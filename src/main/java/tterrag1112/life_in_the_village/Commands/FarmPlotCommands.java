@@ -11,6 +11,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -126,7 +127,7 @@ public class FarmPlotCommands {
                 return 0;
             }
 
-            if (farmhouse.get().getType() != Building.BuildingType.FARMHOUSE) {
+            if (farmhouse.get().getType() != BuildingType.FARMHOUSE) {
                 src.sendFailure(Component.literal(
                         "Building '" + farmhouseName + "' is not a FARMHOUSE."
                 ));

@@ -38,17 +38,33 @@ import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jspecify.annotations.Nullable;
-import tterrag1112.life_in_the_village.Entities.Goals.Adventurer.*;
-import tterrag1112.life_in_the_village.Entities.Goals.Guard.CaravanGuardGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Merchant.CaravanMerchantGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Adventurer.*;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith.BlacksmithGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Carpenter.CarpenterGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmerGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmhandGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.CaravanGuardGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.GuardAttackGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.GuardEquipmentGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.GuardPatrolGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guild.GuildWorkerGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Innkeeper.InnkeeperGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.KingdomRulerGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.VillageLeaderGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.CaravanMerchantGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miner.MinerGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper.StockpileKeeperGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.TradeHandler;
 import tterrag1112.life_in_the_village.Entities.*;
-import tterrag1112.life_in_the_village.Entities.Goals.*;
 import tterrag1112.life_in_the_village.Events.ReputationEvents;
 import tterrag1112.life_in_the_village.Networking.BuilderInventoryPacket;
 import tterrag1112.life_in_the_village.Networking.StockpileContentsPacket;
@@ -60,7 +76,7 @@ import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class TownspersonMob extends PathfinderMob implements Merchant {
+public class TownspersonMob extends PathfinderMob {
 
     // =========================================================================
     // CONSTANTS
@@ -151,12 +167,7 @@ public class TownspersonMob extends PathfinderMob implements Merchant {
 
     private final SimpleContainer personalInventory = new SimpleContainer(36);
 
-    // =========================================================================
-    // TRADING
-    // =========================================================================
 
-    private MerchantOffers offers = new MerchantOffers();
-    @Nullable private Player tradingPlayer = null;
 
     // =========================================================================
     // CONSTRUCTOR
@@ -861,23 +872,6 @@ public class TownspersonMob extends PathfinderMob implements Merchant {
     }
 
 
-
-    // =========================================================================
-    // TRADING (Merchant interface)
-    // =========================================================================
-
-    @Override public void setTradingPlayer(@Nullable Player player) { this.tradingPlayer = player; }
-    @Override public @Nullable Player getTradingPlayer()            { return tradingPlayer; }
-    @Override public MerchantOffers getOffers()                     { return offers; }
-    @Override public void overrideOffers(MerchantOffers o)          {}
-    @Override public int getVillagerXp()                            { return 0; }
-    @Override public void overrideXp(int i)                        {}
-    @Override public boolean showProgressBar()                      { return false; }
-    @Override public SoundEvent getNotifyTradeSound()               { return SoundEvents.VILLAGER_YES; }
-    @Override public boolean isClientSide()                         { return level().isClientSide(); }
-    @Override public boolean stillValid(Player player)              { return distanceTo(player) <= 8.0f; }
-
-
     public static Set<Item> getSellableItems(Profession profession) {
         return switch (profession) {
             case FARMER, FARMHAND -> Set.of(
@@ -904,22 +898,8 @@ public class TownspersonMob extends PathfinderMob implements Merchant {
             default -> Set.of();
         };
     }
-    @Override
-    public void notifyTrade(MerchantOffer offer) {
-        offer.increaseUses();
-        if (tradingPlayer != null) {
-            ReputationEvents.onTradeCompleted(tradingPlayer, this);
-        }
-        if (level() instanceof ServerLevel sl) {
-            getAssignedBuilding(sl).ifPresent(building ->
-                    BuildingStorageAccess.takeItem(sl, building,
-                            offer.getResult().getItem(), offer.getResult().getCount())
-            );
-        }
-    }
 
-    @Override
-    public void notifyTradeUpdated(ItemStack stack) {}
+
 
     @SuppressWarnings("unchecked")
     public <T extends Goal> T getGoal(Class<T> goalClass) {
@@ -930,36 +910,8 @@ public class TownspersonMob extends PathfinderMob implements Merchant {
                 .orElse(null);
     }
 
-    public void regenerateOffers(ServerLevel level) {
-        int baseCost = Math.max(1, (int) Math.round(1 * getPriceModifier()));
-        int cost = Math.max(1, (int)(baseCost * eventTradeDiscount));
-        offers = new MerchantOffers();
-        getAssignedBuilding(level).ifPresent(building -> {
-            double pm = getPriceModifier();
-            int cost1  = Math.max(1, (int) Math.round(1  * pm));
-            int cost2  = Math.max(1, (int) Math.round(2  * pm));
-            int cost3  = Math.max(1, (int) Math.round(3  * pm));
-            int cost4  = Math.max(1, (int) Math.round(4  * pm));
 
-            if (BuildingStorageAccess.hasItem(level, building, Items.WHEAT, 10))
-                offers.add(new MerchantOffer(new ItemCost(Items.EMERALD, cost1),
-                        new ItemStack(Items.WHEAT, 10), 16, 0, 0.05f));
-            if (BuildingStorageAccess.hasItem(level, building, Items.BREAD, 5))
-                offers.add(new MerchantOffer(new ItemCost(Items.EMERALD, cost2),
-                        new ItemStack(Items.BREAD, 5), 16, 0, 0.05f));
-            if (BuildingStorageAccess.hasItem(level, building, Items.IRON_INGOT, 4))
-                offers.add(new MerchantOffer(new ItemCost(Items.EMERALD, cost3),
-                        new ItemStack(Items.IRON_INGOT, 4), 16, 0, 0.05f));
-            if (BuildingStorageAccess.hasItem(level, building, Items.GOLD_INGOT, 2))
-                offers.add(new MerchantOffer(new ItemCost(Items.EMERALD, cost4),
-                        new ItemStack(Items.GOLD_INGOT, 2), 16, 0, 0.05f));
 
-        });
-    }
-
-    public void setMerchantOffers(MerchantOffers offers) {
-        this.offers = offers;
-    }
 
     // =========================================================================
     // INTERACTION
@@ -1197,7 +1149,6 @@ public class TownspersonMob extends PathfinderMob implements Merchant {
         }
 
         // Trading
-        if (!offers.isEmpty()) output.store("offers", MerchantOffers.CODEC, offers);
 
         // Inventory
         NonNullList<ItemStack> items =
@@ -1294,7 +1245,6 @@ public class TownspersonMob extends PathfinderMob implements Merchant {
         });
 
         // Trading
-        input.read("offers", MerchantOffers.CODEC).ifPresent(o -> offers = o);
 
         // Inventory
         NonNullList<ItemStack> items =
@@ -1396,22 +1346,6 @@ public class TownspersonMob extends PathfinderMob implements Merchant {
         return !entityData.get(CARAVAN_ID).isEmpty();
     }
 
-    // Override isWorkTime to check for events
 
-
-    // =========================================================================
-    // ENUMS
-    // =========================================================================
-
-    public enum Profession {
-        NONE, CITIZEN, MERCHANT, FARMER, FARMHAND, BLACKSMITH, BUILDER, GUARD, STOCKPILE_KEEPER, INNKEEPER, MINER,
-        VILLAGE_LEADER, KINGDOM_RULER, CARPENTER, GUILDMASTER, GUILDWORKER, ADVENTURER;
-
-        public String getDisplayName() {
-            return name().charAt(0) + name().substring(1).toLowerCase();
-        }
-    }
-
-    public record TradeOffer(ItemStack price, ItemStack result) {}
 }
 

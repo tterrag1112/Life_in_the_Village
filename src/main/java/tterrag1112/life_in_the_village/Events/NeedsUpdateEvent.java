@@ -10,6 +10,8 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
 import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
@@ -286,7 +288,7 @@ public class NeedsUpdateEvent {
                 .filter(java.util.Optional::isPresent)
                 .map(java.util.Optional::get)
                 .anyMatch(b -> b.getType()
-                        == Building.BuildingType.TOWN_HALL
+                        == BuildingType.TOWN_HALL
                         && b.getLevel() >= 2);
 
         if (!hasMatureTownHall) return;
@@ -309,7 +311,7 @@ public class NeedsUpdateEvent {
                         .map(b -> b.inflate(32))
                         .orElse(new AABB(0, 0, 0, 0, 0, 0)),
                 mob -> mob.getProfession()
-                        == TownspersonMob.Profession
+                        == Profession
                         .VILLAGE_LEADER
                         && mob.getAssignedVillageName()
                         .map(n -> n.equals(
@@ -318,7 +320,7 @@ public class NeedsUpdateEvent {
         ).stream().findFirst().ifPresent(leader -> {
             kingdom.setRulerEntityId(leader.getUUID());
             leader.setProfession(
-                    TownspersonMob.Profession.KINGDOM_RULER);
+                    Profession.KINGDOM_RULER);
             System.out.println(leader.getNpcName()
                     + " appointed as ruler of "
                     + kingdom.getName());

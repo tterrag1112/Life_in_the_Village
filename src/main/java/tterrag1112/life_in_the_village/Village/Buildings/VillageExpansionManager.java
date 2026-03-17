@@ -74,7 +74,7 @@ public class VillageExpansionManager {
 
         // Priority 2 — build new buildings that are
         // unlocked and needed
-        Building.BuildingType newType = findNewBuildingType(
+        BuildingType newType = findNewBuildingType(
                 buildings, tier, population, wealth, data,
                 village);
         if (newType != null) {
@@ -91,17 +91,17 @@ public class VillageExpansionManager {
             List<Building> buildings,
             CurrencyValue wealth) {
         // Priority order for upgrades
-        List<Building.BuildingType> upgradePriority = List.of(
-                Building.BuildingType.TOWN_HALL,
-                Building.BuildingType.STOCKPILE,
-                Building.BuildingType.FARMHOUSE,
-                Building.BuildingType.BLACKSMITH,
-                Building.BuildingType.MARKET,
-                Building.BuildingType.GUILD_HALL,
-                Building.BuildingType.BARRACKS
+        List<BuildingType> upgradePriority = List.of(
+                BuildingType.TOWN_HALL,
+                BuildingType.STOCKPILE,
+                BuildingType.FARMHOUSE,
+                BuildingType.BLACKSMITH,
+                BuildingType.MARKET,
+                BuildingType.GUILD_HALL,
+                BuildingType.BARRACKS
         );
 
-        for (Building.BuildingType type : upgradePriority) {
+        for (BuildingType type : upgradePriority) {
             Optional<Building> candidate = buildings.stream()
                     .filter(b -> b.getType() == type)
                     .filter(BuildingRegistry::canUpgrade)
@@ -132,7 +132,7 @@ public class VillageExpansionManager {
     // New building selection
     // -------------------------------------------------------------------------
 
-    private static Building.BuildingType findNewBuildingType(
+    private static BuildingType findNewBuildingType(
             List<Building> buildings,
             VillageSizeTier tier,
             int population,
@@ -141,12 +141,12 @@ public class VillageExpansionManager {
             Village village) {
 
         // Score each unlocked building type by need
-        Map<Building.BuildingType, Integer> scores
+        Map<BuildingType, Integer> scores
                 = new LinkedHashMap<>();
 
         for (var entry : BuildingRegistry.getAll()
                 .entrySet()) {
-            Building.BuildingType type = entry.getKey();
+            BuildingType type = entry.getKey();
             BuildingRegistry.BuildingDef def = entry.getValue();
 
             // Check if unlocked
@@ -181,13 +181,13 @@ public class VillageExpansionManager {
     }
 
     private static int scoreBuilding(
-            Building.BuildingType type,
+            BuildingType type,
             List<Building> existing,
             int population,
             VillageSizeTier tier,
             Village village) {
 
-        Set<Building.BuildingType> existingTypes =
+        Set<BuildingType> existingTypes =
                 existing.stream()
                         .map(Building::getType)
                         .collect(Collectors.toSet());
@@ -208,7 +208,7 @@ public class VillageExpansionManager {
         return switch (type) {
             case HOUSE -> population > existing.stream()
                     .filter(b -> b.getType()
-                            == Building.BuildingType.HOUSE)
+                            == BuildingType.HOUSE)
                     .count() * 2 ? 90 : 10;
 
             // Boost farmhouse if food is low
@@ -217,30 +217,30 @@ public class VillageExpansionManager {
                     : foodLevel == NeedLevel.LOW ? 85 : 40);
 
             case STOCKPILE -> !existingTypes.contains(
-                    Building.BuildingType.STOCKPILE) ? 95 : 0;
+                    BuildingType.STOCKPILE) ? 95 : 0;
 
             // Boost blacksmith if materials are low
             case BLACKSMITH -> !existingTypes.contains(
-                    Building.BuildingType.BLACKSMITH)
+                    BuildingType.BLACKSMITH)
                     ? (materialLevel == NeedLevel.CRITICAL
                     ? 95 : 80)
                     : 0;
 
             case MARKET -> !existingTypes.contains(
-                    Building.BuildingType.MARKET) ? 75 : 0;
+                    BuildingType.MARKET) ? 75 : 0;
             case INN      -> population > 8  ? 60 : 20;
             case BAKERY   -> population > 6  ? 55 : 15;
             case STABLE   -> population > 8  ? 50 : 10;
             case MILLER   -> existingTypes.contains(
-                    Building.BuildingType.FARMHOUSE) ? 50 : 5;
+                    BuildingType.FARMHOUSE) ? 50 : 5;
             case CARPENTRY -> existingTypes.contains(
-                    Building.BuildingType.STOCKPILE) ? 45 : 5;
+                    BuildingType.STOCKPILE) ? 45 : 5;
             case WOODCUTTER -> population > 5 ? 40 : 10;
             case BARRACKS  -> population > 10 ? 70 : 0;
             case TEMPLE    -> population > 12 ? 55 : 0;
             case LIBRARY   -> population > 14 ? 50 : 0;
             case WATCHTOWER -> existingTypes.contains(
-                    Building.BuildingType.BARRACKS) ? 45 : 0;
+                    BuildingType.BARRACKS) ? 45 : 0;
             case PRISON    -> population > 15 ? 40 : 0;
             case GUILD_HALL -> population > 10 ? 65 : 0;
             case NOBLE_MANOR -> population > 20 ? 50 : 0;
@@ -276,7 +276,7 @@ public class VillageExpansionManager {
     }
 
     private static void requestNewBuilding(
-            Building.BuildingType type,
+            BuildingType type,
             Village village,
             VillageSavedData data,
             long currentTick) {
@@ -343,7 +343,7 @@ public class VillageExpansionManager {
         // Sum stockpile coins
         buildings.stream()
                 .filter(b -> b.getType()
-                        == Building.BuildingType.STOCKPILE)
+                        == BuildingType.STOCKPILE)
                 .forEach(stockpile -> {
                     for (var inv : BuildingStorageAccess
                             .findInventories(level, stockpile)) {

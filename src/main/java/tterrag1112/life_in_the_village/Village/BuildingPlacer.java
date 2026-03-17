@@ -8,17 +8,13 @@ import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.EntitySpawnReason;
-import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
-import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
-import net.minecraft.world.phys.Vec3;
-import tterrag1112.life_in_the_village.Entities.ModEntities;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guild.GuildData;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.Comparator;
 import java.util.Optional;
@@ -43,7 +39,7 @@ public class BuildingPlacer {
             BlockPos pos,
             Identifier structureId,
             String name,
-            Building.BuildingType type,
+            BuildingType type,
             Rotation rotation
 
     ) {
@@ -104,7 +100,7 @@ public class BuildingPlacer {
 
         data.addBuilding(building);
 
-        if (type == Building.BuildingType.GUILD_HALL) {
+        if (type == BuildingType.GUILD_HALL) {
             // Check pos, origin, and center of the building shape
             // since any of these might fall inside village bounds
             var village = data.getVillageAt(pos)
@@ -177,17 +173,17 @@ public class BuildingPlacer {
             return Optional.empty();
         }
     }
-    public static TownspersonMob.Profession getProfessionForType(Building.BuildingType type) {
+    public static Profession getProfessionForType(BuildingType type) {
         return switch (type) {
-            case GUILD_HALL -> TownspersonMob.Profession.GUILDWORKER;
-            case TOWN_HALL -> TownspersonMob.Profession.VILLAGE_LEADER;
-            case GUARD_TOWER -> TownspersonMob.Profession.GUARD;
-            case INN -> TownspersonMob.Profession.INNKEEPER;
-            case MINE -> TownspersonMob.Profession.MINER;
-            case BLACKSMITH -> TownspersonMob.Profession.BLACKSMITH;
-            case STOCKPILE -> TownspersonMob.Profession.STOCKPILE_KEEPER;
-            case FARMHOUSE -> TownspersonMob.Profession.FARMER;
-            case CARPENTRY -> TownspersonMob.Profession.CARPENTER;
+            case GUILD_HALL -> Profession.GUILDWORKER;
+            case TOWN_HALL -> Profession.VILLAGE_LEADER;
+            case GUARD_TOWER -> Profession.GUARD;
+            case INN -> Profession.INNKEEPER;
+            case MINE -> Profession.MINER;
+            case BLACKSMITH -> Profession.BLACKSMITH;
+            case STOCKPILE -> Profession.STOCKPILE_KEEPER;
+            case FARMHOUSE -> Profession.FARMER;
+            case CARPENTRY -> Profession.CARPENTER;
 
 
 

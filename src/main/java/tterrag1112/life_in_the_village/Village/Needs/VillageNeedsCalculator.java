@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.UpgradeRequirements;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -175,7 +176,7 @@ public class VillageNeedsCalculator {
                 .map(data::getBuildingById)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
-                .filter(b -> b.getType() == Building.BuildingType.FARMHOUSE)
+                .filter(b -> b.getType() == BuildingType.FARMHOUSE)
                 .collect(java.util.stream.Collectors.toList());
 
         List<Building> toScan = new ArrayList<>(farmBuildings);
@@ -224,7 +225,7 @@ public class VillageNeedsCalculator {
                 .map(data::getBuildingById)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
-                .filter(b -> b.getType() == Building.BuildingType.STOCKPILE)
+                .filter(b -> b.getType() == BuildingType.STOCKPILE)
                 .findFirst()
                 .orElse(null);
     }

@@ -25,8 +25,10 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.SyncBuildingsPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingPlacer;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Event.EventEffects;
@@ -60,9 +62,9 @@ public class BuildingCommand {
                                                                             String typeStr = StringArgumentType.getString(ctx, "type");
                                                                             ServerLevel level = ctx.getSource().getLevel();
 
-                                                                            Building.BuildingType type;
+                                                                            BuildingType type;
                                                                             try {
-                                                                                type = Building.BuildingType.valueOf(typeStr.toUpperCase());
+                                                                                type = BuildingType.valueOf(typeStr.toUpperCase());
                                                                             } catch (IllegalArgumentException e) {
                                                                                 ctx.getSource().sendFailure(
                                                                                         Component.literal("Unknown building type: " + typeStr)
@@ -404,12 +406,12 @@ public class BuildingCommand {
 
                                     mob.assignToBuilding(building.get().getId(), villageName);
                                     // Set profession based on building type
-                                    TownspersonMob.Profession profession = getProfessionForType(building.get().getType());
+                                    Profession profession = getProfessionForType(building.get().getType());
                                     if (profession != null) {
                                         mob.setProfession(profession);
                                     } else {
                                         // Default to merchant if no profession mapped
-                                        mob.setProfession(TownspersonMob.Profession.MERCHANT);
+                                        mob.setProfession(Profession.MERCHANT);
                                     }
 
 

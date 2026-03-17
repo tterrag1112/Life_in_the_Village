@@ -11,6 +11,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Needs.NeedLevel;
@@ -271,7 +272,7 @@ public class Village {
         return getBounds(VillageSavedData.get(level))
                 .map(bounds -> level.getEntitiesOfClass(
                         TownspersonMob.class, bounds.inflate(16),
-                        e -> e.getProfession() == TownspersonMob.Profession.GUARD
+                        e -> e.getProfession() == Profession.GUARD
                                 && e.getAssignedVillageName()
                                 .map(v -> v.equals(this.name))
                                 .orElse(false)

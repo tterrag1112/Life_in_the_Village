@@ -14,6 +14,7 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -172,7 +173,7 @@ public class CaravanSavedData extends SavedData {
                                 .EntitySpawnReason.NATURAL);
         if (merchant != null) {
             merchant.setProfession(
-                    TownspersonMob.Profession.MERCHANT);
+                    Profession.MERCHANT);
             merchant.setAssignedVillageName(
                     villageData.getVillageById(
                                     caravan.getOriginVillageId())
@@ -200,7 +201,7 @@ public class CaravanSavedData extends SavedData {
             if (guard == null) continue;
 
             guard.setProfession(
-                    TownspersonMob.Profession.GUARD);
+                    Profession.GUARD);
             guard.setAssignedVillageName(
                     villageData.getVillageById(
                                     caravan.getOriginVillageId())

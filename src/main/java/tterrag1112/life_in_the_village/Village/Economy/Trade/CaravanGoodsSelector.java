@@ -6,6 +6,7 @@ import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -168,7 +169,7 @@ public class CaravanGoodsSelector {
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .filter(b -> b.getType()
-                        == Building.BuildingType.STOCKPILE)
+                        == BuildingType.STOCKPILE)
                 .findFirst()
                 .orElse(null);
         if (stockpile == null) return;

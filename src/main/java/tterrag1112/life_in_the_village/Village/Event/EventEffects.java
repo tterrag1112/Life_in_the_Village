@@ -10,6 +10,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
@@ -67,9 +68,9 @@ public class EventEffects {
 
         // Give farmers speed and strength boost
         getVillageNpcs(level, village, data).forEach(mob -> {
-            if (mob.getProfession() == TownspersonMob.Profession.FARMER
+            if (mob.getProfession() == Profession.FARMER
                     || mob.getProfession() ==
-                    TownspersonMob.Profession.FARMHAND) {
+                    Profession.FARMHAND) {
                 mob.addEffect(new MobEffectInstance(
                         MobEffects.SPEED,
                         (int) event.getType().getDurationTicks(),
@@ -102,7 +103,7 @@ public class EventEffects {
         // Merchants get a trade price reduction flag
         getVillageNpcs(level, village, data).forEach(mob -> {
             mob.setEventOverride(VillageEvent.EventType.MARKET_DAY);
-            if (mob.getProfession() == TownspersonMob.Profession.MERCHANT) {
+            if (mob.getProfession() == Profession.MERCHANT) {
                 // Signal merchant to offer discounts
                 mob.setEventTradeDiscount(0.8f); // 20% off
             }
@@ -129,7 +130,7 @@ public class EventEffects {
         // Guards get strength and speed boost
         getVillageNpcs(level, village, data).forEach(mob -> {
             mob.setEventOverride(VillageEvent.EventType.TRAINING_DAY);
-            if (mob.getProfession() == TownspersonMob.Profession.GUARD) {
+            if (mob.getProfession() == Profession.GUARD) {
                 mob.addEffect(new MobEffectInstance(
                         MobEffects.STRENGTH,
                         (int) event.getType().getDurationTicks(),

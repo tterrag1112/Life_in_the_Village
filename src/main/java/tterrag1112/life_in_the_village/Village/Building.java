@@ -14,6 +14,7 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemp
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.*;
 
@@ -46,22 +47,7 @@ public class Building {
             ).apply(instance, Building::new) // calls the private constructor with UUID
     );
 
-    public enum BuildingType{
-        TOWN_HALL, INN, GUILD_HALL, GUARD_TOWER, STOCKPILE, FARMHOUSE, HOUSE, MARKET, MINE, BLACKSMITH, CASTLE,
-        CARPENTRY,
-        // New — Tier 1
-        WELL,
 
-        // New — Tier 2
-        BAKERY, STABLE, MILLER, WOODCUTTER,
-
-        // New — Tier 3
-        BARRACKS, TEMPLE, LIBRARY, APOTHECARY, WATCHTOWER,
-        STONEMASON, WEAVER, CANDLEMAKER, PRISON, BELL_TOWER,
-
-        // New — Tier 4
-        NOBLE_MANOR, WINERY, ARMORER, TOOLSMITH, ATELIER, DOCKS
-    }
 
 
     public Building(String name, BuildingType type, BuildingShape shape, Identifier structureId, Rotation rotation, int level){

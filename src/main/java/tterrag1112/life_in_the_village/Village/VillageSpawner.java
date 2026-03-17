@@ -8,6 +8,8 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
@@ -73,14 +75,14 @@ public class VillageSpawner {
 
         // Track placed footprints for overlap checking
         List<PlacedFootprint> footprints = new ArrayList<>();
-        Map<Building.BuildingType, BlockPos> resolvedPositions
+        Map<BuildingType, BlockPos> resolvedPositions
                 = new LinkedHashMap<>();
 
         for (VillageTypeData.StarterBuilding sb
                 : typeData.getStarterBuildings()) {
-            Building.BuildingType buildingType;
+            BuildingType buildingType;
             try {
-                buildingType = Building.BuildingType
+                buildingType = BuildingType
                         .valueOf(sb.type());
             } catch (IllegalArgumentException e) {
                 System.out.println("VillageSpawner: unknown type "
@@ -109,15 +111,15 @@ public class VillageSpawner {
         // -------------------------------------------------------
         // Phase 2 — Place buildings at resolved positions
         // -------------------------------------------------------
-        Map<Building.BuildingType, Building> placedBuildings
+        Map<BuildingType, Building> placedBuildings
                 = new HashMap<>();
 
         int buildingIndex = 0;
         for (VillageTypeData.StarterBuilding sb
                 : typeData.getStarterBuildings()) {
-            Building.BuildingType buildingType;
+            BuildingType buildingType;
             try {
-                buildingType = Building.BuildingType
+                buildingType = BuildingType
                         .valueOf(sb.type());
             } catch (IllegalArgumentException e) {
                 continue;
@@ -181,8 +183,8 @@ public class VillageSpawner {
         for (VillageTypeData.StarterItem si
                 : typeData.getStarterItems()) {
             try {
-                Building.BuildingType targetType =
-                        Building.BuildingType.valueOf(
+                BuildingType targetType =
+                        BuildingType.valueOf(
                                 si.buildingType());
                 Building targetBuilding =
                         placedBuildings.get(targetType);
@@ -211,8 +213,8 @@ public class VillageSpawner {
         for (VillageTypeData.StarterNpc sn
                 : typeData.getStarterNpcs()) {
             try {
-                Building.BuildingType buildingType =
-                        Building.BuildingType.valueOf(
+                BuildingType buildingType =
+                        BuildingType.valueOf(
                                 sn.buildingType());
                 Building assignedBuilding =
                         placedBuildings.get(buildingType);
@@ -235,8 +237,8 @@ public class VillageSpawner {
                         level.getCurrentDifficultyAt(spawnPos),
                         EntitySpawnReason.NATURAL, null);
 
-                TownspersonMob.Profession profession =
-                        TownspersonMob.Profession.valueOf(
+                Profession profession =
+                        Profession.valueOf(
                                 sn.profession());
                 npc.setProfession(profession);
                 npc.setAssignedBuildingId(
@@ -245,13 +247,13 @@ public class VillageSpawner {
                 npc.setFamilyRole(FamilyRole.valueOf(
                         sn.familyRole()));
                 npc.setHouseId(
-                        buildingType == Building.BuildingType.HOUSE
+                        buildingType == BuildingType.HOUSE
                                 || buildingType
-                                == Building.BuildingType.FARMHOUSE
+                                == BuildingType.FARMHOUSE
                                 ? assignedBuilding.getId() : null);
 
                 if (profession
-                        == TownspersonMob.Profession.MERCHANT) {
+                        == Profession.MERCHANT) {
                     npc.receive(CurrencyValue.ofGold(2));
                 } else {
                     npc.receive(CurrencyValue.ofSilver(5));

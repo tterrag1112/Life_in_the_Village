@@ -13,6 +13,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
@@ -329,12 +330,13 @@ public class VillageMapScreen extends Screen {
     }
 
 
-    private int getBuildingColor(Building.BuildingType type) {
+    private int getBuildingColor(BuildingType type) {
         return switch (type) {
             case INN -> 0x55FF8800;        // orange
             case TOWN_HALL -> 0x550000FF;  // blue
             //case BLACKSMITH -> 0x55FF0000; // red
-            case GUILD_HALL -> 0x55800080; // purple
+            case GUILD_HALL -> 0x55FF0000; // purple
+            case CASTLE -> 0x55800080;
             default -> 0x55FFFFFF;         // white
         };
     }

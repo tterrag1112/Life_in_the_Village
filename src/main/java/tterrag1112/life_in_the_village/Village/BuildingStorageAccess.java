@@ -6,6 +6,8 @@ import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import tterrag1112.life_in_the_village.Blocks.Entity.custom.VillageFoundationBlockEntity;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
@@ -156,5 +158,6 @@ public class BuildingStorageAccess {
             }
         }
     }
+
 }
 

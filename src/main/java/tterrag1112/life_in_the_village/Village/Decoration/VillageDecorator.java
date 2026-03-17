@@ -8,6 +8,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
@@ -54,9 +55,9 @@ public class VillageDecorator {
 
         // Social decorations
         buildings.stream()
-                .filter(b -> b.getType() == Building.BuildingType.INN
+                .filter(b -> b.getType() == BuildingType.INN
                         || b.getType()
-                        == Building.BuildingType.GUILD_HALL)
+                        == BuildingType.GUILD_HALL)
                 .forEach(b -> placeSocialDecorations(
                         level, b, style));
 
@@ -524,7 +525,7 @@ public class VillageDecorator {
             List<Building> buildings) {
         return buildings.stream()
                 .filter(b -> b.getType()
-                        == Building.BuildingType.TOWN_HALL)
+                        == BuildingType.TOWN_HALL)
                 .findFirst();
     }
 

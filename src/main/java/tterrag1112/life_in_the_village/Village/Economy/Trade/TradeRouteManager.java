@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -301,7 +302,7 @@ public class TradeRouteManager {
                         .filter(Optional::isPresent)
                         .map(Optional::get)
                         .filter(b -> b.getType()
-                                == Building.BuildingType.STOCKPILE)
+                                == BuildingType.STOCKPILE)
                         .findFirst())
                 .map(stockpile -> {
                     // Check if village can afford upkeep

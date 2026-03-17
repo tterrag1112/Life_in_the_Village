@@ -6,7 +6,8 @@ public enum KingdomLaw {
     CONSCRIPTION,        // guards automatically recruited
     PRICE_CONTROLS,      // merchant prices fixed by kingdom
     PROPERTY_RIGHTS,     // buildings can't be claimed by outsiders
-    FREE_TRADE;          // no restrictions on merchant activity
+    FREE_TRADE,         // no restrictions on merchant activity
+    KINGS_PEACE;
 
     public String getDescription() {
         return switch (this) {
@@ -16,6 +17,7 @@ public enum KingdomLaw {
             case PRICE_CONTROLS  -> "Merchant prices are regulated by the crown";
             case PROPERTY_RIGHTS -> "Only kingdom citizens may own buildings";
             case FREE_TRADE      -> "All trade restrictions are lifted";
+            case KINGS_PEACE -> "Violence of any kind is forbidden amongs citizens";
         };
     }
 }

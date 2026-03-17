@@ -14,10 +14,10 @@ public class BuildingRegistry {
     // -------------------------------------------------------------------------
 
     public record BuildingDef(
-            Building.BuildingType type,
+            BuildingType type,
             VillageSizeTier minTier,          // minimum village tier to unlock
             int maxLevel,                      // highest upgrade level
-            List<Building.BuildingType> prerequisites, // must exist first
+            List<BuildingType> prerequisites, // must exist first
             Map<Item, Integer> constructionMaterials,  // items from stockpile
             int constructionCost,              // silver coins
             int populationRequirement,         // min NPCs to unlock
@@ -29,14 +29,14 @@ public class BuildingRegistry {
     // Registry
     // -------------------------------------------------------------------------
 
-    private static final Map<Building.BuildingType, BuildingDef> REGISTRY
+    private static final Map<BuildingType, BuildingDef> REGISTRY
             = new LinkedHashMap<>();
 
     static {
         // -------------------------------------------------------
         // Tier 1 — Hamlet
         // -------------------------------------------------------
-        register(Building.BuildingType.TOWN_HALL,
+        register(BuildingType.TOWN_HALL,
                 VillageSizeTier.HAMLET, 3,
                 List.of(),
                 Map.of(Items.OAK_LOG, 32,
@@ -44,7 +44,7 @@ public class BuildingRegistry {
                 5, 0, true,
                 "town_hall/level_1");
 
-        register(Building.BuildingType.HOUSE,
+        register(BuildingType.HOUSE,
                 VillageSizeTier.HAMLET, 3,
                 List.of(),
                 Map.of(Items.OAK_LOG, 16,
@@ -52,7 +52,7 @@ public class BuildingRegistry {
                 2, 0, false,
                 "house/level_1");
 
-        register(Building.BuildingType.FARMHOUSE,
+        register(BuildingType.FARMHOUSE,
                 VillageSizeTier.HAMLET, 3,
                 List.of(),
                 Map.of(Items.OAK_LOG, 16,
@@ -60,7 +60,7 @@ public class BuildingRegistry {
                 2, 0, false,
                 "farmhouse/level_1");
 
-        register(Building.BuildingType.STOCKPILE,
+        register(BuildingType.STOCKPILE,
                 VillageSizeTier.HAMLET, 3,
                 List.of(),
                 Map.of(Items.OAK_LOG, 24,
@@ -68,7 +68,7 @@ public class BuildingRegistry {
                 3, 0, true,
                 "stockpile/level_1");
 
-        register(Building.BuildingType.WELL,
+        register(BuildingType.WELL,
                 VillageSizeTier.HAMLET, 1,
                 List.of(),
                 Map.of(Items.COBBLESTONE, 16,
@@ -79,87 +79,87 @@ public class BuildingRegistry {
         // -------------------------------------------------------
         // Tier 2 — Village
         // -------------------------------------------------------
-        register(Building.BuildingType.BLACKSMITH,
+        register(BuildingType.BLACKSMITH,
                 VillageSizeTier.VILLAGE, 3,
-                List.of(Building.BuildingType.STOCKPILE),
+                List.of(BuildingType.STOCKPILE),
                 Map.of(Items.COBBLESTONE, 48,
                         Items.IRON_INGOT, 16,
                         Items.OAK_LOG, 16),
                 8, 4, true,
                 "blacksmith/level_1");
 
-        register(Building.BuildingType.MARKET,
+        register(BuildingType.MARKET,
                 VillageSizeTier.VILLAGE, 2,
-                List.of(Building.BuildingType.STOCKPILE),
+                List.of(BuildingType.STOCKPILE),
                 Map.of(Items.OAK_LOG, 32,
                         Items.OAK_PLANKS, 32),
                 6, 4, true,
                 "market/level_1");
 
-        register(Building.BuildingType.INN,
+        register(BuildingType.INN,
                 VillageSizeTier.VILLAGE, 3,
-                List.of(Building.BuildingType.HOUSE),
+                List.of(BuildingType.HOUSE),
                 Map.of(Items.OAK_LOG, 48,
                         Items.OAK_PLANKS, 32,
                         Items.COBBLESTONE, 24),
                 10, 6, true,
                 "inn/level_1");
 
-        register(Building.BuildingType.MINE,
+        register(BuildingType.MINE,
                 VillageSizeTier.VILLAGE, 3,
-                List.of(Building.BuildingType.BLACKSMITH),
+                List.of(BuildingType.BLACKSMITH),
                 Map.of(Items.COBBLESTONE, 64,
                         Items.OAK_LOG, 24,
                         Items.IRON_PICKAXE, 2),
                 8, 5, false,
                 "mine/level_1");
 
-        register(Building.BuildingType.CARPENTRY,
+        register(BuildingType.CARPENTRY,
                 VillageSizeTier.VILLAGE, 3,
-                List.of(Building.BuildingType.STOCKPILE),
+                List.of(BuildingType.STOCKPILE),
                 Map.of(Items.OAK_LOG, 48,
                         Items.OAK_PLANKS, 32),
                 6, 4, true,
                 "carpentry/level_1");
 
-        register(Building.BuildingType.BAKERY,
+        register(BuildingType.BAKERY,
                 VillageSizeTier.VILLAGE, 2,
-                List.of(Building.BuildingType.FARMHOUSE),
+                List.of(BuildingType.FARMHOUSE),
                 Map.of(Items.COBBLESTONE, 32,
                         Items.OAK_LOG, 16,
                         Items.WHEAT, 16),
                 5, 4, true,
                 "bakery/level_1");
 
-        register(Building.BuildingType.STABLE,
+        register(BuildingType.STABLE,
                 VillageSizeTier.VILLAGE, 2,
-                List.of(Building.BuildingType.HOUSE),
+                List.of(BuildingType.HOUSE),
                 Map.of(Items.OAK_LOG, 32,
                         Items.HAY_BLOCK, 8),
                 5, 5, true,
                 "stable/level_1");
 
-        register(Building.BuildingType.MILLER,
+        register(BuildingType.MILLER,
                 VillageSizeTier.VILLAGE, 2,
-                List.of(Building.BuildingType.FARMHOUSE),
+                List.of(BuildingType.FARMHOUSE),
                 Map.of(Items.OAK_LOG, 24,
                         Items.COBBLESTONE, 32,
                         Items.STONE, 16),
                 5, 4, true,
                 "miller/level_1");
 
-        register(Building.BuildingType.WOODCUTTER,
+        register(BuildingType.WOODCUTTER,
                 VillageSizeTier.VILLAGE, 2,
-                List.of(Building.BuildingType.STOCKPILE),
+                List.of(BuildingType.STOCKPILE),
                 Map.of(Items.OAK_LOG, 16,
                         Items.COBBLESTONE, 16),
                 3, 3, false,
                 "woodcutter/level_1");
 
-        register(Building.BuildingType.GUILD_HALL,
+        register(BuildingType.GUILD_HALL,
                 VillageSizeTier.VILLAGE, 3,
-                List.of(Building.BuildingType.TOWN_HALL,
-                        Building.BuildingType.MARKET),
+                List.of(BuildingType.TOWN_HALL,
+                        BuildingType.MARKET),
                 Map.of(Items.COBBLESTONE, 64,
                         Items.OAK_LOG, 48,
                         Items.IRON_INGOT, 8),
@@ -169,89 +169,89 @@ public class BuildingRegistry {
         // -------------------------------------------------------
         // Tier 3 — Town
         // -------------------------------------------------------
-        register(Building.BuildingType.BARRACKS,
+        register(BuildingType.BARRACKS,
                 VillageSizeTier.TOWN, 3,
-                List.of(Building.BuildingType.BLACKSMITH,
-                        Building.BuildingType.TOWN_HALL),
+                List.of(BuildingType.BLACKSMITH,
+                        BuildingType.TOWN_HALL),
                 Map.of(Items.COBBLESTONE, 96,
                         Items.IRON_INGOT, 32,
                         Items.OAK_LOG, 32),
                 20, 10, true,
                 "barracks/level_1");
 
-        register(Building.BuildingType.TEMPLE,
+        register(BuildingType.TEMPLE,
                 VillageSizeTier.TOWN, 2,
-                List.of(Building.BuildingType.TOWN_HALL),
+                List.of(BuildingType.TOWN_HALL),
                 Map.of(Items.COBBLESTONE, 128,
                         Items.STONE_BRICKS, 64,
                         Items.GOLD_INGOT, 4),
                 25, 10, true,
                 "temple/level_1");
 
-        register(Building.BuildingType.LIBRARY,
+        register(BuildingType.LIBRARY,
                 VillageSizeTier.TOWN, 2,
-                List.of(Building.BuildingType.TOWN_HALL),
+                List.of(BuildingType.TOWN_HALL),
                 Map.of(Items.OAK_LOG, 48,
                         Items.BOOKSHELF, 16,
                         Items.OAK_PLANKS, 32),
                 15, 8, true,
                 "library/level_1");
 
-        register(Building.BuildingType.APOTHECARY,
+        register(BuildingType.APOTHECARY,
                 VillageSizeTier.TOWN, 2,
-                List.of(Building.BuildingType.MARKET),
+                List.of(BuildingType.MARKET),
                 Map.of(Items.OAK_LOG, 24,
                         Items.GLASS, 16,
                         Items.COBBLESTONE, 32),
                 10, 8, true,
                 "apothecary/level_1");
 
-        register(Building.BuildingType.WATCHTOWER,
+        register(BuildingType.WATCHTOWER,
                 VillageSizeTier.TOWN, 3,
-                List.of(Building.BuildingType.BARRACKS),
+                List.of(BuildingType.BARRACKS),
                 Map.of(Items.COBBLESTONE, 96,
                         Items.OAK_LOG, 16),
                 12, 8, false,
                 "watchtower/level_1");
 
-        register(Building.BuildingType.STONEMASON,
+        register(BuildingType.STONEMASON,
                 VillageSizeTier.TOWN, 2,
-                List.of(Building.BuildingType.MINE),
+                List.of(BuildingType.MINE),
                 Map.of(Items.COBBLESTONE, 64,
                         Items.STONE, 32),
                 8, 6, true,
                 "stonemason/level_1");
 
-        register(Building.BuildingType.WEAVER,
+        register(BuildingType.WEAVER,
                 VillageSizeTier.TOWN, 2,
-                List.of(Building.BuildingType.FARMHOUSE),
+                List.of(BuildingType.FARMHOUSE),
                 Map.of(Items.OAK_LOG, 24,
                         Items.WHITE_WOOL, 16),
                 8, 6, true,
                 "weaver/level_1");
 
-        register(Building.BuildingType.CANDLEMAKER,
+        register(BuildingType.CANDLEMAKER,
                 VillageSizeTier.TOWN, 2,
-                List.of(Building.BuildingType.MARKET),
+                List.of(BuildingType.MARKET),
                 Map.of(Items.OAK_LOG, 16,
                         Items.HONEYCOMB, 8,
                         Items.STRING, 16),
                 6, 6, true,
                 "candlemaker/level_1");
 
-        register(Building.BuildingType.PRISON,
+        register(BuildingType.PRISON,
                 VillageSizeTier.TOWN, 1,
-                List.of(Building.BuildingType.BARRACKS,
-                        Building.BuildingType.TOWN_HALL),
+                List.of(BuildingType.BARRACKS,
+                        BuildingType.TOWN_HALL),
                 Map.of(Items.IRON_BARS, 32,
                         Items.COBBLESTONE, 64,
                         Items.OAK_LOG, 16),
                 15, 10, true,
                 "prison/level_1");
 
-        register(Building.BuildingType.BELL_TOWER,
+        register(BuildingType.BELL_TOWER,
                 VillageSizeTier.TOWN, 1,
-                List.of(Building.BuildingType.TEMPLE),
+                List.of(BuildingType.TEMPLE),
                 Map.of(Items.COBBLESTONE, 64,
                         Items.STONE_BRICKS, 32,
                         Items.BELL, 1),
@@ -261,10 +261,10 @@ public class BuildingRegistry {
         // -------------------------------------------------------
         // Tier 4 — City
         // -------------------------------------------------------
-        register(Building.BuildingType.NOBLE_MANOR,
+        register(BuildingType.NOBLE_MANOR,
                 VillageSizeTier.CITY, 3,
-                List.of(Building.BuildingType.TOWN_HALL,
-                        Building.BuildingType.MARKET),
+                List.of(BuildingType.TOWN_HALL,
+                        BuildingType.MARKET),
                 Map.of(Items.STONE_BRICKS, 128,
                         Items.OAK_LOG, 64,
                         Items.GLASS, 32,
@@ -272,61 +272,61 @@ public class BuildingRegistry {
                 50, 15, false,
                 "noble_manor/level_1");
 
-        register(Building.BuildingType.WINERY,
+        register(BuildingType.WINERY,
                 VillageSizeTier.CITY, 2,
-                List.of(Building.BuildingType.FARMHOUSE,
-                        Building.BuildingType.MARKET),
+                List.of(BuildingType.FARMHOUSE,
+                        BuildingType.MARKET),
                 Map.of(Items.OAK_LOG, 48,
                         Items.GLASS, 16,
                         Items.SWEET_BERRIES, 32),
                 20, 10, false,
                 "winery/level_1");
 
-        register(Building.BuildingType.ARMORER,
+        register(BuildingType.ARMORER,
                 VillageSizeTier.CITY, 2,
-                List.of(Building.BuildingType.BLACKSMITH,
-                        Building.BuildingType.BARRACKS),
+                List.of(BuildingType.BLACKSMITH,
+                        BuildingType.BARRACKS),
                 Map.of(Items.COBBLESTONE, 64,
                         Items.IRON_INGOT, 48,
                         Items.GOLD_INGOT, 8),
                 25, 12, true,
                 "armorer/level_1");
 
-        register(Building.BuildingType.TOOLSMITH,
+        register(BuildingType.TOOLSMITH,
                 VillageSizeTier.CITY, 2,
-                List.of(Building.BuildingType.BLACKSMITH,
-                        Building.BuildingType.MINE),
+                List.of(BuildingType.BLACKSMITH,
+                        BuildingType.MINE),
                 Map.of(Items.COBBLESTONE, 48,
                         Items.IRON_INGOT, 32,
                         Items.OAK_LOG, 24),
                 20, 12, true,
                 "toolsmith/level_1");
 
-        register(Building.BuildingType.ATELIER,
+        register(BuildingType.ATELIER,
                 VillageSizeTier.CITY, 2,
-                List.of(Building.BuildingType.LIBRARY,
-                        Building.BuildingType.WEAVER),
+                List.of(BuildingType.LIBRARY,
+                        BuildingType.WEAVER),
                 Map.of(Items.OAK_LOG, 48,
                         Items.WHITE_WOOL, 24,
                         Items.GLASS, 16),
                 20, 12, true,
                 "atelier/level_1");
 
-        register(Building.BuildingType.DOCKS,
+        register(BuildingType.DOCKS,
                 VillageSizeTier.CITY, 2,
-                List.of(Building.BuildingType.MARKET,
-                        Building.BuildingType.STOCKPILE),
+                List.of(BuildingType.MARKET,
+                        BuildingType.STOCKPILE),
                 Map.of(Items.OAK_LOG, 96,
                         Items.OAK_PLANKS, 64,
                         Items.IRON_INGOT, 16),
                 30, 15, false,
                 "docks/level_1");
 
-        register(Building.BuildingType.CASTLE,
+        register(BuildingType.CASTLE,
                 VillageSizeTier.CITY, 3,
-                List.of(Building.BuildingType.BARRACKS,
-                        Building.BuildingType.WATCHTOWER,
-                        Building.BuildingType.TOWN_HALL),
+                List.of(BuildingType.BARRACKS,
+                        BuildingType.WATCHTOWER,
+                        BuildingType.TOWN_HALL),
                 Map.of(Items.STONE_BRICKS, 256,
                         Items.IRON_INGOT, 64,
                         Items.OAK_LOG, 64),
@@ -334,10 +334,10 @@ public class BuildingRegistry {
                 "castle/level_1");
     }
 
-    private static void register(Building.BuildingType type,
+    private static void register(BuildingType type,
                                  VillageSizeTier minTier,
                                  int maxLevel,
-                                 List<Building.BuildingType> prerequisites,
+                                 List<BuildingType> prerequisites,
                                  Map<Item, Integer> materials,
                                  int coinCost,
                                  int populationReq,
@@ -355,7 +355,7 @@ public class BuildingRegistry {
     // -------------------------------------------------------------------------
 
     public static Optional<BuildingDef> get(
-            Building.BuildingType type) {
+            BuildingType type) {
         return Optional.ofNullable(REGISTRY.get(type));
     }
 
@@ -372,7 +372,7 @@ public class BuildingRegistry {
      * its current buildings and tier.
      */
     public static boolean isUnlocked(
-            Building.BuildingType type,
+            BuildingType type,
             List<Building> existingBuildings,
             VillageSizeTier tier) {
         BuildingDef def = REGISTRY.get(type);
@@ -390,7 +390,7 @@ public class BuildingRegistry {
         }
 
         // Check prerequisites
-        Set<Building.BuildingType> existing = new HashSet<>();
+        Set<BuildingType> existing = new HashSet<>();
         existingBuildings.forEach(b ->
                 existing.add(b.getType()));
         return existing.containsAll(def.prerequisites());
@@ -405,8 +405,10 @@ public class BuildingRegistry {
         return building.getLevel() < def.maxLevel();
     }
 
-    public static Map<Building.BuildingType, BuildingDef>
+    public static Map<BuildingType, BuildingDef>
     getAll() {
         return Collections.unmodifiableMap(REGISTRY);
     }
+
+
 }

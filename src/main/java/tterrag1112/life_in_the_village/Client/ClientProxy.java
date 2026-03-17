@@ -7,4 +7,5 @@ public class ClientProxy {
     public static void openVillageMap() {
         Minecraft.getInstance().setScreen(new VillageMapScreen());
     }
+    
 }

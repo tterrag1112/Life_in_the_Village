@@ -6,9 +6,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
-import tterrag1112.life_in_the_village.Guild.GuildData;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Village.*;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.Decoration.VillagePath;
@@ -240,7 +241,7 @@ public class VillageSavedData extends SavedData {
                 .findFirst();
     }
 
-    public List<Building> getBuildingsByType(Building.BuildingType type) {
+    public List<Building> getBuildingsByType(BuildingType type) {
         return buildings.stream()
                 .filter(b -> b.getType() == type)
                 .toList();

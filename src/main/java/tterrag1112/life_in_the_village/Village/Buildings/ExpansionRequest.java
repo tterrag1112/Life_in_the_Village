@@ -22,7 +22,7 @@ public class ExpansionRequest {
                             .fieldOf("id").forGetter(ExpansionRequest::getId),
                     Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .fieldOf("villageId").forGetter(ExpansionRequest::getVillageId),
-                    Codec.STRING.xmap(Building.BuildingType::valueOf, Building.BuildingType::name)
+                    Codec.STRING.xmap(BuildingType::valueOf, BuildingType::name)
                             .fieldOf("buildingType").forGetter(ExpansionRequest::getBuildingType),
                     BlockPos.CODEC
                             .optionalFieldOf("targetPos", BlockPos.ZERO)
@@ -36,12 +36,12 @@ public class ExpansionRequest {
 
     private final UUID id;
     private final UUID villageId;
-    private final Building.BuildingType buildingType;
+    private final BuildingType buildingType;
     private BlockPos targetPos;
     private RequestStatus status;
     private final long createdAtTick;
 
-    public ExpansionRequest(UUID id, UUID villageId, Building.BuildingType buildingType,
+    public ExpansionRequest(UUID id, UUID villageId, BuildingType buildingType,
                             BlockPos targetPos, RequestStatus status, long createdAtTick) {
         this.id = id;
         this.villageId = villageId;
@@ -51,7 +51,7 @@ public class ExpansionRequest {
         this.createdAtTick = createdAtTick;
     }
 
-    public static ExpansionRequest create(UUID villageId, Building.BuildingType type,
+    public static ExpansionRequest create(UUID villageId, BuildingType type,
                                           long currentTick) {
         return new ExpansionRequest(
                 UUID.randomUUID(), villageId, type,
@@ -61,7 +61,7 @@ public class ExpansionRequest {
 
     public UUID getId()                      { return id; }
     public UUID getVillageId()               { return villageId; }
-    public Building.BuildingType getBuildingType() { return buildingType; }
+    public BuildingType getBuildingType() { return buildingType; }
     public BlockPos getTargetPos()           { return targetPos; }
     public RequestStatus getStatus()         { return status; }
     public long getCreatedAtTick()           { return createdAtTick; }

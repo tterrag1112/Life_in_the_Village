@@ -4,8 +4,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeListing;
@@ -118,7 +120,7 @@ public class VillageEconomy {
                         .map(data::getBuildingById)
                         .filter(Optional::isPresent)
                         .map(Optional::get)
-                        .filter(b -> b.getType() == Building.BuildingType.STOCKPILE)
+                        .filter(b -> b.getType() == BuildingType.STOCKPILE)
                         .forEach(stockpile -> {
                             int count = BuildingStorageAccess.countItem(
                                     level, stockpile, item);
@@ -128,7 +130,7 @@ public class VillageEconomy {
                                     TownspersonMob.class,
                                     stockpile.getShape().toAABB().inflate(16),
                                     mob -> mob.getProfession() ==
-                                            TownspersonMob.Profession.STOCKPILE_KEEPER
+                                            Profession.STOCKPILE_KEEPER
                             ).stream().findFirst().ifPresent(keeper -> {
                                 long price = Math.max(1, getBasePrice(item));
                                 candidates.add(new TradeListResult(
@@ -183,10 +185,10 @@ public class VillageEconomy {
         // Tools and equipment
         targets.put(net.minecraft.world.item.Items.IRON_PICKAXE,
                 countProfession(level, village, data,
-                        TownspersonMob.Profession.MINER) * 2);
+                        Profession.MINER) * 2);
         targets.put(net.minecraft.world.item.Items.IRON_SWORD,
                 countProfession(level, village, data,
-                        TownspersonMob.Profession.GUARD) * 2);
+                        Profession.GUARD) * 2);
 
         // Seeds
         targets.put(net.minecraft.world.item.Items.WHEAT_SEEDS,
@@ -232,7 +234,7 @@ public class VillageEconomy {
                 .orElse(4L);
     }
 
-    private static double getMarkup(TownspersonMob.Profession profession) {
+    private static double getMarkup(Profession profession) {
         return switch (profession) {
             case MERCHANT        -> MERCHANT_MARKUP;
             case STOCKPILE_KEEPER -> STOCKPILE_MARKUP;
@@ -241,7 +243,7 @@ public class VillageEconomy {
     }
 
     private static TradeListing.SellerType getSellerType(
-            TownspersonMob.Profession profession) {
+            Profession profession) {
         return switch (profession) {
             case MERCHANT        -> TradeListing.SellerType.MERCHANT;
             case STOCKPILE_KEEPER -> TradeListing.SellerType.STOCKPILE;
@@ -286,7 +288,7 @@ public class VillageEconomy {
     private static int countProfession(ServerLevel level,
                                        Village village,
                                        VillageSavedData data,
-                                       TownspersonMob.Profession profession) {
+                                       Profession profession) {
         return (int) level.getEntitiesOfClass(
                 TownspersonMob.class,
                 village.getBounds(data)

@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Entities;
 
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Profession.Profession;
 
 public class WorkSchedule {
 
@@ -17,7 +18,7 @@ public class WorkSchedule {
     }
 
     // Minecraft day: dawn=0, noon=6000, dusk=12000, midnight=18000
-    public static TimeWindow getWorkWindow(TownspersonMob.Profession profession) {
+    public static TimeWindow getWorkWindow(Profession profession) {
         return switch (profession) {
             case FARMER, FARMHAND  -> new TimeWindow(500, 11000);
             case MERCHANT          -> new TimeWindow(3000, 15000);
@@ -29,7 +30,7 @@ public class WorkSchedule {
         };
     }
 
-    public static TimeWindow getSleepWindow(TownspersonMob.Profession profession) {
+    public static TimeWindow getSleepWindow(Profession profession) {
         return switch (profession) {
             case FARMER, FARMHAND  -> new TimeWindow(13000, 23500);
             case MERCHANT          -> new TimeWindow(16000, 23500);
@@ -38,7 +39,7 @@ public class WorkSchedule {
         };
     }
 
-    public static TimeWindow getSocialWindow(TownspersonMob.Profession profession) {
+    public static TimeWindow getSocialWindow(Profession profession) {
         // Social time is between work end and sleep start
         return switch (profession) {
             case FARMER, FARMHAND  -> new TimeWindow(11000, 13000);
@@ -65,7 +66,7 @@ public class WorkSchedule {
 
     public static boolean shouldBeHome(TownspersonMob mob) {
         // Guards never go home on schedule
-        if (mob.getProfession() == TownspersonMob.Profession.GUARD) return false;
+        if (mob.getProfession() == Profession.GUARD) return false;
         return isSleepTime(mob);
     }
 }
