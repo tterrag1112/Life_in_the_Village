@@ -24,6 +24,7 @@ public class ModModelProvider extends ModelProvider {
         itemModels.generateFlatItem(ModItems.MONEYBIN.get(), ModelTemplates.FLAT_HANDHELD_ITEM);
         itemModels.generateFlatItem(ModItems.VILLAGE_MAP.get(), ModelTemplates.FLAT_HANDHELD_ITEM);
         blockModels.createTrivialCube(ModBlocks.VILLAGE_FOUNDATION.get());
+        blockModels.createTrivialCube(ModBlocks.GUARD_POST.get());
 
     }
 }

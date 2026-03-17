@@ -1,22 +1,11 @@
 package tterrag1112.life_in_the_village.Datagen;
 
-import net.minecraft.core.Holder;
-import net.minecraft.core.HolderGetter;
 import net.minecraft.core.HolderLookup;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.data.PackOutput;
-import net.minecraft.resources.Identifier;
-import net.minecraft.resources.ResourceKey;
-import net.minecraft.tags.ItemTags;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.neoforged.neoforge.common.data.DataMapProvider;
-import net.neoforged.neoforge.registries.NeoForgeRegistries;
-import tterrag1112.life_in_the_village.Currency.ModCurrency;
-import tterrag1112.life_in_the_village.Life_in_the_village;
-import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.ModCurrency;
 
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 public class ModDatamapProvider extends DataMapProvider {

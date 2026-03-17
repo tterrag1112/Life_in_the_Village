@@ -12,6 +12,7 @@ import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
+import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.*;
@@ -46,7 +47,20 @@ public class Building {
     );
 
     public enum BuildingType{
-        TOWN_HALL, INN, GUILD_HALL, GUARD_TOWER
+        TOWN_HALL, INN, GUILD_HALL, GUARD_TOWER, STOCKPILE, FARMHOUSE, HOUSE, MARKET, MINE, BLACKSMITH, CASTLE,
+        CARPENTRY,
+        // New — Tier 1
+        WELL,
+
+        // New — Tier 2
+        BAKERY, STABLE, MILLER, WOODCUTTER,
+
+        // New — Tier 3
+        BARRACKS, TEMPLE, LIBRARY, APOTHECARY, WATCHTOWER,
+        STONEMASON, WEAVER, CANDLEMAKER, PRISON, BELL_TOWER,
+
+        // New — Tier 4
+        NOBLE_MANOR, WINERY, ARMORER, TOOLSMITH, ATELIER, DOCKS
     }
 
 
@@ -71,7 +85,13 @@ public class Building {
 
 
     public Identifier getStructureId() { return structureId; }
+    public void setStructureId(Identifier id) {
+        this.structureId = id;
+    }
 
+    public void setUpgradeLevel(int level) {
+        this.buildingLevel = level;
+    }
     public UUID getId() { return id; }
     public String getName(){
         return this.buildingName;
@@ -203,6 +223,14 @@ public class Building {
             this.width = width;
             this.height = height;
             this.length = length;
+        }
+
+        public AABB toAABB() {
+            BlockPos max = getMax();
+            return new AABB(
+                    originPoint.getX(), originPoint.getY(), originPoint.getZ(),
+                    max.getX() + 1, max.getY() + 1, max.getZ() + 1
+            );
         }
 
         public BlockPos getOrigin() {

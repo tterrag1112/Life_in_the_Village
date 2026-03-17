@@ -19,7 +19,8 @@ public class ModEntities {
 
     public static final Supplier<EntityType<TownspersonMob>> TOWNSPERSON =
             ENTITY_TYPES.register("townsperson", () -> EntityType.Builder.of(TownspersonMob::new, MobCategory.CREATURE)
-                    .sized(0.75f, 0.95f).build(ResourceKey.create(Registries.ENTITY_TYPE, Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "townsperson"))));
+                    .sized(0.75f, 1.95f)
+                    .build(ResourceKey.create(Registries.ENTITY_TYPE, Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "townsperson"))));
 
     public static void register(IEventBus eventBus) {
         ENTITY_TYPES.register(eventBus);

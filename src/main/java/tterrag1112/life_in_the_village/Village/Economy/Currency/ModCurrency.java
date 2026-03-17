@@ -1,11 +1,10 @@
-package tterrag1112.life_in_the_village.Currency;
+package tterrag1112.life_in_the_village.Village.Economy.Currency;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
-import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.registries.datamaps.DataMapType;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 

@@ -6,6 +6,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.data.event.GatherDataEvent;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.MiningYieldData;
 
 import java.util.List;
 import java.util.Set;
@@ -18,6 +19,16 @@ public class DataGenerators {
         event.createProvider(ModModelProvider::new);
         event.createProvider(ModItemTagProvider::new);
         event.createProvider(ModLanguageProvider::new);
+        //event.getGenerator().addProvider(event.includeServer(), new NpcNameDatagen(event.getGenerator().getPackOutput()));
+        event.createProvider(NpcNameDatagen::new);
+        event.createProvider(VillageTypeDatagen::new);
+        event.createProvider(MiningYieldDatagen::new);
+        event.createProvider(BlacksmithRecipeDatagen::new);
+        event.createProvider(KingdomTitleDatagen::new);
+
+
+
+
 
     }
 }

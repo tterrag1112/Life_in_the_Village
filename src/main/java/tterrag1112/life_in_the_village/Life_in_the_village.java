@@ -1,12 +1,16 @@
 package tterrag1112.life_in_the_village;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.client.renderer.entity.EntityRenderers;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.item.CreativeModeTab;
+import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
@@ -16,8 +20,12 @@ import tterrag1112.life_in_the_village.Blocks.Entity.ModBlockEntities;
 import tterrag1112.life_in_the_village.Blocks.ModBlocks;
 import tterrag1112.life_in_the_village.Components.ModDataComponents;
 import tterrag1112.life_in_the_village.DataAttachments.ModData;
+import tterrag1112.life_in_the_village.Entities.ModEntities;
+import tterrag1112.life_in_the_village.Entities.client.TownspersonRenderer;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Village.Buildings.ModBuildings;
+
+import static net.neoforged.neoforge.common.NeoForgeMod.MOD_ID;
 
 // The value here should match an entry in the META-INF/neoforge.mods.toml file
 @Mod(Life_in_the_village.MODID)
@@ -47,6 +55,7 @@ public class Life_in_the_village {
         ModBlockEntities.BLOCK_ENTITIES.register(modEventBus);
         ModData.register(modEventBus);
         ModBuildings.register(modEventBus);
+        ModEntities.ENTITY_TYPES.register(modEventBus);
 
         ModItems.ITEMS.register(modEventBus);
         ModBlocks.BLOCKS.register(modEventBus);
@@ -76,6 +85,7 @@ public class Life_in_the_village {
         // Do something when the server starts
         LOGGER.info("HELLO from server starting");
     }
+
 
 
 }

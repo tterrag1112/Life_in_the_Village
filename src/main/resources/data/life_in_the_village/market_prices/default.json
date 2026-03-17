@@ -1,0 +1,17 @@
+{
+  "culture": "default",
+  "prices": [
+    { "item": "minecraft:wheat",       "buy": 2,  "sell": 4  },
+    { "item": "minecraft:bread",       "buy": 6,  "sell": 10 },
+    { "item": "minecraft:carrot",      "buy": 2,  "sell": 4  },
+    { "item": "minecraft:potato",      "buy": 2,  "sell": 4  },
+    { "item": "minecraft:beetroot",    "buy": 2,  "sell": 4  },
+    { "item": "minecraft:oak_log",     "buy": 4,  "sell": 8  },
+    { "item": "minecraft:cobblestone", "buy": 1,  "sell": 2  },
+    { "item": "minecraft:iron_ingot",  "buy": 16, "sell": 24 },
+    { "item": "minecraft:gold_ingot",  "buy": 32, "sell": 48 },
+    { "item": "minecraft:coal",        "buy": 3,  "sell": 6  },
+    { "item": "minecraft:wool",        "buy": 4,  "sell": 8  },
+    { "item": "minecraft:leather",     "buy": 6,  "sell": 10 }
+  ]
+}

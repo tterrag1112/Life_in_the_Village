@@ -8,13 +8,21 @@ import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
+import net.minecraft.world.phys.Vec3;
+import tterrag1112.life_in_the_village.Entities.ModEntities;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Guild.GuildData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
+import java.util.Comparator;
 import java.util.Optional;
+import java.util.UUID;
 
 public class BuildingPlacer {
 
@@ -52,21 +60,97 @@ public class BuildingPlacer {
         System.out.println("Place result: " + placed);
 
         Vec3i rawSize = template.getSize();
+
+        int w = rawSize.getX();
+        int h = rawSize.getY();
+        int l = rawSize.getZ();
+
+        BlockPos origin;
         int width, length;
-        if (rotation == Rotation.CLOCKWISE_90 || rotation == Rotation.COUNTERCLOCKWISE_90) {
-            width = rawSize.getZ();
-            length = rawSize.getX();
-        } else {
-            width = rawSize.getX();
-            length = rawSize.getZ();
+
+        switch (rotation) {
+            case CLOCKWISE_90 -> {
+                // Rotated 90 CW: X becomes Z, Z becomes -X
+                origin = pos.offset(-(l - 1), 0, 0);
+                width = l;
+                length = w;
+            }
+            case COUNTERCLOCKWISE_90 -> {
+                // Rotated 90 CCW: X becomes -Z, Z becomes X
+                origin = pos.offset(0, 0, -(w - 1));
+                width = l;
+                length = w;
+            }
+            case CLOCKWISE_180 -> {
+                // Rotated 180: both axes flipped
+                origin = pos.offset(-(w - 1), 0, -(l - 1));
+                width = w;
+                length = l;
+            }
+            default -> {
+                // NONE: pos is already the northwest corner
+                origin = pos;
+                width = w;
+                length = l;
+            }
         }
 
-        Building.BuildingShape shape = new Building.BuildingShape(pos, width, rawSize.getY(), length);
+        Building.BuildingShape shape = new Building.BuildingShape(
+                origin, width, h, length
+        );
 
         Building building = new Building(name, type, shape, structureId, rotation, 1);
-        VillageSavedData.get(level).addBuilding(building);
+        VillageSavedData data = VillageSavedData.get(level);
+
+        data.addBuilding(building);
+
+        if (type == Building.BuildingType.GUILD_HALL) {
+            // Check pos, origin, and center of the building shape
+            // since any of these might fall inside village bounds
+            var village = data.getVillageAt(pos)
+                    .or(() -> data.getVillageAt(origin))
+                    .or(() -> data.getVillageAt(shape.getOrigin()))
+                    .or(() -> {
+                        // Last resort — nearest village within 200 blocks
+                        return data.getAllVillages().stream()
+                                .filter(v -> v.getBounds(data)
+                                        .map(b -> BlockPos.containing(b.getCenter())
+                                                .closerThan(pos, 200))
+                                        .orElse(false))
+                                .min(Comparator.comparingDouble(v ->
+                                        v.getBounds(data)
+                                                .map(b -> BlockPos.containing(
+                                                        b.getCenter()).distSqr(pos))
+                                                .orElse(Double.MAX_VALUE)));
+                    })
+                    .orElse(null);
+
+            if (village == null) {
+                System.out.println("Guild Hall placed at " + pos.toShortString()
+                        + " but no village found within 200 blocks.");
+                return Optional.of(building);
+            }
+
+            if (data.getGuildForVillage(village.getId()).isEmpty()) {
+                GuildData guild = new GuildData(
+                        UUID.randomUUID(),
+                        village.getId(),
+                        UUID.fromString("00000000-0000-0000-0000-000000000000"),
+                        0L);
+                data.addGuild(guild);
+                data.setDirty();
+                System.out.println("Created guild for village: "
+                        + village.getName()
+                        + " | Guild ID: "
+                        + guild.guildId());
+            } else {
+                System.out.println("Guild already registered for village: "
+                        + village.getName());
+            }
+        }
 
         return Optional.of(building);
+
     }
 
 
@@ -92,5 +176,23 @@ public class BuildingPlacer {
             System.out.println("Failed to load structure " + structureId + ": " + e.getMessage());
             return Optional.empty();
         }
+    }
+    public static TownspersonMob.Profession getProfessionForType(Building.BuildingType type) {
+        return switch (type) {
+            case GUILD_HALL -> TownspersonMob.Profession.GUILDWORKER;
+            case TOWN_HALL -> TownspersonMob.Profession.VILLAGE_LEADER;
+            case GUARD_TOWER -> TownspersonMob.Profession.GUARD;
+            case INN -> TownspersonMob.Profession.INNKEEPER;
+            case MINE -> TownspersonMob.Profession.MINER;
+            case BLACKSMITH -> TownspersonMob.Profession.BLACKSMITH;
+            case STOCKPILE -> TownspersonMob.Profession.STOCKPILE_KEEPER;
+            case FARMHOUSE -> TownspersonMob.Profession.FARMER;
+            case CARPENTRY -> TownspersonMob.Profession.CARPENTER;
+
+
+
+            case HOUSE -> null; // no NPC spawned at placement, NPCs seek houses automatically
+            default -> null;
+        };
     }
 }

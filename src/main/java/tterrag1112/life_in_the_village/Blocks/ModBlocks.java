@@ -8,7 +8,9 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
+import tterrag1112.life_in_the_village.Blocks.custom.GuardPostBlock;
 import tterrag1112.life_in_the_village.Blocks.custom.VillageFoundationBlock;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Life_in_the_village;
@@ -22,7 +24,11 @@ public class ModBlocks {
     public static final DeferredBlock<Block> VILLAGE_FOUNDATION = registerBlock("village_foundation",
             VillageFoundationBlock::new,
             BlockBehaviour.Properties.of());
-
+    public static final DeferredBlock<Block> GUARD_POST = registerBlock("guard_post",
+            GuardPostBlock::new,
+            BlockBehaviour.Properties.of()
+                    .strength(2.0f)
+                    .requiresCorrectToolForDrops());
 
 
 

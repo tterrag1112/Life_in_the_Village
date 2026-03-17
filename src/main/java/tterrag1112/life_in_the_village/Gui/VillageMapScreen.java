@@ -36,6 +36,8 @@ public class VillageMapScreen extends Screen {
 
     // Block origin of the map (min corner of village bounds)
     private int originX, originZ;
+    private volatile boolean isLoading = true;
+    private final Object colorLock = new Object();
 
     public VillageMapScreen() {
         super(Component.literal("Village Map"));
@@ -49,29 +51,48 @@ public class VillageMapScreen extends Screen {
         if (mc.player == null || mc.level == null) return;
 
         BlockPos playerPos = mc.player.blockPosition();
-
         Optional<Village> nearest = Building.ClientBuildingCache.getNearestVillage(playerPos);
         if (nearest.isEmpty()) return;
 
         village = nearest.get();
-
         villageBounds = computeBoundsForVillage(village);
         if (villageBounds == null) return;
 
-        // All map dimensions derive from the full village bounds
-        // so all buildings are guaranteed to fit
         int pad = 16;
         originX = (int) villageBounds.minX - pad;
         originZ = (int) villageBounds.minZ - pad;
-        mapBlockWidth = (int)(villageBounds.maxX - villageBounds.minX) + pad * 2;
-        mapBlockDepth = (int)(villageBounds.maxZ - villageBounds.minZ) + pad * 2;
+        mapBlockWidth = Math.max((int)(villageBounds.maxX - villageBounds.minX) + pad * 2, 64);
+        mapBlockDepth = Math.max((int)(villageBounds.maxZ - villageBounds.minZ) + pad * 2, 64);
 
-        // Enforce a minimum map area so small villages don't render tiny
-        mapBlockWidth = Math.max(mapBlockWidth, 64);
-        mapBlockDepth = Math.max(mapBlockDepth, 64);
+        // Capture level reference for the background thread
+        Level level = mc.level;
 
-        bakeTerrainColors(mc.level);
+        // Bake terrain on a background thread so the render thread isn't blocked
+        Thread bakeThread = new Thread(() -> {
+            int[] colors = new int[mapBlockWidth * mapBlockDepth];
 
+            for (int z = 0; z < mapBlockDepth; z++) {
+                for (int x = 0; x < mapBlockWidth; x++) {
+                    int worldX = originX + x;
+                    int worldZ = originZ + z;
+                    int worldY = level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ);
+                    BlockPos pos = new BlockPos(worldX, worldY - 1, worldZ);
+                    Block block = level.getBlockState(pos).getBlock();
+                    int color = getBlockMapColor(block, level, pos);
+                    float heightFactor = Math.min(1.0f, (worldY - 50) / 100.0f);
+                    colors[z * mapBlockWidth + x] = shadedColor(color, heightFactor);
+                }
+            }
+
+            // Write result safely and clear loading flag
+            synchronized (colorLock) {
+                terrainColors = colors;
+                isLoading = false;
+            }
+        }, "village-map-bake");
+
+        bakeThread.setDaemon(true);
+        bakeThread.start();
     }
 
     /**
@@ -140,48 +161,44 @@ public class VillageMapScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        // Dark background
         graphics.fill(0, 0, width, height, 0xC0000000);
 
-        if (village == null || villageBounds == null || terrainColors == null) {
+        if (village == null || villageBounds == null) {
             graphics.drawCenteredString(font, "No nearby village found", width / 2, height / 2, 0xFFFFFF);
+            return;
+        }
+
+        if (isLoading) {
+            graphics.drawCenteredString(font, "Generating map...", width / 2, height / 2, 0xFFFFAA);
             return;
         }
 
         int mapLeft = (width - MAP_SIZE) / 2;
         int mapTop = (height - MAP_SIZE) / 2;
 
-        // Draw terrain
-        drawTerrain(graphics, mapLeft, mapTop);
+        // Read terrain colors safely
+        int[] colors;
+        synchronized (colorLock) {
+            colors = terrainColors;
+        }
 
-        // Draw building overlays
+        drawTerrain(graphics, mapLeft, mapTop, colors);
         drawBuildingOverlays(graphics, mapLeft, mapTop);
-
-        // Draw village bounds outline
         drawVillageBounds(graphics, mapLeft, mapTop);
-
-        // Draw player position
         drawPlayerMarker(graphics, mapLeft, mapTop);
-
-        // Draw village name
         graphics.drawCenteredString(font, village.getName(), width / 2, mapTop - 12, 0xFFFFAA);
-
-        // Draw tooltip for hovered building
         drawHoveredBuildingTooltip(graphics, mouseX, mouseY, mapLeft, mapTop);
 
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
-    private void drawTerrain(GuiGraphics graphics, int mapLeft, int mapTop) {
-        if (terrainColors == null) return;
-
-        // Draw each terrain pixel scaled to fit MAP_SIZE
+    private void drawTerrain(GuiGraphics graphics, int mapLeft, int mapTop, int[] colors) {
         float scaleX = (float) MAP_SIZE / mapBlockWidth;
         float scaleZ = (float) MAP_SIZE / mapBlockDepth;
 
         for (int z = 0; z < mapBlockDepth; z++) {
             for (int x = 0; x < mapBlockWidth; x++) {
-                int color = terrainColors[z * mapBlockWidth + x];
+                int color = colors[z * mapBlockWidth + x];
                 int screenX = mapLeft + (int)(x * scaleX);
                 int screenY = mapTop + (int)(z * scaleZ);
                 int pixelW = Math.max(1, (int)scaleX);
@@ -351,4 +368,13 @@ public class VillageMapScreen extends Screen {
 
     @Override
     public boolean isPauseScreen() { return false; }
+
+    private Thread bakeThread;
+
+    // Store the thread reference and interrupt on close
+    @Override
+    public void onClose() {
+        if (bakeThread != null) bakeThread.interrupt();
+        super.onClose();
+    }
 }
