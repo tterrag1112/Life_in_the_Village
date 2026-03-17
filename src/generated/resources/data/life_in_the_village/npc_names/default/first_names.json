@@ -1,0 +1,36 @@
+{
+  "female": [
+    "Alice",
+    "Margaret",
+    "Agnes",
+    "Eleanor",
+    "Matilda",
+    "Joan",
+    "Isabel",
+    "Emma",
+    "Cecily",
+    "Beatrice",
+    "Maud",
+    "Anne",
+    "Catherine",
+    "Elizabeth",
+    "Rose"
+  ],
+  "male": [
+    "William",
+    "Thomas",
+    "Henry",
+    "Edmund",
+    "Walter",
+    "Richard",
+    "Robert",
+    "John",
+    "Geoffrey",
+    "Hugh",
+    "Alfred",
+    "Roger",
+    "Simon",
+    "Stephen",
+    "Nicholas"
+  ]
+}

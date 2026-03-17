@@ -1,0 +1,110 @@
+{
+  "type": "default",
+  "culture": "default",
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "offset": [
+        20,
+        0,
+        0
+      ],
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "FARMHOUSE",
+      "offset": [
+        0,
+        0,
+        20
+      ],
+      "structure": "farmhouse/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "offset": [
+        -20,
+        0,
+        0
+      ],
+      "structure": "house/level_1"
+    },
+    {
+      "type": "GUILD_HALL",
+      "offset": [
+        20,
+        0,
+        40
+      ],
+      "structure": "house/level_1"
+    }
+  ],
+  "starter_items": [
+    {
+      "building_type": "STOCKPILE",
+      "count": 64,
+      "item": "minecraft:wheat_seeds"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 64,
+      "item": "minecraft:oak_log"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 128,
+      "item": "minecraft:cobblestone"
+    }
+  ],
+  "starter_npcs": [
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "BUILDER"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "VILLAGE_LEADER"
+    },
+    {
+      "building_type": "FARMHOUSE",
+      "family_role": "HEAD",
+      "profession": "FARMER"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "UNASSIGNED",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "family_role": "HEAD",
+      "profession": "STOCKPILE_KEEPER"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "GUILD_HALL",
+      "family_role": "UNASSIGNED",
+      "profession": "GUILDWORKER"
+    },
+    {
+      "building_type": "GUILD_HALL",
+      "family_role": "HEAD",
+      "profession": "GUILDMASTER"
+    }
+  ]
+}

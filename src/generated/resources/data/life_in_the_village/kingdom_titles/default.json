@@ -1,0 +1,12 @@
+{
+  "culture": "default",
+  "titles": {
+    "citizen": "Citizen",
+    "knight_female": "Dame",
+    "knight_male": "Sir",
+    "lord_female": "Lady",
+    "lord_male": "Lord",
+    "ruler_female": "Queen",
+    "ruler_male": "King"
+  }
+}

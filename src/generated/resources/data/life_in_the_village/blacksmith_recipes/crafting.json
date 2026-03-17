@@ -1,0 +1,67 @@
+{
+  "recipes": [
+    {
+      "count": 1,
+      "input": "minecraft:iron_ingot",
+      "input_count": 3,
+      "output": "minecraft:iron_sword",
+      "ticks": 400
+    },
+    {
+      "count": 1,
+      "input": "minecraft:iron_ingot",
+      "input_count": 3,
+      "output": "minecraft:iron_pickaxe",
+      "ticks": 400
+    },
+    {
+      "count": 1,
+      "input": "minecraft:iron_ingot",
+      "input_count": 3,
+      "output": "minecraft:iron_axe",
+      "ticks": 400
+    },
+    {
+      "count": 1,
+      "input": "minecraft:iron_ingot",
+      "input_count": 5,
+      "output": "minecraft:iron_helmet",
+      "ticks": 600
+    },
+    {
+      "count": 1,
+      "input": "minecraft:iron_ingot",
+      "input_count": 8,
+      "output": "minecraft:iron_chestplate",
+      "ticks": 800
+    },
+    {
+      "count": 1,
+      "input": "minecraft:iron_ingot",
+      "input_count": 7,
+      "output": "minecraft:iron_leggings",
+      "ticks": 700
+    },
+    {
+      "count": 1,
+      "input": "minecraft:iron_ingot",
+      "input_count": 4,
+      "output": "minecraft:iron_boots",
+      "ticks": 500
+    },
+    {
+      "count": 1,
+      "input": "minecraft:gold_ingot",
+      "input_count": 3,
+      "output": "minecraft:golden_sword",
+      "ticks": 400
+    },
+    {
+      "count": 1,
+      "input": "minecraft:gold_ingot",
+      "input_count": 5,
+      "output": "minecraft:golden_helmet",
+      "ticks": 600
+    }
+  ]
+}

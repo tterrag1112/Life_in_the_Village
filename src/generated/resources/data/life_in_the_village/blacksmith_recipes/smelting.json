@@ -1,0 +1,34 @@
+{
+  "recipes": [
+    {
+      "count": 1,
+      "input": "minecraft:raw_iron",
+      "output": "minecraft:iron_ingot",
+      "ticks": 200
+    },
+    {
+      "count": 1,
+      "input": "minecraft:raw_gold",
+      "output": "minecraft:gold_ingot",
+      "ticks": 200
+    },
+    {
+      "count": 1,
+      "input": "minecraft:raw_copper",
+      "output": "minecraft:copper_ingot",
+      "ticks": 200
+    },
+    {
+      "count": 1,
+      "input": "minecraft:iron_ore",
+      "output": "minecraft:iron_ingot",
+      "ticks": 200
+    },
+    {
+      "count": 1,
+      "input": "minecraft:gold_ore",
+      "output": "minecraft:gold_ingot",
+      "ticks": 200
+    }
+  ]
+}

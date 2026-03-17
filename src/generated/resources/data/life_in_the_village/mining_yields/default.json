@@ -1,0 +1,71 @@
+{
+  "type": "default",
+  "yields": [
+    {
+      "item": "minecraft:cobblestone",
+      "max": 8,
+      "min": 2,
+      "rarity": "COMMON"
+    },
+    {
+      "item": "minecraft:gravel",
+      "max": 4,
+      "min": 1,
+      "rarity": "COMMON"
+    },
+    {
+      "item": "minecraft:flint",
+      "max": 3,
+      "min": 1,
+      "rarity": "COMMON"
+    },
+    {
+      "item": "minecraft:coal",
+      "max": 4,
+      "min": 1,
+      "rarity": "COMMON"
+    },
+    {
+      "item": "minecraft:raw_iron",
+      "max": 3,
+      "min": 1,
+      "rarity": "UNCOMMON"
+    },
+    {
+      "item": "minecraft:raw_copper",
+      "max": 3,
+      "min": 1,
+      "rarity": "UNCOMMON"
+    },
+    {
+      "item": "minecraft:raw_gold",
+      "max": 2,
+      "min": 1,
+      "rarity": "RARE"
+    },
+    {
+      "item": "minecraft:redstone",
+      "max": 4,
+      "min": 1,
+      "rarity": "RARE"
+    },
+    {
+      "item": "minecraft:lapis_lazuli",
+      "max": 3,
+      "min": 1,
+      "rarity": "RARE"
+    },
+    {
+      "item": "minecraft:diamond",
+      "max": 1,
+      "min": 1,
+      "rarity": "EPIC"
+    },
+    {
+      "item": "minecraft:emerald",
+      "max": 1,
+      "min": 1,
+      "rarity": "EPIC"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "values": {
+    "minecraft:diamond": {
+      "name": "Diamonds",
+      "value": 10
+    },
+    "minecraft:emerald": {
+      "name": "Emeralds",
+      "value": 15
+    }
+  }
+}
