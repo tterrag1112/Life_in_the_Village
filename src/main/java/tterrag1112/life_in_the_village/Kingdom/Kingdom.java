@@ -263,4 +263,24 @@ public class Kingdom {
         long incomeTax = (long)(villageIncomeBronze * incomeTaxRate);
         return flatUpkeepBronze + incomeTax;
     }
+
+
+    public static class ClientKingdomCache {
+        private static List<Kingdom> kingdoms = new ArrayList<>();
+
+        public static void setKingdoms(List<Kingdom> list) {
+            kingdoms = new ArrayList<>(list);
+        }
+
+        public static List<Kingdom> getKingdoms() {
+            return Collections.unmodifiableList(kingdoms);
+        }
+
+        public static Optional<Kingdom> getById(UUID id) {
+            return kingdoms.stream()
+                    .filter(k -> k.getId().equals(id))
+                    .findFirst();
+        }
+    }
+
 }

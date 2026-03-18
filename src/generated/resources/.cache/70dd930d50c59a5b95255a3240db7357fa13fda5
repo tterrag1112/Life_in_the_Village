@@ -1,10 +1,11 @@
-// 1.21.11	2026-03-13T21:40:53.793288	Model Definitions - life_in_the_village
+// 1.21.11	2026-03-17T10:19:53.287083	Model Definitions - life_in_the_village
 23eb8cf5c50dc1adc0bdbd38d9b2419fb046bfd2 assets/life_in_the_village/blockstates/guard_post.json
 0f790ebedf5bf409d364a4f7194e4b6d172c1341 assets/life_in_the_village/blockstates/village_foundation.json
 8b5aa231c91f8eb1bdfb05c84237a6f5efa913bd assets/life_in_the_village/items/denier.json
 4239f1899cfbcc2628488d8028f95a9d33fdebb7 assets/life_in_the_village/items/denier_argent.json
 e372d83bc2fbfbda5f4dfd0164123b2929438cb7 assets/life_in_the_village/items/denier_or.json
 7db0d8f94c5e3baacee24e073d5dc9d3244080ce assets/life_in_the_village/items/guard_post.json
+5533d86656e254e44b21f808465cb5061574a478 assets/life_in_the_village/items/kingdom_book.json
 9a73307038683bd719996df99bf8d01ef87c01ad assets/life_in_the_village/items/moneybin.json
 4e5de3ebadeacfab1f3a44a301e1450d7626a319 assets/life_in_the_village/items/purse.json
 b49a9bc31458c41d48e263c9f965b75d3df6992b assets/life_in_the_village/items/village_foundation.json
@@ -14,6 +15,7 @@ a3aa9393812e404b5c073ddbb487c6fb2b03ec6a assets/life_in_the_village/models/block
 d7f37a78e06949bdb65adc5ec8cb51095f0e84fb assets/life_in_the_village/models/item/denier.json
 04ff1ade5149c3d80e9330a839f09662167b1c45 assets/life_in_the_village/models/item/denier_argent.json
 b528e66f3c8f9755903148bc9ec702fe21d69d44 assets/life_in_the_village/models/item/denier_or.json
+0371df08dc1416a4a98628fae4c36574818dd4bd assets/life_in_the_village/models/item/kingdom_book.json
 e446bf67d8ebebf38485a2ac71d520b15c2b90f6 assets/life_in_the_village/models/item/moneybin.json
 35df024e4a28b132a00ee695822b332eaf4fd5c5 assets/life_in_the_village/models/item/purse.json
 36e28a7be84f011ee682f07d04940847a9f16448 assets/life_in_the_village/models/item/village_map.json

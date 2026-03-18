@@ -12,6 +12,7 @@ import tterrag1112.life_in_the_village.Village.*;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
+import tterrag1112.life_in_the_village.Village.Buildings.PlayerHousingData;
 import tterrag1112.life_in_the_village.Village.Decoration.VillagePath;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
@@ -38,6 +39,32 @@ public class VillageSavedData extends SavedData {
                                 .forGetter(VillageEconomyData::tradeRoads)
                 ).apply(i, VillageEconomyData::new));
     }
+
+    public record VillagePropertyData(
+            List<PlayerHousingData.PlayerProperty> properties,
+            Map<UUID, Long> propertyTaxRates  // villageId -> bronze per day per block
+    ) {
+        private static final Codec<UUID> UUID_STRING =
+                Codec.STRING.xmap(UUID::fromString,
+                        UUID::toString);
+
+        public static final Codec<VillagePropertyData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        PlayerHousingData.PlayerProperty.CODEC
+                                .listOf()
+                                .optionalFieldOf("properties",
+                                        List.of())
+                                .forGetter(VillagePropertyData
+                                        ::properties),
+                        Codec.unboundedMap(UUID_STRING,
+                                        Codec.LONG)
+                                .optionalFieldOf("propertyTaxRates",
+                                        new HashMap<>())
+                                .forGetter(VillagePropertyData
+                                        ::propertyTaxRates)
+                ).apply(i, VillagePropertyData::new));
+    }
+
 
     public record VillageHousingData(
             Map<UUID, Long> rentedRooms,
@@ -104,7 +131,12 @@ public class VillageSavedData extends SavedData {
                             .fieldOf("economyData")
                             .forGetter(d -> new VillageEconomyData(
                                     new ArrayList<>(d.tradeRoutes.values()),
-                                    new ArrayList<>(d.tradeRoads.values())))
+                                    new ArrayList<>(d.tradeRoads.values()))),
+                    VillagePropertyData.CODEC
+                            .fieldOf("propertyData")
+                            .forGetter(d -> new VillagePropertyData(
+                                    new ArrayList<>(d.playerProperties),
+                                    new HashMap<>(d.propertyTaxRates)))
             ).apply(instance, VillageSavedData::fromCodec));
 
     public static VillageSavedData fromCodec(
@@ -116,7 +148,8 @@ public class VillageSavedData extends SavedData {
             List<VillageEvent> events,
             List<GuildData> guilds,
             VillageHousingData housingData,
-            VillageEconomyData economyData) {
+            VillageEconomyData economyData,
+            VillagePropertyData propertyData) {
 
         VillageSavedData data = new VillageSavedData();
         data.buildings.addAll(buildings);
@@ -138,6 +171,12 @@ public class VillageSavedData extends SavedData {
                 data.tradeRoutes.put(r.getRouteId(), r));
         economyData.tradeRoads().forEach(r ->
                 data.tradeRoads.put(r.getRoadId(), r));
+
+
+        propertyData.properties().forEach(
+                data.playerProperties::add);
+        data.propertyTaxRates.putAll(
+                propertyData.propertyTaxRates());
 
         return data;
     }
@@ -162,6 +201,11 @@ public class VillageSavedData extends SavedData {
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
     private final Map<UUID, TradeRoute> tradeRoutes = new HashMap<>();
     private final Map<UUID, TradeRoad> tradeRoads   = new HashMap<>();
+
+    private final List<PlayerHousingData.PlayerProperty>
+            playerProperties = new ArrayList<>();
+    private final Map<UUID, Long> propertyTaxRates
+            = new HashMap<>();
 
 
 
@@ -600,6 +644,67 @@ public class VillageSavedData extends SavedData {
     public void removeTradeRoad(UUID id) {
         tradeRoads.remove(id);
         setDirty();
+    }
+
+    public void addPlayerProperty(
+            PlayerHousingData.PlayerProperty property) {
+        playerProperties.add(property);
+        setDirty();
+    }
+
+    public List<PlayerHousingData.PlayerProperty>
+    getPropertiesForPlayer(UUID playerId) {
+        return playerProperties.stream()
+                .filter(p -> p.playerId().equals(playerId))
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    public Optional<PlayerHousingData.PlayerProperty>
+    getPropertyForBuilding(UUID buildingId) {
+        return playerProperties.stream()
+                .filter(p -> p.buildingId().equals(buildingId))
+                .findFirst();
+    }
+
+    public boolean isPlayerOwned(UUID buildingId) {
+        return getPropertyForBuilding(buildingId).isPresent();
+    }
+
+    public void removeProperty(UUID buildingId) {
+        playerProperties.removeIf(
+                p -> p.buildingId().equals(buildingId));
+        setDirty();
+    }
+
+    public long getPropertyTaxRate(UUID villageId) {
+        return propertyTaxRates.getOrDefault(villageId, 2L);
+    }
+
+    public void setPropertyTaxRate(UUID villageId, long rate) {
+        propertyTaxRates.put(villageId, rate);
+        setDirty();
+    }
+
+    public List<PlayerHousingData.PlayerProperty>
+    getAllPlayerProperties() {
+        return Collections.unmodifiableList(playerProperties);
+    }
+
+    public void updatePropertyTaxTick(UUID buildingId,
+                                      long tick) {
+        for (int i = 0; i < playerProperties.size(); i++) {
+            var p = playerProperties.get(i);
+            if (p.buildingId().equals(buildingId)) {
+                playerProperties.set(i,
+                        new PlayerHousingData.PlayerProperty(
+                                p.playerId(), p.buildingId(),
+                                p.villageId(), p.type(),
+                                p.purchaseTick(), tick,
+                                p.purchasePrice()));
+                setDirty();
+                return;
+            }
+        }
     }
 
 

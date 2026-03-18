@@ -61,6 +61,9 @@ import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.TradeHandler;
@@ -72,6 +75,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -955,6 +959,20 @@ public class TownspersonMob extends PathfinderMob {
                     }
                 }
             }
+            case VILLAGE_LEADER -> {
+                if (level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+                    handleVillageLeaderInteraction(sp, sl);
+                }
+            }
+            case FARMER, BLACKSMITH, CARPENTER, MINER -> {
+                if (level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+                    // Check if player is requesting work
+                    WorkplaceAssignmentManager.handleWorkRequest(
+                            sp, this, sl);
+                }
+            }
             case STOCKPILE_KEEPER -> openStockpileScreen(player);
             case BUILDER          -> openInventoryScreen(player, "Builder Inventory");
             default -> player.displayClientMessage(
@@ -1345,6 +1363,88 @@ public class TownspersonMob extends PathfinderMob {
     public boolean isCaravanMember() {
         return !entityData.get(CARAVAN_ID).isEmpty();
     }
+
+    private void handleVillageLeaderInteraction(
+            ServerPlayer player, ServerLevel sl) {
+        VillageSavedData data = VillageSavedData.get(sl);
+
+        // Find available houses in this village
+        String villageName = getAssignedVillageName()
+                .orElse(null);
+        if (villageName == null) {
+            player.displayClientMessage(
+                    Component.literal(getFirstName()
+                            + ": I am not assigned to "
+                            + "a village."), false);
+            return;
+        }
+
+        Village village = data.getVillageByName(villageName)
+                .orElse(null);
+        if (village == null) return;
+
+        // Find unoccupied, unowned houses
+        List<Building> availableHouses = village
+                .getBuildingIds().stream()
+                .map(data::getBuildingById)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .filter(b -> b.getType()
+                        == BuildingType.HOUSE)
+                .filter(b -> !data.isPlayerOwned(b.getId()))
+                .filter(b -> sl.getEntitiesOfClass(
+                        TownspersonMob.class,
+                        b.getShape().toAABB().inflate(16),
+                        npc -> npc.getHouseId()
+                                .map(id -> id.equals(b.getId()))
+                                .orElse(false)).isEmpty())
+                .collect(java.util.stream.Collectors.toList());
+
+        if (availableHouses.isEmpty()) {
+            player.displayClientMessage(
+                    Component.literal("[" + getNpcName()
+                            + "] There are no houses "
+                            + "available for purchase "
+                            + "in " + villageName + "."),
+                    false);
+            return;
+        }
+
+        // Show available houses
+        player.displayClientMessage(
+                Component.literal("[" + getNpcName()
+                                + "] Available houses in "
+                                + villageName + ":")
+                        .withStyle(
+                                net.minecraft.ChatFormatting.GOLD),
+                false);
+
+        availableHouses.forEach(house -> {
+            long price = HousePurchaseManager.calculatePrice(
+                    house, village, data);
+            long tax   = HousePurchaseManager.calculateWeeklyTax(
+                    house, village, data);
+
+            player.displayClientMessage(
+                    Component.literal("  " + house.getName()
+                            + " — " + CurrencyValue.of(price)
+                            + (tax > 0
+                            ? " (tax: "
+                            + CurrencyValue.of(tax)
+                            + "/week)"
+                            : " (no tax)")),
+                    false);
+        });
+
+        player.displayClientMessage(
+                Component.literal(
+                        "Use /house buy <building-name> "
+                                + "to purchase."),
+                false);
+    }
+
+
+
 
 
 }

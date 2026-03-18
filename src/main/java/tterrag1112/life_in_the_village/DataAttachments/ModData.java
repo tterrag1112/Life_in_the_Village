@@ -7,6 +7,7 @@ import net.neoforged.neoforge.attachment.AttachmentType;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import net.neoforged.neoforge.registries.NeoForgeRegistries;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Profession.PlayerProfessionData;
 
 import java.util.function.Supplier;
 
@@ -18,6 +19,12 @@ public class ModData {
             () -> AttachmentType.<Integer>builder(() -> 0).serialize(Codec.INT.fieldOf("mana")).build());
     public static final Supplier<AttachmentType<Integer>> MANA_DEATH_PENALTY = ATTACHMENT_TYPES.register("mana_death_penalty",
             () -> AttachmentType.<Integer>builder(() -> 0).serialize(Codec.INT.fieldOf("penalty")).build());
+
+    public static final Supplier<AttachmentType<PlayerProfessionData>>
+            PROFESSION_DATA = ATTACHMENT_TYPES.register(
+            "profession_data",
+            () -> AttachmentType.builder(
+                            () -> new PlayerProfessionData()).serialize(PlayerProfessionData.CODEC.fieldOf("data")).build());
 
     public static void register(IEventBus eventBus){
         ATTACHMENT_TYPES.register(eventBus);

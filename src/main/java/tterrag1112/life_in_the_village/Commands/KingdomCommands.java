@@ -6,8 +6,11 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Kingdom.*;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
@@ -33,6 +36,12 @@ public class KingdomCommands {
                                         )
                                 )
                         )
+                        .then(Commands.literal("kingdom")
+                                .then(Commands.literal("givebook")
+                                        .executes(ctx -> giveKingdomBook(
+                                                ctx.getSource()))))
+
+
 
                         // /kingdom addvillage <kingdom> <village>
                         .then(Commands.literal("addvillage")
@@ -382,6 +391,19 @@ public class KingdomCommands {
                                 + " — " + k.getVillageIds().size() + " villages"
                                 + " — treasury: " + k.getTreasury()), false)
         );
+        return 1;
+    }
+
+    private static int giveKingdomBook(CommandSourceStack src) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+
+        ItemStack book = new ItemStack(
+                ModItems.KINGDOM_BOOK.get());
+        player.addItem(book);
+
+        src.sendSuccess(() -> Component.literal(
+                "Given kingdom book."), false);
         return 1;
     }
 }

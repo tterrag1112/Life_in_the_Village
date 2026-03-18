@@ -3,12 +3,18 @@ package tterrag1112.life_in_the_village.Datagen;
 import net.minecraft.client.data.models.BlockModelGenerators;
 import net.minecraft.client.data.models.ItemModelGenerators;
 import net.minecraft.client.data.models.ModelProvider;
+import net.minecraft.client.data.models.model.ItemModelUtils;
+import net.minecraft.client.data.models.model.ModelLocationUtils;
 import net.minecraft.client.data.models.model.ModelTemplates;
+import net.minecraft.client.renderer.item.ItemModel;
 import net.minecraft.data.PackOutput;
+import net.minecraft.world.item.Item;
 import tterrag1112.life_in_the_village.Blocks.Entity.ModBlockEntities;
 import tterrag1112.life_in_the_village.Blocks.ModBlocks;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+
+import static net.minecraft.client.data.models.ItemModelGenerators.createFlatModelDispatch;
 
 public class ModModelProvider extends ModelProvider {
     public ModModelProvider(PackOutput output) {
@@ -25,6 +31,14 @@ public class ModModelProvider extends ModelProvider {
         itemModels.generateFlatItem(ModItems.VILLAGE_MAP.get(), ModelTemplates.FLAT_HANDHELD_ITEM);
         blockModels.createTrivialCube(ModBlocks.VILLAGE_FOUNDATION.get());
         blockModels.createTrivialCube(ModBlocks.GUARD_POST.get());
+        this.generateGrimoir(itemModels, ModItems.KINGDOM_BOOK.get());
 
+    }
+
+
+    public void generateGrimoir(ItemModelGenerators itemModel, Item grimoirItem) {
+        ItemModel.Unbaked itemmodel$unbaked = ItemModelUtils.plainModel(itemModel.createFlatItemModel(grimoirItem, ModelTemplates.FLAT_HANDHELD_ITEM));
+        ItemModel.Unbaked itemmodel$unbaked1 = ItemModelUtils.plainModel(ModelLocationUtils.getModelLocation(grimoirItem, "_3d"));
+        itemModel.itemModelOutput.accept(grimoirItem, createFlatModelDispatch(itemmodel$unbaked, itemmodel$unbaked1));
     }
 }

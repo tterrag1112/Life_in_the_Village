@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Commands;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -12,10 +13,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.permissions.LevelBasedPermissionSet;
-import net.minecraft.server.permissions.Permission;
-import net.minecraft.server.permissions.PermissionLevel;
-import net.minecraft.server.permissions.PermissionSet;
+
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -29,6 +27,8 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingPlacer;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Event.EventEffects;
@@ -48,6 +48,7 @@ public class BuildingCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(
                 Commands.literal("building")
+
                         // --- Existing place command ---
                         .then(Commands.literal("place")
                                 .then(Commands.argument("pos", BlockPosArgument.blockPos())
@@ -425,6 +426,35 @@ public class BuildingCommand {
                                 })
                         )
         );
+        dispatcher.register(
+                Commands.literal("house")
+                        .then(Commands.literal("buy")
+                                .then(Commands.argument("name",
+                                                StringArgumentType.greedyString())
+                                        .executes(ctx -> buyHouse(
+                                                ctx.getSource(),
+                                                StringArgumentType
+                                                        .getString(ctx,
+                                                                "name")))))
+                        .then(Commands.literal("list")
+                                .executes(ctx -> listHouses(
+                                        ctx.getSource())))
+                        .then(Commands.literal("status")
+                                .executes(ctx -> houseStatus(
+                                        ctx.getSource())))
+                        .then(Commands.literal("settaxrate")
+                                .then(Commands.argument("village",
+                                                StringArgumentType.word())
+                                        .then(Commands.argument("rate",
+                                                                IntegerArgumentType
+                                                .integer(0, 100))
+                                                .executes(ctx ->
+                                                        setTaxRate(
+                                                                ctx.getSource(),
+                                                                StringArgumentType
+                                                                        .getString(ctx, "village"),
+                                                                        IntegerArgumentType
+                                                                        .getInteger(ctx, "rate")))))));
     }
 
 
@@ -581,6 +611,178 @@ public class BuildingCommand {
                                 + villageData.getAllTradeRoutes().size()),
                 false);
 
+        return 1;
+    }
+    private static int buyHouse(CommandSourceStack src,
+                                String buildingName) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+        ServerLevel level = src.getLevel();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        Building building = data.getAllBuildings().stream()
+                .filter(b -> b.getName()
+                        .equalsIgnoreCase(buildingName)
+                        && b.getType()
+                        == BuildingType.HOUSE)
+                .findFirst()
+                .orElse(null);
+
+        if (building == null) {
+            src.sendFailure(Component.literal(
+                    "No house found with name: " + buildingName));
+            return 0;
+        }
+
+        // Find nearest village leader
+        TownspersonMob leader = level.getEntitiesOfClass(
+                        TownspersonMob.class,
+                        player.getBoundingBox().inflate(256),
+                        npc -> npc.getProfession()
+                                == Profession.VILLAGE_LEADER)
+                .stream()
+                .min(java.util.Comparator.comparingDouble(
+                        npc -> npc.distanceTo(player)))
+                .orElse(null);
+
+        if (leader == null) {
+            src.sendFailure(Component.literal(
+                    "No village leader found nearby. "
+                            + "You must be near a village leader "
+                            + "to purchase a house."));
+            return 0;
+        }
+
+        HousePurchaseManager.handlePurchaseRequest(
+                player, leader, building.getId(), level);
+        return 1;
+    }
+
+    private static int listHouses(CommandSourceStack src) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+        ServerLevel level = src.getLevel();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        // Find village the player is in or nearest to
+        Village village = data.getVillageAt(
+                        player.blockPosition())
+                .orElse(null);
+
+        if (village == null) {
+            src.sendFailure(Component.literal(
+                    "You are not in a village."));
+            return 0;
+        }
+
+        List<Building> houses = village.getBuildingIds()
+                .stream()
+                .map(data::getBuildingById)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .filter(b -> b.getType()
+                        == BuildingType.HOUSE)
+                .collect(java.util.stream.Collectors.toList());
+
+        if (houses.isEmpty()) {
+            src.sendSuccess(() -> Component.literal(
+                    "No houses in this village."), false);
+            return 0;
+        }
+
+        src.sendSuccess(() -> Component.literal(
+                "=== Houses in " + village.getName()
+                        + " ==="), false);
+
+        houses.forEach(h -> {
+            boolean owned = data.isPlayerOwned(h.getId());
+            long price = HousePurchaseManager.calculatePrice(
+                    h, village, data);
+            long tax   = HousePurchaseManager.calculateWeeklyTax(
+                    h, village, data);
+            String status = owned ? "[Owned]" : "[Available]";
+
+            src.sendSuccess(() -> Component.literal(
+                            status + " " + h.getName()
+                                    + " — " + CurrencyValue.of(price)
+                                    + (tax > 0 ? " | Tax: "
+                                    + CurrencyValue.of(tax) + "/week"
+                                    : " | No tax")),
+                    false);
+        });
+
+        return houses.size();
+    }
+
+    private static int houseStatus(CommandSourceStack src) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+        ServerLevel level = src.getLevel();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        var properties = data.getPropertiesForPlayer(
+                player.getUUID());
+
+        if (properties.isEmpty()) {
+            src.sendSuccess(() -> Component.literal(
+                    "You do not own any properties."), false);
+            return 0;
+        }
+
+        src.sendSuccess(() -> Component.literal(
+                "=== Your Properties ==="), false);
+
+        properties.forEach(prop ->
+                data.getBuildingById(prop.buildingId())
+                        .ifPresent(b -> {
+                            Village v = data.getVillageById(
+                                            prop.villageId())
+                                    .orElse(null);
+                            long tax = v != null
+                                    ? HousePurchaseManager
+                                    .calculateWeeklyTax(
+                                            b, v, data)
+                                    : 0;
+                            src.sendSuccess(() ->
+                                            Component.literal(
+                                                    b.getName()
+                                                            + " in "
+                                                            + (v != null
+                                                            ? v.getName()
+                                                            : "unknown")
+                                                            + "\nPurchased for: "
+                                                            + CurrencyValue.of(
+                                                            prop.purchasePrice())
+                                                            + "\nWeekly tax: "
+                                                            + (tax > 0
+                                                            ? CurrencyValue
+                                                            .of(tax)
+                                                            : "None")),
+                                    false);
+                        }));
+
+        return properties.size();
+    }
+
+    private static int setTaxRate(CommandSourceStack src,
+                                  String villageName,
+                                  int rate) {
+        ServerLevel level = src.getLevel();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        Village village = data.getVillageByName(villageName)
+                .orElse(null);
+        if (village == null) {
+            src.sendFailure(Component.literal(
+                    "Village not found: " + villageName));
+            return 0;
+        }
+
+        data.setPropertyTaxRate(village.getId(), rate);
+        src.sendSuccess(() -> Component.literal(
+                "Set property tax rate in " + villageName
+                        + " to " + rate + " bronze per block "
+                        + "per week."), false);
         return 1;
     }
 }

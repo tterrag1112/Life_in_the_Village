@@ -12,6 +12,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Events.ReputationEvents;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerGroup;
@@ -23,6 +24,9 @@ import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerGuildData;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.PlayerProfession;
+import tterrag1112.life_in_the_village.Profession.PlayerProfessionData;
+import tterrag1112.life_in_the_village.Profession.ProfessionEvents;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
@@ -148,6 +152,61 @@ public class GuildCommands {
                         .then(Commands.literal("clear")
                                 .executes(ctx -> clearAllGroups(ctx.getSource())))
                 )
+        );
+        event.getDispatcher().register(
+                Commands.literal("profession")
+                        .then(Commands.literal("status")
+                                .executes(ctx -> professionStatus(
+                                        ctx.getSource())))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("profession",
+                                                StringArgumentType.word())
+                                        .suggests((ctx, builder) -> {
+                                            for (PlayerProfession p
+                                                    : PlayerProfession
+                                                    .values()) {
+                                                builder.suggest(
+                                                        p.name()
+                                                                .toLowerCase());
+                                            }
+                                            return builder
+                                                    .buildFuture();
+                                        })
+                                        .executes(ctx ->
+                                                setProfession(
+                                                        ctx.getSource(),
+                                                        StringArgumentType
+                                                                .getString(
+                                                                        ctx,
+                                                                        "profession")))))
+                        .then(Commands.literal("addxp")
+                                .then(Commands.argument("profession",
+                                                StringArgumentType.word())
+                                        .then(Commands.argument("amount",
+
+                                                                IntegerArgumentType
+                                                                .integer(1))
+                                                .executes(ctx ->
+                                                        addProfessionXp(
+                                                                ctx.getSource(),
+                                                                StringArgumentType
+                                                                        .getString(ctx,
+                                                                                "profession"),
+                                                                IntegerArgumentType
+                                                                        .getInteger(
+                                                                                ctx,
+                                                                                "amount"))))))
+                                .then(Commands.literal("leave")
+                                        .then(Commands.argument("profession",
+                                                        StringArgumentType.word())
+                                                .executes(ctx -> leaveProfession(
+                                                        ctx.getSource(),
+                                                        StringArgumentType.getString(
+                                                                ctx, "profession")))))
+
+                                        .then(Commands.literal("workplace")
+                                                .executes(ctx -> showWorkplaces(ctx.getSource())))
+
         );
     }
 
@@ -1137,5 +1196,194 @@ public class GuildCommands {
                                         .joining("\n"))),
                 false);
         return 1;
+    }
+
+    private static int professionStatus(
+            CommandSourceStack src) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+
+        PlayerProfessionData data = player.getData(
+                ModData.PROFESSION_DATA);
+
+        src.sendSuccess(() -> net.minecraft.network.chat
+                        .Component.literal(
+                                "=== Profession Skills ==="),
+                false);
+
+        for (PlayerProfession prof : PlayerProfession.values()) {
+            int xp    = data.getXp(prof);
+            int level = data.getLevel(prof);
+            String name = data.getLevelName(prof);
+            int toNext = prof.getXpToNextLevel(xp);
+
+            src.sendSuccess(() -> net.minecraft.network.chat
+                            .Component.literal(
+                                    prof.getDisplayName()
+                                            + ": " + name
+                                            + " (Level " + (level + 1) + ")"
+                                            + " | XP: " + xp
+                                            + (toNext > 0
+                                            ? " | Next: "
+                                            + toNext + " xp"
+                                            : " | MAX")),
+                    false);
+        }
+
+        data.getActiveProfession().ifPresent(p ->
+                src.sendSuccess(() ->
+                                net.minecraft.network.chat.Component
+                                        .literal("Active profession: "
+                                                + p.getDisplayName()),
+                        false));
+
+        return 1;
+    }
+
+    private static int setProfession(CommandSourceStack src,
+                                     String name) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+
+        PlayerProfession prof;
+        try {
+            prof = PlayerProfession.valueOf(
+                    name.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(
+                    net.minecraft.network.chat.Component
+                            .literal("Unknown profession: "
+                                    + name));
+            return 0;
+        }
+
+        PlayerProfessionData data = player.getData(
+                ModData.PROFESSION_DATA);
+        data.setActiveProfession(prof);
+        player.setData(ModData.PROFESSION_DATA, data);
+
+        src.sendSuccess(() ->
+                        net.minecraft.network.chat.Component.literal(
+                                "Active profession set to "
+                                        + prof.getDisplayName()
+                                        + " ("
+                                        + data.getLevelName(prof)
+                                        + ")"),
+                false);
+        return 1;
+    }
+
+    private static int addProfessionXp(CommandSourceStack src,
+                                       String name, int amount) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+
+        PlayerProfession prof;
+        try {
+            prof = PlayerProfession.valueOf(
+                    name.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(
+                    net.minecraft.network.chat.Component
+                            .literal("Unknown profession: "
+                                    + name));
+            return 0;
+        }
+
+        ProfessionEvents.onJobPostingCompleted(
+                player, prof, amount);
+
+        src.sendSuccess(() ->
+                        net.minecraft.network.chat.Component.literal(
+                                "Added " + amount + " XP to "
+                                        + prof.getDisplayName()),
+                false);
+        return 1;
+    }
+
+    private static int leaveProfession(
+            CommandSourceStack src, String name) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+
+        PlayerProfession prof;
+        try {
+            prof = PlayerProfession.valueOf(name.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal(
+                    "Unknown profession: " + name));
+            return 0;
+        }
+
+        PlayerProfessionData data = player.getData(
+                ModData.PROFESSION_DATA);
+
+        if (!data.hasWorkplace(prof)) {
+            src.sendFailure(Component.literal(
+                    "You are not assigned to any "
+                            + prof.getDisplayName()
+                            + " workplace."));
+            return 0;
+        }
+
+        data.removeWorkplace(prof);
+        player.setData(ModData.PROFESSION_DATA, data);
+
+        src.sendSuccess(() -> Component.literal(
+                "You have left your "
+                        + prof.getDisplayName()
+                        + " workplace."), false);
+        return 1;
+    }
+
+    private static int showWorkplaces(CommandSourceStack src) {
+        if (!(src.getEntity() instanceof ServerPlayer player))
+            return 0;
+
+        PlayerProfessionData data = player.getData(
+                ModData.PROFESSION_DATA);
+        VillageSavedData villageData = VillageSavedData.get(
+                src.getLevel());
+
+        if (data.getAllWorkplaces().isEmpty()) {
+            src.sendSuccess(() -> Component.literal(
+                    "You are not assigned to any workplaces.\n"
+                            + "Talk to an NPC in charge of a building "
+                            + "to get work."), false);
+            return 0;
+        }
+
+        src.sendSuccess(() -> Component.literal(
+                "=== Your Workplaces ==="), false);
+
+        data.getAllWorkplaces().forEach((prof, entry) -> {
+            String buildingName = villageData
+                    .getBuildingById(entry.buildingId())
+                    .map(b -> b.getName())
+                    .orElse("Unknown");
+            String villageName = villageData
+                    .getVillageById(entry.villageId())
+                    .map(v -> v.getName())
+                    .orElse("Unknown");
+
+            var a = entry.currentAssignment();
+            String assignmentStr = a == null
+                    ? "No current task"
+                    : a.description() + " ("
+                    + a.currentCount() + "/"
+                    + a.targetCount() + ")";
+
+            src.sendSuccess(() -> Component.literal(
+                            prof.getDisplayName()
+                                    + " at " + buildingName
+                                    + " in " + villageName
+                                    + (entry.isOwner() ? " [Owner]" : " [Employee]")
+                                    + "\nLevel: "
+                                    + data.getLevelName(prof)
+                                    + "\nTask: " + assignmentStr),
+                    false);
+        });
+
+        return data.getAllWorkplaces().size();
     }
 }

@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Village;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.Item;
@@ -10,6 +11,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import tterrag1112.life_in_the_village.Blocks.Entity.custom.VillageFoundationBlockEntity;
+import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
@@ -157,6 +159,20 @@ public class BuildingStorageAccess {
                 return;
             }
         }
+    }
+
+    public static void storeItemFromPlayer(
+            ServerLevel level, Building building,
+            net.minecraft.world.item.ItemStack stack,
+            ServerPlayer player) {
+        storeItem(level, building, stack);
+
+        // Check if this counts toward a quota
+        String itemId = net.minecraft.core.registries
+                .BuiltInRegistries.ITEM
+                .getKey(stack.getItem()).toString();
+        WorkplaceAssignmentManager.onItemDelivered(
+                player, itemId, stack.getCount(), level);
     }
 
 }

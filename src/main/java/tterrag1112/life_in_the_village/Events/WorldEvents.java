@@ -10,6 +10,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
+import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
 import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
@@ -52,6 +54,11 @@ public class WorldEvents {
                 overworld, villageData, overworld.getGameTime());
         VillageExpansionManager.tick(overworld, villageData,
                 overworld.getGameTime());
+        HousePurchaseManager.tickPropertyTax(
+                overworld, villageData,
+                overworld.getGameTime());
+        WorkplaceAssignmentManager.tickWeeklyPay(
+                overworld, overworld.getGameTime());
 
 
     }

@@ -10,6 +10,7 @@ import net.minecraft.world.entity.player.Player;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
+import net.neoforged.neoforge.client.network.event.RegisterClientPayloadHandlersEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
@@ -101,7 +102,28 @@ public class ModModEvents {
         registrar.playToClient(BuilderInventoryPacket.TYPE, BuilderInventoryPacket.CODEC, BuilderInventoryPacket::handle);
         registrar.playToClient(OpenTradeScreenPacket.TYPE, OpenTradeScreenPacket.CODEC, OpenTradeScreenPacket::handle);
         registrar.playToServer(TradeActionPacket.TYPE, TradeActionPacket.CODEC, TradeActionPacket::handle);
+        registrar.playBidirectional(
+                KingdomActionPacket.TYPE,
+                KingdomActionPacket.CODEC,
+                KingdomActionPacket::handle);
 
+        registrar.playToClient(
+                OpenKingdomBookPacket.TYPE,
+                OpenKingdomBookPacket.CODEC,
+                OpenKingdomBookPacket::handle);
+        registrar.playToClient(
+                SyncKingdomPacket.TYPE,
+                SyncKingdomPacket.STREAM_CODEC,
+                SyncKingdomPacket::handle);
+
+    }
+
+    @SubscribeEvent // on the mod event bus only on the physical client
+    public static void register(RegisterClientPayloadHandlersEvent event) {
+        event.register(
+                KingdomActionPacket.TYPE,
+                KingdomActionPacket::handle
+        );
     }
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
