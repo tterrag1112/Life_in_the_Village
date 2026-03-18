@@ -131,9 +131,14 @@ public class ModModEvents {
     public static void onPlayerJoin(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
             ServerLevel level = (ServerLevel) player.level();
+            VillageSavedData data = VillageSavedData.get(level);
+
             List<Building> buildings = VillageSavedData.get(level).getAllBuildings();
             List<Village> villages = VillageSavedData.get(level).getAllVillages();
             PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(buildings, villages));
+            PacketDistributor.sendToPlayer(player,
+                    new SyncKingdomPacket(
+                            data.getAllKingdoms()));
         }
     }
 

@@ -124,6 +124,8 @@ public class Kingdom {
     private double incomeTaxRate                = 0.1; // 10% default
     private long flatUpkeepBronze               = 32L; // 32 bronze per village per day
     private long lastTaxTick                    = -1L;
+    private KingdomHistoryData history;
+
 
     // =========================================================================
     // CONSTRUCTORS
@@ -148,7 +150,6 @@ public class Kingdom {
     public void setName(String name) { this.name = name; }
     public String getCulture() { return culture; }
     public void setCulture(String culture) { this.culture = culture; }
-    private KingdomHistoryData history = new KingdomHistoryData();
 
 
     // =========================================================================

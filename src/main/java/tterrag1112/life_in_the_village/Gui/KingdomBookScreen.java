@@ -1054,4 +1054,9 @@ public class KingdomBookScreen extends Screen {
         return s.length() <= max ? s
                 : s.substring(0, max - 2) + "..";
     }
+
+    public void refresh() {
+        refreshData();
+        rebuildWidgets();
+    }
 }

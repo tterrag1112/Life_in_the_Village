@@ -6,6 +6,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
+import tterrag1112.life_in_the_village.Gui.KingdomBookScreen;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 
@@ -29,8 +30,17 @@ public record SyncKingdomPacket(List<Kingdom> kingdoms) implements CustomPacketP
 
     public static void handle(SyncKingdomPacket packet,
                               IPayloadContext context) {
-        context.enqueueWork(() ->
-                Kingdom.ClientKingdomCache.setKingdoms(
-                        packet.kingdoms()));
+        context.enqueueWork(() -> {
+            Kingdom.ClientKingdomCache.setKingdoms(
+                    packet.kingdoms());
+
+            // If kingdom book is open, refresh it
+            var mc = net.minecraft.client.Minecraft
+                    .getInstance();
+            if (mc.screen instanceof KingdomBookScreen screen) {
+                screen.refreshData();
+                screen.refresh();
+            }
+        });
     }
 }

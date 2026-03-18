@@ -86,24 +86,34 @@ public record KingdomActionPacket(
                     try {
                         KingdomLaw law = KingdomLaw.valueOf(
                                 pkt.stringParam());
+
+                        // Toggle first
                         if (kingdom.hasLaw(law)) {
                             kingdom.repealLaw(law);
                         } else {
                             kingdom.enactLaw(law);
                         }
+
+                        // Record AFTER toggle — now hasLaw reflects
+                        // the new state
                         kingdom.getHistory().recordEvent(
                                 KingdomHistoryData.KingdomHistoryEvent.create(
                                         kingdom.hasLaw(law)
-                                                ? KingdomHistoryData.HistoryEventType.LAW_REPEALED
-                                                : KingdomHistoryData.HistoryEventType.LAW_ENACTED,
+                                                ? KingdomHistoryData
+                                                .HistoryEventType.LAW_ENACTED
+                                                : KingdomHistoryData
+                                                .HistoryEventType.LAW_REPEALED,
                                         (kingdom.hasLaw(law)
-                                                ? "Repealed: " : "Enacted: ")
+                                                ? "Enacted: "
+                                                : "Repealed: ")
                                                 + formatLawName(law.name()),
                                         "By decree of "
                                                 + player.getName().getString(),
                                         level.getGameTime(),
-                                        player.getName().getString()),kingdom.getName(),
+                                        player.getName().getString()),
+                                kingdom.getName(),
                                 player.getName().getString());
+
                         data.setDirty();
                     } catch (IllegalArgumentException ignored) {}
                 }
@@ -215,6 +225,11 @@ public record KingdomActionPacket(
                     data.setDirty();
                 }
             }
+            System.out.println("Kingdom history events before save: "
+                    + kingdom.getHistory().getEvents().size());
+            System.out.println("Kingdom history forGetter test: "
+                    + kingdom.getHistory().getEvents().size());
+            data.setDirty();
 
             // Send updated data back to client
             PacketDistributor
