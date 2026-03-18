@@ -33,9 +33,20 @@ public record OpenKingdomBookPacket(
     public static void handle(OpenKingdomBookPacket pkt,
                               IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
-            var mc = net.minecraft.client.Minecraft.getInstance();
+            var mc = net.minecraft.client.Minecraft
+                    .getInstance();
             if (mc.level == null) return;
-            mc.setScreen(new KingdomBookScreen(pkt.kingdomId()));
+
+            // If screen already open, just refresh
+            if (mc.screen instanceof KingdomBookScreen existing
+                    && existing.getKingdomId()
+                    .equals(pkt.kingdomId())) {
+                existing.refreshData();
+                return;
+            }
+
+            mc.setScreen(new KingdomBookScreen(
+                    pkt.kingdomId()));
         });
     }
 }

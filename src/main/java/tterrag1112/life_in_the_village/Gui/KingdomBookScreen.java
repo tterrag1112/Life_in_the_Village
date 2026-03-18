@@ -1,8 +1,5 @@
 package tterrag1112.life_in_the_village.Gui;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.ChatFormatting;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -10,165 +7,255 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
-import net.neoforged.neoforge.network.PacketDistributor;
-import tterrag1112.life_in_the_village.Kingdom.DiplomaticRelation;
-import tterrag1112.life_in_the_village.Kingdom.Kingdom;
-import tterrag1112.life_in_the_village.Kingdom.KingdomLaw;
+import tterrag1112.life_in_the_village.Kingdom.*;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.KingdomActionPacket;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.*;
 
 public class KingdomBookScreen extends Screen {
 
-    // Layout constants
+    // -------------------------------------------------------------------------
+    // Layout
+    // -------------------------------------------------------------------------
+
     private static final int BOOK_W    = 400;
     private static final int BOOK_H    = 320;
     private static final int SIDEBAR_W = 140;
     private static final int PAGE_PAD  = 16;
+    private static final int LINES_PER_PAGE = 18;
 
+    // -------------------------------------------------------------------------
     // Colors
-    private static final int COL_PARCHMENT  = 0xFFF5F0E0;
-    private static final int COL_SIDEBAR    = 0xFFEDE8D5;
-    private static final int COL_BORDER     = 0xFFB8A878;
-    private static final int COL_DARK       = 0xFF3B2E1A;
-    private static final int COL_MID        = 0xFF7A6040;
-    private static final int COL_LIGHT      = 0xFFA89060;
-    private static final int COL_HIGHLIGHT  = 0xFFD4C48A;
-    private static final int COL_GREEN_BG   = 0xFFD4EAC8;
-    private static final int COL_GREEN_TXT  = 0xFF2D6B1A;
-    private static final int COL_RED_BG     = 0xFFEAC8C8;
-    private static final int COL_RED_TXT    = 0xFF8B1A1A;
-    private static final int COL_GOLD       = 0xFFB8860B;
+    // -------------------------------------------------------------------------
+
+    private static final int COL_PARCHMENT = 0xFFF5F0E0;
+    private static final int COL_SIDEBAR   = 0xFFEDE8D5;
+    private static final int COL_BORDER    = 0xFFB8A878;
+    private static final int COL_DARK      = 0xFF3B2E1A;
+    private static final int COL_MID       = 0xFF7A6040;
+    private static final int COL_LIGHT     = 0xFFA89060;
+    private static final int COL_HIGHLIGHT = 0xFFD4C48A;
+    private static final int COL_GREEN_BG  = 0xFFD4EAC8;
+    private static final int COL_GREEN_TXT = 0xFF2D6B1A;
+    private static final int COL_RED_BG    = 0xFFEAC8C8;
+    private static final int COL_RED_TXT   = 0xFF8B1A1A;
+    private static final int COL_GOLD      = 0xFFB8860B;
+
+    // -------------------------------------------------------------------------
+    // Page types
+    // -------------------------------------------------------------------------
+
+    private enum SectionType {
+        FRONTISPIECE, STATUS, HISTORY,
+        LAWS, ECONOMY, APPOINTMENTS,
+        DIPLOMACY, DECREES, ROYAL_BUILDS
+    }
+
+    private record NavEntry(
+            String label, SectionType section,
+            int historyPageIndex) {}
+
+    // -------------------------------------------------------------------------
+    // State
+    // -------------------------------------------------------------------------
 
     private final UUID kingdomId;
-    private int page = 0;
     private int bookX, bookY;
+    private int page = 0;
 
-    // Pages
-    private static final String[] PAGE_TITLES = {
-            "Frontispiece",
-            "Kingdom Status",
-            "History",
-            "Laws",
-            "Economy",
-            "Appointments",
-            "Diplomacy",
-            "Decrees",
-            "Royal Builds"
-    };
-
-    private static final String[] NAV_LABELS = {
-            "Frontispiece",
-            "Status",
-            "History",
-            "Laws",
-            "Economy",
-            "Appointments",
-            "Diplomacy",
-            "Decrees",
-            "Royal Builds"
-    };
-
-    // Widgets
-    private final List<Button> pageButtons = new ArrayList<>();
-    private EditBox decreeBox;
-
-    // Live kingdom data (refreshed on open and after each action)
-    private String kingdomName    = "Loading...";
-    private String rulerName      = "";
-    private int villageCount      = 0;
-    private long treasury         = 0;
-    private int activeLawCount    = 0;
-    private int taxRate           = 10;
-    private long upkeep           = 32;
+    // Kingdom data
+    private String kingdomName   = "Loading...";
+    private String rulerName     = "Unknown";
+    private int villageCount     = 0;
+    private long treasury        = 0;
+    private int activeLawCount   = 0;
+    private int taxRate          = 10;
+    private long upkeep          = 32;
+    private long foundingTick    = 0L;
     private final Set<KingdomLaw> activeLaws = new HashSet<>();
     private final List<KingdomEntry> kingdoms = new ArrayList<>();
     private final List<VillageEntry> villages = new ArrayList<>();
 
-    record KingdomEntry(UUID id, String name, int villageCount,
+    // History
+    private final List<HistoryTextGenerator.HistoryPage>
+            historyPages = new ArrayList<>();
+
+    // Navigation
+    private final List<NavEntry> navEntries = new ArrayList<>();
+
+    // Widgets
+    private EditBox decreeBox;
+
+    record KingdomEntry(UUID id, String name,
+                        int villageCount,
                         DiplomaticRelation relation) {}
-    record VillageEntry(UUID id, String name, String tier,
-                        String leader) {}
+    record VillageEntry(UUID id, String name,
+                        String tier, String leader) {}
+
+    // -------------------------------------------------------------------------
+    // Constructor / init
+    // -------------------------------------------------------------------------
 
     public KingdomBookScreen(UUID kingdomId) {
         super(Component.literal("Kingdom Book"));
         this.kingdomId = kingdomId;
     }
 
+    public UUID getKingdomId() { return kingdomId; }
+
     @Override
     protected void init() {
         bookX = (width  - BOOK_W) / 2;
         bookY = (height - BOOK_H) / 2;
-
         refreshData();
         buildWidgets();
     }
 
-    private void refreshData() {
-        Kingdom.ClientKingdomCache.getById(kingdomId)
-                .ifPresent(k -> {
-                    kingdomName    = k.getName();
-                    rulerName      = "Dev"; // swap for player name lookup
-                    villageCount   = k.getVillageIds().size();
-                    treasury       = k.getTreasuryBronze();
-                    taxRate        = (int)(k.getIncomeTaxRate() * 100);
-                    upkeep         = k.getFlatUpkeepBronze();
-                    activeLaws.clear();
-                    activeLaws.addAll(k.getActiveLaws());
-                    activeLawCount = activeLaws.size();
+    // -------------------------------------------------------------------------
+    // Data loading
+    // -------------------------------------------------------------------------
 
-                    // Populate kingdoms list for diplomacy page
-                    kingdoms.clear();
-                    k.getAllRelations().forEach((otherId, rel) ->
-                            Kingdom.ClientKingdomCache
-                                    .getById(otherId)
-                                    .ifPresent(other -> kingdoms.add(
-                                            new KingdomEntry(
-                                                    other.getId(),
-                                                    other.getName(),
-                                                    other.getVillageIds()
-                                                            .size(),
-                                                    rel))));
-                });
+    public void refreshData() {
+        Kingdom k = Kingdom.ClientKingdomCache
+                .getById(kingdomId).orElse(null);
+
+        if (k == null) {
+            System.out.println(
+                    "KingdomBookScreen.refreshData: "
+                            + "kingdom not in cache");
+            buildNavEntries();
+            return;
+        }
+
+        kingdomName    = k.getName();
+        rulerName      = k.getRulerPlayerId()
+                .map(id -> "Player").orElse("Unknown");
+        villageCount   = k.getVillageIds().size();
+        treasury       = k.getTreasuryBronze();
+        taxRate        = (int)(k.getIncomeTaxRate() * 100);
+        upkeep         = k.getFlatUpkeepBronze();
+        activeLaws.clear();
+        activeLaws.addAll(k.getActiveLaws());
+        activeLawCount = activeLaws.size();
+
+        foundingTick = k.getHistory().getOrigin()
+                .map(o -> o.foundingTick()).orElse(0L);
+
+        kingdoms.clear();
+        k.getAllRelations().forEach((otherId, rel) ->
+                Kingdom.ClientKingdomCache.getById(otherId)
+                        .ifPresent(other -> kingdoms.add(
+                                new KingdomEntry(
+                                        other.getId(),
+                                        other.getName(),
+                                        other.getVillageIds()
+                                                .size(),
+                                        rel))));
+
+        villages.clear();
+        // Villages populated from building cache if needed
+
+        // Build history pages
+        long currentTick = net.minecraft.client.Minecraft
+                .getInstance().level != null
+                ? net.minecraft.client.Minecraft
+                .getInstance().level.getGameTime()
+                : 0L;
+
+        historyPages.clear();
+        historyPages.addAll(
+                HistoryTextGenerator.buildHistoryPages(
+                        k.getHistory(),
+                        kingdomName,
+                        rulerName,
+                        currentTick,
+                        foundingTick));
+
+        System.out.println(
+                "KingdomBookScreen.refreshData: "
+                        + historyPages.size()
+                        + " history pages built from "
+                        + k.getHistory().getEvents().size()
+                        + " events");
+
+        buildNavEntries();
+    }
+
+    private void buildNavEntries() {
+        navEntries.clear();
+
+        // Fixed pages
+        navEntries.add(new NavEntry(
+                "Frontispiece", SectionType.FRONTISPIECE, -1));
+        navEntries.add(new NavEntry(
+                "Status", SectionType.STATUS, -1));
+
+        // Single history entry — index 0 is the start
+        navEntries.add(new NavEntry(
+                "History", SectionType.HISTORY, 0));
+
+        // Governance
+        navEntries.add(new NavEntry(
+                "Laws", SectionType.LAWS, -1));
+        navEntries.add(new NavEntry(
+                "Economy", SectionType.ECONOMY, -1));
+        navEntries.add(new NavEntry(
+                "Appointments", SectionType.APPOINTMENTS,
+                -1));
+
+        // Foreign
+        navEntries.add(new NavEntry(
+                "Diplomacy", SectionType.DIPLOMACY, -1));
+        navEntries.add(new NavEntry(
+                "Decrees", SectionType.DECREES, -1));
+
+        // Build
+        navEntries.add(new NavEntry(
+                "Royal Builds", SectionType.ROYAL_BUILDS,
+                -1));
+
+        page = Math.min(page, navEntries.size() - 1);
     }
 
     // -------------------------------------------------------------------------
-    // Widget construction
+    // Widgets
     // -------------------------------------------------------------------------
 
     private void buildWidgets() {
         clearWidgets();
-        pageButtons.clear();
+        decreeBox = null;
 
-        int px = bookX + SIDEBAR_W + PAGE_PAD;
-        int py = bookY + 36;
-        int pw = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
-
-        // Prev/Next buttons
+        // Prev / Next
         addRenderableWidget(Button.builder(
                         Component.literal("←"),
                         b -> changePage(-1))
-                .pos(bookX + SIDEBAR_W + 8, bookY + BOOK_H - 28)
-                .size(32, 18)
-                .build());
+                .pos(bookX + SIDEBAR_W + 8,
+                        bookY + BOOK_H - 28)
+                .size(32, 18).build());
 
         addRenderableWidget(Button.builder(
                         Component.literal("→"),
                         b -> changePage(1))
-                .pos(bookX + BOOK_W - 40, bookY + BOOK_H - 28)
-                .size(32, 18)
-                .build());
+                .pos(bookX + BOOK_W - 40,
+                        bookY + BOOK_H - 28)
+                .size(32, 18).build());
 
-        // Page-specific widgets
-        buildPageWidgets(px, py, pw);
-    }
+        SectionType section = currentSection();
+        int px = bookX + SIDEBAR_W + PAGE_PAD;
+        int py = bookY + 36;
+        int pw = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
 
-    private void buildPageWidgets(int px, int py, int pw) {
-        if (page == 3) buildLawWidgets(px, py, pw);
-        if (page == 4) buildEconomyWidgets(px, py, pw);
-        if (page == 6) buildDiplomacyWidgets(px, py, pw);
-        if (page == 7) buildDecreeWidgets(px, py, pw);
+        switch (section) {
+            case LAWS        -> buildLawWidgets(px, py, pw);
+            case ECONOMY     -> buildEconomyWidgets(
+                    px, py, pw);
+            case DIPLOMACY   -> buildDiplomacyWidgets(
+                    px, py, pw);
+            case DECREES     -> buildDecreeWidgets(
+                    px, py, pw);
+            default          -> {}
+        }
     }
 
     private void buildLawWidgets(int px, int py, int pw) {
@@ -179,100 +266,99 @@ public class KingdomBookScreen extends Screen {
             int by = py + i * 28;
             if (by + 20 > bookY + BOOK_H - 32) break;
 
-            Button btn = Button.builder(
-                            Component.literal(active ? "Repeal" : "Enact"),
+            // active = law is ON → button should say "Repeal"
+            // inactive = law is OFF → button should say "Enact"
+            // The TOGGLE_LAW handler flips whatever the
+            // current state is, so the label just needs
+            // to match what clicking WILL do
+            addRenderableWidget(Button.builder(
+                            Component.literal(
+                                    active ? "Repeal" : "Enact"),
                             b -> sendAction(
-                                    KingdomActionPacket.ActionType.TOGGLE_LAW,
+                                    KingdomActionPacket.ActionType
+                                            .TOGGLE_LAW,
                                     law.name(), 0))
                     .pos(px + pw - 52, by)
-                    .size(50, 16)
-                    .build();
-            addRenderableWidget(btn);
-            pageButtons.add(btn);
+                    .size(50, 16).build());
         }
     }
 
-    private void buildEconomyWidgets(int px, int py, int pw) {
-        // Tax rate buttons
+    private void buildEconomyWidgets(int px, int py,
+                                     int pw) {
         addRenderableWidget(Button.builder(
                         Component.literal("-"),
                         b -> {
                             taxRate = Math.max(0, taxRate - 5);
-                            sendAction(
-                                    KingdomActionPacket.ActionType.SET_TAX_RATE,
+                            sendAction(KingdomActionPacket
+                                            .ActionType.SET_TAX_RATE,
                                     "", taxRate);
                         })
                 .pos(px + pw / 2 - 40, py + 28)
-                .size(24, 16)
-                .build());
+                .size(24, 16).build());
 
         addRenderableWidget(Button.builder(
                         Component.literal("+"),
                         b -> {
                             taxRate = Math.min(50, taxRate + 5);
-                            sendAction(
-                                    KingdomActionPacket.ActionType.SET_TAX_RATE,
+                            sendAction(KingdomActionPacket
+                                            .ActionType.SET_TAX_RATE,
                                     "", taxRate);
                         })
                 .pos(px + pw / 2 + 16, py + 28)
-                .size(24, 16)
-                .build());
+                .size(24, 16).build());
 
-        // Upkeep buttons
         addRenderableWidget(Button.builder(
                         Component.literal("-"),
                         b -> {
                             upkeep = Math.max(0, upkeep - 8);
-                            sendAction(
-                                    KingdomActionPacket.ActionType.SET_UPKEEP,
+                            sendAction(KingdomActionPacket
+                                            .ActionType.SET_UPKEEP,
                                     "", (int) upkeep);
                         })
                 .pos(px + pw / 2 - 40, py + 72)
-                .size(24, 16)
-                .build());
+                .size(24, 16).build());
 
         addRenderableWidget(Button.builder(
                         Component.literal("+"),
                         b -> {
                             upkeep = Math.min(256, upkeep + 8);
-                            sendAction(
-                                    KingdomActionPacket.ActionType.SET_UPKEEP,
+                            sendAction(KingdomActionPacket
+                                            .ActionType.SET_UPKEEP,
                                     "", (int) upkeep);
                         })
                 .pos(px + pw / 2 + 16, py + 72)
-                .size(24, 16)
-                .build());
+                .size(24, 16).build());
     }
 
-    private void buildDiplomacyWidgets(int px, int py, int pw) {
-        DiplomaticRelation[] rels = DiplomaticRelation.values();
+    private void buildDiplomacyWidgets(int px, int py,
+                                       int pw) {
+        DiplomaticRelation[] rels =
+                DiplomaticRelation.values();
         for (int i = 0; i < kingdoms.size(); i++) {
             KingdomEntry k = kingdoms.get(i);
-            int by = py + i * 32;
+            int by = py + 16 + i * 32;
             if (by + 20 > bookY + BOOK_H - 32) break;
-
-            // Cycle through relations on click
-            int finalI = i;
+            int fi = i;
             addRenderableWidget(Button.builder(
                             Component.literal("Change"),
                             b -> {
                                 DiplomaticRelation cur =
-                                        kingdoms.get(finalI).relation();
+                                        kingdoms.get(fi).relation();
                                 DiplomaticRelation next =
                                         rels[(cur.ordinal() + 1)
                                                 % rels.length];
-                                sendAction(
-                                        KingdomActionPacket.ActionType
-                                                .SET_RELATION,
-                                        k.id() + ":" + next.name(), 0);
+                                sendAction(KingdomActionPacket
+                                                .ActionType.SET_RELATION,
+                                        k.id() + ":" + next.name(),
+                                        0);
                             })
                     .pos(px + pw - 54, by + 6)
-                    .size(52, 16)
-                    .build());
+                    .size(52, 16).build());
         }
     }
 
-    private void buildDecreeWidgets(int px, int py, int pw) {
+    private void buildDecreeWidgets(int px, int py,
+                                    int pw) {
         decreeBox = new EditBox(font,
                 px, py + 20, pw, 60,
                 Component.literal("Write decree..."));
@@ -283,17 +369,16 @@ public class KingdomBookScreen extends Screen {
                         Component.literal("Issue Decree"),
                         b -> {
                             if (decreeBox != null
-                                    && !decreeBox.getValue().isEmpty()) {
-                                sendAction(
-                                        KingdomActionPacket.ActionType
-                                                .ISSUE_DECREE,
+                                    && !decreeBox.getValue()
+                                    .isEmpty()) {
+                                sendAction(KingdomActionPacket
+                                                .ActionType.ISSUE_DECREE,
                                         decreeBox.getValue(), 0);
                                 decreeBox.setValue("");
                             }
                         })
                 .pos(px, py + 88)
-                .size(80, 18)
-                .build());
+                .size(80, 18).build());
     }
 
     // -------------------------------------------------------------------------
@@ -301,8 +386,8 @@ public class KingdomBookScreen extends Screen {
     // -------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, int mx, int my, float pt) {
-        //renderBackground(g, mx, my, pt);
+    public void render(GuiGraphics g, int mx, int my,
+                       float pt) {
         drawBook(g);
         drawSidebar(g);
         drawPageContent(g);
@@ -310,55 +395,71 @@ public class KingdomBookScreen extends Screen {
     }
 
     private void drawBook(GuiGraphics g) {
-        // Outer shadow
+        // Shadow
         g.fill(bookX + 3, bookY + 3,
-                bookX + BOOK_W + 3, bookY + BOOK_H + 3,
-                0x44000000);
+                bookX + BOOK_W + 3,
+                bookY + BOOK_H + 3, 0x44000000);
 
-        // Main book background
-        g.fill(bookX, bookY, bookX + BOOK_W,
-                bookY + BOOK_H, COL_PARCHMENT);
+        // Background
+        g.fill(bookX, bookY,
+                bookX + BOOK_W, bookY + BOOK_H,
+                COL_PARCHMENT);
 
-        // Border
+        // Borders
         g.renderOutline(bookX, bookY,
                 BOOK_W, BOOK_H, COL_BORDER);
-
-        // Inner border inset
         g.renderOutline(bookX + 2, bookY + 2,
                 BOOK_W - 4, BOOK_H - 4, COL_HIGHLIGHT);
 
-        // Page header separator
+        // Header separator
         g.fill(bookX + SIDEBAR_W, bookY + 28,
                 bookX + BOOK_W, bookY + 29, COL_BORDER);
 
-        // Page footer separator
-        g.fill(bookX + SIDEBAR_W, bookY + BOOK_H - 30,
-                bookX + BOOK_W, bookY + BOOK_H - 29,
-                COL_BORDER);
+        // Footer separator
+        g.fill(bookX + SIDEBAR_W,
+                bookY + BOOK_H - 30,
+                bookX + BOOK_W,
+                bookY + BOOK_H - 29, COL_BORDER);
 
         // Page title
-        g.drawString(font,
-                PAGE_TITLES[page],
+        String title = page < navEntries.size()
+                ? navEntries.get(page).label() : "";
+
+        // For history, show the sub-page title instead
+        if (currentSection() == SectionType.HISTORY) {
+            int hi = historySubPage();
+            if (hi >= 0 && hi < historyPages.size()) {
+                title = historyPages.get(hi).title();
+            }
+        }
+
+        g.drawString(font, title,
                 bookX + SIDEBAR_W + PAGE_PAD,
-                bookY + 10,
-                COL_DARK, false);
+                bookY + 10, COL_DARK, false);
 
-        // Page number
-        String pageNum = (page + 1) + " / "
-                + PAGE_TITLES.length;
-        int pnw = font.width(pageNum);
-        g.drawString(font, pageNum,
-                bookX + BOOK_W - pnw - PAGE_PAD,
-                bookY + 10,
-                COL_LIGHT, false);
+        // Page counter — for history show sub-page
+        String counter;
+        if (currentSection() == SectionType.HISTORY
+                && !historyPages.isEmpty()) {
+            counter = (historySubPage() + 1) + " / "
+                    + historyPages.size();
+        } else {
+            counter = (page + 1) + " / "
+                    + navEntries.size();
+        }
+        int cw = font.width(counter);
+        g.drawString(font, counter,
+                bookX + BOOK_W - cw - PAGE_PAD,
+                bookY + 10, COL_LIGHT, false);
 
-        // Decorative corner flourishes
+        // Corner flourishes
         drawFlourishCorner(g, bookX + 4, bookY + 4);
-        drawFlourishCorner(g, bookX + BOOK_W - 12,
-                bookY + 4);
-        drawFlourishCorner(g, bookX + 4,
-                bookY + BOOK_H - 12);
-        drawFlourishCorner(g, bookX + BOOK_W - 12,
+        drawFlourishCorner(g,
+                bookX + BOOK_W - 12, bookY + 4);
+        drawFlourishCorner(g,
+                bookX + 4, bookY + BOOK_H - 12);
+        drawFlourishCorner(g,
+                bookX + BOOK_W - 12,
                 bookY + BOOK_H - 12);
     }
 
@@ -369,64 +470,55 @@ public class KingdomBookScreen extends Screen {
     }
 
     private void drawSidebar(GuiGraphics g) {
-        // Sidebar background
         g.fill(bookX, bookY,
                 bookX + SIDEBAR_W, bookY + BOOK_H,
                 COL_SIDEBAR);
-
-        // Sidebar right border
         g.fill(bookX + SIDEBAR_W - 1, bookY,
                 bookX + SIDEBAR_W, bookY + BOOK_H,
                 COL_BORDER);
 
-        // Kingdom name and crown
-        g.drawString(font, "\u265B " + kingdomName,
+        // Kingdom name
+        g.drawString(font,
+                "\u265B " + kingdomName,
                 bookX + 8, bookY + 10,
                 COL_DARK, false);
-
         g.fill(bookX + 4, bookY + 22,
                 bookX + SIDEBAR_W - 4, bookY + 23,
                 COL_BORDER);
 
-        // Nav section labels and items
-        int[] sectionStarts = {0, 3, 6, 8};
-        String[] sectionLabels = {
-                "Overview", "Governance",
-                "Foreign", "Build"
-        };
-
+        // Nav entries
+        String lastSection = "";
         int ny = bookY + 28;
-        int section = 0;
 
-        for (int i = 0; i < NAV_LABELS.length; i++) {
-            // Section header
-            if (section < sectionStarts.length
-                    && i == sectionStarts[section]) {
+        for (int i = 0; i < navEntries.size(); i++) {
+            NavEntry entry = navEntries.get(i);
+            String sectionLabel = sectionGroupLabel(
+                    entry.section());
+
+            if (!sectionLabel.equals(lastSection)) {
+                if (ny + 12 > bookY + BOOK_H - 10) break;
                 g.drawString(font,
-                        sectionLabels[section].toUpperCase(),
+                        sectionLabel.toUpperCase(),
                         bookX + 8, ny,
                         COL_LIGHT, false);
                 ny += 12;
-                section++;
+                lastSection = sectionLabel;
             }
 
-            boolean active = (i == page);
+            if (ny + 10 > bookY + BOOK_H - 10) break;
 
+            boolean active = (i == page);
             if (active) {
                 g.fill(bookX + 2, ny - 1,
                         bookX + SIDEBAR_W - 1, ny + 9,
                         COL_HIGHLIGHT);
                 g.fill(bookX + 2, ny - 1,
-                        bookX + 4, ny + 9,
-                        COL_GOLD);
+                        bookX + 4, ny + 9, COL_GOLD);
             }
 
-            // Make nav items clickable
-            int finalI = i;
-            int ny2 = ny;
             g.drawString(font,
                     (active ? "> " : "  ")
-                            + NAV_LABELS[i],
+                            + entry.label(),
                     bookX + 6, ny,
                     active ? COL_DARK : COL_MID, false);
 
@@ -434,53 +526,75 @@ public class KingdomBookScreen extends Screen {
         }
     }
 
+    private String sectionGroupLabel(SectionType s) {
+        return switch (s) {
+            case FRONTISPIECE,
+                 STATUS           -> "Overview";
+            case HISTORY          -> "History";
+            case LAWS, ECONOMY,
+                 APPOINTMENTS     -> "Governance";
+            case DIPLOMACY,
+                 DECREES          -> "Foreign";
+            case ROYAL_BUILDS     -> "Construction";
+        };
+    }
+
     private void drawPageContent(GuiGraphics g) {
-        int px = bookX + SIDEBAR_W + PAGE_PAD;
-        int py = bookY + 36;
-        int pw = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
+        int px   = bookX + SIDEBAR_W + PAGE_PAD;
+        int py   = bookY + 36;
+        int pw   = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
         int maxY = bookY + BOOK_H - 34;
 
-        switch (page) {
-            case 0 -> drawFrontispiece(g, px, py, pw);
-            case 1 -> drawStatus(g, px, py, pw, maxY);
-            case 2 -> drawHistory(g, px, py, pw, maxY);
-            case 3 -> drawLaws(g, px, py, pw, maxY);
-            case 4 -> drawEconomy(g, px, py, pw, maxY);
-            case 5 -> drawAppointments(g, px, py, pw, maxY);
-            case 6 -> drawDiplomacy(g, px, py, pw, maxY);
-            case 7 -> drawDecrees(g, px, py, pw, maxY);
-            case 8 -> drawRoyalBuilds(g, px, py, pw, maxY);
+        switch (currentSection()) {
+            case FRONTISPIECE  -> drawFrontispiece(
+                    g, px, py, pw);
+            case STATUS        -> drawStatus(
+                    g, px, py, pw, maxY);
+            case HISTORY       -> drawHistory(
+                    g, px, py, pw, maxY);
+            case LAWS          -> drawLaws(
+                    g, px, py, pw, maxY);
+            case ECONOMY       -> drawEconomy(
+                    g, px, py, pw, maxY);
+            case APPOINTMENTS  -> drawAppointments(
+                    g, px, py, pw, maxY);
+            case DIPLOMACY     -> drawDiplomacy(
+                    g, px, py, pw, maxY);
+            case DECREES       -> drawDecrees(
+                    g, px, py, pw, maxY);
+            case ROYAL_BUILDS  -> drawRoyalBuilds(
+                    g, px, py, pw, maxY);
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Page renderers
+    // -------------------------------------------------------------------------
+
     private void drawFrontispiece(GuiGraphics g,
-                                  int px, int py, int pw) {
-        // Crown symbol large
+                                  int px, int py,
+                                  int pw) {
         String crown = "\u265B";
-        int cw = font.width(crown) * 2;
+        int cw = font.width(crown);
         g.drawString(font, crown,
-                px + pw / 2 - cw / 4,
+                px + pw / 2 - cw / 2,
                 py + 20, COL_GOLD, false);
 
-        // Kingdom name centered
         int nw = font.width(kingdomName);
         g.drawString(font, kingdomName,
                 px + pw / 2 - nw / 2,
                 py + 50, COL_DARK, false);
 
-        // Decorative line
         g.fill(px + pw / 4, py + 62,
-                px + pw * 3 / 4, py + 63,
-                COL_BORDER);
+                px + pw * 3 / 4, py + 63, COL_BORDER);
 
-        // Tagline
-        String tag = "By right of deed, by will of the realm";
+        String tag = "By right of deed, "
+                + "by will of the realm";
         int tw = font.width(tag);
         g.drawString(font, tag,
                 px + pw / 2 - tw / 2,
                 py + 70, COL_MID, false);
 
-        // Ruler line
         String ruler = "Ruler: " + rulerName;
         int rw = font.width(ruler);
         g.drawString(font, ruler,
@@ -491,23 +605,26 @@ public class KingdomBookScreen extends Screen {
     private void drawStatus(GuiGraphics g,
                             int px, int py, int pw,
                             int maxY) {
-        // Stat boxes
         drawStatBox(g, px, py, 72, 44,
-                "Villages", String.valueOf(villageCount));
+                "Villages",
+                String.valueOf(villageCount));
         drawStatBox(g, px + 80, py, 72, 44,
                 "Treasury", treasury + "b");
         drawStatBox(g, px + 160, py, 72, 44,
-                "Laws", String.valueOf(activeLawCount));
+                "Laws",
+                String.valueOf(activeLawCount));
 
         int y = py + 54;
         g.drawString(font, "Villages",
                 px, y, COL_MID, false);
-        g.fill(px, y + 10, px + pw, y + 11, COL_BORDER);
+        g.fill(px, y + 10, px + pw, y + 11,
+                COL_BORDER);
         y += 14;
 
         for (VillageEntry v : villages) {
             if (y + 10 > maxY) break;
-            g.drawString(font, v.name() + " \u00b7 " + v.tier(),
+            g.drawString(font,
+                    v.name() + " \u00b7 " + v.tier(),
                     px, y, COL_DARK, false);
             int lw = font.width(v.leader());
             g.drawString(font, v.leader(),
@@ -516,8 +633,8 @@ public class KingdomBookScreen extends Screen {
         }
     }
 
-    private void drawStatBox(GuiGraphics g, int x, int y,
-                             int w, int h,
+    private void drawStatBox(GuiGraphics g,
+                             int x, int y, int w, int h,
                              String label, String value) {
         g.fill(x, y, x + w, y + h, COL_HIGHLIGHT);
         g.renderOutline(x, y, w, h, COL_BORDER);
@@ -531,33 +648,90 @@ public class KingdomBookScreen extends Screen {
                 y + 22, COL_DARK, false);
     }
 
+    /**
+     * History renders a single HistoryPage at a time.
+     * ← → navigate within history sub-pages when on
+     * the History nav entry.
+     */
     private void drawHistory(GuiGraphics g,
-                             int px, int py, int pw,
-                             int maxY) {
-        String[] lines = {
-                "In the age before the great roads,",
-                "the lands now called " + kingdomName,
-                "were divided among scattered hamlets.",
-                "",
-                "It was not until a wandering adventurer",
-                "earned the trust of every village elder",
-                "that the villages agreed to speak",
-                "with one voice.",
-                "",
-                "The crown rests not in iron and stone,",
-                "but in the faith of those who toil."
-        };
+                             int px, int py,
+                             int pw, int maxY) {
+        if (historyPages.isEmpty()) {
+            g.drawString(font,
+                    "No history has been recorded yet.",
+                    px, py, COL_MID, false);
+            return;
+        }
+
+        int hi = historySubPage();
+        if (hi < 0 || hi >= historyPages.size()) return;
+
+        HistoryTextGenerator.HistoryPage hp =
+                historyPages.get(hi);
 
         int y = py;
-        for (String line : lines) {
-            if (y + 10 > maxY) break;
-            if (line.isEmpty()) {
-                y += 6;
+
+        // Type-specific header decoration
+        switch (hp.type()) {
+            case ORIGIN -> {
+                g.drawString(font, "The Founding",
+                        px, y, COL_GOLD, false);
+                g.fill(px, y + 10, px + pw, y + 11,
+                        COL_BORDER);
+                y += 18;
+            }
+            case EVENT -> {
+                g.fill(px, y + 4, px + pw, y + 5,
+                        COL_HIGHLIGHT);
+                y += 12;
+            }
+            case FILLER -> {
+                g.fill(px + pw / 4, y + 4,
+                        px + pw * 3 / 4, y + 5,
+                        COL_BORDER);
+                y += 14;
+            }
+        }
+
+        // Render each line from the pre-packed page text
+        // Use pixel-accurate wrapping here for final display
+        for (String paragraph :
+                hp.text().split("\n", -1)) {
+            if (paragraph.isEmpty()) {
+                y += 6; // blank line gap
                 continue;
             }
-            g.drawString(font, line, px, y,
-                    COL_DARK, false);
-            y += 12;
+            // Pixel-wrap each paragraph line
+            List<String> wrapped = wrapText(
+                    paragraph, pw);
+            for (String line : wrapped) {
+                if (y + 10 > maxY - 12) break;
+                int color = hp.type()
+                        == HistoryTextGenerator
+                        .HistoryPageType.FILLER
+                        ? COL_MID : COL_DARK;
+                g.drawString(font, line, px, y,
+                        color, false);
+                y += 12;
+            }
+        }
+
+        // Bottom filler decoration
+        if (hp.type()
+                == HistoryTextGenerator
+                .HistoryPageType.FILLER) {
+            g.fill(px + pw / 4, y + 6,
+                    px + pw * 3 / 4, y + 7,
+                    COL_BORDER);
+        }
+
+        // Navigation hint
+        if (historyPages.size() > 1) {
+            String hint = "← → to browse history";
+            int hw = font.width(hint);
+            g.drawString(font, hint,
+                    px + pw / 2 - hw / 2,
+                    maxY - 10, COL_LIGHT, false);
         }
     }
 
@@ -566,33 +740,25 @@ public class KingdomBookScreen extends Screen {
                           int maxY) {
         KingdomLaw[] laws = KingdomLaw.values();
         int y = py;
-
         for (int i = 0; i < laws.length; i++) {
             if (y + 22 > maxY) break;
             KingdomLaw law = laws[i];
             boolean active = activeLaws.contains(law);
-
-            // Row background for active laws
             if (active) {
                 g.fill(px - 2, y - 1,
                         px + pw + 2, y + 21,
                         COL_GREEN_BG);
             }
-
-            // Law name
             g.drawString(font,
                     formatLawName(law.name()),
                     px, y + 4,
                     active ? COL_GREEN_TXT : COL_DARK,
                     false);
-
-            // Status indicator
             String status = active ? "[On]" : "[Off]";
             g.drawString(font, status,
                     px + 120, y + 4,
                     active ? COL_GREEN_TXT : COL_LIGHT,
                     false);
-
             g.fill(px, y + 21, px + pw, y + 22,
                     COL_HIGHLIGHT);
             y += 28;
@@ -602,23 +768,26 @@ public class KingdomBookScreen extends Screen {
     private void drawEconomy(GuiGraphics g,
                              int px, int py, int pw,
                              int maxY) {
-        // Tax rate
         g.drawString(font, "Income tax rate",
                 px, py, COL_DARK, false);
-        drawValueControl(g, px, py + 14, pw,
-                taxRate + "%");
+        int vw1 = font.width(taxRate + "%");
+        g.drawString(font, taxRate + "%",
+                px + pw / 2 - vw1 / 2,
+                py + 16, COL_DARK, false);
 
-        g.fill(px, py + 36, px + pw, py + 37, COL_HIGHLIGHT);
+        g.fill(px, py + 36, px + pw, py + 37,
+                COL_HIGHLIGHT);
 
-        // Upkeep
         g.drawString(font, "Flat upkeep per village",
                 px, py + 44, COL_DARK, false);
-        drawValueControl(g, px, py + 58, pw,
-                upkeep + " bronze");
+        int vw2 = font.width(upkeep + " bronze");
+        g.drawString(font, upkeep + " bronze",
+                px + pw / 2 - vw2 / 2,
+                py + 60, COL_DARK, false);
 
-        g.fill(px, py + 80, px + pw, py + 81, COL_HIGHLIGHT);
+        g.fill(px, py + 80, px + pw, py + 81,
+                COL_HIGHLIGHT);
 
-        // Treasury stats
         g.drawString(font, "Treasury",
                 px, py + 90, COL_MID, false);
         drawStatBox(g, px, py + 102, 72, 40,
@@ -626,26 +795,16 @@ public class KingdomBookScreen extends Screen {
         drawStatBox(g, px + 80, py + 102, 80, 40,
                 "Est. daily",
                 "~" + (villageCount * upkeep
-                        + 200 * taxRate / 100) + "b");
-    }
-
-    private void drawValueControl(GuiGraphics g,
-                                  int px, int py,
-                                  int pw, String value) {
-        // [-] value [+] layout — buttons added in buildWidgets
-        int vw = font.width(value);
-        g.drawString(font, value,
-                px + pw / 2 - vw / 2, py + 2,
-                COL_DARK, false);
+                        + 200L * taxRate / 100) + "b");
     }
 
     private void drawAppointments(GuiGraphics g,
-                                  int px, int py, int pw,
-                                  int maxY) {
+                                  int px, int py,
+                                  int pw, int maxY) {
         g.drawString(font, "Village leaders",
                 px, py, COL_MID, false);
-        g.fill(px, py + 10, px + pw, py + 11, COL_BORDER);
-
+        g.fill(px, py + 10, px + pw, py + 11,
+                COL_BORDER);
         int y = py + 16;
         for (VillageEntry v : villages) {
             if (y + 22 > maxY) break;
@@ -672,26 +831,20 @@ public class KingdomBookScreen extends Screen {
                                int maxY) {
         g.drawString(font, "Kingdom relations",
                 px, py, COL_MID, false);
-        g.fill(px, py + 10, px + pw, py + 11, COL_BORDER);
-
+        g.fill(px, py + 10, px + pw, py + 11,
+                COL_BORDER);
         int y = py + 16;
         for (KingdomEntry k : kingdoms) {
             if (y + 26 > maxY) break;
-
             g.drawString(font, k.name(),
                     px, y + 4, COL_DARK, false);
-
-            // Relation badge
-            int[] relColors = relColors(k.relation());
-            String relLabel = formatRelation(k.relation());
-            int rw = font.width(relLabel) + 8;
+            int[] rc = relColors(k.relation());
+            String rl = formatRelation(k.relation());
+            int rw = font.width(rl) + 8;
             g.fill(px + 120, y + 2,
-                    px + 120 + rw, y + 14,
-                    relColors[0]);
-            g.drawString(font, relLabel,
-                    px + 124, y + 4,
-                    relColors[1], false);
-
+                    px + 120 + rw, y + 14, rc[0]);
+            g.drawString(font, rl,
+                    px + 124, y + 4, rc[1], false);
             g.fill(px, y + 24, px + pw, y + 25,
                     COL_HIGHLIGHT);
             y += 32;
@@ -703,25 +856,9 @@ public class KingdomBookScreen extends Screen {
                              int maxY) {
         g.drawString(font, "Issue a royal decree",
                 px, py, COL_MID, false);
-        g.fill(px, py + 10, px + pw, py + 11, COL_BORDER);
-        // EditBox and button rendered by widget system
-
-        g.drawString(font, "Recent decrees",
-                px, py + 114, COL_MID, false);
-        g.fill(px, py + 124, px + pw, py + 125,
+        g.fill(px, py + 10, px + pw, py + 11,
                 COL_BORDER);
-
-        String[] recent = {
-                "Day 14 \u2014 Three days of rest proclaimed.",
-                "Day 7 \u2014 Trade tariffs extended."
-        };
-        int y = py + 130;
-        for (String decree : recent) {
-            if (y + 10 > maxY) break;
-            g.drawString(font, decree, px, y,
-                    COL_DARK, false);
-            y += 14;
-        }
+        // EditBox and button rendered by widget system
     }
 
     private void drawRoyalBuilds(GuiGraphics g,
@@ -729,7 +866,8 @@ public class KingdomBookScreen extends Screen {
                                  int maxY) {
         String[][] builds = {
                 {"Royal Keep",
-                        "Seat of power. Unlocks advanced governance.",
+                        "Seat of power. Unlocks advanced "
+                                + "governance.",
                         "Town tier required"},
                 {"Royal Barracks",
                         "Trains elite kingdom guards.",
@@ -741,91 +879,100 @@ public class KingdomBookScreen extends Screen {
                         "Monument to culture. Locked.",
                         "City tier required"}
         };
-
         int y = py;
         for (String[] build : builds) {
             if (y + 42 > maxY) break;
-            boolean locked = build[2].contains("City");
-
+            boolean locked =
+                    build[2].contains("City");
             g.fill(px, y, px + pw, y + 38,
-                    locked ? COL_HIGHLIGHT : COL_PARCHMENT);
+                    locked
+                            ? COL_HIGHLIGHT
+                            : COL_PARCHMENT);
             g.renderOutline(px, y, pw, 38, COL_BORDER);
-
             g.drawString(font, build[0],
                     px + 6, y + 5,
-                    locked ? COL_LIGHT : COL_DARK, false);
+                    locked ? COL_LIGHT : COL_DARK,
+                    false);
             g.drawString(font, build[1],
-                    px + 6, y + 17,
-                    COL_MID, false);
+                    px + 6, y + 17, COL_MID, false);
             g.drawString(font, build[2],
-                    px + 6, y + 27,
-                    COL_LIGHT, false);
-
+                    px + 6, y + 27, COL_LIGHT, false);
             y += 44;
         }
     }
 
     // -------------------------------------------------------------------------
-    // Helpers
+    // Navigation
     // -------------------------------------------------------------------------
 
+    /**
+     * History section has internal sub-pages.
+     * ← → navigate those when on History.
+     * Otherwise they navigate nav entries.
+     */
     private void changePage(int delta) {
+        if (currentSection() == SectionType.HISTORY
+                && !historyPages.isEmpty()) {
+            // Navigate history sub-pages
+            NavEntry entry = navEntries.get(page);
+            int hi = entry.historyPageIndex() + delta;
+            hi = Math.max(0, Math.min(
+                    historyPages.size() - 1, hi));
+            navEntries.set(page, new NavEntry(
+                    entry.label(), entry.section(), hi));
+            buildWidgets();
+            return;
+        }
+
+        // Navigate nav entries
         page = Math.max(0, Math.min(
-                PAGE_TITLES.length - 1, page + delta));
+                navEntries.size() - 1, page + delta));
         buildWidgets();
     }
 
-    private void sendAction(KingdomActionPacket.ActionType type,
-                            String strParam, int intParam) {
-        ClientPacketDistributor.sendToServer(
-                new KingdomActionPacket(type, kingdomId,
-                        strParam, intParam));
+    private SectionType currentSection() {
+        if (page >= navEntries.size())
+            return SectionType.FRONTISPIECE;
+        return navEntries.get(page).section();
     }
 
-    private String formatLawName(String name) {
-        return name.charAt(0)
-                + name.substring(1).toLowerCase()
-                .replace("_", " ");
+    private int historySubPage() {
+        if (page >= navEntries.size()) return 0;
+        return navEntries.get(page).historyPageIndex();
     }
 
-    private String formatRelation(DiplomaticRelation rel) {
-        return rel.name().charAt(0)
-                + rel.name().substring(1).toLowerCase()
-                .replace("_", " ");
-    }
+    // -------------------------------------------------------------------------
+    // Mouse
+    // -------------------------------------------------------------------------
 
-    private int[] relColors(DiplomaticRelation rel) {
-        return switch (rel) {
-            case ALLIANCE  -> new int[]{COL_GREEN_BG, COL_GREEN_TXT};
-            case TRADE     -> new int[]{0xFFD0E8FF, 0xFF1A4A8B};
-            case NEUTRAL   -> new int[]{COL_HIGHLIGHT, COL_MID};
-            case COLD_WAR  -> new int[]{0xFFFFF0C0, 0xFF8B6B00};
-            case WAR       -> new int[]{COL_RED_BG, COL_RED_TXT};
-        };
-    }
-
-
-  @Override
+    @Override
     public boolean mouseClicked(MouseButtonEvent event,
                                 boolean consumed) {
-        if (consumed) return super.mouseClicked(event, consumed);
+        if (consumed)
+            return super.mouseClicked(event, consumed);
 
         double mx = event.x();
         double my = event.y();
 
-        // Check sidebar nav clicks
+        String lastSection = "";
         int ny = bookY + 28;
-        int section = 0;
-        int[] sectionStarts = {0, 3, 6, 8};
 
-        for (int i = 0; i < NAV_LABELS.length; i++) {
-            if (section < sectionStarts.length
-                    && i == sectionStarts[section]) {
+        for (int i = 0; i < navEntries.size(); i++) {
+            NavEntry entry = navEntries.get(i);
+            String sectionLabel = sectionGroupLabel(
+                    entry.section());
+
+            if (!sectionLabel.equals(lastSection)) {
                 ny += 12;
-                section++;
+                lastSection = sectionLabel;
             }
-            if (mx >= bookX + 2 && mx <= bookX + SIDEBAR_W - 1
-                    && my >= ny - 1 && my <= ny + 9) {
+
+            if (ny + 10 > bookY + BOOK_H - 10) break;
+
+            if (mx >= bookX + 2
+                    && mx <= bookX + SIDEBAR_W - 1
+                    && my >= ny - 1
+                    && my <= ny + 9) {
                 page = i;
                 buildWidgets();
                 return true;
@@ -839,20 +986,72 @@ public class KingdomBookScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    // Set kingdom data — called when server sends updated data
-    public void setKingdomData(String name, String ruler,
-                               int villages, long treasury,
-                               Set<KingdomLaw> laws,
-                               int taxRate, long upkeep) {
-        this.kingdomName   = name;
-        this.rulerName     = ruler;
-        this.villageCount  = villages;
-        this.treasury      = treasury;
-        this.activeLaws.clear();
-        this.activeLaws.addAll(laws);
-        this.activeLawCount = laws.size();
-        this.taxRate       = taxRate;
-        this.upkeep        = upkeep;
-        buildWidgets();
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private void sendAction(
+            KingdomActionPacket.ActionType type,
+            String strParam, int intParam) {
+        ClientPacketDistributor.sendToServer(
+                new KingdomActionPacket(
+                        type, kingdomId,
+                        strParam, intParam));
+    }
+
+    private String formatLawName(String name) {
+        return name.charAt(0)
+                + name.substring(1).toLowerCase()
+                .replace("_", " ");
+    }
+
+    private String formatRelation(
+            DiplomaticRelation rel) {
+        return rel.name().charAt(0)
+                + rel.name().substring(1).toLowerCase()
+                .replace("_", " ");
+    }
+
+    private int[] relColors(DiplomaticRelation rel) {
+        return switch (rel) {
+            case ALLIANCE -> new int[]{
+                    COL_GREEN_BG, COL_GREEN_TXT};
+            case TRADE    -> new int[]{
+                    0xFFD0E8FF, 0xFF1A4A8B};
+            case NEUTRAL  -> new int[]{
+                    COL_HIGHLIGHT, COL_MID};
+            case COLD_WAR -> new int[]{
+                    0xFFFFF0C0, 0xFF8B6B00};
+            case WAR      -> new int[]{
+                    COL_RED_BG, COL_RED_TXT};
+        };
+    }
+
+    private List<String> wrapText(String text, int maxW) {
+        List<String> lines = new ArrayList<>();
+        if (text == null || text.isEmpty()) return lines;
+        String[] words = text.split(" ");
+        StringBuilder cur = new StringBuilder();
+        for (String word : words) {
+            String test = cur.isEmpty()
+                    ? word : cur + " " + word;
+            if (font.width(test) > maxW) {
+                if (!cur.isEmpty()) {
+                    lines.add(cur.toString());
+                    cur = new StringBuilder(word);
+                } else {
+                    lines.add(word);
+                }
+            } else {
+                cur = new StringBuilder(test);
+            }
+        }
+        if (!cur.isEmpty()) lines.add(cur.toString());
+        return lines;
+    }
+
+    private String truncate(String s, int max) {
+        return s.length() <= max ? s
+                : s.substring(0, max - 2) + "..";
     }
 }

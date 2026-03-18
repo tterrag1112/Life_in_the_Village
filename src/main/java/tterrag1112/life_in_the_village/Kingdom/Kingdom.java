@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Kingdom;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.world.phys.AABB;
+import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -14,61 +15,98 @@ public class Kingdom {
     // =========================================================================
     // CODEC
     // =========================================================================
+    public static final Codec<Kingdom> CODEC =
+            RecordCodecBuilder.create(instance ->
+                    instance.group(
+                            Codec.STRING.xmap(UUID::fromString,
+                                            UUID::toString)
+                                    .fieldOf("id")
+                                    .forGetter(Kingdom::getId),
+                            Codec.STRING
+                                    .fieldOf("name")
+                                    .forGetter(Kingdom::getName),
+                            Codec.STRING
+                                    .fieldOf("culture")
+                                    .forGetter(Kingdom::getCulture),
+                            Codec.STRING.xmap(UUID::fromString,
+                                            UUID::toString).listOf()
+                                    .optionalFieldOf("villageIds",
+                                            new ArrayList<>())
+                                    .forGetter(k -> new ArrayList<>(
+                                            k.villageIds)),
+                            Codec.STRING.xmap(UUID::fromString,
+                                            UUID::toString)
+                                    .optionalFieldOf("rulerEntityId")
+                                    .forGetter(k -> Optional.ofNullable(
+                                            k.rulerEntityId)),
+                            Codec.STRING.xmap(UUID::fromString,
+                                            UUID::toString)
+                                    .optionalFieldOf("rulerPlayerId")
+                                    .forGetter(k -> Optional.ofNullable(
+                                            k.rulerPlayerId)),
+                            Codec.LONG
+                                    .optionalFieldOf("treasuryBronze",
+                                            0L)
+                                    .forGetter(Kingdom::getTreasuryBronze),
+                            Codec.unboundedMap(
+                                            Codec.STRING.xmap(
+                                                    UUID::fromString,
+                                                    UUID::toString),
+                                            Codec.STRING.xmap(
+                                                    DiplomaticRelation::valueOf,
+                                                    DiplomaticRelation::name))
+                                    .optionalFieldOf("relations",
+                                            new HashMap<>())
+                                    .forGetter(k -> k.relations),
+                            Codec.STRING.xmap(KingdomLaw::valueOf,
+                                            KingdomLaw::name).listOf()
+                                    .optionalFieldOf("activeLaws",
+                                            new ArrayList<>())
+                                    .forGetter(k -> new ArrayList<>(
+                                            k.activeLaws)),
+                            Codec.DOUBLE
+                                    .optionalFieldOf("incomeTaxRate",
+                                            0.1)
+                                    .forGetter(Kingdom::getIncomeTaxRate),
+                            Codec.LONG
+                                    .optionalFieldOf("flatUpkeepBronze",
+                                            32L)
+                                    .forGetter(Kingdom::getFlatUpkeepBronze),
+                            Codec.LONG
+                                    .optionalFieldOf("lastTaxTick", -1L)
+                                    .forGetter(Kingdom::getLastTaxTick),
+                            KingdomHistoryData.CODEC
+                                    .optionalFieldOf("history",
+                                            new KingdomHistoryData())
+                                    .forGetter(k -> k.history)
+                    ).apply(instance, Kingdom::fromCodec));
 
-    public static final Codec<Kingdom> CODEC = RecordCodecBuilder.create(instance ->
-            instance.group(
-                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
-                            .fieldOf("id").forGetter(Kingdom::getId),
-                    Codec.STRING
-                            .fieldOf("name").forGetter(Kingdom::getName),
-                    Codec.STRING
-                            .fieldOf("culture").forGetter(Kingdom::getCulture),
-                    Codec.STRING.xmap(UUID::fromString, UUID::toString).listOf()
-                            .optionalFieldOf("villageIds", new ArrayList<>())
-                            .forGetter(k -> new ArrayList<>(k.villageIds)),
-                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
-                            .optionalFieldOf("rulerEntityId")
-                            .forGetter(k -> Optional.ofNullable(k.rulerEntityId)),
-                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
-                            .optionalFieldOf("rulerPlayerId")
-                            .forGetter(k -> Optional.ofNullable(k.rulerPlayerId)),
-                    Codec.LONG
-                            .optionalFieldOf("treasuryBronze", 0L)
-                            .forGetter(Kingdom::getTreasuryBronze),
-                    Codec.unboundedMap(
-                                    Codec.STRING.xmap(UUID::fromString, UUID::toString),
-                                    Codec.STRING.xmap(DiplomaticRelation::valueOf,
-                                            DiplomaticRelation::name)
-                            ).optionalFieldOf("relations", new HashMap<>())
-                            .forGetter(k -> k.relations),
-                    Codec.STRING.xmap(KingdomLaw::valueOf, KingdomLaw::name).listOf()
-                            .optionalFieldOf("activeLaws", new ArrayList<>())
-                            .forGetter(k -> new ArrayList<>(k.activeLaws)),
-                    Codec.DOUBLE
-                            .optionalFieldOf("incomeTaxRate", 0.1)
-                            .forGetter(Kingdom::getIncomeTaxRate),
-                    Codec.LONG
-                            .optionalFieldOf("flatUpkeepBronze", 32L)
-                            .forGetter(Kingdom::getFlatUpkeepBronze),
-                    Codec.LONG
-                            .optionalFieldOf("lastTaxTick", -1L)
-                            .forGetter(Kingdom::getLastTaxTick)
-            ).apply(instance, (id, name, culture, villageIds, rulerEntity,
-                               rulerPlayer, treasury, relations, laws,
-                               taxRate, upkeep, lastTax) -> {
-                Kingdom k = new Kingdom(id, name, culture);
-                k.villageIds.addAll(villageIds);
-                rulerEntity.ifPresent(rid -> k.rulerEntityId = rid);
-                rulerPlayer.ifPresent(pid -> k.rulerPlayerId = pid);
-                k.treasuryBronze = treasury;
-                k.relations.putAll(relations);
-                k.activeLaws.addAll(laws);
-                k.incomeTaxRate = taxRate;
-                k.flatUpkeepBronze = upkeep;
-                k.lastTaxTick = lastTax;
-                return k;
-            })
-    );
+
+    private static Kingdom fromCodec(
+            UUID id, String name, String culture,
+            List<UUID> villageIds,
+            Optional<UUID> rulerEntity,
+            Optional<UUID> rulerPlayer,
+            long treasury,
+            Map<UUID, DiplomaticRelation> relations,
+            List<KingdomLaw> laws,
+            double taxRate,
+            long upkeep,
+            long lastTax,
+            KingdomHistoryData history) {
+        Kingdom k = new Kingdom(id, name, culture);
+        k.villageIds.addAll(villageIds);
+        rulerEntity.ifPresent(rid -> k.rulerEntityId = rid);
+        rulerPlayer.ifPresent(pid -> k.rulerPlayerId = pid);
+        k.treasuryBronze    = treasury;
+        k.relations.putAll(relations);
+        k.activeLaws.addAll(laws);
+        k.incomeTaxRate     = taxRate;
+        k.flatUpkeepBronze  = upkeep;
+        k.lastTaxTick       = lastTax;
+        k.history           = history;
+        return k;
+    }
 
     // =========================================================================
     // FIELDS
@@ -110,6 +148,8 @@ public class Kingdom {
     public void setName(String name) { this.name = name; }
     public String getCulture() { return culture; }
     public void setCulture(String culture) { this.culture = culture; }
+    private KingdomHistoryData history = new KingdomHistoryData();
+
 
     // =========================================================================
     // VILLAGES
@@ -282,5 +322,8 @@ public class Kingdom {
                     .findFirst();
         }
     }
+
+    public KingdomHistoryData getHistory() { return history; }
+
 
 }

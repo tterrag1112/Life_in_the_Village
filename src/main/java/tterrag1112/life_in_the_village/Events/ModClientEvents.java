@@ -58,6 +58,8 @@ public class ModClientEvents {
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
         EntityRenderers.register(ModEntities.TOWNSPERSON.get(), TownspersonRenderer::new);
+        tterrag1112.life_in_the_village.Api.ModConfiguration.load();
+
     }
 
     @SubscribeEvent

@@ -78,6 +78,7 @@ public class Life_in_the_village {
         // Some common setup code
         LOGGER.info("HELLO FROM COMMON SETUP");
 
+
     }
 
     @SubscribeEvent

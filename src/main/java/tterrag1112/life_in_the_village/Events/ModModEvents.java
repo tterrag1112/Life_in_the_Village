@@ -102,7 +102,7 @@ public class ModModEvents {
         registrar.playToClient(BuilderInventoryPacket.TYPE, BuilderInventoryPacket.CODEC, BuilderInventoryPacket::handle);
         registrar.playToClient(OpenTradeScreenPacket.TYPE, OpenTradeScreenPacket.CODEC, OpenTradeScreenPacket::handle);
         registrar.playToServer(TradeActionPacket.TYPE, TradeActionPacket.CODEC, TradeActionPacket::handle);
-        registrar.playBidirectional(
+        registrar.playToServer(
                 KingdomActionPacket.TYPE,
                 KingdomActionPacket.CODEC,
                 KingdomActionPacket::handle);
@@ -118,13 +118,6 @@ public class ModModEvents {
 
     }
 
-    @SubscribeEvent // on the mod event bus only on the physical client
-    public static void register(RegisterClientPayloadHandlersEvent event) {
-        event.register(
-                KingdomActionPacket.TYPE,
-                KingdomActionPacket::handle
-        );
-    }
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         BuildingCommand.register(event.getDispatcher());
@@ -134,31 +127,6 @@ public class ModModEvents {
 
     }
 
-
-    @SubscribeEvent
-    public static void setPlayerManaOnRespawn(PlayerEvent.PlayerRespawnEvent event){
-        Player player = event.getEntity();
-        int manaLevel = player.getData(ModData.MANA);
-        int penaltyAmount = ModManaHandler.DEATH_MANA_PENALTY_PERCENTAGE;
-        ModManaHandler.decreaseManaForPlayer(player, 25);
-    }
-
-    @SubscribeEvent
-    public static void setPlayerManaOnSpawn(PlayerEvent.PlayerLoggedInEvent event){
-        Player player = event.getEntity();
-        ModManaHandler.setManaForPlayer(player, 50);
-        PacketDistributor.sendToPlayer(((ServerPlayer) player), new ManaData(0, 50));
-    }
-
-    @SubscribeEvent
-    public static void setPlayersManaOnClone(final PlayerEvent.Clone event) {
-        ServerPlayer player = ((ServerPlayer) event.getEntity());
-        ModManaHandler.setManaForPlayer(player, event.getOriginal().getData(ModData.MANA));
-    }
-    @SubscribeEvent
-    public static void setPlayersManaOnDimensionChange(final PlayerEvent.PlayerChangedDimensionEvent event) {
-        PacketDistributor.sendToPlayer(((ServerPlayer) event.getEntity()), new ManaData(0, event.getEntity().getData(ModData.MANA)));
-    }
     @SubscribeEvent
     public static void onPlayerJoin(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {

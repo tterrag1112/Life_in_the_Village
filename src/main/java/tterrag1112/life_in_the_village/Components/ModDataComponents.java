@@ -1,15 +1,10 @@
 package tterrag1112.life_in_the_village.Components;
 
 import com.mojang.serialization.Codec;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.util.ExtraCodecs;
-import net.minecraft.world.entity.animal.fish.Cod;
-import net.minecraft.world.item.component.BundleContents;
-import net.minecraft.world.item.component.CustomData;
-import net.minecraft.world.item.component.ItemContainerContents;
+
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;

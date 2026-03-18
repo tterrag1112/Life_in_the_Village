@@ -7,8 +7,11 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Networking.SyncBuildingsPacket;
+import tterrag1112.life_in_the_village.Networking.SyncKingdomPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
@@ -86,10 +89,22 @@ public class WorldEvents {
     public static void onPlayerLogin(
             net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
 
-        VillageSavedData data = VillageSavedData.get(
-                level.getServer().overworld());
+        ServerLevel level = (ServerLevel) player.level();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        // Sync buildings
+        PacketDistributor.sendToPlayer(player,
+                new SyncBuildingsPacket(
+                        data.getAllBuildings(),
+                        data.getAllVillages()));
+
+        // Sync kingdoms — ensures ClientKingdomCache
+        // is populated even after full game restart
+        PacketDistributor.sendToPlayer(player,
+                new SyncKingdomPacket(
+                        data.getAllKingdoms()));
+
 
         // Clear any warnings where reputation has recovered
         VillageWarningSystem.checkAndClearWarnings(

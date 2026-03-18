@@ -12,6 +12,7 @@ import tterrag1112.life_in_the_village.Kingdom.DiplomaticRelation;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomLaw;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.UUID;
@@ -90,6 +91,19 @@ public record KingdomActionPacket(
                         } else {
                             kingdom.enactLaw(law);
                         }
+                        kingdom.getHistory().recordEvent(
+                                KingdomHistoryData.KingdomHistoryEvent.create(
+                                        kingdom.hasLaw(law)
+                                                ? KingdomHistoryData.HistoryEventType.LAW_REPEALED
+                                                : KingdomHistoryData.HistoryEventType.LAW_ENACTED,
+                                        (kingdom.hasLaw(law)
+                                                ? "Repealed: " : "Enacted: ")
+                                                + formatLawName(law.name()),
+                                        "By decree of "
+                                                + player.getName().getString(),
+                                        level.getGameTime(),
+                                        player.getName().getString()),kingdom.getName(),
+                                player.getName().getString());
                         data.setDirty();
                     } catch (IllegalArgumentException ignored) {}
                 }
@@ -107,10 +121,16 @@ public record KingdomActionPacket(
                         // stringParam = "targetKingdomId:RELATION"
                         String[] parts = pkt.stringParam()
                                 .split(":");
+
+
                         UUID targetId = UUID.fromString(parts[0]);
+                        DiplomaticRelation currentRelation =
+                                kingdom.getRelation(targetId);
                         DiplomaticRelation rel =
                                 DiplomaticRelation.valueOf(parts[1]);
                         kingdom.setRelation(targetId, rel);
+
+
 
                         // Mirror on target kingdom
                         data.getKingdomById(targetId)
@@ -118,6 +138,39 @@ public record KingdomActionPacket(
                                     target.setRelation(
                                             kingdom.getId(), rel);
                                 });
+                        kingdom.getHistory().recordDiplomacy(
+                                new KingdomHistoryData.KingdomDiplomacyData.DiplomacyRecord(
+                                        data.getKingdomById(targetId)
+                                                .map(Kingdom::getName)
+                                                .orElse("Unknown"),
+                                        currentRelation,
+                                        rel,
+                                        level.getGameTime(),
+                                        player.getName().getString()));
+                        data.setDirty();
+
+                        // Record as event
+                        kingdom.getHistory().recordEvent(
+                                KingdomHistoryData.KingdomHistoryEvent.create(
+                                        rel == DiplomaticRelation.WAR
+                                                ? KingdomHistoryData.HistoryEventType.WAR_DECLARED
+                                                : rel == DiplomaticRelation.ALLIANCE
+                                                ? KingdomHistoryData.HistoryEventType.ALLIANCE_FORMED
+                                                : KingdomHistoryData.HistoryEventType.TRADE_PACT_SIGNED,
+                                        rel.name().replace("_", " ")
+                                                + " with "
+                                                + data.getKingdomById(targetId)
+                                                .map(Kingdom::getName)
+                                                .orElse("Unknown"),
+                                        player.getName().getString()
+                                                + " changed relations to "
+                                                + rel.name(),
+                                        level.getGameTime(),
+                                        data.getKingdomById(targetId)
+                                                .map(Kingdom::getName)
+                                                .orElse("Unknown")),
+                                kingdom.getName(),
+                                player.getName().getString());
                         data.setDirty();
                     } catch (Exception ignored) {}
                 }
@@ -168,5 +221,11 @@ public record KingdomActionPacket(
                     .sendToPlayer(player,
                             new SyncKingdomPacket(data.getAllKingdoms()));
         });
+    }
+
+    private static String formatLawName(String name) {
+        return name.charAt(0)
+                + name.substring(1).toLowerCase()
+                .replace("_", " ");
     }
 }

@@ -45,10 +45,12 @@ public class KingdomBookItem extends Item {
             return InteractionResult.FAIL;
         }
 
+        // Send kingdoms first
         PacketDistributor.sendToPlayer(
                 (ServerPlayer) player,
                 new SyncKingdomPacket(data.getAllKingdoms()));
 
+// Then open — arrives after sync due to packet ordering
         PacketDistributor.sendToPlayer(
                 (ServerPlayer) player,
                 new OpenKingdomBookPacket(kingdomId));
