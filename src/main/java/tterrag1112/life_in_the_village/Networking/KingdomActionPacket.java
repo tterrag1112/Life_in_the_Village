@@ -12,6 +12,7 @@ import tterrag1112.life_in_the_village.Kingdom.DiplomaticRelation;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomLaw;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
@@ -97,22 +98,17 @@ public record KingdomActionPacket(
                         // Record AFTER toggle — now hasLaw reflects
                         // the new state
                         kingdom.getHistory().recordEvent(
-                                KingdomHistoryData.KingdomHistoryEvent.create(
-                                        kingdom.hasLaw(law)
-                                                ? KingdomHistoryData
-                                                .HistoryEventType.LAW_ENACTED
-                                                : KingdomHistoryData
-                                                .HistoryEventType.LAW_REPEALED,
-                                        (kingdom.hasLaw(law)
-                                                ? "Enacted: "
-                                                : "Repealed: ")
-                                                + formatLawName(law.name()),
-                                        "By decree of "
-                                                + player.getName().getString(),
-                                        level.getGameTime(),
-                                        player.getName().getString()),
+                                kingdom.hasLaw(law)
+                                        ? HistoryTextGenerator.lawEnacted(
+                                        formatLawName(law.name()),
+                                        player.getName().getString(),
+                                        level.getGameTime())
+                                        : HistoryTextGenerator.lawRepealed(
+                                        formatLawName(law.name()),
+                                        player.getName().getString(),
+                                        level.getGameTime()),
                                 kingdom.getName(),
-                                player.getName().getString());
+                                kingdom.getRulerName(level));
 
                         data.setDirty();
                     } catch (IllegalArgumentException ignored) {}
@@ -142,21 +138,29 @@ public record KingdomActionPacket(
 
 
 
+
                         // Mirror on target kingdom
                         data.getKingdomById(targetId)
                                 .ifPresent(target -> {
                                     target.setRelation(
                                             kingdom.getId(), rel);
                                 });
-                        kingdom.getHistory().recordDiplomacy(
-                                new KingdomHistoryData.KingdomDiplomacyData.DiplomacyRecord(
-                                        data.getKingdomById(targetId)
-                                                .map(Kingdom::getName)
-                                                .orElse("Unknown"),
-                                        currentRelation,
-                                        rel,
-                                        level.getGameTime(),
-                                        player.getName().getString()));
+                        kingdom.getHistory().recordEvent(
+                                rel == DiplomaticRelation.WAR
+                                        ? HistoryTextGenerator.warDeclared(
+                                        kingdom.getName(),
+                                        targetId.toString(),
+                                        level.getGameTime())
+                                        : rel == DiplomaticRelation.ALLIANCE
+                                        ? HistoryTextGenerator.allianceFormed(
+                                        kingdom.getName(),
+                                        targetId.toString(),
+                                        level.getGameTime())
+                                        : HistoryTextGenerator.tradePactSigned(
+                                        kingdom.getName(),
+                                        targetId.toString(),
+                                        level.getGameTime()),
+                                kingdom.getName());
                         data.setDirty();
 
                         // Record as event
@@ -179,8 +183,7 @@ public record KingdomActionPacket(
                                         data.getKingdomById(targetId)
                                                 .map(Kingdom::getName)
                                                 .orElse("Unknown")),
-                                kingdom.getName(),
-                                player.getName().getString());
+                                kingdom.getName());
                         data.setDirty();
                     } catch (Exception ignored) {}
                 }

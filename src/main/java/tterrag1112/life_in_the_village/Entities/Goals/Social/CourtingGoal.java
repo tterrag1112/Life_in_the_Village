@@ -4,6 +4,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -108,6 +110,27 @@ public class CourtingGoal extends Goal {
 
         // Propagate head's surname to spouse
         entity.adoptSurname(entity.getSurname(), level);
+        // After setting spouse IDs
+        if (entity.level() instanceof ServerLevel sl) {
+            VillageSavedData data = VillageSavedData.get(sl);
+            entity.getAssignedVillageName()
+                    .flatMap(data::getVillageByName)
+                    .ifPresent(village ->
+                            data.getKingdomForVillage(
+                                            village.getId())
+                                    .ifPresent(k -> {
+                                        k.getHistory().recordEvent(
+                                                HistoryTextGenerator
+                                                        .notableMarriage(
+                                                                entity.getNpcName(),
+                                                                target.getNpcName(),
+                                                                village.getName(),
+                                                                sl.getGameTime()),
+                                                k.getName(),
+                                                k.getRulerName(sl));
+                                        data.setDirty();
+                                    }));
+        }
 
         System.out.println("NPC " + entity.getNpcName()
                 + " and " + target.getNpcName() + " formed a couple");

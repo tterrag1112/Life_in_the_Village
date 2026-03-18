@@ -36,6 +36,7 @@ import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
+import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jspecify.annotations.Nullable;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Adventurer.*;
@@ -60,6 +61,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -228,7 +230,7 @@ public class TownspersonMob extends PathfinderMob {
         // Universal goals — all professions
         goalSelector.addGoal(1, new FloatGoal(this));
         goalSelector.addGoal(1, new OpenDoorGoal(this, true));
-        goalSelector.addGoal(1, new ReturnHomeGoal(this));
+        goalSelector.addGoal(2, new ReturnHomeGoal(this));
         goalSelector.addGoal(5, new EatMealGoal(this));
         goalSelector.addGoal(3, new SeekHouseGoal(this));
         goalSelector.addGoal(5, new SocializeGoal(this));
@@ -1443,6 +1445,43 @@ public class TownspersonMob extends PathfinderMob {
                 false);
     }
 
+    @SubscribeEvent
+    public static void onNpcDeath(
+            net.neoforged.neoforge.event.entity.living
+                    .LivingDeathEvent event) {
+        if (!(event.getEntity()
+                instanceof TownspersonMob npc)) return;
+        if (!(npc.level() instanceof ServerLevel level))
+            return;
+
+        // Only record deaths of notable professions
+        boolean notable = switch (npc.getProfession()) {
+            case VILLAGE_LEADER, KINGDOM_RULER,
+                 GUILDMASTER, MERCHANT -> true;
+            default -> false;
+        };
+        if (!notable) return;
+
+        VillageSavedData data = VillageSavedData.get(level);
+        npc.getAssignedVillageName()
+                .flatMap(data::getVillageByName)
+                .ifPresent(village ->
+                        data.getKingdomForVillage(
+                                        village.getId())
+                                .ifPresent(k -> {
+                                    k.getHistory().recordEvent(
+                                            HistoryTextGenerator
+                                                    .notableDeath(
+                                                            npc.getNpcName(),
+                                                            village.getName(),
+                                                            npc.getProfession()
+                                                                    .getDisplayName(),
+                                                            level.getGameTime()),
+                                            k.getName(),
+                                            k.getRulerName(level));
+                                    data.setDirty();
+                                }));
+    }
 
 
 

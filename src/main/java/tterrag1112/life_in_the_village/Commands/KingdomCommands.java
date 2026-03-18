@@ -12,6 +12,8 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Kingdom.*;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.Optional;
@@ -153,6 +155,22 @@ public class KingdomCommands {
 
         Kingdom kingdom = new Kingdom(name, culture);
         data.addKingdom(kingdom);
+        kingdom.getHistory().recordEvent(
+                HistoryTextGenerator.kingdomFounded(kingdom.getName(), src.getPlayer().getName().getString(), level.getGameTime()),
+                name);
+
+        kingdom.getHistory().setOrigin(
+                new KingdomHistoryData.KingdomOriginData(
+                        KingdomHistoryData.KingdomOrigins
+                                .FOUNDED_BY_PLAYER,
+                        src.getTextName(),
+                        src.getPlayer() != null
+                                ? src.getPlayer().getUUID()
+                                : new UUID(0, 0),
+                        "the wilderness",
+                        level.getGameTime(),
+                        0,
+                        ""));
         src.sendSuccess(() -> Component.literal(
                         "Created kingdom '" + name + "' with culture '" + culture + "'"),
                 true);
@@ -185,6 +203,11 @@ public class KingdomCommands {
 
         kingdom.addVillage(village.getId());
 
+        data.getKingdomByName(kingdomName).ifPresent(k -> {
+            k.getHistory().recordEvent(
+                    HistoryTextGenerator.villageJoined(villageName, kingdomName, level.getGameTime()), k.getName());
+        });
+
         // Update village culture to match kingdom
         // (culture system integration point for future)
 
@@ -214,6 +237,9 @@ public class KingdomCommands {
         }
 
         kingdom.setRulerPlayerId(src.getPlayer().getUUID());
+        kingdom.getHistory().recordEvent(
+                HistoryTextGenerator.playerBecameRuler(src.getPlayer().getName().getString(), kingdomName, level.getGameTime()),
+                kingdom.getName());
         data.setDirty();
         src.sendSuccess(() -> Component.literal(
                 src.getPlayer().getName().getString()

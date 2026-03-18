@@ -41,7 +41,12 @@ public class VillageTypeDatagen implements DataProvider {
         buildings.add(building("STOCKPILE",  "stockpile/level_1",  20, 0,  0));
         buildings.add(building("FARMHOUSE",  "farmhouse/level_1",  0,  0,  20));
         buildings.add(building("HOUSE",      "house/level_1",      -20, 0, 0));
-        buildings.add(building("GUILD_HALL", "house/level_1", 20, 0, 40));
+        buildings.add(building("GUILD_HALL", "guild_hall/level_1", 20, 0, 40));
+        buildings.add(building("GUARD_TOWER", "guard_tower/level_1", 40, 0, 40));
+        buildings.add(building("MINE", "mine/level_1", 40, 0, 20));
+        buildings.add(building("BLACKSMITH", "blacksmith/level_1", 0, 0, 40));
+
+
 
         json.add("starter_buildings", buildings);
 
@@ -54,6 +59,11 @@ public class VillageTypeDatagen implements DataProvider {
         npcs.add(npc("NONE",             "HOUSE",      "HEAD"));
         npcs.add(npc("GUILDWORKER", "GUILD_HALL", "UNASSIGNED"));
         npcs.add(npc("GUILDMASTER", "GUILD_HALL", "HEAD"));
+        npcs.add(npc("GUARD", "GUARD_TOWER", "HEAD"));
+        npcs.add(npc("MINER", "MINE", "HEAD"));
+        npcs.add(npc("BLACKSMITH", "BLACKSMITH", "HEAD"));
+
+
         json.add("starter_npcs", npcs);
 
         JsonArray items = new JsonArray();

@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.animal.equine.Llama;
 import net.minecraft.world.entity.vehicle.minecart.MinecartChest;
@@ -12,7 +13,9 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
+import tterrag1112.life_in_the_village.Entities.NpcNameRegistry;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
@@ -166,6 +169,7 @@ public class CaravanSavedData extends SavedData {
                               BlockPos pos,
                               ServerLevel level,
                               VillageSavedData villageData) {
+        RandomSource random = level.getRandom();
         // Spawn merchant NPC
         TownspersonMob merchant = ModEntities.TOWNSPERSON
                 .get().create(level,
@@ -181,10 +185,12 @@ public class CaravanSavedData extends SavedData {
                             .orElse("Unknown"));
             merchant.setPos(pos.getX() + 0.5,
                     pos.getY(), pos.getZ() + 0.5);
-            merchant.setCustomName(
-                    net.minecraft.network.chat.Component
-                            .literal("Caravan Merchant"));
-            merchant.setCustomNameVisible(true);
+            String firstName = NpcNameRegistry.INSTANCE
+                    .generateFirstName(merchant.isMale(), random);
+            String surname = NpcNameRegistry.INSTANCE
+                    .generateSurname(random);
+            merchant.setNpcName(firstName + " " + surname);
+            //merchant.setCustomNameVisible(true);
             level.addFreshEntity(merchant);
             caravan.setMerchantEntityId(merchant.getUUID());
             merchant.setCaravanId(caravan.getCaravanId());
@@ -217,10 +223,11 @@ public class CaravanSavedData extends SavedData {
             guard.setPos(pos.getX() + offsetX + 0.5,
                     pos.getY(),
                     pos.getZ() + offsetZ + 0.5);
-            guard.setCustomName(
-                    net.minecraft.network.chat.Component
-                            .literal("Caravan Guard"));
-            guard.setCustomNameVisible(true);
+            String firstName = NpcNameRegistry.INSTANCE
+                    .generateFirstName(guard.isMale(), random);
+            String surname = NpcNameRegistry.INSTANCE
+                    .generateSurname(random);
+            guard.setNpcName(firstName + " " + surname);
             level.addFreshEntity(guard);
             caravan.addGuardEntityId(guard.getUUID());
             guard.setCaravanId(caravan.getCaravanId());
@@ -434,6 +441,35 @@ public class CaravanSavedData extends SavedData {
                     goods,
                     guardCount,
                     currentTick);
+
+            // In dispatchNewCaravans, after caravan is created
+// Check if this is the first ever caravan on this route
+            boolean isFirst = caravans.values().stream()
+                    .filter(c -> c.getRouteId()
+                            .equals(route.getRouteId()))
+                    .count() == 1; // just added this one
+
+            if (isFirst) {
+                villageData.getKingdomForVillage(
+                                route.getVillageA())
+                        .ifPresent(k -> {
+                            String originName = villageData
+                                    .getVillageById(route.getVillageA())
+                                    .map(v -> v.getName())
+                                    .orElse("unknown");
+                            String destName = villageData
+                                    .getVillageById(route.getVillageB())
+                                    .map(v -> v.getName())
+                                    .orElse("unknown");
+                            k.getHistory().recordEvent(
+                                    HistoryTextGenerator.firstCaravan(
+                                            originName, destName,
+                                            level.getGameTime()),
+                                    k.getName(),
+                                    k.getRulerName(level));
+                            villageData.setDirty();
+                        });
+            }
 
             caravans.put(caravan.getCaravanId(), caravan);
             route.setLastCaravanTick(currentTick);

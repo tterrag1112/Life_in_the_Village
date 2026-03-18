@@ -11,6 +11,7 @@ import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
@@ -203,6 +204,36 @@ public class AdventurerQuestTracker {
                         e.blockPosition(), true));
 
         updateGroupActivity(group, "Quest complete! Returning...", level);
+        // After existing quest completion logic
+        if (group.getHomeVillageId() != null) {
+            VillageSavedData villageData =
+                    VillageSavedData.get(level);
+            villageData.getVillageById(
+                            group.getHomeVillageId())
+                    .ifPresent(village ->
+                            villageData.getKingdomForVillage(
+                                            village.getId())
+                                    .ifPresent(k -> {
+                                        String leaderName =
+                                                group.getMemberIds()
+                                                        .stream()
+                                                        .findFirst()
+                                                        .map(id ->
+                                                                AdventurerNameGenerator
+                                                                        .getName(id))
+                                                        .orElse("an adventurer");
+                                        k.getHistory().recordEvent(
+                                                HistoryTextGenerator
+                                                        .questCompleted(
+                                                                leaderName,
+                                                                quest.getType()
+                                                                        .name(),
+                                                                level.getGameTime()),
+                                                k.getName(),
+                                                k.getRulerName(level));
+                                        villageData.setDirty();
+                                    }));
+        }
         data.setDirty();
     }
 

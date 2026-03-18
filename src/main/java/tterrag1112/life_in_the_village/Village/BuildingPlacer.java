@@ -15,6 +15,7 @@ import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
 
 import java.util.Comparator;
 import java.util.Optional;
@@ -144,6 +145,7 @@ public class BuildingPlacer {
                         + village.getName());
             }
         }
+
 
         return Optional.of(building);
 

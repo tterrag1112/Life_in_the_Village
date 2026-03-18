@@ -2,6 +2,8 @@ package tterrag1112.life_in_the_village.Village.Event;
 
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -88,6 +90,30 @@ public class VillageEventScheduler {
         VillageEvent event = VillageEvent.create(
                 village.getId(), type, currentTick);
         data.addEvent(event);
+        data.getKingdomForVillage(village.getId())
+                .ifPresent(k -> {
+                    KingdomHistoryData.HistoryEventType histType =
+                            switch (type) {
+                                case HARVEST_FESTIVAL ->
+                                        KingdomHistoryData
+                                                .HistoryEventType
+                                                .GREAT_HARVEST;
+                                case MARKET_DAY,
+                                     VILLAGE_FAIR ->
+                                        KingdomHistoryData
+                                                .HistoryEventType
+                                                .FESTIVAL_HELD;
+                                default ->
+                                        KingdomHistoryData
+                                                .HistoryEventType
+                                                .FESTIVAL_HELD;
+                            };
+
+                    k.getHistory().recordEvent(
+                            HistoryTextGenerator.festivalHeld(village.getName(), type.name().replace("_", " ")
+                                    .toLowerCase(), currentTick), k.getName(), k.getRulerName(level));
+                    data.setDirty();
+                });
         data.setDirty();
 
         System.out.println("Scheduled " + type

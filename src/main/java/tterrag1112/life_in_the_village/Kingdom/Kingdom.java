@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Kingdom;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -11,6 +12,35 @@ import tterrag1112.life_in_the_village.Village.Village;
 import java.util.*;
 
 public class Kingdom {
+    public record KingdomGovernanceData(
+            long treasuryBronze,
+            double incomeTaxRate,
+            long flatUpkeepBronze,
+            long lastTaxTick,
+            KingdomHistoryData history
+    ) {
+        public static final Codec<KingdomGovernanceData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        Codec.LONG
+                                .optionalFieldOf("treasuryBronze", 0L)
+                                .forGetter(KingdomGovernanceData::treasuryBronze),
+                        Codec.DOUBLE
+                                .optionalFieldOf("incomeTaxRate", 0.1)
+                                .forGetter(KingdomGovernanceData::incomeTaxRate),
+                        Codec.LONG
+                                .optionalFieldOf("flatUpkeepBronze", 32L)
+                                .forGetter(KingdomGovernanceData::flatUpkeepBronze),
+                        Codec.LONG
+                                .optionalFieldOf("lastTaxTick", -1L)
+                                .forGetter(KingdomGovernanceData::lastTaxTick),
+                        KingdomHistoryData.CODEC
+                                .optionalFieldOf("history",
+                                        new KingdomHistoryData())
+                                .forGetter(g -> g.history() != null
+                                        ? g.history()
+                                        : new KingdomHistoryData())
+                ).apply(i, KingdomGovernanceData::new));
+    }
 
     // =========================================================================
     // CODEC
@@ -44,10 +74,6 @@ public class Kingdom {
                                     .optionalFieldOf("rulerPlayerId")
                                     .forGetter(k -> Optional.ofNullable(
                                             k.rulerPlayerId)),
-                            Codec.LONG
-                                    .optionalFieldOf("treasuryBronze",
-                                            0L)
-                                    .forGetter(Kingdom::getTreasuryBronze),
                             Codec.unboundedMap(
                                             Codec.STRING.xmap(
                                                     UUID::fromString,
@@ -64,21 +90,16 @@ public class Kingdom {
                                             new ArrayList<>())
                                     .forGetter(k -> new ArrayList<>(
                                             k.activeLaws)),
-                            Codec.DOUBLE
-                                    .optionalFieldOf("incomeTaxRate",
-                                            0.1)
-                                    .forGetter(Kingdom::getIncomeTaxRate),
-                            Codec.LONG
-                                    .optionalFieldOf("flatUpkeepBronze",
-                                            32L)
-                                    .forGetter(Kingdom::getFlatUpkeepBronze),
-                            Codec.LONG
-                                    .optionalFieldOf("lastTaxTick", -1L)
-                                    .forGetter(Kingdom::getLastTaxTick),
-                            KingdomHistoryData.CODEC
-                                    .optionalFieldOf("history",
-                                            new KingdomHistoryData())
-                                    .forGetter(k -> k.history)
+                            KingdomGovernanceData.CODEC
+                                    .fieldOf("governance")
+                                    .forGetter(k -> new KingdomGovernanceData(
+                                            k.treasuryBronze,
+                                            k.incomeTaxRate,
+                                            k.flatUpkeepBronze,
+                                            k.lastTaxTick,
+                                            k.history != null
+                                                    ? k.history
+                                                    : new KingdomHistoryData()))
                     ).apply(instance, Kingdom::fromCodec));
 
 
@@ -87,24 +108,22 @@ public class Kingdom {
             List<UUID> villageIds,
             Optional<UUID> rulerEntity,
             Optional<UUID> rulerPlayer,
-            long treasury,
             Map<UUID, DiplomaticRelation> relations,
             List<KingdomLaw> laws,
-            double taxRate,
-            long upkeep,
-            long lastTax,
-            KingdomHistoryData history) {
+            KingdomGovernanceData governance) {
         Kingdom k = new Kingdom(id, name, culture);
         k.villageIds.addAll(villageIds);
         rulerEntity.ifPresent(rid -> k.rulerEntityId = rid);
         rulerPlayer.ifPresent(pid -> k.rulerPlayerId = pid);
-        k.treasuryBronze    = treasury;
         k.relations.putAll(relations);
         k.activeLaws.addAll(laws);
-        k.incomeTaxRate     = taxRate;
-        k.flatUpkeepBronze  = upkeep;
-        k.lastTaxTick       = lastTax;
-        k.history           = history;
+        k.treasuryBronze   = governance.treasuryBronze();
+        k.incomeTaxRate    = governance.incomeTaxRate();
+        k.flatUpkeepBronze = governance.flatUpkeepBronze();
+        k.lastTaxTick      = governance.lastTaxTick();
+        k.history          = governance.history() != null
+                ? governance.history()
+                : new KingdomHistoryData();
         return k;
     }
 
@@ -124,7 +143,7 @@ public class Kingdom {
     private double incomeTaxRate                = 0.1; // 10% default
     private long flatUpkeepBronze               = 32L; // 32 bronze per village per day
     private long lastTaxTick                    = -1L;
-    private KingdomHistoryData history;
+    private KingdomHistoryData history = new KingdomHistoryData();
 
 
     // =========================================================================
@@ -221,6 +240,36 @@ public class Kingdom {
     }
 
     public boolean isPlayerRuled() { return rulerPlayerId != null; }
+
+    /**
+     * Returns the display name of the current ruler.
+     * Checks player ruler first, then NPC ruler,
+     * then falls back to "the crown".
+     */
+    public String getRulerName(ServerLevel level) {
+        // Player ruler
+        if (rulerPlayerId != null) {
+            var player = level.getServer()
+                    .getPlayerList()
+                    .getPlayer(rulerPlayerId);
+            if (player != null) {
+                return player.getName().getString();
+            }
+            // Player offline — we don't have the name stored
+            // so fall through to NPC check
+        }
+
+        // NPC ruler
+        if (rulerEntityId != null) {
+            var entity = level.getEntity(rulerEntityId);
+            if (entity instanceof tterrag1112.life_in_the_village
+                    .Entities.custom.TownspersonMob npc) {
+                return npc.getNpcName();
+            }
+        }
+
+        return "the crown";
+    }
 
     // =========================================================================
     // TREASURY
@@ -324,7 +373,9 @@ public class Kingdom {
         }
     }
 
-    public KingdomHistoryData getHistory() { return history; }
-
+    public KingdomHistoryData getHistory() {
+        if (history == null) history = new KingdomHistoryData();
+        return history;
+    }
 
 }

@@ -6,6 +6,8 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.targeting.TargetingConditions;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 
@@ -58,6 +60,7 @@ public class CaravanGuardGoal extends Goal {
         entity.setTarget(null);
         entity.getNavigation().stop();
         entity.clearCurrentActivity();
+        hasRecordedAttack = false;
         threat    = null;
         threatTimer = 0;
     }
@@ -79,8 +82,51 @@ public class CaravanGuardGoal extends Goal {
             tickFollow();
         }
     }
+    private boolean hasRecordedAttack = false;
+
+
 
     private void tickCombat() {
+        // In CaravanGuardGoal.tickCombat, first time combat starts
+        if (!hasRecordedAttack) {
+            hasRecordedAttack = true;
+            if (entity.level() instanceof ServerLevel sl) {
+                CaravanSavedData caravanData =
+                        CaravanSavedData.get(sl);
+                VillageSavedData villageData =
+                        VillageSavedData.get(sl);
+
+                entity.getCaravanId()
+                        .flatMap(caravanData::getCaravan)
+                        .ifPresent(caravan -> {
+                            String origin = villageData
+                                    .getVillageById(
+                                            caravan.getOriginVillageId())
+                                    .map(v -> v.getName())
+                                    .orElse("unknown");
+                            String dest = villageData
+                                    .getVillageById(
+                                            caravan.getDestVillageId())
+                                    .map(v -> v.getName())
+                                    .orElse("unknown");
+                            villageData.getKingdomForVillage(
+                                            caravan.getOriginVillageId())
+                                    .ifPresent(k -> {
+                                        k.getHistory().recordEvent(
+                                                HistoryTextGenerator
+                                                        .caravanAttacked(
+                                                                origin,
+                                                                dest,
+                                                                sl.getGameTime()),
+                                                k.getName(),
+                                                k.getRulerName(sl));
+                                        villageData.setDirty();
+                                    });
+                        });
+            }
+        }
+
+
         entity.getLookControl().setLookAt(threat,
                 30f, entity.getMaxHeadXRot());
         entity.setTarget(threat);

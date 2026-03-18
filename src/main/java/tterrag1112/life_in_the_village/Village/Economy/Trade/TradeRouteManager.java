@@ -2,6 +2,8 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -117,6 +119,10 @@ public class TradeRouteManager {
                     road.getRoadId(), routeType,
                     level.getGameTime());
             data.addTradeRoute(route);
+
+            data.getKingdomForVillage(newVillage.getId())
+                    .ifPresent(k -> k.getHistory().recordEvent(
+                            HistoryTextGenerator.tradeRouteEstablished(newVillage.getName(), target.getName(), level.getGameTime()), k.getName(), k.getRulerName(level)));
 
             System.out.println("TradeRouteManager: established "
                     + routeType + " route between "
@@ -252,6 +258,10 @@ public class TradeRouteManager {
                             route.setStatus(
                                     TradeRoute.RouteStatus
                                             .SUSPENDED);
+
+                            data.getKingdomForVillage(route.getVillageA())
+                                    .ifPresent(k -> k.getHistory().recordEvent(
+                                            HistoryTextGenerator.tradeRouteCollapsed(getVillageName(route.getVillageA(), data), getVillageName(route.getVillageB(),data), level.getGameTime()), k.getName(), k.getRulerName(level)));
                             System.out.println(
                                     "TradeRouteManager: route "
                                             + "suspended — road quality "

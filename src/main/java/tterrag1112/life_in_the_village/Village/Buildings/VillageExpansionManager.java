@@ -1,6 +1,8 @@
 package tterrag1112.life_in_the_village.Village.Buildings;
 
 import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -359,5 +361,50 @@ public class VillageExpansionManager {
                 });
 
         return CurrencyValue.of(totalCopper.get());
+    }
+
+    public static void onBuildingPlaced(Building building,
+                                        Village village,
+                                        VillageSavedData data,
+                                        ServerLevel level,
+                                        long tick) {
+        data.getKingdomForVillage(village.getId())
+                .ifPresent(k -> {
+                    KingdomHistoryData.KingdomHistoryEvent event =
+                            switch (building.getType()) {
+                                case TOWN_HALL ->
+                                        HistoryTextGenerator
+                                                .townHallUpgraded(
+                                                        village.getName(),
+                                                        building.getLevel(),
+                                                        tick);
+                                case CASTLE ->
+                                        HistoryTextGenerator
+                                                .castleBuilt(
+                                                        village.getName(),
+                                                        tick);
+                                case GUILD_HALL ->
+                                        HistoryTextGenerator
+                                                .guildHallFounded(
+                                                        village.getName(),
+                                                        tick);
+                                case BARRACKS, TEMPLE,
+                                     LIBRARY, NOBLE_MANOR ->
+                                        HistoryTextGenerator
+                                                .notableBuildingBuilt(
+                                                        building.getType()
+                                                                .name(),
+                                                        village.getName(),
+                                                        tick);
+                                default -> null;
+                            };
+
+                    if (event != null) {
+                        k.getHistory().recordEvent(event,
+                                k.getName(),
+                                k.getRulerName(level));
+                        data.setDirty();
+                    }
+                });
     }
 }

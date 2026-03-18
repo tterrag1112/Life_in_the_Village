@@ -10,6 +10,8 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
@@ -29,6 +31,7 @@ import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Needs.VillageNeedsCalculator;
 
 import java.util.Map;
+import java.util.UUID;
 
 
 @EventBusSubscriber(modid = Life_in_the_village.MODID)
@@ -78,6 +81,44 @@ public class NeedsUpdateEvent {
                     VillageEconomy.purgeStaleListings(
                             v.getId(), dayTime));
 
+            // After VillageEconomy.purgeStaleListings
+            data.getKingdomForVillage(village.getId())
+                    .ifPresent(k -> {
+                        // Bankruptcy check
+                        if (k.getTreasuryBronze() <= 0
+                                && k.getHistory().getEventsByType(
+                                        KingdomHistoryData
+                                                .HistoryEventType
+                                                .TREASURY_BANKRUPT)
+                                .stream()
+                                .noneMatch(e ->
+                                        dayTime - e.tick()
+                                                < 24000L * 30)) {
+                            k.getHistory().recordEvent(
+                                    HistoryTextGenerator.treasuryBankrupt(k.getName(), gameTick),
+                                    k.getName());
+
+                            data.setDirty();
+                        }
+
+                        // Prosperity check — treasury over 10000 bronze
+                        if (k.getTreasuryBronze() > 10000L
+                                && k.getHistory().getEventsByType(
+                                        KingdomHistoryData
+                                                .HistoryEventType
+                                                .GREAT_PROSPERITY)
+                                .stream()
+                                .noneMatch(e ->
+                                        dayTime - e.tick()
+                                                < 24000L * 60)) {
+                            k.getHistory().recordEvent(
+                                    HistoryTextGenerator.greatProsperity(k.getName(), gameTick),
+                                    k.getName(),
+                                    k.getRulerName(overworld));
+                            data.setDirty();
+                        }
+                    });
+
             // -----------------------------------------------
             // Village events
             // -----------------------------------------------
@@ -99,6 +140,60 @@ public class NeedsUpdateEvent {
             // -----------------------------------------------
             checkKingdomFormation(
                     overworld, village, data, dayTime);
+
+            data.getKingdomForVillage(village.getId())
+                    .ifPresent(k -> {
+                        long foundingTick = k.getHistory()
+                                .getOrigin()
+                                .map(o -> o.foundingTick())
+                                .orElse(0L);
+                        if (foundingTick <= 0) return;
+
+                        long daysSinceFounding =
+                                (dayTime - foundingTick) / 24000L;
+
+                        // Anniversary milestones
+                        boolean is100   = daysSinceFounding == 100;
+                        boolean is1Year = daysSinceFounding == 365;
+                        boolean is5Year = daysSinceFounding == 365 * 5;
+
+                        if (is100 || is1Year || is5Year) {
+                            k.getHistory().recordEvent(
+                                    HistoryTextGenerator.kingdomAnniversary(
+                                            k.getName(),
+                                            daysSinceFounding,
+                                            dayTime),
+                                    k.getName(),
+                                    k.getRulerName(overworld));
+                            data.setDirty();
+                        }
+
+                        // Population milestone
+                        int pop = (int) overworld.getEntitiesOfClass(
+                                TownspersonMob.class,
+                                village.getBounds(data)
+                                        .map(b -> b.inflate(32))
+                                        .orElse(new AABB(0,0,0,0,0,0)),
+                                mob -> mob.getAssignedVillageName()
+                                        .map(n -> n.equals(
+                                                village.getName()))
+                                        .orElse(false)).size();
+
+                        int[] milestones = {10, 25, 50, 100};
+                        for (int milestone : milestones) {
+                            if (pop == milestone) {
+                                k.getHistory().recordEvent(
+                                        HistoryTextGenerator
+                                                .populationMilestone(
+                                                        village.getName(),
+                                                        milestone,
+                                                        dayTime),
+                                        k.getName(),
+                                        k.getRulerName(overworld));
+                                data.setDirty();
+                            }
+                        }
+                    });
 
             // -----------------------------------------------
             // Expansion — now handled by
@@ -298,6 +393,20 @@ public class NeedsUpdateEvent {
         Kingdom kingdom = new Kingdom(kingdomName, "default");
         kingdom.addVillage(village.getId());
         data.addKingdom(kingdom);
+        kingdom.getHistory().recordEvent(
+                HistoryTextGenerator.kingdomFounded(kingdom.getName(), village.getName(), tick),
+                kingdom.getName());
+
+        kingdom.getHistory().setOrigin(
+                new KingdomHistoryData.KingdomOriginData(
+                        KingdomHistoryData.KingdomOrigins.ANCIENT,
+                        "the village elders",
+                        new UUID(0, 0),
+                        village.getName(),
+                        tick,
+                        kingdom.getVillageIds().size(),
+                        "From many, one."));
+        data.setDirty();
         data.setDirty();
 
         System.out.println("Kingdom '" + kingdomName

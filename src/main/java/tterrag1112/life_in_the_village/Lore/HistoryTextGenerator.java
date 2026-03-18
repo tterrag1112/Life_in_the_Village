@@ -32,7 +32,7 @@ public class HistoryTextGenerator {
 
     static {
         put(KingdomHistoryData.HistoryEventType.KINGDOM_FOUNDED,
-                "On the {day}th day, {ruler} proclaimed the founding of {kingdom}, and the banners of the new realm were raised above {party} for the first time.",
+                "On the {day}th day, {rulewr} proclaimed the founding of {kingdom}, and the banners of the new realm were raised above {party} for the first time.",
                 "What had once been a collection of disparate villages was united under a single crown on day {day}, when {ruler} established the Kingdom of {kingdom}.",
                 "The Kingdom of {kingdom} came into being on day {day} by the will of {ruler}, whose vision bound the villages of the realm into one.");
 
@@ -190,6 +190,70 @@ public class HistoryTextGenerator {
                 "On day {day}, {party} was lost — burned, abandoned, or taken beyond recovery. Its people scattered, and {kingdom} mourned what had been.",
                 "Day {day} brought the end of {party}. Whether by war, disaster, or simple misfortune, the village was no more.",
                 "The village of {party} ceased to exist on day {day}, leaving only the memory of what it had been within the borders of {kingdom}.");
+        put(KingdomHistoryData.HistoryEventType.KINGDOM_ANNIVERSARY,
+                "On day {day}, the Kingdom of {kingdom} marked a milestone in its history. Those who had been there from the beginning gathered to reflect on all that had been built.",
+                "Day {day} was declared a day of celebration in {kingdom}, as the realm marked another chapter in its unfolding story.",
+                "The chroniclers noted day {day} as a day of significance for {kingdom} — a moment to pause and take stock of what the kingdom had become.");
+
+        put(KingdomHistoryData.HistoryEventType.POPULATION_MILESTONE,
+                "The village of {party} swelled in size on day {day}, its growing population a testament to the stability that {kingdom} had provided.",
+                "Day {day} saw {party} reach a new threshold of inhabitants. The village had grown beyond what its founders might have imagined.",
+                "On day {day}, the people of {party} celebrated their numbers — proof that life under {kingdom} was worth living.");
+
+        put(KingdomHistoryData.HistoryEventType.TOWN_HALL_UPGRADED,
+                "The town hall of {party} was expanded on day {day}, its new wings housing the growing business of governance in {kingdom}.",
+                "On day {day}, scaffolding came down around {party}'s town hall to reveal a grander building — a sign of the village's rising status.",
+                "Day {day} saw the completion of works on {party}'s town hall. {kingdom} had invested in its future.");
+
+        put(KingdomHistoryData.HistoryEventType.CASTLE_BUILT,
+                "The great castle of {party} was completed on day {day}. Its walls were thick, its towers tall, and all who saw it understood that {kingdom} had grown into something formidable.",
+                "On day {day}, the last stone was laid at {party}'s castle. The builders celebrated, and so did {kingdom}.",
+                "Day {day} marked the completion of a castle in {party} — the most powerful symbol yet of {kingdom}'s ambitions.");
+
+        put(KingdomHistoryData.HistoryEventType.GUILD_HALL_FOUNDED,
+                "A guild hall opened its doors in {party} on day {day}, and adventurers began to gather within {kingdom}'s borders seeking glory and coin.",
+                "On day {day}, the guild hall of {party} was founded. It would become a place of legend in {kingdom}.",
+                "Day {day} saw the first fires lit in {party}'s new guild hall. The realm had a new heart for its wanderers.");
+
+        put(KingdomHistoryData.HistoryEventType.NOTABLE_BIRTH,
+                "On day {day}, {party} was born in {kingdom}. The midwives remarked on the child's strong lungs, though they could not know what the years would bring.",
+                "Day {day} brought a new life into {kingdom} — {party}, whose story was only just beginning.",
+                "The birth of {party} on day {day} was noted by few at the time. Later, the chroniclers would return to this entry with greater interest.");
+
+        put(KingdomHistoryData.HistoryEventType.NOTABLE_MARRIAGE,
+                "On day {day}, {party} were wed in {kingdom}, and the village celebrated with them through the night.",
+                "Day {day} brought joy to {kingdom} as {party} were joined in marriage before their friends and neighbours.",
+                "The wedding of {party} on day {day} was a bright moment in the life of {kingdom} — a reminder that the realm was made of people, not just politics.");
+
+        put(KingdomHistoryData.HistoryEventType.NOTABLE_DEATH,
+                "On day {day}, {party} passed from this world. {kingdom} was poorer for the loss.",
+                "The death of {party} on day {day} cast a shadow over {kingdom}. Those who had known them felt it keenly.",
+                "Day {day} brought grief to {kingdom}, for {party} was gone. The chronicles record the fact plainly, though the loss was anything but plain to those who lived it.");
+
+        put(KingdomHistoryData.HistoryEventType.LEGENDARY_ADVENTURER,
+                "On day {day}, the deeds of {party} had become legend throughout {kingdom}. Songs were sung, and children asked to hear the stories again.",
+                "Day {day} was the day {party} earned a name that would last in {kingdom} long after they were gone.",
+                "The chroniclers of {kingdom} noted day {day} as the moment {party} crossed from merely remarkable into the realm of legend.");
+
+        put(KingdomHistoryData.HistoryEventType.QUEST_COMPLETED,
+                "On day {day}, {party} returned to {kingdom} victorious, their quest complete and their pockets heavier for it.",
+                "Day {day} brought {party} home to {kingdom} with tales of what they had seen and done beyond its borders.",
+                "The return of {party} on day {day} was welcomed in {kingdom}. The realm had need of those willing to venture into the unknown.");
+
+        put(KingdomHistoryData.HistoryEventType.FIRST_CARAVAN,
+                "The first caravan set out from {party} on day {day}, carrying the hopes of {kingdom} along with its cargo.",
+                "On day {day}, {kingdom} watched its first caravan depart. It was a modest thing, but it meant the realm had become something worth trading with.",
+                "Day {day} marked a turning point for {kingdom} — the first caravan had departed, and the realm was no longer isolated.");
+
+        put(KingdomHistoryData.HistoryEventType.CARAVAN_ATTACKED,
+                "On day {day}, a caravan from {party} was attacked on the road. {kingdom} took note of the threat.",
+                "Day {day} brought grim tidings to {kingdom} — a caravan had been waylaid, and the roads were less safe than they had seemed.",
+                "The attack on a caravan from {party} on day {day} was a reminder to {kingdom} that prosperity must be defended.");
+
+        put(KingdomHistoryData.HistoryEventType.NOTABLE_BUILDING_BUILT,
+                "A new {party} was completed in {kingdom} on day {day}, adding to the realm's growing collection of institutions.",
+                "On day {day}, construction finished on a {party} in {kingdom}. The builders were paid, the doors were opened, and life went on.",
+                "Day {day} saw another building rise in {kingdom} — a {party} that would serve the realm for years to come.");
     }
 
     // -------------------------------------------------------------------------
@@ -223,6 +287,447 @@ public class HistoryTextGenerator {
         return fill(template, kingdomName, rulerName,
                 event.involvedParty(),
                 event.tick() / 24000L);
+    }
+
+    // -------------------------------------------------------------------------
+// Event factory methods — call these from integration points
+// -------------------------------------------------------------------------
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    kingdomFounded(String kingdomName,
+                   String foundingVillage,
+                   long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.KINGDOM_FOUNDED,
+                "The founding of " + kingdomName,
+                "Born from the village of " + foundingVillage
+                        + ", the kingdom was established when "
+                        + "its people grew prosperous enough "
+                        + "to stand as one.",
+                tick, foundingVillage);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    playerBecameRuler(String playerName,
+                      String kingdomName,
+                      long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .PLAYER_BECAME_RULER,
+                playerName + " takes the throne",
+                playerName + " assumed rulership of "
+                        + kingdomName
+                        + ", and the kingdom entered "
+                        + "a new chapter.",
+                tick, playerName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    villageJoined(String villageName,
+                  String kingdomName,
+                  long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.VILLAGE_JOINED,
+                villageName + " joins the kingdom",
+                "The village of " + villageName
+                        + " swore fealty to " + kingdomName
+                        + " and was welcomed into the realm.",
+                tick, villageName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    villageLeft(String villageName,
+                String kingdomName,
+                long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.VILLAGE_LEFT,
+                villageName + " departs",
+                "The village of " + villageName
+                        + " broke away from " + kingdomName
+                        + ", choosing to chart its own course.",
+                tick, villageName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    tradeRouteEstablished(String villageA,
+                          String villageB,
+                          long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .TRADE_ROUTE_ESTABLISHED,
+                "New road to " + villageB,
+                "A road was opened between " + villageA
+                        + " and " + villageB
+                        + ", carrying goods and prosperity "
+                        + "between the two settlements.",
+                tick, villageB);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    tradeRouteCollapsed(String villageA,
+                        String villageB,
+                        long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .TRADE_ROUTE_COLLAPSED,
+                "Road to " + villageB + " collapses",
+                "The road between " + villageA + " and "
+                        + villageB + " fell into disrepair "
+                        + "and trade was suspended.",
+                tick, villageB);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    festivalHeld(String villageName,
+                 String festivalType,
+                 long tick) {
+        String formatted = festivalType.replace("_", " ")
+                .toLowerCase();
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.FESTIVAL_HELD,
+                formatted + " in " + villageName,
+                "The people of " + villageName
+                        + " gathered to celebrate a "
+                        + formatted + ".",
+                tick, villageName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    greatHarvest(String villageName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.GREAT_HARVEST,
+                "A great harvest in " + villageName,
+                "The fields of " + villageName
+                        + " yielded beyond all expectation, "
+                        + "and the realm gave thanks "
+                        + "for its good fortune.",
+                tick, villageName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    treasuryBankrupt(String kingdomName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .TREASURY_BANKRUPT,
+                "The treasury runs dry",
+                "The coffers of " + kingdomName
+                        + " were emptied, and the crown "
+                        + "faced financial ruin.",
+                tick, kingdomName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    greatProsperity(String kingdomName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .GREAT_PROSPERITY,
+                "An age of prosperity",
+                "The Kingdom of " + kingdomName
+                        + " entered a period of remarkable "
+                        + "wealth, its treasury full "
+                        + "and its people content.",
+                tick, kingdomName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    decreed(String decree, String rulerName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.DECREE_ISSUED,
+                "Royal decree issued",
+                rulerName + " proclaimed: \"" + decree + "\"",
+                tick, rulerName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    lawEnacted(String lawName, String rulerName,
+               long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.LAW_ENACTED,
+                "Enacted: " + lawName,
+                "By decree of " + rulerName + ".",
+                tick, rulerName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    lawRepealed(String lawName, String rulerName,
+                long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.LAW_REPEALED,
+                "Repealed: " + lawName,
+                "By decree of " + rulerName + ".",
+                tick, rulerName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    warDeclared(String kingdomName,
+                String targetName,
+                long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.WAR_DECLARED,
+                "War declared on " + targetName,
+                "The Kingdom of " + kingdomName
+                        + " declared war upon " + targetName
+                        + ". The drums of conflict echoed "
+                        + "across the realm.",
+                tick, targetName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    allianceFormed(String kingdomName,
+                   String partnerName,
+                   long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .ALLIANCE_FORMED,
+                "Alliance with " + partnerName,
+                kingdomName + " and " + partnerName
+                        + " sealed an alliance, binding "
+                        + "their fates together.",
+                tick, partnerName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    tradePactSigned(String kingdomName,
+                    String partnerName,
+                    long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .TRADE_PACT_SIGNED,
+                "Trade pact with " + partnerName,
+                kingdomName + " and " + partnerName
+                        + " agreed to a trade pact, opening "
+                        + "new roads of commerce.",
+                tick, partnerName);
+    }
+    // Milestones
+    public static KingdomHistoryData.KingdomHistoryEvent
+    kingdomAnniversary(String kingdomName,
+                       long days, long tick) {
+        String milestone = days >= 365 * 5
+                ? "five years"
+                : days >= 365
+                ? "one year"
+                : days + " days";
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .KINGDOM_ANNIVERSARY,
+                kingdomName + " marks " + milestone,
+                "The Kingdom of " + kingdomName
+                        + " celebrated " + milestone
+                        + " since its founding. "
+                        + "Those who remembered its early "
+                        + "days marvelled at how far it "
+                        + "had come.",
+                tick, kingdomName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    populationMilestone(String villageName,
+                        int population,
+                        long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .POPULATION_MILESTONE,
+                villageName + " reaches "
+                        + population + " souls",
+                "The village of " + villageName
+                        + " grew to " + population
+                        + " inhabitants, a sign of "
+                        + "its growing prosperity "
+                        + "and stability.",
+                tick, villageName);
+    }
+
+    // Buildings
+    public static KingdomHistoryData.KingdomHistoryEvent
+    townHallUpgraded(String villageName,
+                     int newLevel, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .TOWN_HALL_UPGRADED,
+                "Town hall expanded in " + villageName,
+                "The town hall of " + villageName
+                        + " was expanded to its "
+                        + ordinal(newLevel) + " tier, "
+                        + "reflecting the village's "
+                        + "growing importance.",
+                tick, villageName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    castleBuilt(String villageName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.CASTLE_BUILT,
+                "A castle rises in " + villageName,
+                "Construction was completed on a great "
+                        + "castle in " + villageName
+                        + ". Its towers could be seen "
+                        + "from miles around, a symbol "
+                        + "of the kingdom's power.",
+                tick, villageName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    guildHallFounded(String villageName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .GUILD_HALL_FOUNDED,
+                "Guild hall founded in " + villageName,
+                "A guild hall was established in "
+                        + villageName
+                        + ", drawing adventurers and "
+                        + "skilled workers from across "
+                        + "the realm.",
+                tick, villageName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    notableBuildingBuilt(String buildingType,
+                         String villageName,
+                         long tick) {
+        String formatted = buildingType.replace("_", " ")
+                .toLowerCase();
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .NOTABLE_BUILDING_BUILT,
+                "A " + formatted + " built in "
+                        + villageName,
+                "A new " + formatted
+                        + " was completed in "
+                        + villageName
+                        + ", adding to the village's "
+                        + "growing collection of "
+                        + "institutions.",
+                tick, villageName);
+    }
+
+    // NPC life
+    public static KingdomHistoryData.KingdomHistoryEvent
+    notableBirth(String npcName,
+                 String villageName,
+                 long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.NOTABLE_BIRTH,
+                "A child is born in " + villageName,
+                npcName + " was born in " + villageName
+                        + ". Few knew then what role "
+                        + "they would come to play "
+                        + "in the kingdom's story.",
+                tick, npcName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    notableMarriage(String name1, String name2,
+                    String villageName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .NOTABLE_MARRIAGE,
+                name1 + " and " + name2 + " wed",
+                name1 + " and " + name2
+                        + " were married in "
+                        + villageName
+                        + ", and the village celebrated "
+                        + "with them.",
+                tick, name1 + " and " + name2);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    notableDeath(String npcName,
+                 String villageName,
+                 String profession,
+                 long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.NOTABLE_DEATH,
+                "Death of " + npcName,
+                npcName + ", "
+                        + profession.toLowerCase()
+                        + " of " + villageName
+                        + ", passed from this world. "
+                        + "Those who knew them "
+                        + "would not soon forget.",
+                tick, npcName);
+    }
+
+    // Adventurers
+    public static KingdomHistoryData.KingdomHistoryEvent
+    legendaryAdventurer(String adventurerName,
+                        long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .LEGENDARY_ADVENTURER,
+                adventurerName + " becomes legend",
+                "Word spread of the deeds of "
+                        + adventurerName
+                        + ", whose exploits had earned "
+                        + "them a place among the "
+                        + "legends of the realm.",
+                tick, adventurerName);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    questCompleted(String groupLeader,
+                   String questType,
+                   long tick) {
+        String formatted = questType.replace("_", " ")
+                .toLowerCase();
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .QUEST_COMPLETED,
+                groupLeader + " completes a "
+                        + formatted,
+                "The adventurer " + groupLeader
+                        + " and their companions "
+                        + "returned victorious from "
+                        + "a " + formatted
+                        + ", their deeds adding to "
+                        + "the kingdom's renown.",
+                tick, groupLeader);
+    }
+
+    // Caravans
+    public static KingdomHistoryData.KingdomHistoryEvent
+    firstCaravan(String originVillage,
+                 String destVillage,
+                 long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.FIRST_CARAVAN,
+                "First caravan departs " + originVillage,
+                "The first caravan set out from "
+                        + originVillage
+                        + " bound for " + destVillage
+                        + ". Merchants and onlookers "
+                        + "lined the road to watch "
+                        + "it go.",
+                tick, destVillage);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    caravanAttacked(String originVillage,
+                    String destVillage,
+                    long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType
+                        .CARAVAN_ATTACKED,
+                "Caravan attacked on the road",
+                "A caravan travelling from "
+                        + originVillage + " to "
+                        + destVillage
+                        + " was set upon by hostile "
+                        + "forces. The guards fought "
+                        + "bravely, but the loss was "
+                        + "felt.",
+                tick, originVillage);
+    }
+
+    // Helper
+    private static String ordinal(int n) {
+        return switch (n) {
+            case 1 -> "first";
+            case 2 -> "second";
+            case 3 -> "third";
+            case 4 -> "fourth";
+            default -> n + "th";
+        };
     }
 
     /**

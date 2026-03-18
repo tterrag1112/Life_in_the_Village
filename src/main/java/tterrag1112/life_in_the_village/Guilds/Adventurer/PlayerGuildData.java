@@ -115,6 +115,7 @@ public class PlayerGuildData extends SavedData {
         for (int i = 0; i < members.size(); i++) {
             if (members.get(i).playerId().equals(playerId)) {
                 members.set(i, members.get(i).withRank(rank));
+
                 setDirty();
                 return;
             }

@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Lore;
 
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import tterrag1112.life_in_the_village.Kingdom.DiplomaticRelation;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
@@ -253,6 +254,29 @@ public class KingdomHistoryData {
         GREAT_HARVEST,
         FAMINE,
 
+        // Milestones
+        KINGDOM_ANNIVERSARY,    // 100 days, 1 year, 5 years
+        POPULATION_MILESTONE,   // village reaches size threshold
+
+        // Buildings
+        TOWN_HALL_UPGRADED,
+        CASTLE_BUILT,
+        GUILD_HALL_FOUNDED,
+        NOTABLE_BUILDING_BUILT,
+
+        // NPC life
+        NOTABLE_BIRTH,
+        NOTABLE_MARRIAGE,
+        NOTABLE_DEATH,
+
+        // Adventurers
+        LEGENDARY_ADVENTURER,
+        QUEST_COMPLETED,
+
+        // Caravans
+        FIRST_CARAVAN,
+        CARAVAN_ATTACKED,
+
         // Player
         PLAYER_BECAME_RULER,
         PLAYER_ABDICATED,
@@ -312,15 +336,27 @@ public class KingdomHistoryData {
         return Optional.ofNullable(origin);
     }
 
-    public void recordEvent(KingdomHistoryEvent event,
-                            String kingdomName,
-                            String rulerName) {
-        // Generate and persist text immediately
+    public void recordEvent(
+            KingdomHistoryData.KingdomHistoryEvent event,
+            String kingdomName) {
+        String text = HistoryTextGenerator.generateForEvent(
+                event, kingdomName,
+                // rulerName extracted from event's involvedParty
+                // as a reasonable fallback
+                event.involvedParty().isEmpty()
+                        ? "the crown"
+                        : event.involvedParty());
+        this.events = events.withEvent(
+                event.withGeneratedText(text));
+    }
+    public void recordEvent(
+            KingdomHistoryData.KingdomHistoryEvent event,
+            String kingdomName,
+            String rulerName) {
         String text = HistoryTextGenerator.generateForEvent(
                 event, kingdomName, rulerName);
-        KingdomHistoryEvent withText =
-                event.withGeneratedText(text);
-        this.events = events.withEvent(withText);
+        this.events = events.withEvent(
+                event.withGeneratedText(text));
     }
 
     public List<KingdomHistoryEvent> getEvents() {

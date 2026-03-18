@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerGuildData;
+import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.HashMap;
@@ -59,34 +60,74 @@ public class AdventurerReputationManager {
     public static AdventurerReputationTier getEffectiveTier(
             ServerPlayer player, AdventurerGroup group,
             ServerLevel level) {
-        String key = cacheKey(player.getUUID(), group.getGroupId());
-        AdventurerReputationTier current = getTier(player, group, level);
+        String key = cacheKey(player.getUUID(),
+                group.getGroupId());
+        AdventurerReputationTier current = getTier(
+                player, group, level);
         AdventurerReputationTier cached  = tierCache.get(key);
         long currentTick = level.getGameTime();
 
         if (cached == null) {
-            // First time seeing this player — no delay needed
             tierCache.put(key, current);
             tierChangeTick.put(key, currentTick);
             return current;
         }
 
         if (cached != current) {
-            // Tier changed — start the delay if not already started
             if (!tierChangeTick.containsKey(key)
                     || tierCache.get(key) == cached) {
                 tierChangeTick.put(key, currentTick);
                 tierCache.put(key, current);
             }
-            // Check if delay has elapsed
-            long changed = tierChangeTick.getOrDefault(key, currentTick);
+            long changed = tierChangeTick.getOrDefault(
+                    key, currentTick);
             if (currentTick - changed >= TIER_CHANGE_DELAY) {
+
+                // Tier has officially changed — check for LEGEND
+                if (current == AdventurerReputationTier.LEGEND
+                        && cached != AdventurerReputationTier.LEGEND) {
+                    recordLegendaryEvent(player, level);
+                }
+
                 return current;
             }
-            return cached; // still showing old tier during delay
+            return cached;
         }
 
         return current;
+    }
+
+    private static void recordLegendaryEvent(
+            ServerPlayer player, ServerLevel level) {
+        VillageSavedData data = VillageSavedData.get(level);
+        String playerName = player.getName().getString();
+
+        // Record in every kingdom the player has reputation in
+        data.getAllKingdoms().stream()
+                .filter(k -> k.getVillageIds().stream()
+                        .anyMatch(vid ->
+                                data.getVillageById(vid)
+                                        .map(v -> v.getReputation(
+                                                player.getUUID()) > 0)
+                                        .orElse(false)))
+                .forEach(k -> {
+                    k.getHistory().recordEvent(
+                            HistoryTextGenerator.legendaryAdventurer(
+                                    playerName,
+                                    level.getGameTime()),
+                            k.getName(),
+                            k.getRulerName(level));
+                    data.setDirty();
+                });
+
+        // Announce to the player
+        player.displayClientMessage(
+                net.minecraft.network.chat.Component.literal(
+                                "Your deeds have become legend. "
+                                        + "The chronicles of the realm "
+                                        + "will remember your name.")
+                        .withStyle(net.minecraft.ChatFormatting.GOLD),
+                false);
     }
 
     // -------------------------------------------------------------------------
