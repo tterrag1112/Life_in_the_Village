@@ -40,19 +40,20 @@ public class VillageSitePreparer {
     // Entry point
     // -------------------------------------------------------------------------
 
-    public static void prepare(ServerLevel level, VillageLayout layout) {
-        BlockPos centre = layout.getCenter();
-        System.out.println("VillageSitePreparer: preparing site at " + centre);
+    public static void prepare(ServerLevel level,
+                               BlockPos centre,
+                               int villageLevel) {
+        // Scale the prep radius to the planned village size
+        int prepRadius = 48 + villageLevel * 8; // 56 for level 1, 128 for level 10
+        System.out.println("VillageSitePreparer: preparing radius="
+                + prepRadius + " around " + centre);
 
-        // Pass 1 — clear all trees
-        clearTrees(level, centre, PREP_RADIUS);
+        clearTrees(level, centre, prepRadius);
+        fillSurfaceHoles(level, centre, prepRadius);
 
-        // Pass 2 — fill surface caves / one-block holes
-        fillSurfaceHoles(level, centre, PREP_RADIUS);
-
-        // Pass 3 — gentle height smoothing (repeated)
-        for (int i = 0; i < SMOOTH_PASSES; i++) {
-            smoothHeights(level, centre, PREP_RADIUS);
+        // Two smoothing passes with a moderate step cap keeps things natural
+        for (int i = 0; i < 2; i++) {
+            smoothHeights(level, centre, prepRadius);
         }
 
         System.out.println("VillageSitePreparer: site preparation complete");

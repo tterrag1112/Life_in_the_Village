@@ -79,7 +79,7 @@ public class VillageDecorator {
         Set<Long> buildingXZ = collectBuildingXZ(buildings);
         buildings.stream()
                 .filter(b -> b.getType() != BuildingType.TOWN_SQUARE)
-                .forEach(b -> smoothAroundBuilding(level, b, buildingXZ));
+                .forEach(b -> smoothAroundBuildingTight(level, b));
 
         // ── Step 2: Town square ───────────────────────────────────────────────
         BlockPos squareCenter = (layout != null && layout.getTownSquarePos() != null)
@@ -210,8 +210,6 @@ public class VillageDecorator {
                                                    VillageSizeTier tier,
                                                    Set<Long> protectedXZ) {
         List<BlockPos> placed = new ArrayList<>();
-
-        // Paths are 1 wide for hamlets, 3 wide (halfWidth=1) for village+
         int halfWidth = tier.ordinal() >= 1 ? 1 : 0;
 
         for (int i = 0; i < pathNodes.size(); i++) {
@@ -219,57 +217,58 @@ public class VillageDecorator {
             BlockPos prev = i > 0               ? pathNodes.get(i - 1) : pos;
             BlockPos next = i < pathNodes.size() - 1 ? pathNodes.get(i + 1) : pos;
 
-            // Travel direction
-            int tx = next.getX() - prev.getX();
-            int tz = next.getZ() - prev.getZ();
-
-            // True perpendicular: rotate travel vector 90° → (-tz, tx)
+            int tx    = next.getX() - prev.getX();
+            int tz    = next.getZ() - prev.getZ();
             int perpX = Integer.signum(-tz);
             int perpZ = Integer.signum(tx);
-
-            // Guard: if both are zero (path has a single node), default to X
             if (perpX == 0 && perpZ == 0) perpX = 1;
 
             for (int offset = -halfWidth; offset <= halfWidth; offset++) {
                 int wx = pos.getX() + perpX * offset;
                 int wz = pos.getZ() + perpZ * offset;
 
-                // Skip columns already occupied by roads, the town square, etc.
                 if (protectedXZ.contains(xzKey(wx, wz))) continue;
 
-                // Clear trees before checking terrain
                 clearColumn(level, wx, wz, pos.getY());
 
-                // Find the true surface at this XZ
-                BlockPos surface   = findSurface(level,
-                        new BlockPos(wx, pos.getY(), wz));
-                // The path block goes at the surface level (replacing the cap block)
-                BlockPos pathBlock = surface.below();
+                // Get the true surface Y directly from the heightmap
+                int surfY = level.getHeight(
+                        net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,
+                        wx, wz);
 
+                // pathBlock is the solid surface block (grass, dirt, etc.)
+                BlockPos pathBlock = new BlockPos(wx, surfY - 1, wz);
                 BlockState existing = level.getBlockState(pathBlock);
 
-                // Only replace natural terrain — never stone, ore, structures
-                if (!isReplaceableTerrain(existing)) continue;
+                // Skip anything that isn't natural placeable terrain
+                if (existing.is(net.minecraft.tags.BlockTags.BASE_STONE_OVERWORLD)
+                        || existing.is(Blocks.BEDROCK)
+                        || existing.is(net.minecraft.tags.BlockTags.LOGS)
+                        || existing.is(net.minecraft.tags.BlockTags.PLANKS)) {
+                    continue;
+                }
 
                 level.setBlock(pathBlock, style.pathState(), 3);
 
-                // Clear any vegetation sitting on top
-                BlockState atSurface = level.getBlockState(surface);
-                if (atSurface.is(BlockTags.REPLACEABLE)
-                        || atSurface.is(BlockTags.FLOWERS)
-                        || atSurface.is(BlockTags.SMALL_FLOWERS)
-                        || atSurface.is(BlockTags.LEAVES)) {
-                    level.setBlock(surface, Blocks.AIR.defaultBlockState(), 3);
+                // Clear anything sitting on top of the new path block
+                BlockPos above = pathBlock.above();
+                BlockState aboveState = level.getBlockState(above);
+                if (!aboveState.isAir() && (
+                        aboveState.is(BlockTags.REPLACEABLE)
+                                || aboveState.is(BlockTags.FLOWERS)
+                                || aboveState.is(BlockTags.SMALL_FLOWERS)
+                                || aboveState.is(BlockTags.LEAVES)
+                                || aboveState.is(BlockTags.LOGS))) {
+                    level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
                 }
 
-                placed.add(surface);
+                // Surface position = the air block above the path
+                placed.add(above);
             }
         }
 
-        // Slab transitions where the path steps up or down by 1 block
-        placePathSlabTransitions(level, placed, style);
-
-        // Lampposts at tier-appropriate intervals
+        // Only place slabs and lampposts after the main block pass is confirmed working
+        //placePathSlabTransitions(level, placed, style);
         placeLampposts(level, placed, style, tier);
 
         return placed;
@@ -670,20 +669,22 @@ public class VillageDecorator {
         }
     }
 
-    private static boolean isReplaceableTerrain(BlockState state) {
-        return state.is(Blocks.GRASS_BLOCK)
-                || state.is(Blocks.DIRT)
-                || state.is(Blocks.COARSE_DIRT)
-                || state.is(Blocks.ROOTED_DIRT)
-                || state.is(Blocks.SAND)
-                || state.is(Blocks.RED_SAND)
-                || state.is(Blocks.GRAVEL)
-                || state.is(Blocks.SNOW_BLOCK)
-                || state.is(BlockTags.REPLACEABLE)
-                || state.is(BlockTags.LEAVES)
-                || state.is(BlockTags.FLOWERS)
-                || state.is(BlockTags.SMALL_FLOWERS)
-                || state.isAir();
+    private static boolean shouldSkipPathPlacement(BlockState state) {
+        return state.is(net.minecraft.tags.BlockTags.BASE_STONE_OVERWORLD)
+                || state.is(Blocks.BEDROCK)
+                || state.is(Blocks.OBSIDIAN)
+                || state.is(net.minecraft.tags.BlockTags.LOGS)
+                || state.is(net.minecraft.tags.BlockTags.PLANKS)
+                || state.isSolidRender() && !state.is(Blocks.GRASS_BLOCK)
+                && !state.is(Blocks.DIRT)
+                && !state.is(Blocks.COARSE_DIRT)
+                && !state.is(Blocks.ROOTED_DIRT)
+                && !state.is(Blocks.SAND)
+                && !state.is(Blocks.RED_SAND)
+                && !state.is(Blocks.GRAVEL)
+                && !state.is(Blocks.SNOW_BLOCK)
+                && !state.is(Blocks.MUD)
+                && !state.is(Blocks.PODZOL);
     }
 
     private static Set<Long> collectBuildingXZ(List<Building> buildings) {
@@ -702,5 +703,60 @@ public class VillageDecorator {
 
     private static long xzKey(int x, int z) {
         return ((long)(x + 30000000)) << 32 | (z + 30000000);
+    }
+
+    private static void smoothAroundBuildingTight(ServerLevel level,
+                                                  Building building) {
+        BlockPos min    = building.getShape().getMin();
+        BlockPos max    = building.getShape().getMax();
+        int targetY     = building.getShape().getOrigin().getY();
+        int border      = 2; // only 2 blocks outside the footprint
+
+        for (int x = min.getX() - border; x <= max.getX() + border; x++) {
+            for (int z = min.getZ() - border; z <= max.getZ() + border; z++) {
+                int surfY = level.getHeight(
+                        net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,
+                        x, z);
+
+                if (surfY == targetY) continue;
+
+                if (surfY < targetY) {
+                    // Fill the gap under the building
+                    for (int y = surfY; y < targetY; y++) {
+                        BlockPos pos   = new BlockPos(x, y, z);
+                        BlockState s   = level.getBlockState(pos);
+                        if (s.isAir() || s.is(net.minecraft.tags.BlockTags.REPLACEABLE)) {
+                            boolean isTop = (y == targetY - 1);
+                            level.setBlock(pos, isTop
+                                    ? Blocks.GRASS_BLOCK.defaultBlockState()
+                                    : Blocks.DIRT.defaultBlockState(), 3);
+                        }
+                    }
+                } else if (surfY > targetY) {
+                    // Carve down natural terrain only
+                    for (int y = surfY - 1; y >= targetY; y--) {
+                        BlockPos pos   = new BlockPos(x, y, z);
+                        BlockState s   = level.getBlockState(pos);
+                        if (s.is(Blocks.GRASS_BLOCK) || s.is(Blocks.DIRT)
+                                || s.is(Blocks.COARSE_DIRT)
+                                || s.is(Blocks.ROOTED_DIRT)
+                                || s.is(Blocks.SAND) || s.is(Blocks.RED_SAND)
+                                || s.is(Blocks.GRAVEL) || s.is(Blocks.SNOW_BLOCK)
+                                || s.is(net.minecraft.tags.BlockTags.REPLACEABLE)
+                                || s.isAir()) {
+                            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                        } else {
+                            break; // hit stone or structure — stop
+                        }
+                    }
+                    // Re-cap the new top if it's bare dirt
+                    BlockPos newCap = new BlockPos(x, targetY - 1, z);
+                    if (level.getBlockState(newCap).is(Blocks.DIRT)) {
+                        level.setBlock(newCap,
+                                Blocks.GRASS_BLOCK.defaultBlockState(), 3);
+                    }
+                }
+            }
+        }
     }
 }

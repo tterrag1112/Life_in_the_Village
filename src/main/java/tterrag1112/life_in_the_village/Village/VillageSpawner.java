@@ -83,41 +83,35 @@ public class VillageSpawner {
 
         // ── Guard: distance from existing villages ───────────────────────────
         VillageSavedData data = VillageSavedData.get(level);
-        if (!isFarEnoughFromExistingVillages(level, origin)) {
-            System.out.println("VillageSpawner: origin " + origin
-                    + " too close to an existing village — aborting");
-            return Optional.empty();
-        }
+        if (!isFarEnoughFromExistingVillages(level, origin)) return Optional.empty();
 
-        // ── Seeded RNG — deterministic per (origin + name) ───────────────────
         Random rng = new Random((long) origin.hashCode() * 31
                 + villageName.hashCode());
 
-        // ── Phase 0: Plan layout ─────────────────────────────────────────────
-        // Village level is approximated from the number of starter buildings.
-        // A hamlet might have 3–4; a town-sized type might have 8–10.
+        // Derive level from type data
         int villageLevel = deriveVillageLevel(typeData);
 
+        // ── Phase -2: Pre-clear and smooth the site FIRST ────────────────────
+        // We do a preliminary terrain analysis just to find the centre,
+        // then prep, then do the full planning pass on the clean terrain.
+        BlockPos roughSurface = findSurface(level, origin);
+        VillageSitePreparer.prepare(level,
+                roughSurface, villageLevel);   // ← new signature, see below
+
+        // ── Phase -1: Plan layout on the NOW-CLEAN terrain ───────────────────
         Optional<VillageLayout> layoutOpt = VillagePlanner.plan(
-                level, origin, typeData, rng, villageLevel);
+                level, roughSurface, typeData, rng, villageLevel);
 
         if (layoutOpt.isEmpty()) {
-            System.out.println("VillageSpawner: VillagePlanner rejected "
-                    + "terrain at " + origin + " — aborting spawn of '"
+            System.out.println("VillageSpawner: planner rejected terrain — aborting '"
                     + villageName + "'");
             return Optional.empty();
         }
 
-
         VillageLayout layout = layoutOpt.get();
+        System.out.println("VillageSpawner: planned '" + villageName + "' — " + layout);
 
-        System.out.println("VillageSpawner: planner accepted '"
-                + villageName + "' — " + layout);
-
-        VillageSitePreparer.prepare(level, layout);
-
-
-        // ── Register the village object ───────────────────────────────────────
+        // ── Register village ──────────────────────────────────────────────────
         Village village = new Village(villageName);
         data.addVillage(village);
 
@@ -132,7 +126,17 @@ public class VillageSpawner {
             BuildingType buildingType = slot.getBuildingType();
             if (buildingType == null) continue;
 
-            BlockPos buildPos = slot.getPos();
+            // Re-query the actual surface at this XZ at placement time.
+            // VillageSitePreparer may have slightly shifted the terrain
+            // between planning and placement (rare but possible).
+            BlockPos plannedPos = slot.getPos();
+            int actualSurfY = level.getHeight(
+                    net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,
+                    plannedPos.getX(), plannedPos.getZ());
+            BlockPos buildPos = new BlockPos(
+                    plannedPos.getX(),
+                    actualSurfY,      // solid surface block Y
+                    plannedPos.getZ());
 
             // Resolve the structure identifier.
             // If the planner slot has a path, use it; otherwise fall back
