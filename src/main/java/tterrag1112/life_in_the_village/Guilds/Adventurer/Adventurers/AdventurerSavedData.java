@@ -18,6 +18,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -77,6 +78,8 @@ public class AdventurerSavedData extends SavedData {
     private long lastTickTime = 0L;
 
     private final Map<UUID, Set<UUID>> playerGroupIndex = new HashMap<>();
+
+
 
 
     // -------------------------------------------------------------------------
@@ -149,6 +152,13 @@ public class AdventurerSavedData extends SavedData {
             // Simulate unspawned groups
             // -------------------------------------------------------
             if (group.tick(currentTick)) dirty = true;
+
+            if (group.getState() == AdventurerGroup.GroupState.AT_GUILD
+                    && group.getStateChangeTick() == currentTick
+                    && group.isSpawned()) {
+                checkRetirements(group, level);
+                dirty = true;
+            }
         }
 
         AdventurerReputationManager.tickWarningSpread(
@@ -173,13 +183,19 @@ public class AdventurerSavedData extends SavedData {
 
     private void spawnGroupEntities(AdventurerGroup group, ServerLevel level) {
         List<UUID> spawnedIds = new ArrayList<>();
+        VillageSavedData villageData = VillageSavedData.get(level);
+
+        // AT_GUILD groups spawn near the guild hall, not at their travel position
+        BlockPos spawnCenter = (group.getState() == AdventurerGroup.GroupState.AT_GUILD)
+                ? getGuildHallPos(group, level, villageData)
+                : group.getCurrentPos();
 
         for (int i = 0; i < group.getMemberCount(); i++) {
-            BlockPos spawnPos = group.getCurrentPos().offset(
+            BlockPos spawnPos = spawnCenter.offset(
                     level.getRandom().nextIntBetweenInclusive(-3, 3),
                     0,
-                    level.getRandom().nextIntBetweenInclusive(-3, 3)
-            );
+                    level.getRandom().nextIntBetweenInclusive(-3, 3));
+
 
             int surfaceY = level.getHeight(
                     net.minecraft.world.level.levelgen.Heightmap.Types
@@ -208,6 +224,33 @@ public class AdventurerSavedData extends SavedData {
         group.getSpawnedEntityIds().addAll(spawnedIds);
         group.setSpawned(true);
     }
+    private BlockPos getGuildOrVillageCenter(AdventurerGroup group,
+                                             ServerLevel level,
+                                             VillageSavedData villageData) {
+        return villageData.getGuildForVillage(group.getHomeVillageId())
+                .flatMap(guild -> villageData.getBuildingById(guild.guildId()))  // if guild has a building ref
+                .map(b -> b.getShape().getOrigin())
+                .or(() -> villageData.getVillageById(group.getHomeVillageId())
+                        .flatMap(v -> v.getBounds(villageData))
+                        .map(aabb -> BlockPos.containing(aabb.getCenter())))
+                .orElse(group.getCurrentPos());
+    }
+    private BlockPos getGuildHallPos(AdventurerGroup group,
+                                     ServerLevel level,
+                                     VillageSavedData villageData) {
+        return villageData.getVillageById(group.getHomeVillageId())
+                .flatMap(village -> village.getBuildingIds().stream()
+                        .map(villageData::getBuildingById)
+                        .filter(Optional::isPresent)
+                        .map(Optional::get)
+                        .filter(b -> b.getType() == BuildingType.GUILD_HALL)
+                        .findFirst())
+                .map(b -> b.getShape().getOrigin())
+                .or(() -> villageData.getVillageById(group.getHomeVillageId())
+                        .flatMap(v -> v.getBounds(villageData))
+                        .map(aabb -> BlockPos.containing(aabb.getCenter())))
+                .orElse(group.getCurrentPos());
+    }
 
     private void setupAdventurerNpc(TownspersonMob npc, AdventurerGroup group,
                                         int memberIndex, ServerLevel level) {
@@ -227,17 +270,12 @@ public class AdventurerSavedData extends SavedData {
         // Identity — use stable name from member UUID
         // -------------------------------------------------------
         UUID memberId = group.getMemberIds().get(memberIndex);
-        String name = AdventurerNameGenerator.getName(memberId);
-        npc.setNpcName(name);
+        String firstName = AdventurerNameGenerator.getFirstName(memberId);
+        String surname   = AdventurerNameGenerator.getSurname(memberId);
+        String title     = AdventurerNameGenerator.getTitle(memberId);
 
-        boolean isLeader = memberIndex == 0;
-        if (isLeader) {
-            npc.setCustomName(Component.literal(name)
-                    .withStyle(net.minecraft.ChatFormatting.GOLD));
-        } else {
-            npc.setCustomName(Component.literal(name)
-                    .withStyle(net.minecraft.ChatFormatting.WHITE));
-        }
+        npc.setNpcName(firstName + " " + surname);  // clean, no title baked in
+        npc.setAdventurerTitle(title);              // stored separately, survives marriage
         npc.setCustomNameVisible(true);
 
         // -------------------------------------------------------
@@ -303,6 +341,7 @@ public class AdventurerSavedData extends SavedData {
             case EXPLORING  -> "Scouting the area";
             case ESCORTING  -> "Escorting traveller";
             case RETURNING  -> "Returning to guild";
+            case AT_GUILD   -> "Resting between contracts";
         };
     }
 
@@ -543,6 +582,40 @@ public class AdventurerSavedData extends SavedData {
                                     ? net.minecraft.ChatFormatting.GOLD
                                     : net.minecraft.ChatFormatting.WHITE));
                 });
+    }
+
+    private void checkRetirements(AdventurerGroup group, ServerLevel level) {
+        if (group.getMemberIds().isEmpty()) return;
+
+        List<UUID> toRetire = new ArrayList<>();
+
+        for (UUID memberId : group.getMemberIds()) {
+            int retirementAge = 55 + (int)(Math.abs(memberId.hashCode()) % 16);
+
+            // Find the spawned entity if present
+            TownspersonMob npc = group.getSpawnedEntityIds().stream()
+                    .map(level::getEntity)
+                    .filter(e -> e instanceof TownspersonMob)
+                    .map(e -> (TownspersonMob) e)
+                    .filter(e -> e.getUUID().equals(memberId))
+                    .findFirst().orElse(null);
+
+            if (npc != null && npc.getAge() >= retirementAge) {
+                toRetire.add(memberId);
+                npc.setAdventurerTitle(
+                        (npc.getAdventurerTitle().isEmpty() ? ""
+                                : npc.getAdventurerTitle() + " ") + "(Retired)");
+                npc.setProfession(Profession.NONE);
+                npc.setGroupId(null);
+                npc.setCurrentActivity("Enjoying retirement");
+            }
+        }
+
+        group.getMemberIds().removeAll(toRetire);
+
+        if (group.getMemberIds().isEmpty()) {
+            group.setDead(true);
+        }
     }
 
 }

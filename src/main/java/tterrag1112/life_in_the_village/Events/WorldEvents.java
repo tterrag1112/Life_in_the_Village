@@ -97,7 +97,8 @@ public class WorldEvents {
         PacketDistributor.sendToPlayer(player,
                 new SyncBuildingsPacket(
                         data.getAllBuildings(),
-                        data.getAllVillages()));
+                        data.getAllVillages(),
+                        data.getAllTradeRoutes()));
 
         // Sync kingdoms — ensures ClientKingdomCache
         // is populated even after full game restart

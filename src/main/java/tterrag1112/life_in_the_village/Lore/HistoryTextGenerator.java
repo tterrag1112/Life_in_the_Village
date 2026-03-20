@@ -19,6 +19,7 @@ public class HistoryTextGenerator {
             "The realm endured, as realms do, through the patient accumulation of small mercies.",
             "It was a time of neither great triumph nor great sorrow — and those who lived through it would later call it the good years.",
             "The people went about their days as people always have, little knowing what history was quietly being made around them."
+
     );
 
     // -------------------------------------------------------------------------
@@ -32,7 +33,7 @@ public class HistoryTextGenerator {
 
     static {
         put(KingdomHistoryData.HistoryEventType.KINGDOM_FOUNDED,
-                "On the {day}th day, {rulewr} proclaimed the founding of {kingdom}, and the banners of the new realm were raised above {party} for the first time.",
+                "On the {day}th day, {ruler} proclaimed the founding of {kingdom}, and the banners of the new realm were raised above {party} for the first time.",
                 "What had once been a collection of disparate villages was united under a single crown on day {day}, when {ruler} established the Kingdom of {kingdom}.",
                 "The Kingdom of {kingdom} came into being on day {day} by the will of {ruler}, whose vision bound the villages of the realm into one.");
 

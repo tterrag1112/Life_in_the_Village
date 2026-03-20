@@ -58,6 +58,9 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.Mercha
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miner.MinerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper.StockpileKeeperGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
+import tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen;
+import tterrag1112.life_in_the_village.Gui.VillageBookScreen;
+import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
@@ -156,6 +159,9 @@ public class TownspersonMob extends PathfinderMob {
     private boolean workingBlocked = false;
 
     private String currentActivity = "";
+
+    @Nullable private UUID companyId = null;
+
 
     public void setCurrentActivity(String activity) {
         if (activity.equals(currentActivity)) return; // no change needed
@@ -415,11 +421,17 @@ public class TownspersonMob extends PathfinderMob {
     // IDENTITY — name, age, life stage
     // =========================================================================
 
+    public String getAdventurerTitle() { return adventurerTitle; }
+    public void setAdventurerTitle(String title) {
+        this.adventurerTitle = title == null ? "" : title;
+        updateDisplayName();
+    }
     public String getNpcName()          { return npcName; }
     public void setNpcName(String name) {
         this.npcName = name;
         updateDisplayName();
     }
+    private String adventurerTitle = "";
 
     private void updateDisplayName() {
         String base = npcName != null ? npcName : "Townsperson";
@@ -444,6 +456,8 @@ public class TownspersonMob extends PathfinderMob {
 
             if (title != null) base = title + " " + base;
         }
+        if (!adventurerTitle.isEmpty()) base = base + " " + adventurerTitle;
+
 
         // Build display name with activity
         net.minecraft.network.chat.MutableComponent display;
@@ -976,10 +990,27 @@ public class TownspersonMob extends PathfinderMob {
                 }
             }
             case STOCKPILE_KEEPER -> openStockpileScreen(player);
-            case BUILDER          -> openInventoryScreen(player, "Builder Inventory");
-            default -> player.displayClientMessage(
-                    Component.literal(getDisplayName().getString() + " is busy."), false
-            );
+            case BUILDER -> openInventoryScreen(player, "Builder Inventory");
+            default -> {
+                // Check if this NPC is a company worker
+                if (isCompanyWorker() && level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+                    CompanySavedData compData = CompanySavedData.get(sl);
+                    compData.getCompanyForWorker(getUUID()).ifPresent(company -> {
+                        if (company.getOwnerPlayerId().equals(sp.getUUID())) {
+                            // Owner interacting with their worker — open worker assignment GUI
+                            CompanyWorkerScreen.open(sp, this, company);
+                        } else {
+                            sp.displayClientMessage(
+                                    Component.literal(getNpcName()
+                                            + " is employed by " + company.getName() + "."),
+                                    false);
+                        }
+                    });
+                }
+                player.displayClientMessage(
+                        Component.literal(getDisplayName().getString() + " is busy."), false);
+            }
         }
         return InteractionResult.SUCCESS;
     }
@@ -1136,6 +1167,8 @@ public class TownspersonMob extends PathfinderMob {
 
         getCaravanId().ifPresent(id ->
                 output.store("caravanId", UUIDUtil.CODEC, id));
+        if (companyId != null)
+            output.putString("companyId", companyId.toString());
 
 
         // Identity
@@ -1144,6 +1177,8 @@ public class TownspersonMob extends PathfinderMob {
         output.putLong("lastAgeTick", lastAgeTick);
         output.putLong("birthTick", birthTick);
         output.putBoolean("isMale", isMale);
+        if (!adventurerTitle.isEmpty())
+            output.putString("adventurerTitle", adventurerTitle);
 
 
 
@@ -1208,6 +1243,8 @@ public class TownspersonMob extends PathfinderMob {
 
         input.read("caravanId", UUIDUtil.CODEC)
                 .ifPresent(this::setCaravanId);
+        input.read("companyId", Codec.STRING)
+                .ifPresent(s -> companyId = UUID.fromString(s));
 
         // Identity
         input.read("npcName", Codec.STRING).ifPresent(s -> npcName = s);
@@ -1215,6 +1252,8 @@ public class TownspersonMob extends PathfinderMob {
         input.read("birthTick", Codec.LONG).ifPresent(t -> birthTick = t);
         input.read("lastAgeTick", Codec.LONG).ifPresent(t -> lastAgeTick = t);
         input.read("isMale", Codec.BOOL).ifPresent(v -> isMale = v);
+        input.read("adventurerTitle", Codec.STRING)
+                .ifPresent(t -> adventurerTitle = t);
         input.read("npcName", Codec.STRING).ifPresent(n -> {
             npcName = n;
             if (!n.isEmpty()) {
@@ -1222,6 +1261,8 @@ public class TownspersonMob extends PathfinderMob {
                 setCustomNameVisible(true);
             }
         });
+
+
         currentActivity = "";
         updateDisplayName();
 
@@ -1370,80 +1411,19 @@ public class TownspersonMob extends PathfinderMob {
             ServerPlayer player, ServerLevel sl) {
         VillageSavedData data = VillageSavedData.get(sl);
 
-        // Find available houses in this village
-        String villageName = getAssignedVillageName()
-                .orElse(null);
-        if (villageName == null) {
-            player.displayClientMessage(
-                    Component.literal(getFirstName()
-                            + ": I am not assigned to "
-                            + "a village."), false);
-            return;
-        }
-
-        Village village = data.getVillageByName(villageName)
-                .orElse(null);
-        if (village == null) return;
-
-        // Find unoccupied, unowned houses
-        List<Building> availableHouses = village
-                .getBuildingIds().stream()
-                .map(data::getBuildingById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .filter(b -> b.getType()
-                        == BuildingType.HOUSE)
-                .filter(b -> !data.isPlayerOwned(b.getId()))
-                .filter(b -> sl.getEntitiesOfClass(
-                        TownspersonMob.class,
-                        b.getShape().toAABB().inflate(16),
-                        npc -> npc.getHouseId()
-                                .map(id -> id.equals(b.getId()))
-                                .orElse(false)).isEmpty())
-                .collect(java.util.stream.Collectors.toList());
-
-        if (availableHouses.isEmpty()) {
-            player.displayClientMessage(
-                    Component.literal("[" + getNpcName()
-                            + "] There are no houses "
-                            + "available for purchase "
-                            + "in " + villageName + "."),
-                    false);
-            return;
-        }
-
-        // Show available houses
-        player.displayClientMessage(
-                Component.literal("[" + getNpcName()
-                                + "] Available houses in "
-                                + villageName + ":")
-                        .withStyle(
-                                net.minecraft.ChatFormatting.GOLD),
-                false);
-
-        availableHouses.forEach(house -> {
-            long price = HousePurchaseManager.calculatePrice(
-                    house, village, data);
-            long tax   = HousePurchaseManager.calculateWeeklyTax(
-                    house, village, data);
-
-            player.displayClientMessage(
-                    Component.literal("  " + house.getName()
-                            + " — " + CurrencyValue.of(price)
-                            + (tax > 0
-                            ? " (tax: "
-                            + CurrencyValue.of(tax)
-                            + "/week)"
-                            : " (no tax)")),
-                    false);
+        getAssignedVillageName().flatMap(data::getVillageByName).ifPresent(village -> {
+            VillageBookScreen.sendOpenPacket(player, village.getId(), sl, data);
         });
-
-        player.displayClientMessage(
-                Component.literal(
-                        "Use /house buy <building-name> "
-                                + "to purchase."),
-                false);
     }
+
+    public Optional<UUID> getCompanyId() {
+        return Optional.ofNullable(companyId);
+    }
+
+    public void setCompanyId(UUID id) { this.companyId = id; }
+    public void clearCompanyId()      { this.companyId = null; }
+
+    public boolean isCompanyWorker() { return companyId != null; }
 
     @SubscribeEvent
     public static void onNpcDeath(
@@ -1482,6 +1462,7 @@ public class TownspersonMob extends PathfinderMob {
                                     data.setDirty();
                                 }));
     }
+
 
 
 

@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
 
 import javax.annotation.Nullable;
@@ -21,7 +22,9 @@ public class AdventurerGroup {
         HUNTING,
         RETURNING,
         EXPLORING,
-        ESCORTING;
+        ESCORTING,
+        AT_GUILD;   // add this
+
 
         public static final Codec<GroupState> CODEC = Codec.STRING.xmap(
                 GroupState::valueOf, GroupState::name);
@@ -57,6 +60,8 @@ public class AdventurerGroup {
                             .forGetter(AdventurerGroup::getFailureCooldownTick),
                     Codec.DOUBLE.optionalFieldOf("successChanceModifier", 1.0)
                             .forGetter(AdventurerGroup::getSuccessChanceModifier),
+                    Codec.LONG.optionalFieldOf("restUntilTick", -1L)
+                            .forGetter(AdventurerGroup::getRestUntilTick),
                     GroupPlayerData.CODEC.fieldOf("playerData")
                             .forGetter(AdventurerGroup::getPlayerData)
             ).apply(instance, AdventurerGroup::fromCodec));
@@ -99,6 +104,7 @@ public class AdventurerGroup {
         );
     }
     private final UUID groupId;
+    private GuildRank groupRank = GuildRank.BRONZE;
     private final UUID homeVillageId;
     private final List<UUID> memberIds;
     private BlockPos currentPos;
@@ -108,6 +114,7 @@ public class AdventurerGroup {
     private long stateChangeTick;
     private boolean isDead = false;
     private long failureCooldownTick = -1L;
+    private long restUntilTick = -1L;
     private double successChanceModifier = 1.0;
 
     @Nullable
@@ -143,7 +150,7 @@ public class AdventurerGroup {
             BlockPos currentPos, BlockPos targetPos, GroupState state,
             Optional<Quest> activeQuest, long stateChangeTick,
             boolean isSpawned, boolean isDead, long failureCooldownTick,
-            double successChanceModifier, GroupPlayerData playerData) {
+            double successChanceModifier, long getRestUntilTick ,GroupPlayerData playerData) {
         AdventurerGroup group = new AdventurerGroup(groupId, homeVillageId,
                 memberIds, currentPos, targetPos, state,
                 activeQuest.orElse(null), stateChangeTick);
@@ -156,6 +163,7 @@ public class AdventurerGroup {
         group.alliedPlayerId       = playerData.alliedPlayerId().orElse(null);
         group.playerLeading        = playerData.playerLeading();
         group.campfirePos          = playerData.campfirePos().orElse(null);
+        group.restUntilTick = getRestUntilTick;
         return group;
     }
 
@@ -208,12 +216,24 @@ public class AdventurerGroup {
                 if (currentPos.equals(targetPos)) {
                     if (state == GroupState.RETURNING) {
                         completeActiveQuest();
-                        state = GroupState.CAMPING;
+                        state = GroupState.AT_GUILD;
+                        // random rest: 1–3 in-game days
+                        restUntilTick = currentTick + 24000L
+                                + (long)(Math.abs(groupId.getLeastSignificantBits())
+                                % 48000L);
                     } else {
                         state = activeQuest != null
                                 ? questStateFor(activeQuest)
                                 : GroupState.CAMPING;
                     }
+                    stateChangeTick = currentTick;
+                    dirty = true;
+                }
+            }
+            case AT_GUILD -> {
+                if (currentTick >= restUntilTick) {
+                    // Rest is over — become ready for a new quest
+                    state = GroupState.CAMPING;
                     stateChangeTick = currentTick;
                     dirty = true;
                 }
@@ -522,5 +542,11 @@ public class AdventurerGroup {
     }
     public void setCampfirePos(@Nullable BlockPos pos) {
         this.campfirePos = pos;
+    }
+
+    public long getRestUntilTick()           { return restUntilTick; }
+    public void setRestUntilTick(long tick)  { this.restUntilTick = tick; }
+    public GuildRank getGroupRank(){
+        return groupRank;
     }
 }

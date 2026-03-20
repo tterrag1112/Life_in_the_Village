@@ -310,7 +310,7 @@ public class BuildingCommand {
                                                     data.setDirty();
                                                     PacketDistributor.sendToPlayer(
                                                             (ServerPlayer) ctx.getSource().getEntity(),
-                                                            new SyncBuildingsPacket(data.getAllBuildings(), data.getAllVillages())
+                                                            new SyncBuildingsPacket(data.getAllBuildings(), data.getAllVillages(), data.getAllTradeRoutes())
                                                     );
                                                     ctx.getSource().sendSuccess(
                                                             () -> Component.literal("Assigned " + building.get().getName() + " to " + villageName), true

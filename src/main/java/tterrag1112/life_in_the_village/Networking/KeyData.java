@@ -54,7 +54,7 @@ public record KeyData(String sender, int keyCode) implements CustomPacketPayload
                             Component.literal("You are not inside any building.")
                     );
                 }
-                PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(data2.getAllBuildings(), data2.getAllVillages()));
+                PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(data2.getAllBuildings(), data2.getAllVillages(), data2.getAllTradeRoutes()));
             }
 
             if (data.keyCode() == 67) {
@@ -94,7 +94,7 @@ public record KeyData(String sender, int keyCode) implements CustomPacketPayload
                             Component.literal("You are not inside any building.")
                     );
                 }
-                PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(data2.getAllBuildings(), data2.getAllVillages()));
+                PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(data2.getAllBuildings(), data2.getAllVillages(), data2.getAllTradeRoutes()));
             }
 
     });

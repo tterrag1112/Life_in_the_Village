@@ -10,6 +10,8 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import tterrag1112.life_in_the_village.Kingdom.*;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.KingdomActionPacket;
+import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 
@@ -49,7 +51,8 @@ public class KingdomBookScreen extends Screen {
     private enum SectionType {
         FRONTISPIECE, STATUS, HISTORY,
         LAWS, ECONOMY, APPOINTMENTS,
-        DIPLOMACY, DECREES, ROYAL_BUILDS
+        DIPLOMACY, DECREES, ROYAL_BUILDS,
+        KINGDOM_MAP
     }
 
     private record NavEntry(
@@ -92,6 +95,10 @@ public class KingdomBookScreen extends Screen {
                         DiplomaticRelation relation) {}
     record VillageEntry(UUID id, String name,
                         String tier, String leader) {}
+
+
+    private final VillageMapRenderer kingdomMapRenderer = new VillageMapRenderer();
+    private boolean mapBakeStarted = false;
 
     // -------------------------------------------------------------------------
     // Constructor / init
@@ -179,6 +186,20 @@ public class KingdomBookScreen extends Screen {
                         + k.getHistory().getEvents().size()
                         + " events");
 
+        List<Village> kingdomVillages = k.getVillageIds().stream()
+                .map(id -> Building.ClientBuildingCache.getVillages().stream()
+                        .filter(v -> v.getId().equals(id)).findFirst())
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .toList();
+
+        if (!kingdomVillages.isEmpty()) {
+            kingdomMapRenderer.startBakeKingdom(kingdomVillages,
+                    BOOK_W - SIDEBAR_W - PAGE_PAD * 2,
+                    BOOK_H - 80);
+            mapBakeStarted = true;
+        }
+
         buildNavEntries();
     }
 
@@ -209,6 +230,7 @@ public class KingdomBookScreen extends Screen {
                 "Diplomacy", SectionType.DIPLOMACY, -1));
         navEntries.add(new NavEntry(
                 "Decrees", SectionType.DECREES, -1));
+        navEntries.add(new NavEntry("Kingdom Map", SectionType.KINGDOM_MAP, -1));
 
         // Build
         navEntries.add(new NavEntry(
@@ -388,6 +410,8 @@ public class KingdomBookScreen extends Screen {
     @Override
     public void render(GuiGraphics g, int mx, int my,
                        float pt) {
+        if (mapBakeStarted) kingdomMapRenderer.tick();
+
         drawBook(g);
         drawSidebar(g);
         drawPageContent(g);
@@ -533,6 +557,7 @@ public class KingdomBookScreen extends Screen {
             case HISTORY          -> "History";
             case LAWS, ECONOMY,
                  APPOINTMENTS     -> "Governance";
+            case KINGDOM_MAP -> "Kingdom Map";
             case DIPLOMACY,
                  DECREES          -> "Foreign";
             case ROYAL_BUILDS     -> "Construction";
@@ -562,6 +587,8 @@ public class KingdomBookScreen extends Screen {
                     g, px, py, pw, maxY);
             case DECREES       -> drawDecrees(
                     g, px, py, pw, maxY);
+            case KINGDOM_MAP -> drawKingdomMap(g, px, py, pw, maxY);
+
             case ROYAL_BUILDS  -> drawRoyalBuilds(
                     g, px, py, pw, maxY);
         }
@@ -1058,5 +1085,20 @@ public class KingdomBookScreen extends Screen {
     public void refresh() {
         refreshData();
         rebuildWidgets();
+    }
+    private void drawKingdomMap(GuiGraphics g, int px, int py, int pw, int maxY) {
+        int mapH = maxY - py;
+        // Frame
+        g.fill(px - 1, py - 1, px + pw + 1, py + mapH + 1, COL_BORDER);
+        kingdomMapRenderer.draw(g, px, py, pw, mapH,
+                // mouse coords — pass from render() if needed, 0,0 disables tooltip
+                0, 0);
+
+        // Village name labels over each village center
+        List<Building> allBuildings = Building.ClientBuildingCache.getBuildings();
+        for (VillageEntry ve : villages) {
+            // Find center of this village's buildings
+            // ... draw village name at worldToScreenX/Z of its center
+        }
     }
 }

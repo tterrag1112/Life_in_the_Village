@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest.QuestDifficulty;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest.QuestType;
@@ -45,6 +46,7 @@ public class AdventurerQuestGenerator {
 
         // Pick a quest type weighted toward what makes sense
         // for a roaming adventurer group
+        GuildRank rank = group.getGroupRank();
         QuestType type = pickQuestType(group, rng);
         QuestDifficulty difficulty = pickDifficulty(group, rng);
 
@@ -230,24 +232,49 @@ public class AdventurerQuestGenerator {
 
     private static QuestDifficulty pickDifficulty(AdventurerGroup group,
                                                   Random rng) {
+        GuildRank rank = group.getGroupRank();
         // Larger groups tackle harder quests
         int size = group.getMemberCount();
-        if (size >= 4) {
-            int roll = rng.nextInt(10);
-            return roll < 4 ? QuestDifficulty.MEDIUM
-                    : roll < 7 ? QuestDifficulty.HARD
-                    : roll < 9 ? QuestDifficulty.ELITE
-                    : QuestDifficulty.LEGENDARY;
-        } else if (size == 3) {
+
+        if(rank == GuildRank.DIAMOND){
+            if(size >= 4){
+                int roll = rng.nextInt(10);
+                return roll < 4 ? QuestDifficulty.MEDIUM
+                        : roll < 7 ? QuestDifficulty.HARD
+                        : roll < 9 ? QuestDifficulty.ELITE
+                        : QuestDifficulty.LEGENDARY;
+            } else if(size >= 3){
+                int roll = rng.nextInt(10);
+                return roll < 3 ? QuestDifficulty.MEDIUM
+                        : roll < 7 ? QuestDifficulty.HARD
+                        : QuestDifficulty.ELITE;
+            } else {
+                int roll = rng.nextInt(10);
+                return roll < 3 ? QuestDifficulty.EASY
+                        : roll < 7 ? QuestDifficulty.MEDIUM
+                        : QuestDifficulty.HARD;            }
+
+        } else if(rank == GuildRank.PLATINUM){
+
+        }else if(rank == GuildRank.GOLD){
             int roll = rng.nextInt(10);
             return roll < 4 ? QuestDifficulty.EASY
                     : roll < 8 ? QuestDifficulty.MEDIUM
                     : QuestDifficulty.HARD;
-        } else {
-            return rng.nextBoolean()
+
+
+
+        }else if(rank == GuildRank.SILVER){
+            int roll = rng.nextInt(10);
+            return roll < 4 ? QuestDifficulty.EASY
+                    : roll < 8 ? QuestDifficulty.MEDIUM
+                    : QuestDifficulty.HARD;
+
+        }
+
+        return rng.nextBoolean()
                     ? QuestDifficulty.EASY
                     : QuestDifficulty.MEDIUM;
-        }
     }
 
     private static UUID getGuildId(AdventurerGroup group,

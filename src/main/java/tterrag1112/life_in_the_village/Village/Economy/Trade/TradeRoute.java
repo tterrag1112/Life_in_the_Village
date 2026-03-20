@@ -3,6 +3,9 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 
 public class TradeRoute {
@@ -176,4 +179,25 @@ public class TradeRoute {
     public void setStatus(RouteStatus s)   { this.status = s; }
     public void setLastCaravanTick(long t) { this.lastCaravanTick = t; }
     public void setTradePenalty(double p)  { this.tradePenalty = Math.max(0, Math.min(1, p)); }
+
+
+    // Add to TradeRoute.java
+    public static class ClientRouteCache {
+        private static List<TradeRoute> routes = new ArrayList<>();
+
+        public static void setRoutes(List<TradeRoute> list) {
+            routes = new ArrayList<>(list);
+        }
+
+        public static List<TradeRoute> getRoutes() {
+            return Collections.unmodifiableList(routes);
+        }
+
+        public static List<TradeRoute> getRoutesForVillage(UUID villageId) {
+            return routes.stream()
+                    .filter(r -> r.villageA.equals(villageId)
+                            || r.villageB.equals(villageId))
+                    .toList();
+        }
+    }
 }

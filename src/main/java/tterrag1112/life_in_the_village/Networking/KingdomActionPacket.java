@@ -145,7 +145,7 @@ public record KingdomActionPacket(
                                     target.setRelation(
                                             kingdom.getId(), rel);
                                 });
-                        kingdom.getHistory().recordEvent(
+                       /* kingdom.getHistory().recordEvent(
                                 rel == DiplomaticRelation.WAR
                                         ? HistoryTextGenerator.warDeclared(
                                         kingdom.getName(),
@@ -162,6 +162,8 @@ public record KingdomActionPacket(
                                         level.getGameTime()),
                                 kingdom.getName());
                         data.setDirty();
+
+                        */
 
                         // Record as event
                         kingdom.getHistory().recordEvent(

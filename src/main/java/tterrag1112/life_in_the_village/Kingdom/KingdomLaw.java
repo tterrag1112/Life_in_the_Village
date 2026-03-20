@@ -7,7 +7,9 @@ public enum KingdomLaw {
     PRICE_CONTROLS,      // merchant prices fixed by kingdom
     PROPERTY_RIGHTS,     // buildings can't be claimed by outsiders
     FREE_TRADE,         // no restrictions on merchant activity
-    KINGS_PEACE;
+    KINGS_PEACE,
+    MINIMUM_WAGE;    // add this — enforces a floor on worker wages
+    ;
 
     public String getDescription() {
         return switch (this) {
@@ -18,6 +20,8 @@ public enum KingdomLaw {
             case PROPERTY_RIGHTS -> "Only kingdom citizens may own buildings";
             case FREE_TRADE      -> "All trade restrictions are lifted";
             case KINGS_PEACE -> "Violence of any kind is forbidden amongs citizens";
+            case MINIMUM_WAGE -> "All hired workers must be paid at least 8 bronze per day";
+
         };
     }
 }

@@ -126,6 +126,8 @@ public class AdventurerInteractGoal extends Goal {
                     ? "Contract complete — " + quest.getTitle()
                     + ". Heading back to the guild hall!"
                     : "Heading back to base.";
+            case AT_GUILD -> "We're taking some time off between contracts.";
+
         };
     }
 

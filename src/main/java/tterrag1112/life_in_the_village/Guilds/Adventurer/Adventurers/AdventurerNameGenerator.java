@@ -32,16 +32,29 @@ public class AdventurerNameGenerator {
      * Generates a stable name for a given UUID.
      * The same UUID will always produce the same name.
      */
-    public static String getName(UUID id) {
+    public static String getFirstName(UUID id) {
+        long most = id.getMostSignificantBits();
+        return FIRST_NAMES[(int) Math.abs(most % FIRST_NAMES.length)];
+    }
+
+    public static String getSurname(UUID id) {
+        long least = id.getLeastSignificantBits();
+        return SURNAMES[(int) Math.abs(least % SURNAMES.length)];
+    }
+
+    public static String getTitle(UUID id) {
         long most  = id.getMostSignificantBits();
         long least = id.getLeastSignificantBits();
+        return TITLES[(int) Math.abs((most + least) % TITLES.length)];
+        // may be empty string — caller decides whether to display it
+    }
 
-        String first   = FIRST_NAMES[(int) Math.abs(most  % FIRST_NAMES.length)];
-        String surname = SURNAMES   [(int) Math.abs(least % SURNAMES.length)];
-        String title   = TITLES     [(int) Math.abs((most + least) % TITLES.length)];
-
-        return title.isEmpty()
-                ? first + " " + surname
+    /** Full assembled name for logs/history — unchanged callers still work */
+    public static String getName(UUID id) {
+        String first   = getFirstName(id);
+        String surname = getSurname(id);
+        String title   = getTitle(id);
+        return title.isEmpty() ? first + " " + surname
                 : first + " " + surname + " " + title;
     }
 }

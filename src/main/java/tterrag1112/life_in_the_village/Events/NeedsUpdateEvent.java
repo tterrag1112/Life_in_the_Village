@@ -9,6 +9,7 @@ import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
@@ -47,6 +48,8 @@ public class NeedsUpdateEvent {
         long gameTick = overworld.getGameTime();
 
         VillageSavedData data = VillageSavedData.get(overworld);
+        CompanySavedData.get(overworld).tick(overworld, VillageSavedData.get(overworld), dayTime);
+
 
         for (Village village : data.getAllVillages()) {
             // Stagger updates by village name hash so not

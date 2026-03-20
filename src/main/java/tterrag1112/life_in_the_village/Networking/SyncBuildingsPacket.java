@@ -8,22 +8,28 @@ import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
 
-public record SyncBuildingsPacket(List<Building> buildings, List<Village> villages) implements CustomPacketPayload {
+public record SyncBuildingsPacket(List<Building> buildings, List<Village> villages, List<TradeRoute> tradeRoutes) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<SyncBuildingsPacket> TYPE =
             new CustomPacketPayload.Type<>(
                     Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "sync_buildings")
             );
 
-    public static final StreamCodec<ByteBuf, SyncBuildingsPacket> STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.fromCodec(Building.CODEC.listOf()), SyncBuildingsPacket::buildings,
-            ByteBufCodecs.fromCodec(Village.CODEC.listOf()), SyncBuildingsPacket::villages,
-            SyncBuildingsPacket::new
-    );
+    public static final StreamCodec<ByteBuf, SyncBuildingsPacket> STREAM_CODEC =
+            StreamCodec.composite(
+                    ByteBufCodecs.fromCodec(Building.CODEC.listOf()),
+                    SyncBuildingsPacket::buildings,
+                    ByteBufCodecs.fromCodec(Village.CODEC.listOf()),
+                    SyncBuildingsPacket::villages,
+                    ByteBufCodecs.fromCodec(TradeRoute.CODEC.listOf()),
+                    SyncBuildingsPacket::tradeRoutes,
+                    SyncBuildingsPacket::new
+            );
 
     @Override
     public Type<SyncBuildingsPacket> type() { return TYPE; }
@@ -32,6 +38,8 @@ public record SyncBuildingsPacket(List<Building> buildings, List<Village> villag
         context.enqueueWork(() -> {
             Building.ClientBuildingCache.setBuildings(packet.buildings());
             Building.ClientBuildingCache.setVillages(packet.villages());
+            TradeRoute.ClientRouteCache.setRoutes(packet.tradeRoutes());
+
         });
     }
 }

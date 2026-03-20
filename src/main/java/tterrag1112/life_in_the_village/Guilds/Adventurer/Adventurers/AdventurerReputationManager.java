@@ -365,6 +365,8 @@ public class AdventurerReputationManager {
             case EXPLORING  -> "Scouting the area.";
             case ESCORTING  -> "Busy. Don't interfere.";
             case RETURNING  -> "Heading back. Excuse us.";
+            case AT_GUILD -> "Resting. Come back later.";
+
         };
     }
 

@@ -36,6 +36,7 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.ModBuildings;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.BlacksmithRecipeRegistry;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.MiningYieldRegistry;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 
@@ -116,6 +117,28 @@ public class ModModEvents {
                 SyncKingdomPacket.STREAM_CODEC,
                 SyncKingdomPacket::handle);
 
+        registrar.playToClient(
+                OpenVillageBookPacket.TYPE,
+                OpenVillageBookPacket.CODEC,
+                OpenVillageBookPacket::handle);
+        registrar.playToServer(
+                VillageActionPacket.TYPE,
+                VillageActionPacket.CODEC,
+                VillageActionPacket::handle);
+
+        registrar.playToServer(
+                CompanyActionPacket.TYPE,
+                CompanyActionPacket.CODEC,
+                CompanyActionPacket::handle);
+        registrar.playToClient(
+                OpenCompanyManagementPacket.TYPE,
+                OpenCompanyManagementPacket.CODEC,
+                OpenCompanyManagementPacket::handle);
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket.TYPE,
+                tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket.CODEC,
+                tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket::handle);
+
     }
 
     @SubscribeEvent
@@ -135,7 +158,8 @@ public class ModModEvents {
 
             List<Building> buildings = VillageSavedData.get(level).getAllBuildings();
             List<Village> villages = VillageSavedData.get(level).getAllVillages();
-            PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(buildings, villages));
+            List<TradeRoute> tradeRoutes = VillageSavedData.get(level).getAllTradeRoutes();
+            PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(buildings, villages, tradeRoutes));
             PacketDistributor.sendToPlayer(player,
                     new SyncKingdomPacket(
                             data.getAllKingdoms()));
