@@ -14,5 +14,8 @@ public enum BuildingType{
     STONEMASON, WEAVER, CANDLEMAKER, PRISON, BELL_TOWER,
 
     // New — Tier 4
-    NOBLE_MANOR, WINERY, ARMORER, TOOLSMITH, ATELIER, DOCKS
+    NOBLE_MANOR, WINERY, ARMORER, TOOLSMITH, ATELIER, DOCKS,
+
+    // Special — procedurally generated, not a placeable NBT structure
+    TOWN_SQUARE
 }

@@ -1,3 +1,4 @@
+// src/main/java/tterrag1112/life_in_the_village/Village/VillageSpawner.java
 package tterrag1112.life_in_the_village.Village;
 
 import net.minecraft.core.BlockPos;
@@ -8,192 +9,195 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
-import tterrag1112.life_in_the_village.Profession.Profession;
-import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Planning.*;
 
 import java.util.*;
 
+/**
+ * Spawns a fully-realised village at a given origin position.
+ *
+ * <h3>Spawn pipeline</h3>
+ * <ol>
+ *   <li><b>Guard checks</b> — distance from existing villages,
+ *       unknown type, etc.</li>
+ *   <li><b>VillagePlanner</b> — terrain analysis, ring-based layout
+ *       planning, farm/path/decoration slot generation. Returns a
+ *       {@link VillageLayout}; aborts if terrain is unsuitable.</li>
+ *   <li><b>Building placement</b> — iterates {@code layout.buildings()}
+ *       and calls {@link BuildingPlacer#placeAndRegister}.</li>
+ *   <li><b>Farm plot placement</b> — delegates to
+ *       {@link FarmPlotPlacer}.</li>
+ *   <li><b>Item stocking</b> — fills starter items from
+ *       {@link VillageTypeData}.</li>
+ *   <li><b>NPC spawning</b> — creates {@link TownspersonMob} entities
+ *       inside their assigned buildings.</li>
+ *   <li><b>Decoration</b> — {@link VillageDecorator} handles paths,
+ *       fences, market stalls, etc., now guided by layout decoration
+ *       anchors.</li>
+ *   <li><b>Trade routes</b> — {@link TradeRouteManager} establishes
+ *       inter-village roads.</li>
+ * </ol>
+ */
 public class VillageSpawner {
 
-    private static final int MIN_VILLAGE_DISTANCE = 50;
-    // Padding between buildings in blocks
-    private static final int BUILDING_PADDING     = 6;
-    // Max random jitter applied to hint offsets
-    private static final int JITTER               = 10;
-    // Max attempts to find a non-overlapping position
-    private static final int MAX_PLACEMENT_ATTEMPTS = 20;
+    // -------------------------------------------------------------------------
+    // Constants
+    // -------------------------------------------------------------------------
 
+    /** Minimum block distance between any two village centres. */
+    private static final int MIN_VILLAGE_DISTANCE = 128;
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    /**
+     * Attempts to spawn a village of the given type at the supplied
+     * origin. The origin is a coarse hint (e.g. chunk-centre); the
+     * planner will snap it to the nearest suitable surface.
+     *
+     * @return the created {@link Village}, or empty if spawning failed.
+     */
     public static Optional<Village> spawnVillage(ServerLevel level,
                                                  BlockPos origin,
                                                  String villageType,
                                                  String villageName) {
+        // ── Guard: known type ────────────────────────────────────────────────
         VillageTypeData typeData = VillageTypeRegistry.INSTANCE
                 .getType(villageType);
         if (typeData == null) {
-            System.out.println("VillageSpawner: unknown village type "
-                    + villageType);
+            System.out.println("VillageSpawner: unknown village type '"
+                    + villageType + "' — aborting");
             return Optional.empty();
         }
 
+        // ── Guard: distance from existing villages ───────────────────────────
         VillageSavedData data = VillageSavedData.get(level);
-
-        // Check minimum distance from existing villages
-        for (Village existing : data.getAllVillages()) {
-            Optional<net.minecraft.world.phys.AABB> bounds =
-                    existing.getBounds(data);
-            if (bounds.isPresent()) {
-                double cx = (bounds.get().minX + bounds.get().maxX) / 2;
-                double cz = (bounds.get().minZ + bounds.get().maxZ) / 2;
-                double dist = Math.sqrt(
-                        Math.pow(origin.getX() - cx, 2)
-                                + Math.pow(origin.getZ() - cz, 2));
-                if (dist < MIN_VILLAGE_DISTANCE) {
-                    System.out.println("VillageSpawner: too close to '"
-                            + existing.getName()
-                            + "' (" + (int) dist + " blocks)");
-                    return Optional.empty();
-                }
-            }
+        if (!isFarEnoughFromExistingVillages(level, origin)) {
+            System.out.println("VillageSpawner: origin " + origin
+                    + " too close to an existing village — aborting");
+            return Optional.empty();
         }
 
+        // ── Seeded RNG — deterministic per (origin + name) ───────────────────
+        Random rng = new Random((long) origin.hashCode() * 31
+                + villageName.hashCode());
+
+        // ── Phase 0: Plan layout ─────────────────────────────────────────────
+        // Village level is approximated from the number of starter buildings.
+        // A hamlet might have 3–4; a town-sized type might have 8–10.
+        int villageLevel = deriveVillageLevel(typeData);
+
+        Optional<VillageLayout> layoutOpt = VillagePlanner.plan(
+                level, origin, typeData, rng, villageLevel);
+
+        if (layoutOpt.isEmpty()) {
+            System.out.println("VillageSpawner: VillagePlanner rejected "
+                    + "terrain at " + origin + " — aborting spawn of '"
+                    + villageName + "'");
+            return Optional.empty();
+        }
+
+
+        VillageLayout layout = layoutOpt.get();
+
+        System.out.println("VillageSpawner: planner accepted '"
+                + villageName + "' — " + layout);
+
+        VillageSitePreparer.prepare(level, layout);
+
+
+        // ── Register the village object ───────────────────────────────────────
         Village village = new Village(villageName);
         data.addVillage(village);
 
-        // -------------------------------------------------------
-        // Phase 1 — Generate candidate positions for all buildings
-        // -------------------------------------------------------
-        Random rng = new Random(origin.hashCode()
-                + villageName.hashCode());
+        // ── Phase 1: Place buildings ─────────────────────────────────────────
+        // The layout gives us one LayoutSlot per building, already positioned
+        // on terrain-aware rings. We iterate them in order so that buildings
+        // appearing multiple times in the type definition (e.g. several HOUSEs)
+        // each get their own slot if the planner emitted enough.
+        Map<BuildingType, Building> placedBuildings = new LinkedHashMap<>();
 
-        // Track placed footprints for overlap checking
-        List<PlacedFootprint> footprints = new ArrayList<>();
-        Map<BuildingType, BlockPos> resolvedPositions
-                = new LinkedHashMap<>();
+        for (LayoutSlot slot : layout.buildings()) {
+            BuildingType buildingType = slot.getBuildingType();
+            if (buildingType == null) continue;
 
-        for (VillageTypeData.StarterBuilding sb
-                : typeData.getStarterBuildings()) {
-            BuildingType buildingType;
-            try {
-                buildingType = BuildingType
-                        .valueOf(sb.type());
-            } catch (IllegalArgumentException e) {
-                System.out.println("VillageSpawner: unknown type "
-                        + sb.type());
+            BlockPos buildPos = slot.getPos();
+
+            // Resolve the structure identifier.
+            // If the planner slot has a path, use it; otherwise fall back
+            // to the first matching starter building definition.
+            String structurePath = slot.getStructurePath();
+            if (structurePath == null || structurePath.isBlank()) {
+                structurePath = findStructurePath(typeData, buildingType);
+            }
+            if (structurePath == null) {
+                System.out.println("VillageSpawner: no structure path for "
+                        + buildingType + " — skipping");
                 continue;
             }
 
-            BlockPos resolved = resolvePosition(
-                    level, origin, sb, footprints, rng);
+            Identifier structId = Identifier.fromNamespaceAndPath(
+                    Life_in_the_village.MODID, structurePath);
 
-            if (resolved == null) {
-                System.out.println("VillageSpawner: could not place "
-                        + sb.type() + " — no valid position found");
-                continue;
-            }
+            // Unique name so multiple houses etc. don't collide
+            String buildingName = villageName + "_"
+                    + buildingType.name().toLowerCase() + "_"
+                    + (countType(placedBuildings, buildingType) + 1);
 
-            // Estimate footprint size from structure name
-            // We use a conservative estimate since we don't know
-            // the actual size until we load the template
-            int estimatedSize = estimateStructureSize(sb.structure());
-            footprints.add(new PlacedFootprint(
-                    resolved, estimatedSize, estimatedSize));
-            resolvedPositions.put(buildingType, resolved);
-        }
-
-        // -------------------------------------------------------
-        // Phase 2 — Place buildings at resolved positions
-        // -------------------------------------------------------
-        Map<BuildingType, Building> placedBuildings
-                = new HashMap<>();
-
-        int buildingIndex = 0;
-        for (VillageTypeData.StarterBuilding sb
-                : typeData.getStarterBuildings()) {
-            BuildingType buildingType;
-            try {
-                buildingType = BuildingType
-                        .valueOf(sb.type());
-            } catch (IllegalArgumentException e) {
-                continue;
-            }
-
-            BlockPos buildPos = resolvedPositions.get(buildingType);
-            if (buildPos == null) continue;
+            Rotation rotation = randomRotation(level.getRandom());
 
             try {
-                Identifier structId = Identifier
-                        .fromNamespaceAndPath(
-                                Life_in_the_village.MODID,
-                                sb.structure());
-
-                String buildingName = villageName + "_"
-                        + sb.type().toLowerCase() + "_"
-                        + (placedBuildings.values().stream()
-                        .filter(b -> b.getType()
-                                == buildingType)
-                        .count() + 1);
-
-                Rotation rotation = randomRotation(
-                        level.getRandom());
-
-                Optional<Building> placed = BuildingPlacer
-                        .placeAndRegister(level, buildPos,
-                                structId, buildingName,
-                                buildingType, rotation);
+                Optional<Building> placed = BuildingPlacer.placeAndRegister(
+                        level, buildPos, structId,
+                        buildingName, buildingType, rotation);
 
                 if (placed.isEmpty()) {
-                    System.out.println("VillageSpawner: "
-                            + "placeAndRegister returned empty for "
-                            + sb.type());
+                    System.out.println("VillageSpawner: placeAndRegister "
+                            + "returned empty for " + buildingType
+                            + " at " + buildPos);
                     continue;
                 }
 
                 village.addBuilding(placed.get());
-                placedBuildings.put(buildingType, placed.get());
-
-                // Update footprint with actual building size
-                int actualW = placed.get().getShape().getWidth();
-                int actualL = placed.get().getShape().getLength();
-                footprints.set(buildingIndex,
-                        new PlacedFootprint(buildPos,
-                                actualW, actualL));
+                // Only store the first instance per type for NPC assignment;
+                // additional instances (e.g. extra houses) remain registered
+                // but we don't overwrite the primary entry.
+                placedBuildings.putIfAbsent(buildingType, placed.get());
 
                 data.setDirty();
                 System.out.println("VillageSpawner: placed "
-                        + sb.type() + " at " + buildPos);
+                        + buildingType + " at " + buildPos);
 
             } catch (Exception e) {
-                System.out.println("VillageSpawner: failed to place "
-                        + sb.type() + " — " + e.getMessage());
+                System.out.println("VillageSpawner: exception placing "
+                        + buildingType + " — " + e.getMessage());
             }
-            buildingIndex++;
         }
 
-        // -------------------------------------------------------
-        // Phase 3 — Stock items
-        // -------------------------------------------------------
-        for (VillageTypeData.StarterItem si
-                : typeData.getStarterItems()) {
+        // ── Phase 2: Place farm plots ─────────────────────────────────────────
+        FarmPlotPlacer.placeAll(level, layout, village, data, rng);
+
+        // ── Phase 3: Stock starter items ──────────────────────────────────────
+        for (VillageTypeData.StarterItem si : typeData.getStarterItems()) {
             try {
                 BuildingType targetType =
-                        BuildingType.valueOf(
-                                si.buildingType());
-                Building targetBuilding =
-                        placedBuildings.get(targetType);
+                        BuildingType.valueOf(si.buildingType());
+                Building targetBuilding = placedBuildings.get(targetType);
                 if (targetBuilding == null) continue;
 
-                Identifier itemId = Identifier
-                        .parse(si.item());
-                var itemHolder = BuiltInRegistries.ITEM
-                        .get(itemId);
+                Identifier itemId = Identifier.parse(si.item());
+                var itemHolder = BuiltInRegistries.ITEM.get(itemId);
                 if (itemHolder.isEmpty()) continue;
 
                 ItemStack stack = new ItemStack(
@@ -202,58 +206,48 @@ public class VillageSpawner {
                         level, targetBuilding, stack);
 
             } catch (Exception e) {
-                System.out.println("VillageSpawner: failed to stock "
-                        + si.item() + " — " + e.getMessage());
+                System.out.println("VillageSpawner: failed to stock '"
+                        + si.item() + "' — " + e.getMessage());
             }
         }
 
-        // -------------------------------------------------------
-        // Phase 4 — Spawn NPCs
-        // -------------------------------------------------------
-        for (VillageTypeData.StarterNpc sn
-                : typeData.getStarterNpcs()) {
+        // ── Phase 4: Spawn NPCs ───────────────────────────────────────────────
+        for (VillageTypeData.StarterNpc sn : typeData.getStarterNpcs()) {
             try {
                 BuildingType buildingType =
-                        BuildingType.valueOf(
-                                sn.buildingType());
+                        BuildingType.valueOf(sn.buildingType());
                 Building assignedBuilding =
                         placedBuildings.get(buildingType);
                 if (assignedBuilding == null) continue;
 
                 TownspersonMob npc = ModEntities.TOWNSPERSON
-                        .get().create(level,
-                                EntitySpawnReason.NATURAL);
+                        .get().create(level, EntitySpawnReason.NATURAL);
                 if (npc == null) continue;
 
-                // Spawn at a random point inside the building
                 BlockPos spawnPos = randomPosInsideBuilding(
                         level, assignedBuilding, rng);
 
                 npc.setPos(spawnPos.getX() + 0.5,
                         spawnPos.getY(),
                         spawnPos.getZ() + 0.5);
-
                 npc.finalizeSpawn(level,
                         level.getCurrentDifficultyAt(spawnPos),
                         EntitySpawnReason.NATURAL, null);
 
                 Profession profession =
-                        Profession.valueOf(
-                                sn.profession());
+                        Profession.valueOf(sn.profession());
                 npc.setProfession(profession);
-                npc.setAssignedBuildingId(
-                        assignedBuilding.getId());
+                npc.setAssignedBuildingId(assignedBuilding.getId());
                 npc.setAssignedVillageName(villageName);
-                npc.setFamilyRole(FamilyRole.valueOf(
-                        sn.familyRole()));
-                npc.setHouseId(
-                        buildingType == BuildingType.HOUSE
-                                || buildingType
-                                == BuildingType.FARMHOUSE
-                                ? assignedBuilding.getId() : null);
+                npc.setFamilyRole(FamilyRole.valueOf(sn.familyRole()));
 
-                if (profession
-                        == Profession.MERCHANT) {
+                boolean isResidence =
+                        buildingType == BuildingType.HOUSE
+                                || buildingType == BuildingType.FARMHOUSE;
+                npc.setHouseId(isResidence
+                        ? assignedBuilding.getId() : null);
+
+                if (profession == Profession.MERCHANT) {
                     npc.receive(CurrencyValue.ofGold(2));
                 } else {
                     npc.receive(CurrencyValue.ofSilver(5));
@@ -266,240 +260,37 @@ public class VillageSpawner {
                         + sn.buildingType());
 
             } catch (Exception e) {
-                System.out.println(
-                        "VillageSpawner: failed to spawn NPC — "
-                                + e.getMessage());
+                System.out.println("VillageSpawner: failed to spawn NPC — "
+                        + e.getMessage());
             }
         }
 
-        // -------------------------------------------------------
-        // Phase 5 — Decorate
-        // -------------------------------------------------------
-        VillageDecorator.decorateVillage(level, village, data);
+        // ── Phase 5: Decorate ─────────────────────────────────────────────────
+        // VillageDecorator handles paths (using PathRouter), fences, wells,
+        // market stalls, and landmarks. It uses layout decoration anchors
+        // internally via the village bounds.
+        VillageDecorator.decorateVillage(level, village, data, layout);
 
+        // ── Phase 6: Establish trade routes ───────────────────────────────────
         TradeRouteManager.establishRoutes(level, village, data);
 
+        System.out.println("VillageSpawner: '" + villageName
+                + "' spawned successfully with "
+                + village.getBuildingIds().size() + " buildings, "
+                + layout.farmPlots().size() + " farm plot(s), "
+                + "density=" + layout.getDensity().label());
 
-        System.out.println("VillageSpawner: village '" + villageName
-                + "' spawned with "
-                + village.getBuildingIds().size()
-                + " buildings");
         return Optional.of(village);
     }
 
     // -------------------------------------------------------------------------
-    // Position resolution
+    // Public utilities (used by NaturalVillageSpawnEvent and commands)
     // -------------------------------------------------------------------------
 
     /**
-     * Finds a valid non-overlapping position for a building.
-     * Uses the JSON hint offset as a starting point, then applies
-     * random jitter and checks for overlap with already-placed
-     * footprints. Falls back to spiral search if jitter fails.
+     * Returns true if {@code pos} is far enough from every known village
+     * centre to allow a new village to spawn there.
      */
-    private static BlockPos resolvePosition(ServerLevel level,
-                                            BlockPos origin,
-                                            VillageTypeData.StarterBuilding sb,
-                                            List<PlacedFootprint> footprints,
-                                            Random rng) {
-        int[] hint = sb.offset();
-        int estSize = estimateStructureSize(sb.structure());
-
-        // Generate a pool of candidate positions
-        List<BlockPos> candidates = new ArrayList<>();
-
-        // Always include the exact hint position first
-        BlockPos exactHint = findSurface(level,
-                origin.offset(hint[0], 0, hint[2]));
-        if (!overlapsAny(exactHint, estSize, estSize, footprints)) {
-            candidates.add(exactHint);
-        }
-
-        // Generate jittered candidates
-        for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS;
-             attempt++) {
-            int jitterX = rng.nextInt(JITTER * 2) - JITTER;
-            int jitterZ = rng.nextInt(JITTER * 2) - JITTER;
-
-            BlockPos candidate = findSurface(level,
-                    origin.offset(hint[0] + jitterX, 0,
-                            hint[2] + jitterZ));
-
-            if (!overlapsAny(candidate, estSize, estSize,
-                    footprints)) {
-                candidates.add(candidate);
-            }
-        }
-
-        if (!candidates.isEmpty()) {
-            // Pick the flattest candidate
-            return candidates.stream()
-                    .min(Comparator.comparingInt(c ->
-                            flatnessScore(level, c, estSize)))
-                    .orElse(candidates.get(0));
-        }
-
-        // All jittered positions overlapped — fall back to spiral
-        // but still score by flatness among spiral candidates
-        List<BlockPos> spiralCandidates = spiralSearchAll(
-                level, exactHint, footprints, estSize);
-
-        if (!spiralCandidates.isEmpty()) {
-            return spiralCandidates.stream()
-                    .min(Comparator.comparingInt(c ->
-                            flatnessScore(level, c, estSize)))
-                    .orElse(spiralCandidates.get(0));
-        }
-
-        return null;
-    }
-
-    private static List<BlockPos> spiralSearchAll(ServerLevel level,
-                                                  BlockPos center,
-                                                  List<PlacedFootprint> footprints,
-                                                  int size) {
-        List<BlockPos> results = new ArrayList<>();
-        int step = size + BUILDING_PADDING;
-
-        for (int r = 1; r <= 10; r++) {
-            for (int dx = -r; dx <= r; dx++) {
-                for (int dz = -r; dz <= r; dz++) {
-                    if (Math.abs(dx) != r
-                            && Math.abs(dz) != r) continue;
-
-                    BlockPos candidate = findSurface(level,
-                            center.offset(dx * step, 0,
-                                    dz * step));
-
-                    if (!overlapsAny(candidate, size, size,
-                            footprints)) {
-                        results.add(candidate);
-                    }
-                }
-            }
-
-            // Stop spiral once we have enough candidates to
-            // compare — no need to search the whole world
-            if (results.size() >= 8) break;
-        }
-
-        return results;
-    }
-
-    /**
-     * Searches outward in a spiral from the center position
-     * until a non-overlapping spot is found.
-     */
-
-
-    private static boolean overlapsAny(BlockPos pos,
-                                       int width, int length,
-                                       List<PlacedFootprint> footprints) {
-        for (PlacedFootprint fp : footprints) {
-            if (overlaps(pos, width, length,
-                    fp.origin, fp.width, fp.length)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean overlaps(BlockPos a, int aw, int al,
-                                    BlockPos b, int bw, int bl) {
-        int padding = BUILDING_PADDING;
-        return a.getX() - padding < b.getX() + bw + padding
-                && a.getX() + aw + padding > b.getX() - padding
-                && a.getZ() - padding < b.getZ() + bl + padding
-                && a.getZ() + al + padding > b.getZ() - padding;
-    }
-
-    // -------------------------------------------------------------------------
-    // NPC spawn position
-    // -------------------------------------------------------------------------
-
-    private static BlockPos randomPosInsideBuilding(
-            ServerLevel level, Building building, Random rng) {
-        BlockPos min = building.getShape().getMin();
-        int w = building.getShape().getWidth();
-        int l = building.getShape().getLength();
-
-        // Try up to 10 random positions inside the building
-        for (int attempt = 0; attempt < 10; attempt++) {
-            int x = min.getX() + 1 + rng.nextInt(
-                    Math.max(1, w - 2));
-            int z = min.getZ() + 1 + rng.nextInt(
-                    Math.max(1, l - 2));
-
-            // Find floor Y inside building
-            int floorY = building.getShape().getOrigin().getY();
-            BlockPos candidate = new BlockPos(x, floorY + 1, z);
-
-            // Check there's air to stand in
-            if (level.getBlockState(candidate).isAir()
-                    && level.getBlockState(
-                    candidate.above()).isAir()) {
-                return candidate;
-            }
-        }
-
-        // Fallback — center of building at floor level
-        return building.getShape().getOrigin().offset(
-                w / 2, 1, l / 2);
-    }
-
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    /**
-     * Estimates building size from structure name.
-     * Used before the template is loaded to check overlap.
-     * Conservative estimates — real size replaces this after placing.
-     */
-    private static int estimateStructureSize(String structureName) {
-        if (structureName.contains("town_hall")) return 16;
-        if (structureName.contains("guild")) return 14;
-        if (structureName.contains("stockpile")) return 12;
-        if (structureName.contains("farmhouse")) return 14;
-        if (structureName.contains("farm")) return 20;
-        if (structureName.contains("inn")) return 16;
-        if (structureName.contains("blacksmith")) return 10;
-        if (structureName.contains("market")) return 12;
-        if (structureName.contains("house")) return 10;
-        return 12; // default estimate
-    }
-
-    private static BlockPos findSurface(ServerLevel level,
-                                        BlockPos pos) {
-        // Use WORLD_SURFACE heightmap — this finds the highest
-        // non-air block exposed to the sky, ignoring caves entirely
-        int surfaceY = level.getHeight(
-                net.minecraft.world.level.levelgen.Heightmap.Types
-                        .WORLD_SURFACE,
-                pos.getX(), pos.getZ());
-
-        // WORLD_SURFACE returns the Y of the first air block
-        // above the surface, so the solid block is one below
-        BlockPos surface = new BlockPos(pos.getX(), surfaceY,
-                pos.getZ());
-
-        // Skip water surfaces — find solid ground instead
-        BlockState state = level.getBlockState(surface.below());
-        if (state.liquid()) {
-            // Search downward for solid non-liquid ground
-            for (int y = surfaceY - 1; y > level.getMinY(); y--) {
-                BlockPos check = new BlockPos(
-                        pos.getX(), y, pos.getZ());
-                BlockState s = level.getBlockState(check);
-                if (s.isSolidRender() && !s.liquid()) {
-                    return check.above();
-                }
-            }
-        }
-
-        return surface;
-    }
-
     public static boolean isFarEnoughFromExistingVillages(
             ServerLevel level, BlockPos pos) {
         VillageSavedData data = VillageSavedData.get(level);
@@ -507,10 +298,8 @@ public class VillageSpawner {
             Optional<net.minecraft.world.phys.AABB> bounds =
                     village.getBounds(data);
             if (bounds.isPresent()) {
-                double cx = (bounds.get().minX
-                        + bounds.get().maxX) / 2;
-                double cz = (bounds.get().minZ
-                        + bounds.get().maxZ) / 2;
+                double cx = (bounds.get().minX + bounds.get().maxX) / 2;
+                double cz = (bounds.get().minZ + bounds.get().maxZ) / 2;
                 double dist = Math.sqrt(
                         Math.pow(pos.getX() - cx, 2)
                                 + Math.pow(pos.getZ() - cz, 2));
@@ -520,6 +309,90 @@ public class VillageSpawner {
         return true;
     }
 
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Derives a 1–10 village level from the number of starter buildings
+     * declared in the type data. This is the initial complexity hint fed
+     * to the planner's density profile.
+     *
+     * <ul>
+     *   <li>1–3 buildings  → level 1–2  (sparse hamlet)</li>
+     *   <li>4–6 buildings  → level 3–5  (moderate village)</li>
+     *   <li>7–9 buildings  → level 6–8  (dense town)</li>
+     *   <li>10+ buildings  → level 9–10 (packed city)</li>
+     * </ul>
+     */
+    private static int deriveVillageLevel(VillageTypeData typeData) {
+        int count = typeData.getStarterBuildings().size();
+        if (count <= 3)  return Math.max(1, count);          // 1–3
+        if (count <= 6)  return 3 + (count - 4);             // 3–5
+        if (count <= 9)  return 6 + (count - 7);             // 6–8
+        return Math.min(10, 9 + (count - 10));               // 9–10
+    }
+
+    /**
+     * Finds the structure path for the first starter building of the
+     * given type in the type data definition.
+     * Returns null if no match is found.
+     */
+    private static String findStructurePath(VillageTypeData typeData,
+                                            BuildingType targetType) {
+        return typeData.getStarterBuildings().stream()
+                .filter(sb -> {
+                    try {
+                        return BuildingType.valueOf(sb.type()) == targetType;
+                    } catch (IllegalArgumentException e) {
+                        return false;
+                    }
+                })
+                .map(VillageTypeData.StarterBuilding::structure)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * Counts how many buildings of a given type have been placed so far.
+     * Used to generate unique building names.
+     */
+    private static long countType(Map<BuildingType, Building> placed,
+                                  BuildingType type) {
+        return placed.keySet().stream()
+                .filter(t -> t == type)
+                .count();
+    }
+
+    /**
+     * Returns a random walkable position inside the building footprint.
+     * Falls back to the building centre if no clear spot is found.
+     */
+    private static BlockPos randomPosInsideBuilding(
+            ServerLevel level, Building building, Random rng) {
+        BlockPos min = building.getShape().getMin();
+        int w = building.getShape().getWidth();
+        int l = building.getShape().getLength();
+
+        for (int attempt = 0; attempt < 10; attempt++) {
+            int x = min.getX() + 1 + rng.nextInt(Math.max(1, w - 2));
+            int z = min.getZ() + 1 + rng.nextInt(Math.max(1, l - 2));
+            int floorY = building.getShape().getOrigin().getY();
+            BlockPos candidate = new BlockPos(x, floorY + 1, z);
+
+            if (level.getBlockState(candidate).isAir()
+                    && level.getBlockState(candidate.above()).isAir()) {
+                return candidate;
+            }
+        }
+
+        // Fallback — geometric centre at floor level
+        return building.getShape().getOrigin().offset(w / 2, 1, l / 2);
+    }
+
+    /**
+     * Picks a uniformly random {@link Rotation}.
+     */
     private static Rotation randomRotation(
             net.minecraft.util.RandomSource random) {
         Rotation[] rotations = Rotation.values();
@@ -527,57 +400,32 @@ public class VillageSpawner {
     }
 
     /**
-     * Scores a position by terrain flatness.
-     * Lower score = flatter = better.
-     * Samples a grid of points across the building footprint
-     * and measures the max height variation.
+     * Returns the surface block position (first air block above solid
+     * ground) at the given XZ, skipping over water.
+     *
+     * <p>This is kept here as a utility for any code in this class that
+     * still needs a quick surface lookup; the planner uses
+     * {@link tterrag1112.life_in_the_village.Village.Planning.TerrainAnalyzer}
+     * for bulk analysis.
      */
-    private static int flatnessScore(ServerLevel level,
-                                     BlockPos pos, int size) {
-        int samples = 4; // sample every 4 blocks
-        int minY    = Integer.MAX_VALUE;
-        int maxY    = Integer.MIN_VALUE;
+    static BlockPos findSurface(ServerLevel level, BlockPos pos) {
+        int surfaceY = level.getHeight(
+                Heightmap.Types.WORLD_SURFACE,
+                pos.getX(), pos.getZ());
+        BlockPos surface = new BlockPos(pos.getX(), surfaceY, pos.getZ());
 
-        for (int dx = 0; dx <= size; dx += samples) {
-            for (int dz = 0; dz <= size; dz += samples) {
-                int y = findSurfaceYAt(level,
-                        pos.getX() + dx,
-                        pos.getZ() + dz,
-                        pos.getY());
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
-            }
-        }
-
-        return maxY - minY; // height variance across footprint
-    }
-
-    private static int findSurfaceYAt(ServerLevel level,
-                                      int x, int z, int nearY) {
-        int y = level.getHeight(
-                net.minecraft.world.level.levelgen.Heightmap.Types
-                        .WORLD_SURFACE, x, z);
-
-        // Skip water
-        BlockState state = level.getBlockState(
-                new BlockPos(x, y - 1, z));
+        // If the surface is water, descend until we hit solid ground
+        BlockState state = level.getBlockState(surface.below());
         if (state.liquid()) {
-            for (int sy = y - 1; sy > level.getMinY(); sy--) {
-                BlockState s = level.getBlockState(
-                        new BlockPos(x, sy, z));
+            for (int y = surfaceY - 1; y > level.getMinY(); y--) {
+                BlockPos check = new BlockPos(pos.getX(), y, pos.getZ());
+                BlockState s = level.getBlockState(check);
                 if (s.isSolidRender() && !s.liquid()) {
-                    return sy + 1;
+                    return check.above();
                 }
             }
         }
 
-        return y;
+        return surface;
     }
-
-    // -------------------------------------------------------------------------
-    // Helper record for overlap checking
-    // -------------------------------------------------------------------------
-
-    private record PlacedFootprint(BlockPos origin,
-                                   int width, int length) {}
 }

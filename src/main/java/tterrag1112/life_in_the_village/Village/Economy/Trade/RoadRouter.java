@@ -12,17 +12,17 @@ import java.util.*;
 public class RoadRouter {
 
     private static final int   MAX_ITERATIONS  = 100000;
-    private static final int   MAX_SLOPE        = 2;
     private static final int   ROAD_HALF_WIDTH  = 2;
     private static final int   SMOOTH_RADIUS    = 2;
     private static final int MAX_PATH_LENGTH    = 10000;
-    private static final int MAX_NODES          = 50000;
+    private static final int MAX_NODES = 200000;  // was 50000
 
     // Movement costs
+    private static final int   MAX_SLOPE        = 1;   // was 2 — tighter
     private static final float COST_FLAT        = 1.0f;
-    private static final float COST_GENTLE      = 4.0f;
-    private static final float COST_STEEP       = 20.0f;
-    private static final float COST_WATER       = 80.0f;
+    private static final float COST_GENTLE      = 8.0f;   // was 4 — gentle slope much costlier
+    private static final float COST_STEEP       = 80.0f;  // was 20 — steep is very expensive
+    private static final float COST_WATER       = 150.0f; // was 80
     private static final float COST_EXISTING    = 0.3f;
 
     // -------------------------------------------------------------------------
@@ -30,73 +30,75 @@ public class RoadRouter {
     // -------------------------------------------------------------------------
 
     public static List<BlockPos> findRoad(ServerLevel level,
-                                          BlockPos from,
-                                          BlockPos to) {
-        // Always start from proper surface positions
-        BlockPos start = new BlockPos(
-                from.getX(),
-                level.getHeight(
-                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                        from.getX(), from.getZ()),
-                from.getZ());
-        BlockPos end = new BlockPos(
-                to.getX(),
-                level.getHeight(
-                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                        to.getX(), to.getZ()),
-                to.getZ());
+                                          BlockPos from, BlockPos to) {
+        BlockPos start = new BlockPos(from.getX(),
+                level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                        from.getX(), from.getZ()), from.getZ());
+        BlockPos end   = new BlockPos(to.getX(),
+                level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                        to.getX(), to.getZ()), to.getZ());
 
         PriorityQueue<Node> open = new PriorityQueue<>(
                 Comparator.comparingDouble(n -> n.f));
         Map<Long, Node> allNodes = new HashMap<>();
-        Set<Long> closed = new HashSet<>();
+        Set<Long>       closed   = new HashSet<>();
 
-        Node startNode = new Node(start, null, 0,
-                heuristic(level, start, end));
+        Node startNode = new Node(start, null, 0, heuristic(level, start, end));
         open.add(startNode);
         allNodes.put(key(start), startNode);
 
         int iterations = 0;
+        Node bestSoFar = startNode; // track closest node reached
 
         while (!open.isEmpty() && iterations < MAX_NODES) {
             iterations++;
             Node current = open.poll();
 
+            // Track the node closest to the destination (by heuristic)
+            if (current.h < bestSoFar.h) bestSoFar = current;
+
             if (current.pos.closerThan(end, 8)) {
-                return reconstructPath(current);
+                List<BlockPos> path = reconstructPath(current);
+                // Append the actual end point so the road reaches exactly
+                path.add(end);
+                return smoothPath(path);
             }
 
             closed.add(key(current.pos));
 
-            for (BlockPos neighbor : getNeighbors(
-                    current.pos)) {
-                // Always get proper surface Y for each neighbor
+            for (BlockPos neighbor : getNeighbors(current.pos)) {
                 int surfY = level.getHeight(
                         Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
                         neighbor.getX(), neighbor.getZ());
-                BlockPos neighborSurface = new BlockPos(
-                        neighbor.getX(), surfY, neighbor.getZ());
+                BlockPos ns      = new BlockPos(neighbor.getX(), surfY, neighbor.getZ());
+                long     nsKey   = key(ns);
+                if (closed.contains(nsKey)) continue;
 
-                long neighborKey = key(neighborSurface);
-                if (closed.contains(neighborKey)) continue;
-
-                float moveCost = movementCost(
-                        level, current.pos, neighborSurface);
+                float moveCost = movementCost(level, current.pos, ns);
                 if (moveCost >= COST_WATER * 2) continue;
 
                 float g = current.g + moveCost;
-                float h = heuristic(level, neighborSurface, end);
-
-                Node existing = allNodes.get(neighborKey);
+                float h = heuristic(level, ns, end);
+                Node existing = allNodes.get(nsKey);
                 if (existing == null || g < existing.g) {
-                    Node node = new Node(neighborSurface,
-                            current, g, h);
-                    allNodes.put(neighborKey, node);
+                    Node node = new Node(ns, current, g, h);
+                    allNodes.put(nsKey, node);
                     open.add(node);
                 }
             }
         }
 
+        // Budget exhausted — return the best partial path we found.
+        // This reaches as far as the A* got without leaving trenches
+        // from an attempted-but-incomplete placement.
+        if (bestSoFar.parent != null) {
+            System.out.println("RoadRouter: budget exhausted after "
+                    + iterations + " nodes — returning partial path ("
+                    + bestSoFar.h + " blocks from goal)");
+            return smoothPath(reconstructPath(bestSoFar));
+        }
+
+        // Absolute fallback — only if we never left the start node
         return fallbackStraightLine(level, start, end);
     }
 
@@ -109,148 +111,182 @@ public class RoadRouter {
                                            RoadQuality quality) {
         List<BlockPos> placed = new ArrayList<>();
 
+        // ── First pass: centre-line + width ──────────────────────────────────
         for (int i = 0; i < path.size(); i++) {
             BlockPos center = path.get(i);
+            BlockPos prev   = i > 0               ? path.get(i - 1) : center;
+            BlockPos next   = i < path.size() - 1 ? path.get(i + 1) : center;
 
-            BlockPos prev = i > 0
-                    ? path.get(i - 1) : center;
-            BlockPos next = i < path.size() - 1
-                    ? path.get(i + 1) : center;
+            // Travel direction (unnormalised)
+            int tx = next.getX() - prev.getX();
+            int tz = next.getZ() - prev.getZ();
 
-            int dx = next.getX() - prev.getX();
-            int dz = next.getZ() - prev.getZ();
+            // True perpendicular: rotate travel 90° → (-tz, tx), then
+            // normalise to unit steps so every offset is exactly 1 block.
+            // We clamp to [-1, 0, 1] since path nodes are always adjacent.
+            int perpX = Integer.signum(-tz);
+            int perpZ = Integer.signum(tx);
 
-            int perpX = dz == 0 ? 0 : (dz > 0 ? 1 : -1);
-            int perpZ = dx == 0 ? 0 : (dx > 0 ? 1 : -1);
+            // Edge case: if both perp components are 0 (shouldn't happen
+            // with a valid path, but guard anyway) default to X axis.
+            if (perpX == 0 && perpZ == 0) perpX = 1;
 
-            if (dx != 0 && dz != 0) {
-                perpX = 1;
-                perpZ = 0;
-            }
+            int centerY = center.getY();
 
-            for (int offset = -ROAD_HALF_WIDTH;
-                 offset <= ROAD_HALF_WIDTH; offset++) {
+            for (int offset = -ROAD_HALF_WIDTH; offset <= ROAD_HALF_WIDTH; offset++) {
                 int wx = center.getX() + perpX * offset;
                 int wz = center.getZ() + perpZ * offset;
 
-                int centerY = center.getY();
+                clearTreesAt(level, wx, wz, centerY);
 
                 if (offset == 0) {
-                    // Center block — place at its own surface
                     placeRoadBlock(level,
                             new BlockPos(wx, centerY - 1, wz), quality);
                     placed.add(new BlockPos(wx, centerY, wz));
                 } else {
                     int sideY = level.getHeight(
-                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                            wx, wz);
-
-                    int diff = Math.abs(sideY - centerY);
+                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, wx, wz);
+                    int diff  = Math.abs(sideY - centerY);
 
                     if (diff <= 1) {
-                        // Close enough — just match center Y exactly
                         placeRoadBlock(level,
-                                new BlockPos(wx, centerY - 1, wz),
-                                quality);
+                                new BlockPos(wx, centerY - 1, wz), quality);
                         placed.add(new BlockPos(wx, centerY, wz));
                     } else if (diff <= 3) {
-                        // Small gap — fill or carve one block
-                        // then place at center Y
                         if (sideY < centerY) {
-                            // Fill up to center
                             for (int y = sideY; y < centerY; y++) {
                                 BlockPos fill = new BlockPos(wx, y, wz);
-                                if (level.getBlockState(fill).isAir()) {
+                                if (level.getBlockState(fill).isAir())
                                     level.setBlock(fill,
-                                            Blocks.DIRT.defaultBlockState(),
-                                            3);
-                                }
+                                            Blocks.DIRT.defaultBlockState(), 3);
                             }
                         } else {
-                            // Carve down to center
                             for (int y = sideY - 1; y >= centerY; y--) {
                                 BlockPos carve = new BlockPos(wx, y, wz);
-                                BlockState cs = level.getBlockState(carve);
-                                if (cs.is(Blocks.GRASS_BLOCK)
-                                        || cs.is(Blocks.DIRT)
-                                        || cs.is(BlockTags.REPLACEABLE)) {
+                                BlockState cs  = level.getBlockState(carve);
+                                if (cs.is(Blocks.GRASS_BLOCK) || cs.is(Blocks.DIRT)
+                                        || cs.is(BlockTags.REPLACEABLE))
                                     level.setBlock(carve,
-                                            Blocks.AIR.defaultBlockState(),
-                                            3);
-                                } else break;
+                                            Blocks.AIR.defaultBlockState(), 3);
+                                else break;
                             }
                         }
                         placeRoadBlock(level,
-                                new BlockPos(wx, centerY - 1, wz),
-                                quality);
+                                new BlockPos(wx, centerY - 1, wz), quality);
                         placed.add(new BlockPos(wx, centerY, wz));
-                    } else {
-                        // Too steep — skip this side block entirely
-                        // rather than creating a weird floating section
                     }
+                    // diff > 3 — too steep, skip this side block
                 }
-            }
-            int centerSurfaceY = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                    center.getX(), center.getZ());
-
-            if (centerSurfaceY != center.getY()) {
-                System.out.println("RoadRouter: center Y mismatch at "
-                        + center + " — path Y: " + center.getY()
-                        + " heightmap Y: " + centerSurfaceY);
             }
         }
 
-        // Second pass — fill diagonal gaps between steps
+        // ── Second pass: fill diagonal gaps ──────────────────────────────────
         for (int i = 0; i < path.size() - 1; i++) {
             BlockPos current = path.get(i);
             BlockPos next    = path.get(i + 1);
-
-            int dx = next.getX() - current.getX();
-            int dz = next.getZ() - current.getZ();
+            int dx      = next.getX() - current.getX();
+            int dz      = next.getZ() - current.getZ();
             int centerY = current.getY();
+            int steps   = Math.max(Math.abs(dx), Math.abs(dz));
 
-            // If nodes are more than 1 step apart fill between them
-            int steps = Math.max(Math.abs(dx), Math.abs(dz));
             if (steps <= 1) {
-                // Standard diagonal fill
                 if (Math.abs(dx) == 1 && Math.abs(dz) == 1) {
                     placeRoadBlock(level,
-                            new BlockPos(current.getX() + dx,
-                                    centerY - 1,
-                                    current.getZ()), quality);
+                            new BlockPos(current.getX() + dx, centerY - 1, current.getZ()),
+                            quality);
                     placeRoadBlock(level,
-                            new BlockPos(current.getX(),
-                                    centerY - 1,
-                                    current.getZ() + dz), quality);
+                            new BlockPos(current.getX(), centerY - 1, current.getZ() + dz),
+                            quality);
                 }
                 continue;
             }
 
-            // Interpolate between nodes to fill the gap
             for (int s = 1; s < steps; s++) {
-                float t = (float) s / steps;
-                int ix = (int)(current.getX() + t * dx);
-                int iz = (int)(current.getZ() + t * dz);
-
-                int iy = level.getHeight(
-                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                        ix, iz);
-
-                // Only fill if close to center Y
+                float t  = (float) s / steps;
+                int ix   = (int)(current.getX() + t * dx);
+                int iz   = (int)(current.getZ() + t * dz);
+                int iy   = level.getHeight(
+                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, ix, iz);
+                clearTreesAt(level, ix, iz, iy);
                 if (Math.abs(iy - centerY) <= 2) {
                     placeRoadBlock(level,
-                            new BlockPos(ix, centerY - 1, iz),
-                            quality);
+                            new BlockPos(ix, centerY - 1, iz), quality);
                     placed.add(new BlockPos(ix, centerY, iz));
                 }
             }
         }
 
-        // Third pass — smooth edges after all blocks placed
+        // ── Third pass: slab transitions where Y changes ─────────────────────
+        placeSlabTransitions(level, placed, quality);
+
+        // ── Fourth pass: smooth edges (XZ-protected) ─────────────────────────
         smoothRoadEdges(level, placed);
 
         return placed;
+    }
+
+    /**
+     * Where consecutive path nodes change Y by exactly 1, place a half-slab
+     * on the uphill side so the transition looks like a ramp rather than a step.
+     */
+    private static void placeSlabTransitions(ServerLevel level,
+                                             List<BlockPos> placed,
+                                             RoadQuality quality) {
+        if (placed.size() < 2) return;
+
+        BlockState slabState = switch (quality) {
+            case COBBLESTONE -> Blocks.COBBLESTONE_SLAB.defaultBlockState();
+            case GRAVEL      -> Blocks.COBBLESTONE_SLAB.defaultBlockState(); // no gravel slab
+            case DIRT        -> Blocks.OAK_SLAB.defaultBlockState();
+        };
+
+        // Build a fast XZ→Y lookup of placed blocks
+        Map<Long, Integer> xzToY = new HashMap<>();
+        for (BlockPos p : placed) {
+            xzToY.put(xzKey(p.getX(), p.getZ()), p.getY());
+        }
+
+        for (int i = 1; i < placed.size(); i++) {
+            BlockPos prev = placed.get(i - 1);
+            BlockPos curr = placed.get(i);
+
+            // Only handle unit steps (adjacent blocks)
+            int manhattanXZ = Math.abs(curr.getX() - prev.getX())
+                    + Math.abs(curr.getZ() - prev.getZ());
+            if (manhattanXZ > 2) continue;
+
+            int dy = curr.getY() - prev.getY();
+            if (Math.abs(dy) != 1) continue;
+
+            // The lower block gets the slab — it smooths the step upward
+            BlockPos lower   = dy > 0 ? prev : curr;
+            // The road block itself is one below the surface pos
+            BlockPos roadPos = lower.below();
+
+            BlockState existing = level.getBlockState(roadPos);
+            // Only place if the block is already a road material
+            if (existing.is(Blocks.COBBLESTONE)
+                    || existing.is(Blocks.GRAVEL)
+                    || existing.is(Blocks.DIRT_PATH)) {
+                level.setBlock(roadPos, slabState, 3);
+            }
+        }
+    }
+
+    // ── Clears logs, leaves, and tall plants in a column ─────────────────────
+    private static void clearTreesAt(ServerLevel level,
+                                     int x, int z, int fromY) {
+        for (int y = fromY + 6; y >= fromY - 1; y--) {
+            BlockPos pos   = new BlockPos(x, y, z);
+            BlockState state = level.getBlockState(pos);
+            if (state.is(BlockTags.LOGS)
+                    || state.is(BlockTags.LEAVES)
+                    || state.is(BlockTags.REPLACEABLE)
+                    || state.is(BlockTags.FLOWERS)
+                    || state.is(BlockTags.SMALL_FLOWERS)) {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            }
+        }
     }
 
     private static void placeRoadBlock(ServerLevel level,
@@ -319,61 +355,61 @@ public class RoadRouter {
 
         level.setBlock(roadPos, roadState, 3);
     }
+    private static long xzKey(int x, int z) {
+        return ((long)(x + 30000000)) << 32 | (z + 30000000);
+    }
 
     private static void smoothRoadEdges(ServerLevel level,
-                                        List<BlockPos> roadBlocks) {
-        Set<BlockPos> roadSet = new HashSet<>(roadBlocks);
+                                        List<BlockPos> roadSurface) {
+        // Build a fast lookup of every road-surface XZ coordinate
+        // keyed only on X/Z so we can check any Y at that column.
+        Set<Long> roadXZ = new HashSet<>();
+        for (BlockPos p : roadSurface) {
+            roadXZ.add(xzKey(p.getX(), p.getZ()));
+        }
 
-        for (BlockPos pos : roadBlocks) {
+        for (BlockPos pos : roadSurface) {
+            int roadY = pos.getY();
+
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dz = -1; dz <= 1; dz++) {
                     if (dx == 0 && dz == 0) continue;
 
                     int nx = pos.getX() + dx;
                     int nz = pos.getZ() + dz;
+
+                    // Never touch a column that is itself part of the road
+                    if (roadXZ.contains(xzKey(nx, nz))) continue;
+
                     int neighborY = level.getHeight(
                             Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                            nx, nz) - 1;
+                            nx, nz);
 
-                    BlockPos neighbor = new BlockPos(
-                            nx, neighborY, nz);
-
-                    // Skip road blocks
-                    if (roadSet.contains(neighbor)) continue;
-
-                    int jump = neighborY - pos.getY();
+                    int jump = neighborY - roadY;
 
                     if (jump > 1) {
-                        // Neighbor is higher — carve one block
-                        BlockPos carve = new BlockPos(
-                                nx, neighborY, nz);
-                        BlockState cs = level.getBlockState(
-                                carve);
+                        // Neighbour is higher — carve the top natural block only
+                        BlockPos carve = new BlockPos(nx, neighborY - 1, nz);
+                        BlockState cs  = level.getBlockState(carve);
                         if (cs.is(Blocks.GRASS_BLOCK)
                                 || cs.is(Blocks.DIRT)
+                                || cs.is(Blocks.COARSE_DIRT)
                                 || cs.is(BlockTags.REPLACEABLE)) {
                             level.setBlock(carve,
-                                    Blocks.AIR.defaultBlockState(),
-                                    3);
-                            // Cap with grass
-                            BlockPos below = carve.below();
-                            if (level.getBlockState(below)
-                                    .is(Blocks.DIRT)) {
-                                level.setBlock(below,
-                                        Blocks.GRASS_BLOCK
-                                                .defaultBlockState(),
-                                        3);
+                                    Blocks.AIR.defaultBlockState(), 3);
+                            // Cap the newly exposed block with grass if it's dirt
+                            BlockPos newTop = carve.below();
+                            if (level.getBlockState(newTop).is(Blocks.DIRT)) {
+                                level.setBlock(newTop,
+                                        Blocks.GRASS_BLOCK.defaultBlockState(), 3);
                             }
                         }
                     } else if (jump < -1) {
-                        // Neighbor is lower — fill one block
-                        BlockPos fill = new BlockPos(
-                                nx, neighborY + 1, nz);
+                        // Neighbour is lower — fill the gap with a single dirt block
+                        BlockPos fill = new BlockPos(nx, neighborY, nz);
                         if (level.getBlockState(fill).isAir()) {
                             level.setBlock(fill,
-                                    Blocks.GRASS_BLOCK
-                                            .defaultBlockState(),
-                                    3);
+                                    Blocks.GRASS_BLOCK.defaultBlockState(), 3);
                         }
                     }
                 }
@@ -445,15 +481,12 @@ public class RoadRouter {
     }
 
     private static float movementCost(ServerLevel level,
-                                      BlockPos from,
-                                      BlockPos to) {
+                                      BlockPos from, BlockPos to) {
         int dy = Math.abs(to.getY() - from.getY());
 
-        // Check for water
         BlockState toState = level.getBlockState(to.below());
         if (toState.liquid()) return COST_WATER;
 
-        // Check for existing road/path
         if (toState.is(Blocks.COBBLESTONE)
                 || toState.is(Blocks.GRAVEL)
                 || toState.is(Blocks.DIRT_PATH)) {
@@ -464,16 +497,14 @@ public class RoadRouter {
                 && from.getZ() != to.getZ();
         float baseCost = diagonal ? 1.414f : 1.0f;
 
-        if (dy == 0) return baseCost * COST_FLAT;
+        if (dy == 0)    return baseCost * COST_FLAT;
 
-        // If slope exceeds MAX_SLOPE, make it extremely expensive
-        // so the router goes around rather than over
+        // Exponential penalty for every block of rise: hugs valleys
         if (dy > MAX_SLOPE) {
-            return baseCost * COST_STEEP * (dy * dy * dy);
+            return baseCost * COST_STEEP * (float)Math.pow(dy, 3);
         }
 
-        // Within allowed slope — gentle cost
-        return baseCost * COST_GENTLE;
+        return baseCost * COST_GENTLE * dy;
     }
 
     private static float heuristic(ServerLevel level,
