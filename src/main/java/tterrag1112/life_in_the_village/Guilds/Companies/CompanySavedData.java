@@ -45,6 +45,8 @@ public class CompanySavedData extends SavedData {
         setDirty();
     }
 
+    public void removeCompany(UUID id) { companies.remove(id); setDirty(); }
+
     public Optional<Company> getById(UUID id) {
         return Optional.ofNullable(companies.get(id));
     }

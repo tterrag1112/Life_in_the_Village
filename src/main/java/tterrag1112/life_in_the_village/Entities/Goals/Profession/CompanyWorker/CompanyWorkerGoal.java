@@ -310,16 +310,9 @@ public class CompanyWorkerGoal extends Goal {
                 if (stock <= 0) continue;
 
                 // Post a trade listing with the company price
-                TradeListing listing = new TradeListing(
-                        entity.getUUID(),
-                        assignedBuilding.getId(),
-                        item,
-                        stock,
-                        priceOverride.pricePerUnit(),
-                        TradeListing.SellerType.COMPANY,
+                VillageEconomy.postListing(level, villageId, entity, item, stock,
                         level.getGameTime());
 
-                VillageEconomy.addListing(villageId, listing);
             }
         }
 
@@ -368,7 +361,7 @@ public class CompanyWorkerGoal extends Goal {
             entity.getNavigation().stop();
             for (int slot = 0; slot < MAX_CARRY; slot++) {
                 // Try to take one item of each type stored
-                for (Building.StoredItemInfo stored :
+                for (BuildingStorageAccess.StoredItemInfo stored :
                         BuildingStorageAccess.listItems(level, assignedBuilding)) {
                     int take = Math.min(stored.count(), MAX_CARRY);
                     boolean taken = BuildingStorageAccess.takeItem(

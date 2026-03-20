@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Guilds.Companies;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.UUIDUtil;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.*;
 
@@ -21,6 +22,30 @@ public class Company {
                 Codec.STRING.xmap(WorkerRole::valueOf, WorkerRole::name);
     }
 
+    public enum ProducerType {
+        GENERIC,     // no specific role — hand-produces items
+        FARMER,      // requires company farmhouse — follows FarmerGoal pattern
+        MINER,       // requires company mine
+        BLACKSMITH,  // requires company blacksmith
+        CARPENTER,   // requires company carpentry
+        LUMBERJACK;  // requires woodcutter
+
+        /** Which BuildingType must the company own for this type to be available */
+        public BuildingType requiredBuilding() {
+            return switch (this) {
+                case FARMER     -> BuildingType.FARMHOUSE;
+                case MINER      -> BuildingType.MINE;
+                case BLACKSMITH -> BuildingType.BLACKSMITH;
+                case CARPENTER  -> BuildingType.CARPENTRY;
+                case LUMBERJACK -> BuildingType.WOODCUTTER;
+                case GENERIC    -> null; // no building required
+            };
+        }
+
+        public static final Codec<ProducerType> CODEC =
+                Codec.STRING.xmap(ProducerType::valueOf, ProducerType::name);
+    }  // requires woodcutter
+
     // -------------------------------------------------------------------------
     // A single hired worker
     // -------------------------------------------------------------------------
@@ -28,13 +53,12 @@ public class Company {
     public record CompanyWorker(
             UUID npcId,
             WorkerRole role,
+            ProducerType producerType,   // NEW
             UUID assignedBuildingId,
-            long wagePerDay,          // bronze per in-game day
+            long wagePerDay,
             long lastPaidTick,
-            // What this worker produces/sells — item registry key
-            // empty = unassigned
             String assignedItemId,
-            int dailyTargetCount      // production quota per day
+            int dailyTargetCount
     ) {
         public static final Codec<CompanyWorker> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -42,6 +66,8 @@ public class Company {
                                 .forGetter(CompanyWorker::npcId),
                         WorkerRole.CODEC.fieldOf("role")
                                 .forGetter(CompanyWorker::role),
+                        ProducerType.CODEC.fieldOf("producerType")
+                                        .forGetter(CompanyWorker::producerType),
                         UUIDUtil.CODEC.fieldOf("assignedBuildingId")
                                 .forGetter(CompanyWorker::assignedBuildingId),
                         Codec.LONG.fieldOf("wagePerDay")
@@ -55,16 +81,20 @@ public class Company {
                 ).apply(i, CompanyWorker::new));
 
         public CompanyWorker withWage(long wage) {
-            return new CompanyWorker(npcId, role, assignedBuildingId,
+            return new CompanyWorker(npcId, role, producerType, assignedBuildingId,
                     wage, lastPaidTick, assignedItemId, dailyTargetCount);
         }
         public CompanyWorker withTask(String itemId, int count) {
-            return new CompanyWorker(npcId, role, assignedBuildingId,
+            return new CompanyWorker(npcId, role, producerType, assignedBuildingId,
                     wagePerDay, lastPaidTick, itemId, count);
         }
         public CompanyWorker withLastPaidTick(long tick) {
-            return new CompanyWorker(npcId, role, assignedBuildingId,
+            return new CompanyWorker(npcId, role, producerType, assignedBuildingId,
                     wagePerDay, tick, assignedItemId, dailyTargetCount);
+        }
+        public CompanyWorker withProducerType(ProducerType type) {
+            return new CompanyWorker(npcId, role, type, assignedBuildingId,
+                    wagePerDay, lastPaidTick, assignedItemId, dailyTargetCount);
         }
     }
 
@@ -168,6 +198,8 @@ public class Company {
     private final Map<String, PriceOverride> priceOverrides = new LinkedHashMap<>();
     private long treasuryBronze = 0L;
     private boolean isActive = true;
+    public static final UUID NO_BUILDING = UUID.fromString("00000000-0000-0000-0000-000000000000");
+
 
     // -------------------------------------------------------------------------
     // Constructor
@@ -243,6 +275,10 @@ public class Company {
         return Collections.unmodifiableList(buildingIds);
     }
 
+    public boolean hasAssignedBuilding(CompanyWorker worker) {
+        return !worker.assignedBuildingId().equals(NO_BUILDING);
+    }
+
     // -------------------------------------------------------------------------
     // Wage enforcement
     // -------------------------------------------------------------------------
@@ -305,4 +341,6 @@ public class Company {
     public void depositBronze(long amt) { treasuryBronze += amt; }
     public boolean isActive()           { return isActive; }
     public void setActive(boolean b)    { this.isActive = b; }
+
+
 }

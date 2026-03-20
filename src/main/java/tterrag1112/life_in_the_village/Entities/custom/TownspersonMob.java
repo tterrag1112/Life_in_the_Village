@@ -994,6 +994,98 @@ public class TownspersonMob extends PathfinderMob {
             }
             case STOCKPILE_KEEPER -> openStockpileScreen(player);
             case BUILDER -> openInventoryScreen(player, "Builder Inventory");
+            case NONE -> {
+                if (level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+
+                    ItemStack held = player.getMainHandItem();
+                    boolean holdingCoin =
+                            tterrag1112.life_in_the_village.Village.Economy
+                                    .Currency.CurrencyValue.valuePerCoin(held.getItem()) > 0;
+
+                    if (!holdingCoin) {
+                        player.displayClientMessage(
+                                Component.literal("[" + getNpcName()
+                                        + "] I'm looking for work. "
+                                        + "Offer me a coin to hire me."),
+                                false);
+                        return InteractionResult.SUCCESS;
+                    }
+
+                    tterrag1112.life_in_the_village.Guilds.Companies
+                            .CompanySavedData compData =
+                            tterrag1112.life_in_the_village.Guilds.Companies
+                                    .CompanySavedData.get(sl);
+                    var companies = compData.getByOwner(sp.getUUID());
+
+                    if (companies.isEmpty()) {
+                        player.displayClientMessage(
+                                Component.literal("[" + getNpcName()
+                                        + "] You don't own a company. "
+                                        + "Found one first from a town."),
+                                false);
+                        return InteractionResult.SUCCESS;
+                    }
+
+                    if (compData.getCompanyForWorker(getUUID()).isPresent()) {
+                        player.displayClientMessage(
+                                Component.literal("[" + getNpcName()
+                                        + "] I'm already employed."),
+                                false);
+                        return InteractionResult.SUCCESS;
+                    }
+
+                    var company = companies.get(0);
+                    held.shrink(1);
+
+                    tterrag1112.life_in_the_village.Guilds.Companies
+                            .Company.CompanyWorker worker =
+                            new tterrag1112.life_in_the_village.Guilds.Companies
+                                    .Company.CompanyWorker(
+                                    getUUID(),
+                                    Company.WorkerRole.PRODUCER,
+                                    Company.ProducerType.GENERIC,
+                                    company.getBuildingIds().isEmpty()
+                                            ? UUID.fromString("00000000-0000-0000-0000-000000000000") // null sentinel
+                                            : company.getBuildingIds().get(0),
+                                    Math.max(company.getEffectiveMinWage(
+                                            tterrag1112.life_in_the_village.Networking
+                                                    .VillageSavedData.get(sl)), 8L),
+                                    sl.getGameTime(), "", 8);
+
+                    company.addWorker(worker);
+                    setCompanyId(company.getCompanyId());
+                    setProfession(Profession.COMPANY_WORKER);
+                    compData.markDirty();
+
+                    player.displayClientMessage(
+                            Component.literal("[" + getNpcName()
+                                    + "] I'll work for " + company.getName()
+                                    + "! Thank you."),
+                            false);
+
+                    CompanyWorkerScreen.open(sp, this, company);
+                }
+            }
+
+            case COMPANY_WORKER -> {
+                if (level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+                    CompanySavedData compData =
+                            CompanySavedData.get(sl);
+                    compData.getCompanyForWorker(getUUID()).ifPresent(company -> {
+                        if (company.getOwnerPlayerId().equals(sp.getUUID())) {
+                            CompanyWorkerScreen.open(sp, this, company);
+                        } else {
+                            sp.displayClientMessage(
+                                    Component.literal(getNpcName()
+                                            + " is employed by "
+                                            + company.getName() + "."),
+                                    false);
+                        }
+                    });
+                }
+            }
 
             default ->
                 player.displayClientMessage(
