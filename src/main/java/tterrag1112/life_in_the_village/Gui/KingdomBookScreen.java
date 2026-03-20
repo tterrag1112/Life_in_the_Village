@@ -31,18 +31,18 @@ public class KingdomBookScreen extends Screen {
     // Colors
     // -------------------------------------------------------------------------
 
-    private static final int COL_PARCHMENT = 0xFFF5F0E0;
-    private static final int COL_SIDEBAR   = 0xFFEDE8D5;
-    private static final int COL_BORDER    = 0xFFB8A878;
-    private static final int COL_DARK      = 0xFF3B2E1A;
-    private static final int COL_MID       = 0xFF7A6040;
-    private static final int COL_LIGHT     = 0xFFA89060;
-    private static final int COL_HIGHLIGHT = 0xFFD4C48A;
-    private static final int COL_GREEN_BG  = 0xFFD4EAC8;
-    private static final int COL_GREEN_TXT = 0xFF2D6B1A;
-    private static final int COL_RED_BG    = 0xFFEAC8C8;
-    private static final int COL_RED_TXT   = 0xFF8B1A1A;
-    private static final int COL_GOLD      = 0xFFB8860B;
+    private static final int COL_PARCHMENT = BookScreenColors.PARCHMENT;
+    private static final int COL_SIDEBAR   = BookScreenColors.SIDEBAR;
+    private static final int COL_BORDER    = BookScreenColors.BORDER;
+    private static final int COL_DARK      = BookScreenColors.DARK;
+    private static final int COL_MID       = BookScreenColors.MID;
+    private static final int COL_LIGHT     = BookScreenColors.LIGHT;
+    private static final int COL_HIGHLIGHT = BookScreenColors.HIGHLIGHT;
+    private static final int COL_GREEN_BG  = BookScreenColors.GREEN_BG;
+    private static final int COL_GREEN_TXT = BookScreenColors.GREEN_TXT;
+    private static final int COL_RED_BG    = BookScreenColors.RED_BG;
+    private static final int COL_RED_TXT   = BookScreenColors.RED_TXT;
+    private static final int COL_GOLD      = BookScreenColors.GOLD;
 
     // -------------------------------------------------------------------------
     // Page types

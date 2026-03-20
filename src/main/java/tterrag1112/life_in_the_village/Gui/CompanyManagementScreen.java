@@ -10,6 +10,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
@@ -17,6 +18,7 @@ import tterrag1112.life_in_the_village.Networking.OpenCompanyManagementPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
+import java.awt.print.Book;
 import java.util.*;
 
 public class CompanyManagementScreen extends Screen {
@@ -31,19 +33,19 @@ public class CompanyManagementScreen extends Screen {
     private static final int ROW_H     = 24;
 
     // Colors — same palette
-    private static final int COL_PARCHMENT = 0xFFF5F0E0;
-    private static final int COL_SIDEBAR   = 0xFFEDE8D5;
-    private static final int COL_BORDER    = 0xFFB8A878;
-    private static final int COL_DARK      = 0xFF3B2E1A;
-    private static final int COL_MID       = 0xFF7A6040;
-    private static final int COL_LIGHT     = 0xFFA89060;
-    private static final int COL_HIGHLIGHT = 0xFFD4C48A;
-    private static final int COL_GREEN_BG  = 0xFFD4EAC8;
-    private static final int COL_GREEN_TXT = 0xFF2D6B1A;
-    private static final int COL_RED_BG    = 0xFFEAC8C8;
-    private static final int COL_RED_TXT   = 0xFF8B1A1A;
-    private static final int COL_GOLD      = 0xFFB8860B;
-    private static final int COL_AMBER     = 0xFFE8A020;
+    private static final int COL_PARCHMENT = BookScreenColors.PARCHMENT;
+    private static final int COL_SIDEBAR   = BookScreenColors.SIDEBAR;
+    private static final int COL_BORDER    = BookScreenColors.BORDER;
+    private static final int COL_DARK      = BookScreenColors.DARK;
+    private static final int COL_MID       = BookScreenColors.MID;
+    private static final int COL_LIGHT     = BookScreenColors.LIGHT;
+    private static final int COL_HIGHLIGHT = BookScreenColors.HIGHLIGHT;
+    private static final int COL_GREEN_BG  = BookScreenColors.GREEN_BG;
+    private static final int COL_GREEN_TXT = BookScreenColors.GREEN_TXT;
+    private static final int COL_RED_BG    = BookScreenColors.RED_BG;
+    private static final int COL_RED_TXT   = BookScreenColors.RED_TXT;
+    private static final int COL_GOLD      = BookScreenColors.GOLD;
+    private static final int COL_AMBER     = BookScreenColors.AMBER;
 
     public enum Section { OVERVIEW, WORKERS, PRICES, SCHEDULE }
 
@@ -83,14 +85,7 @@ public class CompanyManagementScreen extends Screen {
         List<OpenCompanyManagementPacket.WorkerEntry> workers = new ArrayList<>();
         for (Company.CompanyWorker w : company.getWorkers()) {
             // Find NPC name
-            String npcName = level.getEntitiesOfClass(
-                            tterrag1112.life_in_the_village.Entities.custom
-                                    .TownspersonMob.class,
-                            new net.minecraft.world.phys.AABB(
-                                    -30000000, -2048, -30000000,
-                                    30000000,  2048,  30000000),
-                            mob -> mob.getUUID().equals(w.npcId())
-                    ).stream().findFirst()
+            String npcName = TownspersonMob.findByUUID(level, w.npcId())
                     .map(npc -> npc.getNpcName())
                     .orElse("Unknown NPC");
             workers.add(new OpenCompanyManagementPacket.WorkerEntry(
@@ -219,58 +214,6 @@ public class CompanyManagementScreen extends Screen {
                 .pos(px, py + 140).size(pw, 16).build());
     }
 
-    private void buildWorkerWidgets(int px, int py, int pw, int maxY) {
-        int y = py + 14; // skip header
-        int visibleStart = workerScroll;
-        int index = 0;
-
-        for (OpenCompanyManagementPacket.WorkerEntry worker : data.workers()) {
-            if (index < visibleStart) { index++; continue; }
-            if (y + ROW_H > maxY - 12) break;
-
-            final UUID npcId = worker.npcId();
-
-            // Fire button
-            addRenderableWidget(Button.builder(
-                            Component.literal("Fire"),
-                            b -> sendAction(CompanyActionPacket.ActionType
-                                    .FIRE_NPC, npcId))
-                    .pos(px + pw - 32, y + (ROW_H - 14) / 2)
-                    .size(30, 14).build());
-
-            // Wage - / + buttons
-            addRenderableWidget(Button.builder(Component.literal("-"),
-                            b -> sendActionLong(CompanyActionPacket.ActionType
-                                            .SET_WORKER_WAGE, npcId,
-                                    Math.max(data.effectiveMinWage(),
-                                            worker.wagePerDay() - 1)))
-                    .pos(px + pw - 80, y + (ROW_H - 14) / 2)
-                    .size(16, 14).build());
-
-            addRenderableWidget(Button.builder(Component.literal("+"),
-                            b -> sendActionLong(CompanyActionPacket.ActionType
-                                            .SET_WORKER_WAGE, npcId,
-                                    worker.wagePerDay() + 1))
-                    .pos(px + pw - 62, y + (ROW_H - 14) / 2)
-                    .size(16, 14).build());
-
-            y += ROW_H + 2;
-            index++;
-        }
-
-        // Scroll
-        if (workerScroll > 0) {
-            addRenderableWidget(Button.builder(Component.literal("▲"),
-                            b -> { workerScroll--; buildWidgets(); })
-                    .pos(px + pw - 14, py + 14).size(12, 10).build());
-        }
-        int maxVisible = (maxY - (py + 14)) / (ROW_H + 2);
-        if (workerScroll + maxVisible < data.workers().size()) {
-            addRenderableWidget(Button.builder(Component.literal("▼"),
-                            b -> { workerScroll++; buildWidgets(); })
-                    .pos(px + pw - 14, maxY - 12).size(12, 10).build());
-        }
-    }
 
     private void buildPriceWidgets(int px, int py, int pw, int maxY) {
         int y = py + 14;
@@ -439,12 +382,15 @@ public class CompanyManagementScreen extends Screen {
         }
     }
 
+    // drawWorkers — add ROW_H to accommodate the extra buttons, add Manage button column
     private void drawWorkers(GuiGraphics g, int px, int py, int pw, int maxY) {
         int y = py;
+
+        // Column headers
         g.fill(px, y, px + pw, y + 12, 0xFFE8E0C8);
-        g.drawString(font, "Worker",  px + 2,          y + 2, COL_MID, false);
-        g.drawString(font, "Role",    px + 90,          y + 2, COL_MID, false);
-        g.drawString(font, "Wage/day",px + pw - 96,     y + 2, COL_MID, false);
+        g.drawString(font, "Worker",   px + 2,       y + 2, COL_MID, false);
+        g.drawString(font, "Role",     px + 100,      y + 2, COL_MID, false);
+        g.drawString(font, "Wage/day", px + pw - 110, y + 2, COL_MID, false);
         y += 14;
 
         int visibleStart = workerScroll;
@@ -459,19 +405,27 @@ public class CompanyManagementScreen extends Screen {
             g.fill(px, y, px + pw, y + ROW_H, rowBg);
             g.renderOutline(px, y, pw, ROW_H, COL_BORDER);
 
-            g.drawString(font, worker.npcName(),
-                    px + 3, y + (ROW_H - 8) / 2, COL_DARK, false);
-            g.drawString(font, formatRole(worker.role()),
-                    px + 90, y + (ROW_H - 8) / 2, COL_MID, false);
-            g.drawString(font, formatBronze(worker.wagePerDay()),
-                    px + pw - 96, y + (ROW_H - 8) / 2, COL_GOLD, false);
+            // Name
+            String name = worker.npcName();
+            while (font.width(name) > 90 && name.length() > 3)
+                name = name.substring(0, name.length() - 1);
+            if (!name.equals(worker.npcName())) name += "…";
+            g.drawString(font, name, px + 3, y + (ROW_H - 8) / 2, COL_DARK, false);
 
+            // Role
+            g.drawString(font, formatRole(worker.role()),
+                    px + 100, y + (ROW_H - 8) / 2, COL_MID, false);
+
+            // Wage — coin icons
+            CoinRenderer.renderCoinRow(g, worker.wagePerDay(),
+                    px + pw - 110, y + (ROW_H - 16) / 2);
+
+            // Task sub-label
             if (!worker.assignedItemId().isEmpty()) {
-                // Sub-label showing assigned task
-                String task = "\u2192 " + formatItemId(worker.assignedItemId())
-                        + " x" + worker.dailyTargetCount();
-                g.drawString(font, task, px + 3, y + ROW_H - 8,
-                        COL_GREEN_TXT, false);
+                g.drawString(font,
+                        "\u2192 " + formatItemId(worker.assignedItemId())
+                                + " \u00D7" + worker.dailyTargetCount(),
+                        px + 3, y + ROW_H - 8, COL_GREEN_TXT, false);
             }
 
             y += ROW_H + 2;
@@ -482,9 +436,66 @@ public class CompanyManagementScreen extends Screen {
             g.drawCenteredString(font, "No workers hired.",
                     px + pw / 2, py + 60, COL_MID);
             g.drawCenteredString(font,
-                    "Interact with an unemployed NPC to hire.",
+                    "Interact with an unemployed NPC while holding a coin.",
                     px + pw / 2, py + 74, COL_LIGHT);
         }
+    }
+
+    // buildWorkerWidgets — wages stay here, Manage button opens worker screen
+    private void buildWorkerWidgets(int px, int py, int pw, int maxY) {
+        int y = py + 14;
+        int visibleStart = workerScroll;
+        int index = 0;
+
+        for (OpenCompanyManagementPacket.WorkerEntry worker : data.workers()) {
+            if (index < visibleStart) { index++; continue; }
+            if (y + ROW_H > maxY - 12) break;
+
+            final UUID npcId      = worker.npcId();
+            final long currentWage = worker.wagePerDay();
+            int mid = y + (ROW_H - 14) / 2;
+
+            // Wage −
+            addRenderableWidget(Button.builder(Component.literal("−"),
+                            b -> sendActionLong(CompanyActionPacket.ActionType.SET_WORKER_WAGE,
+                                    npcId,
+                                    Math.max(data.effectiveMinWage(), currentWage - 1)))
+                    .pos(px + pw - 110, mid).size(14, 14).build());
+
+            // Wage +
+            addRenderableWidget(Button.builder(Component.literal("+"),
+                            b -> sendActionLong(CompanyActionPacket.ActionType.SET_WORKER_WAGE,
+                                    npcId, currentWage + 1))
+                    .pos(px + pw - 94, mid).size(14, 14).build());
+
+            // Fire
+            addRenderableWidget(Button.builder(Component.literal("Fire"),
+                            b -> sendAction(CompanyActionPacket.ActionType.FIRE_NPC, npcId))
+                    .pos(px + pw - 44, mid).size(30, 14).build());
+
+            // Manage — opens CompanyWorkerScreen for this NPC
+            addRenderableWidget(Button.builder(Component.literal("Manage"),
+                            b -> ClientPacketDistributor.sendToServer(
+                                    new CompanyActionPacket(
+                                            CompanyActionPacket.ActionType.OPEN_WORKER_SCREEN,
+                                            data.companyId(), npcId, "", 0L, 0)))
+                    .pos(px + pw - 78, mid).size(32, 14).build());
+
+            y += ROW_H + 2;
+            index++;
+        }
+
+        // Scroll
+        if (workerScroll > 0)
+            addRenderableWidget(Button.builder(Component.literal("▲"),
+                            b -> { workerScroll--; buildWidgets(); })
+                    .pos(px + pw - 14, py + 14).size(12, 10).build());
+
+        int maxVisible = (maxY - (py + 14)) / (ROW_H + 2);
+        if (workerScroll + maxVisible < data.workers().size())
+            addRenderableWidget(Button.builder(Component.literal("▼"),
+                            b -> { workerScroll++; buildWidgets(); })
+                    .pos(px + pw - 14, maxY - 12).size(12, 10).build());
     }
 
     private void drawPrices(GuiGraphics g, int px, int py, int pw, int maxY) {

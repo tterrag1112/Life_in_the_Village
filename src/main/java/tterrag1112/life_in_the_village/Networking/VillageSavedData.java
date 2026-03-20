@@ -161,6 +161,10 @@ public class VillageSavedData extends SavedData {
         data.kingdoms.addAll(kingdoms);
         data.events.addAll(events);
         data.guilds.addAll(guilds);
+        data.buildings.forEach(b -> data.buildingIndex.put(b.getId(), b));
+        data.villages.forEach(v -> data.villageIndex.put(v.getId(), v));
+        data.kingdoms.forEach(k -> data.kingdomIndex.put(k.getId(), k));
+        data.farmPlots.forEach(p -> data.farmPlotIndex.put(p.getId(), p));
 
         // Housing
         data.rentedRooms.putAll(housingData.rentedRooms());
@@ -197,6 +201,11 @@ public class VillageSavedData extends SavedData {
     private final List<Kingdom> kingdoms = new ArrayList<>();
     private final List<VillageEvent> events = new ArrayList<>();
     private final List<GuildData> guilds = new ArrayList<>();
+
+    private final Map<UUID, Building> buildingIndex = new HashMap<>();
+    private final Map<UUID, Village>  villageIndex  = new HashMap<>();
+    private final Map<UUID, Kingdom>  kingdomIndex  = new HashMap<>();
+    private final Map<UUID, FarmPlot> farmPlotIndex = new HashMap<>();
 
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
     private final Map<UUID, TradeRoute> tradeRoutes = new HashMap<>();
@@ -240,6 +249,7 @@ public class VillageSavedData extends SavedData {
 
     public void addBuilding(Building building) {
         buildings.add(building);
+        buildingIndex.put(building.getId(), building);
         setDirty();
     }
 
@@ -273,9 +283,7 @@ public class VillageSavedData extends SavedData {
     }
 
     public Optional<Building> getBuildingById(UUID id) {
-        return buildings.stream()
-                .filter(b -> b.getId().equals(id))
-                .findFirst();
+        return Optional.ofNullable(buildingIndex.get(id));
     }
 
     // Keep getBuildingAt for position-based lookup
@@ -293,6 +301,8 @@ public class VillageSavedData extends SavedData {
 
     public void addVillage(Village village) {
         villages.add(village);
+        villageIndex.put(village.getId(), village);
+
         setDirty();
     }
 
@@ -326,11 +336,13 @@ public class VillageSavedData extends SavedData {
 
     public void addFarmPlot(FarmPlot plot) {
         farmPlots.add(plot);
+        farmPlotIndex.put(plot.getId(), plot);
+
         setDirty();
     }
 
     public Optional<FarmPlot> getFarmPlotById(UUID id) {
-        return farmPlots.stream().filter(p -> p.getId().equals(id)).findFirst();
+        return Optional.ofNullable(farmPlotIndex.get(id));
     }
 
     public Optional<FarmPlot> getFarmPlotByName(String name) {
@@ -463,21 +475,21 @@ public class VillageSavedData extends SavedData {
 
     // Add getVillageById since Kingdom needs it
     public Optional<Village> getVillageById(UUID id) {
-        return villages.stream()
-                .filter(v -> v.getId().equals(id))
-                .findFirst();
+        return Optional.ofNullable(villageIndex.get(id));
+
     }
 
     // Kingdom methods
     public void addKingdom(Kingdom kingdom) {
         kingdoms.add(kingdom);
+        kingdomIndex.put(kingdom.getId(), kingdom);
+
         setDirty();
     }
 
     public Optional<Kingdom> getKingdomById(UUID id) {
-        return kingdoms.stream()
-                .filter(k -> k.getId().equals(id))
-                .findFirst();
+        return Optional.ofNullable(kingdomIndex.get(id));
+
     }
 
     public Optional<Kingdom> getKingdomByName(String name) {

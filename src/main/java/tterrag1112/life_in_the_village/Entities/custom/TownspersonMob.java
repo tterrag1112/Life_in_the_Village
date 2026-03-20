@@ -1543,6 +1543,15 @@ public class TownspersonMob extends PathfinderMob {
                                 }));
     }
 
+    public static Optional<TownspersonMob> findByUUID(ServerLevel level, UUID id) {
+        return level.getEntitiesOfClass(
+                TownspersonMob.class,
+                new net.minecraft.world.phys.AABB(
+                        -30000000, -2048, -30000000,
+                        30000000,  2048,  30000000),
+                mob -> mob.getUUID().equals(id)
+        ).stream().findFirst();
+    }
 
 
 

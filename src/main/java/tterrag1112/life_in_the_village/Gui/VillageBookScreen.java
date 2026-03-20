@@ -9,6 +9,7 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket;
 import tterrag1112.life_in_the_village.Networking.VillageActionPacket;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.*;
 
@@ -30,20 +31,20 @@ public class VillageBookScreen extends Screen {
     // COLORS
     // =========================================================================
 
-    private static final int COL_PARCHMENT = 0xFFF5F0E0;
-    private static final int COL_SIDEBAR   = 0xFFEDE8D5;
-    private static final int COL_BORDER    = 0xFFB8A878;
-    private static final int COL_DARK      = 0xFF3B2E1A;
-    private static final int COL_MID       = 0xFF7A6040;
-    private static final int COL_LIGHT     = 0xFFA89060;
-    private static final int COL_HIGHLIGHT = 0xFFD4C48A;
-    private static final int COL_GREEN_BG  = 0xFFD4EAC8;
-    private static final int COL_GREEN_TXT = 0xFF2D6B1A;
-    private static final int COL_RED_BG    = 0xFFEAC8C8;
-    private static final int COL_RED_TXT   = 0xFF8B1A1A;
-    private static final int COL_GOLD      = 0xFFB8860B;
-    private static final int COL_AMBER     = 0xFFE8A020;
-    private static final int COL_BLUE_BG   = 0xFFD0E4F8;
+    private static final int COL_PARCHMENT = BookScreenColors.PARCHMENT;
+    private static final int COL_SIDEBAR   = BookScreenColors.SIDEBAR;
+    private static final int COL_BORDER    = BookScreenColors.BORDER;
+    private static final int COL_DARK      = BookScreenColors.DARK;
+    private static final int COL_MID       = BookScreenColors.MID;
+    private static final int COL_LIGHT     = BookScreenColors.LIGHT;
+    private static final int COL_HIGHLIGHT = BookScreenColors.HIGHLIGHT;
+    private static final int COL_GREEN_BG  = BookScreenColors.GREEN_BG;
+    private static final int COL_GREEN_TXT = BookScreenColors.GREEN_TXT;
+    private static final int COL_RED_BG    = BookScreenColors.RED_BG;
+    private static final int COL_RED_TXT   = BookScreenColors.RED_TXT;
+    private static final int COL_GOLD      = BookScreenColors.GOLD;
+    private static final int COL_AMBER     = BookScreenColors.AMBER;
+    private static final int COL_BLUE_BG   = BookScreenColors.BLUE_BG;
 
     // =========================================================================
     // SECTIONS
@@ -288,7 +289,7 @@ public class VillageBookScreen extends Screen {
                     ClientPacketDistributor.sendToServer(
                             new VillageActionPacket(
                                     VillageActionPacket.ActionType.BUY_HOUSE,
-                                    data.villageId(), buildingId));
+                                    data.villageId(), buildingId, "", 0));
 
             case BUY_COMPANY_BUILDING ->
                     ClientPacketDistributor.sendToServer(
@@ -1052,16 +1053,187 @@ public class VillageBookScreen extends Screen {
         return COL_RED_TXT;
     }
 
-    /** Returns sendOpenPacket — defined in the class body, called by the
-     *  village leader interaction handler and VillageActionPacket. */
     public static void sendOpenPacket(
             net.minecraft.server.level.ServerPlayer player,
             UUID villageId,
             net.minecraft.server.level.ServerLevel level,
             tterrag1112.life_in_the_village.Networking.VillageSavedData vdata) {
-        // Full implementation lives above in the server-side helper block.
-        // This stub satisfies any callers that import only the class.
-        tterrag1112.life_in_the_village.Gui.VillageBookScreen
-                .sendOpenPacket(player, villageId, level, vdata);
+
+        var village = vdata.getVillageById(villageId).orElse(null);
+        if (village == null) return;
+
+        // Tier
+        int buildingCount = village.getBuildingIds().size();
+        String tier = tterrag1112.life_in_the_village.Village.Decoration
+                .VillageSizeTier.fromBuildingCount(buildingCount).displayName;
+
+        // Population
+        net.minecraft.world.phys.AABB villageBounds = village.getBounds(vdata)
+                .map(b -> b.inflate(32))
+                .orElse(new net.minecraft.world.phys.AABB(0, 0, 0, 0, 0, 0));
+
+        int pop = (int) level.getEntitiesOfClass(
+                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
+                villageBounds,
+                npc -> npc.getAssignedVillageName()
+                        .map(n -> n.equals(village.getName()))
+                        .orElse(false)
+        ).size();
+
+        // Leader name
+        String leaderName = level.getEntitiesOfClass(
+                        tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
+                        villageBounds,
+                        npc -> npc.getProfession()
+                                == tterrag1112.life_in_the_village.Profession.Profession.VILLAGE_LEADER
+                                && npc.getAssignedVillageName()
+                                .map(n -> n.equals(village.getName()))
+                                .orElse(false)
+                ).stream().findFirst()
+                .map(npc -> npc.getNpcName())
+                .orElse("None");
+
+        // Houses
+        java.util.List<tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.HouseEntry>
+                houses = new java.util.ArrayList<>();
+        for (UUID bid : village.getBuildingIds()) {
+            vdata.getBuildingById(bid).ifPresent(b -> {
+                if (b.getType() != tterrag1112.life_in_the_village.Village.Buildings
+                        .BuildingType.HOUSE) return;
+                long price = tterrag1112.life_in_the_village.Village.Buildings
+                        .HousePurchaseManager.calculatePrice(b, village, vdata);
+                long tax = tterrag1112.life_in_the_village.Village.Buildings
+                        .HousePurchaseManager.calculateWeeklyTax(b, village, vdata);
+                boolean mine = vdata.getPropertyForBuilding(bid)
+                        .map(p -> p.playerId().equals(player.getUUID()))
+                        .orElse(false);
+                boolean others = vdata.isPlayerOwned(bid) && !mine;
+                boolean npcHere = !level.getEntitiesOfClass(
+                        tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
+                        b.getShape().toAABB().inflate(16),
+                        npc -> npc.getHouseId().map(id -> id.equals(bid)).orElse(false)
+                ).isEmpty();
+                houses.add(new tterrag1112.life_in_the_village.Networking
+                        .OpenVillageBookPacket.HouseEntry(
+                        bid, b.getName(), price, tax, mine, others, npcHere));
+            });
+        }
+
+        // Needs
+        java.util.Map<String, String> needs = new java.util.LinkedHashMap<>();
+        village.getNeeds().forEach((cat, need) ->
+                needs.put(formatEnum(cat.name()), formatEnum(need.getLevel().name())));
+
+        // Pending expansion
+        String expansion = vdata.getPendingExpansionForVillage(villageId)
+                .map(r -> formatEnum(r.getBuildingType().name()))
+                .orElse("");
+
+        // Building types present
+        java.util.List<String> btypes = village.getBuildingIds().stream()
+                .map(vdata::getBuildingById)
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .map(b -> formatEnum(b.getType().name()))
+                .distinct().sorted().toList();
+
+        // Player wealth
+        net.minecraft.world.SimpleContainer playerContainer =
+                tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper
+                        .snapshotInventory(player);
+        long playerWealth = tterrag1112.life_in_the_village.Village.Economy.Currency
+                .CoinHelper.getWealth(playerContainer).toBronze();
+
+        // Reputation and warning
+        int playerRep   = village.getReputation(player.getUUID());
+        boolean hasWarn = vdata.hasWarning(player.getUUID(), villageId);
+
+        // Kingdom name
+        String kingdomName = vdata.getKingdomForVillage(villageId)
+                .map(k -> k.getName()).orElse("");
+
+        // Active event
+        String activeEvent = vdata.getActiveEventForVillage(villageId)
+                .map(e -> formatEnum(e.getType().name())).orElse("");
+
+        // Trade route count
+        int routeCount = (int) vdata.getAllTradeRoutes().stream()
+                .filter(r -> r.getVillageA().equals(villageId)
+                        || r.getVillageB().equals(villageId))
+                .filter(r -> r.getStatus()
+                        == tterrag1112.life_in_the_village.Village.Economy.Trade
+                        .TradeRoute.RouteStatus.ACTIVE)
+                .count();
+
+        // Company data
+        tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData companyData =
+                tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData.get(level);
+
+        tterrag1112.life_in_the_village.Guilds.Companies.Company playerCompany =
+                companyData.getByOwner(player.getUUID()).stream()
+                        .filter(c -> c.getHomeVillageId().equals(villageId))
+                        .findFirst().orElse(null);
+
+        boolean hasCompanyHere     = playerCompany != null;
+        UUID    companyId          = hasCompanyHere
+                ? playerCompany.getCompanyId() : new UUID(0, 0);
+        String  companyName        = hasCompanyHere ? playerCompany.getName() : "";
+        int     companyWorkerCount = hasCompanyHere
+                ? playerCompany.getWorkers().size() : 0;
+
+        java.util.List<String> companyBuildingNames = new java.util.ArrayList<>();
+        if (hasCompanyHere) {
+            for (UUID bid : playerCompany.getBuildingIds()) {
+                vdata.getBuildingById(bid)
+                        .ifPresent(b -> companyBuildingNames.add(b.getName()));
+            }
+        }
+
+        // Purchasable buildings
+        java.util.Set<String> nonPurchasable = java.util.Set.of(
+                "HOUSE", "TOWN_HALL", "GUARD_TOWER", "GUILD_HALL",
+                "WELL", "BELL_TOWER", "PRISON");
+
+        java.util.Set<UUID> allCompanyBuildingIds = new java.util.HashSet<>();
+        java.util.Set<UUID> playerCompanyBuildingIds = new java.util.HashSet<>();
+        companyData.getAllCompanies().forEach(c -> {
+            c.getBuildingIds().forEach(allCompanyBuildingIds::add);
+            if (c.getOwnerPlayerId().equals(player.getUUID()))
+                c.getBuildingIds().forEach(playerCompanyBuildingIds::add);
+        });
+
+        java.util.List<tterrag1112.life_in_the_village.Networking
+                .OpenVillageBookPacket.PurchasableBuildingEntry> purchasable =
+                new java.util.ArrayList<>();
+        for (UUID bid : village.getBuildingIds()) {
+            vdata.getBuildingById(bid).ifPresent(b -> {
+                if (nonPurchasable.contains(b.getType().name())) return;
+                long price = tterrag1112.life_in_the_village.Village.Buildings
+                        .HousePurchaseManager.calculatePrice(b, village, vdata);
+                boolean inPlayerCompany  = playerCompanyBuildingIds.contains(bid);
+                boolean inOtherCompany   = !inPlayerCompany
+                        && allCompanyBuildingIds.contains(bid);
+                purchasable.add(new tterrag1112.life_in_the_village.Networking
+                        .OpenVillageBookPacket.PurchasableBuildingEntry(
+                        bid, b.getName(), b.getType().name(),
+                        price, inPlayerCompany, inOtherCompany));
+            });
+        }
+
+        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket(
+                        villageId, village.getName(), leaderName, tier,
+                        pop, village.getTreasuryBronze(),
+                        houses, needs, expansion, btypes,
+                        playerWealth, playerRep, hasWarn,
+                        kingdomName, activeEvent, routeCount,
+                        hasCompanyHere, companyId, companyName,
+                        companyWorkerCount, companyBuildingNames,
+                        purchasable));
+    }
+
+    private static String formatEnum(String s) {
+        if (s == null || s.isEmpty()) return "";
+        return s.charAt(0) + s.substring(1).toLowerCase().replace('_', ' ');
     }
 }

@@ -554,12 +554,7 @@ public class VillageEconomy {
 
     @Nullable
     private static TownspersonMob findEntity(ServerLevel level, UUID id) {
-        return level.getEntitiesOfClass(
-                TownspersonMob.class,
-                new AABB(-30000000, -2048, -30000000,
-                        30000000,  2048,  30000000),
-                mob -> mob.getUUID().equals(id)
-        ).stream().findFirst().orElse(null);
+        return TownspersonMob.findByUUID(level, id).orElse(null);
     }
 
     private static int countPopulation(ServerLevel level,

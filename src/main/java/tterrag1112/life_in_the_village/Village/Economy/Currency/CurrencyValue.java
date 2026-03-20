@@ -70,7 +70,15 @@ public class CurrencyValue {
 
     @Override
     public String toString() {
-        return toGold() + "g " + remainingSilverAfterGold() + "s "
-                + remainingBronzeAfterSilver() + "b";
+        // Delegate to CoinRenderer.format for consistency
+        // (server-side fallback without GuiGraphics)
+        long gold   = toGold();
+        long silver = remainingSilverAfterGold();
+        long bronze = remainingBronzeAfterSilver();
+        StringBuilder sb = new StringBuilder();
+        if (gold   > 0) sb.append(gold).append("g ");
+        if (silver > 0) sb.append(silver).append("s ");
+        if (bronze > 0 || sb.isEmpty()) sb.append(bronze).append("b");
+        return sb.toString().trim();
     }
 }

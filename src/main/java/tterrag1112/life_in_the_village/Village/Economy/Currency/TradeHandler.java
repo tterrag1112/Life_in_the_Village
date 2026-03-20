@@ -272,20 +272,13 @@ public class TradeHandler {
 
     private static net.minecraft.world.SimpleContainer buildPlayerContainer(
             ServerPlayer player) {
-        var container = new net.minecraft.world.SimpleContainer(
-                player.getInventory().getContainerSize());
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
-            container.setItem(i, player.getInventory().getItem(i).copy());
-        }
-        return container;
+
+        return CoinHelper.snapshotInventory(player);
     }
 
     private static void syncPlayerCoins(ServerPlayer player,
                                         net.minecraft.world.SimpleContainer container) {
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
-            player.getInventory().setItem(i, container.getItem(i));
-        }
-        player.inventoryMenu.broadcastChanges();
+       CoinHelper.syncInventory(player,container);
     }
 
     public static String formatPrice(CurrencyValue value) {

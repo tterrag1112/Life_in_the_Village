@@ -116,10 +116,13 @@ public class Company {
 
         /** Is the given in-game hour within work hours? */
         public boolean isWorkTime(long gameTick) {
-            // MC day: 0=dawn(6am), 6000=noon, 12000=dusk(6pm)
-            // Hour 0–23 mapped: hour = (tick % 24000) / 1000
-            int hour = (int)((gameTick % 24000L) / 1000L);
-            return hour >= startHour && hour < endHour;
+            int hour = (int)(((gameTick % 24000L) / 1000L) + 6) % 24;
+            if (startHour < endHour) {
+                return hour >= startHour && hour < endHour;
+            } else {
+                // Overnight schedule (e.g. 22–6)
+                return hour >= startHour || hour < endHour;
+            }
         }
     }
 
@@ -326,6 +329,12 @@ public class Company {
         return unpaid;
     }
 
+    public boolean withdrawBronze(long amount) {
+        if (treasuryBronze < amount) return false;
+        treasuryBronze -= amount;
+        return true;
+    }
+
     // -------------------------------------------------------------------------
     // Getters / setters
     // -------------------------------------------------------------------------
@@ -341,6 +350,10 @@ public class Company {
     public void depositBronze(long amt) { treasuryBronze += amt; }
     public boolean isActive()           { return isActive; }
     public void setActive(boolean b)    { this.isActive = b; }
+
+    public void removePriceOverride(String itemId) {
+        priceOverrides.remove(itemId);
+    }
 
 
 }

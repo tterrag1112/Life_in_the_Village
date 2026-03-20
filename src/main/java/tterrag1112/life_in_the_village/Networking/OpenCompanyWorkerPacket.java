@@ -22,7 +22,9 @@ public record OpenCompanyWorkerPacket(
         String producerType,
         List<AvailableItem> availableItems,
         List<CompanyBuildingEntry> companyBuildings,
-        long currentMarketPrice
+        long currentMarketPrice,
+        List<SellListing> currentSellListings   // items this seller is currently selling
+
 ) implements CustomPacketPayload {
 
     // -------------------------------------------------------------------------
@@ -37,6 +39,18 @@ public record OpenCompanyWorkerPacket(
             int stockCount,
             long marketPrice
     ) {}
+
+    public record SellListing(
+            String itemId,
+            String displayName,
+            int    stockCount,
+            long   customPrice,    // 0 = no override (use market)
+            long   marketPrice
+    ) {
+        public long effectivePrice() {
+            return customPrice > 0 ? customPrice : marketPrice;
+        }
+    }
 
     /** A building the company owns — sent so the client can determine
      *  which ProducerTypes are available without a server round-trip. */
@@ -92,19 +106,29 @@ public record OpenCompanyWorkerPacket(
                 }
 
                 buf.writeVarLong(pkt.currentMarketPrice());
+
+                // Current sell listings
+                buf.writeVarInt(pkt.currentSellListings().size());
+                for (SellListing s : pkt.currentSellListings()) {
+                    buf.writeUtf(s.itemId());
+                    buf.writeUtf(s.displayName());
+                    buf.writeVarInt(s.stockCount());
+                    buf.writeVarLong(s.customPrice());
+                    buf.writeVarLong(s.marketPrice());
+                }
             },
 
             // DECODER
             buf -> {
-                UUID   npcId            = buf.readUUID();
-                UUID   companyId        = buf.readUUID();
-                String npcName          = buf.readUtf();
-                long   wage             = buf.readVarLong();
-                long   minWage          = buf.readVarLong();
-                String currentItemId    = buf.readUtf();
-                int    currentTarget    = buf.readVarInt();
-                String role             = buf.readUtf();
-                String producerType     = buf.readUtf();
+                UUID   npcId         = buf.readUUID();
+                UUID   companyId     = buf.readUUID();
+                String npcName       = buf.readUtf();
+                long   wage          = buf.readVarLong();
+                long   minWage       = buf.readVarLong();
+                String currentItemId = buf.readUtf();
+                int    currentTarget = buf.readVarInt();
+                String role          = buf.readUtf();
+                String producerType  = buf.readUtf();
 
                 int itemCount = buf.readVarInt();
                 List<AvailableItem> items = new ArrayList<>();
@@ -127,13 +151,25 @@ public record OpenCompanyWorkerPacket(
 
                 long currentMarketPrice = buf.readVarLong();
 
+                int sellCount = buf.readVarInt();
+                List<SellListing> sellListings = new ArrayList<>();
+                for (int i = 0; i < sellCount; i++) {
+                    sellListings.add(new SellListing(
+                            buf.readUtf(),
+                            buf.readUtf(),
+                            buf.readVarInt(),
+                            buf.readVarLong(),
+                            buf.readVarLong()));
+                }
+
                 return new OpenCompanyWorkerPacket(
                         npcId, companyId, npcName,
                         wage, minWage,
                         currentItemId, currentTarget,
                         role, producerType,
                         items, buildings,
-                        currentMarketPrice);
+                        currentMarketPrice,
+                        sellListings);
             }
     );
 

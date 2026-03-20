@@ -62,8 +62,6 @@ public class VillageWarningSystem {
             }
         });
 
-        System.out.println("Warning issued against player "
-                + playerId + " from village " + sourceVillageId);
     }
 
     // -------------------------------------------------------------------------

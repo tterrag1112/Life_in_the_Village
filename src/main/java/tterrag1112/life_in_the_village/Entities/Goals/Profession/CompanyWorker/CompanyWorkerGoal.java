@@ -310,8 +310,10 @@ public class CompanyWorkerGoal extends Goal {
                 if (stock <= 0) continue;
 
                 // Post a trade listing with the company price
-                VillageEconomy.postListing(level, villageId, entity, item, stock,
-                        level.getGameTime());
+                VillageEconomy.postCompanyListing(
+                        level, villageId, entity, company,
+                        item, stock, level.getGameTime());
+
 
             }
         }

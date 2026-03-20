@@ -296,24 +296,12 @@ public class HousePurchaseManager {
 
     private static net.minecraft.world.SimpleContainer
     buildTempContainer(ServerPlayer player) {
-        var c = new net.minecraft.world.SimpleContainer(
-                player.getInventory().getContainerSize());
-        for (int i = 0; i < player.getInventory()
-                .getContainerSize(); i++) {
-            c.setItem(i, player.getInventory()
-                    .getItem(i).copy());
-        }
-        return c;
+        return CoinHelper.snapshotInventory(player);
     }
 
     private static void syncContainer(
             ServerPlayer player,
             net.minecraft.world.SimpleContainer container) {
-        for (int i = 0; i < player.getInventory()
-                .getContainerSize(); i++) {
-            player.getInventory().setItem(
-                    i, container.getItem(i));
-        }
-        player.inventoryMenu.broadcastChanges();
+        CoinHelper.syncInventory(player,container);
     }
 }

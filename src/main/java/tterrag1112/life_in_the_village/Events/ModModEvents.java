@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Events;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -15,6 +16,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.HandlerThread;
@@ -25,6 +27,7 @@ import tterrag1112.life_in_the_village.Commands.BuildingCommand;
 import tterrag1112.life_in_the_village.Commands.FarmPlotCommands;
 import tterrag1112.life_in_the_village.Commands.GuildCommands;
 import tterrag1112.life_in_the_village.Commands.KingdomCommands;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
 import tterrag1112.life_in_the_village.DataAttachments.ModData;
@@ -39,8 +42,11 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.MiningYieldRegi
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
+import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 
 @EventBusSubscriber(modid = Life_in_the_village.MODID)
@@ -156,17 +162,71 @@ public class ModModEvents {
             ServerLevel level = (ServerLevel) player.level();
             VillageSavedData data = VillageSavedData.get(level);
 
-            List<Building> buildings = VillageSavedData.get(level).getAllBuildings();
-            List<Village> villages = VillageSavedData.get(level).getAllVillages();
-            List<TradeRoute> tradeRoutes = VillageSavedData.get(level).getAllTradeRoutes();
+            List<Building> buildings = data.getAllBuildings();
+            List<Village> villages = data.getAllVillages();
+            List<TradeRoute> tradeRoutes = data.getAllTradeRoutes();
             PacketDistributor.sendToPlayer(player, new SyncBuildingsPacket(buildings, villages, tradeRoutes));
             PacketDistributor.sendToPlayer(player,
                     new SyncKingdomPacket(
                             data.getAllKingdoms()));
         }
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+
+        ServerLevel level = (ServerLevel) player.level();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        // Sync buildings
+        PacketDistributor.sendToPlayer(player,
+                new SyncBuildingsPacket(
+                        data.getAllBuildings(),
+                        data.getAllVillages(),
+                        data.getAllTradeRoutes()));
+
+        // Sync kingdoms — ensures ClientKingdomCache
+        // is populated even after full game restart
+        PacketDistributor.sendToPlayer(player,
+                new SyncKingdomPacket(
+                        data.getAllKingdoms()));
+
+
+        // Clear any warnings where reputation has recovered
+        VillageWarningSystem.checkAndClearWarnings(
+                player.getUUID(), data);
+
+        // Notify player of any active warnings
+        List<Village> warned = VillageWarningSystem
+                .getWarnedVillages(player.getUUID(), data);
+        if (!warned.isEmpty()) {
+            player.displayClientMessage(
+                    Component.literal("You have active warnings in "
+                                    + warned.size() + " village"
+                                    + (warned.size() > 1 ? "s" : "") + ": "
+                                    + warned.stream()
+                                    .map(Village::getName)
+                                    .collect(Collectors.joining(", ")))
+                            .withStyle(net.minecraft.ChatFormatting.RED),
+                    false);
+        }
     }
 
 
+    @SubscribeEvent
+    public static void onServerStopping(ServerStoppingEvent event) {
+        ServerLevel overworld = event.getServer().overworld();
+        AdventurerSavedData data = AdventurerSavedData.get(overworld);
 
+        // Despawn all spawned groups and mark as unspawned before save
+        data.getAllGroups().forEach(group -> {
+            if (group.isSpawned()) {
+                group.getSpawnedEntityIds().stream()
+                        .map(overworld::getEntity)
+                        .filter(Objects::nonNull)
+                        .forEach(net.minecraft.world.entity.Entity::discard);
+                group.getSpawnedEntityIds().clear();
+                group.setSpawned(false);
+            }
+        });
 
+        data.setDirty();
+    }
 }

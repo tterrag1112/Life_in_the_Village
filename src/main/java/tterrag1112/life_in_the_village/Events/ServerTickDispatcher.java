@@ -1,7 +1,6 @@
 package tterrag1112.life_in_the_village.Events;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
@@ -9,232 +8,83 @@ import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
+import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
 import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Decoration.VillagePath;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Life_in_the_village;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Village.*;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Event.VillageEventScheduler;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Needs.VillageNeedsCalculator;
+import tterrag1112.life_in_the_village.Village.Village;
+import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
 import java.util.Map;
 import java.util.UUID;
 
+import static tterrag1112.life_in_the_village.Life_in_the_village.MODID;
 
-@EventBusSubscriber(modid = Life_in_the_village.MODID)
-public class NeedsUpdateEvent {
-
+@EventBusSubscriber(modid = MODID)
+public class ServerTickDispatcher {
     private static final int UPDATE_INTERVAL = 24000;
+
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
-        MinecraftServer server = event.getServer();
-        ServerLevel overworld = server.overworld();
-        long dayTime = overworld.getDayTime();
-        long gameTick = overworld.getGameTime();
+        ServerLevel overworld = event.getServer().overworld();
+        long tick = overworld.getGameTime();
 
-        VillageSavedData data = VillageSavedData.get(overworld);
-        CompanySavedData.get(overworld).tick(overworld, VillageSavedData.get(overworld), dayTime);
+        VillageSavedData  vdata = VillageSavedData.get(overworld);
+        CompanySavedData  cdata = CompanySavedData.get(overworld);
+        AdventurerSavedData ada = AdventurerSavedData.get(overworld);
+        CaravanSavedData  cara  = CaravanSavedData.get(overworld);
 
+        // Every tick (fast)
+        VillageEventScheduler.tickEvents(overworld, vdata, tick);
 
-        for (Village village : data.getAllVillages()) {
-            // Stagger updates by village name hash so not
-            // all villages update on the same tick
-            long offset = Math.abs(
-                    village.getName().hashCode()
-                            % UPDATE_INTERVAL);
-            if ((dayTime + offset) % UPDATE_INTERVAL != 0)
-                continue;
+        // Every second (20 ticks)
+        if (tick % 20 == 0) {
+            ada.tick(overworld, vdata);
+            cara.tick(overworld, vdata);
+            cdata.tick(overworld, vdata, tick);
+            TradeRouteManager.tick(overworld, vdata, tick);
+            VillageWarningSystem.tickWarningSpread(overworld, vdata, tick);
+            VillageExpansionManager.tick(overworld, vdata, tick);
+            HousePurchaseManager.tickPropertyTax(overworld, vdata, tick);
+            WorkplaceAssignmentManager.tickWeeklyPay(overworld, tick);
+        }
 
-            // -----------------------------------------------
-            // Recompute needs
-            // -----------------------------------------------
-            var needs = VillageNeedsCalculator.compute(
-                    overworld, village, data);
-            village.setNeeds(needs);
-            village.setLastNeedsUpdate(dayTime);
-            data.setDirty();
-
-            System.out.println("Village '" + village.getName()
-                    + "' needs updated: "
-                    + needs.entrySet().stream()
-                    .map(e -> e.getKey() + "="
-                            + e.getValue().getLevel())
-                    .reduce((a, b) -> a + ", " + b)
-                    .orElse("none"));
-
-            // -----------------------------------------------
-            // Purge stale market listings
-            // -----------------------------------------------
-            data.getAllVillages().forEach(v ->
-                    VillageEconomy.purgeStaleListings(
-                            v.getId(), dayTime));
-
-            // After VillageEconomy.purgeStaleListings
-            data.getKingdomForVillage(village.getId())
-                    .ifPresent(k -> {
-                        // Bankruptcy check
-                        if (k.getTreasuryBronze() <= 0
-                                && k.getHistory().getEventsByType(
-                                        KingdomHistoryData
-                                                .HistoryEventType
-                                                .TREASURY_BANKRUPT)
-                                .stream()
-                                .noneMatch(e ->
-                                        dayTime - e.tick()
-                                                < 24000L * 30)) {
-                            k.getHistory().recordEvent(
-                                    HistoryTextGenerator.treasuryBankrupt(k.getName(), gameTick),
-                                    k.getName());
-
-                            data.setDirty();
-                        }
-
-                        // Prosperity check — treasury over 10000 bronze
-                        if (k.getTreasuryBronze() > 10000L
-                                && k.getHistory().getEventsByType(
-                                        KingdomHistoryData
-                                                .HistoryEventType
-                                                .GREAT_PROSPERITY)
-                                .stream()
-                                .noneMatch(e ->
-                                        dayTime - e.tick()
-                                                < 24000L * 60)) {
-                            k.getHistory().recordEvent(
-                                    HistoryTextGenerator.greatProsperity(k.getName(), gameTick),
-                                    k.getName(),
-                                    k.getRulerName(overworld));
-                            data.setDirty();
-                        }
-                    });
-
-            // -----------------------------------------------
-            // Village events
-            // -----------------------------------------------
-            VillageEventScheduler.tick(
-                    overworld, village, data, dayTime);
-
-            // -----------------------------------------------
-            // Food effects on NPCs
-            // -----------------------------------------------
-            applyFoodEffects(overworld, village, data);
-
-            // -----------------------------------------------
-            // Path upgrades
-            // -----------------------------------------------
-            upgradePathsIfAffordable(overworld, village, data);
-
-            // -----------------------------------------------
-            // Kingdom formation check
-            // -----------------------------------------------
-            checkKingdomFormation(
-                    overworld, village, data, dayTime);
-
-            data.getKingdomForVillage(village.getId())
-                    .ifPresent(k -> {
-                        long foundingTick = k.getHistory()
-                                .getOrigin()
-                                .map(o -> o.foundingTick())
-                                .orElse(0L);
-                        if (foundingTick <= 0) return;
-
-                        long daysSinceFounding =
-                                (dayTime - foundingTick) / 24000L;
-
-                        // Anniversary milestones
-                        boolean is100   = daysSinceFounding == 100;
-                        boolean is1Year = daysSinceFounding == 365;
-                        boolean is5Year = daysSinceFounding == 365 * 5;
-
-                        if (is100 || is1Year || is5Year) {
-                            k.getHistory().recordEvent(
-                                    HistoryTextGenerator.kingdomAnniversary(
-                                            k.getName(),
-                                            daysSinceFounding,
-                                            dayTime),
-                                    k.getName(),
-                                    k.getRulerName(overworld));
-                            data.setDirty();
-                        }
-
-                        // Population milestone
-                        int pop = (int) overworld.getEntitiesOfClass(
-                                TownspersonMob.class,
-                                village.getBounds(data)
-                                        .map(b -> b.inflate(32))
-                                        .orElse(new AABB(0,0,0,0,0,0)),
-                                mob -> mob.getAssignedVillageName()
-                                        .map(n -> n.equals(
-                                                village.getName()))
-                                        .orElse(false)).size();
-
-                        int[] milestones = {10, 25, 50, 100};
-                        for (int milestone : milestones) {
-                            if (pop == milestone) {
-                                k.getHistory().recordEvent(
-                                        HistoryTextGenerator
-                                                .populationMilestone(
-                                                        village.getName(),
-                                                        milestone,
-                                                        dayTime),
-                                        k.getName(),
-                                        k.getRulerName(overworld));
-                                data.setDirty();
-                            }
-                        }
-                    });
-
-            // -----------------------------------------------
-            // Expansion — now handled by
-            // VillageExpansionManager in WorldEvents
-            // on its own 3-day interval, so we don't
-            // duplicate it here. Just log current status.
-            // -----------------------------------------------
-            data.getPendingExpansionForVillage(village.getId())
-                    .ifPresent(req -> System.out.println(
-                            "Village '" + village.getName()
-                                    + "' has pending expansion: "
-                                    + req.getBuildingType()
-                                    + " (" + req.getStatus() + ")"));
+        // Once per day (staggered per village)
+        for (Village village : vdata.getAllVillages()) {
+            long offset = Math.abs(village.getName().hashCode() % 24000L);
+            if ((tick + offset) % 24000L == 0) {
+                var needs = VillageNeedsCalculator.compute(overworld, village, vdata);
+                village.setNeeds(needs);
+                village.setLastNeedsUpdate(tick);
+                VillageEventScheduler.tick(overworld, village, vdata, tick);
+                VillageEconomy.purgeStaleListings(village.getId(), tick);
+                upgradePathsIfAffordable(overworld, village, vdata);
+                vdata.setDirty();
+            }
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Fast tick — village events every second
-    // -------------------------------------------------------------------------
-
-    @SubscribeEvent
-    public static void onServerTickFast(
-            ServerTickEvent.Post event) {
-        MinecraftServer server = event.getServer();
-        ServerLevel level = server.overworld();
-        long tick = level.getGameTime();
-
-        if (tick % 20 != 0) return;
-
-        VillageSavedData data = VillageSavedData.get(level);
-        VillageEventScheduler.tickEvents(level, data, tick);
-    }
-
-    // -------------------------------------------------------------------------
-    // Path upgrades
-    // -------------------------------------------------------------------------
-
-    private static void upgradePathsIfAffordable(
+    static void upgradePathsIfAffordable(
             ServerLevel level, Village village,
             VillageSavedData data) {
         Map<VillagePath.PathTier, CurrencyValue> thresholds =

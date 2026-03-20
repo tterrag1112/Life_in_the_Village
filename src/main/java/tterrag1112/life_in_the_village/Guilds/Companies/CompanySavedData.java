@@ -36,9 +36,6 @@ public class CompanySavedData extends SavedData {
         return level.getDataStorage().computeIfAbsent(TYPE);
     }
 
-    // -------------------------------------------------------------------------
-    // CRUD
-    // -------------------------------------------------------------------------
 
     public void addCompany(Company company) {
         companies.put(company.getCompanyId(), company);
@@ -56,6 +53,9 @@ public class CompanySavedData extends SavedData {
                 .filter(c -> c.getOwnerPlayerId().equals(playerId))
                 .toList();
     }
+
+    private static final long BUILDING_TAX_INTERVAL = 24000L * 7; // weekly
+    private static final long BASE_BUILDING_TAX_RATE = 2L;
 
     public Optional<Company> getCompanyForWorker(UUID npcId) {
         return companies.values().stream()
@@ -92,8 +92,10 @@ public class CompanySavedData extends SavedData {
             if (company.getWorkSchedule().isWorkTime(currentTick)) {
                 tickWorkerProduction(level, company, currentTick, villageData);
             }
+
         }
 
+        tickBuildingTax(level, villageData, currentTick); // NEW
         setDirty();
     }
 
@@ -136,5 +138,73 @@ public class CompanySavedData extends SavedData {
                             .withStyle(net.minecraft.ChatFormatting.RED),
                     false);
         }
+    }
+
+    private void tickBuildingTax(ServerLevel level,
+                                 VillageSavedData vdata,
+                                 long currentTick) {
+        if (currentTick % BUILDING_TAX_INTERVAL != 0) return;
+
+        for (Company company : companies.values()) {
+            if (!company.isActive()) return;
+
+            long totalDue = 0L;
+            StringBuilder breakdown = new StringBuilder();
+
+            for (UUID bid : company.getBuildingIds()) {
+                var building = vdata.getBuildingById(bid).orElse(null);
+                if (building == null) continue;
+
+                var village = vdata.getVillageById(company.getHomeVillageId()).orElse(null);
+                if (village == null) continue;
+
+                // Reuse HousePurchaseManager's tax formula for consistency
+                long tax = tterrag1112.life_in_the_village.Village.Buildings
+                        .HousePurchaseManager.calculateWeeklyTax(building, village, vdata);
+
+                // If PROPERTY_RIGHTS law not active, fall back to base rate × footprint
+                if (tax == 0L) {
+                    int footprint = building.getShape().getWidth()
+                            * building.getShape().getLength();
+                    long rate = vdata.getPropertyTaxRate(company.getHomeVillageId());
+                    tax = footprint * rate;
+                }
+
+                totalDue += tax;
+                breakdown.append(building.getName())
+                        .append(": ").append(tax).append("b, ");
+            }
+
+            if (totalDue == 0L) continue;
+
+            if (company.getTreasuryBronze() >= totalDue) {
+                company.withdrawBronze(totalDue);
+                setDirty();
+
+                // Notify owner if online
+                notifyOwner(level, company,
+                        net.minecraft.network.chat.Component.literal(
+                                        "Building tax of " + totalDue
+                                                + "b collected from " + company.getName()
+                                                + " treasury.")
+                                .withStyle(net.minecraft.ChatFormatting.YELLOW));
+            } else {
+                // Treasury can't cover it — warn owner
+                notifyOwner(level, company,
+                        net.minecraft.network.chat.Component.literal(
+                                        "\u26A0 " + company.getName()
+                                                + " cannot afford building tax ("
+                                                + totalDue + "b due). "
+                                                + "Deposit funds to avoid losing buildings.")
+                                .withStyle(net.minecraft.ChatFormatting.RED));
+            }
+        }
+    }
+
+    private void notifyOwner(ServerLevel level, Company company,
+                             net.minecraft.network.chat.Component msg) {
+        var player = level.getServer().getPlayerList()
+                .getPlayer(company.getOwnerPlayerId());
+        if (player != null) player.displayClientMessage(msg, false);
     }
 }

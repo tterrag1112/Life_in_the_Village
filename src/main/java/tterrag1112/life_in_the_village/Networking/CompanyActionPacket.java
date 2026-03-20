@@ -11,6 +11,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.SimpleContainer;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.CompanyManagementScreen;
 import tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen;
 import tterrag1112.life_in_the_village.Gui.VillageBookScreen;
@@ -70,12 +71,15 @@ public record CompanyActionPacket(
         SET_WORKER_ROLE,        // targetId=npcId, intParam=WorkerRole.ordinal()
         SET_PRODUCER_TYPE,      // targetId=npcId, intParam=ProducerType.ordinal()
         ASSIGN_WORKER_TASK,     // targetId=npcId, strParam=itemId, intParam=count
+        OPEN_WORKER_SCREEN,
 
         // ---- Schedule ----
         SET_WORK_HOURS,         // intParam=startHour, longParam=endHour
 
         // ---- Prices ----
         SET_ITEM_PRICE,         // strParam=itemId, longParam=pricePerUnit
+        REMOVE_ITEM_PRICE,  // strParam=itemId — removes override, reverts to market price
+
 
         // ---- Buildings ----
         BUY_COMPANY_BUILDING,   // targetId=buildingId (deducts from player wallet)
@@ -179,6 +183,11 @@ public record CompanyActionPacket(
                     c.setName(newName);
                     cdata.markDirty();
                     refreshManagement(player, pkt.companyId(), level, cdata, vdata, "OVERVIEW");
+                }
+                case OPEN_WORKER_SCREEN -> {
+                    Company c = ownedCompany(cdata, pkt.companyId(), player.getUUID(), player);
+                    if (c == null) return;
+                    refreshWorker(player, pkt.targetId(), pkt.companyId(), level, cdata, vdata);
                 }
 
                 // =============================================================
@@ -418,6 +427,13 @@ public record CompanyActionPacket(
 
                     refreshManagement(player, pkt.companyId(), level, cdata, vdata, "PRICES");
                 }
+                case REMOVE_ITEM_PRICE -> {
+                    Company c = ownedCompany(cdata, pkt.companyId(), player.getUUID(), player);
+                    if (c == null) return;
+                    c.removePriceOverride(pkt.strParam());
+                    cdata.markDirty();
+                    refreshWorker(player, pkt.targetId(), pkt.companyId(), level, cdata, vdata);
+                }
 
                 // =============================================================
                 // BUY COMPANY BUILDING
@@ -545,13 +561,7 @@ public record CompanyActionPacket(
 
     /** Clears the company link from an NPC and returns them to NONE. */
     private static void releaseWorker(ServerLevel level, UUID npcId) {
-        level.getEntitiesOfClass(
-                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
-                new net.minecraft.world.phys.AABB(
-                        -30000000, -2048, -30000000,
-                        30000000,  2048,  30000000),
-                mob -> mob.getUUID().equals(npcId)
-        ).stream().findFirst().ifPresent(npc -> {
+        TownspersonMob.findByUUID(level, npcId).ifPresent(npc -> {
             npc.clearCompanyId();
             npc.setProfession(Profession.NONE);
         });
@@ -603,4 +613,5 @@ public record CompanyActionPacket(
                 Component.literal(message)
                         .withStyle(ChatFormatting.RED), false);
     }
+
 }

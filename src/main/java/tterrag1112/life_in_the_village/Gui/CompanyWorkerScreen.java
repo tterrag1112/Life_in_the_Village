@@ -7,6 +7,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
@@ -34,21 +35,22 @@ public class CompanyWorkerScreen extends Screen {
     // -------------------------------------------------------------------------
     // Colors
     // -------------------------------------------------------------------------
-    private static final int COL_PARCHMENT = 0xFFF5F0E0;
-    private static final int COL_SIDEBAR   = 0xFFEDE8D5;
-    private static final int COL_BORDER    = 0xFFB8A878;
-    private static final int COL_DARK      = 0xFF3B2E1A;
-    private static final int COL_MID       = 0xFF7A6040;
-    private static final int COL_LIGHT     = 0xFFA89060;
-    private static final int COL_HIGHLIGHT = 0xFFD4C48A;
-    private static final int COL_GREEN_BG  = 0xFFD4EAC8;
-    private static final int COL_GREEN_TXT = 0xFF2D6B1A;
-    private static final int COL_RED_TXT   = 0xFF8B1A1A;
-    private static final int COL_GOLD      = 0xFFB8860B;
-    private static final int COL_AMBER     = 0xFFE8A020;
-    private static final int COL_SELECTED  = 0xFFB8D4A8;
-    private static final int COL_ACTIVE    = 0xFFD4B870;
-    private static final int COL_DISABLED  = 0xFFCCBB99;
+    private static final int COL_PARCHMENT = BookScreenColors.PARCHMENT;
+    private static final int COL_SIDEBAR   = BookScreenColors.SIDEBAR;
+    private static final int COL_BORDER    = BookScreenColors.BORDER;
+    private static final int COL_DARK      = BookScreenColors.DARK;
+    private static final int COL_MID       = BookScreenColors.MID;
+    private static final int COL_LIGHT     = BookScreenColors.LIGHT;
+    private static final int COL_HIGHLIGHT = BookScreenColors.HIGHLIGHT;
+    private static final int COL_GREEN_BG  = BookScreenColors.GREEN_BG;
+    private static final int COL_GREEN_TXT = BookScreenColors.GREEN_TXT;
+    private static final int COL_RED_BG    = BookScreenColors.RED_BG;
+    private static final int COL_RED_TXT   = BookScreenColors.RED_TXT;
+    private static final int COL_GOLD      = BookScreenColors.GOLD;
+    private static final int COL_AMBER     = BookScreenColors.AMBER;
+    private static final int COL_SELECTED  = BookScreenColors.COL_SELECTED;
+    private static final int COL_ACTIVE    = BookScreenColors.COL_ACTIVE;
+    private static final int COL_DISABLED  = BookScreenColors.COL_DISABLED;
 
     // -------------------------------------------------------------------------
     // State
@@ -64,6 +66,13 @@ public class CompanyWorkerScreen extends Screen {
     private int  targetCount;
     private long editWage;
     private long customSellPrice   = 0L;
+
+    // Seller state
+    private String  searchText       = "";
+    private boolean dropdownOpen     = false;
+    private int     dropdownScroll   = 0;
+    private int     sellListScroll   = 0;
+    private List<OpenCompanyWorkerPacket.AvailableItem> filteredItems = List.of();
 
     // Seller price input
     private EditBox priceBox;
@@ -111,12 +120,7 @@ public class CompanyWorkerScreen extends Screen {
         tterrag1112.life_in_the_village.Guilds.Companies.Company.CompanyWorker worker =
                 company.getWorker(npcId).orElse(null);
 
-        String npcName = level.getEntitiesOfClass(
-                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
-                new net.minecraft.world.phys.AABB(
-                        -30000000, -2048, -30000000, 30000000, 2048, 30000000),
-                mob -> mob.getUUID().equals(npcId)
-        ).stream().findFirst().map(npc -> npc.getNpcName()).orElse("Worker");
+        String npcName = TownspersonMob.findByUUID(level, npcId).map(npc -> npc.getNpcName()).orElse("Worker");
 
         // Aggregate items across all company buildings (deduplicated by type)
         Map<String, OpenCompanyWorkerPacket.AvailableItem> itemMap = new LinkedHashMap<>();
@@ -153,6 +157,41 @@ public class CompanyWorkerScreen extends Screen {
                 currentMarketPrice = tterrag1112.life_in_the_village.Village.Economy
                         .VillageEconomy.getDynamicPrice(
                                 level, company.getHomeVillageId(), assignedItem);
+        }// After building the availableItems list:
+        List<OpenCompanyWorkerPacket.SellListing> sellListings = new ArrayList<>();
+        if (worker != null && worker.role() == Company.WorkerRole.SELLER) {
+            // All company price overrides that have stock in company buildings
+            for (var override : company.getAllPriceOverrides()) {
+                String itemId = override.itemId();
+                // Get total stock across all company buildings
+                int totalStock = 0;
+                for (UUID bid : company.getBuildingIds()) {
+                    var b = vdata.getBuildingById(bid).orElse(null);
+                    if (b == null) continue;
+                    var item = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                            .get(net.minecraft.resources.Identifier.parse(itemId))
+                            .map(h -> h.value()).orElse(null);
+                    if (item != null)
+                        totalStock += tterrag1112.life_in_the_village.Village
+                                .BuildingStorageAccess.countItem(level, b, item);
+                }
+                if (totalStock == 0) continue;
+
+                var item = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                        .get(net.minecraft.resources.Identifier.parse(itemId))
+                        .map(h -> h.value()).orElse(null);
+                long marketP = item != null
+                        ? tterrag1112.life_in_the_village.Village.Economy.VillageEconomy
+                        .getDynamicPrice(level, company.getHomeVillageId(), item)
+                        : 0L;
+                String displayName = item != null
+                        ? item.getDefaultInstance().getHoverName().getString()
+                        : itemId;
+
+                sellListings.add(new OpenCompanyWorkerPacket.SellListing(
+                        itemId, displayName, totalStock,
+                        override.pricePerUnit(), marketP));
+            }
         }
 
         long minWage      = company.getEffectiveMinWage(vdata);
@@ -173,7 +212,8 @@ public class CompanyWorkerScreen extends Screen {
                         role, prodType,
                         new ArrayList<>(itemMap.values()),
                         companyBuildings,
-                        currentMarketPrice));
+                        currentMarketPrice,
+                        sellListings));
     }
 
     private static void scanBuildingIntoMap(
@@ -327,43 +367,114 @@ public class CompanyWorkerScreen extends Screen {
 
     // --- SELLER ---
     private void buildSellerWidgets(int contentTop) {
-        // Price input
-        int priceY = contentTop + LIST_H + 22;
-        priceBox = new EditBox(font,
-                panelX + 8, priceY, W - 80, 14,
-                Component.literal("Price"));
-        priceBox.setMaxLength(10);
-        priceBox.setValue(customSellPrice > 0
-                ? String.valueOf(customSellPrice) : "");
-        priceBox.setHint(Component.literal("bronze/unit"));
-        addRenderableWidget(priceBox);
+        int searchY = contentTop + 2;
+        int searchW = W - 20;
 
-        // Quick price buttons — set to market, +10%, -10%
-        addRenderableWidget(Button.builder(Component.literal("Market"),
-                        b -> {
-                            if (selectedItemIndex >= 0) {
-                                customSellPrice = data.availableItems()
-                                        .get(selectedItemIndex).marketPrice();
-                                if (priceBox != null)
-                                    priceBox.setValue(String.valueOf(customSellPrice));
+        // Search bar EditBox
+        EditBox search = new EditBox(font,
+                panelX + 8, searchY, searchW, 14,
+                Component.literal("Search items…"));
+        search.setMaxLength(32);
+        search.setValue(searchText);
+        search.setResponder(text -> {
+            searchText = text;
+            dropdownOpen = !text.isBlank() || isFocused();
+            dropdownScroll = 0;
+            rebuildFilteredItems();
+            buildWidgets();
+        });
+        search.setFocused(dropdownOpen);
+        addRenderableWidget(search);
+
+        // Dropdown entries (max 5 visible)
+        if (dropdownOpen) {
+            int dy = searchY + 16;
+            int shown = 0;
+            for (int i = dropdownScroll;
+                 i < filteredItems.size() && shown < 5; i++, shown++) {
+                final OpenCompanyWorkerPacket.AvailableItem item = filteredItems.get(i);
+                final int fi = i;
+                addRenderableWidget(Button.builder(
+                                Component.literal(item.displayName()),
+                                b -> {
+                                    // Add this item to sell listings via SET_ITEM_PRICE
+                                    sendSellerAdd(item.itemId(), item.marketPrice());
+                                    dropdownOpen = false;
+                                    searchText = "";
+                                    buildWidgets();
+                                })
+                        .pos(panelX + 8, dy + shown * 14)
+                        .size(searchW, 13).build());
+            }
+            // Dropdown scroll
+            if (dropdownScroll > 0)
+                addRenderableWidget(Button.builder(Component.literal("▲"),
+                                b -> { dropdownScroll--; buildWidgets(); })
+                        .pos(panelX + 8 + searchW - 12, searchY + 16).size(12, 10).build());
+            if (dropdownScroll + 5 < filteredItems.size())
+                addRenderableWidget(Button.builder(Component.literal("▼"),
+                                b -> { dropdownScroll++; buildWidgets(); })
+                        .pos(panelX + 8 + searchW - 12, searchY + 86).size(12, 10).build());
+        }
+
+        // Sell list — price +/− buttons per row
+        int listTop = contentTop + 20 + (dropdownOpen ? 72 : 0);
+        int rowH    = 20;
+        int shown   = 0;
+        var listings = data.currentSellListings();
+
+        for (int i = sellListScroll;
+             i < listings.size() && shown < visibleSellRows(listTop); i++, shown++) {
+            final OpenCompanyWorkerPacket.SellListing listing = listings.get(i);
+            int ry = listTop + shown * rowH;
+
+            // Price −
+            addRenderableWidget(Button.builder(Component.literal("◀"),
+                            b -> sendPriceAdjust(listing.itemId(),
+                                    Math.max(1, listing.effectivePrice() - 1)))
+                    .pos(panelX + W - 46, ry + 3).size(12, 14).build());
+
+            // Price +
+            addRenderableWidget(Button.builder(Component.literal("▶"),
+                            b -> sendPriceAdjust(listing.itemId(), listing.effectivePrice() + 1))
+                    .pos(panelX + W - 32, ry + 3).size(12, 14).build());
+
+            // Remove (×)
+            addRenderableWidget(Button.builder(Component.literal("×"),
+                            b -> {
+                                sendPriceRemove(listing.itemId());
                                 buildWidgets();
-                            }
-                        })
-                .pos(panelX + W - 68, priceY).size(60, 14).build());
+                            })
+                    .pos(panelX + W - 18, ry + 3).size(12, 14).build());
+        }
 
-        // Confirm sell button
-        addRenderableWidget(Button.builder(
-                        Component.literal("Assign Sell Task"),
-                        b -> {
-                            if (selectedItemIndex >= 0 && customSellPrice > 0) {
-                                String itemId = data.availableItems()
-                                        .get(selectedItemIndex).itemId();
-                                sendSellerTask(itemId, customSellPrice,
-                                        data.availableItems()
-                                                .get(selectedItemIndex).stockCount());
-                            }
-                        })
-                .pos(panelX + 8, panelY + H - 24).size(W - 16, 16).build());
+        // Sell list scroll
+        if (sellListScroll > 0)
+            addRenderableWidget(Button.builder(Component.literal("▲"),
+                            b -> { sellListScroll--; buildWidgets(); })
+                    .pos(panelX + W - 18, listTop).size(12, 10).build());
+        if (sellListScroll + visibleSellRows(listTop) < listings.size())
+            addRenderableWidget(Button.builder(Component.literal("▼"),
+                            b -> { sellListScroll++; buildWidgets(); })
+                    .pos(panelX + W - 18, listTop + visibleSellRows(listTop) * 20 - 12)
+                    .size(12, 10).build());
+    }
+
+    private int visibleSellRows(int listTop) {
+        int available = (panelY + H - FOOTER_H - 4) - listTop;
+        return Math.max(1, available / 20);
+    }
+
+    private void rebuildFilteredItems() {
+        String query = searchText.toLowerCase();
+        filteredItems = data.availableItems().stream()
+                .filter(item -> query.isBlank()
+                        || item.displayName().toLowerCase().contains(query)
+                        || item.itemId().toLowerCase().contains(query))
+                // Exclude items already in the sell list
+                .filter(item -> data.currentSellListings().stream()
+                        .noneMatch(l -> l.itemId().equals(item.itemId())))
+                .toList();
     }
 
     // --- COURIER ---
@@ -495,50 +606,118 @@ public class CompanyWorkerScreen extends Screen {
     // -------------------------------------------------------------------------
     // SELLER render
     // -------------------------------------------------------------------------
-    private void drawSellerContent(GuiGraphics g, int contentTop,
-                                   int mx, int my) {
-        int listY = contentTop + 14;
-        drawItemList(g, listY, mx, my, "Choose item to sell:");
+    private void drawSellerContent(GuiGraphics g, int contentTop, int mx, int my) {
+        int searchY = contentTop + 2;
+        int searchW = W - 20;
 
-        int priceAreaY = contentTop + 14 + LIST_H + 8;
+        // Search bar background
+        g.fill(panelX + 7, searchY - 1,
+                panelX + 7 + searchW + 2, searchY + 15, COL_BORDER);
+        g.fill(panelX + 8, searchY,
+                panelX + 8 + searchW, searchY + 14, 0xFFFFFFFF);
 
-        // Price label
-        g.drawString(font, "Your price (bronze/unit):",
-                panelX + 8, priceAreaY, COL_MID, false);
+        // Dropdown
+        if (dropdownOpen && !filteredItems.isEmpty()) {
+            int dy    = searchY + 16;
+            int shown = 0;
+            for (int i = dropdownScroll;
+                 i < filteredItems.size() && shown < 5; i++, shown++) {
+                var item = filteredItems.get(i);
+                int ry = dy + shown * 14;
+                boolean hov = mx >= panelX + 8 && mx < panelX + 8 + searchW
+                        && my >= ry && my < ry + 14;
 
-        // Market price comparison for selected item
-        if (selectedItemIndex >= 0
-                && selectedItemIndex < data.availableItems().size()) {
-            long marketP = data.availableItems().get(selectedItemIndex).marketPrice();
-            if (marketP > 0) {
-                g.drawString(font, "Market: ",
-                        panelX + 8, priceAreaY + 20, COL_MID, false);
-                CoinRenderer.renderCoinRow(g, marketP, panelX + 52, priceAreaY + 18);
+                g.fill(panelX + 8, ry, panelX + 8 + searchW, ry + 13,
+                        hov ? COL_HIGHLIGHT : 0xFFEEE8D0);
+                g.renderOutline(panelX + 8, ry, searchW, 13, COL_BORDER);
 
-                // Show comparison arrow
-                if (customSellPrice > 0) {
-                    String cmp = customSellPrice > marketP ? "▲ Above market"
-                            : customSellPrice < marketP ? "▼ Below market"
-                            : "= At market";
-                    int cmpColor = customSellPrice > marketP ? COL_AMBER
-                            : customSellPrice < marketP ? COL_GREEN_TXT
-                            : COL_MID;
-                    int cmpX = panelX + 52 + CoinRenderer.coinRowWidth(marketP) + 4;
-                    g.drawString(font, cmp, cmpX, priceAreaY + 20, cmpColor, false);
-                }
+                // Item icon
+                var stack = resolveStack(item.itemId(), 1);
+                if (stack != null) g.renderItem(stack, panelX + 8, ry - 1);
+
+                // Name
+                g.drawString(font, item.displayName(),
+                        panelX + 26, ry + 2, COL_DARK, false);
+
+                // Qty
+                String qty = "×" + item.stockCount();
+                int qtyX = panelX + 8 + searchW - CoinRenderer.coinRowWidth(item.marketPrice()) - font.width(qty) - 8;
+                g.drawString(font, qty, qtyX, ry + 2, COL_MID, false);
+
+                // Market price
+                CoinRenderer.renderCoinRow(g, item.marketPrice(),
+                        panelX + 8 + searchW - CoinRenderer.coinRowWidth(item.marketPrice()) - 2,
+                        ry - 2);
             }
+            // Dropdown border
+            g.renderOutline(panelX + 8, searchY + 16,
+                    searchW, Math.min(filteredItems.size(), 5) * 14, COL_BORDER);
         }
 
-        // Current assignment
-        if (!data.currentItemId().isEmpty()) {
-            String curr = "Now selling: " + formatItemId(data.currentItemId());
-            g.drawString(font, curr, panelX + 8, priceAreaY + 36, COL_GREEN_TXT, false);
-            if (data.currentMarketPrice() > 0) {
-                g.drawString(font, "at market ",
-                        panelX + 8, priceAreaY + 46, COL_MID, false);
-                CoinRenderer.renderCoinRow(g, data.currentMarketPrice(),
-                        panelX + 58, priceAreaY + 44);
+        // Sell listings
+        int listTop = contentTop + 20 + (dropdownOpen ? 72 : 0);
+        int rowH    = 20;
+
+        if (data.currentSellListings().isEmpty()) {
+            g.drawString(font, "No items assigned to sell.",
+                    panelX + 8, listTop + 10, COL_LIGHT, false);
+            g.drawString(font, "Use the search bar above to add items.",
+                    panelX + 8, listTop + 22, COL_LIGHT, false);
+            return;
+        }
+
+        // List header
+        g.fill(panelX + 8, listTop - 12, panelX + W - 8, listTop - 1, 0xFFE8E0C8);
+        g.drawString(font, "Item",    panelX + 26,       listTop - 10, COL_MID, false);
+        g.drawString(font, "Stock",   panelX + W - 140,  listTop - 10, COL_MID, false);
+        g.drawString(font, "Price",   panelX + W - 100,  listTop - 10, COL_MID, false);
+
+        int shown = 0;
+        var listings = data.currentSellListings();
+
+        for (int i = sellListScroll;
+             i < listings.size() && shown < visibleSellRows(listTop); i++, shown++) {
+            var listing = listings.get(i);
+            int ry = listTop + shown * rowH;
+            boolean hasOverride = listing.customPrice() > 0
+                    && listing.customPrice() != listing.marketPrice();
+
+            g.fill(panelX + 8, ry, panelX + W - 8, ry + rowH - 1,
+                    shown % 2 == 0 ? 0xFFEEE8D0 : COL_PARCHMENT);
+            g.renderOutline(panelX + 8, ry, W - 16, rowH - 1, COL_BORDER);
+
+            // Icon
+            var stack = resolveStack(listing.itemId(), 1);
+            if (stack != null) g.renderItem(stack, panelX + 8, ry + 2);
+
+            // Name
+            String name = listing.displayName();
+            while (font.width(name) > 80 && name.length() > 3)
+                name = name.substring(0, name.length() - 1);
+            if (!name.equals(listing.displayName())) name += "…";
+            g.drawString(font, name, panelX + 26, ry + 6, COL_DARK, false);
+
+            // Stock in parentheses
+            g.drawString(font, "(" + listing.stockCount() + ")",
+                    panelX + W - 140, ry + 6, COL_MID, false);
+
+            // Price display
+            int priceX = panelX + W - 100;
+            if (hasOverride) {
+                // Draw market price with red diagonal slash through it
+                int mpWidth = CoinRenderer.coinRowWidth(listing.marketPrice());
+                CoinRenderer.renderCoinRow(g, listing.marketPrice(), priceX, ry + 2);
+                // Red strikethrough line — diagonal from top-left to bottom-right of the coin row
+                g.fill(priceX, ry + 8, priceX + mpWidth, ry + 9, 0xFFCC0000);
+
+                // Custom price beside it
+                CoinRenderer.renderCoinRow(g, listing.customPrice(),
+                        priceX + mpWidth + 4, ry + 2);
+            } else {
+                CoinRenderer.renderCoinRow(g, listing.marketPrice(), priceX, ry + 2);
             }
+
+            // ◀ ▶ × buttons drawn by buildSellerWidgets
         }
     }
 
@@ -650,6 +829,24 @@ public class CompanyWorkerScreen extends Screen {
         int contentTop = panelY + CONTENT_Y;
         int listY = contentTop + (activeRole == Company.WorkerRole.PRODUCER ? 42 : 14);
 
+        if (activeRole == Company.WorkerRole.SELLER) {
+            int searchY = panelY + CONTENT_Y + 2;
+            int searchW = W - 20;
+            if (event.x() >= panelX + 8 && event.x() < panelX + 8 + searchW
+                    && event.y() >= searchY && event.y() < searchY + 14) {
+                dropdownOpen = true;
+                rebuildFilteredItems();
+                buildWidgets();
+                return true;
+            }
+            // Click outside dropdown closes it
+            if (dropdownOpen) {
+                dropdownOpen = false;
+                buildWidgets();
+                return true;
+            }
+        }
+
         if (event.x() >= listX && event.x() < listX + listW
                 && event.y() >= listY && event.y() < listY + LIST_H) {
             int clicked = (int)((event.y() - listY) / ITEM_ROW_H) + itemScroll;
@@ -756,5 +953,29 @@ public class CompanyWorkerScreen extends Screen {
         if (itemId == null || itemId.isEmpty()) return "—";
         String path = itemId.contains(":") ? itemId.split(":")[1] : itemId;
         return path.replace('_', ' ');
+    }
+    private void sendSellerAdd(String itemId, long marketPrice) {
+        // Set price to market price as default
+        ClientPacketDistributor.sendToServer(new CompanyActionPacket(
+                CompanyActionPacket.ActionType.SET_ITEM_PRICE,
+                data.companyId(), new UUID(0, 0), itemId, marketPrice, 0));
+        // Assign SELLER role if not already set
+        ClientPacketDistributor.sendToServer(new CompanyActionPacket(
+                CompanyActionPacket.ActionType.SET_WORKER_ROLE,
+                data.companyId(), data.npcId(), "", 0L,
+                Company.WorkerRole.SELLER.ordinal()));
+    }
+
+    private void sendPriceAdjust(String itemId, long newPrice) {
+        ClientPacketDistributor.sendToServer(new CompanyActionPacket(
+                CompanyActionPacket.ActionType.SET_ITEM_PRICE,
+                data.companyId(), new UUID(0, 0), itemId, newPrice, 0));
+    }
+
+    private void sendPriceRemove(String itemId) {
+        // Price of 0 signals removal on server
+        ClientPacketDistributor.sendToServer(new CompanyActionPacket(
+                CompanyActionPacket.ActionType.REMOVE_ITEM_PRICE,
+                data.companyId(), new UUID(0, 0), itemId, 0L, 0));
     }
 }

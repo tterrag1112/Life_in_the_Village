@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Economy.Currency;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -359,5 +360,20 @@ public class CoinHelper {
             }
             if (remaining <= 0) break;
         }
+    }
+
+    // In CoinHelper.java
+    public static SimpleContainer snapshotInventory(ServerPlayer player) {
+        SimpleContainer c = new SimpleContainer(
+                player.getInventory().getContainerSize());
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++)
+            c.setItem(i, player.getInventory().getItem(i).copy());
+        return c;
+    }
+
+    public static void syncInventory(ServerPlayer player, SimpleContainer snapshot) {
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++)
+            player.getInventory().setItem(i, snapshot.getItem(i));
+        player.inventoryMenu.broadcastChanges();
     }
 }
