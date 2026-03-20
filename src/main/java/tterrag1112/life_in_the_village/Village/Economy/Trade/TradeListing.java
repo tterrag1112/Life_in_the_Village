@@ -8,7 +8,8 @@ public class TradeListing {
     public enum SellerType {
         PRODUCER,   // blacksmith, miner, farmer etc — generally cheaper
         MERCHANT,   // merchant NPC — markup applied
-        STOCKPILE   // stockpile keeper — village price
+        STOCKPILE ,  // stockpile keeper — village price
+        COMPANY
     }
 
     private final UUID sellerEntityId;

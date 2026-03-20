@@ -6,6 +6,8 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Guilds.Companies.Company;
@@ -13,6 +15,7 @@ import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenCompanyManagementPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
 import java.util.*;
 
@@ -42,7 +45,7 @@ public class CompanyManagementScreen extends Screen {
     private static final int COL_GOLD      = 0xFFB8860B;
     private static final int COL_AMBER     = 0xFFE8A020;
 
-    private enum Section { OVERVIEW, WORKERS, PRICES, SCHEDULE }
+    public enum Section { OVERVIEW, WORKERS, PRICES, SCHEDULE }
 
     // -------------------------------------------------------------------------
     // State
@@ -50,7 +53,7 @@ public class CompanyManagementScreen extends Screen {
 
     private final OpenCompanyManagementPacket data;
     private int bookX, bookY;
-    private Section currentSection = Section.OVERVIEW;
+    public Section currentSection = Section.OVERVIEW;
     private int workerScroll = 0;
     private EditBox depositBox;
     private EditBox renameBox;
@@ -63,14 +66,15 @@ public class CompanyManagementScreen extends Screen {
         super(Component.literal(data.companyName()));
         this.data = data;
     }
+    public static void sendOpenPacket(ServerPlayer player, UUID companyId,
+                                      ServerLevel level, CompanySavedData cdata, VillageSavedData vdata) {
+        sendOpenPacket(player, companyId, level, cdata, vdata, "");
+    }
 
     /** Called server-side to build and send the packet. */
-    public static void sendOpenPacket(
-            net.minecraft.server.level.ServerPlayer player,
-            UUID companyId,
-            net.minecraft.server.level.ServerLevel level,
-            CompanySavedData cdata,
-            VillageSavedData vdata) {
+    public static void sendOpenPacket(ServerPlayer player, UUID companyId,
+                                      ServerLevel level, CompanySavedData cdata, VillageSavedData vdata,
+                                      String restoreSection) {
 
         Company company = cdata.getById(companyId).orElse(null);
         if (company == null) return;
@@ -131,7 +135,7 @@ public class CompanyManagementScreen extends Screen {
                         company.getWorkSchedule().startHour(),
                         company.getWorkSchedule().endHour(),
                         company.getEffectiveMinWage(vdata),
-                        workers, prices, buildings));
+                        workers, prices, buildings, restoreSection));
     }
 
     // -------------------------------------------------------------------------
@@ -413,6 +417,11 @@ public class CompanyManagementScreen extends Screen {
         g.drawString(font, "Deposit to treasury:", px, y, COL_DARK, false);
         y += 14; // widget at y+50 from py — handled by buildOverviewWidgets
 
+        // Show denomination guide below deposit field
+        g.drawString(font, "1g=" + CurrencyValue.GOLD_VALUE
+                        + "b  1s=" + CurrencyValue.SILVER_VALUE + "b",
+                px, py + 70, COL_LIGHT, false);
+
         y = py + 80;
         g.fill(px, y, px + pw, y + 1, COL_BORDER);
         y += 8;
@@ -618,14 +627,7 @@ public class CompanyManagementScreen extends Screen {
     }
 
     private String formatBronze(long bronze) {
-        long gold   = bronze / 10000L;
-        long silver = (bronze % 10000L) / 100L;
-        long b      = bronze % 100L;
-        StringBuilder sb = new StringBuilder();
-        if (gold   > 0) sb.append(gold).append("g ");
-        if (silver > 0) sb.append(silver).append("s ");
-        if (b > 0 || sb.isEmpty()) sb.append(b).append("b");
-        return sb.toString().trim();
+        return CoinRenderer.format(bronze);
     }
 
     private String formatHour(int hour) {
@@ -642,4 +644,5 @@ public class CompanyManagementScreen extends Screen {
         String path = itemId.contains(":") ? itemId.split(":")[1] : itemId;
         return path.replace('_', ' ');
     }
+
 }

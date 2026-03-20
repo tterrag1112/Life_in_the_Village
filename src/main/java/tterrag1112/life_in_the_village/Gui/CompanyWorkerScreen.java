@@ -9,6 +9,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
+import tterrag1112.life_in_the_village.Networking.OpenCompanyWorkerPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.*;
@@ -25,14 +26,14 @@ public class CompanyWorkerScreen extends Screen {
     private static final int COL_GREEN_TXT = 0xFF2D6B1A;
 
     // Packet data
-    private final tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket data;
+    private final OpenCompanyWorkerPacket data;
     private int panelX, panelY;
 
     // Available items to assign — populated from building storage
     private int selectedItemIndex = -1;
     private int targetCount = 8;
 
-    public CompanyWorkerScreen(tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket data) {
+    public CompanyWorkerScreen(OpenCompanyWorkerPacket data) {
         super(Component.literal(data.npcName()));
         this.data = data;
     }
@@ -71,7 +72,7 @@ public class CompanyWorkerScreen extends Screen {
                 .orElse("Worker");
 
         // Available items from the assigned building's storage
-        List<tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket.AvailableItem> items = new ArrayList<>();
+        List<OpenCompanyWorkerPacket.AvailableItem> items = new ArrayList<>();
         if (worker != null) {
             vdata.getBuildingById(worker.assignedBuildingId())
                     .ifPresent(building -> {
@@ -87,7 +88,7 @@ public class CompanyWorkerScreen extends Screen {
                                         .getKey(stack.getItem()).toString();
                                 String displayName = stack.getHoverName()
                                         .getString();
-                                items.add(new tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket.AvailableItem(
+                                items.add(new OpenCompanyWorkerPacket.AvailableItem(
                                         itemId, displayName, stack.getCount()));
                             }
                         }
@@ -104,7 +105,7 @@ public class CompanyWorkerScreen extends Screen {
                 ? worker.role().name() : Company.WorkerRole.PRODUCER.name();
 
         PacketDistributor.sendToPlayer(player,
-                new tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket(npcId, companyId, npcName,
+                new OpenCompanyWorkerPacket(npcId, companyId, npcName,
                         wage, minWage, currentItemId, currentTarget,
                         role, items));
     }
@@ -216,8 +217,12 @@ public class CompanyWorkerScreen extends Screen {
                 panelX + W / 2 - 30, y + 2, COL_DARK, false);
 
         // Wage display
-        g.drawString(font, "Wage: " + formatBronze(data.wage()) + "/day",
-                panelX + 8, panelY + H - 42, COL_GOLD, false);
+        g.drawString(font, "Wage:", panelX + 8, panelY + H - 42, COL_MID, false);
+        CoinRenderer.renderCoinRow(g, data.wage(),
+                panelX + 44, panelY + H - 44);
+        g.drawString(font, "/day", panelX + 44
+                        + CoinRenderer.coinRowWidth(data.wage()),
+                panelY + H - 42, COL_MID, false);
         if (data.wage() < data.minWage()) {
             g.drawString(font, "(below min. wage!)",
                     panelX + 100, panelY + H - 42, 0xFFCC2222, false);
@@ -258,13 +263,7 @@ public class CompanyWorkerScreen extends Screen {
     }
 
     private String formatBronze(long bronze) {
-        long gold = bronze / 10000L, silver = (bronze % 10000L) / 100L,
-                b = bronze % 100L;
-        StringBuilder sb = new StringBuilder();
-        if (gold > 0) sb.append(gold).append("g ");
-        if (silver > 0) sb.append(silver).append("s ");
-        if (b > 0 || sb.isEmpty()) sb.append(b).append("b");
-        return sb.toString().trim();
+        return CoinRenderer.format(bronze);
     }
 
     private String formatRole(String role) {

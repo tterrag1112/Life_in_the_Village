@@ -38,6 +38,8 @@ public class VillageBookScreen extends Screen {
     private static final int SIDEBAR_W = 130;
     private static final int PAGE_PAD  = 14;
     private static final int ROW_H     = 28;
+    private int companyButtonY = -1; // -1 = not shown
+
 
     // -------------------------------------------------------------------------
     // Colors — same palette as KingdomBookScreen
@@ -256,24 +258,22 @@ public class VillageBookScreen extends Screen {
             buildHousingButtons();
         }
 
-        if(currentSection== Section.STANDINGS) {
-            // Found company button — only shown for Town+ villages
-            if (data.tierName().equals("Town") || data.tierName().equals("City")) {
-                int px   = bookX + SIDEBAR_W + PAGE_PAD;
-                int pw   = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
-                int btnY = bookY + 36 + 120;
+        if (currentSection == Section.STANDINGS
+                && (data.tierName().equals("Town") || data.tierName().equals("City"))) {
+            int px  = bookX + SIDEBAR_W + PAGE_PAD;
+            int pw  = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
+            int btnY = computeCompanyButtonY();
 
-                addRenderableWidget(Button.builder(
-                                Component.literal("Found a Company"),
-                                b -> ClientPacketDistributor.sendToServer(
-                                        new CompanyActionPacket(
-                                                CompanyActionPacket.ActionType.FOUND_COMPANY,
-                                                UUID.randomUUID(),
-                                                data.villageId(),
-                                                "My Company",
-                                                0L, 0)))
-                        .pos(px, btnY).size(pw, 16).build());
-            }
+            addRenderableWidget(Button.builder(
+                            Component.literal("Found a Company"),
+                            b -> ClientPacketDistributor.sendToServer(
+                                    new CompanyActionPacket(
+                                            CompanyActionPacket.ActionType.FOUND_COMPANY,
+                                            UUID.randomUUID(),
+                                            data.villageId(),
+                                            "My Company",
+                                            0L, 0)))
+                    .pos(px, btnY).size(pw, 16).build());
         }
     }
 
@@ -618,12 +618,12 @@ public class VillageBookScreen extends Screen {
             if (!name.equals(house.name())) name += "..";
 
             g.drawString(font, name, px + 3, y + (ROW_H - 8) / 2, COL_DARK, false);
-            g.drawString(font, formatBronze(house.priceBronze()),
-                    px + pw / 2 - 8, y + (ROW_H - 8) / 2, COL_GOLD, false);
-            String taxStr = house.taxPerWeekBronze() > 0
-                    ? formatBronze(house.taxPerWeekBronze()) : "—";
-            g.drawString(font, taxStr, px + pw - 74,
-                    y + (ROW_H - 8) / 2, COL_MID, false);
+
+            CoinRenderer.renderCoinRow(g, house.priceBronze(), px + pw / 2 - 8, y + (ROW_H - 8) / 2);
+
+            CoinRenderer.renderCoinRow(g, house.taxPerWeekBronze(), px + pw - 74, y + (ROW_H - 8) / 2);
+
+
             g.drawString(font, statusLabel, px + pw - 36,
                     y + (ROW_H - 8) / 2, statusColor, false);
 
@@ -818,7 +818,9 @@ public class VillageBookScreen extends Screen {
                         ? formatBronze(h.taxPerWeekBronze()) + "/wk"
                         : "No tax";
                 int tw = font.width(tax);
-                g.drawString(font, tax, px + pw - tw - 2, y + 1, COL_MID, false);
+                CoinRenderer.renderCoinRow(g, h.taxPerWeekBronze(),px + pw - tw - 2,y + 1 );
+
+
                 y += 14;
             }
         }
@@ -828,13 +830,11 @@ public class VillageBookScreen extends Screen {
         y += 8;
 
         if (data.tierName().equals("Town") || data.tierName().equals("City")) {
-            // Check if player already has a company here — requires sending that
-            // info in OpenVillageBookPacket (add boolean hasCompanyHere)
-            // For now, always show the button
             g.drawString(font, "Company", px, y, COL_MID, false);
             g.fill(px, y + 10, px + pw, y + 11, COL_BORDER);
             y += 15;
-            // Button added in buildWidgets for the STANDINGS section
+            companyButtonY = y;  // record where the button should go
+            y += 20;             // reserve space for it
         }
 
         // --- Leadership path (placeholder but structured) ---
@@ -861,10 +861,6 @@ public class VillageBookScreen extends Screen {
         }
 
         y += 6;
-        if (y + 10 < maxY) {
-            g.drawString(font, "Company system — coming soon",
-                    px, y, COL_LIGHT, false);
-        }
     }
 
 
@@ -918,14 +914,7 @@ public class VillageBookScreen extends Screen {
     // -------------------------------------------------------------------------
 
     private String formatBronze(long bronze) {
-        long gold   = bronze / 10000L;
-        long silver = (bronze % 10000L) / 100L;
-        long b      = bronze % 100L;
-        StringBuilder sb = new StringBuilder();
-        if (gold   > 0) sb.append(gold).append("g ");
-        if (silver > 0) sb.append(silver).append("s ");
-        if (b > 0 || sb.isEmpty()) sb.append(b).append("b");
-        return sb.toString().trim();
+        return CoinRenderer.format(bronze);
     }
 
     private int needColor(String level) {
@@ -946,5 +935,31 @@ public class VillageBookScreen extends Screen {
             case "critical"  -> barW / 8;
             default          -> 0;
         };
+    }
+
+    private int computeCompanyButtonY() {
+        int py   = bookY + 36;
+        int maxY = bookY + BOOK_H - 34;
+        int y = py;
+
+        // Reputation bar
+        y += 10 + 10 + 3 + 14; // label + bar + gap + rep text
+        if (data.playerHasWarning()) y += 16;
+        y += 4 + 1 + 8; // separator
+
+        // Property header
+        y += 10 + 1 + 8 + 15; // header line + border + gap + label
+        List<OpenVillageBookPacket.HouseEntry> owned = data.houses().stream()
+                .filter(OpenVillageBookPacket.HouseEntry::ownedByThisPlayer).toList();
+        if (owned.isEmpty()) {
+            y += 11;
+        } else {
+            y += owned.size() * 14;
+        }
+        y += 8 + 1 + 8; // separator
+
+        // Company header
+        y += 15; // section label + border
+        return Math.min(y, maxY - 20); // clamp so it doesn't go off screen
     }
 }

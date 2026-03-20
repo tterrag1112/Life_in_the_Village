@@ -1,4 +1,4 @@
-package tterrag1112.life_in_the_village.Company;
+package tterrag1112.life_in_the_village.Networking;
 
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;

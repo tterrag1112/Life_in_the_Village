@@ -20,7 +20,9 @@ public record OpenCompanyManagementPacket(
         long effectiveMinWage,
         List<WorkerEntry> workers,
         List<PriceEntry> priceOverrides,
-        List<BuildingEntry> buildings
+        List<BuildingEntry> buildings,
+        String activeSection   // NEW — name of section to restore, empty = default
+
 ) implements CustomPacketPayload {
 
     public record WorkerEntry(UUID npcId, String npcName,
@@ -73,6 +75,7 @@ public record OpenCompanyManagementPacket(
                     buf.writeUtf(b.buildingName());
                     buf.writeUtf(b.buildingType());
                 }
+                buf.writeUtf(pkt.activeSection());
             },
             buf -> {
                 UUID id          = buf.readUUID();
@@ -101,19 +104,27 @@ public record OpenCompanyManagementPacket(
                 for (int i = 0; i < bCount; i++)
                     buildings.add(new BuildingEntry(buf.readUUID(),
                             buf.readUtf(), buf.readUtf()));
+                String activeSection = buf.readUtf();
 
                 return new OpenCompanyManagementPacket(id, name, treasury,
-                        wealth, startH, endH, minWage, workers, prices, buildings);
+                        wealth, startH, endH, minWage, workers, prices, buildings, activeSection);
             }
     );
 
     @Override
     public Type<?> type() { return TYPE; }
 
-    public static void handle(OpenCompanyManagementPacket pkt,
-                              IPayloadContext ctx) {
-        ctx.enqueueWork(() ->
-                net.minecraft.client.Minecraft.getInstance()
-                        .setScreen(new CompanyManagementScreen(pkt)));
+    public static void handle(OpenCompanyManagementPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            var mc = net.minecraft.client.Minecraft.getInstance();
+            CompanyManagementScreen screen = new CompanyManagementScreen(pkt);
+            // Restore section if specified
+            if (!pkt.activeSection().isEmpty()) {
+                try {
+                    screen.currentSection = CompanyManagementScreen.Section.valueOf(pkt.activeSection());
+                } catch (IllegalArgumentException ignored) {}
+            }
+            mc.setScreen(screen);
+        });
     }
 }

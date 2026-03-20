@@ -43,6 +43,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Adventurer.*;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith.BlacksmithGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Carpenter.CarpenterGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmhandGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.CaravanGuardGoal;
@@ -60,6 +61,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen;
 import tterrag1112.life_in_the_village.Gui.VillageBookScreen;
+import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
@@ -356,6 +358,7 @@ public class TownspersonMob extends PathfinderMob {
 
 
             }
+            case COMPANY_WORKER -> goalSelector.addGoal(10, new CompanyWorkerGoal(this));
 
             case NONE     -> goalSelector.addGoal(10, new SeekJobGoal(this));
         }
@@ -991,26 +994,11 @@ public class TownspersonMob extends PathfinderMob {
             }
             case STOCKPILE_KEEPER -> openStockpileScreen(player);
             case BUILDER -> openInventoryScreen(player, "Builder Inventory");
-            default -> {
-                // Check if this NPC is a company worker
-                if (isCompanyWorker() && level() instanceof ServerLevel sl
-                        && player instanceof ServerPlayer sp) {
-                    CompanySavedData compData = CompanySavedData.get(sl);
-                    compData.getCompanyForWorker(getUUID()).ifPresent(company -> {
-                        if (company.getOwnerPlayerId().equals(sp.getUUID())) {
-                            // Owner interacting with their worker — open worker assignment GUI
-                            CompanyWorkerScreen.open(sp, this, company);
-                        } else {
-                            sp.displayClientMessage(
-                                    Component.literal(getNpcName()
-                                            + " is employed by " + company.getName() + "."),
-                                    false);
-                        }
-                    });
-                }
+
+            default ->
                 player.displayClientMessage(
                         Component.literal(getDisplayName().getString() + " is busy."), false);
-            }
+
         }
         return InteractionResult.SUCCESS;
     }

@@ -89,10 +89,18 @@ public record CompanyActionPacket(
                     // Validate: village must be TOWN tier or above
                     UUID villageId = pkt.targetId();
                     var village = vdata.getVillageById(villageId).orElse(null);
+                    if (village == null) {
+                        player.displayClientMessage(
+                                net.minecraft.network.chat.Component.literal(
+                                        "[Company] Village not found: " + villageId),
+                                false);
+                        return;
+                    }
                     if (village == null) return;
                     int buildings = village.getBuildingIds().size();
                     var tier = VillageSizeTier. fromBuildingCount(buildings);
-                    if (tier.ordinal() == TOWN.ordinal()) {
+
+                    if (tier.ordinal() < TOWN.ordinal()) {
                         player.displayClientMessage(
                                 net.minecraft.network.chat.Component.literal(
                                         "You need a Town-tier village to found a company."),
@@ -121,7 +129,7 @@ public record CompanyActionPacket(
                             false);
                     // Re-open management screen with fresh data
                     CompanyManagementScreen.sendOpenPacket(
-                            player, company.getCompanyId(), level, data, vdata);
+                            player, company.getCompanyId(), level, data, vdata, "OVERVIEW");
                 }
 
                 case RENAME_COMPANY -> {
@@ -131,7 +139,7 @@ public record CompanyActionPacket(
                     c.setName(pkt.strParam());
                     data.markDirty();
                     refreshManagementScreen(player, pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "OVERVIEW");
                 }
 
                 case HIRE_NPC -> {
@@ -177,7 +185,7 @@ public record CompanyActionPacket(
                                             + c.getName() + ". Thank you!"),
                             false);
                     refreshManagementScreen(player, pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "WORKERS");
                 }
 
                 case FIRE_NPC -> {
@@ -198,7 +206,7 @@ public record CompanyActionPacket(
                             .ifPresent(npc -> npc.clearCompanyId());
                     data.markDirty();
                     refreshManagementScreen(player, pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "WORKERS");
                 }
 
                 case SET_WORKER_WAGE -> {
@@ -211,7 +219,7 @@ public record CompanyActionPacket(
                             c.updateWorker(w.withWage(wage)));
                     data.markDirty();
                     refreshWorkerScreen(player, pkt.targetId(), pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "WORKER");
                 }
 
                 case ASSIGN_WORKER_TASK -> {
@@ -223,7 +231,7 @@ public record CompanyActionPacket(
                                     pkt.strParam(), pkt.intParam())));
                     data.markDirty();
                     refreshWorkerScreen(player, pkt.targetId(), pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "WORKERS");
                 }
 
                 case SET_WORK_HOURS -> {
@@ -234,7 +242,7 @@ public record CompanyActionPacket(
                             pkt.intParam(), (int) pkt.longParam()));
                     data.markDirty();
                     refreshManagementScreen(player, pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "SCHEDULE");
                 }
 
                 case SET_ITEM_PRICE -> {
@@ -244,7 +252,7 @@ public record CompanyActionPacket(
                     c.setPriceOverride(pkt.strParam(), pkt.longParam());
                     data.markDirty();
                     refreshManagementScreen(player, pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "PRICES");
                 }
 
                 case DEPOSIT_TO_TREASURY -> {
@@ -283,7 +291,7 @@ public record CompanyActionPacket(
                     c.depositBronze(amount);
                     data.markDirty();
                     refreshManagementScreen(player, pkt.companyId(),
-                            level, data, vdata);
+                            level, data, vdata, "OVERVIEW");
                 }
 
                 case ADD_BUILDING -> {
@@ -311,14 +319,15 @@ public record CompanyActionPacket(
 
     private static void refreshManagementScreen(ServerPlayer player,
                                                 UUID companyId, ServerLevel level,
-                                                CompanySavedData data, VillageSavedData vdata) {
+                                                CompanySavedData data, VillageSavedData vdata,
+                                                String section) {
         CompanyManagementScreen.sendOpenPacket(
-                player, companyId, level, data, vdata);
+                player, companyId, level, data, vdata, section);
     }
 
     private static void refreshWorkerScreen(ServerPlayer player,
                                             UUID npcId, UUID companyId, ServerLevel level,
-                                            CompanySavedData data, VillageSavedData vdata) {
+                                            CompanySavedData data, VillageSavedData vdata, String section) {
         CompanyWorkerScreen.sendOpenPacket(
                 player, npcId, companyId, level, data, vdata);
     }

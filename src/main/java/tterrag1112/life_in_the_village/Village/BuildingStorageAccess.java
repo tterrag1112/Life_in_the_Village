@@ -15,11 +15,11 @@ import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 public class BuildingStorageAccess {
+    public record StoredItemInfo(Item item, int count) {}
+
 
     /**
      * Gets the inventory of the block entity at the building's origin.
@@ -175,5 +175,18 @@ public class BuildingStorageAccess {
                 player, itemId, stack.getCount(), level);
     }
 
+    public static List<StoredItemInfo> listItems(ServerLevel level, Building building) {
+        Map<Item, Integer> totals = new LinkedHashMap<>();
+        for (Container inv : findInventories(level, building)) {
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack stack = inv.getItem(i);
+                if (!stack.isEmpty())
+                    totals.merge(stack.getItem(), stack.getCount(), Integer::sum);
+            }
+        }
+        return totals.entrySet().stream()
+                .map(e -> new StoredItemInfo(e.getKey(), e.getValue()))
+                .toList();
+    }
 }
 

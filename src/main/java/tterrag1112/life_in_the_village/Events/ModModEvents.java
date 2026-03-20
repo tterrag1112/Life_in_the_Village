@@ -135,9 +135,9 @@ public class ModModEvents {
                 OpenCompanyManagementPacket.CODEC,
                 OpenCompanyManagementPacket::handle);
         registrar.playToClient(
-                tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket.TYPE,
-                tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket.CODEC,
-                tterrag1112.life_in_the_village.Company.OpenCompanyWorkerPacket::handle);
+                OpenCompanyWorkerPacket.TYPE,
+                OpenCompanyWorkerPacket.CODEC,
+                OpenCompanyWorkerPacket::handle);
 
     }
 

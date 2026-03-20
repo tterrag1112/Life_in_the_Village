@@ -412,7 +412,7 @@ public class BuildingCommand {
                                         mob.setProfession(profession);
                                     } else {
                                         // Default to merchant if no profession mapped
-                                        mob.setProfession(Profession.MERCHANT);
+                                        mob.setProfession(profession != null ? profession : Profession.NONE);
                                     }
 
 

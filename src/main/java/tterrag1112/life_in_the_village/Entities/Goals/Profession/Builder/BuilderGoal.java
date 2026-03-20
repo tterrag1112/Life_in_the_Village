@@ -186,20 +186,20 @@ public class BuilderGoal extends Goal {
                                     .findFirst()
                                     .ifPresent(b -> {
                                         targetBuilding = b;
-                                        requirements =
-                                                UpgradeRequirements
-                                                        .compute(level,
-                                                                b)
-                                                        .orElse(null);
-                                        workshopBuilding =
-                                                findStockpile(v,
-                                                        VillageSavedData
-                                                                .get(level));
-                                        phase = workshopBuilding
-                                                != null
+                                        Optional<UpgradeRequirements> req = UpgradeRequirements.compute(level, b);
+                                        if (req.isEmpty()) {
+                                            targetBuilding = null;
+                                            phase = Phase.IDLE;
+                                            idleCooldown = IDLE_COOLDOWN;
+                                            return;
+                                        }
+                                        requirements = req.get();
+                                        workshopBuilding = findStockpile(v, VillageSavedData.get(level));
+                                        phase = workshopBuilding != null
                                                 ? Phase.WALKING_TO_WORKSHOP
                                                 : Phase.IDLE;
                                     });
+
                         });
             } else {
                 phase = Phase.FINDING_SITE;
@@ -232,6 +232,12 @@ public class BuilderGoal extends Goal {
     private Map<Item, Integer> missingMaterials = new HashMap<>();
 
     private void gather(ServerLevel level) {
+
+        if (requirements == null) {
+            phase = Phase.IDLE;
+            idleCooldown = IDLE_COOLDOWN;
+            return;
+        }
         SimpleContainer personal = entity.getPersonalInventory();
 
         // Check village has enough coins for upgrade cost
