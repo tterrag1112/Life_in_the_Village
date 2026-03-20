@@ -13,6 +13,7 @@ import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 
 import java.util.UUID;
@@ -177,6 +178,7 @@ public record CompanyActionPacket(
                             level.getGameTime(), "", 8);
                     c.addWorker(worker);
                     npc.setCompanyId(c.getCompanyId());
+                    npc.setProfession(Profession.COMPANY_WORKER);
                     data.markDirty();
                     player.displayClientMessage(
                             net.minecraft.network.chat.Component.literal(
@@ -203,7 +205,10 @@ public record CompanyActionPacket(
                                             30000000,  2048,  30000000),
                                     mob -> mob.getUUID().equals(npcId)
                             ).stream().findFirst()
-                            .ifPresent(npc -> npc.clearCompanyId());
+                            .ifPresent(npc -> {npc.clearCompanyId();
+                                npc.setProfession(Profession.NONE);});
+
+
                     data.markDirty();
                     refreshManagementScreen(player, pkt.companyId(),
                             level, data, vdata, "WORKERS");
