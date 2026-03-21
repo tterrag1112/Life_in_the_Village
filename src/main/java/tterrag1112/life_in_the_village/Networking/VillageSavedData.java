@@ -718,6 +718,23 @@ public class VillageSavedData extends SavedData {
             }
         }
     }
+    public Optional<BlockPos> getNearestPathNode(BlockPos pos,
+                                                 UUID villageId) {
+        BlockPos best      = null;
+        double   bestDistSq = Double.MAX_VALUE;
+
+        for (VillagePath path : getPathsForVillage(villageId)) {
+            for (BlockPos block : path.getBlocks()) {
+                double d = block.distSqr(pos);
+                if (d < bestDistSq) {
+                    bestDistSq = d;
+                    best       = block;
+                }
+            }
+        }
+
+        return Optional.ofNullable(best);
+    }
 
 
 

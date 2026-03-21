@@ -4,9 +4,11 @@ package tterrag1112.life_in_the_village.Village.Decoration;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -60,57 +62,84 @@ public class TownSquarePlacer {
         // Find the median ground Y across the square footprint to pick
         // a single flat target Y for the whole pad
         int targetY = medianGroundY(level, center, RADIUS);
-        BlockPos flatCenter = new BlockPos(
-                center.getX(), targetY, center.getZ());
+        BlockPos flatCenter = new BlockPos(center.getX(), targetY, center.getZ());
 
         Set<BlockPos> pavedBlocks = new HashSet<>();
 
-        // ── Level the pad ────────────────────────────────────────────────────
+        // levelPad fills columns UP TO targetY - 1 (inclusive), leaving
+        // targetY as the surface the paving block will replace.
+        // Filling to targetY itself would push the pave block one too high.
         TerrainSmoother.levelPad(level,
                 flatCenter.getX() - RADIUS, flatCenter.getZ() - RADIUS,
                 flatCenter.getX() + RADIUS, flatCenter.getZ() + RADIUS,
-                targetY, Collections.emptySet());
+                targetY - 1,                // ← fill to one below pave surface
+                Collections.emptySet());
 
-        // ── Pave the surface ─────────────────────────────────────────────────
+        // Pave at targetY — replacing whatever solid block is there.
+        // targetY is MOTION_BLOCKING_NO_LEAVES result = the solid surface block.
         for (int dx = -RADIUS; dx <= RADIUS; dx++) {
             for (int dz = -RADIUS; dz <= RADIUS; dz++) {
-                // targetY is the surface block (grass/dirt level).
-                // We REPLACE it with paving — no +1/-1 offset confusion.
                 BlockPos pavePos = new BlockPos(
                         flatCenter.getX() + dx,
-                        targetY,                 // ← the surface block itself
+                        targetY,
                         flatCenter.getZ() + dz);
 
+                // Re-verify surface at this specific column — slope means
+                // not every column is exactly targetY
+                int colSurfY = level.getHeight(
+                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                        pavePos.getX(), pavePos.getZ());
+
+                // If this column is lower than targetY, fill up to targetY - 1
+                // then pave at targetY
+                if (colSurfY < targetY) {
+                    for (int y = colSurfY + 1; y < targetY; y++) {
+                        BlockPos fill = new BlockPos(pavePos.getX(), y, pavePos.getZ());
+                        if (level.getBlockState(fill).isAir()
+                                || level.getBlockState(fill).is(BlockTags.REPLACEABLE)) {
+                            level.setBlock(fill, Blocks.DIRT.defaultBlockState(), 3);
+                        }
+                    }
+                } else if (colSurfY > targetY) {
+                    // Carve down to targetY
+                    for (int y = colSurfY; y > targetY; y--) {
+                        BlockPos carve = new BlockPos(pavePos.getX(), y, pavePos.getZ());
+                        BlockState cs = level.getBlockState(carve);
+                        if (cs.is(Blocks.GRASS_BLOCK) || cs.is(Blocks.DIRT)
+                                || cs.is(Blocks.COARSE_DIRT)
+                                || cs.is(BlockTags.REPLACEABLE)) {
+                            level.setBlock(carve, Blocks.AIR.defaultBlockState(), 3);
+                        } else break;
+                    }
+                }
+
+                // Place paving at targetY (the solid surface level)
                 boolean isBorder = Math.abs(dx) == RADIUS
                         || Math.abs(dz) == RADIUS;
                 boolean isInnerBorder = !isBorder
                         && (Math.abs(dx) == RADIUS - 1
                         || Math.abs(dz) == RADIUS - 1);
 
-                BlockState pave;
-                if (isBorder) {
-                    pave = style.stone.defaultBlockState();
-                } else if (isInnerBorder) {
-                    pave = style.stoneSlab();
-                } else {
-                    pave = style.pathState();
-                }
+                BlockState pave = isBorder      ? style.stone.defaultBlockState()
+                        : isInnerBorder  ? style.stoneSlab()
+                        : style.pathState();
 
-                // Replace the surface block in-place
                 level.setBlock(pavePos, pave, 3);
 
-                // Clear any vegetation / loose blocks sitting on top
+                // Clear vegetation above
                 BlockPos above = pavePos.above();
                 BlockState aboveState = level.getBlockState(above);
-                if (aboveState.isAir()
-                        || aboveState.is(net.minecraft.tags.BlockTags.REPLACEABLE)
-                        || aboveState.is(net.minecraft.tags.BlockTags.FLOWERS)
-                        || aboveState.is(net.minecraft.tags.BlockTags.SMALL_FLOWERS)
-                        || aboveState.is(net.minecraft.tags.BlockTags.LEAVES)) {
+                if (!aboveState.isAir()
+                        && (aboveState.is(BlockTags.REPLACEABLE)
+                        || aboveState.is(BlockTags.FLOWERS)
+                        || aboveState.is(BlockTags.SMALL_FLOWERS)
+                        || aboveState.is(BlockTags.LEAVES))) {
                     level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
                 }
 
-                pavedBlocks.add(pavePos); // surface = the paved block itself
+                // pavedBlocks stores the SOLID pave block position (not air above)
+                // so that protectedXZ checks in VillageDecorator use the correct Y
+                pavedBlocks.add(pavePos);
             }
         }
         // ── Central feature ──────────────────────────────────────────────────
@@ -271,7 +300,7 @@ public class TownSquarePlacer {
             int dx = (int)(Math.cos(angle) * (RADIUS - 3));
             int dz = (int)(Math.sin(angle) * (RADIUS - 3));
             BlockPos base = new BlockPos(
-                    center.getX() + dx, y - 1, center.getZ() + dz);
+                    center.getX() + dx, y , center.getZ() + dz);
             level.setBlock(base, colors[i % colors.length], 3);
             level.setBlock(base.above(), Blocks.OAK_FENCE.defaultBlockState(), 3);
             level.setBlock(base.above(2), Blocks.LANTERN.defaultBlockState(), 3);
@@ -294,7 +323,7 @@ public class TownSquarePlacer {
         for (int i = 0; i < 4; i++) {
             BlockPos stallBase = new BlockPos(
                     center.getX() + stallPositions[i][0],
-                    y - 1,
+                    y,
                     center.getZ() + stallPositions[i][1]);
             // 3-block carpet strip
             for (int s = -1; s <= 1; s++) {
@@ -330,7 +359,7 @@ public class TownSquarePlacer {
         // Glowstone cluster at center
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                BlockPos pos = new BlockPos(center.getX() + dx, y - 1, center.getZ() + dz);
+                BlockPos pos = new BlockPos(center.getX() + dx, y , center.getZ() + dz);
                 level.setBlock(pos, Blocks.GLOWSTONE.defaultBlockState(), 3);
                 placed.add(pos);
             }
@@ -344,7 +373,7 @@ public class TownSquarePlacer {
         boolean toggle = true;
         for (int[] off : offsets) {
             BlockPos pos = new BlockPos(
-                    center.getX() + off[0], y - 1, center.getZ() + off[1]);
+                    center.getX() + off[0], y , center.getZ() + off[1]);
             level.setBlock(pos, toggle
                     ? Blocks.HAY_BLOCK.defaultBlockState()
                     : Blocks.CARVED_PUMPKIN.defaultBlockState(), 3);
@@ -358,13 +387,13 @@ public class TownSquarePlacer {
                                                  List<BlockPos> placed) {
         // Target dummies (hay bales) in a row
         for (int i = -2; i <= 2; i++) {
-            BlockPos pos = new BlockPos(center.getX() + i * 2, y - 1, center.getZ() + 5);
+            BlockPos pos = new BlockPos(center.getX() + i * 2, y , center.getZ() + 5);
             level.setBlock(pos, Blocks.HAY_BLOCK.defaultBlockState(), 3);
             placed.add(pos);
         }
         // Weapon rack (fences) on the opposite side
         for (int i = -1; i <= 1; i++) {
-            BlockPos pos = new BlockPos(center.getX() + i * 2, y - 1, center.getZ() - 5);
+            BlockPos pos = new BlockPos(center.getX() + i * 2, y , center.getZ() - 5);
             level.setBlock(pos, Blocks.OAK_FENCE.defaultBlockState(), 3);
             placed.add(pos);
         }
@@ -384,7 +413,7 @@ public class TownSquarePlacer {
         // Origin at the SW corner, one block below the paved surface.
         BlockPos origin = new BlockPos(
                 center.getX() - RADIUS,
-                center.getY() - 1,
+                center.getY() ,
                 center.getZ() - RADIUS);
 
         // Height of 64 ensures getBuildingAt() finds the square regardless
@@ -426,8 +455,11 @@ public class TownSquarePlacer {
         List<Integer> ys = new ArrayList<>();
         for (int dx = -radius; dx <= radius; dx += 2) {
             for (int dz = -radius; dz <= radius; dz += 2) {
-                ys.add(TerrainSmoother.surfaceY(level,
-                        center.getX() + dx, center.getZ() + dz));
+                ys.add(level.getHeight(
+                        net.minecraft.world.level.levelgen.Heightmap.Types
+                                .MOTION_BLOCKING_NO_LEAVES,
+                        center.getX() + dx,
+                        center.getZ() + dz));
             }
         }
         Collections.sort(ys);

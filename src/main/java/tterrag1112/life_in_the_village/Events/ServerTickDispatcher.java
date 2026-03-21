@@ -20,10 +20,7 @@ import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
 import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
-import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
-import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
-import tterrag1112.life_in_the_village.Village.Decoration.VillagePath;
-import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
+import tterrag1112.life_in_the_village.Village.Decoration.*;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
@@ -65,6 +62,7 @@ public class ServerTickDispatcher {
             TradeRouteManager.tick(overworld, vdata, tick);
             VillageWarningSystem.tickWarningSpread(overworld, vdata, tick);
             VillageExpansionManager.tick(overworld, vdata, tick);
+            VillageAgingManager.tick(overworld, vdata, tick);
             HousePurchaseManager.tickPropertyTax(overworld, vdata, tick);
             WorkplaceAssignmentManager.tickWeeklyPay(overworld, tick);
         }

@@ -156,6 +156,16 @@ public class BuildingRegistry {
                 3, 3, false,
                 "woodcutter/level_1");
 
+        // Add in Tier 2 — Village section, after WOODCUTTER:
+        register(BuildingType.GUARD_TOWER,
+                VillageSizeTier.VILLAGE, 3,
+                List.of(BuildingType.TOWN_HALL),
+                Map.of(Items.COBBLESTONE,  64,
+                        Items.OAK_LOG,      16,
+                        Items.IRON_INGOT,    8),
+                8, 5, false,
+                "guard_tower/level_1");
+
         register(BuildingType.GUILD_HALL,
                 VillageSizeTier.VILLAGE, 3,
                 List.of(BuildingType.TOWN_HALL,

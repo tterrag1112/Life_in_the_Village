@@ -34,31 +34,27 @@ public class TradeRouteManager {
      * relationship changes. Establishes trade routes between
      * eligible villages.
      */
+    // src/main/java/tterrag1112/life_in_the_village/Village/Economy/Trade/TradeRouteManager.java
+// Replace the establishRoutes method entirely:
+
     public static void establishRoutes(ServerLevel level,
                                        Village newVillage,
                                        VillageSavedData data) {
         BlockPos newCenter = getVillageCenter(newVillage, data);
         if (newCenter == null) return;
 
-        // Determine how many roads this village can support
         int buildingCount = newVillage.getBuildingIds().size();
-        VillageSizeTier tier = VillageSizeTier
-                .fromBuildingCount(buildingCount);
+        VillageSizeTier tier = VillageSizeTier.fromBuildingCount(buildingCount);
         int maxRoads = maxRoadsForTier(tier);
 
-        // Count existing routes
-        long existingRoutes = data.getRoutesForVillage(
-                        newVillage.getId()).stream()
-                .filter(r -> r.getStatus()
-                        == TradeRoute.RouteStatus.ACTIVE)
+        long existingRoutes = data.getRoutesForVillage(newVillage.getId())
+                .stream()
+                .filter(r -> r.getStatus() == TradeRoute.RouteStatus.ACTIVE)
                 .count();
 
         if (existingRoutes >= maxRoads) return;
-
         int routesNeeded = (int)(maxRoads - existingRoutes);
 
-        // Score all candidate villages by terrain distance
-        // using a lightweight path cost estimate
         List<Village> candidates = data.getAllVillages().stream()
                 .filter(v -> !v.getId().equals(newVillage.getId()))
                 .filter(v -> data.getRouteBetween(
@@ -66,21 +62,15 @@ public class TradeRouteManager {
                 .filter(v -> {
                     BlockPos vc = getVillageCenter(v, data);
                     if (vc == null) return false;
-                    // Pre-filter by straight line distance
                     double dist = Math.sqrt(
-                            Math.pow(newCenter.getX()
-                                    - vc.getX(), 2)
-                                    + Math.pow(newCenter.getZ()
-                                    - vc.getZ(), 2));
+                            Math.pow(newCenter.getX() - vc.getX(), 2)
+                                    + Math.pow(newCenter.getZ() - vc.getZ(), 2));
                     return dist <= MAX_ROUTE_DISTANCE;
                 })
                 .sorted(Comparator.comparingDouble(v -> {
                     BlockPos vc = getVillageCenter(v, data);
                     if (vc == null) return Double.MAX_VALUE;
-                    // Use terrain-aware distance estimate
-                    // by sampling slope along the straight line
-                    return estimateTerrainDistance(
-                            level, newCenter, vc);
+                    return estimateTerrainDistance(level, newCenter, vc);
                 }))
                 .limit(routesNeeded)
                 .toList();
@@ -93,43 +83,103 @@ public class TradeRouteManager {
                     determineRouteType(newVillage, target, data);
 
             System.out.println("TradeRouteManager: routing road from "
-                    + newVillage.getName() + " to "
-                    + target.getName() + "...");
+                    + newVillage.getName() + " to " + target.getName() + "...");
+
+            // ── Route between village hub positions ───────────────────────────
+            // Use path hubs (town squares) as endpoints when available so the
+            // trade road terminates at the social heart of each village.
+            BlockPos newHub    = newVillage.getEffectivePathHub(data);
+            BlockPos targetHub = target.getEffectivePathHub(data);
 
             List<BlockPos> path = RoadRouter.findRoad(
-                    level, newCenter, targetCenter);
+                    level, newHub, targetHub);
 
             if (path.isEmpty()) {
-                System.out.println("TradeRouteManager: "
-                        + "no path found, skipping");
+                System.out.println("TradeRouteManager: no path found, skipping");
                 continue;
             }
 
             List<BlockPos> placedBlocks = RoadRouter.placeRoad(
-                    level, path,
-                    RoadRouter.RoadQuality.COBBLESTONE);
+                    level, path, RoadRouter.RoadQuality.COBBLESTONE);
+
+            // ── Entrance roads ────────────────────────────────────────────────
+            // If the trade road's start/end is not already at the hub,
+            // place a short primary entrance road connecting them.
+            // This handles the case where the A* path didn't reach exactly
+            // the hub due to budget constraints.
+            if (!path.isEmpty()) {
+                BlockPos roadStart = path.get(0);
+                BlockPos roadEnd   = path.get(path.size() - 1);
+
+                // Connect road start → newVillage hub if more than 8 blocks apart
+                if (!roadStart.closerThan(newHub, 8)) {
+                    placeEntranceRoad(level, roadStart, newHub,
+                            newVillage, data);
+                }
+
+                // Connect road end → target hub
+                if (!roadEnd.closerThan(targetHub, 8)) {
+                    placeEntranceRoad(level, roadEnd, targetHub,
+                            target, data);
+                }
+            }
 
             TradeRoad road = TradeRoad.create(
-                    newVillage.getId(), target.getId(),
-                    placedBlocks);
+                    newVillage.getId(), target.getId(), placedBlocks);
             data.addTradeRoad(road);
 
             TradeRoute route = TradeRoute.create(
                     newVillage.getId(), target.getId(),
-                    road.getRoadId(), routeType,
-                    level.getGameTime());
+                    road.getRoadId(), routeType, level.getGameTime());
             data.addTradeRoute(route);
 
             data.getKingdomForVillage(newVillage.getId())
                     .ifPresent(k -> k.getHistory().recordEvent(
-                            HistoryTextGenerator.tradeRouteEstablished(newVillage.getName(), target.getName(), level.getGameTime()), k.getName(), k.getRulerName(level)));
+                            HistoryTextGenerator.tradeRouteEstablished(
+                                    newVillage.getName(), target.getName(),
+                                    level.getGameTime()),
+                            k.getName(), k.getRulerName(level)));
 
             System.out.println("TradeRouteManager: established "
                     + routeType + " route between "
-                    + newVillage.getName() + " and "
-                    + target.getName()
+                    + newVillage.getName() + " and " + target.getName()
                     + " (" + path.size() + " blocks)");
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Entrance road placement
+    // -------------------------------------------------------------------------
+
+    private static void placeEntranceRoad(ServerLevel level,
+                                          BlockPos roadEndpoint,
+                                          BlockPos villageHub,
+                                          Village village,
+                                          VillageSavedData data) {
+        List<BlockPos> entrancePath = RoadRouter.findRoad(
+                level, roadEndpoint, villageHub);
+
+        if (entrancePath.isEmpty()) return;
+
+        List<BlockPos> placed = RoadRouter.placeRoad(
+                level, entrancePath,
+                RoadRouter.RoadQuality.COBBLESTONE);
+
+        if (placed.isEmpty()) return;
+
+        // Register as a village path so it appears on the village map
+        // and participates in the street network
+        data.addVillagePath(new tterrag1112.life_in_the_village.Village
+                .Decoration.VillagePath(
+                java.util.UUID.randomUUID(),
+                village.getId(),
+                placed,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .VillagePath.PathTier.COBBLESTONE));
+        data.setDirty();
+
+        System.out.println("TradeRouteManager: placed entrance road for "
+                + village.getName() + " (" + placed.size() + " blocks)");
     }
 
     private static int maxRoadsForTier(VillageSizeTier tier) {

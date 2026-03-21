@@ -295,13 +295,18 @@ public class VillageExpansionManager {
     // Helpers
     // -------------------------------------------------------------------------
 
+    // Replace countPopulation entirely:
     private static int countPopulation(List<Building> buildings,
                                        ServerLevel level,
                                        VillageSavedData data) {
-        Village village = buildings.stream()
+        // Get the village from the first building's village membership
+        // by searching all villages for one that contains these building IDs
+        if (buildings.isEmpty()) return 0;
+        UUID firstBuildingId = buildings.get(0).getId();
+
+        Village village = data.getAllVillages().stream()
+                .filter(v -> v.getBuildingIds().contains(firstBuildingId))
                 .findFirst()
-                .flatMap(b -> data.getVillageById(
-                        b.getId()))
                 .orElse(null);
 
         if (village == null) return 0;
@@ -311,8 +316,7 @@ public class VillageExpansionManager {
                         .custom.TownspersonMob.class,
                 village.getBounds(data)
                         .map(b -> b.inflate(32))
-                        .orElse(new net.minecraft.world.phys
-                                .AABB(0, 0, 0, 0, 0, 0)),
+                        .orElse(new net.minecraft.world.phys.AABB(0,0,0,0,0,0)),
                 npc -> npc.getAssignedVillageName()
                         .map(n -> n.equals(village.getName()))
                         .orElse(false)

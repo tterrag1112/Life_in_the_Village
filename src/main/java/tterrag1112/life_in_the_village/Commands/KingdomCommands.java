@@ -4,6 +4,7 @@ import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -15,9 +16,11 @@ import tterrag1112.life_in_the_village.Kingdom.*;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public class KingdomCommands {
 
@@ -25,6 +28,24 @@ public class KingdomCommands {
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(
                 Commands.literal("kingdom")
+                        .then(Commands.literal("spawn")
+                                .then(Commands.argument("name",
+                                                StringArgumentType.word())
+                                        .then(Commands.argument("culture",
+                                                        StringArgumentType.word())
+                                                .then(Commands.argument("villagetype",
+                                                                StringArgumentType.word())
+                                                        .executes(ctx ->
+                                                                spawnKingdom(
+                                                                        ctx.getSource(),
+                                                                        StringArgumentType.getString(ctx, "name"),
+                                                                        StringArgumentType.getString(ctx, "culture"),
+                                                                        StringArgumentType.getString(ctx, "villagetype")
+                                                                ))
+                                                )
+                                        )
+                                )
+                        )
                         // /kingdom create <name> <culture>
                         .then(Commands.literal("create")
                                 .then(Commands.argument("name", StringArgumentType.word())
@@ -430,6 +451,63 @@ public class KingdomCommands {
 
         src.sendSuccess(() -> Component.literal(
                 "Given kingdom book."), false);
+        return 1;
+    }
+    private static int spawnKingdom(CommandSourceStack src,
+                                    String kingdomName,
+                                    String culture,
+                                    String villageType) {
+        ServerLevel level = src.getLevel();
+
+        // Validate village type before starting the long spawn process
+        if (VillageTypeRegistry.INSTANCE.getType(villageType) == null) {
+            src.sendFailure(Component.literal(
+                    "Unknown village type '" + villageType
+                            + "'. Available: "
+                            + String.join(", ",
+                            VillageTypeRegistry.INSTANCE
+                                    .getAvailableTypes())));
+            return 0;
+        }
+
+        BlockPos origin = BlockPos.containing(src.getPosition());
+
+        src.sendSuccess(() -> Component.literal(
+                "Spawning kingdom '" + kingdomName
+                        + "' around " + origin.toShortString()
+                        + " — this may take a moment..."), true);
+
+        // Progress messages are sent back to the command source
+        // as they arrive so the operator can see the live status
+        // (village generation is slow — feedback matters)
+        Consumer<String> progress = msg ->
+                src.sendSuccess(() -> Component.literal(msg), false);
+
+        Optional<Kingdom> result = KingdomSpawner.spawn(
+                level, origin, kingdomName, culture,
+                villageType, progress);
+
+        if (result.isEmpty()) {
+            src.sendFailure(Component.literal(
+                    "Kingdom spawn failed — see above for details."));
+            return 0;
+        }
+
+        Kingdom kingdom = result.get();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        src.sendSuccess(() -> Component.literal(
+                "=== Kingdom '" + kingdomName + "' spawned ==="
+                        + "\n  Villages: " + kingdom.getVillageIds().size()
+                        + "\n  Culture:  " + culture
+                        + "\n  Trade routes: "
+                        + data.getAllTradeRoutes().stream()
+                        .filter(r -> kingdom.getVillageIds().contains(
+                                r.getVillageA())
+                                || kingdom.getVillageIds().contains(
+                                r.getVillageB()))
+                        .count()), true);
+
         return 1;
     }
 }

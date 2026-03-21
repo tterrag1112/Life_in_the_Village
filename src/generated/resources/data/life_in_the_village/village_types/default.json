@@ -39,6 +39,51 @@
       "structure": "house/level_1"
     },
     {
+      "type": "HOUSE",
+      "offset": [
+        -20,
+        0,
+        0
+      ],
+      "structure": "house/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "offset": [
+        -20,
+        0,
+        0
+      ],
+      "structure": "house/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "offset": [
+        -20,
+        0,
+        0
+      ],
+      "structure": "house/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "offset": [
+        -20,
+        0,
+        0
+      ],
+      "structure": "house/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "offset": [
+        -20,
+        0,
+        0
+      ],
+      "structure": "house/level_1"
+    },
+    {
       "type": "GUILD_HALL",
       "offset": [
         20,
@@ -73,6 +118,15 @@
         40
       ],
       "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "INN",
+      "offset": [
+        0,
+        0,
+        50
+      ],
+      "structure": "inn/level_1"
     }
   ],
   "starter_items": [
@@ -90,6 +144,11 @@
       "building_type": "STOCKPILE",
       "count": 128,
       "item": "minecraft:cobblestone"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "count": 16,
+      "item": "life_in_the_village:denier_or"
     }
   ],
   "starter_npcs": [
@@ -147,6 +206,11 @@
       "building_type": "BLACKSMITH",
       "family_role": "HEAD",
       "profession": "BLACKSMITH"
+    },
+    {
+      "building_type": "INN",
+      "family_role": "UNASSIGNEd",
+      "profession": "INNKEEPER"
     }
   ]
 }

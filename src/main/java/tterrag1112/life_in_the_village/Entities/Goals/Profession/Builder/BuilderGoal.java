@@ -23,10 +23,18 @@ import tterrag1112.life_in_the_village.Village.*;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingRegistry;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
+import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageWeathering;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Planning.BuildingFoundation;
 
 import java.util.*;
 import java.util.stream.Collectors;
+
+import static tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator.*;
 
 public class BuilderGoal extends Goal {
 
@@ -525,9 +533,16 @@ public class BuilderGoal extends Goal {
 
         if (bounds.isEmpty()) { failExpansion(level); return; }
 
-        Optional<BlockPos> site = BuildSiteFinder.findSite(
-                level, bounds.get(), size.getX(), size.getZ()
-        );
+        Optional<BlockPos> site = getVillageName(level)
+                .flatMap(name -> VillageSavedData.get(level)
+                        .getVillageByName(name))
+                .flatMap(village -> BuildSiteFinder.findSite(
+                        level,
+                        village,                    // ← pass Village object
+                        VillageSavedData.get(level),
+                        type,                       // ← pass BuildingType
+                        size.getX(),
+                        size.getZ()));
 
         if (site.isEmpty()) {
             failExpansion(level);
@@ -540,53 +555,87 @@ public class BuilderGoal extends Goal {
     }
 
     private void placeBuilding(ServerLevel level) {
-        if (currentExpansion == null) {
-            phase = Phase.IDLE;
-            return; }
+        if (currentExpansion == null) { phase = Phase.IDLE; return; }
 
         BlockPos target = currentExpansion.getTargetPos();
-        double distSq = entity.distanceToSqr(target.getX(), target.getY(), target.getZ());
+        double distSq = entity.distanceToSqr(
+                target.getX(), target.getY(), target.getZ());
 
         if (distSq > 9) {
             entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0
-            );
+                    target.getX(), target.getY(), target.getZ(), 1.0);
             return;
         }
 
         entity.getNavigation().stop();
 
-        // Place the building
         BuildingType type = currentExpansion.getBuildingType();
-        String reqs = currentExpansion.getBuildingType().toString();
+
+        // Get structure path from BuildingRegistry, not toString()
+        BuildingRegistry.BuildingDef def = BuildingRegistry.get(type).orElse(null);
+        if (def == null) { failExpansion(level); return; }
+
         Identifier structId = Identifier.fromNamespaceAndPath(
-                Life_in_the_village.MODID, reqs
-        );
-        System.out.println("TESTING " + type + " " + reqs + " " +structId);
+                Life_in_the_village.MODID, def.structurePath());
+
+        // Re-query live surface at placement time
+        int surfY = level.getHeight(
+                net.minecraft.world.level.levelgen.Heightmap.Types
+                        .MOTION_BLOCKING_NO_LEAVES,
+                target.getX(), target.getZ());
+        BlockPos buildPos = new BlockPos(target.getX(), surfY, target.getZ());
 
         String buildingName = type.name().toLowerCase() + "_"
                 + (int)(Math.random() * 1000);
 
         getVillageName(level).ifPresent(villageName -> {
             try {
-                Building placed = BuildingPlacer.placeAndRegister(
-                        level, target, structId, buildingName,
-                        type, Rotation.NONE
-                ).get();
-
-                // Assign to village
                 VillageSavedData data = VillageSavedData.get(level);
+
+                // Face the building toward the village centre if known,
+                // otherwise use NONE
+                Rotation rotation = data.getVillageByName(villageName)
+                        .flatMap(v -> v.getBounds(data))
+                        .map(bounds -> {
+                            BlockPos vCentre = BlockPos.containing(bounds.getCenter());
+                            return chooseFacingRotation(buildPos, vCentre);
+                        })
+                        .orElse(Rotation.NONE);
+
+                Optional<Building> placedOpt = BuildingPlacer.placeAndRegister(
+                        level, buildPos, structId, buildingName, type, rotation);
+
+                if (placedOpt.isEmpty()) {
+                    failExpansion(level);
+                    return;
+                }
+
+                Building placed = placedOpt.get();
+
                 data.getVillageByName(villageName).ifPresent(v -> {
                     v.getBuildingIds().add(placed.getId());
+
+                    // Connect a path from the new building to the village hub
+                    connectExpansionPath(level, placed, v, data);
+
+                    final Building finalPlaced = placed;
+                    data.getVillageByName(villageName).ifPresent(vi ->
+                            VillageDecorator.decorateExpansionBuilding(
+                                    level, finalPlaced, vi, data));
+
+                    VillageExpansionManager.onBuildingPlaced(
+                            placed, v, data, level,
+                            level.getGameTime());
                     data.setDirty();
                 });
 
-                // Complete the expansion request
-                currentExpansion.setStatus(ExpansionRequest.RequestStatus.COMPLETE);
+                currentExpansion.setStatus(
+                        ExpansionRequest.RequestStatus.COMPLETE);
                 data.removeExpansionRequest(currentExpansion.getId());
 
             } catch (Exception e) {
-                System.out.println("BuilderGoal: failed to place building — " + e.getMessage());
+                System.out.println("BuilderGoal: failed to place "
+                        + type + " — " + e.getMessage());
                 failExpansion(level);
             }
         });
@@ -594,6 +643,21 @@ public class BuilderGoal extends Goal {
         currentExpansion = null;
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
+    }
+
+    private static Rotation chooseFacingRotation(BlockPos buildPos,
+                                                 BlockPos target) {
+        int dx = target.getX() - buildPos.getX();
+        int dz = target.getZ() - buildPos.getZ();
+        if (Math.abs(dx) >= Math.abs(dz)) {
+            return dx > 0
+                    ? Rotation.COUNTERCLOCKWISE_90
+                    : Rotation.CLOCKWISE_90;
+        } else {
+            return dz > 0
+                    ? Rotation.NONE
+                    : Rotation.CLOCKWISE_180;
+        }
     }
 
     private void failExpansion(ServerLevel level) {
@@ -700,4 +764,115 @@ public class BuilderGoal extends Goal {
         currentExpansion = null;
 
     }
+
+    private void connectExpansionPath(ServerLevel level,
+                                      Building newBuilding,
+                                      tterrag1112.life_in_the_village
+                                              .Village.Village village,
+                                      VillageSavedData data) {
+        BlockPos entrance = tterrag1112.life_in_the_village.Village
+                .Decoration.PathRouter.getBuildingEntrance(newBuilding);
+
+        // ── Find branch point ─────────────────────────────────────────────────
+        // Prefer the nearest existing path node so streets branch organically.
+        // Fall back to the hub if no paths exist or the nearest is far away.
+        final int MAX_BRANCH_DIST = 60;
+
+        BlockPos branchPoint = data.getNearestPathNode(entrance, village.getId())
+                .filter(nearest -> nearest.distSqr(entrance)
+                        <= MAX_BRANCH_DIST * MAX_BRANCH_DIST)
+                .orElseGet(() -> village.getEffectivePathHub(data));
+
+        // ── Route ─────────────────────────────────────────────────────────────
+        List<BlockPos> route = tterrag1112.life_in_the_village.Village
+                .Economy.Trade.RoadRouter.findRoad(level, branchPoint, entrance);
+
+        if (route.isEmpty()) {
+            System.out.println("BuilderGoal: no expansion path found to "
+                    + newBuilding.getType());
+            return;
+        }
+
+        // ── Street tier ───────────────────────────────────────────────────────
+        // Civic/production buildings get secondary streets,
+        // residential/agricultural/defensive get tertiary.
+        tterrag1112.life_in_the_village.Village.Planning
+                .ZoneRegistry.ZoneEntry zone =
+                tterrag1112.life_in_the_village.Village.Planning
+                        .ZoneRegistry.get(newBuilding.getType());
+        tterrag1112.life_in_the_village.Village.Decoration.StreetTier tier =
+                zone.preferredStreet();
+
+        tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle style =
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .VillageBiomeStyle.detect(level, entrance);
+
+        // ── Place path blocks ─────────────────────────────────────────────────
+        List<BlockPos> placed = new ArrayList<>();
+
+        for (int i = 0; i < route.size(); i++) {
+            BlockPos node = route.get(i);
+            BlockPos prev = i > 0              ? route.get(i - 1) : node;
+            BlockPos next = i < route.size()-1 ? route.get(i + 1) : node;
+
+            int tx    = next.getX() - prev.getX();
+            int tz    = next.getZ() - prev.getZ();
+            int perpX = Integer.signum(-tz);
+            int perpZ = Integer.signum(tx);
+            if (perpX == 0 && perpZ == 0) perpX = 1;
+
+            for (int offset = -tier.halfWidth;
+                 offset <= tier.halfWidth; offset++) {
+                int wx = node.getX() + perpX * offset;
+                int wz = node.getZ() + perpZ * offset;
+
+                int surfY = level.getHeight(
+                        net.minecraft.world.level.levelgen.Heightmap.Types
+                                .MOTION_BLOCKING_NO_LEAVES, wx, wz);
+                BlockPos pathBlock = new BlockPos(wx, surfY, wz);
+                net.minecraft.world.level.block.state.BlockState existing =
+                        level.getBlockState(pathBlock);
+
+                // Never overwrite existing streets or hard blocks
+                if (existing.is(net.minecraft.tags.BlockTags.BASE_STONE_OVERWORLD)
+                        || existing.is(net.minecraft.world.level.block.Blocks.BEDROCK)
+                        || existing.is(net.minecraft.world.level.block.Blocks.COBBLESTONE)
+                        || existing.is(net.minecraft.world.level.block.Blocks.GRAVEL)
+                        || existing.is(net.minecraft.world.level.block.Blocks.DIRT_PATH)) {
+                    // Keep existing street — still register as placed
+                    placed.add(pathBlock.above());
+                    continue;
+                }
+
+                level.setBlock(pathBlock, style.streetStateFor(tier), 3);
+                placed.add(pathBlock.above());
+            }
+        }
+
+        if (placed.isEmpty()) return;
+
+        // ── Register ──────────────────────────────────────────────────────────
+        data.addVillagePath(new tterrag1112.life_in_the_village.Village
+                .Decoration.VillagePath(
+                java.util.UUID.randomUUID(),
+                village.getId(),
+                placed,
+                tier == tterrag1112.life_in_the_village.Village
+                        .Decoration.StreetTier.PRIMARY
+                        ? tterrag1112.life_in_the_village.Village
+                        .Decoration.VillagePath.PathTier.COBBLESTONE
+                        : tier == tterrag1112.life_in_the_village.Village
+                        .Decoration.StreetTier.SECONDARY
+                        ? tterrag1112.life_in_the_village.Village
+                        .Decoration.VillagePath.PathTier.GRAVEL
+                        : tterrag1112.life_in_the_village.Village
+                        .Decoration.VillagePath.PathTier.DIRT));
+        data.setDirty();
+
+        System.out.println("BuilderGoal: expansion path to "
+                + newBuilding.getType()
+                + " branched from " + branchPoint.toShortString()
+                + " (" + placed.size() + " blocks, tier=" + tier + ")");
+    }
+
 }

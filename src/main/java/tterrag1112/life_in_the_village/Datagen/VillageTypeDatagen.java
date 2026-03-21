@@ -41,10 +41,17 @@ public class VillageTypeDatagen implements DataProvider {
         buildings.add(building("STOCKPILE",  "stockpile/level_1",  20, 0,  0));
         buildings.add(building("FARMHOUSE",  "farmhouse/level_1",  0,  0,  20));
         buildings.add(building("HOUSE",      "house/level_1",      -20, 0, 0));
+        buildings.add(building("HOUSE",      "house/level_1",      -20, 0, 0));
+        buildings.add(building("HOUSE",      "house/level_1",      -20, 0, 0));
+        buildings.add(building("HOUSE",      "house/level_1",      -20, 0, 0));
+        buildings.add(building("HOUSE",      "house/level_1",      -20, 0, 0));
+        buildings.add(building("HOUSE",      "house/level_1",      -20, 0, 0));
         buildings.add(building("GUILD_HALL", "guild_hall/level_1", 20, 0, 40));
         buildings.add(building("GUARD_TOWER", "guard_tower/level_1", 40, 0, 40));
         buildings.add(building("MINE", "mine/level_1", 40, 0, 20));
         buildings.add(building("BLACKSMITH", "blacksmith/level_1", 0, 0, 40));
+        buildings.add(building("INN", "inn/level_1", 0, 0, 50));
+
 
 
 
@@ -62,6 +69,7 @@ public class VillageTypeDatagen implements DataProvider {
         npcs.add(npc("GUARD", "GUARD_TOWER", "HEAD"));
         npcs.add(npc("MINER", "MINE", "HEAD"));
         npcs.add(npc("BLACKSMITH", "BLACKSMITH", "HEAD"));
+        npcs.add(npc("INNKEEPER", "INN", "UNASSIGNEd"));
 
 
         json.add("starter_npcs", npcs);
@@ -70,6 +78,7 @@ public class VillageTypeDatagen implements DataProvider {
         items.add(item("STOCKPILE", "minecraft:wheat_seeds", 64));
         items.add(item("STOCKPILE", "minecraft:oak_log",     64));
         items.add(item("STOCKPILE", "minecraft:cobblestone", 128));
+        items.add(item("TOWN_HALL", "life_in_the_village:denier_or", 16));
         json.add("starter_items", items);
 
         return json;
