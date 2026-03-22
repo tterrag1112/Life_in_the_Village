@@ -47,8 +47,9 @@ public record KeyData(String sender, int keyCode) implements CustomPacketPayload
                 VillageSavedData data2 = VillageSavedData.get(level);
 
 
+                int currentLevel = current.get().getLevel();
                 if (current.isPresent()) {
-                    current.get().upgrade(level);
+                    current.get().setUpgradeLevel(currentLevel+1);
                 } else {
                     player.sendSystemMessage(
                             Component.literal("You are not inside any building.")
@@ -86,9 +87,9 @@ public record KeyData(String sender, int keyCode) implements CustomPacketPayload
                 Optional<Building> current = VillageSavedData.get(level).getBuildingAt(pos);
                 VillageSavedData data2 = VillageSavedData.get(level);
 
-
+                int currentLevel = current.get().getLevel();
                 if (current.isPresent()) {
-                    current.get().downgrade(level);
+                    current.get().setLevel(currentLevel-1);
                 } else {
                     player.sendSystemMessage(
                             Component.literal("You are not inside any building.")

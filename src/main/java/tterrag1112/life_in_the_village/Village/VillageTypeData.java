@@ -21,6 +21,15 @@ public class VillageTypeData {
             String item,        // item registry name
             int count
     ) {}
+    public record VillageShapeProfile(
+            ShapeType shapeType,       // RADIAL (current), LINEAR, CLUSTERED, RIVERINE
+            boolean forcedAxis,        // for LINEAR — follow terrain's best flat direction
+            int maxRings,
+            float streetDensity,       // 0.5 = sparse alleys, 1.5 = dense grid-like
+            boolean walledByDefault    // skip VillagePerimeter randomness
+    ) {}
+
+    public enum ShapeType { RADIAL, LINEAR, CLUSTERED, RIVERINE }
 
     private final String type;
     private final String culture;

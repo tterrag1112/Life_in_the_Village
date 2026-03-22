@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
@@ -11,6 +12,8 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import tterrag1112.life_in_the_village.Blocks.Entity.custom.VillageFoundationBlockEntity;
+import tterrag1112.life_in_the_village.Networking.CraftingOrderInteraction;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
@@ -162,17 +165,26 @@ public class BuildingStorageAccess {
     }
 
     public static void storeItemFromPlayer(
-            ServerLevel level, Building building,
-            net.minecraft.world.item.ItemStack stack,
+            ServerLevel level,
+            Building building,
+            ItemStack stack,
             ServerPlayer player) {
+
         storeItem(level, building, stack);
 
-        // Check if this counts toward a quota
-        String itemId = net.minecraft.core.registries
-                .BuiltInRegistries.ITEM
-                .getKey(stack.getItem()).toString();
-        WorkplaceAssignmentManager.onItemDelivered(
-                player, itemId, stack.getCount(), level);
+        String itemId    = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        int    count     = stack.getCount();
+
+        // ── Workplace quota hook (unchanged) ──────────────────────────────────
+        WorkplaceAssignmentManager.onItemDelivered(player, itemId, count, level);
+
+        // ── Crafting order delivery hook (new) ───────────────────────────────
+        // Resolve the village that owns this building and notify the order system.
+        VillageSavedData data = VillageSavedData.get(level);
+        data.getVillageAt(building.getShape().getOrigin())
+                .ifPresent(village ->
+                        CraftingOrderInteraction.onItemsDeposited(
+                                player, village.getId(), itemId, count, level));
     }
 
     public static List<StoredItemInfo> listItems(ServerLevel level, Building building) {

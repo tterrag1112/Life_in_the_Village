@@ -347,6 +347,9 @@ public class Company {
     public WorkSchedule getWorkSchedule() { return workSchedule; }
     public void setWorkSchedule(WorkSchedule s) { this.workSchedule = s; }
     public long getTreasuryBronze()     { return treasuryBronze; }
+    public void withdrawFromTreasury(long amount) {
+        treasuryBronze = Math.max(0L, treasuryBronze - amount);
+    }
     public void depositBronze(long amt) { treasuryBronze += amt; }
     public boolean isActive()           { return isActive; }
     public void setActive(boolean b)    { this.isActive = b; }

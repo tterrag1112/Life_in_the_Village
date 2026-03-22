@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
@@ -28,6 +29,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageWeathering;
+import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFoundation;
 
@@ -311,7 +313,25 @@ public class BuilderGoal extends Goal {
             entity.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_PICKAXE));
             phase = Phase.WALKING_TO_BUILDING;
         } else {
-            // Partial materials — proceed anyway and place what we can
+            if (!missingMaterials.isEmpty()) {
+                VillageSavedData vdata = VillageSavedData.get(level);
+                long tick = level.getGameTime();
+
+                String villageName = entity.getAssignedVillageName().orElse("");
+                vdata.getVillageByName(villageName).ifPresent(village -> {
+                    missingMaterials.forEach((item, qty) -> {
+                        String itemId = BuiltInRegistries.ITEM
+                                .getKey(item).toString();
+                        CraftingOrderManager.postOrderIfNeeded(
+                                entity.getUUID(),
+                                village.getId(),
+                                itemId,
+                                Math.min(qty, 64),   // sensible per-order cap
+                                tick,
+                                vdata);
+                    });
+                });
+            }
 
             entity.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_PICKAXE));
             phase = Phase.WALKING_TO_BUILDING;

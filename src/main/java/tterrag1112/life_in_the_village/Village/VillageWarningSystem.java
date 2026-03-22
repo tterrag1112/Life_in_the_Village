@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.network.chat.Component;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.ProfessionPerkManager;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -38,13 +39,17 @@ public class VillageWarningSystem {
         // Don't issue duplicate warnings
         if (data.hasWarning(playerId, sourceVillageId)) return;
 
-        data.addPlayerWarning(playerId, sourceVillageId,
+        data.addPlayerWarning(level, playerId, sourceVillageId,
                 level.getGameTime());
-
         // Apply immediate rep penalty to source village
         data.getVillageById(sourceVillageId).ifPresent(village -> {
             village.modifyReputation(playerId, WARNING_REP_PENALTY);
             data.setDirty();
+
+            village.getVillageGuards(level).forEach(guard ->
+                    guard.setCurrentActivity("Investigating theft"));
+
+            ProfessionPerkManager.onVillageAlarm(level, village);
 
             // Notify player if online
             level.getServer().getPlayerList()
@@ -94,7 +99,7 @@ public class VillageWarningSystem {
                                 playerId, v.getId()))
                         .forEach(v -> {
                             // Spread warning with same penalty
-                            data.addPlayerWarning(
+                            data.addPlayerWarning(level,
                                     playerId, v.getId(), currentTick);
                             v.modifyReputation(
                                     playerId, WARNING_REP_PENALTY);

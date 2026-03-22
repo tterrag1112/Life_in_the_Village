@@ -8,11 +8,14 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
 import net.neoforged.neoforge.client.network.event.RegisterClientPayloadHandlersEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerContainerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
@@ -23,12 +26,10 @@ import net.neoforged.neoforge.network.registration.HandlerThread;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import net.neoforged.neoforge.registries.NewRegistryEvent;
 import tterrag1112.life_in_the_village.Blocks.custom.GuardPostBlock;
-import tterrag1112.life_in_the_village.Commands.BuildingCommand;
-import tterrag1112.life_in_the_village.Commands.FarmPlotCommands;
-import tterrag1112.life_in_the_village.Commands.GuildCommands;
-import tterrag1112.life_in_the_village.Commands.KingdomCommands;
+import tterrag1112.life_in_the_village.Commands.*;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
+import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
 import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Entities.NpcNameRegistry;
@@ -44,7 +45,9 @@ import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -162,6 +165,7 @@ public class ModModEvents {
         FarmPlotCommands.onRegisterCommands(event);
         KingdomCommands.onRegisterCommands(event);
         GuildCommands.onRegisterCommands(event);
+        OrderCommand.register(event.getDispatcher());
 
     }
 
@@ -216,6 +220,8 @@ public class ModModEvents {
                             .withStyle(net.minecraft.ChatFormatting.RED),
                     false);
         }
+        long currentTick = level.getGameTime();
+        HousePurchaseManager.processTax(player, level, currentTick);
     }
 
 
@@ -237,5 +243,112 @@ public class ModModEvents {
         });
 
         data.setDirty();
+    }
+
+    private static final java.util.Map<java.util.UUID, java.util.Map<Integer, net.minecraft.world.item.ItemStack>>
+            containerSnapshots = new java.util.HashMap<>();
+
+    @SubscribeEvent
+    public static void onContainerOpen(PlayerContainerEvent.Open event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+
+        var menu = event.getContainer();
+        java.util.Map<Integer, ItemStack> snapshot = new java.util.HashMap<>();
+        // Only snapshot non-player-inventory slots
+        for (int i = 0; i < menu.slots.size(); i++) {
+            net.minecraft.world.inventory.Slot slot = menu.slots.get(i);
+            // Player inventory slots contain the player's own Container — skip them
+            if (slot.container == player.getInventory()) continue;
+            ItemStack stack = slot.getItem();
+            if (!stack.isEmpty()) snapshot.put(i, stack.copy());
+        }
+        containerSnapshots.put(player.getUUID(), snapshot);
+    }
+
+    @SubscribeEvent
+    public static void onContainerClose(PlayerContainerEvent.Close event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!(player.level() instanceof ServerLevel level)) return;
+
+        var snapshot = containerSnapshots.remove(player.getUUID());
+        if (snapshot == null) return;
+
+        var menu = event.getContainer();
+
+        // Find the block pos from any non-player-inventory slot's container
+        net.minecraft.core.BlockPos containerPos = null;
+        for (net.minecraft.world.inventory.Slot slot : menu.slots) {
+            if (slot.container == player.getInventory()) continue;
+            if (slot.container instanceof net.minecraft.world.level.block.entity.BlockEntity be) {
+                containerPos = be.getBlockPos();
+                break;
+            }
+        }
+        if (containerPos == null) return;
+
+        VillageSavedData data = VillageSavedData.get(level);
+        var village = data.getVillageAt(containerPos).orElse(null);
+        if (village == null) return;
+
+        var building = data.getBuildingAt(containerPos).orElse(null);
+        if (building == null) return;
+
+        boolean playerOwnsBuilding = data.isPlayerOwned(building.getId())
+                && data.getPropertyForBuilding(building.getId())
+                .map(p -> p.playerId().equals(player.getUUID()))
+                .orElse(false);
+
+        if (!playerOwnsBuilding) {
+            // Look for slots where item count decreased
+            boolean stoleItems = false;
+            for (int i = 0; i < menu.slots.size(); i++) {
+                net.minecraft.world.inventory.Slot slot = menu.slots.get(i);
+                if (slot.container == player.getInventory()) continue;
+
+                ItemStack current = slot.getItem();
+                ItemStack before  = snapshot.getOrDefault(i, ItemStack.EMPTY);
+
+                // Count decreased = items were removed
+                int removedCount = before.getCount() - current.getCount();
+                if (removedCount > 0 && !before.isEmpty()) {
+                    stoleItems = true;
+                    break;
+                }
+            }
+
+            if (stoleItems) {
+                tterrag1112.life_in_the_village.Village.VillageWarningSystem
+                        .issueWarning(player.getUUID(), village.getId(), level, data);
+                tterrag1112.life_in_the_village.Village.Reputation.ReputationManager
+                        .onStolenFromContainer(player, village.getId(), level);
+                player.displayClientMessage(
+                        net.minecraft.network.chat.Component.literal(
+                                        "You have been seen stealing from "
+                                                + village.getName() + "!")
+                                .withStyle(net.minecraft.ChatFormatting.RED),
+                        false);
+            }
+        }
+
+        // Diff: find slots where count increased
+        for (int i = 0; i < menu.slots.size(); i++) {
+            net.minecraft.world.inventory.Slot slot = menu.slots.get(i);
+            if (slot.container == player.getInventory()) continue;
+
+            ItemStack current = slot.getItem();
+            if (current.isEmpty()) continue;
+
+            ItemStack before = snapshot.getOrDefault(i, ItemStack.EMPTY);
+            int addedCount = current.getCount() - before.getCount();
+            if (addedCount <= 0) continue;
+
+            String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                    .getKey(current.getItem()).toString();
+
+            tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager
+                    .onItemDelivered(player, itemId, addedCount, level);
+            CraftingOrderInteraction.onItemsDeposited(
+                    player, village.getId(), itemId, addedCount, level);
+        }
     }
 }

@@ -229,7 +229,7 @@ public class FarmPlotCommands {
                 cropType = FarmPlot.CropType.valueOf(cropTypeName.toUpperCase());
             } catch (IllegalArgumentException e) {
                 src.sendFailure(Component.literal(
-                        "Invalid crop type. Valid types: WHEAT, CARROTS, POTATOES, BEETROOT, MIXED"
+                        "Invalid crop type. Valid types: WHEAT, CARROTS, POTATOES, BEETROOT, MIXED, GRAIN, VEGETABLE, ORCHARD, PASTURE"
                 ));
                 return 0;
             }

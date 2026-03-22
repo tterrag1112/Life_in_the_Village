@@ -1,27 +1,27 @@
+// src/main/java/tterrag1112/life_in_the_village/Village/Building.java
 package tterrag1112.life_in_the_village.Village;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Vec3i;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
-import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 import net.minecraft.world.phys.AABB;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingCondition;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.*;
 
 import static com.ibm.icu.text.PluralRules.Operand.i;
 
-
 public class Building {
+
     private String buildingName;
     private final UUID id;
     private BuildingType buildingType;
@@ -30,91 +30,151 @@ public class Building {
     private Identifier structureId;
     private Rotation rotation;
 
+    // ── New field: tracks maintenance/decay state ────────────────────────────
+    private BuildingCondition condition = BuildingCondition.NEW;
+
+    // =========================================================================
+    // UUID codec helper
+    // =========================================================================
+
     public static final Codec<UUID> UUID_CODEC = Codec.STRING.xmap(
             UUID::fromString, UUID::toString
     );
+
+    // =========================================================================
+    // Codec
+    // =========================================================================
+
     public static final Codec<Building> CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
-                    UUID_CODEC.fieldOf("id").forGetter(Building::getId),
-                    Codec.STRING.fieldOf("name").forGetter(Building::getName),
+                    UUID_CODEC.fieldOf("id")
+                            .forGetter(Building::getId),
+                    Codec.STRING.fieldOf("name")
+                            .forGetter(Building::getName),
                     Codec.STRING.xmap(BuildingType::valueOf, BuildingType::name)
-                            .fieldOf("type").forGetter(Building::getType),
-                    BuildingShape.SHAPE_CODEC.fieldOf("shape").forGetter(Building::getShape),
-                    Identifier.CODEC.fieldOf("structureId").forGetter(Building::getStructureId),
-                    Codec.INT.fieldOf("buildingLevel").forGetter(Building::getLevel),
-                    Codec.STRING.xmap(Rotation::valueOf, Rotation::name)
-                            .fieldOf("rotation").forGetter(Building::getRotation)
-            ).apply(instance, Building::new) // calls the private constructor with UUID
+                            .fieldOf("type")
+                            .forGetter(Building::getType),
+                    BuildingShape.SHAPE_CODEC.fieldOf("shape")
+                            .forGetter(Building::getShape),
+                    Identifier.CODEC.fieldOf("structureId")
+                            .forGetter(Building::getStructureId),
+                    Codec.INT.fieldOf("buildingLevel")
+                            .forGetter(Building::getLevel),
+                    Codec.STRING.xmap(
+                                    Rotation::valueOf,
+                                    Rotation::name)
+                            .fieldOf("rotation")
+                            .forGetter(Building::getRotation),
+                    // BuildingCondition — optional so existing saves load with WEATHERED default
+                    BuildingCondition.CODEC
+                            .optionalFieldOf("condition", BuildingCondition.WEATHERED)
+                            .forGetter(Building::getCondition)
+            ).apply(instance, Building::fromCodec)
     );
 
-
-
-
-    public Building(String name, BuildingType type, BuildingShape shape, Identifier structureId, Rotation rotation, int level){
-        this.buildingName = name;
-        this.buildingType = type;
-        this.buildingShape = shape;
-        this.structureId = structureId;
-        this.rotation = rotation;
-        this.buildingLevel = level;
-        this.id = UUID.randomUUID();
+    private static Building fromCodec(UUID id, String name, BuildingType type,
+                                      BuildingShape shape, Identifier structureId,
+                                      int buildingLevel,
+                                      Rotation rotation,
+                                      BuildingCondition condition) {
+        Building b = new Building(id, name, type, shape, structureId, buildingLevel, rotation);
+        b.condition = condition;
+        return b;
     }
-    private Building(UUID id, String name, BuildingType type, BuildingShape shape, Identifier structureId, int buildingLevel, Rotation rotation) {
-        this.id = id;
-        this.buildingName = name;
-        this.buildingType = type;
+
+    // =========================================================================
+    // Constructors
+    // =========================================================================
+
+    /** Public constructor — generates a new random UUID. */
+    public Building(String name, BuildingType type, BuildingShape shape,
+                    Identifier structureId,
+                    Rotation rotation,
+                    int level) {
+        this.buildingName  = name;
+        this.buildingType  = type;
         this.buildingShape = shape;
-        this.structureId = structureId;
+        this.structureId   = structureId;
+        this.rotation      = rotation;
+        this.buildingLevel = level;
+        this.id            = UUID.randomUUID();
+        this.condition     = BuildingCondition.NEW;
+    }
+
+    /** Private constructor — used by codec (preserves persisted UUID). */
+    private Building(UUID id, String name, BuildingType type, BuildingShape shape,
+                     Identifier structureId, int buildingLevel,
+                     Rotation rotation) {
+        this.id            = id;
+        this.buildingName  = name;
+        this.buildingType  = type;
+        this.buildingShape = shape;
+        this.structureId   = structureId;
         this.buildingLevel = buildingLevel;
-        this.rotation = rotation;
+        this.rotation      = rotation;
+        this.condition     = BuildingCondition.WEATHERED; // safe default for loaded buildings
     }
 
+    // =========================================================================
+    // Getters / setters
+    // =========================================================================
 
-    public Identifier getStructureId() { return structureId; }
-    public void setStructureId(Identifier id) {
-        this.structureId = id;
-    }
-
-    public void setUpgradeLevel(int level) {
-        this.buildingLevel = level;
-    }
-    public UUID getId() { return id; }
-    public String getName(){
-        return this.buildingName;
-    }
-    public int getLevel(){return this.buildingLevel;}
-    public void setLevel(int level){this.buildingLevel = level;}
-    public BuildingType getType(){
-        return this.buildingType;
-    }
+    public UUID              getId()            { return id; }
+    public String            getName()          { return buildingName; }
+    public BuildingType      getType()          { return buildingType; }
+    public BuildingShape     getShape()         { return buildingShape; }
+    public Identifier        getStructureId()   { return structureId; }
+    public int               getLevel()         { return buildingLevel; }
     public Rotation getRotation() { return rotation; }
-    public BuildingShape getShape(){
-        return this.buildingShape;
-    }
+    public BuildingCondition getCondition()     { return condition; }
 
+    public void setName(String name)             { this.buildingName  = name; }
+    public void setStructureId(Identifier id)    { this.structureId   = id; }
+    public void setUpgradeLevel(int level)       { this.buildingLevel = level; }
+    public void setLevel(int level)              { this.buildingLevel = level; }
+    public void setCondition(BuildingCondition c){ this.condition     = c; }
 
+    // =========================================================================
+    // Legacy NBT save/load (used by old code paths, kept for compatibility)
+    // =========================================================================
 
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag();
-        tag.putString("name", buildingName);
-        tag.putString("type", buildingType.name());
-        tag.put("shape", buildingShape.save());
-        tag.putString("id", structureId.getNamespace());
+        tag.putString("name",     buildingName);
+        tag.putString("type",     buildingType.name());
+        tag.put("shape",          buildingShape.save());
+        tag.putString("id",       structureId.getNamespace());
         tag.putString("rotation", rotation.name());
-        tag.putInt("level", buildingLevel);
+        tag.putInt("level",       buildingLevel);
+        tag.putString("condition", condition.name());
         return tag;
     }
+
     public Building load(CompoundTag tag) {
-        String name = tag.getString("name").get();
-        BuildingType type = BuildingType.valueOf(tag.getString("type").get());
-        BuildingShape shape = BuildingShape.load(tag.getCompound("shape").get());
-        Identifier id = this.getStructureId();
-        Rotation rotation = this.getRotation();
-        int level = tag.getIntOr("level", 0);
-        return new Building(name, type, shape, id, rotation, level);
+        String       name     = tag.getString("name").get();
+        BuildingType type     = BuildingType.valueOf(tag.getString("type").get());
+        BuildingShape shape   = BuildingShape.load(tag.getCompound("shape").get());
+        Identifier   sid      = this.getStructureId();
+        Rotation rot = this.getRotation();
+        int          level    = tag.getIntOr("level", 0);
+        BuildingCondition cond;
+        try {
+            cond = BuildingCondition.valueOf(
+                    tag.getString("condition").orElse("WEATHERED"));
+        } catch (IllegalArgumentException e) {
+            cond = BuildingCondition.WEATHERED;
+        }
+        Building b = new Building(name, type, shape, sid, rot, level);
+        b.condition = cond;
+        return b;
     }
 
-    public void fillBlock(Building building, ServerLevel level, Block target, Block replacement) {
+    // =========================================================================
+    // Block-fill utility
+    // =========================================================================
+
+    public void fillBlock(Building building, ServerLevel level,
+                          Block target, Block replacement) {
         BuildingShape shape = building.getShape();
         BlockPos min = shape.getMin();
         BlockPos max = shape.getMax();
@@ -123,71 +183,13 @@ public class Building {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    if (level.getBlockState(pos).is(target)) {
+                    if (level.getBlockState(pos).getBlock() == target) {
                         level.setBlock(pos, replacement.defaultBlockState(), 3);
                     }
                 }
             }
         }
     }
-
-    public boolean upgrade(ServerLevel level) {
-        int nextLevel = buildingLevel + 1;
-        Identifier nextStructure = Identifier.fromNamespaceAndPath(
-                structureId.getNamespace(),
-                structureId.getPath().replaceAll("level_\\d+", "level_" + nextLevel)
-        );
-
-        System.out.println("Attempting upgrade to: " + nextStructure);
-
-        Optional<StructureTemplate> templateOpt = BuildingPlacer.loadTemplate(level, nextStructure);
-        if (templateOpt.isEmpty()) {
-            System.out.println("No higher level structure found");
-            return false;
-        }
-        StructureTemplate template = templateOpt.get();
-
-        System.out.println("Upgrade template size: " + template.getSize());
-
-        StructurePlaceSettings settings = new StructurePlaceSettings();
-        template.placeInWorld(level, buildingShape.getOrigin(), BlockPos.ZERO, settings, level.random, 2);
-
-        this.structureId = nextStructure;
-        this.buildingLevel = nextLevel;
-        VillageSavedData.get(level).setDirty();
-
-        return true;
-    }
-    public boolean downgrade(ServerLevel level) {
-        int previousLevel = buildingLevel - 1;
-        Identifier nextStructure = Identifier.fromNamespaceAndPath(
-                structureId.getNamespace(),
-                structureId.getPath().replaceAll("level_\\d+", "level_" + previousLevel)
-        );
-
-        System.out.println("Attempting downgrade to: " + nextStructure);
-
-        Optional<StructureTemplate> templateOpt = BuildingPlacer.loadTemplate(level, nextStructure);
-        if (templateOpt.isEmpty()) {
-            System.out.println("No lower level structure found");
-            return false;
-        }
-        StructureTemplate template = templateOpt.get();
-
-        System.out.println("Downgrade template size: " + template.getSize());
-
-        StructurePlaceSettings settings = new StructurePlaceSettings();
-        template.placeInWorld(level, buildingShape.getOrigin(), BlockPos.ZERO, settings, level.random, 2);
-
-        this.structureId = nextStructure;
-        this.buildingLevel = previousLevel;
-        VillageSavedData.get(level).setDirty();
-
-        return true;
-    }
-
-
-
 
     public static class BuildingShape {
         private final BlockPos originPoint;

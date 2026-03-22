@@ -7,6 +7,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
@@ -282,6 +283,10 @@ public class FarmhandGoal extends Goal {
 
         // Get seed from farmhouse storage
         Block cropBlock = getCropBlockForPlot();
+        if (cropBlock == null) {
+            toReplant.remove(0);
+            return; // PASTURE — no crops to plant
+        }
         var seedItem = getSeedItemForPlot();
 
         boolean taken = BuildingStorageAccess.takeItem(
@@ -305,22 +310,28 @@ public class FarmhandGoal extends Goal {
     private Block getCropBlockForPlot() {
         if (assignedPlot == null) return Blocks.WHEAT;
         return switch (assignedPlot.getCropType()) {
-            case WHEAT    -> Blocks.WHEAT;
-            case CARROTS  -> Blocks.CARROTS;
-            case POTATOES -> Blocks.POTATOES;
-            case BEETROOT -> Blocks.BEETROOTS;
-            case MIXED    -> Blocks.WHEAT;
+            case WHEAT, GRAIN   -> Blocks.WHEAT;
+            case CARROTS        -> Blocks.CARROTS;
+            case POTATOES       -> Blocks.POTATOES;
+            case BEETROOT       -> Blocks.BEETROOTS;
+            case MIXED          -> Blocks.WHEAT;
+            case VEGETABLE      -> Blocks.CARROTS;
+            case ORCHARD        -> Blocks.WHEAT;
+            case PASTURE        -> null;
         };
     }
 
-    private net.minecraft.world.item.Item getSeedItemForPlot() {
+    private Item getSeedItemForPlot() {
         if (assignedPlot == null) return Items.WHEAT_SEEDS;
         return switch (assignedPlot.getCropType()) {
-            case WHEAT    -> Items.WHEAT_SEEDS;
-            case CARROTS  -> Items.CARROT;
-            case POTATOES -> Items.POTATO;
-            case BEETROOT -> Items.BEETROOT_SEEDS;
-            case MIXED    -> Items.WHEAT_SEEDS;
+            case WHEAT, GRAIN   -> Items.WHEAT_SEEDS;
+            case CARROTS        -> Items.CARROT;
+            case POTATOES       -> Items.POTATO;
+            case BEETROOT       -> Items.BEETROOT_SEEDS;
+            case MIXED          -> Items.WHEAT_SEEDS;
+            case VEGETABLE      -> Items.CARROT;
+            case ORCHARD        -> Items.WHEAT_SEEDS;
+            case PASTURE        -> Items.WHEAT_SEEDS; // unused — PASTURE skips replant
         };
     }
 

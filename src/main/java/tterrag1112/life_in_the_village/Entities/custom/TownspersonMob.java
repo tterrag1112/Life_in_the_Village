@@ -46,6 +46,7 @@ import org.jspecify.annotations.Nullable;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Adventurer.*;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith.BlacksmithGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderMaintenanceGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Carpenter.CarpenterGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmerGoal;
@@ -77,6 +78,7 @@ import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
+import tterrag1112.life_in_the_village.Networking.CraftingOrderInteraction;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -270,6 +272,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         goalSelector.addGoal(2, new ReturnHomeGoal(this));
         goalSelector.addGoal(5, new EatMealGoal(this));
         goalSelector.addGoal(3, new SeekHouseGoal(this));
+        goalSelector.addGoal(6, new ChildBirthGoal(this));
         goalSelector.addGoal(5, new SocializeGoal(this));
         goalSelector.addGoal(9, new LookAtPlayerGoal(this, Player.class, 8.0f));
         goalSelector.addGoal(10, new RandomLookAroundGoal(this));
@@ -302,7 +305,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 goalSelector.addGoal(10, new MerchantGoal(this));
                 goalSelector.addGoal(1, new CaravanMerchantGoal(this));
             }
-            case BUILDER  -> goalSelector.addGoal(10, new BuilderGoal(this));
+            case BUILDER  -> {
+                goalSelector.addGoal(10, new BuilderGoal(this));
+                goalSelector.addGoal(11, new BuilderMaintenanceGoal(this));  // NEW
+            }
             case INNKEEPER -> goalSelector.addGoal(10, new InnkeeperGoal(this));
             case STOCKPILE_KEEPER -> {
                 goalSelector.addGoal(10, new StockpileKeeperGoal(this));
@@ -578,10 +584,6 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         return parts[0];
     }
 
-    public String getSurname() {
-        String[] parts = npcName.split(" ", 2);
-        return parts.length > 1 ? parts[1] : "";
-    }
 
     public int getAge()       { return age; }
     public int getAgeDays()   { return age; } // alias for compatibility
@@ -814,14 +816,25 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public Optional<UUID> getHouseId()              { return Optional.ofNullable(houseId); }
     public void setHouseId(@Nullable UUID id)        { this.houseId = id; }
 
-    public Optional<UUID> getSpouseId()             { return Optional.ofNullable(spouseId); }
     public void setSpouseId(@Nullable UUID id)       { this.spouseId = id; }
 
     public Optional<UUID> getHeadOfHouseholdId()    { return Optional.ofNullable(headOfHouseholdId); }
-    public void setHeadOfHouseholdId(@Nullable UUID id) { this.headOfHouseholdId = id; }
 
     public List<UUID> getChildrenIds()              { return Collections.unmodifiableList(childrenIds); }
-    public void addChild(UUID childId)              { childrenIds.add(childId); }
+
+    public void addChildId(UUID childId) {
+        if (!childrenIds.contains(childId)) childrenIds.add(childId);
+    }
+
+    // getSurname extracts the last word of the NPC's full name
+    public String getSurname() {
+        if (npcName == null || npcName.isEmpty()) return "";
+        String[] parts = npcName.split(" ");
+        return parts.length > 1 ? parts[parts.length - 1] : "";
+    }
+
+    public Optional<UUID> getSpouseId() { return Optional.ofNullable(spouseId); }
+    public void setHeadOfHouseholdId(UUID id) { this.headOfHouseholdId = id; }
 
     // =========================================================================
     // WORK / ASSIGNMENT
@@ -938,7 +951,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     private BlockPos findAvailableBed(ServerLevel level, Building inn,
                                       VillageSavedData data) {
-        Set<BlockPos> occupiedBeds = new HashSet<>(data.rentedBeds.values());
+        Set<BlockPos> occupiedBeds = new HashSet<>(data.getAllRentedBeds().values());
         BlockPos min = inn.getShape().getMin();
         BlockPos max = inn.getShape().getMax();
 
@@ -1072,15 +1085,33 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         switch (getProfession()) {
             case MERCHANT -> {
-                if (level() instanceof ServerLevel sl && player instanceof ServerPlayer sp) {
-                    MerchantGoal goal = getGoal(MerchantGoal.class);
-                    if (goal != null && goal.isOpenForTrade()) {
-                        TradeHandler.openTradeScreen(sp, this);
+                if (level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+
+                    if (sp.isShiftKeyDown()) {
+                        // Shift interact = request work assignment
+                        WorkplaceAssignmentManager.handleWorkRequest(sp, this, sl);
                     } else {
-                        player.displayClientMessage(
-                                Component.literal(getNpcName()
-                                        + " is not open for trade right now."), false);
+                        // Normal interact = open trade screen (unchanged)
+                        MerchantGoal goal = getGoal(MerchantGoal.class);
+                        if (goal != null && goal.isOpenForTrade()) {
+                            TradeHandler.openTradeScreen(sp, this);
+                        } else {
+                            player.displayClientMessage(
+                                    Component.literal(getNpcName()
+                                            + " is not open for trade right now."),
+                                    false);
+                        }
                     }
+                }
+            }
+
+            case GUARD -> {
+                if (level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+                    // Guards offer work assignment on normal interact —
+                    // they have no trade screen
+                    WorkplaceAssignmentManager.handleWorkRequest(sp, this, sl);
                 }
             }
             case ADVENTURER ->{
@@ -1170,19 +1201,34 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             case VILLAGE_LEADER -> {
                 if (level() instanceof ServerLevel sl
                         && player instanceof ServerPlayer sp) {
+
+                    // Sneak + interact = show full order board
+                    if (sp.isShiftKeyDown()) {
+                        CraftingOrderInteraction.showOrderBoard(sp, this, sl);
+                        return InteractionResult.SUCCESS;
+                    }
+
+                    // Normal interact = open village book (unchanged), then hint about orders
                     handleVillageLeaderInteraction(sp, sl);
+                    CraftingOrderInteraction.showOrderHint(sp, this, sl);
                 }
             }
             case FARMER, BLACKSMITH, CARPENTER, MINER -> {
                 if (level() instanceof ServerLevel sl
                         && player instanceof ServerPlayer sp) {
-                    // Check if player is requesting work
-                    WorkplaceAssignmentManager.handleWorkRequest(
-                            sp, this, sl);
+                    WorkplaceAssignmentManager.handleWorkRequest(sp, this, sl);
                 }
             }
-            case STOCKPILE_KEEPER -> openStockpileScreen(player);
-            case BUILDER -> openInventoryScreen(player, "Builder Inventory");
+            case STOCKPILE_KEEPER -> {
+                // Show the stockpile screen as before
+                openStockpileScreen(player);
+
+                // Also show any crafting orders this keeper has posted
+                if (level() instanceof ServerLevel sl
+                        && player instanceof ServerPlayer sp) {
+                    CraftingOrderInteraction.showStockpileOrders(sp, this, sl);
+                }
+            }            case BUILDER -> openInventoryScreen(player, "Builder Inventory");
             case NONE -> {
                 if (level() instanceof ServerLevel sl
                         && player instanceof ServerPlayer sp) {
@@ -1746,6 +1792,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 mob -> mob.getUUID().equals(id)
         ).stream().findFirst();
     }
+
 
 
 

@@ -125,10 +125,11 @@ public class FarmPlotPlacer {
 
             // Register
             String plotName = village.getName() + "_farm_" + (i + 1);
+            FarmPlot.CropType cropType = chooseCropType(style, i, plots.size(), rng, village, data);
             FarmPlot farmPlot = new FarmPlot(
                     UUID.randomUUID(), plotName, flatCentre,
                     Math.max(BASE_HALF_W, BASE_HALF_L),
-                    FarmPlot.CropType.MIXED);
+                    cropType);
 
             if (nearestFarmhouse != null) {
                 farmPlot.setFarmhouseId(nearestFarmhouse.getId());
@@ -577,6 +578,58 @@ public class FarmPlotPlacer {
             }
         }
     }
+    public static FarmPlot.CropType chooseCropType(
+            VillageBiomeStyle style,
+            int plotIndex,
+            int totalPlots,
+            Random rng,
+            Village village,
+            VillageSavedData data) {
+
+        // Check if the village has a miller — if so, at least one plot is GRAIN
+        boolean hasMiller = village.getBuildingIds().stream()
+                .map(data::getBuildingById)
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .anyMatch(b -> b.getType() == BuildingType.MILLER);
+
+        // Biome-primary crop — drives the majority of plots
+        FarmPlot.CropType biomePrimary = switch (style) {
+            case SNOWY       -> FarmPlot.CropType.POTATOES;  // hardy cold-climate crop
+            case DESERT      -> FarmPlot.CropType.CARROTS;   // oasis vegetable garden
+            case JUNGLE      -> FarmPlot.CropType.ORCHARD;   // fruit-bearing jungle plots
+            case SAVANNA     -> FarmPlot.CropType.PASTURE;   // grazing land
+            case TAIGA       -> FarmPlot.CropType.VEGETABLE; // rich dark soil vegetables
+            case SWAMP       -> FarmPlot.CropType.VEGETABLE; // waterlogged root veg
+            default          -> FarmPlot.CropType.MIXED;     // temperate — standard rotation
+        };
+
+        // First plot: miller villages always start with GRAIN for bread supply
+        if (plotIndex == 0 && hasMiller) {
+            return FarmPlot.CropType.GRAIN;
+        }
+
+        // Single-plot village — use biome primary
+        if (totalPlots == 1) return biomePrimary;
+
+        // Multi-plot villages — distribute variety
+        // Last plot: always VEGETABLE for nutritional diversity,
+        //            unless biome dictates PASTURE
+        if (plotIndex == totalPlots - 1) {
+            return (biomePrimary == FarmPlot.CropType.PASTURE)
+                    ? FarmPlot.CropType.PASTURE
+                    : FarmPlot.CropType.VEGETABLE;
+        }
+
+        // Middle plots: biome primary with some random variety
+        int roll = rng.nextInt(4);
+        return switch (roll) {
+            case 0  -> biomePrimary;
+            case 1  -> hasMiller ? FarmPlot.CropType.GRAIN : FarmPlot.CropType.WHEAT;
+            case 2  -> FarmPlot.CropType.MIXED;
+            default -> biomePrimary;
+        };
+    }
 
     private static boolean isNatural(BlockState s) {
         return s.is(Blocks.GRASS_BLOCK) || s.is(Blocks.DIRT)
@@ -622,4 +675,6 @@ public class FarmPlotPlacer {
             this.southEdge      = southEdge;
         }
     }
+
+
 }

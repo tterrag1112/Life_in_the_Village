@@ -1,3 +1,4 @@
+// src/main/java/tterrag1112/life_in_the_village/Events/ServerTickDispatcher.java
 package tterrag1112.life_in_the_village.Events;
 
 import net.minecraft.core.BlockPos;
@@ -16,11 +17,17 @@ import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Profession.ProfessionPerkManager;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
 import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
-import tterrag1112.life_in_the_village.Village.Decoration.*;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageAgingManager;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
+import tterrag1112.life_in_the_village.Village.Decoration.VillagePath;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
+import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
@@ -38,23 +45,23 @@ import static tterrag1112.life_in_the_village.Life_in_the_village.MODID;
 
 @EventBusSubscriber(modid = MODID)
 public class ServerTickDispatcher {
-    private static final int UPDATE_INTERVAL = 24000;
 
+    private static final int UPDATE_INTERVAL = 24000;
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         ServerLevel overworld = event.getServer().overworld();
         long tick = overworld.getGameTime();
 
-        VillageSavedData  vdata = VillageSavedData.get(overworld);
-        CompanySavedData  cdata = CompanySavedData.get(overworld);
-        AdventurerSavedData ada = AdventurerSavedData.get(overworld);
-        CaravanSavedData  cara  = CaravanSavedData.get(overworld);
+        VillageSavedData    vdata = VillageSavedData.get(overworld);
+        CompanySavedData    cdata = CompanySavedData.get(overworld);
+        AdventurerSavedData ada   = AdventurerSavedData.get(overworld);
+        CaravanSavedData    cara  = CaravanSavedData.get(overworld);
 
-        // Every tick (fast)
+        // ── Every tick (fast) ─────────────────────────────────────────────────
         VillageEventScheduler.tickEvents(overworld, vdata, tick);
 
-        // Every second (20 ticks)
+        // ── Every second (20 ticks) ───────────────────────────────────────────
         if (tick % 20 == 0) {
             ada.tick(overworld, vdata);
             cara.tick(overworld, vdata);
@@ -65,84 +72,83 @@ public class ServerTickDispatcher {
             VillageAgingManager.tick(overworld, vdata, tick);
             HousePurchaseManager.tickPropertyTax(overworld, vdata, tick);
             WorkplaceAssignmentManager.tickWeeklyPay(overworld, tick);
+
+            // Crafting order lifecycle — expiry + economy posting (internally
+            // gated to once-per-day for the economy pass)
+            CraftingOrderManager.tick(overworld, vdata, tick);
+
+            // Passive perk effects — Haste near furnaces/with axe, etc.
+            for (net.minecraft.server.level.ServerPlayer player :
+                    overworld.getServer().getPlayerList().getPlayers()) {
+                ProfessionPerkManager.tickPassiveEffects(player);
+            }
         }
 
-        // Once per day (staggered per village)
+        // ── Once per day (staggered per village) ──────────────────────────────
         for (Village village : vdata.getAllVillages()) {
             long offset = Math.abs(village.getName().hashCode() % 24000L);
             if ((tick + offset) % 24000L == 0) {
                 var needs = VillageNeedsCalculator.compute(overworld, village, vdata);
                 village.setNeeds(needs);
                 village.setLastNeedsUpdate(tick);
+
+                applyFoodEffects(overworld, village, vdata);
                 VillageEventScheduler.tick(overworld, village, vdata, tick);
                 VillageEconomy.purgeStaleListings(village.getId(), tick);
                 upgradePathsIfAffordable(overworld, village, vdata);
+                checkKingdomFormation(overworld, village, vdata, tick);
+
                 vdata.setDirty();
             }
         }
     }
 
-    static void upgradePathsIfAffordable(
-            ServerLevel level, Village village,
-            VillageSavedData data) {
-        Map<VillagePath.PathTier, CurrencyValue> thresholds =
-                Map.of(
-                        VillagePath.PathTier.DIRT,
-                        CurrencyValue.ofGold(5),
-                        VillagePath.PathTier.GRAVEL,
-                        CurrencyValue.ofGold(15),
-                        VillagePath.PathTier.COBBLESTONE,
-                        CurrencyValue.ofGold(30));
+    // =========================================================================
+    // Path upgrade
+    // =========================================================================
 
-        // Use the improved wealth calculation from
-        // VillageExpansionManager which includes
-        // both NPC wealth and stockpile coins
-        CurrencyValue wealth =
-                VillageExpansionManager.getVillageWealth(
-                        village.getBuildingIds().stream()
-                                .map(data::getBuildingById)
-                                .filter(java.util.Optional
-                                        ::isPresent)
-                                .map(java.util.Optional::get)
-                                .collect(java.util.stream
-                                        .Collectors.toList()),
-                        level, data, village);
+    static void upgradePathsIfAffordable(ServerLevel level,
+                                         Village village,
+                                         VillageSavedData data) {
+        Map<VillagePath.PathTier, CurrencyValue> thresholds = Map.of(
+                VillagePath.PathTier.DIRT,        CurrencyValue.ofGold(5),
+                VillagePath.PathTier.GRAVEL,      CurrencyValue.ofGold(15),
+                VillagePath.PathTier.COBBLESTONE, CurrencyValue.ofGold(30));
 
-        for (VillagePath path : data.getPathsForVillage(
-                village.getId())) {
+        CurrencyValue wealth = VillageExpansionManager.getVillageWealth(
+                village.getBuildingIds().stream()
+                        .map(data::getBuildingById)
+                        .filter(java.util.Optional::isPresent)
+                        .map(java.util.Optional::get)
+                        .collect(java.util.stream.Collectors.toList()),
+                level, data, village);
+
+        for (VillagePath path : data.getPathsForVillage(village.getId())) {
             if (path.getTier().isMaxTier()) continue;
 
-            CurrencyValue threshold =
-                    thresholds.get(path.getTier());
+            CurrencyValue threshold = thresholds.get(path.getTier());
             if (threshold == null) continue;
             if (!wealth.isAffordable(threshold)) continue;
 
-            VillagePath.PathTier nextTier =
-                    path.getTier().next();
+            VillagePath.PathTier nextTier = path.getTier().next();
             path.setTier(nextTier);
 
             // Place upgraded blocks
             for (BlockPos pos : path.getBlocks()) {
                 BlockPos below = pos.below();
-                if (level.getBlockState(below)
-                        .isSolidRender()) {
+                if (level.getBlockState(below).isSolidRender()) {
                     level.setBlock(below,
-                            nextTier.getBlock()
-                                    .defaultBlockState(),
-                            3);
+                            nextTier.getBlock().defaultBlockState(), 3);
                 }
             }
 
             // Add lampposts when reaching cobblestone
             if (nextTier == VillagePath.PathTier.COBBLESTONE) {
-                VillageBiomeStyle style =
-                        VillageBiomeStyle.detect(level,
-                                path.getBlocks().get(0));
-                VillageSizeTier tier =
-                        VillageSizeTier.fromBuildingCount(
-                                village.getBuildingIds().size());
-                VillageDecorator.placeLampposts(
-                        level, path.getBlocks(), style, tier);
+                VillageBiomeStyle style = VillageBiomeStyle.detect(
+                        level, path.getBlocks().get(0));
+                VillageSizeTier tier = VillageSizeTier.fromBuildingCount(
+                        village.getBuildingIds().size());
+                VillageDecorator.placeLampposts(level, path.getBlocks(), style, tier);
             }
 
             data.setDirty();
@@ -151,15 +157,14 @@ public class ServerTickDispatcher {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Food effects
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Food need effects
+    // =========================================================================
 
     private static void applyFoodEffects(ServerLevel level,
                                          Village village,
                                          VillageSavedData data) {
-        var foodNeed = village.getNeeds().get(
-                NeedCategory.FOOD);
+        var foodNeed = village.getNeeds().get(NeedCategory.FOOD);
         if (foodNeed == null) return;
 
         level.getEntitiesOfClass(
@@ -174,26 +179,20 @@ public class ServerTickDispatcher {
             switch (foodNeed.getLevel()) {
                 case LOW -> {
                     mob.addEffect(new MobEffectInstance(
-                            MobEffects.SLOWNESS,
-                            UPDATE_INTERVAL, 0,
+                            MobEffects.SLOWNESS, UPDATE_INTERVAL, 0,
                             false, false));
-                    // Unblock work — just slowed
                     mob.setIsWorkingBlocked(false);
                 }
                 case CRITICAL -> {
                     mob.addEffect(new MobEffectInstance(
-                            MobEffects.SLOWNESS,
-                            UPDATE_INTERVAL, 1,
+                            MobEffects.SLOWNESS, UPDATE_INTERVAL, 1,
                             false, false));
                     mob.addEffect(new MobEffectInstance(
-                            MobEffects.WEAKNESS,
-                            UPDATE_INTERVAL, 0,
+                            MobEffects.WEAKNESS, UPDATE_INTERVAL, 0,
                             false, false));
-                    // Block work when critically hungry
                     mob.setIsWorkingBlocked(true);
                 }
                 default -> {
-                    // Satisfied — remove effects
                     mob.removeEffect(MobEffects.SLOWNESS);
                     mob.removeEffect(MobEffects.WEAKNESS);
                     mob.setIsWorkingBlocked(false);
@@ -202,16 +201,16 @@ public class ServerTickDispatcher {
         });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Kingdom formation
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
-    private static void checkKingdomFormation(
-            ServerLevel level, Village village,
-            VillageSavedData data, long tick) {
+    private static void checkKingdomFormation(ServerLevel level,
+                                              Village village,
+                                              VillageSavedData data,
+                                              long tick) {
         // Already in a kingdom
-        if (data.getKingdomForVillage(
-                village.getId()).isPresent()) return;
+        if (data.getKingdomForVillage(village.getId()).isPresent()) return;
 
         // Need at least 10 population
         int population = (int) level.getEntitiesOfClass(
@@ -226,26 +225,25 @@ public class ServerTickDispatcher {
 
         if (population < 10) return;
 
-        // Need a town hall at level 2+ before forming
-        // a kingdom — prevents immediate formation
-        boolean hasMatureTownHall = village.getBuildingIds()
-                .stream()
+        // Need a town hall at level 2+ before forming a kingdom
+        boolean hasMatureTownHall = village.getBuildingIds().stream()
                 .map(data::getBuildingById)
                 .filter(java.util.Optional::isPresent)
                 .map(java.util.Optional::get)
-                .anyMatch(b -> b.getType()
-                        == BuildingType.TOWN_HALL
+                .anyMatch(b -> b.getType() == BuildingType.TOWN_HALL
                         && b.getLevel() >= 2);
 
         if (!hasMatureTownHall) return;
 
         // Form kingdom named after the village
-        String kingdomName = village.getName() + " Kingdom";
-        Kingdom kingdom = new Kingdom(kingdomName, "default");
+        String  kingdomName = village.getName() + " Kingdom";
+        Kingdom kingdom     = new Kingdom(kingdomName, "default");
         kingdom.addVillage(village.getId());
         data.addKingdom(kingdom);
+
         kingdom.getHistory().recordEvent(
-                HistoryTextGenerator.kingdomFounded(kingdom.getName(), village.getName(), tick),
+                HistoryTextGenerator.kingdomFounded(
+                        kingdom.getName(), village.getName(), tick),
                 kingdom.getName());
 
         kingdom.getHistory().setOrigin(
@@ -257,34 +255,9 @@ public class ServerTickDispatcher {
                         tick,
                         kingdom.getVillageIds().size(),
                         "From many, one."));
-        data.setDirty();
-        data.setDirty();
 
-        System.out.println("Kingdom '" + kingdomName
-                + "' formed from village '"
-                + village.getName() + "'");
-
-        // Promote village leader to kingdom ruler
-        level.getEntitiesOfClass(
-                TownspersonMob.class,
-                village.getBounds(data)
-                        .map(b -> b.inflate(32))
-                        .orElse(new AABB(0, 0, 0, 0, 0, 0)),
-                mob -> mob.getProfession()
-                        == Profession
-                        .VILLAGE_LEADER
-                        && mob.getAssignedVillageName()
-                        .map(n -> n.equals(
-                                village.getName()))
-                        .orElse(false)
-        ).stream().findFirst().ifPresent(leader -> {
-            kingdom.setRulerEntityId(leader.getUUID());
-            leader.setProfession(
-                    Profession.KINGDOM_RULER);
-            System.out.println(leader.getNpcName()
-                    + " appointed as ruler of "
-                    + kingdom.getName());
-            data.setDirty();
-        });
+        data.setDirty();
+        System.out.println("ServerTickDispatcher: formed kingdom '"
+                + kingdomName + "' from village '" + village.getName() + "'");
     }
 }

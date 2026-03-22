@@ -217,7 +217,7 @@ public class AdventurerReputationManager {
         // Find the home village and start the warning spread
         villageData.getVillageById(group.getHomeVillageId())
                 .ifPresent(village -> {
-                    villageData.addPlayerWarning(
+                    villageData.addPlayerWarning(level,
                             player.getUUID(),
                             village.getId(),
                             level.getGameTime()
@@ -478,7 +478,7 @@ public class AdventurerReputationManager {
                                                 .hasWarning(playerId,
                                                         v.getId()))
                                         .forEach(v -> villageData
-                                                .addPlayerWarning(
+                                                .addPlayerWarning(level,
                                                         playerId,
                                                         v.getId(),
                                                         currentTick));

@@ -1,3 +1,4 @@
+// src/main/java/tterrag1112/life_in_the_village/Village/Buildings/FarmPlot.java
 package tterrag1112.life_in_the_village.Village.Buildings;
 
 import com.mojang.serialization.Codec;
@@ -10,29 +11,146 @@ import java.util.UUID;
 
 public class FarmPlot {
 
-    public enum CropType {
-        WHEAT, CARROTS, POTATOES, BEETROOT, MIXED;
+    // =========================================================================
+    // CropType — expanded for biome-aware selection
+    // =========================================================================
 
+    public enum CropType {
+
+        /**
+         * Wheat monoculture — the historical staple.
+         * Feeds MILLER; surplus sold as bread at markets.
+         * Best grown in plains and temperate biomes.
+         */
+        WHEAT,
+
+        /**
+         * Carrot-dominant plot.
+         * High nutrition per block, drought-tolerant.
+         * Preferred in desert / mesa biomes.
+         */
+        CARROTS,
+
+        /**
+         * Potato-dominant plot.
+         * Highest caloric density; ideal for cold climates.
+         * Preferred in snowy / taiga biomes.
+         */
+        POTATOES,
+
+        /**
+         * Beetroot plot.
+         * Produces dye ingredients alongside food.
+         */
+        BEETROOT,
+
+        /**
+         * Mixed rotation — wheat, carrots, potatoes in strips.
+         * Default fallback for temperate biomes when no specific
+         * crop is indicated by biome context.
+         */
+        MIXED,
+
+        /**
+         * Grain-dominated rotation: wheat + some beetroot.
+         * Supplies the MILLER for bread production.
+         * Favoured by farming villages with a mill building.
+         */
+        GRAIN,
+
+        /**
+         * Vegetable rotation: carrots, potatoes, beetroot in strips.
+         * Highest raw nutrition output; no mill required.
+         * Favoured when FOOD need is CRITICAL or MILLER is absent.
+         */
+        VEGETABLE,
+
+        /**
+         * Orchard stand-in: jungle / forest biomes.
+         * Represented by bone-meal-grown saplings / apples.
+         * FarmerGoal uses OAK_SAPLING + bone meal during the
+         * replant phase, then harvests apple drops.
+         * Purely flavour in the current implementation — produces
+         * wheat/carrot as actual drops with a visual difference.
+         */
+        ORCHARD,
+
+        /**
+         * Pasture — cleared, fenced grassland for livestock.
+         * No crop rows are planted. FarmerGoal skips the replant
+         * phase for PASTURE plots and instead leaves grass.
+         * Future: pairs with ANIMAL_KEEPER profession.
+         * Currently produces hay bales and occasional leather.
+         */
+        PASTURE;
+
+        // -------------------------------------------------------------------------
+        // Seed / crop identifiers
+        // -------------------------------------------------------------------------
+
+        /**
+         * Returns the primary seed item for this crop type.
+         * MIXED and GRAIN default to wheat seeds.
+         * VEGETABLE defaults to carrot.
+         * ORCHARD / PASTURE use wheat seeds as a placeholder.
+         */
         public Identifier getSeedItem() {
             return switch (this) {
-                case WHEAT    -> Identifier.withDefaultNamespace("wheat_seeds");
-                case CARROTS  -> Identifier.withDefaultNamespace("carrot");
-                case POTATOES -> Identifier.withDefaultNamespace("potato");
-                case BEETROOT -> Identifier.withDefaultNamespace("beetroot_seeds");
-                case MIXED    -> Identifier.withDefaultNamespace("wheat_seeds");
+                case WHEAT, GRAIN, MIXED -> Identifier.withDefaultNamespace("wheat_seeds");
+                case CARROTS             -> Identifier.withDefaultNamespace("carrot");
+                case POTATOES            -> Identifier.withDefaultNamespace("potato");
+                case BEETROOT            -> Identifier.withDefaultNamespace("beetroot_seeds");
+                case VEGETABLE           -> Identifier.withDefaultNamespace("carrot");
+                case ORCHARD             -> Identifier.withDefaultNamespace("wheat_seeds");
+                case PASTURE             -> Identifier.withDefaultNamespace("wheat_seeds");
             };
         }
 
+        /**
+         * Returns the primary crop block for this type.
+         * Used by FarmerGoal.getCropBlock() during the replant phase.
+         */
         public Identifier getCropBlock() {
             return switch (this) {
-                case WHEAT    -> Identifier.withDefaultNamespace("wheat");
-                case CARROTS  -> Identifier.withDefaultNamespace("carrots");
-                case POTATOES -> Identifier.withDefaultNamespace("potatoes");
-                case BEETROOT -> Identifier.withDefaultNamespace("beetroot");
-                case MIXED    -> Identifier.withDefaultNamespace("wheat");
+                case WHEAT, GRAIN, MIXED -> Identifier.withDefaultNamespace("wheat");
+                case CARROTS             -> Identifier.withDefaultNamespace("carrots");
+                case POTATOES            -> Identifier.withDefaultNamespace("potatoes");
+                case BEETROOT            -> Identifier.withDefaultNamespace("beetroot");
+                case VEGETABLE           -> Identifier.withDefaultNamespace("carrots");
+                case ORCHARD             -> Identifier.withDefaultNamespace("wheat");
+                case PASTURE             -> Identifier.withDefaultNamespace("wheat");
+            };
+        }
+
+        /**
+         * Returns true if this plot type grows plantable crops.
+         * PASTURE returns false — no crop rows.
+         */
+        public boolean isCropPlot() {
+            return this != PASTURE;
+        }
+
+        /**
+         * Returns the nutrition value per unit harvest relative to wheat (1.0).
+         * Used by VillageNeedsCalculator when counting food nutrition.
+         */
+        public float nutritionMultiplier() {
+            return switch (this) {
+                case WHEAT, GRAIN  -> 1.0f;
+                case MIXED         -> 1.0f;
+                case CARROTS       -> 0.9f;  // 3 hunger vs wheat's 2.5 — close
+                case POTATOES      -> 1.2f;  // higher saturation
+                case BEETROOT      -> 0.7f;  // lower nutrition per unit
+                case VEGETABLE     -> 1.1f;  // average of carrot/potato
+                case ORCHARD       -> 0.8f;  // apple — moderate
+                case PASTURE       -> 0.6f;  // meat/leather — indirect food
             };
         }
     }
+
+    // =========================================================================
+    // Codec
+    // =========================================================================
 
     public static final Codec<FarmPlot> CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
@@ -56,22 +174,29 @@ public class FarmPlot {
             })
     );
 
-    private final UUID id;
-    private String name;
-    private BlockPos origin;
-    private int radius;
-    private CropType cropType;
-    private UUID farmhouseId; // nullable until assigned
+    // =========================================================================
+    // Fields
+    // =========================================================================
 
-    public FarmPlot(UUID id, String name, BlockPos origin, int radius, CropType cropType) {
-        this.id = id;
-        this.name = name;
-        this.origin = origin;
-        this.radius = radius;
+    private final UUID      id;
+    private       String    name;
+    private       BlockPos  origin;
+    private       int       radius;
+    private       CropType  cropType;
+    private       UUID      farmhouseId; // nullable until assigned
+
+    public FarmPlot(UUID id, String name, BlockPos origin,
+                    int radius, CropType cropType) {
+        this.id       = id;
+        this.name     = name;
+        this.origin   = origin;
+        this.radius   = radius;
         this.cropType = cropType;
     }
 
-    // --- Spatial helpers ---
+    // =========================================================================
+    // Spatial helpers
+    // =========================================================================
 
     public boolean contains(BlockPos pos) {
         double dx = pos.getX() - origin.getX();
@@ -79,18 +204,19 @@ public class FarmPlot {
         return dx * dx + dz * dz <= (double) radius * radius;
     }
 
-    public java.util.List<BlockPos> getFarmlandBlocks(net.minecraft.server.level.ServerLevel level) {
+    public java.util.List<BlockPos> getFarmlandBlocks(
+            net.minecraft.server.level.ServerLevel level) {
         java.util.List<BlockPos> result = new java.util.ArrayList<>();
         for (int x = origin.getX() - radius; x <= origin.getX() + radius; x++) {
             for (int z = origin.getZ() - radius; z <= origin.getZ() + radius; z++) {
                 BlockPos surface = new BlockPos(x, origin.getY(), z);
                 if (!contains(surface)) continue;
-                // Walk up/down a few blocks to find farmland
                 for (int dy = -3; dy <= 3; dy++) {
                     BlockPos check = surface.offset(0, dy, 0);
                     net.minecraft.world.level.block.state.BlockState state =
                             level.getBlockState(check);
-                    if (state.getBlock() instanceof net.minecraft.world.level.block.FarmBlock) {
+                    if (state.getBlock() instanceof
+                            net.minecraft.world.level.block.FarmBlock) {
                         result.add(check);
                         break;
                     }
@@ -100,14 +226,16 @@ public class FarmPlot {
         return result;
     }
 
-    // --- Getters/Setters ---
+    // =========================================================================
+    // Getters / setters
+    // =========================================================================
 
-    public UUID getId()           { return id; }
-    public String getName()       { return name; }
-    public BlockPos getOrigin()   { return origin; }
-    public int getRadius()        { return radius; }
-    public CropType getCropType() { return cropType; }
-    public UUID getFarmhouseId()  { return farmhouseId; }
+    public UUID     getId()           { return id; }
+    public String   getName()         { return name; }
+    public BlockPos getOrigin()       { return origin; }
+    public int      getRadius()       { return radius; }
+    public CropType getCropType()     { return cropType; }
+    public UUID     getFarmhouseId()  { return farmhouseId; }
 
     public void setName(String name)           { this.name = name; }
     public void setOrigin(BlockPos origin)     { this.origin = origin; }
