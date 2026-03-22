@@ -144,6 +144,15 @@ public class ModModEvents {
                 OpenCompanyWorkerPacket.TYPE,
                 OpenCompanyWorkerPacket.CODEC,
                 OpenCompanyWorkerPacket::handle);
+        registrar.playToClient(
+                OpenGuildScreenPacket.TYPE,
+                OpenGuildScreenPacket.CODEC,
+                OpenGuildScreenPacket::handle);
+
+        registrar.playToServer(
+                GuildActionPacket.TYPE,
+                GuildActionPacket.CODEC,
+                GuildActionPacket::handle);
 
     }
 

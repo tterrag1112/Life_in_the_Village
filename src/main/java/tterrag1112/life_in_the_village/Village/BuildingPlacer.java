@@ -185,22 +185,7 @@ public class BuildingPlacer {
         }
     }
     public static Profession getProfessionForType(BuildingType type) {
-        return switch (type) {
-            case GUILD_HALL -> Profession.GUILDWORKER;
-            case TOWN_HALL -> Profession.VILLAGE_LEADER;
-            case GUARD_TOWER -> Profession.GUARD;
-            case INN -> Profession.INNKEEPER;
-            case MINE -> Profession.MINER;
-            case BLACKSMITH -> Profession.BLACKSMITH;
-            case STOCKPILE -> Profession.STOCKPILE_KEEPER;
-            case FARMHOUSE -> Profession.FARMER;
-            case CARPENTRY -> Profession.CARPENTER;
-
-
-
-            case HOUSE -> null; // no NPC spawned at placement, NPCs seek houses automatically
-            default -> null;
-        };
+        return Profession.professionFor(type);
     }
     private static void applyBiomeSwap(ServerLevel level,
                                        BlockPos origin,

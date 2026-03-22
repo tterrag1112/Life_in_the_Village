@@ -121,4 +121,24 @@ public class PlayerGuildData extends SavedData {
             }
         }
     }
+
+    public List<GuildMember> getAllMembersForGuild(UUID guildId) {
+        return members.stream()
+                .filter(m -> m.guildId().equals(guildId))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Replaces an existing member record with an updated one.
+     * Used after quest completion and rank-up.
+     */
+    public void updateMember(GuildMember updated) {
+        for (int i = 0; i < members.size(); i++) {
+            if (members.get(i).playerId().equals(updated.playerId())) {
+                members.set(i, updated);
+                setDirty();
+                return;
+            }
+        }
+    }
 }

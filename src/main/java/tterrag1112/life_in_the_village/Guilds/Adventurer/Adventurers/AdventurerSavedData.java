@@ -15,7 +15,10 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
 import tterrag1112.life_in_the_village.Entities.PersonalityTrait;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
+import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -23,11 +26,24 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import static tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerEquipment.applyRoleEquipment;
+
 public class AdventurerSavedData extends SavedData {
 
     private static final int  SPAWN_RADIUS            = 64;
-    private static final int  MAX_GROUPS_PER_VILLAGE  = 3;
     private static final long TICK_INTERVAL           = 20L;
+    /**
+     * Maximum wandering adventurers (non-village-assigned) in the world.
+     * Village-assigned adventurers who join parties are not counted here —
+     * they remain as villagers employed differently.
+     */
+    private static final int MAX_WANDERING_ADVENTURERS = 12;
+
+    /**
+     * Maximum wandering adventurer groups originating from a single village.
+     * Kept low — most adventurers should be village residents, not wanderers.
+     */
+    private static final int MAX_GROUPS_PER_VILLAGE = 2;
 
     // -------------------------------------------------------------------------
     // SavedDataType — replaces Factory/Info, uses codec for serialization
@@ -151,6 +167,13 @@ public class AdventurerSavedData extends SavedData {
             // -------------------------------------------------------
             // Simulate unspawned groups
             // -------------------------------------------------------
+
+            PlayerPartySavedData partyData = PlayerPartySavedData.get(level);
+            boolean allInParty = !group.getMemberIds().isEmpty()
+                    && group.getMemberIds().stream()
+                    .allMatch(id -> partyData.getPartyContaining(id)
+                            .isPresent());
+            if (allInParty) continue;
             if (group.tick(currentTick)) dirty = true;
 
             if (group.getState() == AdventurerGroup.GroupState.AT_GUILD
@@ -181,21 +204,43 @@ public class AdventurerSavedData extends SavedData {
     // Spawn / Despawn
     // -------------------------------------------------------------------------
 
-    private void spawnGroupEntities(AdventurerGroup group, ServerLevel level) {
-        List<UUID> spawnedIds = new ArrayList<>();
+    private void spawnGroupEntities(AdventurerGroup group,
+                                   ServerLevel level) {
+        PlayerPartySavedData partyData = PlayerPartySavedData.get(level);
         VillageSavedData villageData = VillageSavedData.get(level);
 
-        // AT_GUILD groups spawn near the guild hall, not at their travel position
-        BlockPos spawnCenter = (group.getState() == AdventurerGroup.GroupState.AT_GUILD)
-                ? getGuildHallPos(group, level, villageData)
-                : group.getCurrentPos();
+        // If ALL members are in a party, this group is fully absorbed —
+        // mark dead rather than spawning duplicate entities
+        boolean allInParty = !group.getMemberIds().isEmpty()
+                && group.getMemberIds().stream()
+                .allMatch(id -> partyData
+                        .getPartyContaining(id).isPresent());
+        if (allInParty) {
+            group.setDead(true);
+            setDirty();
+            return;
+        }
+
+        List<UUID> spawnedIds = new ArrayList<>();
+
+        BlockPos spawnCenter =
+                group.getState() == AdventurerGroup.GroupState.AT_GUILD
+                        ? getGuildHallPos(group, level, villageData)
+                        : group.getCurrentPos();
 
         for (int i = 0; i < group.getMemberCount(); i++) {
+            UUID memberId = group.getMemberIds().get(i);
+
+            // Skip members already in a player party — their entity
+            // is managed by party goals, not the group spawner
+            if (partyData.getPartyContaining(memberId).isPresent()) {
+                continue;
+            }
+
             BlockPos spawnPos = spawnCenter.offset(
                     level.getRandom().nextIntBetweenInclusive(-3, 3),
                     0,
                     level.getRandom().nextIntBetweenInclusive(-3, 3));
-
 
             int surfaceY = level.getHeight(
                     net.minecraft.world.level.levelgen.Heightmap.Types
@@ -205,14 +250,11 @@ public class AdventurerSavedData extends SavedData {
             TownspersonMob npc = new TownspersonMob(
                     ModEntities.TOWNSPERSON.get(), level);
 
-            // All data setup in one place
             setupAdventurerNpc(npc, group, i, level);
 
-            npc.setPos(
-                    spawnPos.getX() + 0.5,
-                    (double) surfaceY,
-                    spawnPos.getZ() + 0.5
-            );
+            npc.setPos(spawnPos.getX() + 0.5,
+                    surfaceY,
+                    spawnPos.getZ() + 0.5);
             npc.setYRot(level.getRandom().nextFloat() * 360f);
             npc.setXRot(0f);
 
@@ -252,83 +294,100 @@ public class AdventurerSavedData extends SavedData {
                 .orElse(group.getCurrentPos());
     }
 
-    private void setupAdventurerNpc(TownspersonMob npc, AdventurerGroup group,
-                                        int memberIndex, ServerLevel level) {
-
-        // -------------------------------------------------------
-        // Group membership
-        // -------------------------------------------------------
+    private void setupAdventurerNpc(TownspersonMob npc,
+                                    AdventurerGroup group,
+                                    int memberIndex,
+                                    ServerLevel level) {
+        // ── Group membership ──────────────────────────────────────────
         npc.setGroupId(group.getGroupId());
         npc.setIsGroupLeader(memberIndex == 0);
 
-        // -------------------------------------------------------
-        // Profession — triggers goal registration automatically
-        // -------------------------------------------------------
+        // ── Profession ────────────────────────────────────────────────
         npc.setProfession(Profession.ADVENTURER);
 
-        // -------------------------------------------------------
-        // Identity — use stable name from member UUID
-        // -------------------------------------------------------
+        // ── Combat role — assigned to ALL adventurers ─────────────────
+        // Roles are distributed across the group so a 3-person group
+        // naturally gets SWORDSMAN, ARCHER, HEALER etc.
+        // When not in a party the role governs equipment and idle
+        // behaviour but party goals don't fire (no party found in data).
+        CombatRole role = assignGroupRole(group, memberIndex);
+        // Use the backing field directly to avoid re-registering goals
+        // mid-setup — setProfession above already registered them
+        npc.setCombatRoleSilent(role);;
+        applyRoleEquipment(npc, role,
+                group.getGroupRank() == GuildRank.DIAMOND
+                        || group.getGroupRank() == GuildRank.PLATINUM);
+
+        // ── Identity ──────────────────────────────────────────────────
         UUID memberId = group.getMemberIds().get(memberIndex);
         String firstName = AdventurerNameGenerator.getFirstName(memberId);
         String surname   = AdventurerNameGenerator.getSurname(memberId);
         String title     = AdventurerNameGenerator.getTitle(memberId);
 
-        npc.setNpcName(firstName + " " + surname);  // clean, no title baked in
-        npc.setAdventurerTitle(title);              // stored separately, survives marriage
+        npc.setNpcName(firstName + " " + surname);
+        npc.setAdventurerTitle(title);
         npc.setCustomNameVisible(true);
 
-        // -------------------------------------------------------
-        // Gender — stable from UUID
-        // -------------------------------------------------------
+        // ── Gender ────────────────────────────────────────────────────
         npc.setMale((memberId.getMostSignificantBits() & 1) == 0);
 
-        // -------------------------------------------------------
-        // Age — adventurers are adults, stable range from UUID
-        // -------------------------------------------------------
-        int age = 20 + (int)(Math.abs(memberId.getLeastSignificantBits()) % 30);
+        // ── Age ───────────────────────────────────────────────────────
+        int age = 20 + (int)(Math.abs(
+                memberId.getLeastSignificantBits()) % 30);
         npc.setAge(age);
 
-        // -------------------------------------------------------
-        // Appearance — stable from UUID so consistent on respawn
-        // -------------------------------------------------------
-        int skinTone  = (int)(Math.abs(memberId.getMostSignificantBits())  % 6);
-        int hairStyle = (int)(Math.abs(memberId.getLeastSignificantBits()) % 8);
-        int hairColor = (int)(Math.abs(memberId.getMostSignificantBits()
-                + memberId.getLeastSignificantBits()) % 7);
+        // ── Appearance ────────────────────────────────────────────────
+        int skinTone  = (int)(Math.abs(
+                memberId.getMostSignificantBits()) % 6);
+        int hairStyle = (int)(Math.abs(
+                memberId.getLeastSignificantBits()) % 8);
+        int hairColor = (int)(Math.abs(
+                memberId.getMostSignificantBits()
+                        + memberId.getLeastSignificantBits()) % 7);
         npc.setAppearance(skinTone, hairStyle, hairColor);
 
-        // -------------------------------------------------------
-        // Personality — give adventurers fitting traits
-        // -------------------------------------------------------
+        // ── Personality ───────────────────────────────────────────────
         npc.clearTraits();
-        npc.addTrait(PersonalityTrait.BRAVE); // all adventurers are brave
+        npc.addTrait(PersonalityTrait.BRAVE);
         if (memberIndex == 0) {
-            // Leader gets an extra trait
             long seed = memberId.getMostSignificantBits();
             PersonalityTrait[] all = PersonalityTrait.values();
-            PersonalityTrait extra = all[(int)(Math.abs(seed) % all.length)];
+            PersonalityTrait extra =
+                    all[(int)(Math.abs(seed) % all.length)];
             if (!extra.conflictsWith(PersonalityTrait.BRAVE)) {
                 npc.addTrait(extra);
             }
         }
 
-        // -------------------------------------------------------
-        // Village assignment — adventurers belong to home village
-        // -------------------------------------------------------
+        // ── Village assignment ────────────────────────────────────────
         VillageSavedData villageData = VillageSavedData.get(level);
         villageData.getVillageById(group.getHomeVillageId())
                 .ifPresent(v -> npc.setAssignedVillageName(v.getName()));
 
-        // -------------------------------------------------------
-        // Equipment based on quest difficulty
-        // -------------------------------------------------------
-        setupAdventurerEquipment(npc, group.getActiveQuest(), memberIndex == 0);
-
-        // -------------------------------------------------------
-        // Activity label — shows under name tag
-        // -------------------------------------------------------
+        // ── Activity label ────────────────────────────────────────────
         npc.setCurrentActivity(getActivityLabel(group));
+    }
+
+    /**
+     * Distributes combat roles across a group so the composition
+     * feels natural. The leader (index 0) is always a SWORDSMAN.
+     * Remaining slots cycle through a priority order.
+     */
+    private static CombatRole assignGroupRole(AdventurerGroup group,
+                                              int memberIndex) {
+        if (memberIndex == 0) return CombatRole.SWORDSMAN;
+
+        // Priority fill order for remaining slots
+        CombatRole[] fill = {
+                CombatRole.ARCHER,
+                CombatRole.HEALER,
+                CombatRole.SCOUT,
+                CombatRole.MAGE,
+                CombatRole.SWORDSMAN // extra frontliner if group > 5
+        };
+
+        int fillIdx = (memberIndex - 1) % fill.length;
+        return fill[fillIdx];
     }
 
     private String getActivityLabel(AdventurerGroup group) {
@@ -382,11 +441,7 @@ public class AdventurerSavedData extends SavedData {
     private void despawnGroupEntities(AdventurerGroup group,
                                       ServerLevel level) {
         // Sync position from leader before despawning
-        group.getSpawnedEntityIds().stream()
-                .map(level::getEntity)
-                .filter(Objects::nonNull)
-                .findFirst()
-                .ifPresent(e -> group.setCurrentPos(e.blockPosition()));
+
 
         // Remove campfire if one was placed
         group.getCampfirePos().ifPresent(pos -> {
@@ -400,7 +455,9 @@ public class AdventurerSavedData extends SavedData {
         });
 
         // Remove seat armor stands
+        PlayerPartySavedData partyData = PlayerPartySavedData.get(level);
         group.getSpawnedEntityIds().stream()
+                .filter(id -> partyData.getPartyContaining(id).isEmpty()) // ← skip party members
                 .map(level::getEntity)
                 .filter(Objects::nonNull)
                 .forEach(e -> {
@@ -410,6 +467,13 @@ public class AdventurerSavedData extends SavedData {
                     e.stopRiding();
                     e.discard();
                 });
+
+        group.getSpawnedEntityIds().stream()
+                .filter(id -> partyData.getPartyContaining(id).isEmpty())
+                .map(level::getEntity)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .ifPresent(e -> group.setCurrentPos(e.blockPosition()));
 
         group.getSpawnedEntityIds().clear();
         group.setSpawned(false);
@@ -456,36 +520,70 @@ public class AdventurerSavedData extends SavedData {
     private void trySpawnNewGroups(ServerLevel level,
                                    VillageSavedData villageData,
                                    long currentTick) {
+        // Count total wandering (non-village-resident) adventurers
+        // across all groups to enforce world cap
+        long totalWandering = groups.values().stream()
+                .filter(g -> !isVillageResidentGroup(g, villageData))
+                .mapToLong(g -> g.getMemberIds().size())
+                .sum();
+
+        if (totalWandering >= MAX_WANDERING_ADVENTURERS) return;
+
+        PlayerPartySavedData partyData = PlayerPartySavedData.get(level);
+
         villageData.getAllVillages().forEach(village -> {
             UUID villageId = village.getId();
 
+            // Only spawn groups for villages with a guild hall
+            if (villageData.getGuildForVillage(villageId).isEmpty()) return;
+
+            // Count existing groups originating from this village
+            // that are NOT just village residents in a party
             long existing = groups.values().stream()
                     .filter(g -> g.getHomeVillageId().equals(villageId))
+                    .filter(g -> !isVillageResidentGroup(g, villageData))
                     .count();
+
             if (existing >= MAX_GROUPS_PER_VILLAGE) return;
 
-            if (villageData.getGuildForVillage(villageId).isEmpty()) return;
+            // Don't spawn if we're already at world cap
+            if (totalWandering >= MAX_WANDERING_ADVENTURERS) return;
 
             var bounds = village.getBounds(villageData);
             if (bounds.isEmpty()) return;
-            BlockPos center = BlockPos.containing(bounds.get().getCenter());
-
-
-            if (center == null) return;
+            BlockPos center = BlockPos.containing(
+                    bounds.get().getCenter());
 
             Random rng = new Random();
-            int offsetX = (rng.nextBoolean() ? 1 : -1) * (100 + rng.nextInt(200));
-            int offsetZ = (rng.nextBoolean() ? 1 : -1) * (100 + rng.nextInt(200));
+            int offsetX = (rng.nextBoolean() ? 1 : -1)
+                    * (100 + rng.nextInt(200));
+            int offsetZ = (rng.nextBoolean() ? 1 : -1)
+                    * (100 + rng.nextInt(200));
             BlockPos target = center.offset(offsetX, 0, offsetZ);
 
             int memberCount = 2 + level.getRandom().nextInt(3);
             AdventurerGroup group = AdventurerGroup.create(
-                    villageId, memberCount, center, target, currentTick);
-
+                    villageId, memberCount, center,
+                    target, currentTick);
             groups.put(group.getGroupId(), group);
         });
     }
 
+    /**
+     * Returns true if all members of this group are assigned to a village
+     * (i.e. they are resident adventurers, not wanderers).
+     * Village-resident adventurers who join a party are not wandering —
+     * they are employed differently and should not count toward the
+     * wandering group cap.
+     */
+    private boolean isVillageResidentGroup(AdventurerGroup group,
+                                           VillageSavedData villageData) {
+        // A group is "resident" if it has a home village AND
+        // all its spawned members are assigned to that village
+        if (group.getHomeVillageId() == null) return false;
+        return villageData.getVillageById(group.getHomeVillageId())
+                .isPresent();
+    }
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

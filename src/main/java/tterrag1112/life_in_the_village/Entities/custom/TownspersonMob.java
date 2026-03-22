@@ -22,7 +22,11 @@ import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
+import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.monster.RangedAttackMob;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -60,9 +64,15 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miner.MinerGoal
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper.StockpileKeeperGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen;
+import tterrag1112.life_in_the_village.Gui.GuildScreen;
 import tterrag1112.life_in_the_village.Gui.VillageBookScreen;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerGuildData;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerParty;
 import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
@@ -87,7 +97,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class TownspersonMob extends PathfinderMob {
+public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     // =========================================================================
     // CONSTANTS
@@ -132,6 +142,25 @@ public class TownspersonMob extends PathfinderMob {
     private int hairStyle = 0;
     private int hairColor = 0;
     private boolean isMale = true;
+
+    @Nullable
+    private CombatRole combatRole = null;
+
+    public @Nullable CombatRole getCombatRole() { return combatRole; }
+    public void setCombatRole(@Nullable CombatRole role) {
+        this.combatRole = role;
+        // Re-register goals so party goals activate/deactivate
+        // immediately when a role is assigned or cleared
+        if (goalSelector != null
+                && getProfession() == Profession.ADVENTURER) {
+            goalSelector.removeAllGoals(g -> true);
+            targetSelector.removeAllGoals(g -> true);
+            registerGoals();
+        }
+    }
+    public void setCombatRoleSilent(@Nullable CombatRole role) {
+        this.combatRole = role;
+    }
 
 
     // =========================================================================
@@ -345,18 +374,84 @@ public class TownspersonMob extends PathfinderMob {
 
             case GUILDWORKER -> goalSelector.addGoal(10, new GuildWorkerGoal(this));
             case GUILDMASTER -> goalSelector.addGoal(10, new WanderInBuildingGoal(this));
-            case ADVENTURER  -> {
-                goalSelector.addGoal(10, new SocializeGoal(this));
-                goalSelector.addGoal(2, new AdventurerInteractGoal(this));
-                goalSelector.addGoal(2, new AdventurerPatrolGoal(this));
-                goalSelector.addGoal(4, new AdventurerLookAroundGoal(this));
-                goalSelector.addGoal(1, new AdventurerCombatAssistGoal(this));
-                targetSelector.addGoal(1, new HurtByTargetGoal(this));
-                goalSelector.addGoal(2, new AdventurerHuntGoal(this));      // hunt quest
-                goalSelector.addGoal(3, new AdventurerExploreGoal(this));
-                goalSelector.addGoal(4, new AdventurerCampGoal(this));    // add this
+            case ADVENTURER -> {
+                if (combatRole != null) {
+                    // Combat — must come before movement goals
+                    goalSelector.addGoal(1, new PartyFollowGoal(this));
+                    goalSelector.addGoal(2, new PartyDefendGoal(this));
+                    goalSelector.addGoal(3, new PartyRoleGoal(this));
 
+                    // Melee attack — fires when target is set by
+                    // PartyDefendGoal or HurtByTargetGoal
+                    goalSelector.addGoal(2, new MeleeAttackGoal(
+                            this, 1.2, true));
 
+                    // Ranged attack for ARCHER — uses bow
+                    if (combatRole == CombatRole.ARCHER) {
+                        goalSelector.addGoal(2,
+                                new net.minecraft.world.entity.ai.goal
+                                        .RangedBowAttackGoal<>(
+                                        this, 1.0, 20, 15.0f));
+                    }
+
+                    goalSelector.addGoal(4, new PartyCampGoal(this));
+                    goalSelector.addGoal(5, new PartyConversationGoal(this));
+                    goalSelector.addGoal(6, new PartyAmbientGoal(this));
+
+                    // Target selectors — these drive who the NPC fights
+                    targetSelector.addGoal(1, new HurtByTargetGoal(this));
+                    targetSelector.addGoal(2,
+                            new NearestAttackableTargetGoal<>(
+                                    this,
+                                    net.minecraft.world.entity.monster.Monster.class,
+                                    10,
+                                    true,
+                                    false,
+                                    (target, level) -> {
+                                        PlayerPartySavedData partyData =
+                                                PlayerPartySavedData.get(level);
+                                        return partyData
+                                                .getPartyContaining(getUUID())
+                                                .map(party -> {
+                                                    ServerPlayer leader =
+                                                            level.getServer()
+                                                                    .getPlayerList()
+                                                                    .getPlayer(
+                                                                            party.getLeaderPlayerId());
+                                                    if (leader != null
+                                                            && target instanceof net.minecraft.world.entity.Mob m
+                                                            && m.getTarget() != null
+                                                            && m.getTarget()
+                                                            .equals(leader)) {
+                                                        return true;
+                                                    }
+                                                    return party.getMembers()
+                                                            .stream()
+                                                            .filter(PlayerParty.PartyMember::isAlive)
+                                                            .anyMatch(member -> {
+                                                                var memberEntity =
+                                                                        level.getEntity(
+                                                                                member.npcId());
+                                                                return target instanceof net.minecraft.world.entity.Mob m2
+                                                                        && m2.getTarget() != null
+                                                                        && memberEntity != null
+                                                                        && m2.getTarget()
+                                                                        .equals(memberEntity);
+                                                            });
+                                                })
+                                                .orElse(false);
+                                    }));
+                } else {
+                    goalSelector.addGoal(2, new AdventurerInteractGoal(this));
+                    goalSelector.addGoal(2, new AdventurerPatrolGoal(this));
+                    goalSelector.addGoal(4, new AdventurerLookAroundGoal(this));
+                    goalSelector.addGoal(2, new AdventurerHuntGoal(this));
+                    goalSelector.addGoal(3, new AdventurerExploreGoal(this));
+                    goalSelector.addGoal(10, new SocializeGoal(this));
+                    goalSelector.addGoal(4, new AdventurerCampGoal(this));
+                    goalSelector.addGoal(1, new AdventurerCombatAssistGoal(this));
+                    targetSelector.addGoal(1, new HurtByTargetGoal(this));
+                }
             }
             case COMPANY_WORKER -> goalSelector.addGoal(10, new CompanyWorkerGoal(this));
 
@@ -894,6 +989,31 @@ public class TownspersonMob extends PathfinderMob {
         return CoinHelper.pay(personalInventory, receiver.personalInventory, amount);
     }
 
+    @Override
+    public void performRangedAttack(
+            net.minecraft.world.entity.LivingEntity target,
+            float distanceFactor) {
+        // Only fire if ARCHER role
+        if (combatRole != CombatRole.ARCHER) return;
+
+        Arrow arrow =
+                new Arrow(
+                        level(), this,
+                        new ItemStack(Items.ARROW),
+                        null);
+
+        double dx = target.getX() - getX();
+        double dy = target.getY(0.3333) - arrow.getY();
+        double dz = target.getZ() - getZ();
+        double dist = Math.sqrt(dx * dx + dz * dz);
+
+        arrow.shoot(dx, dy + dist * 0.2, dz,
+                1.6f, 12.0f - (float) dist * 0.2f);
+
+        level().addFreshEntity(arrow);
+        swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+    }
+
 
     public static Set<Item> getSellableItems(Profession profession) {
         return switch (profession) {
@@ -963,6 +1083,46 @@ public class TownspersonMob extends PathfinderMob {
                     }
                 }
             }
+            case ADVENTURER ->{
+                if (getCombatRole() != null
+                        && hand == InteractionHand.MAIN_HAND) {
+                    if (player instanceof ServerPlayer sp) {
+                        PlayerPartySavedData partyData = PlayerPartySavedData.get((ServerLevel) level());
+
+                        // Only the party leader can interact
+                        partyData.getPartyContaining(getUUID())
+                                .filter(party -> party.getLeaderPlayerId()
+                                        .equals(sp.getUUID()))
+                                .ifPresentOrElse(
+                                        party -> {
+                                            // Show quick status in chat
+                                            party.getMember(getUUID())
+                                                    .ifPresent(m -> {
+                                                        sp.displayClientMessage(
+                                                                Component.literal(
+                                                                        "[" + m.name()
+                                                                                + "] " + m.role().symbol
+                                                                                + " " + m.role().getDisplayName()
+                                                                                + " | Lv." + m.level()
+                                                                                + " | " + m.kills()
+                                                                                + " kills"),
+                                                                false);
+                                                        sp.displayClientMessage(
+                                                                Component.literal(
+                                                                        "  " + m.role().description),
+                                                                false);
+                                                    });
+                                        },
+                                        () -> sp.displayClientMessage(
+                                                Component.literal(
+                                                        getNpcName()
+                                                                + ": I'm ready for adventure!"),
+                                                false));
+                    }
+                    return InteractionResult.SUCCESS;
+                }
+
+            }
             case INNKEEPER -> {
                 if (level() instanceof ServerLevel sl
                         && player instanceof ServerPlayer sp) {
@@ -970,13 +1130,42 @@ public class TownspersonMob extends PathfinderMob {
                 }
             }
             case GUILDWORKER -> {
-                if (level() instanceof ServerLevel sl
-                        && player instanceof ServerPlayer sp) {
-                    GuildWorkerGoal goal = getGoal(GuildWorkerGoal.class);
-                    if (goal != null) {
-                        goal.handlePlayerInteraction(sp, sl);
+                if (level() instanceof ServerLevel serverLevel && hand == InteractionHand.MAIN_HAND) {
+
+                    VillageSavedData vdata = VillageSavedData.get(serverLevel);
+
+                    // Find the guild for this NPC's village
+                    Optional<UUID> guildIdOpt = getAssignedVillageName()
+                            .flatMap(name -> vdata.getVillageByName(name))
+                            .flatMap(village ->
+                                    vdata.getGuildForVillage(village.getId()))
+                            .map(GuildData::guildId);
+
+                    if (guildIdOpt.isEmpty()) {
+                        if (player instanceof ServerPlayer sp) {
+                            sp.displayClientMessage(
+                                    Component.literal(
+                                            getNpcName()
+                                                    + ": This village has no guild hall yet."),
+                                    false);
+                        }
+                        return InteractionResult.SUCCESS;
                     }
+
+                    if (player instanceof ServerPlayer sp) {
+                        PlayerGuildData guildData =
+                                PlayerGuildData.get(serverLevel);
+                        PlayerPartySavedData partyData =
+                                PlayerPartySavedData.get(serverLevel);
+
+                        GuildScreen.sendOpenPacket(
+                                sp, guildIdOpt.get(), serverLevel,
+                                guildData, vdata, partyData);
+                    }
+
+                    return InteractionResult.SUCCESS;
                 }
+
             }
             case VILLAGE_LEADER -> {
                 if (level() instanceof ServerLevel sl
@@ -1249,6 +1438,7 @@ public class TownspersonMob extends PathfinderMob {
                 output.store("caravanId", UUIDUtil.CODEC, id));
         if (companyId != null)
             output.putString("companyId", companyId.toString());
+        if (combatRole != null) output.putString("combatRole", combatRole.name());
 
 
         // Identity
@@ -1325,6 +1515,10 @@ public class TownspersonMob extends PathfinderMob {
                 .ifPresent(this::setCaravanId);
         input.read("companyId", Codec.STRING)
                 .ifPresent(s -> companyId = UUID.fromString(s));
+        input.read("combatRole", Codec.STRING).ifPresent(s -> {
+            try { setCombatRole(CombatRole.valueOf(s)); }
+            catch (IllegalArgumentException ignored) {}
+        });
 
         // Identity
         input.read("npcName", Codec.STRING).ifPresent(s -> npcName = s);
@@ -1436,8 +1630,8 @@ public class TownspersonMob extends PathfinderMob {
                     EntityDataSerializers.STRING);
 
     public Optional<UUID> getGroupId() {
-        String raw = entityData.get(GROUP_ID);
-        if (raw.isEmpty()) return Optional.empty();
+        String raw = this.entityData.get(GROUP_ID);
+        if (raw == null || raw.isEmpty()) return Optional.empty();
         try {
             return Optional.of(UUID.fromString(raw));
         } catch (IllegalArgumentException e) {
@@ -1445,8 +1639,8 @@ public class TownspersonMob extends PathfinderMob {
         }
     }
 
-    public void setGroupId(UUID id) {
-        entityData.set(GROUP_ID, id.toString());
+    public void setGroupId(@Nullable UUID id) {
+        this.entityData.set(GROUP_ID, id != null ? id.toString() : "");
     }
 
     public void clearGroupId() {

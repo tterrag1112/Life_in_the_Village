@@ -292,6 +292,46 @@ public class CoinHelper {
                     new ItemStack(ModItems.DENIER.get(), (int) bronze));
         }
     }
+    public static void giveCoins(ServerPlayer player, CurrencyValue amount) {
+        long remaining = amount.toBronze();
+
+        // Check player inventory for a purse first
+        net.minecraft.world.entity.player.Inventory inv = player.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack stack = inv.getItem(i);
+            if (!(stack.getItem() instanceof PurseItem)) continue;
+
+            long rem = remaining;
+            remaining = PurseItem.mutateContents(stack, contents -> {
+                long r = rem;
+                r = depositIntoPurse(contents, ModItems.DENIER_OR.get(),
+                        CurrencyValue.GOLD_VALUE, r);
+                r = depositIntoPurse(contents, ModItems.DENIER_ARGENT.get(),
+                        CurrencyValue.SILVER_VALUE, r);
+                r = depositIntoPurse(contents, ModItems.DENIER.get(),
+                        CurrencyValue.BRONZE_VALUE, r);
+                return r;
+            });
+
+            if (remaining == 0) return;
+        }
+
+        // Fall back to loose coins added directly to inventory
+        if (remaining > 0) {
+            long gold   = remaining / CurrencyValue.GOLD_VALUE;
+            remaining  %= CurrencyValue.GOLD_VALUE;
+            long silver = remaining / CurrencyValue.SILVER_VALUE;
+            remaining  %= CurrencyValue.SILVER_VALUE;
+            long bronze = remaining;
+
+            if (gold   > 0) player.getInventory().add(
+                    new ItemStack(ModItems.DENIER_OR.get(),     (int) gold));
+            if (silver > 0) player.getInventory().add(
+                    new ItemStack(ModItems.DENIER_ARGENT.get(), (int) silver));
+            if (bronze > 0) player.getInventory().add(
+                    new ItemStack(ModItems.DENIER.get(),        (int) bronze));
+        }
+    }
 
     private static long depositIntoPurse(
             PurseItem.PouchContents contents, Item coin, int value, long remaining) {
