@@ -107,8 +107,7 @@ public class TerrainAnalyzer {
         // Clearings are a bonus (less prep work)
         float suitability = flatRatio
                 - waterRatio  * 2.0f
-                - steepRatio  * 0.5f
-                + (float) clearingCandidates.size() / Math.max(1, samples) * 0.3f;
+                - steepRatio  * 0.3f;
 
         // ── Water body detection ──────────────────────────────────────────────
         WaterBodyInfo waterBody = detectWaterBody(

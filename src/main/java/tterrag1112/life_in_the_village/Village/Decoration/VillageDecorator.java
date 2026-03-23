@@ -11,9 +11,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
-import tterrag1112.life_in_the_village.Village.Planning.BuildingFoundation;
-import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
-import tterrag1112.life_in_the_village.Village.Planning.ZoneRegistry;
+import tterrag1112.life_in_the_village.Village.Planning.*;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -89,7 +87,7 @@ public class VillageDecorator {
         // ── Step 4: Street network ────────────────────────────────────────────
         StreetNetwork network = buildStreetNetwork(
                 level, buildings, squareCenter, style, tier,
-                protectedXZ, data, village);
+                protectedXZ, data, village, layout);
 
         village.setPathHubPos(squareCenter);
         data.setDirty();
@@ -156,7 +154,14 @@ public class VillageDecorator {
             ServerLevel level, List<Building> buildings,
             BlockPos squareCenter, VillageBiomeStyle style,
             VillageSizeTier tier, Set<Long> protectedXZ,
-            VillageSavedData data, Village village) {
+            VillageSavedData data, Village village, VillageLayout layout) {
+
+
+        if (layout.hasCapitalStreetGraph()) {
+            return buildCapitalStreetNetwork(
+                    level, layout.getCapitalStreetGraph(),
+                    buildings, squareCenter, style, data, village, protectedXZ);
+        }
 
         StreetNetwork network = new StreetNetwork();
         network.setHub(squareCenter);
@@ -179,8 +184,10 @@ public class VillageDecorator {
                     : network.nearestNodeOfTier(entrance,
                     StreetTier.values()[Math.max(0, streetTier.ordinal() - 1)]);
 
-            List<BlockPos> route = RoadRouter.findRoad(
-                    level, branchFrom.pos, entrance);
+            int routerBudget = village.getBuildingIds().size() >= LayoutDensityProfile.CAPITAL_THRESHOLD
+                    ? 800_000
+                    : 500_000;
+            List<BlockPos> route = RoadRouter.findRoad(level, squareCenter, entrance, routerBudget);
 
             if (route.isEmpty()) {
                 System.out.println("VillageDecorator: no route to "
@@ -210,6 +217,101 @@ public class VillageDecorator {
             System.out.println("VillageDecorator: " + streetTier.name()
                     + " street to " + building.getType()
                     + " (" + placed.size() + " blocks)");
+        }
+
+        return network;
+    }
+
+    private static StreetNetwork buildCapitalStreetNetwork(
+            ServerLevel level,
+            CapitalStreetGraph graph,
+            List<Building> buildings,
+            BlockPos squareCenter,
+            VillageBiomeStyle style,
+            VillageSavedData data,
+            Village village,
+            Set<Long> protectedXZ) {
+
+        StreetNetwork network = new StreetNetwork();
+        network.setHub(squareCenter);
+
+        // Convert graph nodes to StreetNetwork nodes
+        Map<UUID, StreetNetwork.Node> nodeMap = new HashMap<>();
+        for (var gNode : graph.getNodes()) {
+            int surfY = level.getHeight(
+                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                    gNode.x, gNode.z);
+            BlockPos pos = new BlockPos(gNode.x, surfY, gNode.z);
+            StreetTier tier = convertTier(gNode.tier);
+            StreetNetwork.Node sNode = network.addNode(pos, tier, null);
+            nodeMap.put(gNode.id, sNode);
+        }
+
+        // Place each street segment between its two nodes
+        for (var seg : graph.getSegments()) {
+            StreetNetwork.Node sA = nodeMap.get(seg.a.id);
+            StreetNetwork.Node sB = nodeMap.get(seg.b.id);
+            if (sA == null || sB == null) continue;
+
+            StreetTier tier = convertTier(seg.tier);
+
+            // Use RoadRouter to place actual blocks between node positions
+            List<BlockPos> route = RoadRouter.findRoad(
+                    level, sA.pos, sB.pos, 800_000);
+
+            if (route.isEmpty()) continue;
+
+            List<BlockPos> placed = placeStreetSegment(
+                    level, route, style, tier, protectedXZ);
+            if (placed.isEmpty()) continue;
+
+            network.connect(sA, sB, tier, placed);
+            placed.forEach(p -> protectedXZ.add(xzKey(p.getX(), p.getZ())));
+
+            data.addVillagePath(new VillagePath(
+                    UUID.randomUUID(), village.getId(), placed,
+                    tier == StreetTier.PRIMARY
+                            ? VillagePath.PathTier.COBBLESTONE
+                            : tier == StreetTier.SECONDARY
+                            ? VillagePath.PathTier.GRAVEL
+                            : VillagePath.PathTier.DIRT));
+        }
+
+        // After streets are placed, connect building entrances to nearest street node
+        // (short spur roads only — the street grid is already there)
+        for (Building building : buildings) {
+            if (building.getType() == BuildingType.TOWN_SQUARE) continue;
+            BlockPos entrance = PathRouter.getBuildingEntrance(building);
+
+            // Find nearest street node within 40 blocks
+            StreetNetwork.Node nearest = network.nearestNodeOfTier(
+                    entrance, StreetTier.TERTIARY);
+
+            if (nearest == null || nearest.pos.distSqr(entrance) > 40 * 40) continue;
+            if (nearest.pos.distSqr(entrance) < 4) continue; // already on street
+
+            List<BlockPos> spur = RoadRouter.findRoad(
+                    level, nearest.pos, entrance, 50_000);
+            if (spur.isEmpty()) continue;
+
+            ZoneRegistry.ZoneEntry zone = ZoneRegistry.get(building.getType());
+            StreetTier spurTier = zone.preferredStreet();
+
+            List<BlockPos> spurPlaced = placeStreetSegment(
+                    level, spur, style, spurTier, protectedXZ);
+            if (spurPlaced.isEmpty()) continue;
+
+            StreetNetwork.Node entryNode = network.addNode(entrance, spurTier, building.getId());
+            network.connect(nearest, entryNode, spurTier, spurPlaced);
+
+            spurPlaced.forEach(p -> protectedXZ.add(xzKey(p.getX(), p.getZ())));
+
+            data.addVillagePath(new VillagePath(
+                    UUID.randomUUID(), village.getId(), spurPlaced,
+                    VillagePath.PathTier.DIRT));
+
+            System.out.println("VillageDecorator: capital spur to "
+                    + building.getType() + " (" + spurPlaced.size() + " blocks)");
         }
 
         return network;
@@ -1794,5 +1896,12 @@ public class VillageDecorator {
                 Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
                 pos.getX(), pos.getZ());
         return new BlockPos(pos.getX(), surfY + 1, pos.getZ());
+    }
+    private static StreetTier convertTier(CapitalStreetGraph.StreetTier t) {
+        return switch (t) {
+            case PRIMARY   -> StreetTier.PRIMARY;
+            case SECONDARY -> StreetTier.SECONDARY;
+            case TERTIARY  -> StreetTier.TERTIARY;
+        };
     }
 }

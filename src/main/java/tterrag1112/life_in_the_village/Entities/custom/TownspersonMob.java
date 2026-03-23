@@ -41,6 +41,7 @@ import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jspecify.annotations.Nullable;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Adventurer.*;
@@ -1746,40 +1747,40 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public boolean isCompanyWorker() { return companyId != null; }
 
     @SubscribeEvent
-    public static void onNpcDeath(
-            net.neoforged.neoforge.event.entity.living
-                    .LivingDeathEvent event) {
-        if (!(event.getEntity()
-                instanceof TownspersonMob npc)) return;
-        if (!(npc.level() instanceof ServerLevel level))
-            return;
-
-        // Only record deaths of notable professions
-        boolean notable = switch (npc.getProfession()) {
-            case VILLAGE_LEADER, KINGDOM_RULER,
-                 GUILDMASTER, MERCHANT -> true;
-            default -> false;
-        };
-        if (!notable) return;
+    public static void onNpcDeath(LivingDeathEvent event) {
+        if (!(event.getEntity() instanceof TownspersonMob npc)) return;
+        if (!(npc.level() instanceof ServerLevel level)) return;
 
         VillageSavedData data = VillageSavedData.get(level);
+
+        // Remove from household
+        HouseholdManager.onNpcDied(npc.getUUID(), data);
+
+        // Notify spouse
+        if (npc.getSpouseId().isPresent()) {
+            level.getEntitiesOfClass(TownspersonMob.class,
+                    npc.getBoundingBox().inflate(128),
+                    mob -> mob.getUUID().equals(npc.getSpouseId().get())
+            ).forEach(spouse -> {
+                spouse.setFamilyRole(FamilyRole.UNASSIGNED);
+            });
+        }
+
+        // Record death in kingdom history
         npc.getAssignedVillageName()
                 .flatMap(data::getVillageByName)
                 .ifPresent(village ->
-                        data.getKingdomForVillage(
-                                        village.getId())
+                        data.getKingdomForVillage(village.getId())
                                 .ifPresent(k -> {
                                     k.getHistory().recordEvent(
-                                            HistoryTextGenerator
-                                                    .notableDeath(
-                                                            npc.getNpcName(),
-                                                            village.getName(),
-                                                            npc.getProfession()
-                                                                    .getDisplayName(),
-                                                            level.getGameTime()),
+                                            HistoryTextGenerator.notableDeath(
+                                                    npc.getNpcName(),
+                                                    village.getName(),
+                                                    npc.getProfession().getDisplayName(),
+                                                    level.getGameTime()),
                                             k.getName(),
                                             k.getRulerName(level));
-                                    data.setDirty();
+                                    data.markDirty();
                                 }));
     }
 

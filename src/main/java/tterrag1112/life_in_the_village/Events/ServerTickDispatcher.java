@@ -35,6 +35,8 @@ import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Event.VillageEventScheduler;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Needs.VillageNeedsCalculator;
+import tterrag1112.life_in_the_village.Village.Simulation.KingdomEconomyEngine;
+import tterrag1112.life_in_the_village.Village.Simulation.VillageSimEngine;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
@@ -97,6 +99,15 @@ public class ServerTickDispatcher {
                 VillageEconomy.purgeStaleListings(village.getId(), tick);
                 upgradePathsIfAffordable(overworld, village, vdata);
                 checkKingdomFormation(overworld, village, vdata, tick);
+
+                VillageSimEngine.tick(overworld, village, vdata, tick);
+                for (Kingdom kingdom : vdata.getAllKingdoms()) {
+                    long kingdomOffset = Math.abs(kingdom.getName().hashCode() % 24000L);
+                    if ((tick + kingdomOffset + 1000L) % 24000L == 0) {
+                        KingdomEconomyEngine.evaluate(overworld, kingdom, vdata);
+                    }
+                }
+
 
                 vdata.setDirty();
             }

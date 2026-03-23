@@ -17,26 +17,55 @@ import tterrag1112.life_in_the_village.World.SeasonTracker;
 
 import java.util.*;
 
+/**
+ * Computes the current resource needs of a village across three categories:
+ * {@link NeedCategory#FOOD}, {@link NeedCategory#BUILDING_MATERIALS}, and
+ * {@link NeedCategory#SEEDS}.
+ *
+ * <h3>Food need</h3>
+ * Base requirement = {@code villagerCount × NUTRITION_PER_VILLAGER_PER_DAY},
+ * scaled by the current season's food multiplier. Winter (×1.4) drives CRITICAL
+ * urgency; summer (×0.9) eases pressure. Actual stock is measured in nutrition
+ * units via {@link FoodValueHelper}.
+ *
+ * <h3>Seeds need</h3>
+ * Computed per {@link FarmPlot} using its {@link FarmPlot.CropType}:
+ * <ul>
+ *   <li>PASTURE plots consume no seeds — skipped.</li>
+ *   <li>In winter, seed need returns SATISFIED — nothing to plant.</li>
+ *   <li>Required count per plot = farmlandBlocks × {@code SEED_BUFFER_MULTIPLIER}
+ *       × {@link FarmPlot.CropType#nutritionMultiplier()} — GRAIN plots are
+ *       weighted higher than BEETROOT plots because their output is more critical
+ *       to food supply.</li>
+ *   <li>Deficit is broken down by specific seed item so crafting orders and
+ *       the stockpile keeper can request the right seeds.</li>
+ * </ul>
+ *
+ * <h3>Building materials need</h3>
+ * Derived from {@link UpgradeRequirements} by diffing current and next-level
+ * structure templates for every upgradeable building. Stock is measured from
+ * the village stockpile.
+ */
 public class VillageNeedsCalculator {
 
-    // How much nutrition one villager needs per day (base, before season scaling)
+    // ── Food constants ─────────────────────────────────────────────────────────
     private static final int NUTRITION_PER_VILLAGER_PER_DAY = 20;
 
-    // Seed buffer multiplier — keep enough seeds for 2 full plantings
+    // ── Seed constants ─────────────────────────────────────────────────────────
+    /**
+     * How many full replantings worth of seeds to keep in stock.
+     * 2 = enough to replant the entire village farm twice.
+     */
     private static final int SEED_BUFFER_MULTIPLIER = 2;
 
-    // Items counted as building materials
+    // ── Building materials ─────────────────────────────────────────────────────
     private static final Set<Item> BUILDING_MATERIAL_ITEMS = Set.of(
-            Items.OAK_LOG, Items.SPRUCE_LOG, Items.BIRCH_LOG,
-            Items.OAK_PLANKS, Items.SPRUCE_PLANKS, Items.BIRCH_PLANKS,
-            Items.COBBLESTONE, Items.STONE, Items.STONE_BRICKS,
-            Items.OAK_SLAB, Items.SPRUCE_SLAB,
-            Items.GLASS, Items.GLASS_PANE,
-            Items.IRON_INGOT, Items.GRAVEL, Items.SAND
-    );
-
-    private static final Set<Item> SEED_ITEMS = Set.of(
-            Items.WHEAT_SEEDS, Items.CARROT, Items.POTATO, Items.BEETROOT_SEEDS
+            Items.OAK_LOG,     Items.SPRUCE_LOG,    Items.BIRCH_LOG,
+            Items.OAK_PLANKS,  Items.SPRUCE_PLANKS, Items.BIRCH_PLANKS,
+            Items.COBBLESTONE, Items.STONE,          Items.STONE_BRICKS,
+            Items.OAK_SLAB,    Items.SPRUCE_SLAB,
+            Items.GLASS,       Items.GLASS_PANE,
+            Items.IRON_INGOT,  Items.GRAVEL,         Items.SAND
     );
 
     // =========================================================================
@@ -47,7 +76,6 @@ public class VillageNeedsCalculator {
             ServerLevel level, Village village, VillageSavedData data) {
 
         Map<NeedCategory, VillageNeed> needs = new EnumMap<>(NeedCategory.class);
-
         Building stockpile = findStockpile(level, village, data);
 
         needs.put(NeedCategory.FOOD,
@@ -61,37 +89,30 @@ public class VillageNeedsCalculator {
     }
 
     // =========================================================================
-    // Food need  — season multiplier applied to the required nutrition figure
+    // Food need — season multiplier applied to required nutrition
     // =========================================================================
 
-    private static VillageNeed computeFoodNeed(
-            ServerLevel level, Village village,
-            VillageSavedData data, Building stockpile) {
-
+    private static VillageNeed computeFoodNeed(ServerLevel level,
+                                               Village village,
+                                               VillageSavedData data,
+                                               Building stockpile) {
         int villagerCount = countTownspeople(level, village, data);
 
-        // ── Season scaling ────────────────────────────────────────────────────
-        // In winter, consumption pressure is higher (1.4×) because nothing grows.
-        // In summer, lower pressure (0.9×) because fields are producing.
-        // The multiplier inflates the *required* nutrition figure, not the
-        // actual stock — so the same stockpile looks more or less comfortable
-        // depending on the time of year.
-        float seasonMultiplier = SeasonTracker.currentSeason(level)
-                .getFoodNeedMultiplier();
+        // Season multiplier inflates the required threshold, not the actual stock.
+        // The same stockpile looks comfortable in summer and precarious in winter.
+        float seasonMultiplier    = SeasonTracker.currentSeason(level).getFoodNeedMultiplier();
+        int   baseRequired        = villagerCount * NUTRITION_PER_VILLAGER_PER_DAY;
+        int   requiredNutrition   = Math.round(baseRequired * seasonMultiplier);
 
-        int baseRequired    = villagerCount * NUTRITION_PER_VILLAGER_PER_DAY;
-        int requiredNutrition = Math.round(baseRequired * seasonMultiplier);
-
-        // Scan stockpile for food
-        Map<Item, Integer> foodItems   = new HashMap<>();
-        int                totalNutrition = 0;
+        Map<Item, Integer> foodItems = new HashMap<>();
+        int totalNutrition = 0;
 
         if (stockpile != null) {
             for (var container : BuildingStorageAccess.findInventories(level, stockpile)) {
                 for (int i = 0; i < container.getContainerSize(); i++) {
                     ItemStack stack = container.getItem(i);
                     if (stack.isEmpty()) continue;
-                    int nutrition = FoodValueHelper.getStackNutrition(stack);
+                    float nutrition = FoodValueHelper.getStackNutrition(stack);
                     if (nutrition > 0) {
                         foodItems.merge(stack.getItem(), stack.getCount(), Integer::sum);
                         totalNutrition += nutrition;
@@ -100,39 +121,34 @@ public class VillageNeedsCalculator {
             }
         }
 
-        // Build deficit breakdown
+        // Deficit expressed as equivalent wheat units for display purposes
         Map<Item, Integer> breakdown = new HashMap<>();
         if (totalNutrition < requiredNutrition) {
-            int deficit = requiredNutrition - totalNutrition;
-            breakdown.put(Items.WHEAT, deficit);
+            breakdown.put(Items.WHEAT, requiredNutrition - totalNutrition);
         }
 
         NeedLevel needLevel = NeedLevel.fromRatio(
-                requiredNutrition == 0
-                        ? 2.0
-                        : (double) totalNutrition / requiredNutrition
-        );
+                requiredNutrition == 0 ? 2.0
+                        : (double) totalNutrition / requiredNutrition);
 
         return new VillageNeed(NeedCategory.FOOD, needLevel,
                 totalNutrition, requiredNutrition, breakdown);
     }
 
     // =========================================================================
-    // Building materials need  — unchanged from original
+    // Building materials need
     // =========================================================================
 
-    private static VillageNeed computeMaterialsNeed(
-            ServerLevel level, Village village,
-            VillageSavedData data, Building stockpile) {
-
+    private static VillageNeed computeMaterialsNeed(ServerLevel level,
+                                                    Village village,
+                                                    VillageSavedData data,
+                                                    Building stockpile) {
         Map<Item, Integer> required = new HashMap<>();
         for (UUID id : village.getBuildingIds()) {
-            data.getBuildingById(id).ifPresent(building -> {
-                UpgradeRequirements.compute(level, building).ifPresent(reqs ->
-                        reqs.getRequiredItems().forEach((item, count) ->
-                                required.merge(item, count, Integer::sum))
-                );
-            });
+            data.getBuildingById(id).ifPresent(building ->
+                    UpgradeRequirements.compute(level, building).ifPresent(reqs ->
+                            reqs.getRequiredItems().forEach((item, count) ->
+                                    required.merge(item, count, Integer::sum))));
         }
 
         Map<Item, Integer> available = new HashMap<>();
@@ -148,10 +164,9 @@ public class VillageNeedsCalculator {
             }
         }
 
-        int totalRequired  = required.values().stream().mapToInt(i -> i).sum();
+        int totalRequired  = required.values().stream().mapToInt(v -> v).sum();
         int totalAvailable = required.entrySet().stream()
-                .mapToInt(e -> Math.min(
-                        e.getValue(),
+                .mapToInt(e -> Math.min(e.getValue(),
                         available.getOrDefault(e.getKey(), 0)))
                 .sum();
 
@@ -162,54 +177,96 @@ public class VillageNeedsCalculator {
         });
 
         NeedLevel needLevel = NeedLevel.fromRatio(
-                totalRequired == 0
-                        ? 2.0
-                        : (double) totalAvailable / totalRequired
-        );
+                totalRequired == 0 ? 2.0
+                        : (double) totalAvailable / totalRequired);
 
         return new VillageNeed(NeedCategory.BUILDING_MATERIALS, needLevel,
                 totalAvailable, totalRequired, deficit);
     }
 
     // =========================================================================
-    // Seeds need  — unchanged from original
+    // Seeds need — per-plot, CropType-aware
     // =========================================================================
 
-    private static VillageNeed computeSeedsNeed(
-            ServerLevel level, Village village,
-            VillageSavedData data, Building stockpile) {
+    private static VillageNeed computeSeedsNeed(ServerLevel level,
+                                                Village village,
+                                                VillageSavedData data,
+                                                Building stockpile) {
+        // Nothing to plant in winter — return SATISFIED silently
+        if (SeasonTracker.isWinter(level)) {
+            return new VillageNeed(NeedCategory.SEEDS, NeedLevel.SATISFIED,
+                    0, 0, Collections.emptyMap());
+        }
 
-        // Count farmland blocks across all plots
-        int totalFarmland = data.getFarmPlotsInVillage(village, data)
-                .stream()
-                .mapToInt(plot -> plot.getFarmlandBlocks(level).size())
-                .sum();
+        // ── Required seeds: per-plot calculation ──────────────────────────────
+        // Each crop plot contributes a seed requirement weighted by:
+        //   • its farmland block count (raw acreage)
+        //   • SEED_BUFFER_MULTIPLIER (keep two full replantings in stock)
+        //   • CropType.nutritionMultiplier() — GRAIN (1.0×) gets full buffer,
+        //     BEETROOT (0.7×) slightly less, POTATOES (1.2×) slightly more.
+        //     This naturally prioritises wheat and potato seeds over beetroot
+        //     when generating crafting orders from the stockpile keeper.
+        Map<Item, Integer> required = new HashMap<>();
 
-        int totalRequired  = totalFarmland * SEED_BUFFER_MULTIPLIER;
-        int totalAvailable = 0;
-        Map<Item, Integer> deficit = new HashMap<>();
+        for (FarmPlot plot : data.getFarmPlotsInVillage(village, data)) {
+            FarmPlot.CropType cropType = plot.getCropType();
 
+            // PASTURE: no seeds ever
+            if (!cropType.isCropPlot()) continue;
+
+            Item seedItem = getSeedItemForCropType(cropType);
+            if (seedItem == null) continue;
+
+            int farmlandCount = plot.getFarmlandBlocks(level).size();
+            if (farmlandCount == 0) continue;
+
+            int needed = Math.round(
+                    farmlandCount
+                            * SEED_BUFFER_MULTIPLIER
+                            * cropType.nutritionMultiplier());
+
+            required.merge(seedItem, needed, Integer::sum);
+        }
+
+        // No farm plots — no seed need
+        if (required.isEmpty()) {
+            return new VillageNeed(NeedCategory.SEEDS, NeedLevel.SATISFIED,
+                    0, 0, Collections.emptyMap());
+        }
+
+        // ── Available seeds in stockpile ──────────────────────────────────────
+        Map<Item, Integer> available = new HashMap<>();
         if (stockpile != null) {
             for (var container : BuildingStorageAccess.findInventories(level, stockpile)) {
                 for (int i = 0; i < container.getContainerSize(); i++) {
                     ItemStack stack = container.getItem(i);
                     if (stack.isEmpty()) continue;
-                    if (SEED_ITEMS.contains(stack.getItem())) {
-                        totalAvailable += stack.getCount();
+                    // Only count seed types we actually need — avoids inflating
+                    // the available figure with irrelevant items
+                    if (required.containsKey(stack.getItem())) {
+                        available.merge(stack.getItem(), stack.getCount(), Integer::sum);
                     }
                 }
             }
         }
 
-        if (totalAvailable < totalRequired) {
-            deficit.put(Items.WHEAT_SEEDS, totalRequired - totalAvailable);
-        }
+        int totalRequired  = required.values().stream().mapToInt(v -> v).sum();
+        int totalAvailable = required.entrySet().stream()
+                .mapToInt(e -> Math.min(e.getValue(),
+                        available.getOrDefault(e.getKey(), 0)))
+                .sum();
+
+        // Per-seed deficit so crafting orders and the stockpile keeper
+        // can request exactly the right type
+        Map<Item, Integer> deficit = new HashMap<>();
+        required.forEach((seed, count) -> {
+            int have = available.getOrDefault(seed, 0);
+            if (have < count) deficit.put(seed, count - have);
+        });
 
         NeedLevel needLevel = NeedLevel.fromRatio(
-                totalRequired == 0
-                        ? 2.0
-                        : (double) totalAvailable / totalRequired
-        );
+                totalRequired == 0 ? 2.0
+                        : (double) totalAvailable / totalRequired);
 
         return new VillageNeed(NeedCategory.SEEDS, needLevel,
                 totalAvailable, totalRequired, deficit);
@@ -219,8 +276,9 @@ public class VillageNeedsCalculator {
     // Helpers
     // =========================================================================
 
-    private static Building findStockpile(
-            ServerLevel level, Village village, VillageSavedData data) {
+    private static Building findStockpile(ServerLevel level,
+                                          Village village,
+                                          VillageSavedData data) {
         return village.getBuildingIds().stream()
                 .map(data::getBuildingById)
                 .filter(Optional::isPresent)
@@ -230,30 +288,44 @@ public class VillageNeedsCalculator {
                 .orElse(null);
     }
 
-    private static int countTownspeople(
-            ServerLevel level, Village village, VillageSavedData data) {
+    private static int countTownspeople(ServerLevel level,
+                                        Village village,
+                                        VillageSavedData data) {
         return (int) level.getEntitiesOfClass(
                 TownspersonMob.class,
                 village.getBounds(data)
-                        .map(bounds -> new net.minecraft.world.phys.AABB(
-                                bounds.minX - 32, bounds.minY - 32, bounds.minZ - 32,
-                                bounds.maxX + 32, bounds.maxY + 32, bounds.maxZ + 32))
+                        .map(b -> new net.minecraft.world.phys.AABB(
+                                b.minX - 32, b.minY - 32, b.minZ - 32,
+                                b.maxX + 32, b.maxY + 32, b.maxZ + 32))
                         .orElse(new net.minecraft.world.phys.AABB(0, 0, 0, 0, 0, 0)),
                 mob -> mob.getAssignedVillageName()
                         .map(name -> name.equals(village.getName()))
                         .orElse(false)
         ).size();
     }
+
+    /**
+     * Returns the primary seed item for a crop type.
+     *
+     * <ul>
+     *   <li>WHEAT / GRAIN / MIXED / ORCHARD → wheat seeds (wheat-based buffer)</li>
+     *   <li>CARROTS / VEGETABLE → carrot (highest nutrition per block)</li>
+     *   <li>POTATOES → potato</li>
+     *   <li>BEETROOT → beetroot seeds</li>
+     *   <li>PASTURE → {@code null} (caller skips these)</li>
+     * </ul>
+     *
+     * VEGETABLE plots use carrot as the representative seed because carrot has
+     * the highest individual nutrition in the vegetable rotation. The FarmerGoal
+     * will plant a mix; this method only determines stockpile buffer priority.
+     */
     private static Item getSeedItemForCropType(FarmPlot.CropType cropType) {
         return switch (cropType) {
-            case WHEAT, GRAIN   -> Items.WHEAT_SEEDS;
-            case CARROTS        -> Items.CARROT;
-            case POTATOES       -> Items.POTATO;
-            case BEETROOT       -> Items.BEETROOT_SEEDS;
-            case MIXED          -> Items.WHEAT_SEEDS;
-            case VEGETABLE      -> Items.CARROT;
-            case ORCHARD        -> Items.WHEAT_SEEDS;
-            case PASTURE        -> null; // PASTURE consumes no seeds — skip in caller
+            case WHEAT, GRAIN, MIXED, ORCHARD -> Items.WHEAT_SEEDS;
+            case CARROTS, VEGETABLE            -> Items.CARROT;
+            case POTATOES                      -> Items.POTATO;
+            case BEETROOT                      -> Items.BEETROOT_SEEDS;
+            case PASTURE                       -> null;
         };
     }
 }

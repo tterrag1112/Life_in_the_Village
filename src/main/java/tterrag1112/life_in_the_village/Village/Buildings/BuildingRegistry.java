@@ -342,6 +342,26 @@ public class BuildingRegistry {
                         Items.OAK_LOG, 64),
                 100, 20, true,
                 "castle/level_1");
+
+        register(BuildingType.CHANCELLERY,
+                VillageSizeTier.CITY, 2,
+                List.of(BuildingType.TOWN_HALL,
+                        BuildingType.CASTLE),
+                Map.of(Items.STONE_BRICKS, 128,
+                        Items.OAK_LOG,     64,
+                        Items.GOLD_INGOT,  8),
+                40, 20, true,
+                "chancellery/level_1");
+
+        register(BuildingType.TREASURY,
+                VillageSizeTier.CITY, 2,
+                List.of(BuildingType.CASTLE,
+                        BuildingType.STOCKPILE),
+                Map.of(Items.STONE_BRICKS, 192,
+                        Items.IRON_INGOT,  32,
+                        Items.GOLD_INGOT, 16),
+                60, 25, true,
+                "treasury/level_1");
     }
 
     private static void register(BuildingType type,

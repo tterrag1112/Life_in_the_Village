@@ -32,7 +32,7 @@ import java.util.*;
 public class RoadRouter {
 
     // ── Pathfinding ───────────────────────────────────────────────────────────
-    private static final int   MAX_NODES       = 200_000;
+    private static final int MAX_NODES = 500_000;
     private static final int   ROAD_HALF_WIDTH = 2;      // 5 blocks wide total
 
     // ── Slope costs — exponential penalty keeps routes in valleys ────────────
@@ -100,6 +100,71 @@ public class RoadRouter {
         }
 
         // Budget exhausted — return best partial path, no fallback straight line
+        if (bestSoFar.parent != null) {
+            System.out.println("RoadRouter: budget exhausted ("
+                    + iterations + " nodes), partial path "
+                    + (int)bestSoFar.h + " blocks short");
+            return densify(reconstructPath(bestSoFar), level);
+        }
+
+        return Collections.emptyList();
+    }
+
+    public static List<BlockPos> findRoad(ServerLevel level,
+                                          BlockPos from,
+                                          BlockPos to,
+                                          int maxNodes) {
+        // Identical to findRoad(level, from, to) but uses maxNodes
+        // instead of the MAX_NODES constant.
+        // Copy the existing findRoad body here, replacing MAX_NODES with maxNodes.
+        BlockPos start = solidSurface(level, from);
+        BlockPos end   = solidSurface(level, to);
+
+        PriorityQueue<Node> open = new PriorityQueue<>(
+                Comparator.comparing(n -> n.f));
+        Map<Long, Node> allNodes = new HashMap<>();
+        Set<Long>       closed   = new HashSet<>();
+
+        Node startNode = new Node(start, null, 0f, heuristic(level, start, end));
+        open.add(startNode);
+        allNodes.put(key(start), startNode);
+
+        int  iterations = 0;
+        Node bestSoFar  = startNode;
+
+        while (!open.isEmpty() && iterations < maxNodes) {
+            iterations++;
+            Node current = open.poll();
+
+            if (current.h < bestSoFar.h) bestSoFar = current;
+
+            if (current.pos.closerThan(end, 6)) {
+                List<BlockPos> path = reconstructPath(current);
+                path.add(end);
+                return densify(path, level);
+            }
+
+            closed.add(key(current.pos));
+
+            for (BlockPos nb : getNeighbors(current.pos)) {
+                BlockPos ns    = solidSurface(level, nb);
+                long     nsKey = key(ns);
+                if (closed.contains(nsKey)) continue;
+
+                float moveCost = movementCost(level, current.pos, ns);
+                if (moveCost >= COST_WATER * 2f) continue;
+
+                float g = current.g + moveCost;
+                float h = heuristic(level, ns, end);
+                Node existing = allNodes.get(nsKey);
+                if (existing == null || g < existing.g) {
+                    Node node = new Node(ns, current, g, h);
+                    allNodes.put(nsKey, node);
+                    open.add(node);
+                }
+            }
+        }
+
         if (bestSoFar.parent != null) {
             System.out.println("RoadRouter: budget exhausted ("
                     + iterations + " nodes), partial path "
@@ -255,6 +320,62 @@ public class RoadRouter {
         smoothRoadEdges(level, placed, placedXZ);
 
         return placed;
+    }
+    public static List<BlockPos> findRoadWithMerge(
+            ServerLevel level,
+            BlockPos from,
+            BlockPos to,
+            tterrag1112.life_in_the_village.Networking.VillageSavedData data) {
+
+        final int MERGE_SNAP_RADIUS = 120; // blocks — how close a road must be to trigger merge
+
+        // ── Find nearest existing road block to the route midpoint ───────────
+        int midX = (from.getX() + to.getX()) / 2;
+        int midZ = (from.getZ() + to.getZ()) / 2;
+
+        BlockPos bestMergePoint = null;
+        double   bestMergeDist  = MERGE_SNAP_RADIUS * MERGE_SNAP_RADIUS;
+
+        for (tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad road
+                : data.getAllTradeRoads()) {
+            // Sample every 8th block for performance (roads can be thousands of blocks)
+            List<BlockPos> blocks = road.getBlocks();
+            for (int i = 0; i < blocks.size(); i += 8) {
+                BlockPos b   = blocks.get(i);
+                double   dx  = b.getX() - midX;
+                double   dz  = b.getZ() - midZ;
+                double   dSq = dx * dx + dz * dz;
+                if (dSq < bestMergeDist) {
+                    bestMergeDist  = dSq;
+                    bestMergePoint = b;
+                }
+            }
+        }
+
+        if (bestMergePoint == null) {
+            // No existing road nearby — plain A*
+            return findRoad(level, from, to);
+        }
+
+        System.out.println("RoadRouter: merging route through existing road at "
+                + bestMergePoint.toShortString()
+                + " (dist=" + (int)Math.sqrt(bestMergeDist) + " blocks)");
+
+        // ── Route in two segments ─────────────────────────────────────────────
+        List<BlockPos> feeder = findRoad(level, from,           bestMergePoint);
+        List<BlockPos> tail   = findRoad(level, bestMergePoint, to);
+
+        if (feeder.isEmpty() || tail.isEmpty()) {
+            // Merge point routing failed — fall back to direct
+            return findRoad(level, from, to);
+        }
+
+        // Concatenate, removing the duplicate merge point at the join
+        List<BlockPos> combined = new ArrayList<>(feeder);
+        if (!tail.isEmpty()) {
+            combined.addAll(tail.subList(1, tail.size())); // skip duplicate merge node
+        }
+        return combined;
     }
 
     // =========================================================================
@@ -628,6 +749,28 @@ public class RoadRouter {
 
     private static long xzKey(int x, int z) {
         return ((long)(x + 30_000_000)) << 32 | (z + 30_000_000);
+    }
+    public static BlockPos nearestRoadBlock(
+            BlockPos pos,
+            int radiusBlocks,
+            tterrag1112.life_in_the_village.Networking.VillageSavedData data) {
+
+        BlockPos best    = null;
+        long     bestSq  = (long) radiusBlocks * radiusBlocks;
+
+        for (tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad road
+                : data.getAllTradeRoads()) {
+            List<BlockPos> blocks = road.getBlocks();
+            // Sample every 4th block
+            for (int i = 0; i < blocks.size(); i += 4) {
+                BlockPos b  = blocks.get(i);
+                long     dx = b.getX() - pos.getX();
+                long     dz = b.getZ() - pos.getZ();
+                long     sq = dx * dx + dz * dz;
+                if (sq < bestSq) { bestSq = sq; best = b; }
+            }
+        }
+        return best;
     }
 
     // =========================================================================

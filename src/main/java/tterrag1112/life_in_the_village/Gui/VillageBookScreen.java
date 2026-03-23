@@ -10,6 +10,8 @@ import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket;
 import tterrag1112.life_in_the_village.Networking.VillageActionPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
+import tterrag1112.life_in_the_village.World.SeasonTracker;
 
 import java.util.*;
 
@@ -409,7 +411,18 @@ public class VillageBookScreen extends Screen {
                 new Stat("Treasury",   formatBronze(data.treasuryBronze())),
                 new Stat("Routes",     data.tradeRouteCount() + " active"),
                 new Stat("Buildings",  String.valueOf(data.buildingTypes().size())),
+                new Stat("Season",   data.seasonName()),
+
         };
+        if (data.openOrderCount() > 0) {
+            g.fill(px, y, px + pw, y + 12, 0xFFEEFFEE);
+            g.renderOutline(px, y, pw, 12, COL_BORDER);
+            g.drawString(font,
+                    "\u2709 " + data.openOrderCount() + " open commission"
+                            + (data.openOrderCount() > 1 ? "s" : "") + " — sneak+talk to leader",
+                    px + 3, y + 2, COL_GREEN_TXT, false);
+            y += 16;
+        }
 
         for (int i = 0; i < stats.length; i += 2) {
             if (y + 24 > maxY) break;
@@ -1219,6 +1232,9 @@ public class VillageBookScreen extends Screen {
                         price, inPlayerCompany, inOtherCompany));
             });
         }
+        String seasonName = SeasonTracker.currentSeason(level).displayName;
+        int openOrderCount = (int) vdata.getOrdersForVillage(village.getId())
+                .stream().filter(CraftingOrder::isOpen).count();
 
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
                 new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket(
@@ -1229,7 +1245,7 @@ public class VillageBookScreen extends Screen {
                         kingdomName, activeEvent, routeCount,
                         hasCompanyHere, companyId, companyName,
                         companyWorkerCount, companyBuildingNames,
-                        purchasable));
+                        purchasable, seasonName, openOrderCount));
     }
 
     private static String formatEnum(String s) {

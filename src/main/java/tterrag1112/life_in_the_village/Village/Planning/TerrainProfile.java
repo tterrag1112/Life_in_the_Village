@@ -51,7 +51,7 @@ public record TerrainProfile(
 
     public int heightVariance() { return maxY - minY; }
 
-    public boolean isSuitable() { return suitability > 0.15f; }
+    public boolean isSuitable() { return suitability > 0.05f; }
 
     /** True if a significant water body was detected near the site. */
     public boolean hasWater() { return waterBody != null; }

@@ -259,8 +259,8 @@ public class WorkplaceAssignmentManager {
             profData.getAllWorkplaces().forEach((profession, entry) -> {
                 if (!entry.buildingId().equals(buildingId)) return;
                 int passiveXp = Math.max(1, saleAmount / 10);
-                ProfessionEvents.onJobPostingCompleted(player, profession, passiveXp);
-            });
+                UUID villageId = entry.villageId();
+                ProfessionEvents.onJobPostingCompleted(player, profession, passiveXp, villageId);            });
         });
     }
 

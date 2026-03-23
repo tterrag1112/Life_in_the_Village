@@ -1,59 +1,34 @@
 {
   "type": "farming_village",
   "culture": "default",
+  "shape_profile": {
+    "forced_axis": true,
+    "max_rings": 1,
+    "shape_type": "LINEAR",
+    "street_density": 1.1,
+    "walled_by_default": false
+  },
   "starter_buildings": [
     {
       "type": "TOWN_HALL",
-      "offset": [
-        0,
-        0,
-        0
-      ],
       "structure": "town_hall/level_1"
     },
     {
       "type": "STOCKPILE",
-      "offset": [
-        20,
-        0,
-        0
-      ],
       "structure": "stockpile/level_1"
     },
     {
       "type": "FARMHOUSE",
-      "offset": [
-        0,
-        0,
-        20
-      ],
-      "structure": "farmhouse/level_1"
-    },
-    {
-      "type": "FARMHOUSE",
-      "offset": [
-        20,
-        0,
-        20
-      ],
+      "max_count": 2,
+      "min_count": 2,
       "structure": "farmhouse/level_1"
     },
     {
       "type": "HOUSE",
-      "offset": [
-        -20,
-        0,
-        0
-      ],
       "structure": "house/level_1"
     },
     {
       "type": "MARKET",
-      "offset": [
-        40,
-        0,
-        0
-      ],
       "structure": "market/level_1"
     }
   ],

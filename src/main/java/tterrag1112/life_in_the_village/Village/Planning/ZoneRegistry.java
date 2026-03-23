@@ -28,13 +28,15 @@ public class ZoneRegistry {
     static {
         // ── Civic ──────────────────────────────────────────────────────────────
         reg(BuildingType.TOWN_HALL,    BuildingZone.CIVIC,       0, false, StreetTier.PRIMARY);
-        reg(BuildingType.GUILD_HALL,   BuildingZone.CIVIC,       1, true,  StreetTier.PRIMARY);
-        reg(BuildingType.INN,          BuildingZone.CIVIC,       2, true,  StreetTier.PRIMARY);
-        reg(BuildingType.MARKET,       BuildingZone.CIVIC,       3, true,  StreetTier.PRIMARY);
-        reg(BuildingType.BELL_TOWER,   BuildingZone.CIVIC,       4, true,  StreetTier.PRIMARY);
-        reg(BuildingType.TEMPLE,       BuildingZone.CIVIC,       5, true,  StreetTier.PRIMARY);
-        reg(BuildingType.LIBRARY,      BuildingZone.CIVIC,       6, true,  StreetTier.SECONDARY);
-        reg(BuildingType.NOBLE_MANOR,  BuildingZone.CIVIC,       7, true,  StreetTier.PRIMARY);
+        reg(BuildingType.CHANCELLERY,  BuildingZone.CIVIC,       1, false, StreetTier.PRIMARY);  // NEW
+        reg(BuildingType.GUILD_HALL,   BuildingZone.CIVIC,       2, true,  StreetTier.PRIMARY);
+        reg(BuildingType.INN,          BuildingZone.CIVIC,       3, true,  StreetTier.PRIMARY);
+        reg(BuildingType.MARKET,       BuildingZone.CIVIC,       4, true,  StreetTier.PRIMARY);
+        reg(BuildingType.BELL_TOWER,   BuildingZone.CIVIC,       5, true,  StreetTier.PRIMARY);
+        reg(BuildingType.TEMPLE,       BuildingZone.CIVIC,       6, true,  StreetTier.PRIMARY);
+        reg(BuildingType.LIBRARY,      BuildingZone.CIVIC,       7, true,  StreetTier.SECONDARY);
+        reg(BuildingType.NOBLE_MANOR,  BuildingZone.CIVIC,       8, true,  StreetTier.PRIMARY);
+        reg(BuildingType.WELL,         BuildingZone.CIVIC,       9, false, StreetTier.SECONDARY);
 
         // ── Production ────────────────────────────────────────────────────────
         reg(BuildingType.BLACKSMITH,   BuildingZone.PRODUCTION,  0, true,  StreetTier.SECONDARY);
@@ -67,7 +69,7 @@ public class ZoneRegistry {
         reg(BuildingType.BARRACKS,     BuildingZone.DEFENSIVE,    2, true,  StreetTier.PRIMARY);
         reg(BuildingType.PRISON,       BuildingZone.DEFENSIVE,    3, true,  StreetTier.TERTIARY);
         reg(BuildingType.CASTLE,       BuildingZone.DEFENSIVE,    4, false, StreetTier.PRIMARY);
-        reg(BuildingType.WELL,         BuildingZone.CIVIC,         8, false, StreetTier.SECONDARY);
+        reg(BuildingType.TREASURY,     BuildingZone.DEFENSIVE,    5, true,  StreetTier.PRIMARY);  // NEW
     }
 
     private static void reg(BuildingType type, BuildingZone zone,

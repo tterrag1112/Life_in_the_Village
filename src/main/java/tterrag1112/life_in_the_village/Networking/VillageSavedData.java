@@ -23,6 +23,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
 import tterrag1112.life_in_the_village.Village.JobPosting;
 import tterrag1112.life_in_the_village.Village.Reputation.VillageReputation;
+import tterrag1112.life_in_the_village.Village.Simulation.VillageSimData;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -94,7 +95,8 @@ public class VillageSavedData extends SavedData {
     public record VillageGovernanceData(
             List<Kingdom>      kingdoms,
             List<VillageEvent> events,
-            List<GuildData>    guilds
+            List<GuildData>    guilds,
+            List<VillageSimData> simSnapshots
     ) {
         public static final Codec<VillageGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -106,7 +108,9 @@ public class VillageSavedData extends SavedData {
                                 .forGetter(VillageGovernanceData::events),
                         GuildData.CODEC.listOf()
                                 .optionalFieldOf("guilds", new ArrayList<>())
-                                .forGetter(VillageGovernanceData::guilds)
+                                .forGetter(VillageGovernanceData::guilds),
+                        VillageSimData.CODEC.listOf().optionalFieldOf("simSnapshots", new ArrayList<>())
+                                .forGetter(VillageGovernanceData::simSnapshots)
                 ).apply(i, VillageGovernanceData::new));
     }
 
@@ -205,7 +209,7 @@ public class VillageSavedData extends SavedData {
                     VillageGovernanceData.CODEC
                             .fieldOf("governanceData")
                             .forGetter(d -> new VillageGovernanceData(
-                                    d.kingdoms, d.events, d.guilds)),
+                                    d.kingdoms, d.events, d.guilds, new ArrayList<>(d.simData.values()))),
                     VillageSocialData.CODEC
                             .fieldOf("socialData")
                             .forGetter(d -> new VillageSocialData(
@@ -257,6 +261,7 @@ public class VillageSavedData extends SavedData {
         data.kingdoms.addAll(governanceData.kingdoms());
         data.events.addAll(governanceData.events());
         data.guilds.addAll(governanceData.guilds());
+        governanceData.simSnapshots().forEach(s -> data.simData.put(s.getVillageId(), s));
 
         // Social
         socialData.households().forEach(h ->
@@ -312,6 +317,7 @@ public class VillageSavedData extends SavedData {
 
     // Governance
     private final List<Kingdom>           kingdoms          = new ArrayList<>();
+    private final Map<UUID, VillageSimData> simData = new LinkedHashMap<>();
     private final List<VillageEvent>      events            = new ArrayList<>();
     private final List<GuildData>         guilds            = new ArrayList<>();
 
@@ -801,5 +807,17 @@ public class VillageSavedData extends SavedData {
     }
     public Map<UUID, BlockPos> getAllRentedBeds() {
         return Collections.unmodifiableMap(rentedBeds);
+    }
+    public Optional<VillageSimData> getSimData(UUID villageId) {
+        return Optional.ofNullable(simData.get(villageId));
+    }
+
+    public void putSimData(VillageSimData sim) {
+        simData.put(sim.getVillageId(), sim);
+        setDirty();
+    }
+
+    public Collection<VillageSimData> getAllSimData() {
+        return Collections.unmodifiableCollection(simData.values());
     }
 }

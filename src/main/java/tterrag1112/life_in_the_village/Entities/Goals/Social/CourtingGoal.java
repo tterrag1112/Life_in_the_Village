@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Entities.Goals.Social;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
+import tterrag1112.life_in_the_village.Entities.HouseholdManager;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -110,6 +111,14 @@ public class CourtingGoal extends Goal {
 
         // Propagate head's surname to spouse
         entity.adoptSurname(entity.getSurname(), level);
+
+        // Update household — spouse moves into the head's house
+        if (entity.level() instanceof ServerLevel sl) {
+            VillageSavedData data = VillageSavedData.get(sl);
+            entity.getHouseId().ifPresent(houseId ->
+                    HouseholdManager.onNpcMovedHouse(
+                            target.getUUID(), houseId, false, data, sl.getGameTime()));
+        }
         // After setting spouse IDs
         if (entity.level() instanceof ServerLevel sl) {
             VillageSavedData data = VillageSavedData.get(sl);

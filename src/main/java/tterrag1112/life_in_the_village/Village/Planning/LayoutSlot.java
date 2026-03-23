@@ -2,6 +2,7 @@
 package tterrag1112.life_in_the_village.Village.Planning;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Rotation;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 /**
@@ -159,4 +160,22 @@ public class LayoutSlot {
                 + (buildingType != null ? "(" + buildingType + ")" : "")
                 + "[" + halfW * 2 + "x" + halfL * 2 + "]";
     }
+
+
+public static class LayoutSlotWithRotation extends LayoutSlot {
+
+    private final Rotation rotation;
+
+    public LayoutSlotWithRotation(BlockPos pos,
+                                  BuildingType buildingType,
+                                  String structurePath,
+                                  int radius,
+                                  Rotation rotation) {
+        super(pos, buildingType, structurePath, radius);
+        this.rotation = rotation;
+    }
+
+    /** Returns the pre-determined rotation for this slot. */
+    public Rotation getPresetRotation() { return rotation; }
+}
 }

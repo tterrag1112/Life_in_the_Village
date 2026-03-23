@@ -16,6 +16,7 @@ public class VillageLayout {
     private final List<LayoutSlot>      slots = new ArrayList<>();
     /** Center of the planned village (usually near the town hall). */
     private BlockPos                    center;
+    private CapitalStreetGraph capitalStreetGraph = null;
 
     private BlockPos townSquarePos;
 
@@ -111,4 +112,17 @@ public class VillageLayout {
 
     public BlockPos getTownSquarePos()            { return townSquarePos;  }
     public void     setTownSquarePos(BlockPos pos){ townSquarePos = pos;   }
+
+    public CapitalStreetGraph getCapitalStreetGraph() {
+        return capitalStreetGraph;
+    }
+
+    public void setCapitalStreetGraph(CapitalStreetGraph graph) {
+        this.capitalStreetGraph = graph;
+    }
+
+    public boolean hasCapitalStreetGraph() {
+        return capitalStreetGraph != null;
+    }
+
 }

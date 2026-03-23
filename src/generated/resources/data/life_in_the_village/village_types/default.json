@@ -1,131 +1,50 @@
 {
   "type": "default",
   "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "RADIAL",
+    "street_density": 1.0,
+    "walled_by_default": false
+  },
   "starter_buildings": [
     {
       "type": "TOWN_HALL",
-      "offset": [
-        0,
-        0,
-        0
-      ],
       "structure": "town_hall/level_1"
     },
     {
       "type": "STOCKPILE",
-      "offset": [
-        20,
-        0,
-        0
-      ],
       "structure": "stockpile/level_1"
     },
     {
       "type": "FARMHOUSE",
-      "offset": [
-        0,
-        0,
-        20
-      ],
       "structure": "farmhouse/level_1"
     },
     {
       "type": "HOUSE",
-      "offset": [
-        -20,
-        0,
-        0
-      ],
-      "structure": "house/level_1"
-    },
-    {
-      "type": "HOUSE",
-      "offset": [
-        -20,
-        0,
-        0
-      ],
-      "structure": "house/level_1"
-    },
-    {
-      "type": "HOUSE",
-      "offset": [
-        -20,
-        0,
-        0
-      ],
-      "structure": "house/level_1"
-    },
-    {
-      "type": "HOUSE",
-      "offset": [
-        -20,
-        0,
-        0
-      ],
-      "structure": "house/level_1"
-    },
-    {
-      "type": "HOUSE",
-      "offset": [
-        -20,
-        0,
-        0
-      ],
-      "structure": "house/level_1"
-    },
-    {
-      "type": "HOUSE",
-      "offset": [
-        -20,
-        0,
-        0
-      ],
+      "max_count": 3,
+      "min_count": 3,
       "structure": "house/level_1"
     },
     {
       "type": "GUILD_HALL",
-      "offset": [
-        20,
-        0,
-        40
-      ],
       "structure": "guild_hall/level_1"
     },
     {
       "type": "GUARD_TOWER",
-      "offset": [
-        40,
-        0,
-        40
-      ],
       "structure": "guard_tower/level_1"
     },
     {
       "type": "MINE",
-      "offset": [
-        40,
-        0,
-        20
-      ],
       "structure": "mine/level_1"
     },
     {
       "type": "BLACKSMITH",
-      "offset": [
-        0,
-        0,
-        40
-      ],
       "structure": "blacksmith/level_1"
     },
     {
       "type": "INN",
-      "offset": [
-        0,
-        0,
-        50
-      ],
       "structure": "inn/level_1"
     }
   ],
@@ -144,6 +63,11 @@
       "building_type": "STOCKPILE",
       "count": 128,
       "item": "minecraft:cobblestone"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 16,
+      "item": "minecraft:iron_ingot"
     },
     {
       "building_type": "TOWN_HALL",
@@ -209,7 +133,7 @@
     },
     {
       "building_type": "INN",
-      "family_role": "UNASSIGNEd",
+      "family_role": "UNASSIGNED",
       "profession": "INNKEEPER"
     }
   ]

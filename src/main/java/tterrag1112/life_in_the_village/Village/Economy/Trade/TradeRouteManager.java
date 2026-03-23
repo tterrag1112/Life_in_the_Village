@@ -91,8 +91,8 @@ public class TradeRouteManager {
             BlockPos newHub    = newVillage.getEffectivePathHub(data);
             BlockPos targetHub = target.getEffectivePathHub(data);
 
-            List<BlockPos> path = RoadRouter.findRoad(
-                    level, newHub, targetHub);
+            List<BlockPos> path = RoadRouter.findRoadWithMerge(
+                    level, newHub, targetHub, data);
 
             if (path.isEmpty()) {
                 System.out.println("TradeRouteManager: no path found, skipping");
@@ -156,8 +156,8 @@ public class TradeRouteManager {
                                           BlockPos villageHub,
                                           Village village,
                                           VillageSavedData data) {
-        List<BlockPos> entrancePath = RoadRouter.findRoad(
-                level, roadEndpoint, villageHub);
+        List<BlockPos> entrancePath = RoadRouter.findRoadWithMerge(
+                level, roadEndpoint, villageHub, data);
 
         if (entrancePath.isEmpty()) return;
 

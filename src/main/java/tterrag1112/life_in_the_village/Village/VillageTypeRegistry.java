@@ -51,14 +51,13 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
 
                 List<VillageTypeData.StarterBuilding> buildings = new ArrayList<>();
                 for (var el : json.getAsJsonArray("starter_buildings")) {
-                    JsonObject b = el.getAsJsonObject();
-                    JsonArray off = b.getAsJsonArray("offset");
+                    JsonObject b  = el.getAsJsonObject();
+                    int minCount  = b.has("min_count") ? b.get("min_count").getAsInt() : 1;
+                    int maxCount  = b.has("max_count") ? b.get("max_count").getAsInt() : minCount;
                     buildings.add(new VillageTypeData.StarterBuilding(
                             b.get("type").getAsString(),
                             b.get("structure").getAsString(),
-                            new int[]{ off.get(0).getAsInt(),
-                                    off.get(1).getAsInt(),
-                                    off.get(2).getAsInt() }
+                            minCount, maxCount
                     ));
                 }
 
@@ -84,8 +83,36 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
                     }
                 }
 
+                VillageTypeData.VillageShapeProfile shapeProfile = VillageTypeData.VillageShapeProfile.defaultProfile();
+                if (json.has("shape_profile")) {
+                    JsonObject sp = json.getAsJsonObject("shape_profile");
+
+                    VillageTypeData.ShapeType shapeType = VillageTypeData.ShapeType.RADIAL;
+                    if (sp.has("shape_type")) {
+                        try {
+                            shapeType = VillageTypeData.ShapeType.valueOf(
+                                    sp.get("shape_type").getAsString().toUpperCase());
+                        } catch (IllegalArgumentException ignored) {
+                            LOGGER.warn("Unknown shape_type '{}' in {}, defaulting to RADIAL",
+                                    sp.get("shape_type").getAsString(), location);
+                        }
+                    }
+
+                    boolean forcedAxis      = sp.has("forced_axis")
+                            && sp.get("forced_axis").getAsBoolean();
+                    int maxRings             = sp.has("max_rings")
+                            ? sp.get("max_rings").getAsInt() : 2;
+                    float streetDensity      = sp.has("street_density")
+                            ? sp.get("street_density").getAsFloat() : 1.0f;
+                    boolean walledByDefault  = sp.has("walled_by_default")
+                            && sp.get("walled_by_default").getAsBoolean();
+
+                    shapeProfile = new VillageTypeData.VillageShapeProfile(
+                            shapeType, forcedAxis, maxRings, streetDensity, walledByDefault);
+                }
+
                 loaded.put(type, new VillageTypeData(
-                        type, culture, buildings, npcs, items));
+                        type, culture, buildings, npcs, items, shapeProfile));
                 LOGGER.info("Loaded village type '{}'", type);
 
             } catch (Exception e) {

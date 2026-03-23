@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
+import tterrag1112.life_in_the_village.Entities.HouseholdManager;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -97,6 +98,13 @@ public class SeekHouseGoal extends Goal {
         if (isHouseEmpty(level, targetHouse)) {
             entity.setHouseId(targetHouse.getId());
             entity.setFamilyRole(FamilyRole.HEAD);
+            // Register in household data
+            HouseholdManager.onNpcMovedHouse(
+                    entity.getUUID(),
+                    targetHouse.getId(),
+                    entity.isChild(),
+                    data,
+                    level.getGameTime());
             entity.setAssignedVillageName(
                     data.getVillageAt(targetHouse.getShape().getOrigin())
                             .map(Village::getName).orElse("")

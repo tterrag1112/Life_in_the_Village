@@ -44,16 +44,33 @@ public class VillageSitePreparer {
     public static void prepare(ServerLevel level,
                                BlockPos centre,
                                int villageLevel) {
-        // Radius scales with village level; always exceeds the outermost ring
-        // (ring 3 max ≈ 60 blocks; add 20 block buffer)
-        int radius = Math.max(72, 56 + villageLevel * 8);
+        prepare(level, centre, villageLevel, false);
+    }
+
+    public static void prepareCapital(ServerLevel level,
+                                      BlockPos centre,
+                                      int villageLevel) {
+        prepare(level, centre, villageLevel, true);
+    }
+
+    private static void prepare(ServerLevel level,
+                                BlockPos centre,
+                                int villageLevel,
+                                boolean isCapital) {
+        // Capitals get a larger radius and more aggressive smoothing
+        int radius      = isCapital
+                ? Math.max(180, 120 + villageLevel * 6)
+                : Math.max(72, 56 + villageLevel * 8);
+        int smoothPasses = isCapital ? 5 : SMOOTH_PASSES;
+        int maxStep      = isCapital ? 4 : MAX_STEP;
+
         System.out.println("VillageSitePreparer: preparing radius="
-                + radius + " at " + centre);
+                + radius + (isCapital ? " [CAPITAL]" : "") + " at " + centre);
 
         clearTrees(level, centre, radius);
         fillSurfaceHoles(level, centre, radius);
-        for (int i = 0; i < SMOOTH_PASSES; i++) {
-            smoothHeights(level, centre, radius);
+        for (int i = 0; i < smoothPasses; i++) {
+            smoothHeights(level, centre, radius, maxStep);
         }
 
         System.out.println("VillageSitePreparer: site preparation complete");
@@ -100,7 +117,7 @@ public class VillageSitePreparer {
         }
 
         for (BlockPos pos : toRemove) {
-            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 18);
         }
 
         System.out.println("VillageSitePreparer: cleared "
@@ -190,7 +207,7 @@ public class VillageSitePreparer {
                     BlockState s   = level.getBlockState(below);
                     if (s.isAir()) {
                         level.setBlock(below,
-                                Blocks.DIRT.defaultBlockState(), 3);
+                                Blocks.DIRT.defaultBlockState(), 18);
                     } else {
                         break; // solid — no gap here
                     }
@@ -210,7 +227,7 @@ public class VillageSitePreparer {
      * Only modifies natural terrain blocks.
      */
     private static void smoothHeights(ServerLevel level,
-                                      BlockPos centre, int radius) {
+                                      BlockPos centre, int radius, int maxStep) {
         int size    = radius * 2 + 1;
         int[] heights = new int[size * size];
 
@@ -249,13 +266,13 @@ public class VillageSitePreparer {
 
                 int targetY = sum / count;
                 // Clamp change per pass
-                targetY = Math.max(currentY - MAX_STEP,
-                        Math.min(currentY + MAX_STEP, targetY));
+                targetY = Math.max(currentY - maxStep,
+                        Math.min(currentY + maxStep, targetY));
 
                 int dy = Math.abs(targetY - currentY);
                 int effectiveMaxStep = dy > RIDGE_THRESHOLD / 2
                         ? 1          // steep column — preserve more shape
-                        : MAX_STEP;  // normal column — full smoothing
+                        : maxStep;  // normal column — full smoothing
 
                 targetY = Math.max(currentY - effectiveMaxStep,
                         Math.min(currentY + effectiveMaxStep, targetY));
@@ -264,6 +281,10 @@ public class VillageSitePreparer {
                 adjustColumn(level, cx, cz, currentY, targetY);
             }
         }
+    }
+    private static void smoothHeights(ServerLevel level,
+                                      BlockPos centre, int radius) {
+        smoothHeights(level, centre, radius, MAX_STEP);
     }
 
     /**
@@ -290,7 +311,7 @@ public class VillageSitePreparer {
                     boolean isTop = (y == targetY);
                     level.setBlock(pos, isTop
                             ? capBlock(level, x, z, currentY)
-                            : Blocks.DIRT.defaultBlockState(), 3);
+                            : Blocks.DIRT.defaultBlockState(), 18);
                 }
             }
         } else {
@@ -299,7 +320,7 @@ public class VillageSitePreparer {
                 BlockPos pos = new BlockPos(x, y, z);
                 BlockState s = level.getBlockState(pos);
                 if (isNaturalTerrain(s)) {
-                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 18);
                 } else {
                     break; // hit stone or player-placed block
                 }
@@ -308,7 +329,7 @@ public class VillageSitePreparer {
             BlockPos newTop = new BlockPos(x, targetY, z);
             BlockState top  = level.getBlockState(newTop);
             if (top.is(Blocks.DIRT) || top.is(Blocks.COARSE_DIRT)) {
-                level.setBlock(newTop, capBlock(level, x, z, currentY), 3);
+                level.setBlock(newTop, capBlock(level, x, z, currentY), 18);
             }
         }
     }

@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingCondition;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
@@ -33,6 +34,9 @@ public class VillageAgingManager {
     private static final int[] TIER_REQUIREMENTS = {
             0, 0, 1, 1, 2, 2, 3, 3, 3, 3
     };
+
+    private static final long DEGRADE_INTERVAL = 24000L * 7;
+
 
     // =========================================================================
     // Tick
@@ -65,6 +69,9 @@ public class VillageAgingManager {
         // field instead.
         long lastLevelUp = village.getLastLevelUpTick();
         if (currentTick - lastLevelUp < LEVELUP_COOLDOWN) return;
+
+        tickBuildingDecay(village, data, currentTick);
+
 
         // ── Condition checks ──────────────────────────────────────────────────
         int  thresholdIdx  = Math.min(currentLevel - 1,
@@ -167,5 +174,27 @@ public class VillageAgingManager {
                 })
                 .max()
                 .orElse(0);
+    }
+    private static void tickBuildingDecay(Village village,
+                                          VillageSavedData data,
+                                          long currentTick) {
+        village.getBuildingIds().stream()
+                .map(data::getBuildingById)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                // Never degrade NEW — VillageWeathering advances it to WEATHERED
+                .filter(b -> b.getCondition() != BuildingCondition.NEW)
+                // Only degrade if we haven't recently advanced it to MAINTAINED
+                .filter(b -> b.getCondition() != BuildingCondition.MAINTAINED
+                        || (currentTick % (DEGRADE_INTERVAL * 4) == 0)) // MAINTAINED lasts 4x longer
+                .forEach(b -> {
+                    if (currentTick % DEGRADE_INTERVAL == 0) {
+                        BuildingCondition next = b.getCondition().degrade();
+                        if (next != b.getCondition()) {
+                            b.setCondition(next);
+                            data.markDirty();
+                        }
+                    }
+                });
     }
 }

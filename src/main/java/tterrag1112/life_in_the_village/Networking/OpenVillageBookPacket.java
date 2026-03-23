@@ -34,7 +34,9 @@ public record OpenVillageBookPacket(
         int     companyWorkerCount,
         List<String>                  companyBuildingNames,
         // Per-building purchase entries for the Company Buildings page
-        List<PurchasableBuildingEntry> purchasableBuildings
+        List<PurchasableBuildingEntry> purchasableBuildings,
+        String seasonName,          // e.g. "Autumn" or "Winter"
+        int    openOrderCount       // number of unclaimed crafting orders
 ) implements CustomPacketPayload {
 
     // =========================================================================
@@ -151,6 +153,8 @@ public record OpenVillageBookPacket(
                     buf.writeBoolean(b.inCompany());
                     buf.writeBoolean(b.ownedByOtherCompany());
                 }
+                buf.writeUtf(pkt.seasonName());
+                buf.writeVarInt(pkt.openOrderCount());
             },
 
             // -----------------------------------------------------------------
@@ -216,6 +220,8 @@ public record OpenVillageBookPacket(
                             buf.readBoolean(),
                             buf.readBoolean()));
                 }
+                String  seasonName     = buf.readUtf();
+                int     openOrderCount = buf.readVarInt();
 
                 return new OpenVillageBookPacket(
                         villageId, villageName, leaderName, tierName,
@@ -225,12 +231,14 @@ public record OpenVillageBookPacket(
                         kingdom, event, routeCount,
                         hasCompany, companyId, companyName,
                         workerCount, companyBuildings,
-                        purchasable);
+                        purchasable,seasonName, openOrderCount);
             }
     );
 
     @Override
     public Type<?> type() { return TYPE; }
+
+
 
     // =========================================================================
     // CLIENT HANDLER
