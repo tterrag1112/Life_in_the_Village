@@ -61,18 +61,16 @@ public class CapitalLayoutPlanner {
     // BUILDING_DEPTH: typical footprint perpendicular to face (into the block).
     // ALLEY_GAP: 1-block gap between adjacent buildings on the same face.
     // SETBACK: distance from road edge to building front face.
-    private static final int BUILDING_WIDTH  = 12;
+    private static final int BUILDING_WIDTH  = 10;
     private static final int BUILDING_DEPTH  = 10;
     private static final int ALLEY_GAP       = 1;
-    private static final int FACE_SETBACK    = 4;
+    private static final int FACE_SETBACK    = 1;  // was 4, reduced for tighter packing
 
     // ── Block filtering ────────────────────────────────────────────────────
     // Only register blocks within these size limits.
     private static final int MIN_BLOCK_SIZE  = 18;
     private static final int MAX_BLOCK_SIZE  = 80;
 
-    // ── Minimum clearance between adjacent building plots ─────────────────
-    private static final int MIN_PLOT_CLEARANCE = 4;
 
     // =========================================================================
     // Entry point
@@ -88,30 +86,44 @@ public class CapitalLayoutPlanner {
         VillageLayout layout = new VillageLayout(terrain, density);
         layout.setCenter(centre);
         int cx = centre.getX(), cz = centre.getZ();
+        boolean tightGrid = typeData.getShapeProfile() != null
+                && typeData.getShapeProfile().shapeType()
+                == VillageTypeData.ShapeType.COURTYARD;
 
         // ── Step 1: Town hall at centre ───────────────────────────────────────
         placeTownHall(layout, typeData, centre, sizeCache);
 
-        // ── Step 2: Build wagon-wheel street graph ────────────────────────────
+        // ── Step 2: Build wagon-wheel street graph ────────────────────────────────
         CapitalStreetGraph graph = buildWagonWheel(cx, cz, density, rng);
+        System.out.println("CapitalLayoutPlanner: wagon wheel — "
+                + graph.getNodes().size() + " nodes, "
+                + graph.getSegments().size() + " segments");
 
-        // ── Step 3: Grid overlay ──────────────────────────────────────────────
-        // Imperial capitals use COURTYARD shape — give them a tighter grid
-        boolean tightGrid = typeData.getShapeProfile() != null
-                && typeData.getShapeProfile().shapeType()
-                == VillageTypeData.ShapeType.COURTYARD;
+// ── Step 3: Grid overlay — returns the map of grid nodes ─────────────────
         Map<Long, CapitalStreetGraph.StreetNode> gridNodes =
                 addGridOverlay(graph, cx, cz, density, rng, tightGrid);
-        graph.detectCityBlocks(gridNodes, MIN_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        System.out.println("CapitalLayoutPlanner: grid overlay — "
+                + gridNodes.size() + " grid nodes");
+
+// ── Step 4: Detect city blocks from the grid node map ────────────────────
+
 
         // ── Step 5: Generate face plots on every city block ───────────────────
         for (CapitalStreetGraph.CityBlock block : graph.getCityBlocks()) {
             block.generateFacePlots(BUILDING_WIDTH, BUILDING_DEPTH,
                     ALLEY_GAP, FACE_SETBACK);
         }
+        int totalPlots = graph.getCityBlocks().stream()
+                .mapToInt(b -> b.plots.size()).sum();
+        System.out.println("CapitalLayoutPlanner: total face plots: " + totalPlots);
+
 
         // ── Step 6: Assign buildings to face plots ────────────────────────────
         assignBuildingsToCityBlocks(graph, typeData, sizeCache, rng);
+        long assigned = graph.getCityBlocks().stream()
+                .flatMap(b -> b.plots.stream())
+                .filter(p -> p.occupied).count();
+        System.out.println("CapitalLayoutPlanner: assigned buildings: " + assigned);
 
         // ── Step 7: Commit plots to VillageLayout ─────────────────────────────
         commitToLayout(layout, graph, level, rng);
@@ -292,9 +304,34 @@ public class CapitalLayoutPlanner {
                         : CapitalStreetGraph.StreetTier.TERTIARY);
             }
         }
-        graph.detectCityBlocks(gridNodeByXZ, MIN_BLOCK_SIZE, MAX_BLOCK_SIZE);
         System.out.println("CapitalLayoutPlanner: grid overlay — "
                 + gridNodeByXZ.size() + " grid nodes, spacing=" + gridSpacing);
+
+        for (int i = 0; i < gxCoords.size() - 1; i++) {
+            for (int j = 0; j < gzCoords.size() - 1; j++) {
+                int gx0 = gxCoords.get(i),     gx1 = gxCoords.get(i + 1);
+                int gz0 = gzCoords.get(j),     gz1 = gzCoords.get(j + 1);
+                int w   = gx1 - gx0,           d   = gz1 - gz0;
+
+                if (w < MIN_BLOCK_SIZE || d < MIN_BLOCK_SIZE) continue;
+                if (w > MAX_BLOCK_SIZE || d > MAX_BLOCK_SIZE) continue;
+
+                CapitalStreetGraph.StreetNode sw = gridNodeByXZ.get(gridKey(gx0, gz0));
+                CapitalStreetGraph.StreetNode se = gridNodeByXZ.get(gridKey(gx1, gz0));
+                CapitalStreetGraph.StreetNode nw = gridNodeByXZ.get(gridKey(gx0, gz1));
+                CapitalStreetGraph.StreetNode ne = gridNodeByXZ.get(gridKey(gx1, gz1));
+
+                if (sw == null || se == null || nw == null || ne == null) continue;
+                if (!segmentExists(graph, sw, se)) continue;
+                if (!segmentExists(graph, nw, ne)) continue;
+                if (!segmentExists(graph, sw, nw)) continue;
+                if (!segmentExists(graph, se, ne)) continue;
+
+                graph.registerCityBlock(new CapitalStreetGraph.CityBlock(gx0, gz0, gx1, gz1));
+            }
+        }
+        System.out.println("CapitalLayoutPlanner: city blocks created: "
+                + graph.getCityBlocks().size());
 
         return gridNodeByXZ;  //
 
@@ -400,6 +437,8 @@ public class CapitalLayoutPlanner {
                 best.occupied      = true;
             }
         }
+
+
     }
 
     private static double zoneMin(BuildingZone zone,
@@ -458,32 +497,19 @@ public class CapitalLayoutPlanner {
                 if (!plot.occupied || plot.assignedType == null) continue;
 
                 int surfY = level.getHeight(
-                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                        plot.x, plot.z);
+                        Heightmap.Types.WORLD_SURFACE, plot.x, plot.z);
+                if (surfY <= level.getMinY() + 2) surfY = layout.getCenter().getY();
+
                 BlockPos pos = new BlockPos(plot.x, surfY, plot.z);
 
-                // Store facing rotation in the slot so VillageSpawner uses it
-                LayoutSlot slot = new LayoutSlot.LayoutSlotWithRotation(
+                LayoutSlot.LayoutSlotWithRotation slot = new LayoutSlot.LayoutSlotWithRotation(
                         pos, plot.assignedType, plot.structurePath,
                         StructureSizeCache.DEFAULT_RADIUS,
                         plot.facingRotation());
 
-                if (!layout.tryAdd(slot)) {
-                    // Jitter slightly and retry once
-                    for (int attempt = 0; attempt < 4; attempt++) {
-                        int jx = (rng.nextInt(7) - 3);
-                        int jz = (rng.nextInt(7) - 3);
-                        int sy = level.getHeight(
-                                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                                plot.x + jx, plot.z + jz);
-                        LayoutSlot jSlot = new LayoutSlot.LayoutSlotWithRotation(
-                                new BlockPos(plot.x + jx, sy, plot.z + jz),
-                                plot.assignedType, plot.structurePath,
-                                StructureSizeCache.DEFAULT_RADIUS,
-                                plot.facingRotation());
-                        if (layout.tryAdd(jSlot)) break;
-                    }
-                }
+                // Face plots are geometrically non-overlapping by construction.
+                // The overlap check is for the ring planner — skip it here.
+                layout.addForced(slot);
             }
         }
     }

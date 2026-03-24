@@ -322,9 +322,11 @@ public class CapitalStreetGraph {
         // Radial spoke nodes are excluded so off-grid angles don't
         // produce degenerate corner lookups.
         TreeSet<Integer> xs = new TreeSet<>(), zs = new TreeSet<>();
-        for (StreetNode n : gridNodes.values()) {
-            xs.add(n.x);
-            zs.add(n.z);
+        for (Long key : gridNodes.keySet()) {
+            int gx = (int)((key >> 32) - 32768);
+            int gz = (int)((key & 0xFFFFFFFFL) - 32768);
+            xs.add(gx);
+            zs.add(gz);
         }
 
         Integer[] xArr = xs.toArray(new Integer[0]);

@@ -106,22 +106,26 @@ public class VillageDecorator {
 
         // ── Step 7: Building border transitions ───────────────────────────────
         // Must happen AFTER streets so we know which faces are on a street
-        buildings.stream()
+      /*  buildings.stream()
                 .filter(b -> b.getType() != BuildingType.TOWN_SQUARE)
                 .forEach(b -> placeBuildingTransitions(level, b, style, allPathXZ));
         // ── Step 7b: Approach gradient ────────────────────────────────────────
         placeApproachGradient(level, village, data, style, allPathXZ);
 
+       */
+
         // ── Step 8: Per-building exterior decorations ─────────────────────────
-        buildings.stream()
+        /*buildings.stream()
                 .filter(b -> b.getType() != BuildingType.TOWN_SQUARE)
                 .forEach(b -> placeExteriorDecorations(level, b, style, tier));
 
+         */
+
         // ── Step 9: Street furniture ──────────────────────────────────────────
-        placeStreetFurniture(level, network, style, tier);
+        //placeStreetFurniture(level, network, style, tier);
 
         // ── Step 9b: Proximity furniture ──────────────────────────────────────
-        placeProximityFurniture(level, buildings, style);
+       // placeProximityFurniture(level, buildings, style);
 
         // ── Step 10: Market stalls ────────────────────────────────────────────
         if (tier.hasMarket) {
