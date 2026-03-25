@@ -6,6 +6,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -29,6 +30,9 @@ public class ModBlocks {
             BlockBehaviour.Properties.of()
                     .strength(2.0f)
                     .requiresCorrectToolForDrops());
+    public static final DeferredBlock<Block> NOBLE_STONE = registerBlock("noble_stone",
+            Block::new,
+            BlockBehaviour.Properties.ofFullCopy(Blocks.REINFORCED_DEEPSLATE));
 
 
 

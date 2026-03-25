@@ -62,6 +62,12 @@ public class VillagePlanner {
         }
 
         int buildingCount = typeData.getStarterBuildings().size();
+// forCapital needs the *expanded* count (after resolving min/maxCount),
+// not the count of unique building entries. Use sum of minCounts.
+        int expandedBuildingCount = typeData.getStarterBuildings().stream()
+                .mapToInt(VillageTypeData.StarterBuilding::minCount)
+                .sum();
+        buildingCount = Math.max(buildingCount, expandedBuildingCount);
         boolean isCapital = buildingCount >= LayoutDensityProfile.CAPITAL_THRESHOLD;
 
         LayoutDensityProfile density = isCapital
@@ -74,11 +80,18 @@ public class VillagePlanner {
         layout.setCenter(centre);
 
         if (isCapital) {
-            // Street-first layout for large capitals
+            // ORGANIC layout type falls through to the ring planner below —
+            // CapitalLayoutPlanner.plan() returns null as the signal.
             VillageLayout capitalLayout = CapitalLayoutPlanner.plan(
                     level, centre, typeData, density, terrain, sizeCache, rng);
-            System.out.println("VillagePlanner: planned CAPITAL village — " + capitalLayout);
-            return Optional.of(capitalLayout);
+            if (capitalLayout != null) {
+                System.out.println("VillagePlanner: planned CAPITAL village — "
+                        + capitalLayout);
+                return Optional.of(capitalLayout);
+            }
+            System.out.println("VillagePlanner: ORGANIC capital — "
+                    + "falling back to ring planner");
+            // Fall through to normal shape dispatch below
         }
 
         VillageShapeProfile profile = typeData.getShapeProfile();

@@ -78,6 +78,33 @@ public class Village {
     /** Outer ring radius used by the planner. 0 = not yet set. */
     private int ring2Radius = 0;
 
+    private final List<BlockPos> capitalGatePositions = new ArrayList<>();
+
+
+    public void addGatePosition(BlockPos pos) {
+        if (!capitalGatePositions.contains(pos))
+            capitalGatePositions.add(pos);
+    }
+
+    public List<BlockPos> getCapitalGatePositions() {
+        return Collections.unmodifiableList(capitalGatePositions);
+    }
+
+    public boolean hasCapitalGates() {
+        return !capitalGatePositions.isEmpty();
+    }
+
+    public BlockPos nearestCapitalGate(int x, int z) {
+        BlockPos best  = null;
+        double   bestD = Double.MAX_VALUE;
+        for (BlockPos gate : capitalGatePositions) {
+            double dx = gate.getX() - x, dz = gate.getZ() - z;
+            double d  = dx * dx + dz * dz;
+            if (d < bestD) { bestD = d; best = gate; }
+        }
+        return best;
+    }
+
     /**
      * The village level (1–10) used at spawn time.
      * Incremented by {@link
@@ -98,7 +125,8 @@ public class Village {
             int  ring2Radius,
             int  currentLevel,
             List<BlockPos> patrolWaypoints,
-            long lastLevelUpTick
+            long lastLevelUpTick,
+            List<BlockPos> capitalGatePositions
     ) {
         static final Codec<VillageLayoutMeta> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -126,7 +154,11 @@ public class Village {
                                 .forGetter(VillageLayoutMeta::patrolWaypoints),
                         Codec.LONG
                                 .optionalFieldOf("lastLevelUpTick", 0L)
-                                .forGetter(VillageLayoutMeta::lastLevelUpTick)
+                                .forGetter(VillageLayoutMeta::lastLevelUpTick),
+                        BlockPos.CODEC.listOf()
+                                .optionalFieldOf("capitalGatePositions",
+                                        new ArrayList<>())
+                                .forGetter(VillageLayoutMeta::capitalGatePositions)
                 ).apply(i, VillageLayoutMeta::new));
 
         static VillageLayoutMeta from(Village v) {
@@ -138,7 +170,8 @@ public class Village {
                     v.ring2Radius,
                     v.currentLevel,
                     new ArrayList<>(v.patrolWaypoints),
-                    v.lastLevelUpTick);
+                    v.lastLevelUpTick,
+                    new ArrayList<>(v.capitalGatePositions));
         }
 
         void applyTo(Village v) {
@@ -152,6 +185,9 @@ public class Village {
                 v.patrolWaypoints.addAll(patrolWaypoints);
             }
             v.lastLevelUpTick = lastLevelUpTick;
+            if(!capitalGatePositions.isEmpty()){
+                v.capitalGatePositions.addAll(capitalGatePositions);
+            }
         }
     }
 
@@ -220,7 +256,7 @@ public class Village {
                                     new VillageLayoutMeta(
                                             Optional.empty(), Optional.empty(),
                                             Optional.empty(), 0, 0, 1,
-                                            new ArrayList<>(), 0L))
+                                            new ArrayList<>(), 0L, new ArrayList<>()))
                             .forGetter(VillageLayoutMeta::from)
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,

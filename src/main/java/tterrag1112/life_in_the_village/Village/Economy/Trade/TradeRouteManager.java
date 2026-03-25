@@ -88,8 +88,8 @@ public class TradeRouteManager {
             // ── Route between village hub positions ───────────────────────────
             // Use path hubs (town squares) as endpoints when available so the
             // trade road terminates at the social heart of each village.
-            BlockPos newHub    = newVillage.getEffectivePathHub(data);
-            BlockPos targetHub = target.getEffectivePathHub(data);
+            BlockPos newHub    = resolveRouteHub(newVillage, data);
+            BlockPos targetHub = resolveRouteHub(target, data);
 
             List<BlockPos> path = RoadRouter.findRoadWithMerge(
                     level, newHub, targetHub, data);
@@ -419,5 +419,15 @@ public class TradeRouteManager {
         return village.getBounds(data)
                 .map(b -> BlockPos.containing(b.getCenter()))
                 .orElse(null);
+    }
+    private static BlockPos resolveRouteHub(Village village, VillageSavedData data) {
+        if (village.hasCapitalGates()) {
+ // Use the first registered gate as the road endpoint.
+ // If there are multiple gates, the caller can pick the nearest one
+ // after computing both hubs. For now, the first gate is fine
+ // because RoadRouter finds its own path regardless of start point.
+             return village.getCapitalGatePositions().get(0);
+             }
+            return village.getEffectivePathHub(data);
     }
 }

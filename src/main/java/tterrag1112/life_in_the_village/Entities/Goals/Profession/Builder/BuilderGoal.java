@@ -665,18 +665,17 @@ public class BuilderGoal extends Goal {
         idleCooldown = IDLE_COOLDOWN;
     }
 
-    private static Rotation chooseFacingRotation(BlockPos buildPos,
-                                                 BlockPos target) {
+    private static Rotation chooseFacingRotation(BlockPos buildPos, BlockPos target) {
         int dx = target.getX() - buildPos.getX();
         int dz = target.getZ() - buildPos.getZ();
         if (Math.abs(dx) >= Math.abs(dz)) {
             return dx > 0
-                    ? Rotation.COUNTERCLOCKWISE_90
-                    : Rotation.CLOCKWISE_90;
+                    ? Rotation.CLOCKWISE_90
+                    : Rotation.COUNTERCLOCKWISE_90;
         } else {
             return dz > 0
-                    ? Rotation.NONE
-                    : Rotation.CLOCKWISE_180;
+                    ? Rotation.CLOCKWISE_180
+                    : Rotation.NONE;
         }
     }
 

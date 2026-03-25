@@ -159,7 +159,7 @@ public class ServerTickDispatcher {
                         level, path.getBlocks().get(0));
                 VillageSizeTier tier = VillageSizeTier.fromBuildingCount(
                         village.getBuildingIds().size());
-                VillageDecorator.placeLampposts(level, path.getBlocks(), style, tier);
+                //VillageDecorator.placeLampposts(level, path.getBlocks(), style, tier);
             }
 
             data.setDirty();

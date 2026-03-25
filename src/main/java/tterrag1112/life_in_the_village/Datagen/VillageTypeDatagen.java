@@ -86,6 +86,17 @@ public class VillageTypeDatagen implements DataProvider {
         json.addProperty("type", "royal_capital");
         json.addProperty("culture", "default");
         json.add("shape_profile", shapeProfile("PLAZA", false, 3, 1.5f, true));
+        json.add("capital_profile", capitalProfile(
+                "ROUND",  // layout_type
+                0,        // grid_spacing: 0 = auto (2*(12+2)+2*2+4 = 36 blocks)
+                3,        // buildings_per_face
+                9,       // building_width
+                9,       // building_depth
+                -4,        // face_setback
+                0,        // alley_gap
+                0,        // spoke_count
+                true      // gate_roads
+        ));
 
         JsonArray b = new JsonArray();
         // Power core — each is unique
@@ -96,25 +107,26 @@ public class VillageTypeDatagen implements DataProvider {
         // Civic district
         b.add(building("GUILD_HALL",  "guild_hall/level_1"));
         b.add(buildingN("MARKET",     "market/level_1",     3));
-        b.add(buildingN("INN",        "inn/level_1",        10));
+        b.add(buildingRange("INN",        "inn/level_1",        5,10));
         b.add(building("TEMPLE",      "temple/level_1"));
         b.add(building("LIBRARY",     "library/level_1"));
         b.add(buildingRange("BELL_TOWER",  "bell_tower/level_1", 1, 2));
         // Noble quarter
-        b.add(buildingN("NOBLE_MANOR","noble_manor/level_1",5));
+        b.add(buildingRange("NOBLE_MANOR","noble_manor/level_1",10, 15));
         b.add(building("STABLE",      "stable/level_1"));
         // Production district
         b.add(buildingRange("BLACKSMITH",  "blacksmith/level_1",2,3));
         b.add(buildingRange("ARMORER",     "armorer/level_1",1,2));
         b.add(buildingRange("BAKERY",      "bakery/level_1", 2,3));
-        b.add(building("APOTHECARY",  "apothecary/level_1"));
-        b.add(building("STONEMASON",  "stonemason/level_1"));
+        b.add(buildingRange("APOTHECARY",  "apothecary/level_1", 1, 7));
+        b.add(buildingRange("STONEMASON",  "stonemason/level_1", 2, 3));
+        b.add(buildingRange("CARPENTRY", "carpentry/level_1", 2, 3));
         // Military perimeter
         b.add(building("BARRACKS",    "barracks/level_1"));
         b.add(buildingN("GUARD_TOWER","guard_tower/level_1",3));
         b.add(building("PRISON",      "prison/level_1"));
         // Residential outer ring — large count fills city-block plots
-        b.add(buildingRange("HOUSE",  "house/level_1",      30, 50));
+        b.add(buildingRange("HOUSE",  "house/level_1",      30, 100));
         // Storage
         b.add(buildingN("STOCKPILE",  "stockpile/level_1",  2));
         json.add("starter_buildings", b);
@@ -200,6 +212,17 @@ public class VillageTypeDatagen implements DataProvider {
         json.addProperty("type", "imperial_capital");
         json.addProperty("culture", "imperial");
         json.add("shape_profile", shapeProfile("COURTYARD", false, 3, 1.4f, true));
+        json.add("capital_profile", capitalProfile(
+                "ROUND",  // layout_type
+                0,        // grid_spacing: 0 = auto (2*(12+2)+2*2+4 = 36 blocks)
+                2,        // buildings_per_face
+                12,       // building_width
+                10,       // building_depth
+                2,        // face_setback
+                2,        // alley_gap
+                6,        // spoke_count
+                true      // gate_roads
+        ));
 
         JsonArray b = new JsonArray();
         // Palace complex (inner ward)
@@ -746,6 +769,23 @@ public class VillageTypeDatagen implements DataProvider {
                 new GsonBuilder().setPrettyPrinting()
                         .create().toJsonTree(json),
                 path);
+    }
+    private JsonObject capitalProfile(String layoutType, int gridSpacing,
+                                      int buildingsPerFace,
+                                      int buildingWidth, int buildingDepth,
+                                      int faceSetback, int alleyGap,
+                                      int spokeCount, boolean gateRoads) {
+        JsonObject cp = new JsonObject();
+        cp.addProperty("layout_type",        layoutType);
+        cp.addProperty("grid_spacing",       gridSpacing);
+        cp.addProperty("buildings_per_face", buildingsPerFace);
+        cp.addProperty("building_width",     buildingWidth);
+        cp.addProperty("building_depth",     buildingDepth);
+        cp.addProperty("face_setback",       faceSetback);
+        cp.addProperty("alley_gap",          alleyGap);
+        cp.addProperty("spoke_count",        spokeCount);
+        cp.addProperty("gate_roads",         gateRoads);
+        return cp;
     }
 
     @Override

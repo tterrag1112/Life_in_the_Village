@@ -34,6 +34,8 @@ public class ModModelProvider extends ModelProvider {
         this.generateGrimoir(itemModels, ModItems.KINGDOM_BOOK.get());
         this.generateGrimoir(itemModels, ModItems.COMPANY_LEDGER.get());
 
+        blockModels.createTrivialCube(ModBlocks.NOBLE_STONE.get());
+
 
     }
 

@@ -140,6 +140,11 @@ public class VillageSpawner {
         System.out.println("VillageSpawner: planning complete for '"
                 + villageName + "' — " + layout);
 
+
+        if (layout.hasCapitalStreetGraph()) {
+            VillageDecorator.placeCapitalStreets(level, village, data, layout);
+        }
+
         // ── Phase 1: Place buildings ──────────────────────────────────────────
         // first instance per type (for items/backward compat)
         Map<BuildingType, Building>       placedBuildings    = new LinkedHashMap<>();
@@ -199,17 +204,19 @@ public class VillageSpawner {
                 Building newBuilding = placed.get();
 
                 // Check overlap against every already-placed building for this village
-                boolean overlapsExisting = placedBuildingsAll.values().stream()
-                        .flatMap(List::stream)
-                        .anyMatch(existing -> shapesOverlapXZ(
-                                existing.getShape(), newBuilding.getShape(),
-                                StructureSizeCache.MIN_GAP));
-
-                if (overlapsExisting) {
-                    System.out.println("VillageSpawner: " + buildingType
-                            + " at " + buildPos + " overlaps — removing");
-                    data.removeBuilding(newBuilding);
-                    continue;
+                boolean isCapitalPlot = slot instanceof LayoutSlot.LayoutSlotWithRotation;
+                if (!isCapitalPlot) {
+                    boolean overlapsExisting = placedBuildingsAll.values().stream()
+                            .flatMap(List::stream)
+                            .anyMatch(existing -> shapesOverlapXZ(
+                                    existing.getShape(), newBuilding.getShape(),
+                                    StructureSizeCache.MIN_GAP));
+                    if (overlapsExisting) {
+                        System.out.println("VillageSpawner: " + buildingType
+                                + " at " + buildPos + " overlaps — removing");
+                        data.removeBuilding(newBuilding);
+                        continue;
+                    }
                 }
 
                 village.addBuilding(newBuilding);
@@ -319,6 +326,12 @@ public class VillageSpawner {
 
         // ── Phase 5: Decorate ─────────────────────────────────────────────────
         VillageDecorator.decorateVillage(level, village, data, layout);
+        if (layout.hasCapitalStreetGraph() && !layout.getGatePositions().isEmpty()) {
+            layout.getGatePositions().forEach(village::addGatePosition);
+            System.out.println("VillageSpawner: stored "
+                    + layout.getGatePositions().size() + " gate positions for '"
+                    + villageName + "'");
+        }
 
         // ── Phase 6: Establish trade routes ───────────────────────────────────
         TradeRouteManager.establishRoutes(level, village, data);
@@ -476,14 +489,13 @@ public class VillageSpawner {
     static Rotation chooseFacingRotation(BlockPos buildPos, BlockPos target) {
         int dx = target.getX() - buildPos.getX();
         int dz = target.getZ() - buildPos.getZ();
-
         if (Math.abs(dx) >= Math.abs(dz)) {
             return dx > 0
                     ? Rotation.COUNTERCLOCKWISE_90  // entrance faces east
                     : Rotation.CLOCKWISE_90;        // entrance faces west
         } else {
             return dz > 0
-                    ? Rotation.NONE                 // entrance faces south (default)
+                    ? Rotation.NONE                 // entrance faces south
                     : Rotation.CLOCKWISE_180;       // entrance faces north
         }
     }

@@ -11,44 +11,81 @@ import java.util.*;
  * Abstract street network for large capitals, planned before any blocks
  * are placed in the world.
  *
- * <h3>Key concepts</h3>
+ * <h3>City block model</h3>
+ * Each {@link CityBlock} has four faces (N/S/E/W). Buildings are packed
+ * wall-to-wall along each face with a corner inset equal to
+ * {@code buildingDepth} so that N-face and W/E-face buildings do not
+ * collide at the corners. This restores all four faces while keeping
+ * the geometry non-overlapping.
  *
- * <b>StreetNode</b> — an XZ intersection or endpoint. Holds a tier
- * (PRIMARY / SECONDARY / TERTIARY) that governs road width and surface.
- *
- * <b>StreetSegment</b> — a connection between two nodes. Each segment
- * has a half-width in blocks. No block positions are stored here — those
- * are produced during decoration by RoadRouter.
- *
- * <b>CityBlock</b> — a rectangular parcel bounded on four sides by
- * street segments. Buildings are packed wall-to-wall along the perimeter
- * faces of the block, facing outward toward the street. This is the key
- * difference from per-plot placement: a CityBlock can hold 3–6 houses
- * along each face, producing the "rows of terraced houses" look of a
- * dense medieval city.
- *
- * <h3>Building placement model</h3>
- * The planner fills each CityBlock face with buildings packed at 1-block
- * gaps. Given a face of length L (blocks) and buildings averaging W
- * blocks wide, the number of buildings on that face is roughly L / (W+1).
- * Buildings on the north/south faces of a block face north/south
- * (NONE or CLOCKWISE_180). Buildings on east/west faces face those
- * directions (CLOCKWISE_90 or COUNTERCLOCKWISE_90). This avoids the
- * current problem where every building faces the town square regardless
- * of where it actually is.
+ * <h3>District model</h3>
+ * Each city block is assigned a {@link CapitalDistrict} based on its
+ * distance from the centre and angular position. Districts are used by
+ * the building assignment pass to enforce coherent neighbourhoods:
+ * civic buildings in the CIVIC_FORUM, craft buildings in the CRAFT_QUARTER,
+ * etc.
  */
 public class CapitalStreetGraph {
 
     // =========================================================================
-    // Tier
+    // CapitalDistrict
+    // =========================================================================
+
+    /**
+     * Named neighbourhood assigned to each city block.
+     * Controls which building types are placed in which block.
+     */
+    public enum CapitalDistrict {
+        /**
+         * Innermost blocks (dist < r1). Castle, town hall, chancellery,
+         * treasury. No houses — this is the seat of power.
+         */
+        PALACE_WARD,
+
+        /**
+         * South of palace ward (r1–r2, south quadrant ~135°–225°).
+         * Market, guild hall, inn, bell tower, temple, library.
+         * The social and economic heart of the city.
+         */
+        CIVIC_FORUM,
+
+        /**
+         * East of palace ward (r1–r2, east quadrant ~45°–135°).
+         * Blacksmith, bakery, stonemason, armorer, carpentry.
+         * Craft and production district.
+         */
+        CRAFT_QUARTER,
+
+        /**
+         * Northwest of palace ward (r1–r2, northwest ~225°–315°).
+         * Noble manor, stable, library, apothecary.
+         * Affluent residential district.
+         */
+        NOBLE_QUARTER,
+
+        /**
+         * Mid-ring (r2–r3) — all directions.
+         * Houses, additional stockpiles, stables.
+         * General residential.
+         */
+        RESIDENTIAL,
+
+        /**
+         * Outer ring (dist > r3). Barracks, guard towers,
+         * watchtowers, prison. The defensive perimeter.
+         */
+        OUTER_WALL
+    }
+
+    // =========================================================================
+    // StreetTier
     // =========================================================================
 
     public enum StreetTier {
-        PRIMARY,    // main avenues — 3-block half-width, cobblestone
-        SECONDARY,  // district roads — 2-block half-width, gravel
-        TERTIARY    // alleys between blocks — 1-block half-width, dirt path
+        PRIMARY,   // main avenues — halfWidth 3, cobblestone
+        SECONDARY, // district roads — halfWidth 2, gravel
+        TERTIARY;  // alleys — halfWidth 1, dirt path
 
-        ;
         public int halfWidth() {
             return switch (this) {
                 case PRIMARY   -> 3;
@@ -56,6 +93,9 @@ public class CapitalStreetGraph {
                 case TERTIARY  -> 1;
             };
         }
+
+        /** True if this segment is axis-aligned (always true for grid segments). */
+        public boolean isGrid() { return true; }
     }
 
     // =========================================================================
@@ -89,30 +129,32 @@ public class CapitalStreetGraph {
     // =========================================================================
 
     public static class StreetSegment {
-        public final UUID         id   = UUID.randomUUID();
-        public final StreetNode   a, b;
-        public final StreetTier   tier;
+        public final UUID       id   = UUID.randomUUID();
+        public final StreetNode a, b;
+        public final StreetTier tier;
+        /**
+         * True when this segment is perfectly axis-aligned (dx==0 or dz==0).
+         * Grid segments are always axis-aligned. Spoke overlays may not be.
+         */
+        public final boolean axisAligned;
 
         public StreetSegment(StreetNode a, StreetNode b, StreetTier tier) {
-            this.a = a; this.b = b; this.tier = tier;
+            this.a    = a; this.b = b; this.tier = tier;
+            this.axisAligned = (a.x == b.x) || (a.z == b.z);
             a.edges.add(this); b.edges.add(this);
         }
 
         public double length() { return a.distanceTo(b); }
 
-        /** Unit direction vector a→b as {dx, dz}. */
         public double[] direction() {
-            double len = length();
-            if (len < 0.001) return new double[]{1, 0};
+            double len = Math.max(0.001, length());
             return new double[]{(b.x - a.x) / len, (b.z - a.z) / len};
         }
 
-        /** Left perpendicular (CCW 90°) of direction. */
         public double[] leftPerp() {
             double[] d = direction(); return new double[]{-d[1], d[0]};
         }
 
-        /** Returns the other node of this segment. */
         public StreetNode other(StreetNode n) { return n == a ? b : a; }
     }
 
@@ -123,27 +165,36 @@ public class CapitalStreetGraph {
     /**
      * A rectangular city block bounded by four street segments.
      *
-     * <h3>Face model</h3>
-     * Each block has four faces (NORTH, SOUTH, EAST, WEST). Buildings are
-     * placed along these faces, wall-to-wall, facing outward. The road
-     * on each face is on the outside of the building row — buildings do
-     * not face into the block interior.
+     * <h3>Corner inset</h3>
+     * All four faces are active (N, S, E, W). To prevent corner overlap,
+     * N/S-face buildings are inset by {@code buildingDepth} at both ends
+     * so that E/W-face buildings can occupy the corners without collision.
      *
-     * <h3>Why axis-aligned?</h3>
-     * Keeping blocks axis-aligned means buildings always face one of the
-     * four cardinal directions, which is a hard constraint of Minecraft's
-     * NBT structure system. Diagonal blocks would require diagonal buildings
-     * which are not supported.
+     * <pre>
+     *   ← inset →  [N][N][N]  ← inset →
+     *   [W]  ←—— courtyard ——→  [E]
+     *   [W]                     [E]
+     *   ← inset →  [S][S][S]  ← inset →
+     * </pre>
+     *
+     * The corner cells (inset × depth) are deliberately left empty —
+     * they form the visual "corners" of the block, often used for
+     * small courtyards, trees, or decorative features.
      */
     public static class CityBlock {
         public final UUID id = UUID.randomUUID();
 
-        /** Axis-aligned bounding box of this block in world XZ. */
         public final int minX, minZ, maxX, maxZ;
 
-        /**
-         * Assigned building face slots. Populated by
-         */
+        /** District this block belongs to — set by CapitalLayoutPlanner. */
+        public CapitalDistrict district = CapitalDistrict.RESIDENTIAL;
+
+        /** Angle from the city centre to this block's centre (degrees, east=0). */
+        public double angleFromCentre = 0.0;
+
+        /** Distance from the city centre to this block's centre (blocks). */
+        public double distFromCentre = 0.0;
+
         public final List<BlockFacePlot> plots = new ArrayList<>();
 
         public CityBlock(int minX, int minZ, int maxX, int maxZ) {
@@ -151,59 +202,103 @@ public class CapitalStreetGraph {
             this.maxX = maxX; this.maxZ = maxZ;
         }
 
-        public int width()  { return maxX - minX; }
-        public int depth()  { return maxZ - minZ; }
-        public int centreX(){ return (minX + maxX) / 2; }
-        public int centreZ(){ return (minZ + maxZ) / 2; }
+        public int width()   { return maxX - minX; }
+        public int depth()   { return maxZ - minZ; }
+        public int centreX() { return (minX + maxX) / 2; }
+        public int centreZ() { return (minZ + maxZ) / 2; }
 
         /**
-         * Generates face plots along all four perimeter faces.
-         * Buildings are spaced every {@code (buildingWidth + alleyGap)} blocks.
+         * Generates building plots along all four perimeter faces with
+         * corner insets so E/W and N/S faces don't overlap at corners.
          *
-         * @param buildingWidth   typical building footprint in the face direction
-         * @param buildingDepth   typical building footprint perpendicular to face
-         * @param alleyGap        gap between adjacent buildings (1–2 blocks)
-         * @param setback         distance from road kerb to building front face
+         * @param buildingWidth  footprint dimension along the face (blocks)
+         * @param buildingDepth  footprint dimension perpendicular to face (blocks)
+         * @param alleyGap       gap between adjacent buildings on same face (blocks)
+         * @param setback        distance from road kerb to building front (blocks)
+         * @param roadHalfWidth  half-width of the bounding road (blocks);
+         *                       positions are measured from this, not from the node
          */
         public void generateFacePlots(int buildingWidth, int buildingDepth,
-                                      int alleyGap, int setback) {
+                                      int alleyGap, int setback,
+                                      int roadHalfWidth) {
             plots.clear();
-            int step = buildingWidth + alleyGap;
 
-            // ── North face (buildings face NORTH, entrance on north/min-Z side) ──
-            // Buildings run east–west along minZ edge
-            for (int bx = minX + setback; bx + buildingWidth <= maxX - setback; bx += step) {
-                int cx = bx + buildingWidth / 2;
-                int cz = minZ + setback + buildingDepth / 2;
-                plots.add(new BlockFacePlot(cx, cz, buildingWidth, buildingDepth,
-                        Face.NORTH, this));
+            // Distance from grid node (block edge) to the inner face of buildings
+            int outerMargin = roadHalfWidth + setback;
+            // Distance from grid node to the centre of the building footprint
+            int outerCentre = outerMargin + buildingDepth / 2;
+            // Step between building centres along a face
+            int step        = buildingWidth + alleyGap;
+            // Corner inset: leave this many blocks clear at each end of N/S faces
+            // so that E/W buildings (which run along minX/maxX walls) don't overlap
+            int cornerInset = buildingDepth + alleyGap;
+
+            // ── North face — buildings face NORTH (entrance toward −Z / minZ road) ──
+            // N-face buildings are set back outerCentre from minZ.
+            // They are inset cornerInset from minX and maxX so E/W buildings fit.
+            {
+                int faceZ  = minZ + outerCentre;
+                int startX = minX + outerMargin + cornerInset;
+                int endX   = maxX - outerMargin - cornerInset;
+                for (int bx = startX; bx + buildingWidth <= endX; bx += step) {
+                    int cx = bx + buildingWidth / 2;
+                    plots.add(new BlockFacePlot(cx, faceZ, buildingWidth,
+                            buildingDepth, Face.NORTH, this));
+                }
             }
 
-            // ── South face (buildings face SOUTH, entrance on south/max-Z side) ──
-            for (int bx = minX + setback; bx + buildingWidth <= maxX - setback; bx += step) {
-                int cx = bx + buildingWidth / 2;
-                int cz = maxZ - setback - buildingDepth / 2;
-                plots.add(new BlockFacePlot(cx, cz, buildingWidth, buildingDepth,
-                        Face.SOUTH, this));
+            // ── South face — buildings face SOUTH (entrance toward +Z / maxZ road) ──
+            {
+                int faceZ  = maxZ - outerCentre;
+                int startX = minX + outerMargin + cornerInset;
+                int endX   = maxX - outerMargin - cornerInset;
+                for (int bx = startX; bx + buildingWidth <= endX; bx += step) {
+                    int cx = bx + buildingWidth / 2;
+                    plots.add(new BlockFacePlot(cx, faceZ, buildingWidth,
+                            buildingDepth, Face.SOUTH, this));
+                }
             }
 
-            // ── West face (buildings face WEST, entrance on west/min-X side) ──
-            // Buildings run north–south along minX edge
-            // Width/depth are swapped because these buildings are rotated 90°
-            for (int bz = minZ + setback; bz + buildingWidth <= maxZ - setback; bz += step) {
-                int cx = minX + setback + buildingDepth / 2;
-                int cz = bz + buildingWidth / 2;
-                plots.add(new BlockFacePlot(cx, cz, buildingDepth, buildingWidth,
-                        Face.WEST, this));
+            // ── West face — buildings face WEST (entrance toward −X / minX road) ──
+            // W-face buildings run north–south. No corner inset needed on Z axis
+            // because the N/S face buildings already left the corners clear.
+            {
+                int faceX  = minX + outerCentre;
+                int startZ = minZ + outerMargin;
+                int endZ   = maxZ - outerMargin;
+                for (int bz = startZ; bz + buildingWidth <= endZ; bz += step) {
+                    int cz = bz + buildingWidth / 2;
+                    // Swap width/depth since the building is rotated 90°
+                    plots.add(new BlockFacePlot(faceX, cz, buildingDepth,
+                            buildingWidth, Face.WEST, this));
+                }
             }
 
-            // ── East face (buildings face EAST, entrance on east/max-X side) ──
-            for (int bz = minZ + setback; bz + buildingWidth <= maxZ - setback; bz += step) {
-                int cx = maxX - setback - buildingDepth / 2;
-                int cz = bz + buildingWidth / 2;
-                plots.add(new BlockFacePlot(cx, cz, buildingDepth, buildingWidth,
-                        Face.EAST, this));
+            // ── East face — buildings face EAST (entrance toward +X / maxX road) ──
+            {
+                int faceX  = maxX - outerCentre;
+                int startZ = minZ + outerMargin;
+                int endZ   = maxZ - outerMargin;
+                for (int bz = startZ; bz + buildingWidth <= endZ; bz += step) {
+                    int cz = bz + buildingWidth / 2;
+                    plots.add(new BlockFacePlot(faceX, cz, buildingDepth,
+                            buildingWidth, Face.EAST, this));
+                }
             }
+        }
+
+        /** Returns the interior courtyard bounding box (between building rows). */
+        public int courtyardMinX(int roadHalfWidth, int setback, int buildingDepth) {
+            return minX + roadHalfWidth + setback + buildingDepth + 1;
+        }
+        public int courtyardMaxX(int roadHalfWidth, int setback, int buildingDepth) {
+            return maxX - roadHalfWidth - setback - buildingDepth - 1;
+        }
+        public int courtyardMinZ(int roadHalfWidth, int setback, int buildingDepth) {
+            return minZ + roadHalfWidth + setback + buildingDepth + 1;
+        }
+        public int courtyardMaxZ(int roadHalfWidth, int setback, int buildingDepth) {
+            return maxZ - roadHalfWidth - setback - buildingDepth - 1;
         }
     }
 
@@ -213,34 +308,41 @@ public class CapitalStreetGraph {
 
     /**
      * A single building slot on one face of a city block.
-     *
-     * <p>The building placed here will face outward (toward the road on
-     * that face), with its entrance on the street-facing side.
+     * The building faces outward — its entrance is on the street side.
      */
     public static class BlockFacePlot {
-        public final int            x, z;        // world XZ centre of the plot
-        public final int            plotW, plotD; // approx footprint dimensions
-        public final Face           face;         // which block face this is on
-        public final CityBlock      block;        // parent block
+        public final int        x, z;
+        public final int        plotW, plotD;
+        public final Face       face;
+        public final CityBlock  block;
+
+        /** Angle from the city centre to this plot (degrees, east=0, clockwise). */
+        public double angleFromCentre;
 
         public BuildingType assignedType;
-        public       String         structurePath;
-        public       boolean        occupied;
+        public String       structurePath;
+        public boolean      occupied;
 
         public BlockFacePlot(int x, int z, int plotW, int plotD,
                              Face face, CityBlock block) {
             this.x = x; this.z = z;
             this.plotW = plotW; this.plotD = plotD;
-            this.face = face; this.block = block;
+            this.face  = face; this.block = block;
         }
 
-        /** The Minecraft Rotation that makes the building entrance face the road. */
+        /**
+         * Returns the Minecraft Rotation so the building entrance faces the road.
+         * NONE = entrance faces south (+Z).
+         * CLOCKWISE_180 = entrance faces north (−Z).
+         * CLOCKWISE_90 = entrance faces west (−X).
+         * COUNTERCLOCKWISE_90 = entrance faces east (+X).
+         */
         public Rotation facingRotation() {
             return switch (face) {
-                case NORTH -> Rotation.CLOCKWISE_180;       // entrance faces north (−Z)
-                case SOUTH -> Rotation.NONE;                // entrance faces south (+Z)
-                case EAST  -> Rotation.COUNTERCLOCKWISE_90; // entrance faces east (+X)
-                case WEST  -> Rotation.CLOCKWISE_90;        // entrance faces west (−X)
+                case NORTH -> Rotation.CLOCKWISE_180;
+                case SOUTH -> Rotation.NONE;
+                case EAST  -> Rotation.COUNTERCLOCKWISE_90;
+                case WEST  -> Rotation.CLOCKWISE_90;
             };
         }
 
@@ -253,7 +355,7 @@ public class CapitalStreetGraph {
     }
 
     // =========================================================================
-    // Face enum
+    // Face
     // =========================================================================
 
     public enum Face { NORTH, SOUTH, EAST, WEST }
@@ -269,8 +371,7 @@ public class CapitalStreetGraph {
     public final int centreX, centreZ;
 
     public CapitalStreetGraph(int centreX, int centreZ) {
-        this.centreX = centreX;
-        this.centreZ = centreZ;
+        this.centreX = centreX; this.centreZ = centreZ;
     }
 
     // =========================================================================
@@ -294,85 +395,6 @@ public class CapitalStreetGraph {
     }
 
     // =========================================================================
-    // City block detection
-    // =========================================================================
-
-    /**
-     * Finds all axis-aligned rectangular city blocks formed by the
-     * intersection of streets on the grid overlay.
-     *
-     * <p>A city block exists wherever four grid nodes form a rectangle
-     * with streets on all four sides. This is called after
-     * nodes, so all intersections are axis-aligned.
-     *
-     * <p>The detection works by collecting all X-coordinates and all
-     * Z-coordinates that have at least one grid node, then checking
-     * every (xA, zA) → (xB, zB) pair where xA &lt; xB and zA &lt; zB.
-     * A block is registered if all four corner nodes exist and all four
-     * sides have a direct street segment.
-     *
-     * @param minBlockSize minimum block dimension in blocks (avoids tiny slivers)
-     * @param maxBlockSize maximum block dimension in blocks (avoids huge empty blocks)
-     */
-    public void detectCityBlocks(Map<Long, StreetNode> gridNodes,
-                                     int minBlockSize, int maxBlockSize) {
-        cityBlocks.clear();
-
-        // Collect unique X and Z coordinates from grid nodes only.
-        // Radial spoke nodes are excluded so off-grid angles don't
-        // produce degenerate corner lookups.
-        TreeSet<Integer> xs = new TreeSet<>(), zs = new TreeSet<>();
-        for (Long key : gridNodes.keySet()) {
-            int gx = (int)((key >> 32) - 32768);
-            int gz = (int)((key & 0xFFFFFFFFL) - 32768);
-            xs.add(gx);
-            zs.add(gz);
-        }
-
-        Integer[] xArr = xs.toArray(new Integer[0]);
-        Integer[] zArr = zs.toArray(new Integer[0]);
-
-        for (int xi = 0; xi < xArr.length - 1; xi++) {
-            for (int zi = 0; zi < zArr.length - 1; zi++) {
-                int x0 = xArr[xi], x1 = xArr[xi + 1];
-                int z0 = zArr[zi], z1 = zArr[zi + 1];
-                int w  = x1 - x0;
-                int d  = z1 - z0;
-
-                if (w < minBlockSize || d < minBlockSize) continue;
-                if (w > maxBlockSize || d > maxBlockSize) continue;
-
-                // All four corners must be present in the grid node map
-                StreetNode sw = gridNodes.get(xzKey(x0, z0));
-                StreetNode se = gridNodes.get(xzKey(x1, z0));
-                StreetNode nw = gridNodes.get(xzKey(x0, z1));
-                StreetNode ne = gridNodes.get(xzKey(x1, z1));
-
-                if (sw == null || se == null || nw == null || ne == null) continue;
-
-                // All four sides must have a direct street segment
-                if (!hasSegment(sw, se)) continue;
-                if (!hasSegment(nw, ne)) continue;
-                if (!hasSegment(sw, nw)) continue;
-                if (!hasSegment(se, ne)) continue;
-
-                cityBlocks.add(new CityBlock(x0, z0, x1, z1));
-            }
-        }
-
-        System.out.println("CapitalStreetGraph: detected "
-                + cityBlocks.size() + " city blocks");
-    }
-
-    /** Returns true if a direct segment exists between nodes a and b. */
-    private boolean hasSegment(StreetNode a, StreetNode b) {
-        for (StreetSegment s : segments) {
-            if ((s.a == a && s.b == b) || (s.a == b && s.b == a)) return true;
-        }
-        return false;
-    }
-
-    // =========================================================================
     // Queries
     // =========================================================================
 
@@ -380,7 +402,7 @@ public class CapitalStreetGraph {
     public List<StreetSegment> getSegments()   { return Collections.unmodifiableList(segments);   }
     public List<CityBlock>     getCityBlocks() { return Collections.unmodifiableList(cityBlocks); }
 
-    /** Nearest node within maxDist of (x, z), or null. */
+    /** Nearest node within maxDist, or null. */
     public StreetNode nearestNode(int x, int z, double maxDist) {
         StreetNode best = null; double bestSq = maxDist * maxDist;
         for (StreetNode n : nodes) {
@@ -390,40 +412,19 @@ public class CapitalStreetGraph {
         return best;
     }
 
-    /** True if any occupied plot within radius blocks of (x, z). */
-    public boolean hasOccupiedPlotNear(int x, int z, int radius) {
-        int rSq = radius * radius;
-        for (CityBlock block : cityBlocks) {
-            for (BlockFacePlot p : block.plots) {
-                if (!p.occupied) continue;
-                int dx = p.x - x, dz = p.z - z;
-                if (dx * dx + dz * dz < rSq) return true;
-            }
-        }
-        return false;
-    }
-
     /**
-     * Returns all unoccupied block-face plots across all city blocks,
-     * sorted by distance from the graph centre (nearest first — civic
-     * buildings fill innermost blocks, residential fills outward).
+     * Returns all unoccupied plots sorted nearest-to-centre first.
      */
     public List<BlockFacePlot> getUnoccupiedPlotsByDistance() {
         List<BlockFacePlot> all = new ArrayList<>();
-        for (CityBlock block : cityBlocks) {
-            for (BlockFacePlot p : block.plots) {
+        for (CityBlock b : cityBlocks)
+            for (BlockFacePlot p : b.plots)
                 if (!p.occupied) all.add(p);
-            }
-        }
-        all.sort(Comparator.comparingDouble(
-                p -> p.distToCenter(centreX, centreZ)));
+        all.sort(Comparator.comparingDouble(p -> p.distToCenter(centreX, centreZ)));
         return all;
     }
 
     private static long xzKey(int x, int z) {
-        return ((long)(x + 32768)) << 32 | ((z + 32768) & 0xFFFFFFFFL);
-    }
-    private static long gridKey(int x, int z) {
         return ((long)(x + 32768)) << 32 | ((z + 32768) & 0xFFFFFFFFL);
     }
 }

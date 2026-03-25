@@ -17,19 +17,19 @@ package tterrag1112.life_in_the_village.Village.Decoration;
 public enum StreetTier {
 
     PRIMARY(
-            5,         // width in blocks (half-width = 2)
+            7,         // width in blocks (half-width = 2)
             8,         // lamppost spacing (blocks)
             true,      // use cobblestone
-            true       // place kerb blocks on edges
+            false       // place kerb blocks on edges
     ),
     SECONDARY(
-            3,         // half-width = 1
+            5,         // half-width = 1
             12,
             false,     // gravel / dirt-path
             false
     ),
     TERTIARY(
-            1,         // half-width = 0 (single block)
+            3,         // half-width = 0 (single block)
             20,
             false,
             false
