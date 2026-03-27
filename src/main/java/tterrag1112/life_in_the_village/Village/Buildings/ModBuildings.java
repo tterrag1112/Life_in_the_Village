@@ -7,6 +7,7 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import net.neoforged.neoforge.registries.NeoForgeRegistries;
 import net.neoforged.neoforge.registries.RegistryBuilder;
+import tterrag1112.life_in_the_village.Kingdom.Castle.CastleStyle;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Village.Building;
 
@@ -18,6 +19,7 @@ public class ModBuildings {
 
     public static final DeferredRegister<Building> BUILDINGS = DeferredRegister.create(BUILDING_REGISTRY, Life_in_the_village.MODID);
     //public static final Supplier<Building> TEST = BUILDINGS.register("test", () -> new Building("testing"));
+
 
 
     public static void register(IEventBus eventBus){

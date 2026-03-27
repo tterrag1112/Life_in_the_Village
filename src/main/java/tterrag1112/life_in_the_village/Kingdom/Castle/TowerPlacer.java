@@ -92,7 +92,7 @@ public class TowerPlacer {
                                 List<BlockPos> capRing,
                                 List<BlockPos> floors,
                                 List<BlockPos> arrowSlits) {
-        switch (style.towerShape()) {
+        switch (style.towers().towerShape()) {
             case ROUND     -> placeRoundRing(node, y, isCap, rng, capRing, arrowSlits);
             case SQUARE    -> placeSquareRing(node, y, isCap, rng, capRing, arrowSlits);
             case D_SHAPED  -> placeDShapedRing(node, y, isCap, rng, capRing, arrowSlits);
@@ -116,7 +116,7 @@ public class TowerPlacer {
                 double dist = Math.sqrt(dx * dx + dz * dz);
                 if (dist > r) continue;
 
-                boolean isShell = dist > r - style.wallThickness();
+                boolean isShell = dist > r - style.walls().wallThickness();
                 BlockPos pos    = new BlockPos(cx + dx, y, cz + dz);
 
                 if (isShell) {
@@ -147,7 +147,7 @@ public class TowerPlacer {
         int cx = node.center().getX();
         int cz = node.center().getZ();
         int r  = node.radius();
-        int th = style.wallThickness();
+        int th = style.walls().wallThickness();
 
         for (int dx = -r; dx <= r; dx++) {
             for (int dz = -r; dz <= r; dz++) {
@@ -189,7 +189,7 @@ public class TowerPlacer {
 
                 double dist    = Math.sqrt(dx * dx + dz * dz);
                 boolean inCirc = dist <= r;
-                boolean isShell = dist > r - style.wallThickness();
+                boolean isShell = dist > r - style.walls().wallThickness();
                 if (!inCirc) continue;
 
                 BlockPos pos = new BlockPos(cx + dx, y, cz + dz);
@@ -223,7 +223,7 @@ public class TowerPlacer {
                 // Octagon: Chebyshev + L1 combined
                 if (!isInsideOctagon(dx, dz, r)) continue;
 
-                boolean isShell = isOctagonShell(dx, dz, r, style.wallThickness());
+                boolean isShell = isOctagonShell(dx, dz, r, style.walls().wallThickness());
                 BlockPos pos    = new BlockPos(cx + dx, y, cz + dz);
 
                 if (isShell) {
@@ -247,7 +247,7 @@ public class TowerPlacer {
     private void placeTowerFloor(CastleLayout.TowerNode node, int y, RandomSource rng) {
         int cx = node.center().getX();
         int cz = node.center().getZ();
-        int r  = node.radius() - style.wallThickness(); // floor inside the shell
+        int r  = node.radius() - style.walls().wallThickness(); // floor inside the shell
 
         for (int dx = -r; dx <= r; dx++) {
             for (int dz = -r; dz <= r; dz++) {
@@ -271,7 +271,7 @@ public class TowerPlacer {
     private void placeInteriorLadders(CastleLayout.TowerNode node, int groundY, int topY) {
         // Place ladders on the inner north wall face at each floor
         BlockPos ladderBase = node.center().relative(Direction.SOUTH,
-                node.radius() - style.wallThickness());
+                node.radius() - style.walls().wallThickness());
         for (int y = groundY + 1; y < topY; y++) {
             BlockPos ladderPos = ladderBase.atY(y);
             BlockState ladder  = Blocks.LADDER.defaultBlockState()
@@ -325,8 +325,8 @@ public class TowerPlacer {
     // -------------------------------------------------------------------------
 
     private boolean isInsideShape(CastleLayout.TowerNode node, int dx, int dz) {
-        int interior = node.radius() - style.wallThickness();
-        return switch (style.towerShape()) {
+        int interior = node.radius() - style.walls().wallThickness();
+        return switch (style.towers().towerShape()) {
             case ROUND     -> dx * dx + dz * dz <= interior * interior;
             case SQUARE    -> Math.abs(dx) <= interior && Math.abs(dz) <= interior;
             case D_SHAPED  -> dx * dx + dz * dz <= interior * interior
@@ -337,7 +337,7 @@ public class TowerPlacer {
 
     private boolean isInsideShapeInclusive(CastleLayout.TowerNode node, int dx, int dz) {
         int r = node.radius();
-        return switch (style.towerShape()) {
+        return switch (style.towers().towerShape()) {
             case ROUND     -> dx * dx + dz * dz <= r * r;
             case SQUARE    -> Math.abs(dx) <= r && Math.abs(dz) <= r;
             case D_SHAPED  -> dx * dx + dz * dz <= r * r
@@ -385,7 +385,7 @@ public class TowerPlacer {
 
     private int resolveTopY(CastleLayout.TowerNode node) {
         int groundY = terrain.maxGroundYInRadius(node.center(), node.radius());
-        return groundY + node.wallHeight() + style.towerHeightBonus();
+        return groundY + node.wallHeight() + style.towers().towerHeightBonus();
     }
 
     private boolean isFloorLevel(int y, int groundY) {

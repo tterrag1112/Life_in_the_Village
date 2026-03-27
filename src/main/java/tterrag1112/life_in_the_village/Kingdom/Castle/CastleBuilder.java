@@ -1,8 +1,11 @@
 package tterrag1112.life_in_the_village.Kingdom.Castle;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.ServerLevelAccessor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,10 +26,10 @@ import java.util.List;
  */
 public class CastleBuilder {
 
-    private final LevelAccessor level;
+    private final ServerLevelAccessor level;
     private final CastleStyle style;
 
-    public CastleBuilder(LevelAccessor level, CastleStyle style) {
+    public CastleBuilder(ServerLevelAccessor level, CastleStyle style) {
         this.level = level;
         this.style = style;
     }
@@ -41,8 +44,7 @@ public class CastleBuilder {
      */
     public void build(CastleLayout layout, RandomSource rng) {
         TerrainSampler terrain  = new TerrainSampler(level);
-
-        DetailApplicator detail = new DetailApplicator(serverLevel, style);
+        DetailApplicator detail = new DetailApplicator(level, style, layout.getOrigin());
 
         // Accumulated placement records from all Layer 2 work
         List<WallSegmentPlacer.PlacementRecord> wallRecords   = new ArrayList<>();
@@ -69,6 +71,7 @@ public class CastleBuilder {
             } else {
                 TowerPlacer.PlacementRecord record = towerPlacer.place(node, rng);
                 towerRecords.add(record);
+                System.out.println(record);
             }
         }
 
@@ -81,13 +84,29 @@ public class CastleBuilder {
 
             // Skip the edge that connects directly into the gatehouse (the gate
             // placer already covers those wall stubs)
-            if (from.role() == CastleLayout.TowerNode.TowerRole.GATEHOUSE || to.role() == CastleLayout.TowerNode.TowerRole.GATEHOUSE) {
+            // Only skip if BOTH endpoints are gatehouse — that would be a zero-length self-edge
+// Single gatehouse endpoint: place the wall stub up to the gatehouse face
+            if (from.role() == CastleLayout.TowerNode.TowerRole.GATEHOUSE && to.role() == CastleLayout.TowerNode.TowerRole.GATEHOUSE) {
                 continue;
             }
 
+            CastleLayout.TowerNode fromNode = layout.resolveFrom(edge);
+            CastleLayout.TowerNode toNode   = layout.resolveTo(edge);
+// For edges touching the gatehouse, shorten the segment so it meets the gate face
+            BlockPos wallFrom = fromNode.center();
+            BlockPos wallTo   = toNode.center();
+
+            if (fromNode.role() == CastleLayout.TowerNode.TowerRole.GATEHOUSE) {
+                wallFrom = offsetTowardTarget(from.center(), to.center(), from.radius() + 1);
+            } else if (toNode.role() == CastleLayout.TowerNode.TowerRole.GATEHOUSE) {
+                wallTo = offsetTowardTarget(to.center(), from.center(), to.radius() + 1);
+            }
+
+
             WallSegmentPlacer.PlacementRecord record = wallPlacer.place(
-                    from.center(), to.center(), edge.wallHeight(), rng);
+                    fromNode, toNode, edge.wallHeight(), rng);
             wallRecords.add(record);
+
         }
 
         // ---- 4. Inner ward --------------------------------------------------
@@ -132,7 +151,7 @@ public class CastleBuilder {
             CastleLayout.TowerNode from = ward.towers().get(edge.fromIndex());
             CastleLayout.TowerNode to   = ward.towers().get(edge.toIndex());
             WallSegmentPlacer.PlacementRecord rec = wallPlacer.place(
-                    from.center(), to.center(), edge.wallHeight(), rng);
+                    from, to, edge.wallHeight(), rng);
             wallRecords.add(rec);
         }
     }
@@ -179,5 +198,12 @@ public class CastleBuilder {
     protected MoatPlacer.FillMode determineMoatFill() {
         // Default: water. Override for lava/dry-moat styles.
         return MoatPlacer.FillMode.WATER;
+    }
+    private BlockPos offsetTowardTarget(BlockPos from, BlockPos toward, int distance) {
+        double dx = toward.getX() - from.getX();
+        double dz = toward.getZ() - from.getZ();
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len == 0) return from;
+        return from.offset((int)(dx / len * distance), 0, (int)(dz / len * distance));
     }
 }

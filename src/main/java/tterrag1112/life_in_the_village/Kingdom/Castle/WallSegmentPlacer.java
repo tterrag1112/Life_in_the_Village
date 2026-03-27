@@ -35,35 +35,33 @@ public class WallSegmentPlacer {
     private final LevelAccessor level;
     private final CastleStyle style;
     private final TerrainSampler terrain;
+    CastleStyle.WallConfig wallConfig;
 
     public WallSegmentPlacer(LevelAccessor level, CastleStyle style, TerrainSampler terrain) {
         this.level   = level;
         this.style   = style;
         this.terrain = terrain;
+        this.wallConfig = style.walls();
     }
 
     // -------------------------------------------------------------------------
     // Main placement
     // -------------------------------------------------------------------------
 
-    /**
-     * Place a wall segment from {@code from} to {@code to}.
-     *
-     * @param from       Center of the starting tower (wall begins here)
-     * @param to         Center of the ending tower (wall ends here)
-     * @param wallHeight Nominal height of the wall in blocks
-     * @param rng        Random source for material variation and ruination
-     * @return           PlacementRecord listing all top-course block positions
-     *                   for the battlement applicator.
-     */
-    public PlacementRecord place(BlockPos from, BlockPos to, int wallHeight,
+
+    public PlacementRecord place(CastleLayout.TowerNode fromNode, CastleLayout.TowerNode toNode, int wallHeight,
                                  RandomSource rng) {
+        BlockPos from = fromNode.center();
+        BlockPos to   = toNode.center();
+        BlockPos wallStart = offsetTowardTarget(from, to, fromNode.radius());
+        BlockPos wallEnd   = offsetTowardTarget(to, from, toNode.radius());
+
 
         List<BlockPos> topCourse  = new ArrayList<>();
         List<BlockPos> walkway    = new ArrayList<>();
 
         // Rasterize the line between from and to using Bresenham-style stepping
-        List<BlockPos> path = rasterizeLine(from, to);
+        List<BlockPos> path = rasterizeLine(wallStart, wallEnd);
 
         // Determine the dominant axis so we know which face gets arrow slits
         boolean xDominant = Math.abs(to.getX() - from.getX())
@@ -71,7 +69,7 @@ public class WallSegmentPlacer {
         Direction inwardFace  = xDominant ? Direction.NORTH : Direction.WEST;
         Direction outwardFace = inwardFace.getOpposite();
 
-        int thickness = style.wallThickness();
+        int thickness = wallConfig.wallThickness();
 
         // For each step along the path, place a wall column
         for (int stepIdx = 0; stepIdx < path.size(); stepIdx++) {
@@ -133,7 +131,7 @@ public class WallSegmentPlacer {
             }
         }
 
-        return new PlacementRecord(topCourse, walkway, from, to, wallHeight);
+        return new PlacementRecord(topCourse, walkway, wallStart, wallEnd, wallHeight);
     }
 
     // -------------------------------------------------------------------------
@@ -160,7 +158,7 @@ public class WallSegmentPlacer {
 
         int x = x0, z = z0;
         for (int step = 0; step <= totalSteps; step++) {
-            if (step > 0 && step < totalSteps) {
+            if (step >= 0 && step <= totalSteps) {
                 result.add(new BlockPos(x, a.getY(), z));
             }
             int e2 = 2 * err;
@@ -223,7 +221,7 @@ public class WallSegmentPlacer {
 
     private void fillFoundation(BlockPos topPos, int minY, int groundY, RandomSource rng) {
         for (int y = minY; y < groundY; y++) {
-            for (int dx = 0; dx < style.wallThickness(); dx++) {
+            for (int dx = 0; dx < wallConfig.wallThickness(); dx++) {
                 BlockPos pos = offsetIntoWall(topPos, Direction.NORTH, dx).atY(y);
                 BlockState current = level.getBlockState(pos);
                 if (current.isAir() || current.is(Blocks.WATER)) {
@@ -263,4 +261,16 @@ public class WallSegmentPlacer {
             BlockPos wallTo,
             int wallHeight
     ) {}
+
+    private BlockPos offsetTowardTarget(BlockPos from, BlockPos toward, int distance) {
+        double dx = toward.getX() - from.getX();
+        double dz = toward.getZ() - from.getZ();
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len == 0) return from;
+        return from.offset(
+                (int) Math.round(dx / len * distance),
+                0,
+                (int) Math.round(dz / len * distance)
+        );
+    }
 }

@@ -31,7 +31,7 @@ import net.minecraft.resources.Identifier;
  *
  *   Pool key:   yourmod:castle/battlements/norman
  *   Templates:
- *     yourmod:castle/battlements/norman_0.nbt   — square merlons, standard height
+ *     yourmod:castle/battlements/norman.nbt   — square merlons, standard height
  *     yourmod:castle/battlements/norman_1.nbt   — square merlons with slab cap
  *
  *   Pool key:   yourmod:castle/battlements/moorish
@@ -57,7 +57,7 @@ import net.minecraft.resources.Identifier;
  *
  *   Pool key:   yourmod:castle/tower_roofs/norman
  *   Templates:
- *     yourmod:castle/tower_roofs/norman_0.nbt   — flat merlon cap, round tower (r3)
+ *     yourmod:castle/tower_roofs/norman.nbt   — flat merlon cap, round tower (r3)
  *     yourmod:castle/tower_roofs/norman_1.nbt   — flat merlon cap, round tower (r5)
  *     yourmod:castle/tower_roofs/norman_2.nbt   — flat merlon cap, square tower (r3)
  *     yourmod:castle/tower_roofs/norman_3.nbt   — flat merlon cap, square tower (r5)
@@ -86,7 +86,7 @@ import net.minecraft.resources.Identifier;
  *
  *   Pool key:   yourmod:castle/gatehouses/norman
  *   Templates:
- *     yourmod:castle/gatehouses/norman_0.nbt    — twin square towers with square battlements
+ *     yourmod:castle/gatehouses/norman.nbt    — twin square towers with square battlements
  *     yourmod:castle/gatehouses/norman_1.nbt    — twin towers with chapel window above gate
  *
  *   Pool key:   yourmod:castle/gatehouses/moorish
@@ -109,7 +109,7 @@ import net.minecraft.resources.Identifier;
  *
  *   Pool key:   yourmod:castle/donjon_roofs/norman
  *   Templates:
- *     yourmod:castle/donjon_roofs/norman_0.nbt  — crenellated flat roof with corner turrets
+ *     yourmod:castle/donjon_roofs/norman.nbt  — crenellated flat roof with corner turrets
  *     yourmod:castle/donjon_roofs/norman_1.nbt  — stepped pyramidal cap
  *
  *   Pool key:   yourmod:castle/donjon_roofs/moorish
@@ -135,7 +135,7 @@ import net.minecraft.resources.Identifier;
  *
  *   Pool key:   yourmod:castle/windows/norman
  *   Templates:
- *     yourmod:castle/windows/norman_0.nbt       — plain rectangular slit
+ *     yourmod:castle/windows/norman.nbt       — plain rectangular slit
  *     yourmod:castle/windows/norman_1.nbt       — cross slit (iron bars cross pattern)
  *
  *   Pool key:   yourmod:castle/windows/moorish
@@ -171,18 +171,20 @@ import net.minecraft.resources.Identifier;
  * ============================================================
  *
  * To have a fully functional Norman castle you need at minimum:
- *   [ ] yourmod:castle/battlements/norman_0.nbt
- *   [ ] yourmod:castle/tower_roofs/norman_0.nbt  (round, small)
+ *   [ ] yourmod:castle/battlements/norman.nbt
+ *   [ ] yourmod:castle/tower_roofs/norman.nbt  (round, small)
  *   [ ] yourmod:castle/tower_roofs/norman_2.nbt  (square, small)
- *   [ ] yourmod:castle/gatehouses/norman_0.nbt
- *   [ ] yourmod:castle/donjon_roofs/norman_0.nbt
+ *   [ ] yourmod:castle/gatehouses/norman.nbt
+ *   [ ] yourmod:castle/donjon_roofs/norman.nbt
  *
  * Everything else uses the code fallbacks (simple alternating merlons,
  * slab tower caps) which look functional if plain.
  *
  * ============================================================
  */
-public final class CastleStyles {
+
+
+/*public final class CastleStyles {
 
     private CastleStyles() {}
 
@@ -191,52 +193,45 @@ public final class CastleStyles {
     // -------------------------------------------------------------------------
 
     public static final CastleStyle NORMAN = new CastleStyle(
-            CastleStyle.PlanType.SQUARE,
-            /* radius      */ 24, 32,
-            /* wall height */ 10, 14,
-            /* thickness   */ 3,
-            CastleStyle.TowerShape.SQUARE,
-            /* tower radius */ 4, 6,
-            /* height bonus */ 4,
-            /* towerFreq    */ 0.6f,
-            /* donjon       */ true,  5, 7, 6,
-            /* inner ward   */ false, 0.5f,
-            /* moat         */ true,  4, 3,
-            /* portcullis   */ true,
-            /* drawbridge   */ true,
+            new CastleStyle.LayoutConfig(CastleStyle.PlanType.SQUARE, 24, 32),
+            new CastleStyle.WallConfig(10, 14, 3),
+            new CastleStyle.TowerConfig(CastleStyle.TowerShape.SQUARE, 4, 6, 4, 0.6f),
+            new CastleStyle.DonjeonConfig(true, 5, 7, 6, false, 0.5f),
+            new CastleStyle.FeatureConfig(true, 4, 3, true, true, true, true),
+            new CastleStyle.StructurePoolConfig(
+                    rl("castle/battlements/norman"),
+                    rl("castle/gatehouses/norman"),
+                    rl("castle/windows/norman"),
+                    rl("castle/tower_roofs/norman"),
+                    rl("castle/donjon_roofs/norman"),
+                    rl("castle/interiors/barracks")
+            ),
             MaterialPalette.stoneBrick(),
             MaterialPalette.stoneBrick(),
             MaterialPalette.stoneBrick(),
-            rl("castle/battlements/norman"),
-            rl("castle/gatehouses/norman"),
-            rl("castle/windows/norman"),
-            rl("castle/tower_roofs/norman"),
-            rl("castle/donjon_roofs/norman"),
-            rl("castle/interiors/barracks"),
-            /* ruination */ 0.0f,
-            /* torches   */ true,
-            /* flags     */ true,
-            /* styleSeed */ 1001L
+            0.0f,
+            1001L
     );
 
     // -------------------------------------------------------------------------
     // Moorish — polygonal towers, ornate gatehouse, sandstone
     // -------------------------------------------------------------------------
 
+
     public static final CastleStyle MOORISH = new CastleStyle(
-            CastleStyle.PlanType.POLYGON,
-            /* radius      */ 28, 38,
-            /* wall height */ 8,  12,
-            /* thickness   */ 2,
-            CastleStyle.TowerShape.POLYGONAL,
-            /* tower radius */ 3, 5,
-            /* height bonus */ 5,
-            /* towerFreq    */ 0.8f,
-            /* donjon       */ true,  4, 6, 4,
-            /* inner ward   */ true, 0.5f,
-            /* moat         */ false, 0, 0,
-            /* portcullis   */ false,
-            /* drawbridge   */ false,
+            new CastleStyle.LayoutConfig(CastleStyle.PlanType.POLYGON, 28, 38),
+            new CastleStyle.WallConfig(8, 12, 2),
+            new CastleStyle.TowerConfig(CastleStyle.TowerShape.POLYGONAL, 3, 5, 5, 0.8f),
+            new CastleStyle.DonjeonConfig(true, 4, 6, 4, true, 0.5f),
+            new CastleStyle.FeatureConfig(false, 0, 0, false, false, true, true),
+            new CastleStyle.StructurePoolConfig(
+                    rl("castle/battlements/moorish"),
+                    rl("castle/gatehouses/moorish"),
+                    rl("castle/windows/moorish"),
+                    rl("castle/tower_roofs/moorish"),
+                    rl("castle/donjon_roofs/moorish"),
+                    rl("castle/interiors/empty")
+            ),
             MaterialPalette.sandstone(),
             new MaterialPalette(
                     java.util.List.of(
@@ -246,19 +241,10 @@ public final class CastleStyles {
                     java.util.List.of(),
                     net.minecraft.world.level.block.Blocks.SANDSTONE_STAIRS,
                     net.minecraft.world.level.block.Blocks.SANDSTONE_SLAB,
-                    net.minecraft.world.level.block.Blocks.SANDSTONE_WALL
-            ),
+                    net.minecraft.world.level.block.Blocks.SANDSTONE_WALL),
             MaterialPalette.sandstone(),
-            rl("castle/battlements/moorish"),
-            rl("castle/gatehouses/moorish"),
-            rl("castle/windows/moorish"),
-            rl("castle/tower_roofs/moorish"),
-            rl("castle/donjon_roofs/moorish"),
-            rl("castle/interiors/empty"),
-            /* ruination */ 0.0f,
-            /* torches   */ true,
-            /* flags     */ true,
-            /* styleSeed */ 2002L
+            0.0f,
+            2002L
     );
 
     // -------------------------------------------------------------------------
@@ -266,32 +252,24 @@ public final class CastleStyles {
     // -------------------------------------------------------------------------
 
     public static final CastleStyle FANTASY = new CastleStyle(
-            CastleStyle.PlanType.IRREGULAR,
-            /* radius      */ 30, 42,
-            /* wall height */ 12, 18,
-            /* thickness   */ 2,
-            CastleStyle.TowerShape.ROUND,
-            /* tower radius */ 4, 7,
-            /* height bonus */ 8,
-            /* towerFreq    */ 0.9f,
-            /* donjon       */ true,  6, 9, 10,
-            /* inner ward   */ true, 0.45f,
-            /* moat         */ true,  5, 4,
-            /* portcullis   */ true,
-            /* drawbridge   */ true,
+            new CastleStyle.LayoutConfig(CastleStyle.PlanType.IRREGULAR, 30, 42),
+            new CastleStyle.WallConfig(12, 18, 2),
+            new CastleStyle.TowerConfig(CastleStyle.TowerShape.ROUND, 4, 7, 8, 0.9f),
+            new CastleStyle.DonjeonConfig(true, 6, 9, 10, true, 0.45f),
+            new CastleStyle.FeatureConfig(true, 5, 4, true, true, true, true),
+            new CastleStyle.StructurePoolConfig(
+                    rl("castle/battlements/fantasy"),
+                    rl("castle/gatehouses/fantasy"),
+                    rl("castle/windows/fantasy"),
+                    rl("castle/tower_roofs/fantasy"),
+                    rl("castle/donjon_roofs/fantasy"),
+                    rl("castle/interiors/storage")
+            ),
             MaterialPalette.deepslate(),
             MaterialPalette.deepslate(),
             MaterialPalette.deepslate(),
-            rl("castle/battlements/fantasy"),
-            rl("castle/gatehouses/fantasy"),
-            rl("castle/windows/fantasy"),
-            rl("castle/tower_roofs/fantasy"),
-            rl("castle/donjon_roofs/fantasy"),
-            rl("castle/interiors/storage"),
-            /* ruination */ 0.0f,
-            /* torches   */ true,
-            /* flags     */ true,
-            /* styleSeed */ 3003L
+            0.0f,
+            3003L
     );
 
     // -------------------------------------------------------------------------
@@ -299,32 +277,24 @@ public final class CastleStyles {
     // -------------------------------------------------------------------------
 
     public static final CastleStyle RUIN = new CastleStyle(
-            CastleStyle.PlanType.IRREGULAR,
-            /* radius      */ 20, 30,
-            /* wall height */ 6,  10,
-            /* thickness   */ 2,
-            CastleStyle.TowerShape.ROUND,
-            /* tower radius */ 3, 5,
-            /* height bonus */ 2,
-            /* towerFreq    */ 0.5f,
-            /* donjon       */ false, 4, 6, 4,
-            /* inner ward   */ false, 0.5f,
-            /* moat         */ false, 0, 0,
-            /* portcullis   */ false,
-            /* drawbridge   */ false,
+            new CastleStyle.LayoutConfig(CastleStyle.PlanType.IRREGULAR, 20, 30),
+            new CastleStyle.WallConfig(6, 10, 2),
+            new CastleStyle.TowerConfig(CastleStyle.TowerShape.ROUND, 3, 5, 2, 0.5f),
+            new CastleStyle.DonjeonConfig(false, 4, 6, 4, false, 0.5f),
+            new CastleStyle.FeatureConfig(false, 0, 0, false, false, false, false),
+            new CastleStyle.StructurePoolConfig(
+                    rl("castle/battlements/ruin"),
+                    rl("castle/gatehouses/ruin"),
+                    rl("castle/windows/norman"),
+                    rl("castle/tower_roofs/ruin"),
+                    rl("castle/donjon_roofs/ruin"),
+                    rl("castle/interiors/empty")
+            ),
             MaterialPalette.stoneBrick(),
             MaterialPalette.stoneBrick(),
             MaterialPalette.stoneBrick(),
-            rl("castle/battlements/ruin"),
-            rl("castle/gatehouses/ruin"),
-            rl("castle/windows/norman"),
-            rl("castle/tower_roofs/ruin"),
-            rl("castle/donjon_roofs/ruin"),
-            rl("castle/interiors/empty"),
-            /* ruination */ 0.65f,
-            /* torches   */ false,
-            /* flags     */ false,
-            /* styleSeed */ 4004L
+            0.65f,
+            4004L
     );
 
     // -------------------------------------------------------------------------
@@ -332,6 +302,8 @@ public final class CastleStyles {
     // -------------------------------------------------------------------------
 
     private static Identifier rl(String path) {
-        return Identifier.parse("yourmod:" + path);
+        return Identifier.parse("life_in_the_village:data/structures/" + path);
     }
 }
+
+ */

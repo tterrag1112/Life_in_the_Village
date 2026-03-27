@@ -123,7 +123,7 @@ public class MoatPlacer {
         int bw = BRIDGE_WIDTH / 2;
         // Bridge extends in the +Z direction (south, conventional gatehouse facing)
         boolean inWidth = Math.abs(x - gatehouse.getX()) <= bw;
-        boolean inDepth = z >= gatehouse.getZ() && z <= gatehouse.getZ() + style.moatWidth() + 2;
+        boolean inDepth = z >= gatehouse.getZ() && z <= gatehouse.getZ() + style.features().moatWidth() + 2;
         return inWidth && inDepth;
     }
 

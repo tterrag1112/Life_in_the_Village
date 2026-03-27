@@ -7,13 +7,11 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.packs.resources.ResourceManager;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
-import net.neoforged.neoforge.client.network.event.RegisterClientPayloadHandlersEvent;
+import net.neoforged.neoforge.event.AddServerReloadListenersEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerContainerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
@@ -28,13 +26,12 @@ import net.neoforged.neoforge.registries.NewRegistryEvent;
 import tterrag1112.life_in_the_village.Blocks.custom.GuardPostBlock;
 import tterrag1112.life_in_the_village.Commands.*;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
+import tterrag1112.life_in_the_village.Kingdom.Castle.CastleStyleLoader;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
-import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Entities.NpcNameRegistry;
 import tterrag1112.life_in_the_village.Life_in_the_village;
-import tterrag1112.life_in_the_village.Magic.ManaSystem.ModManaHandler;
 import tterrag1112.life_in_the_village.Networking.*;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.ModBuildings;
@@ -45,9 +42,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -68,6 +63,14 @@ public class ModModEvents {
                 Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "npc_names"),
                 NpcNameRegistry.INSTANCE
         );
+
+    }
+    @SubscribeEvent
+    public static void onAddServerReloadListeners(AddServerReloadListenersEvent event){
+        event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "castle_styles"),
+                CastleStyleLoader.INSTANCE);
+
+
     }
     @SubscribeEvent
     public static void onServerStarting(ServerStartingEvent event) {
@@ -166,6 +169,7 @@ public class ModModEvents {
         KingdomCommands.onRegisterCommands(event);
         GuildCommands.onRegisterCommands(event);
         OrderCommand.register(event.getDispatcher());
+        CastleCommand.register(event.getDispatcher());
 
     }
 

@@ -37,12 +37,24 @@ public class GatehousePlacer {
     private final LevelAccessor level;
     private final CastleStyle style;
     private final TerrainSampler terrain;
+    CastleStyle.FeatureConfig featureConfig;
+    CastleStyle.TowerConfig towerConfig;
+    CastleStyle.WallConfig wallConfig;
+
+
+
 
     public GatehousePlacer(LevelAccessor level, CastleStyle style, TerrainSampler terrain) {
         this.level   = level;
         this.style   = style;
         this.terrain = terrain;
+        this.featureConfig = style.features();
+        this.towerConfig = style.towers();
+        this.wallConfig = style.walls();
+
+
     }
+
 
     // -------------------------------------------------------------------------
     // Entry point
@@ -61,7 +73,7 @@ public class GatehousePlacer {
 
         int groundY  = terrain.groundY(gateNode.center());
         int wallH    = gateNode.wallHeight();
-        int topY     = groundY + wallH + style.towerHeightBonus() + 2; // gatehouses taller
+        int topY     = groundY + wallH + towerConfig.towerHeightBonus() + 2; // gatehouses taller
         int towerR   = gateNode.radius();
 
         // The two flanking tower centers
@@ -78,12 +90,12 @@ public class GatehousePlacer {
                 wallH, rng, passageCeiling);
 
         // Portcullis groove
-        if (style.hasPortcullis()) {
+        if (featureConfig.hasPortcullis()) {
             placePortcullisGroove(gateNode.center(), lateral, groundY, wallH);
         }
 
         // Drawbridge channel
-        if (style.hasDrawbridge()) {
+        if (featureConfig.hasDrawbridge()) {
             placeDrawbridgeChannel(gateNode.center(), facing, groundY, rng);
         }
 
@@ -103,8 +115,8 @@ public class GatehousePlacer {
         for (int y = groundY; y <= topY; y++) {
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dz = -radius; dz <= radius; dz++) {
-                    boolean isShell = Math.abs(dx) > radius - style.wallThickness()
-                            || Math.abs(dz) > radius - style.wallThickness();
+                    boolean isShell = Math.abs(dx) > radius - wallConfig.wallThickness()
+                            || Math.abs(dz) > radius - wallConfig.wallThickness();
                     BlockPos pos    = new BlockPos(
                             center.getX() + dx, y, center.getZ() + dz);
 
@@ -130,7 +142,7 @@ public class GatehousePlacer {
                                   int groundY, int topY, int wallH,
                                   RandomSource rng, List<BlockPos> ceilingOut) {
         // Tunnel depth = wall thickness + a short barbican extension
-        int tunnelDepth = style.wallThickness() + 3;
+        int tunnelDepth = wallConfig.wallThickness() + 3;
 
         for (int t = -tunnelDepth / 2; t <= tunnelDepth / 2; t++) {
             BlockPos depthPos = gateCenter.relative(facing, t);
@@ -211,7 +223,7 @@ public class GatehousePlacer {
      */
     private void placeDrawbridgeChannel(BlockPos gateCenter, Direction facing,
                                         int groundY, RandomSource rng) {
-        int bridgeLength = style.moatWidth() > 0 ? style.moatWidth() : 5;
+        int bridgeLength = featureConfig.moatWidth() > 0 ? featureConfig.moatWidth() : 5;
 
         for (int step = 1; step <= bridgeLength; step++) {
             BlockPos stepPos = gateCenter.relative(facing, step);
@@ -242,8 +254,8 @@ public class GatehousePlacer {
         for (BlockPos center : List.of(leftCenter, rightCenter)) {
             for (int dx = -towerR; dx <= towerR; dx++) {
                 for (int dz = -towerR; dz <= towerR; dz++) {
-                    boolean isShell = Math.abs(dx) >= towerR - style.wallThickness()
-                            || Math.abs(dz) >= towerR - style.wallThickness();
+                    boolean isShell = Math.abs(dx) >= towerR - wallConfig.wallThickness()
+                            || Math.abs(dz) >= towerR - wallConfig.wallThickness();
                     if (isShell) {
                         caps.add(new BlockPos(
                                 center.getX() + dx, topY, center.getZ() + dz));

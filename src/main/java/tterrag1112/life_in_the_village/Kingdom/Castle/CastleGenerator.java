@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Kingdom.Castle;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.ServerLevelAccessor;
 
 /**
  * Public entry point for castle generation.
@@ -45,7 +46,7 @@ public final class CastleGenerator {
      * @param rng    A seeded random source. Use a seed derived from the chunk
      *               position + world seed for deterministic generation.
      */
-    public static void generate(LevelAccessor level,
+    public static void generate(ServerLevelAccessor level,
                                 BlockPos origin,
                                 CastleStyle style,
                                 RandomSource rng) {
@@ -53,17 +54,19 @@ public final class CastleGenerator {
         // Phase 1: Layout (no world access)
         CastleLayoutGenerator layoutGen = new CastleLayoutGenerator();
         CastleLayout layout = layoutGen.generate(style, origin, rng);
+        System.out.println("Creating layout: " +layout.toString()+ style.toString()+ origin);
 
         // Phase 2 + 3: Build (world access, includes detail application)
         CastleBuilder builder = new CastleBuilder(level, style);
         builder.build(layout, rng);
+        System.out.println("Building castle: ");
     }
 
     /**
      * Overload that returns the CastleLayout for external inspection
      * (e.g. for placing loot chests, spawners, or NPCs afterward).
      */
-    public static CastleLayout generateWithLayout(LevelAccessor level,
+    public static CastleLayout generateWithLayout(ServerLevelAccessor level,
                                                   BlockPos origin,
                                                   CastleStyle style,
                                                   RandomSource rng) {

@@ -42,9 +42,9 @@ public record MaterialPalette(
             instance.group(
                     WeightedBlock.CODEC.listOf().fieldOf("main_blocks").forGetter(MaterialPalette::mainBlocks),
                     WeightedBlock.CODEC.listOf().fieldOf("cracked_variants").forGetter(MaterialPalette::crackedVariants),
-                    BuiltInRegistries.BLOCK.getCodec().fieldOf("stair_block").forGetter(MaterialPalette::stairBlock),
-                    BuiltInRegistries.BLOCK.getCodec().fieldOf("slab_block").forGetter(MaterialPalette::slabBlock),
-                    BuiltInRegistries.BLOCK.getCodec().fieldOf("wall_block").forGetter(MaterialPalette::wallBlock)
+                    BuiltInRegistries.BLOCK.byNameCodec().fieldOf("stair_block").forGetter(MaterialPalette::stairBlock),
+                    BuiltInRegistries.BLOCK.byNameCodec().fieldOf("slab_block").forGetter(MaterialPalette::slabBlock),
+                    BuiltInRegistries.BLOCK.byNameCodec().fieldOf("wall_block").forGetter(MaterialPalette::wallBlock)
             ).apply(instance, MaterialPalette::new)
     );
 
@@ -55,7 +55,7 @@ public record MaterialPalette(
     public record WeightedBlock(Block block, int weight) {
         public static final Codec<WeightedBlock> CODEC = RecordCodecBuilder.create(instance ->
                 instance.group(
-                        BuiltInRegistries.BLOCK.getCodec().fieldOf("block").forGetter(WeightedBlock::block),
+                        BuiltInRegistries.BLOCK.byNameCodec().fieldOf("block").forGetter(WeightedBlock::block),
                         Codec.INT.fieldOf("weight").forGetter(WeightedBlock::weight)
                 ).apply(instance, WeightedBlock::new)
         );

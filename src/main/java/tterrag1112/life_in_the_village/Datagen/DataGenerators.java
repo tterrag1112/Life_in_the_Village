@@ -19,16 +19,16 @@ public class DataGenerators {
         event.createProvider(ModModelProvider::new);
         event.createProvider(ModItemTagProvider::new);
         event.createProvider(ModLanguageProvider::new);
-        //event.getGenerator().addProvider(event.includeServer(), new NpcNameDatagen(event.getGenerator().getPackOutput()));
         event.createProvider(NpcNameDatagen::new);
         event.createProvider(VillageTypeDatagen::new);
         event.createProvider(MiningYieldDatagen::new);
         event.createProvider(BlacksmithRecipeDatagen::new);
         event.createProvider(KingdomTitleDatagen::new);
-
-
-
+        event.createProvider(CastleStyleDatagen::new);
 
 
     }
+
+
+
 }

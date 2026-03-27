@@ -108,6 +108,15 @@ sourceSets {
         }
     }
 }
+processResources {
+    from('src/main/resources') {
+        include '**/*.nbt'
+    }
+    from('src/generated/resources') {
+        include '**/*.nbt'
+    }
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+}
 
 
 dependencies {
