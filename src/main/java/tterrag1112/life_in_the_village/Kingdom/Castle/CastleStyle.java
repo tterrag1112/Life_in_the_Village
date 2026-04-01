@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.RandomSource;
 import net.minecraft.util.StringRepresentable;
+import tterrag1112.life_in_the_village.Kingdom.Castle.Placers.MoatFillType;
 
 public record CastleStyle(
         String styleId,
@@ -14,11 +15,12 @@ public record CastleStyle(
         DonjeonConfig donjon,
         FeatureConfig features,
         StructurePoolConfig pools,
-        MaterialPalette primaryMaterial,
-        MaterialPalette accentMaterial,
-        MaterialPalette floorMaterial,
+        String themeId,      // looks up ArchitectTheme from registry
+        String paletteId,    // looks up ArchitectPalette from PaletteRegistry
         float ruinationLevel,
-        long styleSeed
+        long styleSeed,
+        FunctionConfig function,
+        StyleDetailConfig styleDetail
 ) {
 
     // -------------------------------------------------------------------------
@@ -62,11 +64,12 @@ public record CastleStyle(
                     DonjeonConfig.CODEC.fieldOf("donjon").forGetter(CastleStyle::donjon),
                     FeatureConfig.CODEC.fieldOf("features").forGetter(CastleStyle::features),
                     StructurePoolConfig.CODEC.fieldOf("pools").forGetter(CastleStyle::pools),
-                    MaterialPalette.CODEC.fieldOf("primary_material").forGetter(CastleStyle::primaryMaterial),
-                    MaterialPalette.CODEC.fieldOf("accent_material").forGetter(CastleStyle::accentMaterial),
-                    MaterialPalette.CODEC.fieldOf("floor_material").forGetter(CastleStyle::floorMaterial),
+                    Codec.STRING.fieldOf("theme_id").forGetter(CastleStyle::themeId),
+                    Codec.STRING.fieldOf("palette_id").forGetter(CastleStyle::paletteId),
                     Codec.FLOAT.fieldOf("ruination_level").forGetter(CastleStyle::ruinationLevel),
-                    Codec.LONG.fieldOf("style_seed").forGetter(CastleStyle::styleSeed)
+                    Codec.LONG.fieldOf("style_seed").forGetter(CastleStyle::styleSeed),
+                    FunctionConfig.CODEC.fieldOf("function").forGetter(CastleStyle::function),
+                    StyleDetailConfig.CODEC.fieldOf("style_detail").forGetter(CastleStyle::styleDetail)
             ).apply(instance, CastleStyle::new)
     );
 
@@ -105,15 +108,27 @@ public record CastleStyle(
     public record LayoutConfig(
             CastleStyle.PlanType planType,
             int minRadius,
-            int maxRadius
+            int maxRadius,
+            int polygonSides,// 0 = random 5-8, explicit value locks the side count
+            boolean useRoomStackGeneration
     ) {
         public static final Codec<LayoutConfig> CODEC = RecordCodecBuilder.create(instance ->
                 instance.group(
                         CastleStyle.PlanType.CODEC.fieldOf("plan_type").forGetter(LayoutConfig::planType),
                         Codec.INT.fieldOf("min_radius").forGetter(LayoutConfig::minRadius),
-                        Codec.INT.fieldOf("max_radius").forGetter(LayoutConfig::maxRadius)
+                        Codec.INT.fieldOf("max_radius").forGetter(LayoutConfig::maxRadius),
+                        Codec.INT.optionalFieldOf("polygon_sides", 0)
+                                .forGetter(LayoutConfig::polygonSides),
+                        Codec.BOOL.fieldOf("use_room_stack_generation")
+                                .forGetter(LayoutConfig::useRoomStackGeneration)
                 ).apply(instance, LayoutConfig::new)
         );
+
+        /** Returns the side count to use, respecting explicit config or falling back to random. */
+        public int resolveSides(RandomSource rng) {
+            if (polygonSides >= 5 && polygonSides <= 12) return polygonSides;
+            return 5 + rng.nextInt(4); // random 5-8
+        }
     }
     public record WallConfig(
             int minWallHeight,
@@ -168,20 +183,38 @@ public record CastleStyle(
             boolean hasMoat,
             int moatWidth,
             int moatDepth,
+            MoatFillType moatFill,      // replaces hardcoded WATER in CastleBuilder
             boolean hasPortcullis,
             boolean hasDrawbridge,
+            boolean hasBarbian,         // second gate structure projecting outward
+            boolean hasWallTurrets,     // small projecting turrets mid-wall
+            float turretFrequency,      // 0-1 probability per wall segment
             boolean addTorches,
-            boolean addFlags
+            boolean addFlags,
+            boolean addVines,           // for ruin/overgrown styles
+            boolean addRubble           // scatter debris at base of walls
     ) {
         public static final Codec<FeatureConfig> CODEC = RecordCodecBuilder.create(instance ->
                 instance.group(
                         Codec.BOOL.fieldOf("has_moat").forGetter(FeatureConfig::hasMoat),
                         Codec.INT.fieldOf("moat_width").forGetter(FeatureConfig::moatWidth),
                         Codec.INT.fieldOf("moat_depth").forGetter(FeatureConfig::moatDepth),
+                        MoatFillType.CODEC.optionalFieldOf("moat_fill", MoatFillType.WATER)
+                                .forGetter(FeatureConfig::moatFill),
                         Codec.BOOL.fieldOf("has_portcullis").forGetter(FeatureConfig::hasPortcullis),
                         Codec.BOOL.fieldOf("has_drawbridge").forGetter(FeatureConfig::hasDrawbridge),
+                        Codec.BOOL.optionalFieldOf("has_barbian", false)
+                                .forGetter(FeatureConfig::hasBarbian),
+                        Codec.BOOL.optionalFieldOf("has_wall_turrets", false)
+                                .forGetter(FeatureConfig::hasWallTurrets),
+                        Codec.FLOAT.optionalFieldOf("turret_frequency", 0.3f)
+                                .forGetter(FeatureConfig::turretFrequency),
                         Codec.BOOL.fieldOf("add_torches").forGetter(FeatureConfig::addTorches),
-                        Codec.BOOL.fieldOf("add_flags").forGetter(FeatureConfig::addFlags)
+                        Codec.BOOL.fieldOf("add_flags").forGetter(FeatureConfig::addFlags),
+                        Codec.BOOL.optionalFieldOf("add_vines", false)
+                                .forGetter(FeatureConfig::addVines),
+                        Codec.BOOL.optionalFieldOf("add_rubble", false)
+                                .forGetter(FeatureConfig::addRubble)
                 ).apply(instance, FeatureConfig::new)
         );
     }
@@ -206,6 +239,41 @@ public record CastleStyle(
                         ).forGetter(StructurePoolConfig::interiorPool)
                 ).apply(instance, StructurePoolConfig::new)
         );
+    }
+    public boolean isRuin() {
+        return ruinationLevel() >= 0.5f;
+    }
+
+    public ArchitectTheme theme() {
+        return switch (themeId) {
+            case "norman"        -> ArchitectTheme.NORMAN;
+            case "moorish"       -> ArchitectTheme.MOORISH;
+            case "fantasy"       -> ArchitectTheme.FANTASY;
+            case "ruin"          -> ArchitectTheme.RUIN;
+            case "japanese"      -> ArchitectTheme.JAPANESE;
+            case "french_gothic" -> ArchitectTheme.FRENCH_GOTHIC;
+            case "byzantine"     -> ArchitectTheme.BYZANTINE;
+            case "edwardian"     -> ArchitectTheme.EDWARDIAN;
+            case "mughal"        -> ArchitectTheme.MUGHAL;
+            case "dark_lord"     -> ArchitectTheme.DARK_LORD;
+            case "elvish"        -> ArchitectTheme.ELVISH;
+            case "dwarven"       -> ArchitectTheme.DWARVEN;
+            case "sea_fort"      -> ArchitectTheme.SEA_FORT;
+            case "ancient_ruin"  -> ArchitectTheme.ANCIENT_RUIN;
+            case "undead"        -> ArchitectTheme.UNDEAD;
+            case "crystal_spire" -> ArchitectTheme.CRYSTAL_SPIRE;
+            case "cattingham"    -> ArchitectTheme.CATTINGHAM;
+            case "grand_palace"  -> ArchitectTheme.GRAND_PALACE;
+            case "rustic_manor"  -> ArchitectTheme.RUSTIC_MANOR;
+            default              -> ArchitectTheme.NORMAN;
+        };
+    }
+
+    public ArchitectPalette palette() {
+        String pid = (paletteId == null || paletteId.isEmpty())
+                ? theme().defaultPaletteId()
+                : paletteId;
+        return PaletteRegistry.INSTANCE.get(pid);
     }
 
 

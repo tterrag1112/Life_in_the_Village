@@ -170,6 +170,7 @@ public class ModModEvents {
         GuildCommands.onRegisterCommands(event);
         OrderCommand.register(event.getDispatcher());
         CastleCommand.register(event.getDispatcher());
+        CastleDesignCommand.register(event.getDispatcher());
 
     }
 

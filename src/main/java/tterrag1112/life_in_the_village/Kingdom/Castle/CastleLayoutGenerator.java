@@ -129,7 +129,7 @@ public class CastleLayoutGenerator {
     private List<CastleLayout.TowerNode> generatePolygonPlan(BlockPos origin, int radius, int towerRadius,
                                                              int wallHeight, CastleStyle style, RandomSource rng) {
         // More sides for larger castles for a rounder feel
-        int sides = 5 + rng.nextInt(4); // 5, 6, 7, or 8
+        int sides = style.layout().resolveSides(rng); // was: 5 + rng.nextInt(4)
         List<CastleLayout.TowerNode> nodes = new ArrayList<>();
         for (int i = 0; i < sides; i++) {
             double angle = (2.0 * Math.PI * i / sides) - Math.PI / 2.0;

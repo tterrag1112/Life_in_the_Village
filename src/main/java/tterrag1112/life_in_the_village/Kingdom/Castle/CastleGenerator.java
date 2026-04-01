@@ -2,80 +2,100 @@ package tterrag1112.life_in_the_village.Kingdom.Castle;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.ServerLevelAccessor;
+
+import java.util.List;
 
 /**
  * Public entry point for castle generation.
  *
- * This is the only class your mod's structure placement code needs to call.
- * Everything else in this package is an implementation detail.
+ * All styles now use the TMA-style room stack pipeline.
+ * The old CastleBuilder pipeline has been removed.
  *
- * Usage:
- * <pre>
- *   CastleStyle style = CastleStyles.NORMAN;   // or load from datapack
- *   CastleGenerator.generate(level, origin, style, rng);
- * </pre>
+ * Pipeline:
+ *   Phase 1 — CastleLayoutGenerator  (no world access, pure spatial data)
+ *   Phase 2 — GroundPlanConverter    (CastleLayout → List<RoomStack>)
+ *   Phase 3 — RoomStackBuilder       (places blocks, applies detail)
  *
- * The generation executes in three phases:
- *   Phase 1 (CastleLayoutGenerator) — produce a CastleLayout with no world access
- *   Phase 2 (CastleBuilder)         — place structural blocks using the layout
- *   Phase 3 (DetailApplicator)      — stamp structure-file templates for visual detail
- *
- * All three phases are invoked synchronously. For chunk-by-chunk or
- * deferred generation, wrap the call in your own scheduling logic.
+ * Returns a CastleManifest for consumption by the capital system.
  */
 public final class CastleGenerator {
 
     private CastleGenerator() {}
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Main entry point
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     /**
      * Generate a castle centered on origin using the given style.
      *
-     * @param level  The world accessor. Must be a ServerLevel for structure
-     *               template loading (Layer 3). On a ClientLevel, Layer 3 is
-     *               silently skipped and the castle generates without decoration.
-     * @param origin The center of the castle footprint. The Y coordinate is used
-     *               as the starting scan point for terrain detection — the actual
-     *               placement anchors to the surface automatically.
-     * @param style  The CastleStyle controlling all generation parameters.
-     * @param rng    A seeded random source. Use a seed derived from the chunk
-     *               position + world seed for deterministic generation.
+     * @param level  Must be a ServerLevel for structure template loading.
+     * @param origin Center of the castle footprint. Y is the terrain scan start.
+     * @param style  All generation parameters.
+     * @param rng    Seeded from chunk position + world seed for determinism.
+     * @return       CastleManifest with positions for capital/quest systems.
      */
-    public static void generate(ServerLevelAccessor level,
-                                BlockPos origin,
-                                CastleStyle style,
-                                RandomSource rng) {
-
-        // Phase 1: Layout (no world access)
+    public static CastleManifest generate(ServerLevelAccessor level,
+                                          BlockPos origin,
+                                          CastleStyle style,
+                                          RandomSource rng) {
+        // Phase 1: Layout — no world access
         CastleLayoutGenerator layoutGen = new CastleLayoutGenerator();
         CastleLayout layout = layoutGen.generate(style, origin, rng);
-        System.out.println("Creating layout: " +layout.toString()+ style.toString()+ origin);
 
-        // Phase 2 + 3: Build (world access, includes detail application)
-        CastleBuilder builder = new CastleBuilder(level, style);
-        builder.build(layout, rng);
-        System.out.println("Building castle: ");
+        // Phase 2: Convert layout to room stacks
+        TerrainSampler terrain = new TerrainSampler(level);
+        GroundPlanConverter converter = new GroundPlanConverter(style, terrain);
+        List<RoomStack> stacks = converter.convert(layout, rng);
+
+        // Phase 3: Build and detail
+        RoomStackBuilder builder = new RoomStackBuilder(level, style, terrain);
+        return builder.build(layout, stacks, rng);
     }
+
+    // =========================================================================
+    // Layout-only overload (for preview / debug)
+    // =========================================================================
 
     /**
-     * Overload that returns the CastleLayout for external inspection
-     * (e.g. for placing loot chests, spawners, or NPCs afterward).
+     * Run Phase 1 only — produces the layout without touching the world.
+     * Used by the debug command and preview tools.
      */
-    public static CastleLayout generateWithLayout(ServerLevelAccessor level,
-                                                  BlockPos origin,
-                                                  CastleStyle style,
-                                                  RandomSource rng) {
+    public static CastleLayout generateLayout(CastleStyle style,
+                                              BlockPos origin,
+                                              RandomSource rng) {
+        return new CastleLayoutGenerator().generate(style, origin, rng);
+    }
+
+    // =========================================================================
+    // Layout + build overload (returns layout for external inspection)
+    // =========================================================================
+
+    /**
+     * Full generation that also returns the CastleLayout for callers that
+     * need tower positions, wall edges, or zone boundaries.
+     */
+    public static GenerationResult generateWithLayout(ServerLevelAccessor level,
+                                                      BlockPos origin,
+                                                      CastleStyle style,
+                                                      RandomSource rng) {
         CastleLayoutGenerator layoutGen = new CastleLayoutGenerator();
         CastleLayout layout = layoutGen.generate(style, origin, rng);
 
-        CastleBuilder builder = new CastleBuilder(level, style);
-        builder.build(layout, rng);
+        TerrainSampler terrain = new TerrainSampler(level);
+        GroundPlanConverter converter = new GroundPlanConverter(style, terrain);
+        List<RoomStack> stacks = converter.convert(layout, rng);
 
-        return layout;
+        RoomStackBuilder builder = new RoomStackBuilder(level, style, terrain);
+        CastleManifest manifest = builder.build(layout, stacks, rng);
+
+        return new GenerationResult(layout, manifest);
     }
+
+    // =========================================================================
+    // Result record
+    // =========================================================================
+
+    public record GenerationResult(CastleLayout layout, CastleManifest manifest) {}
 }

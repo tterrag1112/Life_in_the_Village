@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:chest",
+  "pools": [
+    {
+      "rolls": { "type": "minecraft:uniform", "min": 4, "max": 8 },
+      "entries": [
+        { "type": "minecraft:item", "name": "minecraft:wheat",      "weight": 40 },
+        { "type": "minecraft:item", "name": "minecraft:bread",      "weight": 30 },
+        { "type": "minecraft:item", "name": "minecraft:potato",     "weight": 25 },
+        { "type": "minecraft:item", "name": "minecraft:carrot",     "weight": 25 },
+        { "type": "minecraft:item", "name": "minecraft:dried_kelp", "weight": 10 },
+        { "type": "minecraft:item", "name": "minecraft:apple",      "weight": 20 }
+      ]
+    }
+  ]
+}

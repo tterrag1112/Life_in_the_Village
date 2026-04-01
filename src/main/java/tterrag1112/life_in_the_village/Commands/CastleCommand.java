@@ -118,8 +118,9 @@ public class CastleCommand {
 
         // Generate
         try {
-            CastleLayout layout = CastleGenerator.generateWithLayout(level, origin, style, rng);
-
+            CastleGenerator.GenerationResult result =
+                    CastleGenerator.generateWithLayout(level, origin, style, rng);
+            CastleLayout layout = result.layout();
             // Report what was built
             CastleLayout.BoundingBox bounds = layout.getApproximateBounds();
             source.sendSuccess(() -> Component.literal(

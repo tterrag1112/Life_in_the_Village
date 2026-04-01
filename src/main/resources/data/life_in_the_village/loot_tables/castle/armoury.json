@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:chest",
+  "pools": [
+    {
+      "rolls": { "type": "minecraft:uniform", "min": 2, "max": 5 },
+      "entries": [
+        { "type": "minecraft:item", "name": "minecraft:iron_sword",     "weight": 20 },
+        { "type": "minecraft:item", "name": "minecraft:iron_helmet",    "weight": 15 },
+        { "type": "minecraft:item", "name": "minecraft:iron_chestplate","weight": 10 },
+        { "type": "minecraft:item", "name": "minecraft:iron_leggings",  "weight": 10 },
+        { "type": "minecraft:item", "name": "minecraft:iron_boots",     "weight": 15 },
+        { "type": "minecraft:item", "name": "minecraft:bow",            "weight": 20 },
+        { "type": "minecraft:item", "name": "minecraft:arrow",          "weight": 40 },
+        { "type": "minecraft:item", "name": "minecraft:shield",         "weight": 10 }
+      ]
+    }
+  ]
+}

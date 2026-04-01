@@ -185,4 +185,91 @@ public record MaterialPalette(
                 Blocks.DEEPSLATE_BRICK_WALL
         );
     }
+    public static final MaterialPalette QUARTZ = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.QUARTZ_BLOCK,        60),
+                    new WeightedBlock(Blocks.SMOOTH_QUARTZ,       30),
+                    new WeightedBlock(Blocks.CHISELED_QUARTZ_BLOCK,10)),
+            List.of(new WeightedBlock(Blocks.CALCITE,             70),
+                    new WeightedBlock(Blocks.WHITE_CONCRETE,      30)),
+            Blocks.QUARTZ_STAIRS,
+            Blocks.QUARTZ_SLAB,
+            Blocks.QUARTZ_BLOCK  // no wall variant — use block as fallback
+    );
+
+    public static final MaterialPalette STONE = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.STONE,               60),
+                    new WeightedBlock(Blocks.COBBLESTONE,         30),
+                    new WeightedBlock(Blocks.MOSSY_COBBLESTONE,   10)),
+            List.of(new WeightedBlock(Blocks.MOSSY_COBBLESTONE,   60),
+                    new WeightedBlock(Blocks.GRAVEL,              40)),
+            Blocks.STONE_STAIRS,
+            Blocks.STONE_SLAB,
+            Blocks.COBBLESTONE_WALL
+    );
+
+    public static final MaterialPalette BLACKSTONE = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.POLISHED_BLACKSTONE_BRICKS, 65),
+                    new WeightedBlock(Blocks.BLACKSTONE,                  25),
+                    new WeightedBlock(Blocks.CRACKED_POLISHED_BLACKSTONE_BRICKS, 10)),
+            List.of(new WeightedBlock(Blocks.CRACKED_POLISHED_BLACKSTONE_BRICKS, 60),
+                    new WeightedBlock(Blocks.BLACKSTONE,                          40)),
+            Blocks.POLISHED_BLACKSTONE_BRICK_STAIRS,
+            Blocks.POLISHED_BLACKSTONE_BRICK_SLAB,
+            Blocks.POLISHED_BLACKSTONE_BRICK_WALL
+    );
+
+    public static final MaterialPalette RED_SANDSTONE = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.RED_SANDSTONE,         60),
+                    new WeightedBlock(Blocks.SMOOTH_RED_SANDSTONE,  30),
+                    new WeightedBlock(Blocks.CHISELED_RED_SANDSTONE,10)),
+            List.of(new WeightedBlock(Blocks.RED_SANDSTONE,         80),
+                    new WeightedBlock(Blocks.RED_SAND,              20)),
+            Blocks.RED_SANDSTONE_STAIRS,
+            Blocks.RED_SANDSTONE_SLAB,
+            Blocks.RED_SANDSTONE_WALL
+    );
+
+    public static final MaterialPalette BRICK = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.BRICKS,          70),
+                    new WeightedBlock(Blocks.CRACKED_STONE_BRICKS, 20),
+                    new WeightedBlock(Blocks.MOSSY_STONE_BRICKS,   10)),
+            List.of(new WeightedBlock(Blocks.CRACKED_STONE_BRICKS, 60),
+                    new WeightedBlock(Blocks.COBBLESTONE,           40)),
+            Blocks.BRICK_STAIRS,
+            Blocks.BRICK_SLAB,
+            Blocks.BRICK_WALL
+    );
+
+    public static final MaterialPalette PRISMARINE = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.PRISMARINE_BRICKS,  60),
+                    new WeightedBlock(Blocks.PRISMARINE,          30),
+                    new WeightedBlock(Blocks.DARK_PRISMARINE,     10)),
+            List.of(new WeightedBlock(Blocks.DARK_PRISMARINE,    60),
+                    new WeightedBlock(Blocks.PRISMARINE,          40)),
+            Blocks.PRISMARINE_BRICK_STAIRS,
+            Blocks.PRISMARINE_SLAB,
+            Blocks.PRISMARINE_WALL
+    );
+
+    public static final MaterialPalette OAK_WOOD = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.OAK_PLANKS,      60),
+                    new WeightedBlock(Blocks.OAK_LOG,         30),
+                    new WeightedBlock(Blocks.STRIPPED_OAK_LOG,10)),
+            List.of(new WeightedBlock(Blocks.OAK_LOG,         70),
+                    new WeightedBlock(Blocks.MOSSY_COBBLESTONE,30)),
+            Blocks.OAK_STAIRS,
+            Blocks.OAK_SLAB,
+            Blocks.COBBLESTONE_WALL  // wood has no wall block
+    );
+
+    public static final MaterialPalette NETHER_BRICK = new MaterialPalette(
+            List.of(new WeightedBlock(Blocks.NETHER_BRICKS,         65),
+                    new WeightedBlock(Blocks.RED_NETHER_BRICKS,      25),
+                    new WeightedBlock(Blocks.CRACKED_NETHER_BRICKS,  10)),
+            List.of(new WeightedBlock(Blocks.CRACKED_NETHER_BRICKS,  60),
+                    new WeightedBlock(Blocks.BLACKSTONE,              40)),
+            Blocks.NETHER_BRICK_STAIRS,
+            Blocks.NETHER_BRICK_SLAB,
+            Blocks.NETHER_BRICK_WALL
+    );
 }

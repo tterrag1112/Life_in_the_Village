@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:chest",
+  "pools": [
+    {
+      "rolls": { "type": "minecraft:uniform", "min": 2, "max": 4 },
+      "entries": [
+        { "type": "minecraft:item", "name": "minecraft:book",           "weight": 40 },
+        { "type": "minecraft:item", "name": "minecraft:enchanted_book", "weight": 20 },
+        { "type": "minecraft:item", "name": "minecraft:paper",          "weight": 30 },
+        { "type": "minecraft:item", "name": "minecraft:map",            "weight": 10 }
+      ]
+    }
+  ]
+}
