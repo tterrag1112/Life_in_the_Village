@@ -19,12 +19,14 @@
     },
     {
       "type": "FARMHOUSE",
-      "max_count": 2,
+      "max_count": 4,
       "min_count": 2,
       "structure": "farmhouse/level_1"
     },
     {
       "type": "HOUSE",
+      "max_count": 4,
+      "min_count": 2,
       "structure": "house/level_1"
     },
     {
