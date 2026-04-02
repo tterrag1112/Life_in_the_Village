@@ -1,0 +1,122 @@
+{
+  "type": "riverside_town",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": true,
+    "max_rings": 2,
+    "shape_type": "RIVERINE",
+    "street_density": 0.9,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "MARKET",
+      "structure": "market/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "FARMHOUSE",
+      "structure": "farmhouse/level_1"
+    },
+    {
+      "type": "CARPENTRY",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 3,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "starter_items": [
+    {
+      "building_type": "STOCKPILE",
+      "count": 64,
+      "item": "minecraft:wheat_seeds"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 128,
+      "item": "minecraft:oak_log"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 64,
+      "item": "minecraft:cobblestone"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 32,
+      "item": "minecraft:bread"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "count": 24,
+      "item": "life_in_the_village:denier_or"
+    }
+  ],
+  "starter_npcs": [
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "BUILDER"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "VILLAGE_LEADER"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "family_role": "HEAD",
+      "profession": "STOCKPILE_KEEPER"
+    },
+    {
+      "building_type": "MARKET",
+      "family_role": "HEAD",
+      "profession": "MERCHANT"
+    },
+    {
+      "building_type": "INN",
+      "family_role": "UNASSIGNED",
+      "profession": "INNKEEPER"
+    },
+    {
+      "building_type": "FARMHOUSE",
+      "family_role": "HEAD",
+      "profession": "FARMER"
+    },
+    {
+      "building_type": "CARPENTRY",
+      "family_role": "HEAD",
+      "profession": "CARPENTER"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "donjon": {
+    "donjon_height_bonus": 18,
+    "donjon_max_size": 9,
+    "donjon_min_size": 6,
+    "has_donjon": true,
+    "has_inner_ward": true,
+    "inner_ward_scale": 0.45
+  },
+  "features": {
+    "add_flags": true,
+    "add_rubble": false,
+    "add_torches": true,
+    "add_vines": false,
+    "has_barbian": false,
+    "has_drawbridge": false,
+    "has_moat": true,
+    "has_portcullis": false,
+    "has_wall_turrets": true,
+    "moat_depth": 3,
+    "moat_fill": "empty",
+    "moat_width": 4,
+    "turret_frequency": 0.7
+  },
+  "function": {
+    "has_alchemist_lab": true,
+    "has_chapel": false,
+    "has_dungeon": false,
+    "has_library": true,
+    "has_stable": false,
+    "has_training_yard": false,
+    "roster": {
+      "alchemist": 2,
+      "cook": 1,
+      "guard": 4,
+      "king": 1,
+      "knight": 2,
+      "lady": 2,
+      "lord": 2,
+      "priest": 1,
+      "queen": 1,
+      "scholar": 6,
+      "scribe": 4,
+      "servant": 4,
+      "smith": 0,
+      "stablehand": 0
+    },
+    "subbuilding_specs": [
+      {
+        "type": "throne_room",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "donjon_ground"
+      },
+      {
+        "type": "royal_quarters",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "donjon_upper"
+      },
+      {
+        "type": "treasury",
+        "loot_table": "life_in_the_village:castle/treasury",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "donjon_ground"
+      },
+      {
+        "type": "barracks",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "outer_ward"
+      },
+      {
+        "type": "well",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "courtyard"
+      },
+      {
+        "type": "library",
+        "loot_table": "life_in_the_village:castle/library",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "inner_ward"
+      },
+      {
+        "type": "alchemist_lab",
+        "loot_table": "life_in_the_village:castle/alchemist_lab",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "inner_ward"
+      },
+      {
+        "type": "observatory",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "tower_interior"
+      },
+      {
+        "type": "council_chamber",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "donjon_upper"
+      },
+      {
+        "type": "scriptorium",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 2,
+        "min_count": 0,
+        "zone": "inner_ward"
+      },
+      {
+        "type": "noble_quarters",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 2,
+        "min_count": 0,
+        "zone": "inner_ward"
+      },
+      {
+        "type": "cistern",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "underground"
+      }
+    ]
+  },
+  "layout": {
+    "max_radius": 36,
+    "min_radius": 26,
+    "plan_type": "polygon",
+    "polygon_sides": 6,
+    "use_room_stack_generation": false
+  },
+  "palette_id": "quartz",
+  "pools": {
+    "battlement_pool": "life_in_the_village:castle/battlements/fantasy",
+    "donjon_roof_pool": "life_in_the_village:castle/donjon_roofs/fantasy",
+    "gatehouse_pool": "life_in_the_village:castle/gatehouses/fantasy",
+    "interior_pool": "life_in_the_village:castle/interiors/storage",
+    "tower_roof_pool": "life_in_the_village:castle/tower_roofs/fantasy",
+    "window_pool": "life_in_the_village:castle/windows/fantasy"
+  },
+  "ruination_level": 0.0,
+  "style_detail": {
+    "arch_style": "pointed",
+    "battlement_style": "pointed",
+    "courtyard_style": "fountain",
+    "has_battered_base": false,
+    "has_quoins": true,
+    "merlon_height": 2,
+    "merlon_width": 1,
+    "string_course_interval": 3,
+    "tower_roof_style": "spire",
+    "wall_decoration": "pilasters",
+    "window_style": "wide_arch"
+  },
+  "style_id": "crystal_spire",
+  "style_seed": 1616,
+  "theme_id": "crystal_spire",
+  "towers": {
+    "max_tower_radius": 6,
+    "min_tower_radius": 4,
+    "tower_frequency": 0.9,
+    "tower_height_bonus": 14,
+    "tower_shape": "round"
+  },
+  "walls": {
+    "max_wall_height": 14,
+    "min_wall_height": 10,
+    "wall_thickness": 2
+  }
+}

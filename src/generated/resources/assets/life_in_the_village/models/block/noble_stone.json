@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "life_in_the_village:block/noble_stone"
+  }
+}

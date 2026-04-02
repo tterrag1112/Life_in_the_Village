@@ -1,0 +1,12 @@
+{
+  "culture": "bookworm",
+  "titles": {
+    "citizen": "Scholar",
+    "knight_female": "Warden",
+    "knight_male": "Warden",
+    "lord_female": "Magistra",
+    "lord_male": "Magister",
+    "ruler_female": "Archduchess",
+    "ruler_male": "Archduke"
+  }
+}

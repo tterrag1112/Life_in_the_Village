@@ -1,0 +1,12 @@
+{
+  "culture": "highland",
+  "titles": {
+    "citizen": "Clansman",
+    "knight_female": "Champion",
+    "knight_male": "Champion",
+    "lord_female": "Thane",
+    "lord_male": "Thane",
+    "ruler_female": "High Chieftain",
+    "ruler_male": "High Chieftain"
+  }
+}

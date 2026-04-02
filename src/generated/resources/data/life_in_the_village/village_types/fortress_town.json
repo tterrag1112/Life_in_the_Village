@@ -1,0 +1,130 @@
+{
+  "type": "fortress_town",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "HILLTOP",
+    "street_density": 0.6,
+    "walled_by_default": true
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "GUARD_TOWER",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "guard_tower/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 3,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "starter_items": [
+    {
+      "building_type": "STOCKPILE",
+      "count": 256,
+      "item": "minecraft:cobblestone"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 64,
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 4,
+      "item": "minecraft:iron_sword"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 4,
+      "item": "minecraft:iron_helmet"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 48,
+      "item": "minecraft:bread"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "count": 32,
+      "item": "life_in_the_village:denier_or"
+    }
+  ],
+  "starter_npcs": [
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "BUILDER"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "VILLAGE_LEADER"
+    },
+    {
+      "building_type": "GUARD_TOWER",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "GUARD_TOWER",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "UNASSIGNED",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "family_role": "HEAD",
+      "profession": "STOCKPILE_KEEPER"
+    },
+    {
+      "building_type": "BLACKSMITH",
+      "family_role": "HEAD",
+      "profession": "BLACKSMITH"
+    },
+    {
+      "building_type": "INN",
+      "family_role": "UNASSIGNED",
+      "profession": "INNKEEPER"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    }
+  ]
+}

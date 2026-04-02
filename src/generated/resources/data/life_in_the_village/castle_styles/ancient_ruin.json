@@ -1,0 +1,103 @@
+{
+  "donjon": {
+    "donjon_height_bonus": 2,
+    "donjon_max_size": 7,
+    "donjon_min_size": 4,
+    "has_donjon": true,
+    "has_inner_ward": false,
+    "inner_ward_scale": 0.5
+  },
+  "features": {
+    "add_flags": false,
+    "add_rubble": true,
+    "add_torches": false,
+    "add_vines": true,
+    "has_barbian": false,
+    "has_drawbridge": false,
+    "has_moat": false,
+    "has_portcullis": false,
+    "has_wall_turrets": false,
+    "moat_depth": 0,
+    "moat_fill": "empty",
+    "moat_width": 0,
+    "turret_frequency": 0.0
+  },
+  "function": {
+    "has_alchemist_lab": false,
+    "has_chapel": false,
+    "has_dungeon": false,
+    "has_library": false,
+    "has_stable": false,
+    "has_training_yard": false,
+    "roster": {
+      "alchemist": 0,
+      "cook": 0,
+      "guard": 0,
+      "king": 0,
+      "knight": 0,
+      "lady": 0,
+      "lord": 0,
+      "priest": 0,
+      "queen": 0,
+      "scholar": 0,
+      "scribe": 0,
+      "servant": 0,
+      "smith": 0,
+      "stablehand": 0
+    },
+    "subbuilding_specs": [
+      {
+        "type": "dungeon",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "underground"
+      }
+    ]
+  },
+  "layout": {
+    "max_radius": 36,
+    "min_radius": 24,
+    "plan_type": "irregular",
+    "polygon_sides": 0,
+    "use_room_stack_generation": false
+  },
+  "palette_id": "stone_brick",
+  "pools": {
+    "battlement_pool": "life_in_the_village:castle/battlements/ruin",
+    "donjon_roof_pool": "life_in_the_village:castle/donjon_roofs/ruin",
+    "gatehouse_pool": "life_in_the_village:castle/gatehouses/ruin",
+    "interior_pool": "life_in_the_village:castle/interiors/empty",
+    "tower_roof_pool": "life_in_the_village:castle/tower_roofs/ruin",
+    "window_pool": "life_in_the_village:castle/windows/norman"
+  },
+  "ruination_level": 0.85,
+  "style_detail": {
+    "arch_style": "flat",
+    "battlement_style": "crenellated",
+    "courtyard_style": "paved",
+    "has_battered_base": true,
+    "has_quoins": false,
+    "merlon_height": 1,
+    "merlon_width": 1,
+    "string_course_interval": 0,
+    "tower_roof_style": "flat",
+    "wall_decoration": "none",
+    "window_style": "cross_slit"
+  },
+  "style_id": "ancient_ruin",
+  "style_seed": 1414,
+  "theme_id": "ancient_ruin",
+  "towers": {
+    "max_tower_radius": 6,
+    "min_tower_radius": 3,
+    "tower_frequency": 0.6,
+    "tower_height_bonus": 1,
+    "tower_shape": "round"
+  },
+  "walls": {
+    "max_wall_height": 8,
+    "min_wall_height": 4,
+    "wall_thickness": 2
+  }
+}

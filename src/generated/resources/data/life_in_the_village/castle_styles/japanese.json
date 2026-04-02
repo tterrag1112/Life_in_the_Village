@@ -1,0 +1,187 @@
+{
+  "donjon": {
+    "donjon_height_bonus": 14,
+    "donjon_max_size": 7,
+    "donjon_min_size": 5,
+    "has_donjon": true,
+    "has_inner_ward": true,
+    "inner_ward_scale": 0.55
+  },
+  "features": {
+    "add_flags": true,
+    "add_rubble": false,
+    "add_torches": true,
+    "add_vines": false,
+    "has_barbian": false,
+    "has_drawbridge": false,
+    "has_moat": false,
+    "has_portcullis": false,
+    "has_wall_turrets": true,
+    "moat_depth": 0,
+    "moat_fill": "empty",
+    "moat_width": 0,
+    "turret_frequency": 0.6
+  },
+  "function": {
+    "has_alchemist_lab": false,
+    "has_chapel": true,
+    "has_dungeon": false,
+    "has_library": true,
+    "has_stable": true,
+    "has_training_yard": true,
+    "roster": {
+      "alchemist": 0,
+      "cook": 1,
+      "guard": 6,
+      "king": 1,
+      "knight": 3,
+      "lady": 2,
+      "lord": 2,
+      "priest": 1,
+      "queen": 1,
+      "scholar": 4,
+      "scribe": 2,
+      "servant": 4,
+      "smith": 0,
+      "stablehand": 0
+    },
+    "subbuilding_specs": [
+      {
+        "type": "throne_room",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "donjon_ground"
+      },
+      {
+        "type": "royal_quarters",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "donjon_upper"
+      },
+      {
+        "type": "treasury",
+        "loot_table": "life_in_the_village:castle/treasury",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "donjon_ground"
+      },
+      {
+        "type": "barracks",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "outer_ward"
+      },
+      {
+        "type": "well",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "courtyard"
+      },
+      {
+        "type": "library",
+        "loot_table": "life_in_the_village:castle/library",
+        "max_count": 1,
+        "min_count": 1,
+        "zone": "inner_ward"
+      },
+      {
+        "type": "council_chamber",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "donjon_upper"
+      },
+      {
+        "type": "chapel",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "inner_ward"
+      },
+      {
+        "type": "training_yard",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "courtyard"
+      },
+      {
+        "type": "noble_quarters",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 3,
+        "min_count": 0,
+        "zone": "inner_ward"
+      },
+      {
+        "type": "kitchen",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "outer_ward"
+      },
+      {
+        "type": "armoury",
+        "loot_table": "life_in_the_village:castle/armoury",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "wall_interior"
+      },
+      {
+        "type": "scriptorium",
+        "loot_table": "life_in_the_village:castle/empty",
+        "max_count": 1,
+        "min_count": 0,
+        "zone": "inner_ward"
+      }
+    ]
+  },
+  "layout": {
+    "max_radius": 34,
+    "min_radius": 26,
+    "plan_type": "concentric",
+    "polygon_sides": 0,
+    "use_room_stack_generation": true
+  },
+  "palette_id": "quartz",
+  "pools": {
+    "battlement_pool": "life_in_the_village:castle/battlements/japanese",
+    "donjon_roof_pool": "life_in_the_village:castle/donjon_roofs/japanese",
+    "gatehouse_pool": "life_in_the_village:castle/gatehouses/japanese",
+    "interior_pool": "life_in_the_village:castle/interiors/empty",
+    "tower_roof_pool": "life_in_the_village:castle/tower_roofs/japanese",
+    "window_pool": "life_in_the_village:castle/windows/japanese"
+  },
+  "ruination_level": 0.0,
+  "style_detail": {
+    "arch_style": "flat",
+    "battlement_style": "parapet",
+    "courtyard_style": "garden",
+    "has_battered_base": false,
+    "has_quoins": false,
+    "merlon_height": 1,
+    "merlon_width": 2,
+    "string_course_interval": 3,
+    "tower_roof_style": "pagoda",
+    "wall_decoration": "string_course",
+    "window_style": "wide_arch"
+  },
+  "style_id": "japanese",
+  "style_seed": 5005,
+  "theme_id": "japanese",
+  "towers": {
+    "max_tower_radius": 5,
+    "min_tower_radius": 3,
+    "tower_frequency": 0.7,
+    "tower_height_bonus": 6,
+    "tower_shape": "round"
+  },
+  "walls": {
+    "max_wall_height": 10,
+    "min_wall_height": 8,
+    "wall_thickness": 2
+  }
+}

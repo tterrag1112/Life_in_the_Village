@@ -1,0 +1,304 @@
+{
+  "type": "highland_capital",
+  "culture": "highland",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "HILLTOP",
+    "street_density": 1.2,
+    "walled_by_default": true
+  },
+  "starter_buildings": [
+    {
+      "type": "CASTLE",
+      "structure": "castle/level_1"
+    },
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "CHANCELLERY",
+      "structure": "chancellery/level_1"
+    },
+    {
+      "type": "TREASURY",
+      "structure": "treasury/level_1"
+    },
+    {
+      "type": "BARRACKS",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "barracks/level_1"
+    },
+    {
+      "type": "GUARD_TOWER",
+      "max_count": 4,
+      "min_count": 4,
+      "structure": "guard_tower/level_1"
+    },
+    {
+      "type": "WATCHTOWER",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "watchtower/level_1"
+    },
+    {
+      "type": "PRISON",
+      "structure": "prison/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "ARMORER",
+      "structure": "armorer/level_1"
+    },
+    {
+      "type": "STONEMASON",
+      "structure": "stonemason/level_1"
+    },
+    {
+      "type": "WOODCUTTER",
+      "structure": "woodcutter/level_1"
+    },
+    {
+      "type": "MARKET",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "market/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "TEMPLE",
+      "structure": "temple/level_1"
+    },
+    {
+      "type": "GUILD_HALL",
+      "structure": "guild_hall/level_1"
+    },
+    {
+      "type": "STABLE",
+      "structure": "stable/level_1"
+    },
+    {
+      "type": "NOBLE_MANOR",
+      "structure": "noble_manor/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 8,
+      "min_count": 6,
+      "structure": "house/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "stockpile/level_1"
+    }
+  ],
+  "starter_items": [
+    {
+      "building_type": "TREASURY",
+      "count": 200,
+      "item": "life_in_the_village:denier_or"
+    },
+    {
+      "building_type": "CASTLE",
+      "count": 160,
+      "item": "life_in_the_village:denier_or"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 512,
+      "item": "minecraft:cobblestone"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 128,
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "count": 96,
+      "item": "minecraft:bread"
+    },
+    {
+      "building_type": "BARRACKS",
+      "count": 16,
+      "item": "minecraft:iron_sword"
+    },
+    {
+      "building_type": "BARRACKS",
+      "count": 8,
+      "item": "minecraft:iron_chestplate"
+    },
+    {
+      "building_type": "BARRACKS",
+      "count": 8,
+      "item": "minecraft:iron_helmet"
+    },
+    {
+      "building_type": "BARRACKS",
+      "count": 8,
+      "item": "minecraft:bow"
+    }
+  ],
+  "starter_npcs": [
+    {
+      "building_type": "CASTLE",
+      "family_role": "HEAD",
+      "profession": "KINGDOM_RULER"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "VILLAGE_LEADER"
+    },
+    {
+      "building_type": "CHANCELLERY",
+      "family_role": "HEAD",
+      "profession": "CHANCELLOR"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "UNASSIGNED",
+      "profession": "HERALD"
+    },
+    {
+      "building_type": "TREASURY",
+      "family_role": "UNASSIGNED",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "TREASURY",
+      "family_role": "UNASSIGNED",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "BARRACKS",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "BARRACKS",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "BARRACKS",
+      "family_role": "UNASSIGNED",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "BARRACKS",
+      "family_role": "UNASSIGNED",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "BARRACKS",
+      "family_role": "UNASSIGNED",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "GUARD_TOWER",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "GUARD_TOWER",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "GUARD_TOWER",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "GUARD_TOWER",
+      "family_role": "HEAD",
+      "profession": "GUARD"
+    },
+    {
+      "building_type": "BLACKSMITH",
+      "family_role": "HEAD",
+      "profession": "BLACKSMITH"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
+      "profession": "BUILDER"
+    },
+    {
+      "building_type": "MARKET",
+      "family_role": "HEAD",
+      "profession": "MERCHANT"
+    },
+    {
+      "building_type": "MARKET",
+      "family_role": "HEAD",
+      "profession": "MERCHANT"
+    },
+    {
+      "building_type": "GUILD_HALL",
+      "family_role": "HEAD",
+      "profession": "GUILDMASTER"
+    },
+    {
+      "building_type": "INN",
+      "family_role": "UNASSIGNED",
+      "profession": "INNKEEPER"
+    },
+    {
+      "building_type": "TEMPLE",
+      "family_role": "HEAD",
+      "profession": "PRIEST"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "family_role": "HEAD",
+      "profession": "STOCKPILE_KEEPER"
+    },
+    {
+      "building_type": "STOCKPILE",
+      "family_role": "HEAD",
+      "profession": "STOCKPILE_KEEPER"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    },
+    {
+      "building_type": "HOUSE",
+      "family_role": "HEAD",
+      "profession": "NONE"
+    }
+  ]
+}

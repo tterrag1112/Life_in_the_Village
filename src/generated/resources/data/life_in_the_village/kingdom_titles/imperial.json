@@ -1,0 +1,12 @@
+{
+  "culture": "imperial",
+  "titles": {
+    "citizen": "Subject",
+    "knight_female": "Legate",
+    "knight_male": "Legate",
+    "lord_female": "Consul",
+    "lord_male": "Consul",
+    "ruler_female": "Empress",
+    "ruler_male": "Emperor"
+  }
+}

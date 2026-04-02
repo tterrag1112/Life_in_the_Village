@@ -1,0 +1,24 @@
+{
+  "model": {
+    "type": "minecraft:select",
+    "cases": [
+      {
+        "model": {
+          "type": "minecraft:model",
+          "model": "life_in_the_village:item/kingdom_book"
+        },
+        "when": [
+          "gui",
+          "ground",
+          "fixed",
+          "on_shelf"
+        ]
+      }
+    ],
+    "fallback": {
+      "type": "minecraft:model",
+      "model": "life_in_the_village:item/kingdom_book_3d"
+    },
+    "property": "minecraft:display_context"
+  }
+}
