@@ -34,7 +34,7 @@ public class SellToMarketGoal extends Goal {
     private static final int SELL_DURATION = 200;
 
     private final TownspersonMob entity;
-    private final Set<Item> sellableItems;
+    private final Map<Item, Integer> sellableItems;
 
     private Phase phase = Phase.IDLE;
     private int checkTimer = 0;
@@ -43,7 +43,7 @@ public class SellToMarketGoal extends Goal {
     private TownspersonMob merchantNpc = null;
     private Map<Item, Integer> itemsToSell = new HashMap<>();
 
-    public SellToMarketGoal(TownspersonMob entity, Set<Item> sellableItems) {
+    public SellToMarketGoal(TownspersonMob entity, Map<Item, Integer> sellableItems) {
         this.entity = entity;
         this.sellableItems = sellableItems;
         setFlags(EnumSet.of(Flag.MOVE));
@@ -78,9 +78,9 @@ public class SellToMarketGoal extends Goal {
         if (assignedBuilding == null) return false;
 
         itemsToSell.clear();
-        for (Item item : sellableItems) {
-            int count = BuildingStorageAccess.countItem(
-                    level, assignedBuilding, item);
+        for (Map.Entry<Item, Integer> entry : sellableItems.entrySet()) {
+            Item item = entry.getKey();
+            Integer count = entry.getValue();
             if (hasSurplus(level, assignedBuilding, item)) {
                 itemsToSell.put(item, count - SELL_THRESHOLD);
             }

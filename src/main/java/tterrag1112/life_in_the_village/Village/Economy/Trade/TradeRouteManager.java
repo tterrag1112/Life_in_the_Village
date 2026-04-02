@@ -3,11 +3,10 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
-import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -169,13 +168,11 @@ public class TradeRouteManager {
 
         // Register as a village path so it appears on the village map
         // and participates in the street network
-        data.addVillagePath(new tterrag1112.life_in_the_village.Village
-                .Decoration.VillagePath(
+        data.addVillagePath(new VillagePath(
                 java.util.UUID.randomUUID(),
                 village.getId(),
                 placed,
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .VillagePath.PathTier.COBBLESTONE));
+                VillagePath.PathTier.COBBLESTONE));
         data.setDirty();
 
         System.out.println("TradeRouteManager: placed entrance road for "

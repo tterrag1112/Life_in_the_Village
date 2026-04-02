@@ -454,6 +454,7 @@ public class VillageTypeDatagen implements DataProvider {
 
         JsonArray n = new JsonArray();
         n.add(npc("BUILDER",          "TOWN_HALL",  "HEAD"));
+        n.add(npc("VILLAGE_LEADER", "TOWN_HALL", "UNASSIGNED"));
         n.add(npc("FARMER",           "FARMHOUSE",  "HEAD"));
         n.add(npc("FARMER",           "FARMHOUSE",  "HEAD"));
         n.add(npc("STOCKPILE_KEEPER", "STOCKPILE",  "HEAD"));

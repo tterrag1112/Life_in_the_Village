@@ -357,7 +357,7 @@ public class GuildCommands {
 
             // Reputation gain
             ReputationEvents
-                    .modifyReputationForAllVillages(player, level, data, 10);
+                    .modifyReputationForAllVillages(player, level, data);
 
             // Special reward for high ranks
             if (quest.hasSpecialReward()) {

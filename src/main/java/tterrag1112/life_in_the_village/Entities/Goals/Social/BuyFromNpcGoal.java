@@ -75,8 +75,7 @@ public class BuyFromNpcGoal extends Goal {
 
         if (target == null) return false;
 
-        return entity.canAffordTotal(
-                CurrencyValue.of(target.listing().getPricePerItem()), level);
+        return entity.canAffordWithBuilding(CurrencyValue.of(target.listing().getPricePerItem()), level);
     }
 
     @Override

@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 

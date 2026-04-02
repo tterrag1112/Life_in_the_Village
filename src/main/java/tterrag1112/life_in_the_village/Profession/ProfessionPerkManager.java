@@ -48,7 +48,7 @@ public final class ProfessionPerkManager {
                                     PlayerProfession profession,
                                     int newLevel) {
         PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
-        ProfessionPerk perk = ProfessionPerk.atLevel(profession, newLevel).get();
+        ProfessionPerk perk = ProfessionPerk.atLevel(profession, newLevel);
         if (perk == null) return;
 
         profData.unlockPerk(perk);
@@ -70,13 +70,7 @@ public final class ProfessionPerkManager {
         if (!(player.level() instanceof ServerLevel level)) return;
         PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
 
-        // ── BLACKSMITH: Haste near lit furnace ────────────────────────────────
-        if (profData.hasUnlockedPerk(ProfessionPerk.BLACKSMITH_HASTE)) {
-            if (isNearActiveFurnace(player, level, 6)) {
-                player.addEffect(new MobEffectInstance(
-                        MobEffects.HASTE, PASSIVE_DURATION, 0, false, false));
-            }
-        }
+
 
         // ── CARPENTER: Haste while holding an axe ────────────────────────────
         if (profData.hasUnlockedPerk(ProfessionPerk.CARPENTER_WOODCUTTER)) {
@@ -171,18 +165,8 @@ public final class ProfessionPerkManager {
         return player.getRandom().nextBoolean();
     }
 
-    /** FARMER_YIELD — harvest yield multiplier (extra drop chance). */
-    public static double getHarvestYieldMultiplier(ServerPlayer player) {
-        return getHarvestYieldMultiplier(player, 0);
-    }
-    public static double getHarvestYieldMultiplier(ServerPlayer player, double seasonModifier) {
-        PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
-        double base = profData.getYieldBonus(PlayerProfession.FARMER);
-        if (profData.hasUnlockedPerk(ProfessionPerk.FARMER_YIELD)) {
-            base = Math.max(base, 0.25);
-        }
-        return base;
-    }
+
+
 
     /** MERCHANT_BETTER_PRICES — NPC buy price multiplier (1.0 or 1.1). */
     public static long applyMerchantBuyPricePerk(ServerPlayer player, long basePrice) {

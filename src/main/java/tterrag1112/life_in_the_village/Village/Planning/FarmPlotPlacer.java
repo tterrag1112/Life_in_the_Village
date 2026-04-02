@@ -12,6 +12,8 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathRouter;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -466,8 +468,7 @@ public class FarmPlotPlacer {
                 centre.getZ() + shape.baseHalfL + EDGE_JITTER + 2);
 
         BlockPos farmhouseEntrance =
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .PathRouter.getBuildingEntrance(farmhouse);
+                PathRouter.getBuildingEntrance(farmhouse);
 
         // ── Find the best branch point ────────────────────────────────────────
         // Increase search radius to 48 blocks so farmhouses inside the
@@ -533,11 +534,9 @@ public class FarmPlotPlacer {
             }
         }
 
-        data.addVillagePath(new tterrag1112.life_in_the_village.Village
-                .Decoration.VillagePath(
+        data.addVillagePath(new VillagePath(
                 UUID.randomUUID(), village.getId(), route,
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .VillagePath.PathTier.DIRT));
+                VillagePath.PathTier.DIRT));
         data.setDirty();
     }
 

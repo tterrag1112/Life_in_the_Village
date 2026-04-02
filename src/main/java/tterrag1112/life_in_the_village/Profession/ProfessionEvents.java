@@ -48,26 +48,6 @@ public class ProfessionEvents {
                     }
                     awardXp(player, data, prof, Math.round(baseXp * seasonMult));
 
-                    // Yield bonus — drop extra item based on level + season + perk
-                    if (player.level() instanceof ServerLevel sl) {
-                        double seasonYield = SeasonTracker.getYieldMultiplier(sl);
-                        double effectiveYield = ProfessionPerkManager
-                                .getHarvestYieldMultiplier(player, seasonYield);
-                        double baseBonus = data.getYieldBonus(prof);
-                        // Cap total bonus so it's never absurd
-                        double totalBonus = Math.min(baseBonus + (effectiveYield - 1.0f), 1.5);
-                        if (totalBonus > 0 && Math.random() < totalBonus) {
-                            ItemStack bonus = new ItemStack(state.getBlock().asItem());
-                            if (!bonus.isEmpty()) {
-                                sl.addFreshEntity(new ItemEntity(
-                                        sl,
-                                        event.getPos().getX() + 0.5,
-                                        event.getPos().getY() + 0.5,
-                                        event.getPos().getZ() + 0.5,
-                                        bonus));
-                            }
-                        }
-                    }
                 }
             }
         }

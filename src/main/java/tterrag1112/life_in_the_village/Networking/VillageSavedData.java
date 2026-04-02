@@ -16,7 +16,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.Buildings.PlayerHousingData;
-import tterrag1112.life_in_the_village.Village.Decoration.VillagePath;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;

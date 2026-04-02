@@ -8,6 +8,9 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
+import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.ZoneRegistry;
 
@@ -66,33 +69,36 @@ public class BuildSiteFinder {
             int requiredWidth,
             int requiredLength) {
 
-        // ── Attempt 1: ring-aware search using stored layout metadata ─────────
+        // Build footprint grid once — O(buildings × footprint) total,
+        // then O(1) per candidate position check
+        BuildingFootprint footprint = BuildingFootprint.fromVillage(village, data);
+
+        // Also reserve road space from existing paths
+        for (VillagePath path
+                : data.getPathsForVillage(village.getId())) {
+            if (!path.isObsolete()) {
+                footprint.reserveRoad(path.getCenterline(),
+                        RoadShape.RoadTier.TOWN_ROAD.reservedHalfWidth());
+            }
+        }
+
+        // ── Attempt 1: ring-aware search ──────────────────────────────────────
         BlockPos centre = village.getVillageCentre();
         if (centre != null && village.getRing1Radius() > 0) {
             Optional<BlockPos> ringSite = findSiteOnRing(
                     level, village, data, buildingType,
-                    requiredWidth, requiredLength, centre);
+                    requiredWidth, requiredLength, centre, footprint);
             if (ringSite.isPresent()) return ringSite;
         }
 
-        // ── Attempt 2: spiral fallback ────────────────────────────────────────
+        // ── Attempt 2: spiral fallback with footprint collision ───────────────
         Optional<AABB> bounds = village.getBounds(data);
         if (bounds.isEmpty()) return Optional.empty();
 
         return findSiteSpiral(level, bounds.get(),
-                requiredWidth, requiredLength);
+                requiredWidth, requiredLength, footprint, centre);
     }
 
-    /**
-     * Legacy overload — used by existing callers that only have bounds.
-     * Prefers ring search if the village can be found in saved data.
-     */
-    public static Optional<BlockPos> findSite(
-            ServerLevel level, AABB villageBounds,
-            int requiredWidth, int requiredLength) {
-        return findSiteSpiral(level, villageBounds,
-                requiredWidth, requiredLength);
-    }
 
     // =========================================================================
     // Ring-aware search
@@ -104,39 +110,49 @@ public class BuildSiteFinder {
             VillageSavedData data,
             BuildingType buildingType,
             int w, int l,
-            BlockPos centre) {
+            BlockPos centre,
+            BuildingFootprint footprint) {
 
         BuildingZone zone = ZoneRegistry.zoneOf(buildingType);
         int preferredRing = zone.preferredRing;
 
-        // Try preferred ring then overflow rings
         for (int ringOffset = 0; ringOffset <= RING_OVERFLOW; ringOffset++) {
             int ringIndex = preferredRing + ringOffset;
             int radius    = ringRadiusFor(village, ringIndex);
 
-            // Try the zone's preferred angular sector first,
-            // then fall back to any angle if sector is full
             for (int pass = 0; pass < 2; pass++) {
                 boolean sectorOnly = (pass == 0);
 
                 for (int angle = 0; angle < 360; angle += RING_ANGLE_STEP) {
                     double rad = Math.toRadians(angle);
-
-                    // Sector filter on first pass
                     if (sectorOnly && !zone.containsAngle(angle)) continue;
 
                     int cx = centre.getX() + (int)(Math.cos(rad) * radius);
                     int cz = centre.getZ() + (int)(Math.sin(rad) * radius);
 
-                    int surfY = surfaceY(level, cx, cz);
+                    int surfY = level.getHeight(
+                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, cx, cz);
                     if (surfY < 0) continue;
 
                     BlockPos candidate = new BlockPos(cx, surfY, cz);
 
-                    // Reject if overlaps existing building footprints
-                    if (overlapsExistingBuilding(candidate, w, l, data)) continue;
+                    // ── NEW: use footprint grid instead of AABB loop ──────────
+                    if (!footprint.isClear(candidate, w, l,
+                            BuildingFootprint.DEFAULT_BUFFER)) {
+                        // Try shifting outward
+                        candidate = footprint.findClearPosition(
+                                candidate, centre, w, l,
+                                BuildingFootprint.DEFAULT_BUFFER, 30);
+                        if (candidate == null) continue;
 
-                    // Reject if terrain is too rough for the footprint
+                        // Re-query surface at shifted position
+                        surfY = level.getHeight(
+                                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                                candidate.getX(), candidate.getZ());
+                        candidate = new BlockPos(
+                                candidate.getX(), surfY, candidate.getZ());
+                    }
+
                     if (!isSiteFlat(level, candidate, w, l)) continue;
 
                     return Optional.of(candidate);
@@ -196,13 +212,19 @@ public class BuildSiteFinder {
 
     private static Optional<BlockPos> findSiteSpiral(
             ServerLevel level, AABB villageBounds,
-            int requiredWidth, int requiredLength) {
+            int requiredWidth, int requiredLength,
+            BuildingFootprint footprint,
+            BlockPos centre) {
 
-        int centerX = (int)((villageBounds.minX + villageBounds.maxX) / 2);
-        int centerZ = (int)((villageBounds.minZ + villageBounds.maxZ) / 2);
+        int centerX = centre != null ? centre.getX()
+                : (int)((villageBounds.minX + villageBounds.maxX) / 2);
+        int centerZ = centre != null ? centre.getZ()
+                : (int)((villageBounds.minZ + villageBounds.maxZ) / 2);
         int startRadius = (int)(Math.max(
                 villageBounds.maxX - villageBounds.minX,
                 villageBounds.maxZ - villageBounds.minZ) / 2) + 8;
+
+        BlockPos centrePos = new BlockPos(centerX, 0, centerZ);
 
         for (int radius = startRadius;
              radius <= startRadius + MAX_SPIRAL_RADIUS;
@@ -213,17 +235,27 @@ public class BuildSiteFinder {
                 int x = centerX + (int)(radius * Math.cos(rad));
                 int z = centerZ + (int)(radius * Math.sin(rad));
 
-                // Skip if inside village bounds
-                if (villageBounds.inflate(4).intersects(
-                        new AABB(x, villageBounds.minY - 10, z,
-                                x + requiredWidth,
-                                villageBounds.maxY + 10,
-                                z + requiredLength))) continue;
-
-                int y = surfaceY(level, x, z);
+                int y = level.getHeight(
+                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
                 if (y < 0) continue;
 
                 BlockPos candidate = new BlockPos(x, y, z);
+
+                // ── NEW: footprint check ──────────────────────────────────────
+                if (!footprint.isClear(candidate, requiredWidth, requiredLength,
+                        BuildingFootprint.DEFAULT_BUFFER)) {
+                    candidate = footprint.findClearPosition(
+                            candidate, centrePos,
+                            requiredWidth, requiredLength,
+                            BuildingFootprint.DEFAULT_BUFFER, 20);
+                    if (candidate == null) continue;
+
+                    y = level.getHeight(
+                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                            candidate.getX(), candidate.getZ());
+                    candidate = new BlockPos(candidate.getX(), y, candidate.getZ());
+                }
+
                 if (isSiteFlat(level, candidate, requiredWidth, requiredLength)) {
                     return Optional.of(candidate);
                 }

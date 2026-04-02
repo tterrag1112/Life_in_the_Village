@@ -13,6 +13,7 @@ import net.minecraft.world.level.biome.Biome;
 
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Gui.GuildScreen;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.*;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
@@ -148,8 +149,7 @@ public class GuildWorkerGoal extends Goal {
                     false);
         }
 
-        // Give quest book
-        giveQuestBook(player, guild, guildData, level);
+
     }
 
     private void giveQuestBook(ServerPlayer player, GuildData guild,
@@ -253,4 +253,10 @@ public class GuildWorkerGoal extends Goal {
         player.displayClientMessage(
                 Component.literal("You received a quest book!"), true);
     }
+
+    private void openGuildScreen(){
+
+    }
+
+
 }

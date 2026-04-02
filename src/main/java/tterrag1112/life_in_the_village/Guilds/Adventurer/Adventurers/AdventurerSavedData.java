@@ -13,7 +13,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
-import tterrag1112.life_in_the_village.Entities.PersonalityTrait;
+import tterrag1112.life_in_the_village.Entities.custom.AppearanceComponent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
@@ -348,16 +348,8 @@ public class AdventurerSavedData extends SavedData {
 
         // ── Personality ───────────────────────────────────────────────
         npc.clearTraits();
-        npc.addTrait(PersonalityTrait.BRAVE);
-        if (memberIndex == 0) {
-            long seed = memberId.getMostSignificantBits();
-            PersonalityTrait[] all = PersonalityTrait.values();
-            PersonalityTrait extra =
-                    all[(int)(Math.abs(seed) % all.length)];
-            if (!extra.conflictsWith(PersonalityTrait.BRAVE)) {
-                npc.addTrait(extra);
-            }
-        }
+        npc.addTrait(AppearanceComponent.PersonalityTrait.BRAVE);
+
 
         // ── Village assignment ────────────────────────────────────────
         VillageSavedData villageData = VillageSavedData.get(level);

@@ -2,7 +2,7 @@
 package tterrag1112.life_in_the_village.Village.Planning;
 
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Decoration.StreetTier;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.StreetTier;
 
 import java.util.EnumMap;
 import java.util.Map;

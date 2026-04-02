@@ -42,7 +42,7 @@ import java.util.*;
 public class TownSquarePlacer {
 
     // Half-size of the town square in blocks (full side = 2*RADIUS+1)
-    public static final int RADIUS = 10;
+    public static final int RADIUS = 1;
 
     // -------------------------------------------------------------------------
     // Entry point

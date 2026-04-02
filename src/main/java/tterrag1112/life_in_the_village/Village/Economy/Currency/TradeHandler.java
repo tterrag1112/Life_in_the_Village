@@ -276,8 +276,7 @@ public class TradeHandler {
 
             // 3. Pay player from merchant's personal inventory
             var playerContainer = buildPlayerContainer(player);
-            CoinHelper.pay(merchant.getPersonalInventory(),
-                    playerContainer, totalEarned);
+            CoinHelper.payWithBuilding(playerContainer, totalEarned, level, market);
             syncPlayerCoins(player, playerContainer);
 
             player.displayClientMessage(

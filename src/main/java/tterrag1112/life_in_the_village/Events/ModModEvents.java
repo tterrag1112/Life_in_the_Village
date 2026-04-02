@@ -171,6 +171,7 @@ public class ModModEvents {
         OrderCommand.register(event.getDispatcher());
         CastleCommand.register(event.getDispatcher());
         CastleDesignCommand.register(event.getDispatcher());
+        DebugTickCommand.register(event.getDispatcher());
 
     }
 

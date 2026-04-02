@@ -49,7 +49,8 @@ public class VillageReputation {
 
     public enum Tier {
         OUTCAST (-100, -51, "Outcast",   ChatFormatting.DARK_RED),
-        STRANGER( -50,  -1, "Stranger",  ChatFormatting.RED),
+        DISTRUSTED(-50, -26, "Distrusted", ChatFormatting.RED),
+        STRANGER( -25,  -1, "Stranger",  ChatFormatting.RED),
         NEWCOMER(   0,  24, "Newcomer",  ChatFormatting.GRAY),
         RESIDENT(  25,  49, "Resident",  ChatFormatting.WHITE),
         TRUSTED (  50,  74, "Trusted",   ChatFormatting.GREEN),
@@ -71,7 +72,7 @@ public class VillageReputation {
         /** Market price discount fraction (0.0 = no discount). */
         public double getPriceDiscount() {
             return switch (this) {
-                case OUTCAST, STRANGER, NEWCOMER -> 0.0;
+                case OUTCAST, DISTRUSTED, STRANGER, NEWCOMER -> 0.0;
                 case RESIDENT                    -> 0.05;
                 case TRUSTED                     -> 0.10;
                 case PILLAR                      -> 0.15;

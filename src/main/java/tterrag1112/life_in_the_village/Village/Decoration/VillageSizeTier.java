@@ -73,4 +73,5 @@ public enum VillageSizeTier {
         }
         return HAMLET;
     }
+
 }

@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 
 import java.util.EnumSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -19,11 +20,11 @@ public class PostListingGoal extends Goal {
     private static final int UPDATE_INTERVAL = 1200;
 
     private final TownspersonMob entity;
-    private final Set<Item> sellableItems;
+    private final Map<Item, Integer> sellableItems;
     private int timer = 0;
 
     public PostListingGoal(TownspersonMob entity,
-                           Set<Item> sellableItems) {
+                           Map<Item, Integer> sellableItems) {
         this.entity        = entity;
         this.sellableItems = sellableItems;
         setFlags(EnumSet.noneOf(Flag.class)); // non-blocking
@@ -63,9 +64,9 @@ public class PostListingGoal extends Goal {
         long tick = level.getGameTime();
 
         // Post listing for each item we have in stock
-        for (Item item : sellableItems) {
-            int count = BuildingStorageAccess.countItem(
-                    level, building, item);
+        for (Map.Entry<Item, Integer> entry : sellableItems.entrySet()) {
+            Item item = entry.getKey();
+            Integer count = entry.getValue();
             if (count > 0) {
                 VillageEconomy.postListing(
                         level, villageId, entity, item, count, tick);

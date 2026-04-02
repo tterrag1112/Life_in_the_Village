@@ -63,6 +63,11 @@
     {
       "building_type": "TOWN_HALL",
       "family_role": "HEAD",
+      "profession": "VILLAGE_LEADER"
+    },
+    {
+      "building_type": "TOWN_HALL",
+      "family_role": "HEAD",
       "profession": "BUILDER"
     },
     {

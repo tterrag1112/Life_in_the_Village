@@ -456,7 +456,7 @@ public class FarmerGoal extends Goal {
             CurrencyValue totalCost = CurrencyValue.of(
                     (long) needed * SEED_PRICE.toBronze());
 
-            if (!entity.canAffordTotal(totalCost, level)) {
+            if (!entity.canAffordWithBuilding(totalCost, level)) {
                 long canAfford = entity.getTotalWealth(level).toBronze()
                         / SEED_PRICE.toBronze();
                 needed = (int) Math.min(needed, canAfford);
@@ -546,7 +546,7 @@ public class FarmerGoal extends Goal {
             if (available < needed) {
                 CurrencyValue cost = CurrencyValue.of(
                         (long)(needed - available) * SEED_PRICE.toBronze());
-                return entity.canAffordTotal(cost, level);
+                return entity.canAffordWithBuilding(cost, level);
             }
         }
         return false;

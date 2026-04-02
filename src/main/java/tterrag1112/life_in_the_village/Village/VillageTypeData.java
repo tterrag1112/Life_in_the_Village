@@ -180,7 +180,7 @@ public class VillageTypeData {
     // =========================================================================
 
     private final String               type;
-    private final String               culture;
+    public final String               culture;
     private final List<StarterBuilding> starterBuildings;
     private final List<StarterNpc>      starterNpcs;
     private final List<StarterItem>     starterItems;

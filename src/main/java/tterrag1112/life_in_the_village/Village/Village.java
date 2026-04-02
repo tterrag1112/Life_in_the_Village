@@ -14,6 +14,7 @@ import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Needs.NeedLevel;
@@ -46,6 +47,7 @@ public class Village {
     // Needs — recomputed daily, only lastNeedsUpdate persisted
     private Map<NeedCategory, VillageNeed> needs = new EnumMap<>(NeedCategory.class);
     private long lastNeedsUpdate = -1L;
+    private VillagePath.PathTier pathTier;
 
     // =========================================================================
     // LAYOUT METADATA — persisted so the expansion system can use them
@@ -306,6 +308,7 @@ public class Village {
     public void setRing2Radius(int r)             { this.ring2Radius    = r;   }
     public void setCurrentLevel(int level)        { this.currentLevel   = level; }
 
+
     /**
      * Convenience: set all layout fields from a completed
      * {@link tterrag1112.life_in_the_village.Village.Planning.VillageLayout}.
@@ -525,5 +528,12 @@ public class Village {
 
     public void addPatrolWaypoint(BlockPos pos) {
         patrolWaypoints.add(pos);
+    }
+
+    public VillagePath.PathTier getPathTier(){
+        return VillagePath.PathTier.DIRT;
+    }
+    public static void setPathTier(VillagePath.PathTier tier){
+
     }
 }

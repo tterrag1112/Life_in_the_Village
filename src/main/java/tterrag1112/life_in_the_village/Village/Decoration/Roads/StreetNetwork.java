@@ -1,5 +1,5 @@
 // src/main/java/tterrag1112/life_in_the_village/Village/Decoration/StreetNetwork.java
-package tterrag1112.life_in_the_village.Village.Decoration;
+package tterrag1112.life_in_the_village.Village.Decoration.Roads;
 
 import net.minecraft.core.BlockPos;
 

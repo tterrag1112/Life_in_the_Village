@@ -112,7 +112,7 @@ public class StockpileKeeperGoal extends Goal {
             int qty   = Math.min(needed, seller.listing().getQuantity());
             long cost = seller.listing().getPricePerItem() * qty;
 
-            if (!entity.canAffordTotal(CurrencyValue.of(cost), level)) {
+            if (!entity.canAffordWithBuilding(CurrencyValue.of(cost), level)) {
                 return false;
             }
 

@@ -1,10 +1,9 @@
 // src/main/java/tterrag1112/life_in_the_village/Village/Decoration/PathRouter.java
-package tterrag1112.life_in_the_village.Village.Decoration;
+package tterrag1112.life_in_the_village.Village.Decoration.Roads;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.Rotation;
 import tterrag1112.life_in_the_village.Village.Building;
 
 import java.util.*;

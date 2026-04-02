@@ -8,6 +8,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.SlabType;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.StreetTier;
 
 public enum VillageBiomeStyle {
 
