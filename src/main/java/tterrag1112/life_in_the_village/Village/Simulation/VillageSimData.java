@@ -61,11 +61,11 @@ public class VillageSimData {
                             .forGetter(d -> d.mineCount),
                     Codec.LONG.fieldOf("lastSyncTick")
                             .forGetter(d -> d.lastSyncTick),
-                    Codec.FLOAT.fieldOf("treasuryBalanceEstimate")
+                    Codec.FLOAT.optionalFieldOf("treasuryBalanceEstimate", 0f)
                             .forGetter(d -> d.treasuryBalanceEstimate),
-                    Codec.FLOAT.fieldOf("wageDrainPerDay")
+                    Codec.FLOAT.optionalFieldOf("wageDrainPerDay", 0f)
                             .forGetter(d -> d.wageDrainPerDay),
-                    Codec.FLOAT.fieldOf("taxIncomePerDay")
+                    Codec.FLOAT.optionalFieldOf("taxIncomePerDay", 0f)
                             .forGetter(d -> d.taxIncomePerDay)
             ).apply(i, VillageSimData::new));
 
@@ -91,11 +91,9 @@ public class VillageSimData {
     private int   mineCount;
     /** Game tick of the last real-data sync (0 = never synced). */
     private long  lastSyncTick;
-    /** Simulated treasury balance (mirrors VillageTreasury for unloaded). */
+    private boolean wasUnloaded = false;
     private float treasuryBalanceEstimate;
-    /** Average daily wage drain rate. */
     private float wageDrainPerDay;
-    /** Average daily tax income rate. */
     private float taxIncomePerDay;
 
     // =========================================================================
@@ -167,28 +165,24 @@ public class VillageSimData {
      */
     public void blendReal(float realFoodProd, float realFoodCons,
                           float realMatProd,  float realMatCons,
-                          int   realPop,      long  tick, float realTreasuryBalance, float realWageDrain, float realTaxIncome) {
+                          int   realPop,      long  tick) {
         foodProductionPerDay   = realFoodProd   * 0.8f + foodProductionPerDay   * 0.2f;
         foodConsumptionPerDay  = realFoodCons   * 0.8f + foodConsumptionPerDay  * 0.2f;
         materialProductionPerDay  = realMatProd * 0.8f + materialProductionPerDay  * 0.2f;
         materialConsumptionPerDay = realMatCons * 0.8f + materialConsumptionPerDay * 0.2f;
         simulatedPopulation    = realPop;
         lastSyncTick           = tick;
-        this.treasuryBalanceEstimate = realTreasuryBalance;
-        this.wageDrainPerDay = realWageDrain * 0.8f + wageDrainPerDay * 0.2f;
-        this.taxIncomePerDay = realTaxIncome * 0.8f + taxIncomePerDay * 0.2f;
+
 
     }
 
     /** Advances the sim by the given day count using only stored rates + season. */
     public void advanceSim(float seasonFoodMult, float seasonMatMult) {
-        // Consumption rises with season, production falls in winter
-        // (already baked into the rates — this is a secondary nudge)
-        foodConsumptionPerDay   *= seasonFoodMult;
+        foodConsumptionPerDay     *= seasonFoodMult;
         materialConsumptionPerDay *= seasonMatMult;
+        // Treasury simulation
         treasuryBalanceEstimate += (taxIncomePerDay - wageDrainPerDay);
         treasuryBalanceEstimate = Math.max(0, treasuryBalanceEstimate);
-
     }
 
     // =========================================================================
@@ -208,7 +202,19 @@ public class VillageSimData {
     public void setFarmhouseCount(int count) { this.farmhouseCount = count; }
     public void setMineCount(int count)      { this.mineCount = count;      }
     public void setSimulatedPopulation(int p){ this.simulatedPopulation = p; }
+    // Coin tracking
     public float getTreasuryEstimate()  { return treasuryBalanceEstimate; }
     public float getNetIncomePerDay()   { return taxIncomePerDay - wageDrainPerDay; }
     public boolean isTreasuryHealthy()  { return getNetIncomePerDay() > 0; }
+
+    public void blendRealEconomy(float realTreasuryBalance,
+                                 float realWageDrain, float realTaxIncome) {
+        this.treasuryBalanceEstimate = realTreasuryBalance;
+        this.wageDrainPerDay = realWageDrain * 0.8f + wageDrainPerDay * 0.2f;
+        this.taxIncomePerDay = realTaxIncome * 0.8f + taxIncomePerDay * 0.2f;
+    }
+
+    // Unloaded tracking (runtime only)
+    public boolean wasUnloaded()          { return wasUnloaded; }
+    public void setWasUnloaded(boolean v) { this.wasUnloaded = v; }
 }

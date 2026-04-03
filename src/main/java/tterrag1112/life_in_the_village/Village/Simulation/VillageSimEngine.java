@@ -57,24 +57,26 @@ public final class VillageSimEngine {
      * data is measured and blended into the rolling average. Otherwise,
      * the existing sim rates are advanced using season multipliers only.</p>
      */
-    public static void tick(ServerLevel level,
-                            Village village,
-                            VillageSavedData data,
-                            long currentTick) {
+    public static void tick(ServerLevel level, Village village,
+                            VillageSavedData data, long currentTick) {
         VillageSimData sim = data.getSimData(village.getId())
                 .orElseGet(() -> buildBaseline(village, data, currentTick));
 
-
         boolean isLoaded = isVillageLoaded(level, village, data);
 
-// Reconcile if transitioning from unloaded → loaded
+        // Reconcile on unloaded → loaded transition
         if (isLoaded && sim.wasUnloaded()) {
-            reconcileOnLoad(level, village, data, currentTick);
+            reconcileOnLoad(level, village, data, sim, currentTick);
             sim.setWasUnloaded(false);
         }
 
         if (isLoaded) {
             syncFromReal(level, village, data, sim, currentTick);
+            // Blend treasury data while loaded
+            sim.blendRealEconomy(
+                    village.getTreasuryBronze(),
+                    countWageNpcs(level, village, data) * 8f, // rough wage estimate
+                    sim.getSimulatedPopulation() * 3f);       // rough tax estimate
         } else {
             sim.setWasUnloaded(true);
             advanceSim(sim, currentTick);
@@ -135,7 +137,7 @@ public final class VillageSimEngine {
                 matProd,  matCons,
                 estimatedPop,
                 farmhouseCount, mineCount,
-                tick);
+                tick, 0f, 0f, 0f);
     }
 
     // =========================================================================
@@ -189,6 +191,7 @@ public final class VillageSimEngine {
         }
         float realMatProd = mines     * BASE_MATERIALS_PER_MINE;
         float realMatCons = buildings * BASE_MATERIALS_PER_BUILDING;
+
 
         sim.blendReal(realFoodProd, realFoodCons,
                 realMatProd, realMatCons,
@@ -276,14 +279,15 @@ public final class VillageSimEngine {
         }
 
         // ── Treasury reconciliation ──────────────────────────────────────
+        float finalDaysUnloaded = daysUnloaded;
         data.getTreasury(village.getId()).ifPresent(treasury -> {
             // Simulate tax income and wage drain
             long taxIncome = (long)(sim.getSimulatedPopulation()
-                    * VillageTreasury.BASELINE_INCOME_PER_NPC * daysUnloaded);
+                    * VillageTreasury.BASELINE_INCOME_PER_NPC * finalDaysUnloaded);
             long wageDrain = (long)(Math.max(1, sim.getSimulatedPopulation() / 5)
-                    * VillageTreasury.GUARD_WAGE * daysUnloaded);
+                    * VillageTreasury.GUARD_WAGE * finalDaysUnloaded);
             long propertyTax = (long)(sim.getFarmhouseCount()
-                    * VillageTreasury.PROPERTY_TAX_PER_HOUSE * daysUnloaded);
+                    * VillageTreasury.PROPERTY_TAX_PER_HOUSE * finalDaysUnloaded);
 
             treasury.deposit(taxIncome + propertyTax);
             treasury.withdraw(wageDrain);
@@ -341,19 +345,86 @@ public final class VillageSimEngine {
                     new ItemStack(Items.COBBLESTONE, cobble));
         }
     }
-
-    private static Building findStockpile(Village village, VillageSavedData data) {
-        return village.getBuildingIds().stream()
-                .map(data::getBuildingById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .filter(b -> b.getType() == BuildingType.STOCKPILE)
-                .findFirst()
-                .orElse(null);
-    }
     // Add to VillageSimData:
     private boolean wasUnloaded = false;
 
     public boolean wasUnloaded() { return wasUnloaded; }
     public void setWasUnloaded(boolean val) { this.wasUnloaded = val; }
+    // =========================================================================
+    // Reconciliation — materialize simulated production on village load
+    // =========================================================================
+
+    private static void reconcileOnLoad(ServerLevel level, Village village,
+                                        VillageSavedData data,
+                                        VillageSimData sim, long currentTick) {
+        long ticksUnloaded = currentTick - sim.getLastSyncTick();
+        if (ticksUnloaded < 24000L) return;
+
+        float daysUnloaded = Math.min(ticksUnloaded / 24000f, 30f);
+
+        // Food
+        float netFood = sim.foodNetPerDay() * daysUnloaded;
+        if (netFood > 0) {
+            int breadCount = Math.min((int)(netFood / 5), 128);
+            if (breadCount > 0) {
+                Building stockpile = findStockpile(village, data);
+                if (stockpile != null)
+                    BuildingStorageAccess.storeItem(level, stockpile,
+                            new net.minecraft.world.item.ItemStack(
+                                    net.minecraft.world.item.Items.BREAD, breadCount));
+            }
+        }
+
+        // Materials
+        float netMaterials = sim.materialNetPerDay() * daysUnloaded;
+        if (netMaterials > 0) {
+            int logs = Math.min((int)(netMaterials / 2), 128);
+            int cobble = Math.min((int)(netMaterials / 2), 128);
+            Building stockpile = findStockpile(village, data);
+            if (stockpile != null) {
+                if (logs > 0)
+                    BuildingStorageAccess.storeItem(level, stockpile,
+                            new net.minecraft.world.item.ItemStack(
+                                    net.minecraft.world.item.Items.OAK_LOG, logs));
+                if (cobble > 0)
+                    BuildingStorageAccess.storeItem(level, stockpile,
+                            new net.minecraft.world.item.ItemStack(
+                                    net.minecraft.world.item.Items.COBBLESTONE, cobble));
+            }
+        }
+
+        // Treasury — simulate tax/wage flow
+        float netTreasury = sim.getNetIncomePerDay() * daysUnloaded;
+        if (netTreasury > 0) {
+            village.depositToTreasury((long) netTreasury);
+        } else {
+            village.withdrawFromTreasury((long) Math.abs(netTreasury));
+        }
+
+        System.out.printf("[SimReconcile] %s — %.1f days, food=%+.0f, mat=%+.0f, treasury=%+.0f%n",
+                village.getName(), daysUnloaded, netFood, netMaterials, netTreasury);
+    }
+
+    private static Building findStockpile(Village village, VillageSavedData data) {
+        return village.getBuildingIds().stream()
+                .map(data::getBuildingById)
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .filter(b -> b.getType() == BuildingType.STOCKPILE)
+                .findFirst().orElse(null);
+    }
+
+    private static int countWageNpcs(ServerLevel level, Village village,
+                                     VillageSavedData data) {
+        var bounds = village.getBounds(data).orElse(null);
+        if (bounds == null) return 0;
+        return (int) level.getEntitiesOfClass(
+                TownspersonMob.class, bounds.inflate(32),
+                mob -> {
+                    var p = mob.getProfession();
+                    return p == tterrag1112.life_in_the_village.Profession.Profession.GUARD
+                            || p == tterrag1112.life_in_the_village.Profession.Profession.STOCKPILE_KEEPER
+                            || p == tterrag1112.life_in_the_village.Profession.Profession.INNKEEPER;
+                }).size();
+    }
 }

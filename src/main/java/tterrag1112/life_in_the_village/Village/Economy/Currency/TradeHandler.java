@@ -182,8 +182,8 @@ public class TradeHandler {
                     : rawPrice;
 
             var playerContainer = buildPlayerContainer(player);
-            long playerWealth   = CoinHelper.getWealth(playerContainer).toBronze();
-            int  canAfford      = (int)(playerWealth / pricePerItem);
+            long playerWealth = CoinHelper.getWealth(playerContainer).toBronze();
+            int canAfford = (int) (playerWealth / pricePerItem);
             quantity = Math.min(quantity, canAfford);
 
             if (quantity <= 0) {
@@ -223,19 +223,7 @@ public class TradeHandler {
                 if (ProfessionPerkManager.hasDoubleReputationTrade(player)) {
                     ReputationManager.onTradeCompleted(player, villageId, level);
                 }
-            }
-            // In TradeHandler.handleTrade(), after the buy/sell logic completes:
-// ── Market tax ──────────────────────────────────────────────────────
-            if (villageId != null) {
-                VillageTreasury treasury = data.getTreasury(villageId).orElse(null);
-                if (treasury != null) {
-                    long taxed = treasury.collectMarketTax(
-                            pricePerItem * quantity);
-                    if (taxed > 0) {
-                        data.putTreasury(treasury);
-                        data.setDirty();
-                    }
-                }
+
             }
 
             // =========================================================================
@@ -302,20 +290,8 @@ public class TradeHandler {
             ProfessionEvents.onSellToNpc(
                     player, new ItemStack(item), quantity, villageId);
 
-            // In TradeHandler.handleTrade(), after the buy/sell logic completes:
-// ── Market tax ──────────────────────────────────────────────────────
-            if (villageId != null) {
-                VillageTreasury treasury = data.getTreasury(villageId).orElse(null);
-                if (treasury != null) {
-                    long taxed = treasury.collectMarketTax(
-                            pricePerItem * quantity);
-                    if (taxed > 0) {
-                        data.putTreasury(treasury);
-                        data.setDirty();
-                    }
-                }
-            }
         }
+
 
 
         // Refresh the trade screen with updated stock/prices

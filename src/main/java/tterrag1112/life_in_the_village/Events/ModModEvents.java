@@ -13,6 +13,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
 import net.neoforged.neoforge.event.AddServerReloadListenersEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerContainerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
@@ -25,10 +26,14 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import net.neoforged.neoforge.registries.NewRegistryEvent;
 import tterrag1112.life_in_the_village.Blocks.custom.GuardPostBlock;
 import tterrag1112.life_in_the_village.Commands.*;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Castle.CastleStyleLoader;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
+import tterrag1112.life_in_the_village.Village.Economy.BusinessPurchaseManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
 import tterrag1112.life_in_the_village.Entities.NpcNameRegistry;
 import tterrag1112.life_in_the_village.Life_in_the_village;
@@ -44,6 +49,7 @@ import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 
@@ -172,6 +178,8 @@ public class ModModEvents {
         CastleCommand.register(event.getDispatcher());
         CastleDesignCommand.register(event.getDispatcher());
         DebugTickCommand.register(event.getDispatcher());
+        FarmCommands.register(event.getDispatcher());
+        BalanceTestCommands.register(event.getDispatcher());
 
     }
 
@@ -355,6 +363,22 @@ public class ModModEvents {
                     .onItemDelivered(player, itemId, addedCount, level);
             CraftingOrderInteraction.onItemsDeposited(
                     player, village.getId(), itemId, addedCount, level);
+        }
+    }
+    @SubscribeEvent
+    public static void onTownspersonDeath(LivingDeathEvent event) {
+        if (!(event.getEntity() instanceof TownspersonMob townsperson)) return;
+        if (!(event.getEntity().level() instanceof ServerLevel level)) return;
+
+        // Check if this was a head farmer
+        if (townsperson.getProfession() == Profession.FARMER) {
+            Optional<Building> farmhouse = townsperson.getAssignedBuildingId()
+                    .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
+                    .filter(b -> b.getType() == BuildingType.FARMHOUSE);
+
+            if (farmhouse.isPresent()) {
+                BusinessPurchaseManager.handleFarmerDeath(townsperson, level);
+            }
         }
     }
 }

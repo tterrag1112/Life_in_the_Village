@@ -97,7 +97,7 @@ public class FarmPlotCommands {
                 return 0;
             }
 
-            FarmPlot plot = new FarmPlot(UUID.randomUUID(), name, pos, radius, FarmPlot.CropType.MIXED);
+            FarmPlot plot = new FarmPlot(UUID.randomUUID(), name, pos, radius, FarmPlot.CropType.MIXED, FarmPlot.PlotSubtype.CROP_FIELD);
             data.addFarmPlot(plot);
 
             src.sendSuccess(() -> Component.literal(

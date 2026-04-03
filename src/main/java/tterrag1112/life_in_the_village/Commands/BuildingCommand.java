@@ -114,7 +114,7 @@ public class BuildingCommand {
                                                 .executes(ctx -> {
                                                     String name = StringArgumentType.getString(ctx, "name");
                                                     VillageSavedData data = VillageSavedData.get(ctx.getSource().getLevel());
-                                                    data.addVillage(new Village(name));
+                                                    data.addVillage(new Village(name, "default"));
                                                     ctx.getSource().sendSuccess(
                                                             () -> Component.literal("Created village: " + name), true
                                                     );

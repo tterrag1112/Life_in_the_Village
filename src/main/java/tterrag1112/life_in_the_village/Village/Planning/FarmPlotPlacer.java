@@ -2,12 +2,20 @@
 package tterrag1112.life_in_the_village.Village.Planning;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FarmBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -16,8 +24,11 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathRouter;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Village;
+import tterrag1112.life_in_the_village.Village.VillageTypeData;
+import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Places farm plots with organic, naturally-shaped boundaries.
@@ -64,82 +75,343 @@ public class FarmPlotPlacer {
     // Entry point
     // =========================================================================
 
+    // Major updates to FarmPlotPlacer.java
+
     public static void placeAll(ServerLevel level,
                                 VillageLayout layout,
                                 Village village,
                                 VillageSavedData data,
                                 Random rng) {
-        List<LayoutSlot> plots = layout.farmPlots();
-        if (plots.isEmpty()) return;
+        VillageTypeData typeData = VillageTypeRegistry.INSTANCE.getType(village.getVillageType());
+        VillageTypeData.FarmPlotConfig config = typeData.getFarmPlotConfig();
 
+        // Check if farming is disabled for this village type
+        if (config.placement() == VillageTypeData.FarmPlotPlacement.NONE) {
+            System.out.println("FarmPlotPlacer: farming disabled for " + village.getVillageType());
+            return;
+        }
+
+        // Count farmhouses
         List<Building> farmhouses = village.getBuildingIds().stream()
                 .map(data::getBuildingById)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .filter(b -> b.getType() == BuildingType.FARMHOUSE)
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
 
-        VillageBiomeStyle style = VillageBiomeStyle.detect(level,
-                plots.get(0).getPos());
+        if (farmhouses.isEmpty()) {
+            System.out.println("FarmPlotPlacer: no farmhouses found");
+            return;
+        }
 
-        System.out.println("FarmPlotPlacer: placing "
-                + plots.size() + " farm plots for " + village.getName());
+        int totalPlots = farmhouses.size() * config.plotsPerFarmhouse();
+        int cropPlots = config.allowAnimalPens()
+                ? (int)(totalPlots * 0.7)  // 70% crops, 30% animals
+                : totalPlots;
+        int animalPlots = totalPlots - cropPlots;
 
-        for (int i = 0; i < plots.size(); i++) {
-            LayoutSlot slot = plots.get(i);
-            BlockPos centre = slot.getPos();
+        System.out.println("FarmPlotPlacer: placing " + cropPlots + " crop plots and "
+                + animalPlots + " animal pens for " + village.getName());
 
-            // Re-query live surface after site prep
-            int surfY = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                    centre.getX(), centre.getZ());
-            BlockPos liveCentre = new BlockPos(
-                    centre.getX(), surfY, centre.getZ());
+        VillageBiomeStyle style = VillageBiomeStyle.detect(level, layout.getCenter());
 
-            // Generate the organic edge shape for this plot
-            PlotShape shape = generateShape(rng,
-                    BASE_HALF_W, BASE_HALF_L, EDGE_JITTER);
+        // Place crop plots
+        placeCropPlots(level, layout, village, data, farmhouses, cropPlots, config, style, rng);
 
-            // Level the pad to median Y of the footprint
-            int targetY = medianFootprintY(level, liveCentre, shape);
-            BlockPos flatCentre = new BlockPos(
-                    liveCentre.getX(), targetY, liveCentre.getZ());
+        // Place animal pens (if allowed)
+        if (config.allowAnimalPens()) {
+            placeAnimalPens(level, layout, village, data, farmhouses, animalPlots, config, style, rng);
+        }
+    }
 
+    private static void placeCropPlots(ServerLevel level, VillageLayout layout,
+                                       Village village, VillageSavedData data,
+                                       List<Building> farmhouses, int count,
+                                       VillageTypeData.FarmPlotConfig config,
+                                       VillageBiomeStyle style, Random rng) {
+        BlockPos centre = layout.getCenter();
+        Optional<AABB> villageBounds = village.getBounds(data);
+
+        for (int i = 0; i < count; i++) {
+            BlockPos plotPos = findPlotLocation(level, centre, villageBounds,
+                    config, false, i, count, rng);
+
+            if (plotPos == null) continue;
+
+            // Generate plot shape
+            PlotShape shape = generateShape(rng, BASE_HALF_W, BASE_HALF_L, EDGE_JITTER);
+            int targetY = medianFootprintY(level, plotPos, shape);
+            BlockPos flatCentre = new BlockPos(plotPos.getX(), targetY, plotPos.getZ());
+
+            // Level and place
             levelPad(level, flatCentre, shape, targetY);
-
-            // Place the plot interior, fence, and features
             BlockState[] crops = chooseCrops(rng, STRIP_COUNT);
-            placePlot(level, flatCentre, shape, targetY, crops, style, rng);
-
-            // Connect to nearest farmhouse with a footpath
-            Building nearestFarmhouse = null;
-            if (!farmhouses.isEmpty()) {
-                nearestFarmhouse = farmhouses.stream()
-                        .min(Comparator.comparingDouble(f ->
-                                f.getShape().getOrigin()
-                                        .distSqr(flatCentre)))
-                        .orElse(null);
-            }
-            if (nearestFarmhouse != null) {
-                placeFootpath(level, flatCentre, shape,
-                        nearestFarmhouse, data, village, style);
-            }
+            placeCropPlot(level, flatCentre, shape, targetY, crops, style, rng);
 
             // Register
+            Building nearestFarmhouse = farmhouses.stream()
+                    .min(Comparator.comparingDouble(f ->
+                            f.getShape().getOrigin().distSqr(flatCentre)))
+                    .orElse(null);
+
             String plotName = village.getName() + "_farm_" + (i + 1);
-            FarmPlot.CropType cropType = chooseCropType(style, i, plots.size(), rng, village, data);
+            FarmPlot.CropType cropType = chooseCropType(style, i, count, rng, village, data);
             FarmPlot farmPlot = new FarmPlot(
                     UUID.randomUUID(), plotName, flatCentre,
-                    Math.max(BASE_HALF_W, BASE_HALF_L),
-                    cropType);
+                    Math.max(BASE_HALF_W, BASE_HALF_L), cropType, FarmPlot.PlotSubtype.CROP_FIELD);
 
             if (nearestFarmhouse != null) {
                 farmPlot.setFarmhouseId(nearestFarmhouse.getId());
+                placeFootpath(level, flatCentre, shape, nearestFarmhouse, data, village, style);
             }
 
             data.addFarmPlot(farmPlot);
-            System.out.println("FarmPlotPlacer: placed '"
-                    + plotName + "' at " + flatCentre);
+            System.out.println("FarmPlotPlacer: placed crop field '" + plotName + "' at " + flatCentre);
+        }
+    }
+
+    private static void placeAnimalPens(ServerLevel level, VillageLayout layout,
+                                        Village village, VillageSavedData data,
+                                        List<Building> farmhouses, int count,
+                                        VillageTypeData.FarmPlotConfig config,
+                                        VillageBiomeStyle style, Random rng) {
+        BlockPos centre = layout.getCenter();
+        Optional<AABB> villageBounds = village.getBounds(data);
+
+        for (int i = 0; i < count; i++) {
+            // Animal pens ALWAYS go outside walls
+            BlockPos plotPos = findPlotLocation(level, centre, villageBounds,
+                    config, true, i, count, rng);
+
+            if (plotPos == null) continue;
+
+            // Larger pens for animals
+            int penHalfW = BASE_HALF_W + 4;
+            int penHalfL = BASE_HALF_L + 3;
+            PlotShape shape = generateShape(rng, penHalfW, penHalfL, EDGE_JITTER);
+            int targetY = medianFootprintY(level, plotPos, shape);
+            BlockPos flatCentre = new BlockPos(plotPos.getX(), targetY, plotPos.getZ());
+
+            // Level and place
+            levelPad(level, flatCentre, shape, targetY);
+            placeAnimalPen(level, flatCentre, shape, targetY, style, rng);
+
+            // Register
+            Building nearestFarmhouse = farmhouses.stream()
+                    .min(Comparator.comparingDouble(f ->
+                            f.getShape().getOrigin().distSqr(flatCentre)))
+                    .orElse(null);
+
+            String plotName = village.getName() + "_pen_" + (i + 1);
+            FarmPlot farmPlot = new FarmPlot(
+                    UUID.randomUUID(), plotName, flatCentre,
+                    Math.max(penHalfW, penHalfL), FarmPlot.CropType.PASTURE, FarmPlot.PlotSubtype.ANIMAL_PEN);
+
+            if (nearestFarmhouse != null) {
+                farmPlot.setFarmhouseId(nearestFarmhouse.getId());
+                placeFootpath(level, flatCentre, shape, nearestFarmhouse, data, village, style);
+            }
+
+            data.addFarmPlot(farmPlot);
+            System.out.println("FarmPlotPlacer: placed animal pen '" + plotName + "' at " + flatCentre);
+        }
+    }
+
+    private static BlockPos findPlotLocation(ServerLevel level, BlockPos centre,
+                                             Optional<AABB> villageBounds, // FIX: Use AABB
+                                             VillageTypeData.FarmPlotConfig config, boolean forceOutside,
+                                             int index, int total, Random rng) {
+        int attempts = 0;
+        int maxAttempts = 20;
+
+        while (attempts++ < maxAttempts) {
+            // Calculate distance from center based on placement type
+            int distance;
+            if (forceOutside || config.placement() == VillageTypeData.FarmPlotPlacement.PERIMETER_OUTSIDE) {
+                // Outside walls: use max distance from bounds edge
+                int edgeDistance = villageBounds.map(b ->
+                        (int)Math.max(b.getXsize(), b.getZsize()) / 2 + config.minDistance()
+                ).orElse(config.minDistance());
+                distance = edgeDistance + rng.nextInt(config.maxDistance() - config.minDistance() + 1);
+            } else if (config.placement() == VillageTypeData.FarmPlotPlacement.DISTANT_FIELDS) {
+                distance = config.minDistance() + rng.nextInt(config.maxDistance() - config.minDistance() + 1);
+            } else {
+                // INTEGRATED: within village bounds
+                distance = rng.nextInt(config.maxDistance());
+            }
+
+            // Random angle
+            double angle = 2 * Math.PI * (index + rng.nextDouble()) / total;
+            int x = centre.getX() + (int)(Math.cos(angle) * distance);
+            int z = centre.getZ() + (int)(Math.sin(angle) * distance);
+
+            int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+            BlockPos candidate = new BlockPos(x, y, z);
+
+            // Validate location
+            if (isValidPlotLocation(level, candidate, villageBounds, config, forceOutside)) {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+
+    private static boolean isValidPlotLocation(ServerLevel level, BlockPos pos,
+                                               Optional<AABB> villageBounds, // FIX: Use AABB
+                                               VillageTypeData.FarmPlotConfig config, boolean forceOutside) {
+        // Check if outside bounds when required
+        if (forceOutside && villageBounds.isPresent()) {
+            AABB bounds = villageBounds.get();
+            // FIX: Use AABB.contains which takes a Vec3
+            if (bounds.contains(pos.getCenter())) {
+                return false;
+            }
+        }
+
+        // Check terrain suitability (not too steep, not in water, not in structure)
+        int slopeCheck = 0;
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dz = -3; dz <= 3; dz++) {
+                int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                        pos.getX() + dx, pos.getZ() + dz);
+                slopeCheck += Math.abs(y - pos.getY());
+            }
+        }
+
+        return slopeCheck < 20; // Average slope less than ~0.4 blocks per unit
+    }
+
+    private static void placeCropPlot(ServerLevel level, BlockPos centre,
+                                      PlotShape shape, int targetY,
+                                      BlockState[] crops,
+                                      VillageBiomeStyle style, Random rng) {
+        // Place fence with gate
+        placeFenceWithGate(level, centre, shape, targetY, style);
+
+        // Place water source in center
+        placeWaterSource(level, centre, targetY);
+
+        // Place farmland and crops
+        int scan = Math.max(shape.baseHalfW, shape.baseHalfL) + 2;
+        for (int dx = -scan; dx <= scan; dx++) {
+            for (int dz = -scan; dz <= scan; dz++) {
+                if (!isInsidePlot(shape, dx, dz)) continue;
+                if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) continue; // Skip water area
+
+                BlockPos farmlandPos = new BlockPos(
+                        centre.getX() + dx, targetY, centre.getZ() + dz);
+
+                level.setBlock(farmlandPos, Blocks.FARMLAND.defaultBlockState()
+                        .setValue(FarmBlock.MOISTURE, 7), 3);
+
+                // Plant crop
+                BlockState crop = crops[Math.abs((dx + dz)) % crops.length];
+                level.setBlock(farmlandPos.above(), crop, 3);
+            }
+        }
+    }
+
+    private static void placeAnimalPen(ServerLevel level, BlockPos centre,
+                                       PlotShape shape, int targetY,
+                                       VillageBiomeStyle style, Random rng) {
+        // Place fence with gate
+        placeFenceWithGate(level, centre, shape, targetY, style);
+
+        // Place water trough
+        placeWaterTrough(level, centre, targetY);
+
+        // Place grass
+        int scan = Math.max(shape.baseHalfW, shape.baseHalfL) + 2;
+        for (int dx = -scan; dx <= scan; dx++) {
+            for (int dz = -scan; dz <= scan; dz++) {
+                if (!isInsidePlot(shape, dx, dz)) continue;
+
+                BlockPos grassPos = new BlockPos(
+                        centre.getX() + dx, targetY, centre.getZ() + dz);
+                level.setBlock(grassPos, Blocks.GRASS_BLOCK.defaultBlockState(), 3);
+            }
+        }
+
+        // Spawn animals
+        spawnPenAnimals(level, centre, shape, targetY, rng);
+    }
+
+    private static void placeFenceWithGate(ServerLevel level, BlockPos centre,
+                                           PlotShape shape, int targetY,
+                                           VillageBiomeStyle style) {
+        Block fenceBlock = style.fence;
+        int scan = Math.max(shape.baseHalfW, shape.baseHalfL) + 2;
+        BlockPos gatePos = null;
+        Direction gateDir = null;
+
+        for (int dx = -scan; dx <= scan; dx++) {
+            for (int dz = -scan; dz <= scan; dz++) {
+                if (!isOnBoundary(shape, dx, dz)) continue;
+
+                BlockPos fencePos = new BlockPos(
+                        centre.getX() + dx, targetY + 1, centre.getZ() + dz);
+
+                // Place gate on side closest to village center
+                if (gatePos == null && Math.abs(dz) < 2 && dx < 0) {
+                    gatePos = fencePos;
+                    gateDir = Direction.SOUTH; // Adjust based on actual orientation
+                    level.setBlock(fencePos, Blocks.OAK_FENCE_GATE.defaultBlockState()
+                            .setValue(FenceGateBlock.FACING, gateDir), 3);
+                } else {
+                    level.setBlock(fencePos, fenceBlock.defaultBlockState(), 3);
+                }
+            }
+        }
+    }
+
+    private static void placeWaterSource(ServerLevel level, BlockPos centre, int targetY) {
+        // 2x2 water pool in center at ground level (not floating)
+        for (int dx = 0; dx <= 1; dx++) {
+            for (int dz = 0; dz <= 1; dz++) {
+                BlockPos waterPos = new BlockPos(centre.getX() + dx, targetY, centre.getZ() + dz);
+                level.setBlock(waterPos, Blocks.WATER.defaultBlockState(), 3);
+            }
+        }
+    }
+
+    private static void placeWaterTrough(ServerLevel level, BlockPos centre, int targetY) {
+        // Simple cauldron or water-filled basin
+        BlockPos troughPos = centre.offset(2, 0, 2);
+        level.setBlock(troughPos.below(), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+        level.setBlock(troughPos, Blocks.WATER_CAULDRON.defaultBlockState(), 3);
+    }
+
+    private static void spawnPenAnimals(ServerLevel level, BlockPos centre,
+                                        PlotShape shape, int targetY, Random rng) {
+        // Spawn 3-6 animals based on pen type
+        int animalCount = 3 + rng.nextInt(4);
+        EntityType<?>[] animalTypes = {
+                EntityType.COW, EntityType.PIG, EntityType.SHEEP, EntityType.CHICKEN
+        };
+        EntityType<?> chosenType = animalTypes[rng.nextInt(animalTypes.length)];
+
+        for (int i = 0; i < animalCount; i++) {
+            int dx = rng.nextInt(shape.baseHalfL * 2) - shape.baseHalfW;
+            int dz = rng.nextInt(shape.baseHalfL * 2) - shape.baseHalfL;
+            if (!isInsidePlot(shape, dx, dz)) continue;
+
+            BlockPos spawnPos = new BlockPos(
+                    centre.getX() + dx, targetY + 1, centre.getZ() + dz);
+
+            Entity animal = chosenType.create(level, EntitySpawnReason.MOB_SUMMONED);
+            if (animal != null) {
+                // FIX: Use setPos instead of moveTo
+                animal.setPos(
+                        spawnPos.getX() + 0.5,
+                        spawnPos.getY(),
+                        spawnPos.getZ() + 0.5
+                );
+                animal.setYRot(rng.nextFloat() * 360);
+                animal.setXRot(0);
+                level.addFreshEntity(animal);
+            }
         }
     }
 

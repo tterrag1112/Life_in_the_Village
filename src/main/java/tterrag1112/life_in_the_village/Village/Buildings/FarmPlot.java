@@ -166,9 +166,12 @@ public class FarmPlot {
                             .fieldOf("cropType").forGetter(FarmPlot::getCropType),
                     Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .optionalFieldOf("farmhouseId")
-                            .forGetter(p -> Optional.ofNullable(p.getFarmhouseId()))
-            ).apply(instance, (id, name, origin, radius, cropType, farmhouseId) -> {
-                FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType);
+                            .forGetter(p -> Optional.ofNullable(p.farmhouseId)),
+                    Codec.STRING.xmap(PlotSubtype::valueOf, PlotSubtype::name)
+                            .optionalFieldOf("subtype", PlotSubtype.CROP_FIELD)
+                            .forGetter(FarmPlot::getSubtype)
+            ).apply(instance, (id, name, origin, radius, cropType, farmhouseId, subtype) -> {
+                FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
                 return plot;
             })
@@ -184,14 +187,17 @@ public class FarmPlot {
     private       int       radius;
     private       CropType  cropType;
     private       UUID      farmhouseId; // nullable until assigned
+    private PlotSubtype subtype;
+
 
     public FarmPlot(UUID id, String name, BlockPos origin,
-                    int radius, CropType cropType) {
+                    int radius, CropType cropType, PlotSubtype subtype) {
         this.id       = id;
         this.name     = name;
         this.origin   = origin;
         this.radius   = radius;
         this.cropType = cropType;
+        this.subtype = subtype;
     }
 
     // =========================================================================
@@ -226,6 +232,18 @@ public class FarmPlot {
         return result;
     }
 
+    public enum PlotSubtype {
+        /** Traditional crop field with farmland and crops */
+        CROP_FIELD,
+
+        /** Fenced grass area for livestock - no farmland */
+        ANIMAL_PEN;
+
+        public boolean isCropPlot() {
+            return this == CROP_FIELD;
+        }
+    }
+
     // =========================================================================
     // Getters / setters
     // =========================================================================
@@ -244,4 +262,6 @@ public class FarmPlot {
     public void setFarmhouseId(UUID id)        { this.farmhouseId = id; }
 
     public boolean isAssigned() { return farmhouseId != null; }
+    public PlotSubtype getSubtype() { return subtype; }
+    public void setSubtype(PlotSubtype subtype) { this.subtype = subtype; }
 }

@@ -251,6 +251,49 @@ public class CoinHelper {
     public static boolean canAfford(SimpleContainer inventory, CurrencyValue price) {
         return getWealth(inventory).isAffordable(price);
     }
+    // Add these methods to CoinHelper.java:
+
+    /**
+     * Count total coins in a player's inventory
+     */
+    public static CurrencyValue countCoins(ServerPlayer player) {
+        long total = 0;
+        for (ItemStack stack : player.getInventory()) {
+            if (isCoin(stack)) {
+                total += getCoinValue(stack).toBronze() * stack.getCount();
+            }
+        }
+        return CurrencyValue.of(total);
+    }
+
+    /**
+     * Remove coins from a player's inventory
+     * Returns true if successful, false if not enough coins
+     */
+    public static boolean removeCoins(ServerPlayer player, CurrencyValue amount) {
+        long remaining = amount.toBronze();
+
+        // First pass: check if player has enough
+        long available = countCoins(player).toBronze();
+        if (available < remaining) {
+            return false;
+        }
+
+        // Second pass: remove coins
+        for (int i = 0; i < player.getInventory().getContainerSize() && remaining > 0; i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (isCoin(stack)) {
+                long coinValue = getCoinValue(stack).toBronze();
+                int coinsInStack = stack.getCount();
+                int toRemove = (int)Math.min(coinsInStack, (remaining + coinValue - 1) / coinValue);
+
+                stack.shrink(toRemove);
+                remaining -= toRemove * coinValue;
+            }
+        }
+
+        return remaining <= 0;
+    }
 
     /**
      * Give coins to an NPC inventory, preferring to put them in a purse if one exists.
@@ -294,6 +337,7 @@ public class CoinHelper {
                     new ItemStack(ModItems.DENIER.get(), (int) bronze));
         }
     }
+
     public static void giveCoins(ServerPlayer player, CurrencyValue amount) {
         long remaining = amount.toBronze();
 
@@ -320,18 +364,18 @@ public class CoinHelper {
 
         // Fall back to loose coins added directly to inventory
         if (remaining > 0) {
-            long gold   = remaining / CurrencyValue.GOLD_VALUE;
-            remaining  %= CurrencyValue.GOLD_VALUE;
+            long gold = remaining / CurrencyValue.GOLD_VALUE;
+            remaining %= CurrencyValue.GOLD_VALUE;
             long silver = remaining / CurrencyValue.SILVER_VALUE;
-            remaining  %= CurrencyValue.SILVER_VALUE;
+            remaining %= CurrencyValue.SILVER_VALUE;
             long bronze = remaining;
 
-            if (gold   > 0) player.getInventory().add(
-                    new ItemStack(ModItems.DENIER_OR.get(),     (int) gold));
+            if (gold > 0) player.getInventory().add(
+                    new ItemStack(ModItems.DENIER_OR.get(), (int) gold));
             if (silver > 0) player.getInventory().add(
                     new ItemStack(ModItems.DENIER_ARGENT.get(), (int) silver));
             if (bronze > 0) player.getInventory().add(
-                    new ItemStack(ModItems.DENIER.get(),        (int) bronze));
+                    new ItemStack(ModItems.DENIER.get(), (int) bronze));
         }
     }
 
@@ -342,7 +386,7 @@ public class CoinHelper {
         long count = remaining / value;
         ItemStack toDeposit = new ItemStack(coin, (int) Math.min(count, 64));
         if (contents.absorb(toDeposit)) {
-            remaining -= (long)(Math.min(count, 64)) * value;
+            remaining -= (long) (Math.min(count, 64)) * value;
         }
         return remaining;
     }
@@ -421,28 +465,19 @@ public class CoinHelper {
     // Add to CoinHelper.java:
 
 // =========================================================================
-// DEBT SYSTEM — simple borrow/repay for merchant NPCs
-// =========================================================================
+    // DEBT SYSTEM — simple borrow/repay for merchant NPCs
+    // =========================================================================
 
     /**
-     * A lightweight debt tracker for NPCs. Not persisted separately —
-     * stored as fields on the NPC's EconomyComponent.
+     * Lightweight debt tracker for NPCs. Persisted via EconomyComponent.
+     * No interest rates, no credit scores — just a borrowing cap that
+     * shrinks when debts are forgiven.
      */
     public static class DebtTracker {
-        private long currentDebt = 0;
+        private long currentDebt;
         private long maxDebt;
-        private long repayDeadlineTick = 0;
-        /** Number of times debt was forgiven — shrinks maxDebt. */
-        private int forgiveCount = 0;
-
-        public static final Codec<DebtTracker> CODEC = RecordCodecBuilder.create(i ->
-                i.group(
-                        Codec.LONG.fieldOf("currentDebt").forGetter(d -> d.currentDebt),
-                        Codec.LONG.fieldOf("maxDebt").forGetter(d -> d.maxDebt),
-                        Codec.LONG.fieldOf("repayDeadlineTick")
-                                .forGetter(d -> d.repayDeadlineTick),
-                        Codec.INT.fieldOf("forgiveCount").forGetter(d -> d.forgiveCount)
-                ).apply(i, DebtTracker::new));
+        private long repayDeadlineTick;
+        private int forgiveCount;
 
         public DebtTracker(long currentDebt, long maxDebt,
                            long repayDeadlineTick, int forgiveCount) {
@@ -452,26 +487,21 @@ public class CoinHelper {
             this.forgiveCount = forgiveCount;
         }
 
-        /** Default tracker for a new merchant. */
         public static DebtTracker create(long baseMaxDebt) {
             return new DebtTracker(0, baseMaxDebt, 0, 0);
         }
 
-        /** Can this NPC borrow the given amount? */
         public boolean canBorrow(long amount) {
             return (currentDebt + amount) <= maxDebt;
         }
 
-        /** Take on debt. Sets repay deadline if this is new debt. */
         public void borrow(long amount, long currentTick) {
             currentDebt += amount;
             if (repayDeadlineTick == 0) {
-                // 5 in-game days to repay
                 repayDeadlineTick = currentTick + (24000L * 5);
             }
         }
 
-        /** Repay debt from earnings. */
         public long repay(long available) {
             long payment = Math.min(available, currentDebt);
             currentDebt -= payment;
@@ -483,31 +513,41 @@ public class CoinHelper {
         }
 
         /**
-         * Check if debt is overdue. If so, forgive it but shrink maxDebt.
-         * Call once per day.
+         * If overdue, forgive the debt but shrink max capacity.
+         * Call once per in-game day.
          */
         public void tickDeadline(long currentTick) {
             if (currentDebt <= 0 || repayDeadlineTick <= 0) return;
             if (currentTick < repayDeadlineTick) return;
-
-            // Forgive the debt but shrink future borrowing capacity
             currentDebt = 0;
             repayDeadlineTick = 0;
             forgiveCount++;
-            // Each forgiveness halves remaining max debt (minimum 50 bronze)
             maxDebt = Math.max(50, maxDebt / 2);
         }
 
-        public long getCurrentDebt()  { return currentDebt; }
-        public long getMaxDebt()      { return maxDebt; }
-        public boolean hasDebt()      { return currentDebt > 0; }
+        public long getCurrentDebt() {
+            return currentDebt;
+        }
+
+        public long getMaxDebt() {
+            return maxDebt;
+        }
+
+        public long getRepayDeadlineTick() {
+            return repayDeadlineTick;
+        }
+
+        public int getForgiveCount() {
+            return forgiveCount;
+        }
+
+        public boolean hasDebt() {
+            return currentDebt > 0;
+        }
     }
 
     /**
-     * Spend with debt fallback — if the NPC can't afford it outright,
-     * borrow the shortfall if within debt limits.
-     *
-     * @return true if the purchase went through (possibly with debt)
+     * Spend with debt fallback — borrows shortfall if within limits.
      */
     public static boolean spendWithDebt(SimpleContainer inventory,
                                         CurrencyValue amount,
@@ -517,37 +557,33 @@ public class CoinHelper {
         long cost = amount.toBronze();
 
         if (wealth >= cost) {
-            // Can afford outright
             return spend(inventory, amount);
         }
 
-        // Need to borrow the shortfall
         long shortfall = cost - wealth;
         if (!debt.canBorrow(shortfall)) return false;
 
-        // Spend everything we have
         if (wealth > 0) {
             spend(inventory, CurrencyValue.of(wealth));
         }
-        // Borrow the rest
         debt.borrow(shortfall, currentTick);
         return true;
     }
 
     /**
      * Auto-repay debt from current wealth. Call after the NPC makes a sale.
+     * Repays up to 50% of current wealth per call.
      */
     public static void autoRepayDebt(SimpleContainer inventory,
                                      DebtTracker debt) {
         if (!debt.hasDebt()) return;
-
         long available = getWealth(inventory).toBronze();
-        // Repay up to 50% of current wealth per check
         long repayAmount = Math.min(available / 2, debt.getCurrentDebt());
         if (repayAmount <= 0) return;
-
         if (spend(inventory, CurrencyValue.of(repayAmount))) {
             debt.repay(repayAmount);
         }
     }
+
+
 }

@@ -8,6 +8,7 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Items;
 import net.minecraft.ChatFormatting;
+import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
@@ -18,9 +19,11 @@ import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
 import tterrag1112.life_in_the_village.Networking.CraftingOrderInteraction;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Profession.Profession;
-import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
+import tterrag1112.life_in_the_village.Profession.*;
+import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.TradeHandler;
+import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -290,9 +293,72 @@ public final class NpcInteractionHandler {
                                                           ServerPlayer player,
                                                           ServerLevel level) {
         if (player.isShiftKeyDown()) {
-            WorkplaceAssignmentManager.handleWorkRequest(player, npc, level);
+            if (npc.getProfession() == Profession.FARMER) {
+                if (player instanceof ServerPlayer serverPlayer) {
+                    joinAsFarmhand(serverPlayer, level, npc);
+                    return InteractionResult.SUCCESS;
+                }
+            } else{
+                WorkplaceAssignmentManager.handleWorkRequest(player, npc, level);
+            }
         }
         // Normal interact just shows the greeting (already shown above)
         return InteractionResult.SUCCESS;
+    }
+    private static void joinAsFarmhand(ServerPlayer player, ServerLevel level, TownspersonMob npc) {
+        VillageSavedData data = VillageSavedData.get(level);
+        PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
+
+        // Get this farmer's farmhouse
+        Building farmhouse = npc.getAssignedBuildingId()
+                .flatMap(data::getBuildingById)
+                .filter(b -> b.getType() == BuildingType.FARMHOUSE)
+                .orElse(null);
+
+        if (farmhouse == null) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] I don't have a farmhouse to offer you work at."),
+                    false);
+            return;
+        }
+
+        // Get village ID
+        UUID villageId = npc.getAssignedVillageName()
+                .flatMap(data::getVillageByName)
+                .map(tterrag1112.life_in_the_village.Village.Village::getId)
+                .orElse(null);
+
+        if (villageId == null) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] Something went wrong."),
+                    false);
+            return;
+        }
+
+        // Create workplace entry
+        PlayerWorkplace.WorkplaceEntry entry = new PlayerWorkplace.WorkplaceEntry(
+                farmhouse.getId(),
+                villageId,
+                PlayerProfession.FARMER,
+                false,
+                level.getGameTime(),
+                level.getGameTime(),
+                null  // No current assignment
+        );
+
+        profData.setWorkplace(PlayerProfession.FARMER, entry);
+        player.setData(ModData.PROFESSION_DATA, profData);
+
+        // Get business level for welcome message
+        FarmBusinessLevel businessLevel = data.getOrCreateFarmBusinessLevel(farmhouse.getId());
+
+        player.displayClientMessage(Component.literal(
+                        "[" + npc.getNpcName() + "] Welcome to " + businessLevel.getBusinessLevelName()
+                                + "! You're now a farmhand here. I'll give you tasks to complete.")
+                .withStyle(net.minecraft.ChatFormatting.GREEN), false);
+
+        // Issue first assignment
+        WorkplaceAssignmentManager.issueAssignment(
+                player, npc, PlayerProfession.FARMER, profData, level);
     }
 }

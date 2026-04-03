@@ -49,6 +49,7 @@ public class Village {
     private long lastNeedsUpdate = -1L;
     private VillagePath.PathTier pathTier;
 
+
     // =========================================================================
     // LAYOUT METADATA — persisted so the expansion system can use them
     // =========================================================================
@@ -60,6 +61,8 @@ public class Village {
      * Null before first spawn.
      */
     @Nullable private BlockPos villageCentre;
+    private String villageType;
+
 
     /**
      * Centre of the town square building.
@@ -200,7 +203,7 @@ public class Village {
     public Village(String name, UUID id,
                    List<UUID> buildingIds, List<BlockPos> guardPosts,
                    Map<UUID, Integer> playerReputations,
-                   Map<String, String> preferredArmor) {
+                   Map<String, String> preferredArmor, String villageType) {
         this.name              = name;
         this.id                = id;
         this.buildingIds       = new ArrayList<>(buildingIds);
@@ -209,12 +212,13 @@ public class Village {
         this.preferredArmor    = new HashMap<>(preferredArmor);
         this.needs             = new EnumMap<>(NeedCategory.class);
         this.lastNeedsUpdate   = -1L;
+        this.villageType = villageType;
     }
 
-    public Village(String name) {
+    public Village(String name, String villageType) {
         this(name, UUID.randomUUID(),
                 new ArrayList<>(), new ArrayList<>(),
-                new HashMap<>(), new HashMap<>());
+                new HashMap<>(), new HashMap<>(), villageType);
     }
 
     // =========================================================================
@@ -259,16 +263,19 @@ public class Village {
                                             Optional.empty(), Optional.empty(),
                                             Optional.empty(), 0, 0, 1,
                                             new ArrayList<>(), 0L, new ArrayList<>()))
-                            .forGetter(VillageLayoutMeta::from)
+                            .forGetter(VillageLayoutMeta::from),
+                    Codec.STRING
+                            .optionalFieldOf("villageType", "default")
+                            .forGetter(Village::getVillageType)
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
-                               layoutMeta) -> {
+                               layoutMeta, villageType) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
                         new HashMap<>(reputations),
-                        new HashMap<>(armor));
+                        new HashMap<>(armor), villageType);
                 v.setLastNeedsUpdate(lastNeedsUpdate);
                 v.treasuryBronze = treasuryBronze;
                 villageLeaderId.ifPresent(v::setVillageLeaderId);
@@ -276,6 +283,7 @@ public class Village {
                 return v;
             })
     );
+
 
     // =========================================================================
     // IDENTITY
@@ -536,4 +544,6 @@ public class Village {
     public static void setPathTier(VillagePath.PathTier tier){
 
     }
+    public String getVillageType() { return villageType; }
+
 }

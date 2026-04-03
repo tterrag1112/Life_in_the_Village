@@ -18,6 +18,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.Buildings.PlayerHousingData;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
+import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
@@ -172,7 +173,8 @@ public class VillageSavedData extends SavedData implements
     public record VillageEconomyData(
             List<TradeRoute>      tradeRoutes,
             List<TradeRoad>       tradeRoads,
-            List<VillageTreasury> treasuries
+            List<VillageTreasury> treasuries,
+            List<FarmBusinessLevel> farmBusinessLevels
     ) {
         public static final Codec<VillageEconomyData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -184,7 +186,10 @@ public class VillageSavedData extends SavedData implements
                                 .forGetter(VillageEconomyData::tradeRoads),
                         VillageTreasury.CODEC.listOf()
                                 .optionalFieldOf("treasuries", List.of())
-                                .forGetter(VillageEconomyData::treasuries)
+                                .forGetter(VillageEconomyData::treasuries),
+                        FarmBusinessLevel.CODEC.listOf()
+                                .optionalFieldOf("farmBusinessLevels", List.of())
+                                .forGetter(VillageEconomyData::farmBusinessLevels)
                 ).apply(i, VillageEconomyData::new));
     }
 
@@ -241,7 +246,8 @@ public class VillageSavedData extends SavedData implements
                             .forGetter(d -> new VillageEconomyData(
                                     new ArrayList<>(d.tradeRoutes.values()),
                                     new ArrayList<>(d.tradeRoads.values()),
-                                    new ArrayList<>(d.treasuries.values()))),
+                                    new ArrayList<>(d.treasuries.values()),
+                                    new ArrayList<>(d.farmBusinessLevels.values()))),
                     VillagePropertyData.CODEC
                             .fieldOf("propertyData")
                             .forGetter(d -> new VillagePropertyData(
@@ -333,6 +339,7 @@ public class VillageSavedData extends SavedData implements
     private final List<ExpansionRequest>  expansionRequests = new ArrayList<>();
     private final List<VillagePath>       villagePaths      = new ArrayList<>();
 
+
     // Governance
     private final List<Kingdom>           kingdoms          = new ArrayList<>();
     private final Map<UUID, VillageSimData> simData = new LinkedHashMap<>();
@@ -352,6 +359,8 @@ public class VillageSavedData extends SavedData implements
     private final Map<UUID, TradeRoute> tradeRoutes = new HashMap<>();
     private final Map<UUID, TradeRoad>  tradeRoads  = new HashMap<>();
     private final Map<UUID, VillageTreasury> treasuries = new LinkedHashMap<>();
+    private final Map<UUID, FarmBusinessLevel> farmBusinessLevels = new HashMap<>();
+
 
 
     // Property
@@ -862,5 +871,17 @@ public class VillageSavedData extends SavedData implements
 
     public Collection<VillageTreasury> getAllTreasuries() {
         return Collections.unmodifiableCollection(treasuries.values());
+    }
+    public FarmBusinessLevel getOrCreateFarmBusinessLevel(UUID farmhouseId) {
+        return farmBusinessLevels.computeIfAbsent(farmhouseId, FarmBusinessLevel::new);
+    }
+
+    public Optional<FarmBusinessLevel> getFarmBusinessLevel(UUID farmhouseId) {
+        return Optional.ofNullable(farmBusinessLevels.get(farmhouseId));
+    }
+
+    public void updateFarmBusinessLevel(FarmBusinessLevel level) {
+        farmBusinessLevels.put(level.getFarmhouseId(), level);
+        setDirty();
     }
 }

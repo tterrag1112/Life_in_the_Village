@@ -115,5 +115,14 @@ public class PlayerWorkplace {
                     profession, isOwner, assignedTick,
                     tick, currentAssignment);
         }
+        public WorkplaceEntry(UUID buildingId,
+                              UUID villageId,
+                              PlayerProfession profession,
+                              boolean isOwner,
+                              WorkAssignment currentAssignment){
+
+            return new WorkplaceEntry(buildingId, villageId, profession, isOwner, );
+
+        }
     }
 }

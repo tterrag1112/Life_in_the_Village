@@ -107,7 +107,7 @@ public class VillageSpawner {
         VillageLayout layout = layoutOpt.get();
 
         // ── Register village ──────────────────────────────────────────────────
-        Village village = new Village(villageName);
+        Village village = new Village(villageName, typeData.getType());
         village.applyLayout(layout, villageLevel);
         data.addVillage(village);
 
@@ -402,9 +402,9 @@ public class VillageSpawner {
                         .create(level, EntitySpawnReason.MOB_SUMMONED);
                 if (npc == null) continue;
 
-                npc.getNavigation().moveTo(spawnPos.getX() + 0.5,
-                        spawnPos.getY(), spawnPos.getZ() + 0.5,
-                        rng.nextInt() * 360, 1);
+                npc.setPos(spawnPos.getX() + 0.5,spawnPos.getY(), spawnPos.getZ() + 0.5);
+                npc.setYRot(rng.nextFloat() * 360);
+                npc.setXRot(0);
 
 
                 npc.finalizeSpawn(level, level.getCurrentDifficultyAt(spawnPos),

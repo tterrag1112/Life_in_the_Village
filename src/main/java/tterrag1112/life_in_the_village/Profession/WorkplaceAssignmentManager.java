@@ -14,6 +14,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -25,7 +26,7 @@ public class WorkplaceAssignmentManager {
     private static final long QUOTA_DEADLINE = 24000L * 5;  // 5 days
 
     // Weekly pay by level (Apprentice → Grandmaster)
-    private static final long[] WEEKLY_PAY = {
+    public static final long[] WEEKLY_PAY = {
             8L, 16L, 32L, 64L, 128L
     };
 
@@ -144,41 +145,7 @@ public class WorkplaceAssignmentManager {
         }
     }
 
-    // =========================================================================
-    // Assignment completion
-    // =========================================================================
 
-    public static void completeAssignment(ServerPlayer player,
-                                          TownspersonMob npc,
-                                          PlayerProfession profession,
-                                          PlayerProfessionData profData,
-                                          VillageSavedData data,
-                                          ServerLevel level) {
-        PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
-        if (entry == null) return;
-
-        PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
-        if (a == null || !a.isComplete()) return;
-
-        // Award XP and coins — pass villageId for reputation hook
-        ProfessionEvents.onJobPostingCompleted(
-                player, profession, a.xpReward(), entry.villageId());
-
-        CurrencyValue reward = CurrencyValue.of(a.coinReward());
-        var container = buildTempContainer(player);
-        CoinHelper.giveCoins(container, reward);
-        syncContainer(player, container);
-
-        player.displayClientMessage(Component.literal(
-                        "[" + npc.getNpcName() + "] Well done! Here is your reward: "
-                                + reward + " + " + a.xpReward() + " XP")
-                .withStyle(net.minecraft.ChatFormatting.GREEN), false);
-
-        profData.setWorkplace(profession, entry.withAssignment(null));
-        player.setData(ModData.PROFESSION_DATA, profData);
-
-        issueAssignment(player, npc, profession, profData, level);
-    }
 
     // =========================================================================
     // Quota progress
@@ -229,8 +196,19 @@ public class WorkplaceAssignmentManager {
                 if (workplace.isOwner()) continue;
 
                 int lvl = profData.getLevel(profession);
-                long pay = WEEKLY_PAY[Math.min(lvl, WEEKLY_PAY.length - 1)];
-                CurrencyValue wage = CurrencyValue.of(pay);
+                long basePay = WEEKLY_PAY[Math.min(lvl, WEEKLY_PAY.length - 1)];
+
+                // NEW: Apply business level bonus for farmers
+                long finalPay = basePay;
+                if (profession == PlayerProfession.FARMER) {
+                    VillageSavedData data = VillageSavedData.get(level);
+                    Optional<FarmBusinessLevel> businessLevel = data.getFarmBusinessLevel(workplace.buildingId());
+                    if (businessLevel.isPresent()) {
+                        finalPay = businessLevel.get().calculatePlayerWage(lvl);
+                    }
+                }
+
+                CurrencyValue wage = CurrencyValue.of(finalPay);
 
                 var container = buildTempContainer(player);
                 CoinHelper.giveCoins(container, wage);
@@ -249,20 +227,71 @@ public class WorkplaceAssignmentManager {
         });
     }
 
-    // =========================================================================
-    // Passive XP from workplace sales
-    // =========================================================================
+    // Update assignment completion to include business bonus
+    public static void completeAssignment(ServerPlayer player,
+                                          TownspersonMob npc,
+                                          PlayerProfession profession,
+                                          PlayerProfessionData profData,
+                                          VillageSavedData data,
+                                          ServerLevel level) {
+        PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
+        if (entry == null) return;
 
+        PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
+        if (a == null || !a.isComplete()) return;
+
+        // Award XP
+        ProfessionEvents.onJobPostingCompleted(
+                player, profession, a.xpReward(), entry.villageId());
+
+        // Calculate reward with business bonus
+        long baseReward = a.coinReward();
+        long finalReward = baseReward;
+
+        if (profession == PlayerProfession.FARMER) {
+            Optional<FarmBusinessLevel> businessLevel = data.getFarmBusinessLevel(entry.buildingId());
+            if (businessLevel.isPresent()) {
+                finalReward = businessLevel.get().calculateTaskPayment(
+                        baseReward, profData.getLevel(profession));
+            }
+        }
+
+        CurrencyValue reward = CurrencyValue.of(finalReward);
+        var container = buildTempContainer(player);
+        CoinHelper.giveCoins(container, reward);
+        syncContainer(player, container);
+
+        player.displayClientMessage(Component.literal(
+                        "[" + npc.getNpcName() + "] Well done! Here is your reward: "
+                                + reward + " + " + a.xpReward() + " XP")
+                .withStyle(net.minecraft.ChatFormatting.GREEN), false);
+
+        profData.setWorkplace(profession, entry.withAssignment(null));
+        player.setData(ModData.PROFESSION_DATA, profData);
+
+        issueAssignment(player, npc, profession, profData, level);
+    }
+
+    // Update sale notification to record business metrics
     public static void onWorkplaceSale(ServerLevel level, UUID buildingId, int saleAmount) {
+        // Update business level
+        VillageSavedData data = VillageSavedData.get(level);
+        FarmBusinessLevel businessLevel = data.getOrCreateFarmBusinessLevel(buildingId);
+        businessLevel.recordSale(saleAmount, level);
+        data.updateFarmBusinessLevel(businessLevel);
+
+        // Give XP to assigned players
         level.getServer().getPlayerList().getPlayers().forEach(player -> {
             PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
             profData.getAllWorkplaces().forEach((profession, entry) -> {
                 if (!entry.buildingId().equals(buildingId)) return;
                 int passiveXp = Math.max(1, saleAmount / 10);
                 UUID villageId = entry.villageId();
-                ProfessionEvents.onJobPostingCompleted(player, profession, passiveXp, villageId);            });
+                ProfessionEvents.onJobPostingCompleted(player, profession, passiveXp, villageId);
+            });
         });
     }
+
 
     // =========================================================================
     // Issue assignment
@@ -304,21 +333,95 @@ public class WorkplaceAssignmentManager {
         return switch (profession) {
 
             // ── FARMER ────────────────────────────────────────────────────────
-            case FARMER -> isQuota
-                    ? new PlayerWorkplace.WorkAssignment(
-                    PlayerWorkplace.AssignmentType.QUOTA,
-                    "Harvest and deliver " + getQuotaCount(level) + " wheat to the stockpile",
-                    "minecraft:wheat",
-                    getQuotaCount(level), 0,
-                    currentTick, currentTick + QUOTA_DEADLINE,
-                    profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
-                    getQuotaCount(level) * 2L)
-                    : new PlayerWorkplace.WorkAssignment(
-                    PlayerWorkplace.AssignmentType.TASK,
-                    getSimpleFarmerTask(level),
-                    null, 1, 0,
-                    currentTick, currentTick + TASK_DEADLINE,
-                    30, 4L);
+            case FARMER -> {
+                if (isQuota) {
+                    // High-level quota assignments vary by specialization
+                    FarmerQuotaType quotaType = chooseQuotaType(level);
+                    yield switch (quotaType) {
+                        case CROP_HARVEST -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.QUOTA,
+                                "Harvest and deliver " + getQuotaCount(level) + " wheat to farmhouse storage",
+                                "minecraft:wheat",
+                                getQuotaCount(level), 0,
+                                currentTick, currentTick + QUOTA_DEADLINE,
+                                profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
+                                getQuotaCount(level) * 2L);
+
+                        case MIXED_CROPS -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.QUOTA,
+                                "Deliver " + (getQuotaCount(level) / 2) + " each of carrots and potatoes",
+                                "minecraft:carrot", // Primary tracked item
+                                getQuotaCount(level) / 2, 0,
+                                currentTick, currentTick + QUOTA_DEADLINE,
+                                profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 10,
+                                getQuotaCount(level) * 3L);
+
+                        case ANIMAL_PRODUCTS -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.QUOTA,
+                                "Collect and deliver " + (getQuotaCount(level) / 4) + " leather from animals",
+                                "minecraft:leather",
+                                getQuotaCount(level) / 4, 0,
+                                currentTick, currentTick + QUOTA_DEADLINE,
+                                profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 20,
+                                getQuotaCount(level) * 8L);
+
+                        case MARKET_SALES -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.QUOTA,
+                                "Sell " + getQuotaCount(level) + " worth of farm goods at market",
+                                "minecraft:emerald", // Placeholder for coin tracking
+                                getQuotaCount(level), 0,
+                                currentTick, currentTick + QUOTA_DEADLINE,
+                                profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 30,
+                                getQuotaCount(level) * 5L);
+                    };
+                } else {
+                    // Low-level task assignments
+                    FarmerTaskType taskType = chooseTaskType(level);
+                    yield switch (taskType) {
+                        case HARVEST_PLOT -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.TASK,
+                                "Harvest all mature crops from the assigned farm plot",
+                                null, 1, 0,
+                                currentTick, currentTick + TASK_DEADLINE,
+                                20, 4L);
+
+                        case PLANT_SEEDS -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.TASK,
+                                "Plant 64 seeds in empty farmland",
+                                null, 1, 0,
+                                currentTick, currentTick + TASK_DEADLINE,
+                                15, 3L);
+
+                        case FEED_ANIMALS -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.TASK,
+                                "Feed 8 animals in the pen to prepare for breeding",
+                                null, 1, 0,
+                                currentTick, currentTick + TASK_DEADLINE,
+                                25, 5L);
+
+                        case COLLECT_PRODUCTS -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.TASK,
+                                "Collect eggs, milk, or wool from animals in the pen",
+                                null, 1, 0,
+                                currentTick, currentTick + TASK_DEADLINE,
+                                20, 4L);
+
+                        case FERTILIZE_CROPS -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.TASK,
+                                "Apply bone meal to crops to accelerate growth",
+                                null, 1, 0,
+                                currentTick, currentTick + TASK_DEADLINE,
+                                18, 3L);
+
+                        case MARKET_DELIVERY -> new PlayerWorkplace.WorkAssignment(
+                                PlayerWorkplace.AssignmentType.TASK,
+                                "Take farm goods to the market and manage the stall for 2 hours",
+                                null, 1, 0,
+                                currentTick, currentTick + TASK_DEADLINE,
+                                30, 6L);
+                    };
+                }
+            }
 
             // ── BLACKSMITH ────────────────────────────────────────────────────
             case BLACKSMITH -> isQuota
@@ -520,5 +623,51 @@ public class WorkplaceAssignmentManager {
             player.getInventory().setItem(i, container.getItem(i));
         }
         player.inventoryMenu.broadcastChanges();
+    }
+    private enum FarmerQuotaType {
+        CROP_HARVEST,
+        MIXED_CROPS,
+        ANIMAL_PRODUCTS,
+        MARKET_SALES
+    }
+
+    private enum FarmerTaskType {
+        HARVEST_PLOT,
+        PLANT_SEEDS,
+        FEED_ANIMALS,
+        COLLECT_PRODUCTS,
+        FERTILIZE_CROPS,
+        MARKET_DELIVERY
+    }
+
+    private static FarmerQuotaType chooseQuotaType(int level) {
+        // Higher levels unlock more complex quotas
+        if (level >= 4) {
+            return FarmerQuotaType.values()[new Random().nextInt(FarmerQuotaType.values().length)];
+        } else if (level >= 3) {
+            // Level 3-4: no market sales yet
+            FarmerQuotaType[] limited = {
+                    FarmerQuotaType.CROP_HARVEST,
+                    FarmerQuotaType.MIXED_CROPS,
+                    FarmerQuotaType.ANIMAL_PRODUCTS
+            };
+            return limited[new Random().nextInt(limited.length)];
+        } else {
+            return FarmerQuotaType.CROP_HARVEST;
+        }
+    }
+
+    private static FarmerTaskType chooseTaskType(int level) {
+        // Level 1: only basic tasks
+        if (level < 2) {
+            FarmerTaskType[] basic = {
+                    FarmerTaskType.HARVEST_PLOT,
+                    FarmerTaskType.PLANT_SEEDS
+            };
+            return basic[new Random().nextInt(basic.length)];
+        } else {
+            // Level 2+: all tasks available
+            return FarmerTaskType.values()[new Random().nextInt(FarmerTaskType.values().length)];
+        }
     }
 }

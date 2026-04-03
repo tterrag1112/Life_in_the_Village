@@ -179,10 +179,40 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
                             buildingWidth, buildingDepth,
                             faceSetback, alleyGap, spokeCount, gateRoads);
                 }
+                VillageTypeData.FarmPlotConfig farmPlotConfig =
+                        VillageTypeData.FarmPlotConfig.defaultConfig();
+                if (json.has("farm_plot_config")) {
+                    JsonObject fp = json.getAsJsonObject("farm_plot_config");
+
+                    VillageTypeData.FarmPlotPlacement placement =
+                            VillageTypeData.FarmPlotPlacement.PERIMETER_OUTSIDE;
+                    if (fp.has("placement")) {
+                        try {
+                            placement = VillageTypeData.FarmPlotPlacement.valueOf(
+                                    fp.get("placement").getAsString().toUpperCase());
+                        } catch (IllegalArgumentException ignored) {
+                            LOGGER.warn("Unknown farm_plot_placement '{}' in {}",
+                                    fp.get("placement").getAsString(), location);
+                        }
+                    }
+
+                    int minDistance = fp.has("min_distance")
+                            ? fp.get("min_distance").getAsInt() : 8;
+                    int maxDistance = fp.has("max_distance")
+                            ? fp.get("max_distance").getAsInt() : 32;
+                    boolean allowAnimalPens = !fp.has("allow_animal_pens")
+                            || fp.get("allow_animal_pens").getAsBoolean();
+                    int plotsPerFarmhouse = fp.has("plots_per_farmhouse")
+                            ? fp.get("plots_per_farmhouse").getAsInt() : 1;
+
+                    farmPlotConfig = new VillageTypeData.FarmPlotConfig(
+                            placement, minDistance, maxDistance,
+                            allowAnimalPens, plotsPerFarmhouse);
+                }
 
                 loaded.put(type, new VillageTypeData(
                         type, culture, buildings, npcs, items,
-                        shapeProfile, capitalProfile));
+                        shapeProfile, capitalProfile, farmPlotConfig));
                 LOGGER.info("Loaded village type '{}'", type);
 
             } catch (Exception e) {

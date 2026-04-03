@@ -48,6 +48,54 @@ public class VillageTypeData {
             int    count
     ) {}
 
+    // In VillageTypeData.java - add new record
+    // =========================================================================
+// Farm plot placement configuration
+// =========================================================================
+
+    public record FarmPlotConfig(
+            FarmPlotPlacement placement,
+            int minDistance,
+            int maxDistance,
+            boolean allowAnimalPens,
+            int plotsPerFarmhouse
+    ) {
+        public static FarmPlotConfig defaultConfig() {
+            return new FarmPlotConfig(
+                    FarmPlotPlacement.PERIMETER_OUTSIDE,
+                    8, 32, true, 1
+            );
+        }
+
+        public static FarmPlotConfig integrated() {
+            return new FarmPlotConfig(
+                    FarmPlotPlacement.INTEGRATED,
+                    0, 16, false, 1
+            );
+        }
+
+        public static FarmPlotConfig distantFields() {
+            return new FarmPlotConfig(
+                    FarmPlotPlacement.DISTANT_FIELDS,
+                    40, 80, true, 2
+            );
+        }
+    }
+
+    public enum FarmPlotPlacement {
+        /** Plots placed outside village walls/perimeter (most village types) */
+        PERIMETER_OUTSIDE,
+
+        /** Plots mixed within village bounds (dense urban farming) */
+        INTEGRATED,
+
+        /** Plots far from village center (large-scale agricultural villages) */
+        DISTANT_FIELDS,
+
+        /** No farm plots generated */
+        NONE
+    }
+
     // =========================================================================
     // Shape profile — controls the ring/linear/hilltop planner
     // =========================================================================
@@ -184,6 +232,7 @@ public class VillageTypeData {
     private final List<StarterBuilding> starterBuildings;
     private final List<StarterNpc>      starterNpcs;
     private final List<StarterItem>     starterItems;
+    private final FarmPlotConfig        farmPlotConfig;  // NEW
     private final VillageShapeProfile   shapeProfile;
     private final CapitalProfile        capitalProfile;
 
@@ -197,7 +246,7 @@ public class VillageTypeData {
                            List<StarterItem>     starterItems) {
         this(type, culture, starterBuildings, starterNpcs, starterItems,
                 VillageShapeProfile.defaultProfile(),
-                CapitalProfile.defaultRound());
+                CapitalProfile.defaultRound(),FarmPlotConfig.defaultConfig());
     }
 
     public VillageTypeData(String type, String culture,
@@ -206,7 +255,7 @@ public class VillageTypeData {
                            List<StarterItem>     starterItems,
                            VillageShapeProfile   shapeProfile) {
         this(type, culture, starterBuildings, starterNpcs, starterItems,
-                shapeProfile, CapitalProfile.defaultRound());
+                shapeProfile, CapitalProfile.defaultRound(), FarmPlotConfig.defaultConfig());
     }
 
     public VillageTypeData(String type, String culture,
@@ -214,7 +263,8 @@ public class VillageTypeData {
                            List<StarterNpc>      starterNpcs,
                            List<StarterItem>     starterItems,
                            VillageShapeProfile   shapeProfile,
-                           CapitalProfile        capitalProfile) {
+                           CapitalProfile        capitalProfile,
+                           FarmPlotConfig        farmPlotConfig) {  // NEW
         this.type             = type;
         this.culture          = culture;
         this.starterBuildings = List.copyOf(starterBuildings);
@@ -223,6 +273,8 @@ public class VillageTypeData {
         this.shapeProfile     = shapeProfile;
         this.capitalProfile   = capitalProfile != null
                 ? capitalProfile : CapitalProfile.defaultRound();
+        this.farmPlotConfig   = farmPlotConfig != null         // NEW
+                ? farmPlotConfig : FarmPlotConfig.defaultConfig();
     }
 
     // =========================================================================
@@ -236,4 +288,6 @@ public class VillageTypeData {
     public List<StarterItem>     getStarterItems()     { return starterItems;     }
     public VillageShapeProfile   getShapeProfile()     { return shapeProfile;     }
     public CapitalProfile        getCapitalProfile()   { return capitalProfile;   }
+    public FarmPlotConfig getFarmPlotConfig() { return farmPlotConfig; }  // NEW
+
 }
