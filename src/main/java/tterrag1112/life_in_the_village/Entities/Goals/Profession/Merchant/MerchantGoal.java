@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
@@ -16,10 +17,7 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 public class MerchantGoal extends Goal {
 
@@ -105,56 +103,58 @@ public class MerchantGoal extends Goal {
         }
 
         entity.getNavigation().stop();
-
         VillageSavedData data = VillageSavedData.get(level);
         Optional<Village> village = entity.getAssignedVillageName()
                 .flatMap(name -> data.getVillageByName(name));
-
         MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
 
-        priceData.getAllPrices().forEach((item, basePrice) -> {
+        // Build a priority list — items with low market stock come first
+        List<Map.Entry<Item, MarketPriceData.ItemPrice>> prioritized =
+                new ArrayList<>(priceData.getAllPrices().entrySet());
+        prioritized.sort((a, b) -> {
+            int stockA = BuildingStorageAccess.countItem(level, market, a.getKey());
+            int stockB = BuildingStorageAccess.countItem(level, market, b.getKey());
+            return Integer.compare(stockA, stockB); // lowest stock first
+        });
+
+        int totalBought = 0;
+        for (var entry : prioritized) {
+            if (totalBought >= 48) break; // cap total per collection visit
+
+            Item item = entry.getKey();
             int available = BuildingStorageAccess.countItem(level, target, item);
-            if (available <= 0) return;
+            if (available <= 0) continue;
+
+            // Only buy if market stock is below threshold
+            int marketStock = BuildingStorageAccess.countItem(level, market, item);
+            if (marketStock >= 32) continue; // already well-stocked
 
             int toTake = Math.min(available, 16);
 
-            // Calculate how much to pay using dynamic buy price
             long pricePerItem = village.map(v ->
                     DynamicPriceCalculator.getBuyPrice(
-                            level, v, data, item, basePrice.buyPrice())
-            ).orElse(basePrice.buyPrice());
+                            level, v, data, item, entry.getValue().buyPrice())
+            ).orElse(entry.getValue().buyPrice());
 
             long totalCost = pricePerItem * toTake;
             CurrencyValue cost = CurrencyValue.of(totalCost);
 
-            // Only take if merchant can afford it
-            if (!entity.canAfford(cost)) {
-                System.out.println("Merchant can't afford " + toTake + "x "
-                        + item.getDescriptionId() + " for " + cost);
-                return;
-            }
+            if (!entity.canAfford(cost)) continue;
 
             boolean taken = BuildingStorageAccess.takeItem(
                     level, target, item, toTake);
-            if (!taken) return;
+            if (!taken) continue;
 
-            // Pay the NPC assigned to this building
             TownspersonMob assignedNpc = findAssignedNpc(level, target);
             if (assignedNpc != null) {
                 entity.pay(assignedNpc, cost);
-                System.out.println("Merchant paid " + cost + " to "
-                        + assignedNpc.getNpcName() + " for " + toTake
-                        + "x " + item.getDescriptionId());
             } else {
-                // No assigned NPC — pay into building storage as coins
                 entity.spend(cost);
-                System.out.println("Merchant spent " + cost
-                        + " (no assigned NPC) for " + toTake
-                        + "x " + item.getDescriptionId());
             }
 
             entity.getPersonalInventory().addItem(new ItemStack(item, toTake));
-        });
+            totalBought += toTake;
+        }
 
         currentBuildingIndex++;
     }

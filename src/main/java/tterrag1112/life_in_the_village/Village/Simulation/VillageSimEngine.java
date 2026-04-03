@@ -2,11 +2,14 @@
 package tterrag1112.life_in_the_village.Village.Simulation;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Economy.VillageTreasury;
 import tterrag1112.life_in_the_village.Village.Needs.FoodValueHelper;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
@@ -61,9 +64,19 @@ public final class VillageSimEngine {
         VillageSimData sim = data.getSimData(village.getId())
                 .orElseGet(() -> buildBaseline(village, data, currentTick));
 
-        if (isVillageLoaded(level, village, data)) {
+
+        boolean isLoaded = isVillageLoaded(level, village, data);
+
+// Reconcile if transitioning from unloaded → loaded
+        if (isLoaded && sim.wasUnloaded()) {
+            reconcileOnLoad(level, village, data, currentTick);
+            sim.setWasUnloaded(false);
+        }
+
+        if (isLoaded) {
             syncFromReal(level, village, data, sim, currentTick);
         } else {
+            sim.setWasUnloaded(true);
             advanceSim(sim, currentTick);
         }
 
@@ -218,4 +231,129 @@ public final class VillageSimEngine {
         if (centre == null) return false;
         return level.isLoaded(centre);
     }
+    // Add to VillageSimEngine.java:
+
+// =========================================================================
+// Reconciliation — materialize simulated production on village load
+// =========================================================================
+
+    /**
+     * Called once when a village transitions from unloaded to loaded.
+     * Materializes the goods that were "produced" during the simulation
+     * period into the village's physical storage.
+     *
+     * <p>This is approximate by design — the player wasn't there to see
+     * the details, so perfect accuracy isn't needed. What matters is that
+     * the stockpile reflects the passage of time.</p>
+     */
+    public static void reconcileOnLoad(ServerLevel level,
+                                       Village village,
+                                       VillageSavedData data,
+                                       long currentTick) {
+        VillageSimData sim = data.getSimData(village.getId()).orElse(null);
+        if (sim == null) return;
+
+        long ticksUnloaded = currentTick - sim.getLastSyncTick();
+        if (ticksUnloaded < 24000L) return; // less than a day, skip
+
+        float daysUnloaded = ticksUnloaded / 24000f;
+        // Cap at 30 days to prevent absurd stockpiles after long absences
+        daysUnloaded = Math.min(daysUnloaded, 30f);
+
+        // ── Food reconciliation ──────────────────────────────────────────
+        float netFood = sim.foodNetPerDay() * daysUnloaded;
+        if (netFood > 0) {
+            // Surplus — add food to stockpile
+            materializeFood(level, village, data, (int) netFood);
+        }
+        // Deficit is handled passively — stockpile just won't have been
+        // refilled, and needs calculator will flag CRITICAL on next tick.
+
+        // ── Material reconciliation ──────────────────────────────────────
+        float netMaterials = sim.materialNetPerDay() * daysUnloaded;
+        if (netMaterials > 0) {
+            materializeMaterials(level, village, data, (int) netMaterials);
+        }
+
+        // ── Treasury reconciliation ──────────────────────────────────────
+        data.getTreasury(village.getId()).ifPresent(treasury -> {
+            // Simulate tax income and wage drain
+            long taxIncome = (long)(sim.getSimulatedPopulation()
+                    * VillageTreasury.BASELINE_INCOME_PER_NPC * daysUnloaded);
+            long wageDrain = (long)(Math.max(1, sim.getSimulatedPopulation() / 5)
+                    * VillageTreasury.GUARD_WAGE * daysUnloaded);
+            long propertyTax = (long)(sim.getFarmhouseCount()
+                    * VillageTreasury.PROPERTY_TAX_PER_HOUSE * daysUnloaded);
+
+            treasury.deposit(taxIncome + propertyTax);
+            treasury.withdraw(wageDrain);
+            data.putTreasury(treasury);
+        });
+
+        // Mark sim as synced at current tick
+        sim.blendReal(
+                sim.getFoodProductionPerDay(),
+                sim.getFoodConsumptionPerDay(),
+                sim.getMaterialProductionPerDay(),
+                sim.getMaterialConsumptionPerDay(),
+                sim.getSimulatedPopulation(),
+                currentTick);
+        data.putSimData(sim);
+
+        System.out.printf("[SimReconcile] %s — %.1f days unloaded, " +
+                        "food net=%+.0f, mat net=%+.0f%n",
+                village.getName(), daysUnloaded, netFood, netMaterials);
+    }
+
+    private static void materializeFood(ServerLevel level, Village village,
+                                        VillageSavedData data, int nutritionUnits) {
+        // Convert nutrition units to bread (5 nutrition each)
+        int breadCount = nutritionUnits / 5;
+        if (breadCount <= 0) return;
+
+        // Cap at 2 stacks per reconciliation
+        breadCount = Math.min(breadCount, 128);
+
+        Building stockpile = findStockpile(village, data);
+        if (stockpile == null) return;
+
+        BuildingStorageAccess.storeItem(level, stockpile,
+                new ItemStack(Items.BREAD, breadCount));
+    }
+
+    private static void materializeMaterials(ServerLevel level, Village village,
+                                             VillageSavedData data, int units) {
+        // Split between logs and cobblestone
+        int logs = units / 2;
+        int cobble = units / 2;
+        logs = Math.min(logs, 128);
+        cobble = Math.min(cobble, 128);
+
+        Building stockpile = findStockpile(village, data);
+        if (stockpile == null) return;
+
+        if (logs > 0) {
+            BuildingStorageAccess.storeItem(level, stockpile,
+                    new ItemStack(Items.OAK_LOG, logs));
+        }
+        if (cobble > 0) {
+            BuildingStorageAccess.storeItem(level, stockpile,
+                    new ItemStack(Items.COBBLESTONE, cobble));
+        }
+    }
+
+    private static Building findStockpile(Village village, VillageSavedData data) {
+        return village.getBuildingIds().stream()
+                .map(data::getBuildingById)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .filter(b -> b.getType() == BuildingType.STOCKPILE)
+                .findFirst()
+                .orElse(null);
+    }
+    // Add to VillageSimData:
+    private boolean wasUnloaded = false;
+
+    public boolean wasUnloaded() { return wasUnloaded; }
+    public void setWasUnloaded(boolean val) { this.wasUnloaded = val; }
 }

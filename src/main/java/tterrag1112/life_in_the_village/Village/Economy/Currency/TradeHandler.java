@@ -16,6 +16,7 @@ import tterrag1112.life_in_the_village.Profession.ProfessionEvents;
 import tterrag1112.life_in_the_village.Profession.ProfessionPerkManager;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Economy.VillageTreasury;
 import tterrag1112.life_in_the_village.Village.Reputation.ReputationManager;
 import tterrag1112.life_in_the_village.Village.Reputation.VillageReputation;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -223,6 +224,19 @@ public class TradeHandler {
                     ReputationManager.onTradeCompleted(player, villageId, level);
                 }
             }
+            // In TradeHandler.handleTrade(), after the buy/sell logic completes:
+// ── Market tax ──────────────────────────────────────────────────────
+            if (villageId != null) {
+                VillageTreasury treasury = data.getTreasury(villageId).orElse(null);
+                if (treasury != null) {
+                    long taxed = treasury.collectMarketTax(
+                            pricePerItem * quantity);
+                    if (taxed > 0) {
+                        data.putTreasury(treasury);
+                        data.setDirty();
+                    }
+                }
+            }
 
             // =========================================================================
             // PLAYER SELLING to market
@@ -287,7 +301,22 @@ public class TradeHandler {
             // ── XP + reputation on sell ────────────────────────────────────────
             ProfessionEvents.onSellToNpc(
                     player, new ItemStack(item), quantity, villageId);
+
+            // In TradeHandler.handleTrade(), after the buy/sell logic completes:
+// ── Market tax ──────────────────────────────────────────────────────
+            if (villageId != null) {
+                VillageTreasury treasury = data.getTreasury(villageId).orElse(null);
+                if (treasury != null) {
+                    long taxed = treasury.collectMarketTax(
+                            pricePerItem * quantity);
+                    if (taxed > 0) {
+                        data.putTreasury(treasury);
+                        data.setDirty();
+                    }
+                }
+            }
         }
+
 
         // Refresh the trade screen with updated stock/prices
         openTradeScreen(player, merchant);

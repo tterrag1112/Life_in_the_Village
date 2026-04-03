@@ -39,6 +39,8 @@ import tterrag1112.life_in_the_village.Entities.*;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionGoalFactory;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 
+import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
+import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -215,6 +217,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         }
     }
 
+
     // =========================================================================
     // SCHEDULE — delegated to WorkSchedule
     // =========================================================================
@@ -265,13 +268,21 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         String base = appearance.getName() != null ? appearance.getName() : "";
 
         StringBuilder display = new StringBuilder();
-        if (!adventurerTitle.isEmpty()) {
-            display.append(adventurerTitle).append(" ");
+
+        if(getProfession() == Profession.VILLAGE_LEADER){
+            display.append(KingdomTitleRegistry.INSTANCE.getCulture("default").getLordTitle(this.isMale)).append(" ");
         }
+        if(getProfession() == Profession.KINGDOM_RULER){
+            display.append(KingdomTitleRegistry.INSTANCE.getCulture("default").getRulerTitle(this.isMale)).append(" ");
+        }
+
         if (!base.isEmpty()) {
             display.append(base);
         } else {
             display.append(getProfession().getDisplayName());
+        }
+        if (!adventurerTitle.isEmpty()) {
+            display.append(" ").append(adventurerTitle);
         }
         if (!currentActivity.isEmpty()) {
             display.append(" — ").append(currentActivity);

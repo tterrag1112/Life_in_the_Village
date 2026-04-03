@@ -82,11 +82,8 @@ public class LayoutSlot {
      * {@link StructureSizeCache.FootprintInfo}.
      * Called by the planner after loading the template size.
      */
-    public void setFootprint(int structureWidth, int structureLength) {
-        // Store half-dimensions so the overlap check is symmetric
-        this.halfW = structureWidth  / 2 + 1;
-        this.halfL = structureLength / 2 + 1;
-    }
+
+
 
     // =========================================================================
     // Overlap check — XZ AABB
@@ -143,6 +140,16 @@ public class LayoutSlot {
     public String      getStructurePath() { return structurePath; }
     public int         getHalfW()         { return halfW;         }
     public int         getHalfL()         { return halfL;         }
+    private int footprintWidth = 0;
+    private int footprintLength = 0;
+    public void setFootprint(int width, int length) {
+        this.footprintWidth = width;
+        this.footprintLength = length;
+    }
+    public int getFootprintWidth()  { return footprintWidth; }
+    public int getFootprintLength() { return footprintLength; }
+
+
 
     /**
      * Legacy radius accessor — returns the larger of halfW and halfL.

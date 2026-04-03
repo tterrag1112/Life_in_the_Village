@@ -20,6 +20,8 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
+import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
+import tterrag1112.life_in_the_village.Village.Economy.VillageTreasury;
 import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
 import tterrag1112.life_in_the_village.Village.JobPosting;
 import tterrag1112.life_in_the_village.Village.Reputation.VillageReputation;
@@ -29,7 +31,15 @@ import tterrag1112.life_in_the_village.Village.Village;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class VillageSavedData extends SavedData {
+public class VillageSavedData extends SavedData implements
+        VillageDataAccess.VillageView,
+        VillageDataAccess.ReputationView,
+        VillageDataAccess.EconomyView,
+        VillageDataAccess.KingdomView,
+        VillageDataAccess.HouseholdView,
+        VillageDataAccess.GuildView,
+        VillageDataAccess.SimulationView,
+        VillageDataAccess.TreasuryView {
 
     // =========================================================================
     // Embedded codec records
@@ -157,9 +167,12 @@ public class VillageSavedData extends SavedData {
 
     // ── 6. Economy ────────────────────────────────────────────────────────────
 
+    // ── 6. Economy ────────────────────────────────────────────────────────────
+
     public record VillageEconomyData(
-            List<TradeRoute> tradeRoutes,
-            List<TradeRoad>  tradeRoads
+            List<TradeRoute>      tradeRoutes,
+            List<TradeRoad>       tradeRoads,
+            List<VillageTreasury> treasuries
     ) {
         public static final Codec<VillageEconomyData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -168,7 +181,10 @@ public class VillageSavedData extends SavedData {
                                 .forGetter(VillageEconomyData::tradeRoutes),
                         TradeRoad.CODEC.listOf()
                                 .optionalFieldOf("tradeRoads", List.of())
-                                .forGetter(VillageEconomyData::tradeRoads)
+                                .forGetter(VillageEconomyData::tradeRoads),
+                        VillageTreasury.CODEC.listOf()
+                                .optionalFieldOf("treasuries", List.of())
+                                .forGetter(VillageEconomyData::treasuries)
                 ).apply(i, VillageEconomyData::new));
     }
 
@@ -224,7 +240,8 @@ public class VillageSavedData extends SavedData {
                             .fieldOf("economyData")
                             .forGetter(d -> new VillageEconomyData(
                                     new ArrayList<>(d.tradeRoutes.values()),
-                                    new ArrayList<>(d.tradeRoads.values()))),
+                                    new ArrayList<>(d.tradeRoads.values()),
+                                    new ArrayList<>(d.treasuries.values()))),
                     VillagePropertyData.CODEC
                             .fieldOf("propertyData")
                             .forGetter(d -> new VillagePropertyData(
@@ -277,6 +294,7 @@ public class VillageSavedData extends SavedData {
         // Economy
         economyData.tradeRoutes().forEach(r -> data.tradeRoutes.put(r.getRouteId(), r));
         economyData.tradeRoads().forEach(r  -> data.tradeRoads.put(r.getRoadId(), r));
+        economyData.treasuries().forEach(t  -> data.treasuries.put(t.getVillageId(), t));
 
         // Property
         propertyData.properties().forEach(data.playerProperties::add);
@@ -333,6 +351,8 @@ public class VillageSavedData extends SavedData {
     // Economy
     private final Map<UUID, TradeRoute> tradeRoutes = new HashMap<>();
     private final Map<UUID, TradeRoad>  tradeRoads  = new HashMap<>();
+    private final Map<UUID, VillageTreasury> treasuries = new LinkedHashMap<>();
+
 
     // Property
     private final List<PlayerHousingData.PlayerProperty> playerProperties = new ArrayList<>();
@@ -819,5 +839,28 @@ public class VillageSavedData extends SavedData {
 
     public Collection<VillageSimData> getAllSimData() {
         return Collections.unmodifiableCollection(simData.values());
+    }
+
+
+    // =========================================================================
+    // Village treasury
+    // =========================================================================
+
+    public Optional<VillageTreasury> getTreasury(UUID villageId) {
+        return Optional.ofNullable(treasuries.get(villageId));
+    }
+
+    public void putTreasury(VillageTreasury treasury) {
+        treasuries.put(treasury.getVillageId(), treasury);
+        setDirty();
+    }
+
+    public void removeTreasury(UUID villageId) {
+        treasuries.remove(villageId);
+        setDirty();
+    }
+
+    public Collection<VillageTreasury> getAllTreasuries() {
+        return Collections.unmodifiableCollection(treasuries.values());
     }
 }

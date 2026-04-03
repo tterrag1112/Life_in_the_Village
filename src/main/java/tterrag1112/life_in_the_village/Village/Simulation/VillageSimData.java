@@ -60,7 +60,13 @@ public class VillageSimData {
                     Codec.INT.fieldOf("mineCount")
                             .forGetter(d -> d.mineCount),
                     Codec.LONG.fieldOf("lastSyncTick")
-                            .forGetter(d -> d.lastSyncTick)
+                            .forGetter(d -> d.lastSyncTick),
+                    Codec.FLOAT.fieldOf("treasuryBalanceEstimate")
+                            .forGetter(d -> d.treasuryBalanceEstimate),
+                    Codec.FLOAT.fieldOf("wageDrainPerDay")
+                            .forGetter(d -> d.wageDrainPerDay),
+                    Codec.FLOAT.fieldOf("taxIncomePerDay")
+                            .forGetter(d -> d.taxIncomePerDay)
             ).apply(i, VillageSimData::new));
 
     // =========================================================================
@@ -85,6 +91,12 @@ public class VillageSimData {
     private int   mineCount;
     /** Game tick of the last real-data sync (0 = never synced). */
     private long  lastSyncTick;
+    /** Simulated treasury balance (mirrors VillageTreasury for unloaded). */
+    private float treasuryBalanceEstimate;
+    /** Average daily wage drain rate. */
+    private float wageDrainPerDay;
+    /** Average daily tax income rate. */
+    private float taxIncomePerDay;
 
     // =========================================================================
     // Constructor
@@ -98,7 +110,10 @@ public class VillageSimData {
                           int   simulatedPopulation,
                           int   farmhouseCount,
                           int   mineCount,
-                          long  lastSyncTick) {
+                          long  lastSyncTick,
+                          float treasuryBalanceEstimate,
+                          float wageDrainPerDay,
+                          float taxIncomePerDay) {
         this.villageId              = villageId;
         this.foodProductionPerDay   = foodProductionPerDay;
         this.foodConsumptionPerDay  = foodConsumptionPerDay;
@@ -108,6 +123,9 @@ public class VillageSimData {
         this.farmhouseCount         = farmhouseCount;
         this.mineCount              = mineCount;
         this.lastSyncTick           = lastSyncTick;
+        this.treasuryBalanceEstimate = treasuryBalanceEstimate;
+        this.wageDrainPerDay = wageDrainPerDay;
+        this.taxIncomePerDay = taxIncomePerDay;
     }
 
     // =========================================================================
@@ -149,13 +167,17 @@ public class VillageSimData {
      */
     public void blendReal(float realFoodProd, float realFoodCons,
                           float realMatProd,  float realMatCons,
-                          int   realPop,      long  tick) {
+                          int   realPop,      long  tick, float realTreasuryBalance, float realWageDrain, float realTaxIncome) {
         foodProductionPerDay   = realFoodProd   * 0.8f + foodProductionPerDay   * 0.2f;
         foodConsumptionPerDay  = realFoodCons   * 0.8f + foodConsumptionPerDay  * 0.2f;
         materialProductionPerDay  = realMatProd * 0.8f + materialProductionPerDay  * 0.2f;
         materialConsumptionPerDay = realMatCons * 0.8f + materialConsumptionPerDay * 0.2f;
         simulatedPopulation    = realPop;
         lastSyncTick           = tick;
+        this.treasuryBalanceEstimate = realTreasuryBalance;
+        this.wageDrainPerDay = realWageDrain * 0.8f + wageDrainPerDay * 0.2f;
+        this.taxIncomePerDay = realTaxIncome * 0.8f + taxIncomePerDay * 0.2f;
+
     }
 
     /** Advances the sim by the given day count using only stored rates + season. */
@@ -164,6 +186,9 @@ public class VillageSimData {
         // (already baked into the rates — this is a secondary nudge)
         foodConsumptionPerDay   *= seasonFoodMult;
         materialConsumptionPerDay *= seasonMatMult;
+        treasuryBalanceEstimate += (taxIncomePerDay - wageDrainPerDay);
+        treasuryBalanceEstimate = Math.max(0, treasuryBalanceEstimate);
+
     }
 
     // =========================================================================
@@ -183,4 +208,7 @@ public class VillageSimData {
     public void setFarmhouseCount(int count) { this.farmhouseCount = count; }
     public void setMineCount(int count)      { this.mineCount = count;      }
     public void setSimulatedPopulation(int p){ this.simulatedPopulation = p; }
+    public float getTreasuryEstimate()  { return treasuryBalanceEstimate; }
+    public float getNetIncomePerDay()   { return taxIncomePerDay - wageDrainPerDay; }
+    public boolean isTreasuryHealthy()  { return getNetIncomePerDay() > 0; }
 }

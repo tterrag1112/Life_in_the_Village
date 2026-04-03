@@ -402,11 +402,11 @@ public class VillageSpawner {
                         .create(level, EntitySpawnReason.MOB_SUMMONED);
                 if (npc == null) continue;
 
-                /*npc.moveTo(spawnPos.getX() + 0.5,
+                npc.getNavigation().moveTo(spawnPos.getX() + 0.5,
                         spawnPos.getY(), spawnPos.getZ() + 0.5,
-                        rng.nextFloat() * 360f, 0f);
+                        rng.nextInt() * 360, 1);
 
-                 */
+
                 npc.finalizeSpawn(level, level.getCurrentDifficultyAt(spawnPos),
                         EntitySpawnReason.MOB_SUMMONED, null);
 

@@ -1,8 +1,6 @@
-// src/main/java/tterrag1112/life_in_the_village/Village/Planning/VillageLayout.java
 package tterrag1112.life_in_the_village.Village.Planning;
 
 import net.minecraft.core.BlockPos;
-import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,17 +10,11 @@ import java.util.stream.Collectors;
 /**
  * Holds the planned layout for a village before any blocks are placed.
  *
- * <h3>Capital extensions</h3>
- * When a capital is planned by {@link CapitalLayoutPlanner}, two extra
- * fields are populated:
- * <ul>
- *   <li>{@link #capitalStreetGraph} — the abstract street network used by
- *       {@link tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator}
- *       to place actual road blocks after buildings are spawned.</li>
- *   <li>{@link #gatePositions} — the outer-ring node positions where the
- *       city perimeter wall will have gates. Trade routes terminate here
- *       instead of routing through the city to the town square.</li>
- * </ul>
+ * <h3>Key change: footprint-aware overlap</h3>
+ * {@link #tryAdd(LayoutSlot)} uses actual structure footprint dimensions
+ * (width × length) for AABB overlap testing instead of circular radius
+ * checks. PATH_NODE and DECORATION slots are excluded from building
+ * overlap tests — only building slots block other buildings.
  */
 public class VillageLayout {
 
@@ -30,21 +22,13 @@ public class VillageLayout {
     private final LayoutDensityProfile density;
     private final List<LayoutSlot>     slots = new ArrayList<>();
 
-    /** Centre of the planned village (usually the town hall position). */
     private BlockPos center;
-
-    /** Abstract street graph — non-null only for capitals. */
     private CapitalStreetGraph capitalStreetGraph = null;
-
-    /**
-     * Positions of city gates on the outer perimeter ring.
-     * Trade roads terminate here for capitals when
-     * {@link tterrag1112.life_in_the_village.Village.VillageTypeData.CapitalProfile#gateRoads()}
-     * is true.
-     */
     private final List<BlockPos> gatePositions = new ArrayList<>();
-
     private BlockPos townSquarePos;
+
+    /** Minimum gap in blocks between building edges for AABB overlap. */
+    public static final int MIN_BUILDING_GAP = 4;
 
     public VillageLayout(TerrainProfile terrain, LayoutDensityProfile density) {
         this.terrain = terrain;
@@ -57,12 +41,21 @@ public class VillageLayout {
     // =========================================================================
 
     /**
-     * Tries to add a slot, rejecting it if it overlaps an existing one.
-     * @return true if the slot was accepted.
+     * Tries to add a slot, rejecting it if it overlaps an existing building.
+     *
+     * <p>Only BUILDING slots are tested against each other. PATH_NODE and
+     * DECORATION slots never block building placement. FARM_PLOT slots
+     * block other farm plots and buildings, but not decorations.</p>
+     *
+     * <p>When both slots have footprint dimensions set, uses AABB overlap
+     * with {@link #MIN_BUILDING_GAP}. Otherwise falls back to radius circles.</p>
+     *
+     * @return true if the slot was accepted, false if it overlaps
      */
     public boolean tryAdd(LayoutSlot slot) {
         for (LayoutSlot existing : slots) {
-            if (slot.overlaps(existing)) return false;
+            if (!shouldCheckOverlap(slot, existing)) continue;
+            if (slotsOverlap(slot, existing)) return false;
         }
         slots.add(slot);
         return true;
@@ -70,11 +63,63 @@ public class VillageLayout {
 
     /**
      * Adds a slot unconditionally, bypassing the overlap check.
-     * Used for city-block face plots (geometrically pre-validated),
-     * path nodes, and decorations that are allowed to be close together.
      */
     public void addForced(LayoutSlot slot) {
         slots.add(slot);
+    }
+
+    private boolean shouldCheckOverlap(LayoutSlot candidate, LayoutSlot existing) {
+        // PATH_NODE never blocks anything
+        if (existing.getSlotType() == LayoutSlot.SlotType.PATH_NODE) return false;
+
+        // DECORATION only blocks other decorations, not buildings
+        if (existing.getSlotType() == LayoutSlot.SlotType.DECORATION
+                && candidate.getSlotType() != LayoutSlot.SlotType.DECORATION) return false;
+
+        // Buildings block buildings and are blocked by buildings
+        if (candidate.getSlotType() == LayoutSlot.SlotType.BUILDING) {
+            return existing.getSlotType() == LayoutSlot.SlotType.BUILDING;
+        }
+
+        // Farm plots block other farm plots and buildings
+        if (candidate.getSlotType() == LayoutSlot.SlotType.FARM_PLOT) {
+            return existing.getSlotType() == LayoutSlot.SlotType.FARM_PLOT
+                    || existing.getSlotType() == LayoutSlot.SlotType.BUILDING;
+        }
+
+        return candidate.getSlotType() == existing.getSlotType();
+    }
+
+    private boolean slotsOverlap(LayoutSlot a, LayoutSlot b) {
+        int aW = a.getFootprintWidth();
+        int aL = a.getFootprintLength();
+        int bW = b.getFootprintWidth();
+        int bL = b.getFootprintLength();
+
+        if (aW > 0 && aL > 0 && bW > 0 && bL > 0) {
+            return footprintOverlap(
+                    a.getPos(), aW, aL,
+                    b.getPos(), bW, bL,
+                    MIN_BUILDING_GAP);
+        }
+        return a.overlaps(b);
+    }
+
+    static boolean footprintOverlap(BlockPos aPos, int aW, int aL,
+                                    BlockPos bPos, int bW, int bL,
+                                    int gap) {
+        int aMinX = aPos.getX() - aW / 2 - gap;
+        int aMaxX = aPos.getX() + aW / 2 + gap;
+        int aMinZ = aPos.getZ() - aL / 2 - gap;
+        int aMaxZ = aPos.getZ() + aL / 2 + gap;
+
+        int bMinX = bPos.getX() - bW / 2;
+        int bMaxX = bPos.getX() + bW / 2;
+        int bMinZ = bPos.getZ() - bL / 2;
+        int bMaxZ = bPos.getZ() + bL / 2;
+
+        return aMinX < bMaxX && aMaxX > bMinX
+                && aMinZ < bMaxZ && aMaxZ > bMinZ;
     }
 
     // =========================================================================
@@ -105,72 +150,47 @@ public class VillageLayout {
                 .collect(Collectors.toList());
     }
 
+    public List<LayoutSlot> buildingSlotsCopy() {
+        return new ArrayList<>(buildings());
+    }
+
     // =========================================================================
-    // Accessors — core
+    // Accessors
     // =========================================================================
 
-    public TerrainProfile       getTerrain()           { return terrain;      }
-    public LayoutDensityProfile getDensity()           { return density;      }
-    public List<LayoutSlot>     getAllSlots()           { return slots;        }
-    public BlockPos             getCenter()            { return center;       }
-    public void                 setCenter(BlockPos c)  { center = c;          }
-
+    public TerrainProfile       getTerrain()           { return terrain; }
+    public LayoutDensityProfile getDensity()           { return density; }
+    public List<LayoutSlot>     getAllSlots()           { return slots; }
+    public BlockPos             getCenter()            { return center; }
+    public void                 setCenter(BlockPos c)  { center = c; }
     public BlockPos  getTownSquarePos()               { return townSquarePos; }
-    public void      setTownSquarePos(BlockPos pos)   { townSquarePos = pos;  }
+    public void      setTownSquarePos(BlockPos pos)   { townSquarePos = pos; }
 
-    // =========================================================================
-    // Accessors — capital street graph
-    // =========================================================================
+    public CapitalStreetGraph getCapitalStreetGraph()                      { return capitalStreetGraph; }
+    public void               setCapitalStreetGraph(CapitalStreetGraph g)  { capitalStreetGraph = g; }
+    public boolean            hasCapitalStreetGraph()                      { return capitalStreetGraph != null; }
 
-    public CapitalStreetGraph getCapitalStreetGraph()             { return capitalStreetGraph;        }
-    public void               setCapitalStreetGraph(CapitalStreetGraph g) { capitalStreetGraph = g;  }
-    public boolean            hasCapitalStreetGraph()             { return capitalStreetGraph != null; }
+    public void addGatePosition(BlockPos pos)    { gatePositions.add(pos); }
+    public List<BlockPos> getGatePositions()      { return Collections.unmodifiableList(gatePositions); }
 
-    // =========================================================================
-    // Accessors — gate positions
-    // =========================================================================
-
-    /**
-     * Adds a city gate position to the layout.
-     * Called by {@link CapitalLayoutPlanner} for each spoke tip on the
-     * outer ring. Trade routes use these positions as their endpoint for
-     * capitals so roads terminate at the gate, not the town square.
-     */
-    public void addGatePosition(BlockPos pos) {
-        gatePositions.add(pos);
-    }
-
-    /** Returns an unmodifiable view of all registered gate positions. */
-    public List<BlockPos> getGatePositions() {
-        return Collections.unmodifiableList(gatePositions);
-    }
-
-    /**
-     * Finds the nearest gate position to the given world XZ coordinate,
-     * or returns null if no gate positions are registered.
-     */
     public BlockPos nearestGate(int x, int z) {
-        BlockPos best  = null;
-        double   bestD = Double.MAX_VALUE;
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
         for (BlockPos gate : gatePositions) {
             double dx = gate.getX() - x, dz = gate.getZ() - z;
-            double d  = dx * dx + dz * dz;
+            double d = dx * dx + dz * dz;
             if (d < bestD) { bestD = d; best = gate; }
         }
         return best;
     }
 
-    // =========================================================================
-    // Debug
-    // =========================================================================
-
     @Override
     public String toString() {
         return "VillageLayout[buildings=" + buildings().size()
-                + ", farms="       + farmPlots().size()
+                + ", farms=" + farmPlots().size()
                 + ", decorations=" + decorations().size()
                 + ", suitability=" + String.format("%.2f", terrain.suitability())
-                + ", density="     + density.label()
+                + ", density=" + density.label()
                 + (hasCapitalStreetGraph()
                 ? ", capital gates=" + gatePositions.size() : "")
                 + "]";

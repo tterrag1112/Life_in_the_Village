@@ -1,5 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Economy.Currency;
 
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.SimpleContainer;
@@ -415,5 +417,137 @@ public class CoinHelper {
         for (int i = 0; i < player.getInventory().getContainerSize(); i++)
             player.getInventory().setItem(i, snapshot.getItem(i));
         player.inventoryMenu.broadcastChanges();
+    }
+    // Add to CoinHelper.java:
+
+// =========================================================================
+// DEBT SYSTEM — simple borrow/repay for merchant NPCs
+// =========================================================================
+
+    /**
+     * A lightweight debt tracker for NPCs. Not persisted separately —
+     * stored as fields on the NPC's EconomyComponent.
+     */
+    public static class DebtTracker {
+        private long currentDebt = 0;
+        private long maxDebt;
+        private long repayDeadlineTick = 0;
+        /** Number of times debt was forgiven — shrinks maxDebt. */
+        private int forgiveCount = 0;
+
+        public static final Codec<DebtTracker> CODEC = RecordCodecBuilder.create(i ->
+                i.group(
+                        Codec.LONG.fieldOf("currentDebt").forGetter(d -> d.currentDebt),
+                        Codec.LONG.fieldOf("maxDebt").forGetter(d -> d.maxDebt),
+                        Codec.LONG.fieldOf("repayDeadlineTick")
+                                .forGetter(d -> d.repayDeadlineTick),
+                        Codec.INT.fieldOf("forgiveCount").forGetter(d -> d.forgiveCount)
+                ).apply(i, DebtTracker::new));
+
+        public DebtTracker(long currentDebt, long maxDebt,
+                           long repayDeadlineTick, int forgiveCount) {
+            this.currentDebt = currentDebt;
+            this.maxDebt = maxDebt;
+            this.repayDeadlineTick = repayDeadlineTick;
+            this.forgiveCount = forgiveCount;
+        }
+
+        /** Default tracker for a new merchant. */
+        public static DebtTracker create(long baseMaxDebt) {
+            return new DebtTracker(0, baseMaxDebt, 0, 0);
+        }
+
+        /** Can this NPC borrow the given amount? */
+        public boolean canBorrow(long amount) {
+            return (currentDebt + amount) <= maxDebt;
+        }
+
+        /** Take on debt. Sets repay deadline if this is new debt. */
+        public void borrow(long amount, long currentTick) {
+            currentDebt += amount;
+            if (repayDeadlineTick == 0) {
+                // 5 in-game days to repay
+                repayDeadlineTick = currentTick + (24000L * 5);
+            }
+        }
+
+        /** Repay debt from earnings. */
+        public long repay(long available) {
+            long payment = Math.min(available, currentDebt);
+            currentDebt -= payment;
+            if (currentDebt <= 0) {
+                currentDebt = 0;
+                repayDeadlineTick = 0;
+            }
+            return payment;
+        }
+
+        /**
+         * Check if debt is overdue. If so, forgive it but shrink maxDebt.
+         * Call once per day.
+         */
+        public void tickDeadline(long currentTick) {
+            if (currentDebt <= 0 || repayDeadlineTick <= 0) return;
+            if (currentTick < repayDeadlineTick) return;
+
+            // Forgive the debt but shrink future borrowing capacity
+            currentDebt = 0;
+            repayDeadlineTick = 0;
+            forgiveCount++;
+            // Each forgiveness halves remaining max debt (minimum 50 bronze)
+            maxDebt = Math.max(50, maxDebt / 2);
+        }
+
+        public long getCurrentDebt()  { return currentDebt; }
+        public long getMaxDebt()      { return maxDebt; }
+        public boolean hasDebt()      { return currentDebt > 0; }
+    }
+
+    /**
+     * Spend with debt fallback — if the NPC can't afford it outright,
+     * borrow the shortfall if within debt limits.
+     *
+     * @return true if the purchase went through (possibly with debt)
+     */
+    public static boolean spendWithDebt(SimpleContainer inventory,
+                                        CurrencyValue amount,
+                                        DebtTracker debt,
+                                        long currentTick) {
+        long wealth = getWealth(inventory).toBronze();
+        long cost = amount.toBronze();
+
+        if (wealth >= cost) {
+            // Can afford outright
+            return spend(inventory, amount);
+        }
+
+        // Need to borrow the shortfall
+        long shortfall = cost - wealth;
+        if (!debt.canBorrow(shortfall)) return false;
+
+        // Spend everything we have
+        if (wealth > 0) {
+            spend(inventory, CurrencyValue.of(wealth));
+        }
+        // Borrow the rest
+        debt.borrow(shortfall, currentTick);
+        return true;
+    }
+
+    /**
+     * Auto-repay debt from current wealth. Call after the NPC makes a sale.
+     */
+    public static void autoRepayDebt(SimpleContainer inventory,
+                                     DebtTracker debt) {
+        if (!debt.hasDebt()) return;
+
+        long available = getWealth(inventory).toBronze();
+        // Repay up to 50% of current wealth per check
+        long repayAmount = Math.min(available / 2, debt.getCurrentDebt());
+        if (repayAmount <= 0) return;
+
+        if (spend(inventory, CurrencyValue.of(repayAmount))) {
+            debt.repay(repayAmount);
+        }
     }
 }

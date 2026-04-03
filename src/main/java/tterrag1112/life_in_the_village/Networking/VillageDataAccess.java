@@ -83,11 +83,12 @@ public final class VillageDataAccess {
         getReputation(UUID playerId, UUID villageId);
     }
 
+
     /**
-     * Read-only access to economy data (trade routes, orders, listings).
-     * Used by: economy display UIs, caravan dispatch logic.
+     * Read-only access to economy data (trade routes, orders, listings, treasury).
+     * Used by: economy display UIs, caravan dispatch logic, market tax hooks.
      */
-    public interface EconomyView {
+    public interface EconomyView extends TreasuryView {
         List<tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute>
         getAllTradeRoutes();
 
@@ -96,6 +97,14 @@ public final class VillageDataAccess {
 
         List<tterrag1112.life_in_the_village.Village.Economy.CraftingOrder>
         getOrdersForVillage(UUID villageId);
+    }
+    /**
+     * Read-only access to village treasury data.
+     * Used by: economy display UIs, NPC wage goals, market tax hooks.
+     */
+    public interface TreasuryView {
+        Optional<tterrag1112.life_in_the_village.Village.Economy.VillageTreasury>
+        getTreasury(java.util.UUID villageId);
     }
 
     /**
@@ -136,11 +145,13 @@ public final class VillageDataAccess {
         getGuildById(UUID guildId);
     }
 
+
     /**
-     * Read-only access to simulation snapshots.
-     * Used by: kingdom economy engine, village book statistics.
+     * Read-only access to simulation snapshots and treasury.
+     * Used by: kingdom economy engine, village book statistics,
+     * treasury tick handler.
      */
-    public interface SimulationView {
+    public interface SimulationView extends TreasuryView {
         Optional<tterrag1112.life_in_the_village.Village.Simulation.VillageSimData>
         getSimData(UUID villageId);
     }
@@ -158,8 +169,12 @@ public final class VillageDataAccess {
     /**
      * Combined view for the village book UI that needs most read data.
      */
+    /**
+     * Combined view for the village book UI that needs most read data.
+     */
     public interface VillageBookView extends VillageView, ReputationView,
-            EconomyView, KingdomView, HouseholdView, GuildView {}
+            EconomyView, KingdomView, HouseholdView, GuildView,
+            TreasuryView {}
 
     // =========================================================================
     // Implementation note

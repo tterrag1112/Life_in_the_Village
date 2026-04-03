@@ -1,10 +1,9 @@
+// src/main/java/tterrag1112/life_in_the_village/Entities/custom/EconomyComponent.java
 package tterrag1112.life_in_the_village.Entities.custom;
 
-import net.minecraft.core.HolderLookup;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.NonNullList;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.Tag;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.ItemStack;
@@ -13,9 +12,11 @@ import net.minecraft.world.level.storage.ValueOutput;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
+import javax.annotation.Nullable;
+
 /**
  * Manages all economy-related state for a TownspersonMob:
- * personal inventory, coin wealth, and payment operations.
+ * personal inventory, coin wealth, payment operations, and debt.
  *
  * <h3>Why extract this?</h3>
  * TownspersonMob held a SimpleContainer, several wealth-query methods,
@@ -29,16 +30,30 @@ import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
  *
  * <h3>Building wealth</h3>
  * Some NPCs can also access their assigned building's storage. The
- * {@link #getTotalWealth(ServerLevel)} method combines personal coins
- * with building storage coins — but the building lookup is done by the
- * caller (TownspersonMob) since it knows the building assignment.
- * Use {@link #getTotalWealthWithBuilding(CurrencyValue)} to combine.
+ * building lookup is done by the caller (TownspersonMob) since it
+ * knows the building assignment.
+ *
+ * <h3>Debt</h3>
+ * Merchants (and potentially other NPCs) can borrow coins to purchase
+ * expensive goods they intend to resell at a profit. The debt tracker
+ * is lazily created — only NPCs that actually take on debt will have
+ * one. The tracker is persisted alongside the inventory.
  */
 public class EconomyComponent {
 
     private static final int INVENTORY_SIZE = 27;
 
+    /** Default max debt for a new merchant (in bronze units). */
+    private static final long DEFAULT_MERCHANT_MAX_DEBT = 500L;
+
     private final SimpleContainer personalInventory;
+
+    /**
+     * Debt tracker — null for most NPCs, lazily created when a merchant
+     * first borrows. Persisted in save/load.
+     */
+    @Nullable
+    private CoinHelper.DebtTracker debtTracker;
 
     public EconomyComponent() {
         this.personalInventory = new SimpleContainer(INVENTORY_SIZE);
@@ -114,6 +129,73 @@ public class EconomyComponent {
     }
 
     // =========================================================================
+    // Debt system
+    // =========================================================================
+
+    /**
+     * Returns the debt tracker, creating one if it doesn't exist.
+     * Use this for merchants who may need to borrow.
+     *
+     * @param maxDebt the maximum debt capacity (only used on first creation)
+     */
+    public CoinHelper.DebtTracker getOrCreateDebtTracker(long maxDebt) {
+        if (debtTracker == null) {
+            debtTracker = CoinHelper.DebtTracker.create(maxDebt);
+        }
+        return debtTracker;
+    }
+
+    /**
+     * Returns the debt tracker, creating one with the default merchant
+     * max debt if it doesn't exist.
+     */
+    public CoinHelper.DebtTracker getOrCreateDebtTracker() {
+        return getOrCreateDebtTracker(DEFAULT_MERCHANT_MAX_DEBT);
+    }
+
+    /** Returns the debt tracker, or null if this NPC has never borrowed. */
+    @Nullable
+    public CoinHelper.DebtTracker getDebtTracker() {
+        return debtTracker;
+    }
+
+    /** True if this NPC currently owes debt. */
+    public boolean hasDebt() {
+        return debtTracker != null && debtTracker.hasDebt();
+    }
+
+    /**
+     * Attempt to spend with debt fallback. If the NPC can't afford
+     * the full amount outright, borrows the shortfall.
+     *
+     * @return true if the purchase went through (possibly with debt)
+     */
+    public boolean spendWithDebt(CurrencyValue amount, long currentTick) {
+        return CoinHelper.spendWithDebt(
+                personalInventory, amount,
+                getOrCreateDebtTracker(), currentTick);
+    }
+
+    /**
+     * Auto-repay debt from current wealth. Call after the NPC makes a sale
+     * or receives income.
+     */
+    public void autoRepayDebt() {
+        if (debtTracker == null || !debtTracker.hasDebt()) return;
+        CoinHelper.autoRepayDebt(personalInventory, debtTracker);
+    }
+
+    /**
+     * Check debt deadlines. Call once per in-game day.
+     * If overdue, debt is forgiven but max borrowing capacity shrinks.
+     */
+    public void tickDebtDeadline(long currentTick) {
+        if (debtTracker != null) {
+            debtTracker.tickDeadline(currentTick);
+        }
+    }
+
+    // =========================================================================
     // Inventory item checks (used by goals)
     // =========================================================================
 
@@ -159,7 +241,20 @@ public class EconomyComponent {
     // Persistence
     // =========================================================================
 
+    /**
+     * Saves inventory and debt state.
+     *
+     * <p>Layout in NBT:</p>
+     * <pre>
+     *   Items    → standard ContainerHelper format (slot tags)
+     *   debtCurrentDebt      → long (only if tracker exists)
+     *   debtMaxDebt          → long
+     *   debtRepayDeadline    → long
+     *   debtForgiveCount     → int
+     * </pre>
+     */
     public void save(ValueOutput output) {
+        // ── Inventory ─────────────────────────────────────────────────────
         NonNullList<ItemStack> items =
                 NonNullList.withSize(personalInventory.getContainerSize(),
                         ItemStack.EMPTY);
@@ -167,15 +262,44 @@ public class EconomyComponent {
             items.set(i, personalInventory.getItem(i));
         }
         ContainerHelper.saveAllItems(output, items);
+
+        // ── Debt tracker ──────────────────────────────────────────────────
+        if (debtTracker != null) {
+            output.putBoolean("hasDebt", true);
+            output.putLong("debtCurrentDebt", debtTracker.getCurrentDebt());
+            output.putLong("debtMaxDebt", debtTracker.getMaxDebt());
+            output.putLong("debtRepayDeadline", debtTracker.getRepayDeadlineTick());
+            output.putInt("debtForgiveCount", debtTracker.getForgiveCount());
+        } else {
+            output.putBoolean("hasDebt", false);
+        }
     }
 
+    /**
+     * Loads inventory and debt state.
+     */
     public void load(ValueInput input) {
+        // ── Inventory ─────────────────────────────────────────────────────
         NonNullList<ItemStack> items =
                 NonNullList.withSize(personalInventory.getContainerSize(),
                         ItemStack.EMPTY);
         ContainerHelper.loadAllItems(input, items);
         for (int i = 0; i < items.size(); i++) {
             personalInventory.setItem(i, items.get(i));
+        }
+
+        // ── Debt tracker ──────────────────────────────────────────────────
+        boolean hadDebt = input.read("hasDebt", Codec.BOOL).orElse(false);
+        if (hadDebt) {
+            long currentDebt    = input.read("debtCurrentDebt", Codec.LONG).orElse(0L);
+            long maxDebt        = input.read("debtMaxDebt", Codec.LONG)
+                    .orElse(DEFAULT_MERCHANT_MAX_DEBT);
+            long repayDeadline  = input.read("debtRepayDeadline", Codec.LONG).orElse(0L);
+            int  forgiveCount   = input.read("debtForgiveCount", Codec.INT).orElse(0);
+            debtTracker = new CoinHelper.DebtTracker(
+                    currentDebt, maxDebt, repayDeadline, forgiveCount);
+        } else {
+            debtTracker = null;
         }
     }
 }

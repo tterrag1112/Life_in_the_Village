@@ -5,7 +5,7 @@ import java.util.Map;
 public class KingdomTitleData {
 
     private final String culture;
-    private final Map<String, String> titles;
+    private final  Map<String, String> titles;
 
     public KingdomTitleData(String culture, Map<String, String> titles) {
         this.culture = culture;

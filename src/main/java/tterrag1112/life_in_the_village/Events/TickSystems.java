@@ -25,6 +25,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Economy.TreasuryTickHandler;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Event.VillageEventScheduler;
 import tterrag1112.life_in_the_village.Village.Needs.VillageNeedsCalculator;
@@ -229,6 +230,8 @@ class VillageDailyTickSystem implements TickSubsystem {
 
             // ── Economy maintenance ──────────────────────────────────────────
             VillageEconomy.purgeStaleListings(village.getId(), tick);
+            // ── Treasury operations ──────────────────────────────────────────
+            TreasuryTickHandler.tick(level, village, vdata, tick);
 
             // ── Path upgrades ────────────────────────────────────────────────
             upgradePathsIfAffordable(level, village, vdata);
