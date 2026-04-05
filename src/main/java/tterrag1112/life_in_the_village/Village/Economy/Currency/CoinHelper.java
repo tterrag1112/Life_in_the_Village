@@ -260,10 +260,14 @@ public class CoinHelper {
         long total = 0;
         for (ItemStack stack : player.getInventory()) {
             if (isCoin(stack)) {
-                total += getCoinValue(stack).toBronze() * stack.getCount();
+                total += getStackValue(stack) * stack.getCount();
             }
         }
         return CurrencyValue.of(total);
+    }
+    public static boolean isCoin(ItemStack stack){
+        Item item = stack.getItem();
+        return CurrencyValue.valuePerCoin(item) > 0;
     }
 
     /**
@@ -283,7 +287,7 @@ public class CoinHelper {
         for (int i = 0; i < player.getInventory().getContainerSize() && remaining > 0; i++) {
             ItemStack stack = player.getInventory().getItem(i);
             if (isCoin(stack)) {
-                long coinValue = getCoinValue(stack).toBronze();
+                long coinValue = getStackValue(stack);
                 int coinsInStack = stack.getCount();
                 int toRemove = (int)Math.min(coinsInStack, (remaining + coinValue - 1) / coinValue);
 

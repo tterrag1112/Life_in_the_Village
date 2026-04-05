@@ -156,6 +156,7 @@ public class SellToMarketGoal extends Goal {
 
         MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
         boolean soldAnything = false;
+        long totalRevenue = 0L;
 
         for (Map.Entry<Item, Integer> entry : itemsToSell.entrySet()) {
             Item item = entry.getKey();
@@ -193,6 +194,7 @@ public class SellToMarketGoal extends Goal {
 
             // Merchant pays seller
             merchantNpc.pay(entity, totalPayment);
+            totalRevenue += totalPayment.toBronze();
 
             System.out.println(entity.getNpcName() + " sold " + toSell
                     + "x " + item.getDescriptionId()
@@ -206,6 +208,10 @@ public class SellToMarketGoal extends Goal {
             MerchantGoal merchantGoal = merchantNpc.getGoal(MerchantGoal.class);
             if (merchantGoal != null) {
                 merchantGoal.regenerateMarketOffers(level);
+            }
+            if (entity.getProfession() == Profession.FARMER && totalRevenue > 0) {
+                tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager
+                        .onWorkplaceSale(level, assignedBuilding.getId(), (int) totalRevenue);
             }
         }
 

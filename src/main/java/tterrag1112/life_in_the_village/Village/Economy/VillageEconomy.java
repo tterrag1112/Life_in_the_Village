@@ -13,6 +13,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.DynamicPriceCalculator;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceData;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeListing;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
@@ -411,25 +412,11 @@ public class VillageEconomy {
     // =========================================================================
 
     public static long getBasePrice(Item item) {
-        MarketPriceData data = MarketPriceRegistry.INSTANCE.getDefault();
-        if (data == null) return 4L;
-        return data.getPrice(item)
-                .map(MarketPriceData.ItemPrice::sellPrice)
-                .orElse(4L);
+        return MarketPriceHelper.getBaseSellPrice(item);
     }
 
-    /**
-     * Dynamic price for a specific village context — combines base price
-     * with supply/demand from DynamicPriceCalculator.
-     */
-    public static long getDynamicPrice(ServerLevel level, UUID villageId,
-                                       Item item) {
-        VillageSavedData vdata = VillageSavedData.get(level);
-        Village village = vdata.getVillageById(villageId).orElse(null);
-        long base = getBasePrice(item);
-        if (village == null) return base;
-        return DynamicPriceCalculator.getSellPrice(level, village, vdata,
-                item, base);
+    public static long getDynamicPrice(ServerLevel level, UUID villageId, Item item) {
+        return MarketPriceHelper.getDynamicSellPrice(level, villageId, item);
     }
 
     /**

@@ -42,28 +42,34 @@ public class MarketPriceRegistry extends
             try {
                 JsonObject json = GSON.fromJson(
                         new InputStreamReader(resource.open()),
-                        JsonObject.class
-                );
+                        JsonObject.class);
 
                 String culture = json.has("culture")
                         ? json.get("culture").getAsString() : DEFAULT_CULTURE;
 
+                // ── Parse default fallback values ─────────────────────────
+                long defaultBuy  = json.has("default_buy")
+                        ? json.get("default_buy").getAsLong() : 1L;
+                long defaultSell = json.has("default_sell")
+                        ? json.get("default_sell").getAsLong() : 2L;
+
+                // ── Parse explicit prices ─────────────────────────────────
                 Map<Item, MarketPriceData.ItemPrice> prices = new HashMap<>();
                 for (var el : json.getAsJsonArray("prices")) {
                     JsonObject p = el.getAsJsonObject();
-                    Identifier itemId =
-                            Identifier.parse(p.get("item").getAsString());
+                    Identifier itemId = Identifier.parse(p.get("item").getAsString());
                     long buy  = p.get("buy").getAsLong();
                     long sell = p.get("sell").getAsLong();
 
                     BuiltInRegistries.ITEM.getOptional(itemId).ifPresent(item ->
-                            prices.put(item, new MarketPriceData.ItemPrice(item, buy, sell))
-                    );
+                            prices.put(item, new MarketPriceData.ItemPrice(item, buy, sell)));
                 }
 
-                loaded.put(culture, new MarketPriceData(culture, prices));
-                LOGGER.info("Loaded market prices for culture '{}': {} items",
-                        culture, prices.size());
+                loaded.put(culture, new MarketPriceData(
+                        culture, prices, defaultBuy, defaultSell));
+                LOGGER.info("Loaded market prices for culture '{}': {} items " +
+                                "(default buy={}, sell={})",
+                        culture, prices.size(), defaultBuy, defaultSell);
 
             } catch (Exception e) {
                 LOGGER.error("Failed to load market prices from {}: {}",

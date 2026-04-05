@@ -525,6 +525,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         if (assignedBuildingId == null) return Optional.empty();
         return VillageSavedData.get(level).getBuildingById(assignedBuildingId);
     }
+    public void clearAssignedBuilding(){
+        this.setAssignedBuildingId(null);
+    }
 
     public Optional<BlockPos> getAssignedPost()         { return Optional.ofNullable(assignedPost); }
     public void setAssignedPost(@Nullable BlockPos pos)  { this.assignedPost = pos; }

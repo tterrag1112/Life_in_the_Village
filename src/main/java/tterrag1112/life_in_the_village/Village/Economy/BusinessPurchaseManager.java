@@ -133,12 +133,10 @@ public class BusinessPurchaseManager {
         }
 
         // Get village ID
-        UUID villageId = farmhouse.getVillageId()
-                .or(() -> data.getAllVillages().stream()
-                        .filter(v -> v.getBuildingIds().contains(farmhouse.getId()))
-                        .map(Village::getId)
-                        .findFirst())
-                .orElse(null);
+        UUID villageId = data.getAllVillages().stream()
+                .filter(v -> v.getBuildingIds().contains(farmhouse.getId()))
+                .map(Village::getId)
+                .findFirst().orElse(null);
 
         if (villageId == null) {
             player.displayClientMessage(Component.literal(
@@ -294,12 +292,10 @@ public class BusinessPurchaseManager {
         PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
 
         // Get village ID
-        UUID villageId = farmhouse.getVillageId()
-                .or(() -> data.getAllVillages().stream()
-                        .filter(v -> v.getBuildingIds().contains(farmhouse.getId()))
-                        .map(Village::getId)
-                        .findFirst())
-                .orElse(null);
+        UUID villageId = data.getAllVillages().stream()
+                .filter(v -> v.getBuildingIds().contains(farmhouse.getId()))
+                .map(Village::getId)
+                .findFirst().orElse(null);
 
         // Upgrade to owner
         PlayerWorkplace.WorkplaceEntry ownerEntry = new PlayerWorkplace.WorkplaceEntry(
@@ -428,12 +424,10 @@ public class BusinessPurchaseManager {
 
         PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
 
-        UUID villageId = farmhouse.getVillageId()
-                .or(() -> data.getAllVillages().stream()
+        UUID villageId = data.getAllVillages().stream()
                         .filter(v -> v.getBuildingIds().contains(farmhouse.getId()))
                         .map(Village::getId)
-                        .findFirst())
-                .orElse(null);
+                        .findFirst().orElse(null);
 
         PlayerWorkplace.WorkplaceEntry ownerEntry = new PlayerWorkplace.WorkplaceEntry(
                 farmhouse.getId(),
