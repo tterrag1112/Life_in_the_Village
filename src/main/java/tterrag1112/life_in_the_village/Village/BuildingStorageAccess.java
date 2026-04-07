@@ -129,40 +129,9 @@ public class BuildingStorageAccess {
         return total;
     }
 
-    public static boolean canAfford(ServerLevel level,
-                                    Building building,
-                                    CurrencyValue amount) {
-        for (Container inv : findInventories(level, building)) {
-            // Copy to SimpleContainer for CoinHelper compatibility
-            SimpleContainer copy = new SimpleContainer(
-                    inv.getContainerSize());
-            for (int i = 0; i < inv.getContainerSize(); i++) {
-                copy.setItem(i, inv.getItem(i).copy());
-            }
-            if (CoinHelper.canAfford(copy, amount)) return true;
-        }
-        return false;
-    }
 
-    public static void deductCurrency(ServerLevel level,
-                                      Building building,
-                                      CurrencyValue amount) {
-        for (Container inv : findInventories(level, building)) {
-            SimpleContainer copy = new SimpleContainer(
-                    inv.getContainerSize());
-            for (int i = 0; i < inv.getContainerSize(); i++) {
-                copy.setItem(i, inv.getItem(i).copy());
-            }
-            if (CoinHelper.canAfford(copy, amount)) {
-                CoinHelper.spend(copy, amount);
-                // Write changes back to the real inventory
-                for (int i = 0; i < inv.getContainerSize(); i++) {
-                    inv.setItem(i, copy.getItem(i));
-                }
-                return;
-            }
-        }
-    }
+
+
 
     public static void storeItemFromPlayer(
             ServerLevel level,

@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket;
 import tterrag1112.life_in_the_village.Networking.VillageActionPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
 
 import java.util.*;
@@ -1151,11 +1152,8 @@ public class VillageBookScreen extends Screen {
                 .distinct().sorted().toList();
 
         // Player wealth
-        net.minecraft.world.SimpleContainer playerContainer =
-                tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper
-                        .snapshotInventory(player);
-        long playerWealth = tterrag1112.life_in_the_village.Village.Economy.Currency
-                .CoinHelper.getWealth(playerContainer).toBronze();
+
+        long playerWealth = CoinHelper.getPlayerWealth(player).toBronze();
 
         // Reputation and warning
         int playerRep   = village.getReputation(player.getUUID());

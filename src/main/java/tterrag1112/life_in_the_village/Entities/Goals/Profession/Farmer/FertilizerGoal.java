@@ -10,10 +10,9 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -66,8 +65,8 @@ public class FertilizerGoal extends Goal {
         }
 
         // Only fertilizer role uses this goal
-        FarmRoleManager.FarmRole role = FarmRoleManager.getRole(entity);
-        if (role != FarmRoleManager.FarmRole.FERTILIZER) {
+        FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
+        if (role != FarmRole.FERTILIZER) {
             return false;
         }
 

@@ -90,8 +90,7 @@ public class HousePurchaseManager {
         CurrencyValue cost = CurrencyValue.of(price);
 
         // Can the player afford it?
-        var playerContainer = buildTempContainer(player);
-        if (!CoinHelper.canAfford(playerContainer, cost)) {
+        if (!CoinHelper.playerCanAfford(player, cost)) {
             player.displayClientMessage(
                     Component.literal("This house costs " + cost + ".\n"
                             + "You cannot afford it."), false);
@@ -99,8 +98,7 @@ public class HousePurchaseManager {
         }
 
         // Deduct payment
-        CoinHelper.spend(playerContainer, cost);
-        syncContainer(player, playerContainer);
+        CoinHelper.playerPay(player, cost);
 
         // Half the purchase price goes to the village treasury
         data.getKingdomForVillage(village.getId())
@@ -166,11 +164,9 @@ public class HousePurchaseManager {
             }
 
             CurrencyValue taxCost = CurrencyValue.of(tax);
-            var playerContainer   = buildTempContainer(player);
 
-            if (CoinHelper.canAfford(playerContainer, taxCost)) {
-                CoinHelper.spend(playerContainer, taxCost);
-                syncContainer(player, playerContainer);
+            if (CoinHelper.playerCanAfford(player, taxCost)) {
+                CoinHelper.playerPay(player, taxCost);
 
                 // Half goes to kingdom treasury
                 data.getKingdomForVillage(village.getId())
@@ -239,17 +235,5 @@ public class HousePurchaseManager {
         return footprint * rate;
     }
 
-    // =========================================================================
-    // Helpers
-    // =========================================================================
 
-    private static net.minecraft.world.SimpleContainer buildTempContainer(
-            ServerPlayer player) {
-        return CoinHelper.snapshotInventory(player);
-    }
-
-    private static void syncContainer(ServerPlayer player,
-                                      net.minecraft.world.SimpleContainer container) {
-        CoinHelper.syncInventory(player, container);
-    }
 }

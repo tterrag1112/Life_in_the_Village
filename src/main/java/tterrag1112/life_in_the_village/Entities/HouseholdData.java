@@ -57,7 +57,10 @@ public class HouseholdData {
                             .fieldOf("type")
                             .forGetter(h -> h.type),
                     Codec.LONG.fieldOf("formedTick")
-                            .forGetter(h -> h.formedTick)
+                            .forGetter(h -> h.formedTick),
+                    Codec.LONG.optionalFieldOf("pooledWealth", 0L)
+                            .forGetter(h -> h.pooledWealth)
+
             ).apply(i, HouseholdData::new));
 
     // -------------------------------------------------------------------------
@@ -69,6 +72,8 @@ public class HouseholdData {
     private final List<UUID>        memberNpcIds;
     private       HouseholdType     type;
     private final long              formedTick;
+    private long pooledWealth = 0L;
+
 
     // -------------------------------------------------------------------------
     // Constructor
@@ -76,12 +81,14 @@ public class HouseholdData {
 
     public HouseholdData(UUID householdId, UUID buildingId,
                          List<UUID> memberNpcIds,
-                         HouseholdType type, long formedTick) {
+                         HouseholdType type, long formedTick, long pooledWealth) {
         this.householdId  = householdId;
         this.buildingId   = buildingId;
         this.memberNpcIds = new ArrayList<>(memberNpcIds);
         this.type         = type;
         this.formedTick   = formedTick;
+        this.pooledWealth  = pooledWealth;
+
     }
 
     // -------------------------------------------------------------------------
@@ -105,7 +112,7 @@ public class HouseholdData {
         HouseholdType type = inferType(memberIds.size(), childCount);
         return new HouseholdData(
                 UUID.randomUUID(), buildingId,
-                memberIds, type, formedTick);
+                memberIds, type, formedTick, 0L);
     }
 
     private static HouseholdType inferType(int total, int childCount) {
@@ -151,4 +158,47 @@ public class HouseholdData {
     public List<UUID>     getMemberNpcIds() { return Collections.unmodifiableList(memberNpcIds); }
     public HouseholdType  getType()         { return type; }
     public long           getFormedTick()   { return formedTick; }
+
+    public long getPooledWealth()         { return pooledWealth; }
+
+    public void depositToPool(long bronze) {
+        if (bronze > 0) pooledWealth += bronze;
+    }
+
+    /**
+     * Attempts to withdraw from the household pool.
+     * Role-based limits:
+     *   HEAD   — up to 100% of pool
+     *   SPOUSE — up to 60% of pool
+     *   CHILD  — up to 15% of pool, capped at 30 bronze regardless of pool size
+     *
+     * @return true if the amount was withdrawn
+     */
+    public boolean withdrawFromPool(long bronze, FamilyRole role) {
+        if (pooledWealth < bronze) return false;
+
+        long maxAllowed = switch (role) {
+            case HEAD     -> pooledWealth;
+            case SPOUSE   -> (long)(pooledWealth * 0.6);
+            case CHILD    -> Math.min(30L, (long)(pooledWealth * 0.15));
+            case ELDERLY  -> (long)(pooledWealth * 0.4);
+            default       -> 0L;
+        };
+
+        if (bronze > maxAllowed) return false;
+        pooledWealth -= bronze;
+        return true;
+    }
+
+    public boolean canWithdraw(long bronze, FamilyRole role) {
+        if (pooledWealth < bronze) return false;
+        long maxAllowed = switch (role) {
+            case HEAD     -> pooledWealth;
+            case SPOUSE   -> (long)(pooledWealth * 0.6);
+            case CHILD    -> Math.min(30L, (long)(pooledWealth * 0.15));
+            case ELDERLY  -> (long)(pooledWealth * 0.4);
+            default       -> 0L;
+        };
+        return bronze <= maxAllowed;
+    }
 }

@@ -15,6 +15,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import tterrag1112.life_in_the_village.Client.FarmingVisualEffects;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -22,8 +23,12 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
+import tterrag1112.life_in_the_village.Village.Economy.EconomicBalance;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
+import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
 
 import java.util.*;
@@ -38,7 +43,7 @@ import java.util.stream.Collectors;
  *   <li>Deposit harvested goods in the farmhouse</li>
  *   <li>Replant farmland</li>
  *   <li>Purchase seeds from the market when short</li>
- *   <li>Coordinate farmhand roles via {@link FarmRoleManager}</li>
+ *   <li>Coordinate farmhand roles via {@link FarmRoleAssigner}</li>
  * </ul>
  *
  * <h3>Selling</h3>
@@ -159,7 +164,7 @@ public class FarmerGoal extends Goal {
         if (assignedPlots.isEmpty()) { goIdle(); return; }
 
         // Role-based task filtering
-        FarmRoleManager.FarmRole role = FarmRoleManager.getRole(entity);
+        FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
 
         toHarvest.clear();
         toReplant.clear();
@@ -208,16 +213,16 @@ public class FarmerGoal extends Goal {
         }
     }
 
-    private boolean canHarvest(FarmRoleManager.FarmRole role) {
-        return role == FarmRoleManager.FarmRole.GENERALIST
-                || role == FarmRoleManager.FarmRole.CROP_SPECIALIST
-                || role == FarmRoleManager.FarmRole.HARVESTER;
+    private boolean canHarvest(FarmRole role) {
+        return role == FarmRole.GENERALIST
+                || role == FarmRole.CROP_SPECIALIST
+                || role == FarmRole.HARVESTER;
     }
 
-    private boolean canPlant(FarmRoleManager.FarmRole role) {
-        return role == FarmRoleManager.FarmRole.GENERALIST
-                || role == FarmRoleManager.FarmRole.CROP_SPECIALIST
-                || role == FarmRoleManager.FarmRole.PLANTER;
+    private boolean canPlant(FarmRole role) {
+        return role == FarmRole.GENERALIST
+                || role == FarmRole.CROP_SPECIALIST
+                || role == FarmRole.PLANTER;
     }
 
     // =========================================================================
@@ -431,17 +436,48 @@ public class FarmerGoal extends Goal {
             int needed = Math.max(0, plotSize - currentSeeds);
             if (needed <= 0) continue;
 
-            long pricePerSeed = villageId != null
-                    ? VillageEconomy.getDynamicPrice(level, villageId, seedItem)
-                    : VillageEconomy.getBasePrice(seedItem);
-            CurrencyValue cost = CurrencyValue.of(pricePerSeed * needed);
+            long pricePerSeed = EconomicBalance.SEED_PRICES.getOrDefault(seedItem, 1L);
+            CurrencyValue cost = CurrencyValue.of((long) needed * pricePerSeed);
+            UUID buildingId = entity.getAssignedBuildingId().orElse(null);
+            if (buildingId == null) continue;
 
-            // Pay from personal inventory or fall back to farmhouse storage
-            boolean paid = entity.payWithBuilding(merchant, cost, level);
-            if (!paid) continue;
+            // Business purchase: farmhouse treasury pays, not personal wallet
+            BuildingEconomy economy = data.getOrCreateBuildingEconomy(buildingId);
+            if (!economy.canAfford(cost.toBronze())) continue;
 
+            if (villageId != null) {
+                var seller = VillageEconomy.findCheapestSeller(
+                        level, villageId, seedItem,
+                        entity.getX(), entity.getZ(),
+                        level.getGameTime()).orElse(null);
+
+                if (seller != null) {
+                    long actualCost = seller.listing().getPricePerItem() * needed;
+                    if (economy.canAfford(actualCost)) {
+                        boolean taken = BuildingStorageAccess.takeItem(
+                                level,
+                                data.getBuildingById(
+                                                seller.listing().getSellerBuildingId())
+                                        .orElse(null),
+                                seedItem, needed);
+                        if (taken) {
+                            // businessPay: building treasury → seller wallet + visual
+                            NpcEconomy.businessPay(
+                                    buildingId, seller.seller(),
+                                    CurrencyValue.of(actualCost), level, data);
+                            BuildingStorageAccess.storeItem(level, farmhouse,
+                                    new ItemStack(seedItem, needed));
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            // Fallback: spend from building treasury silently (no seller NPC found)
+            economy.withdraw(cost.toBronze());
             BuildingStorageAccess.storeItem(level, farmhouse,
                     new ItemStack(seedItem, needed));
+            data.setDirty();
         }
 
         phase = Phase.ANALYZING;

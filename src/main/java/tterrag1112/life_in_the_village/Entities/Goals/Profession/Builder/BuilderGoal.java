@@ -248,23 +248,7 @@ public class BuilderGoal extends Goal {
         SimpleContainer personal = entity.getPersonalInventory();
 
         // Check village has enough coins for upgrade cost
-        if (requirements.getCoinCost() > 0) {
-            CurrencyValue cost = CurrencyValue.ofSilver(
-                    requirements.getCoinCost());
-            if (workshopBuilding != null
-                    && !BuildingStorageAccess.canAfford(
-                    level, workshopBuilding, cost)) {
-                // Can't afford — wait
-                phase = Phase.IDLE;
-                idleCooldown = IDLE_COOLDOWN;
-                return;
-            }
-            // Deduct coins upfront
-            if (workshopBuilding != null) {
-                BuildingStorageAccess.deductCurrency(
-                        level, workshopBuilding, cost);
-            }
-        }
+
 
         // Rest of gather logic unchanged...
         Map<Item, Integer> needed = new HashMap<>(

@@ -3,14 +3,11 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
-import net.minecraft.tags.BlockTags;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.FurnaceBlock;
-
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.AbstractFurnaceBlock;
+import net.minecraft.world.level.block.AnvilBlock;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.AbstractWorkstationProductionGoal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -18,416 +15,278 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.BlacksmithRecipeData;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.BlacksmithRecipeRegistry;
+import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
 
 import java.util.*;
 
-public class BlacksmithGoal extends Goal {
+/**
+ * Migrated blacksmith goal using AbstractWorkstationProductionGoal.
+ *
+ * <h3>Two-recipe types</h3>
+ * Smelting (furnace): ore + coal → ingot.
+ * Crafting (anvil): ingots → tools / weapons / armor.
+ * The {@link #isSmeltRecipe} flag set in {@link #chooseRecipe} drives which
+ * station, fuel, and input source the rest of the run uses.
+ *
+ * <h3>Supply chain</h3>
+ * Ore is drawn from the village mine or stockpile. Ingots are stored in the
+ * blacksmith building and consumed there for crafting. Finished goods are
+ * deposited to the blacksmith building and sold at market.
+ */
+public class BlacksmithGoal extends AbstractWorkstationProductionGoal {
 
-    private enum Phase {
-        IDLE,
-        GATHERING_ORES,
-        WALKING_TO_FURNACE,
-        SMELTING,
-        WALKING_TO_ANVIL,
-        CRAFTING,
-        DEPOSITING
-    }
+    private static final int MAX_BATCH = 8;
 
-    private static final int IDLE_COOLDOWN = 600;
-    private static final int INTERACT_RANGE_SQ = 9;
+    /** Set in chooseRecipe; read by buildSteps, resolveInputSource, fuelPerBatch. */
+    private boolean isSmeltRecipe = false;
 
-    private final TownspersonMob entity;
-    private Phase phase = Phase.IDLE;
-    private int idleCooldown = 0;
-    private int workTimer = 0;
-    private int workDuration = 0;
+    public BlacksmithGoal(TownspersonMob entity) { super(entity); }
 
-    private Building blacksmith = null;
-    private BlockPos furnacePos = null;
-    private BlockPos anvilPos = null;
-
-    // What we're currently working on
-    private BlacksmithRecipeData.SmeltingRecipe currentSmeltRecipe = null;
-    private BlacksmithRecipeData.CraftingRecipe currentCraftRecipe = null;
-    private int currentBatchSize = 0;
-
-    public BlacksmithGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    // =========================================================================
+    // Abstract implementations
+    // =========================================================================
 
     @Override
-    public boolean canUse() {
-        if (!entity.isWorkTime()) return false;
-        if (entity.isWorkingBlocked()) return false;
-        if (idleCooldown > 0) { idleCooldown--; return false; }
-        if (!(entity.level() instanceof ServerLevel level)) return false;
+    protected BuildingType requiredBuildingType() { return BuildingType.BLACKSMITH; }
 
-        blacksmith = findBlacksmith(level);
-        if (blacksmith == null) return false;
-
-        furnacePos = findBlock(level, FurnaceBlock.class);
-        anvilPos   = findAnvilPos(level);
-
-        return true;
-    }
-
+    /**
+     * Prioritises smelt (build ingot stock) over craft.
+     * Uses productionTarget() to pick the specific item.
+     */
     @Override
-    public void start() { analyze(); }
+    protected Optional<ProductionRecipe> chooseRecipe(ServerLevel level,
+                                                      Building building) {
+        BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
+        Optional<Item> target = productionTarget(level, building);
 
-    @Override
-    public boolean canContinueToUse() {
-        if (!entity.isWorkTime()) return false;
-        return phase != Phase.IDLE;
-    }
+        // ── Try to fill the priority target ──────────────────────────────────
+        if (target.isPresent()) {
+            Item t = target.get();
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
-        switch (phase) {
-            case GATHERING_ORES    -> gatherOres(level);
-            case WALKING_TO_FURNACE -> walkTo(furnacePos,
-                    Phase.SMELTING);
-            case SMELTING          -> smelt(level);
-            case WALKING_TO_ANVIL  -> walkTo(anvilPos,
-                    Phase.CRAFTING);
-            case CRAFTING          -> craft(level);
-            case DEPOSITING        -> deposit(level);
-            default -> {}
-        }
-    }
-
-    private void analyze() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
-
-        BlacksmithRecipeData recipes =
-                BlacksmithRecipeRegistry.INSTANCE.getData();
-
-        // Check smelting first — always smelt ore before crafting
-        for (BlacksmithRecipeData.SmeltingRecipe recipe
-                : recipes.getSmeltingRecipes()) {
-            int available = countInBuildingAndInventory(
-                    level, recipe.input());
-            if (available > 0) {
-                currentSmeltRecipe = recipe;
-                currentBatchSize = available;
-                phase = Phase.GATHERING_ORES;
-                return;
+            for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
+                if (r.output() != t) continue;
+                if (countFromOreSource(level, r.input()) > 0) {
+                    isSmeltRecipe = true;
+                    return Optional.of(ProductionRecipe.of(
+                            r.input(), 1, r.output(), r.count(), r.ticks()));
+                }
             }
-        }
 
-        // Find crafting recipe with lowest stock in building
-        // so blacksmith produces what is most needed
-        BlacksmithRecipeData.CraftingRecipe bestRecipe = null;
-        int lowestStock = Integer.MAX_VALUE;
-
-        for (BlacksmithRecipeData.CraftingRecipe recipe
-                : recipes.getCraftingRecipes()) {
-            int available = countInBuildingAndInventory(
-                    level, recipe.input());
-            if (available < recipe.inputCount()) continue;
-
-            // Check current stock of output
-            int currentStock = blacksmith != null
-                    ? BuildingStorageAccess.countItem(
-                    level, blacksmith, recipe.output())
-                    : 0;
-
-            // Skip if already have plenty in stock
-            if (currentStock >= 4) continue;
-
-            if (currentStock < lowestStock) {
-                lowestStock = currentStock;
-                bestRecipe = recipe;
-            }
-        }
-
-        if (bestRecipe != null) {
-            currentCraftRecipe = bestRecipe;
-            currentBatchSize = countInBuildingAndInventory(
-                    level, bestRecipe.input()) / bestRecipe.inputCount();
-            phase = anvilPos != null
-                    ? Phase.WALKING_TO_ANVIL : Phase.IDLE;
-            return;
-        }
-
-        goIdle();
-    }
-
-    private void gatherOres(ServerLevel level) {
-        entity.setCurrentActivity("Gathering ore");
-
-        if (currentSmeltRecipe == null) { goIdle(); return; }
-
-        // Take ores from stockpile or mine
-        int taken = 0;
-        int toTake = Math.min(currentBatchSize, 8); // take up to 8 at a time
-
-        // Try stockpile first
-        Building stockpile = findBuilding(level,
-                BuildingType.STOCKPILE);
-        if (stockpile != null) {
-            if (BuildingStorageAccess.takeItem(level, stockpile,
-                    currentSmeltRecipe.input(), toTake)) {
-                taken = toTake;
-            }
-        }
-
-        // Try mine if stockpile didn't have enough
-        if (taken < toTake) {
-            Building mine = findBuilding(level, BuildingType.MINE);
-            if (mine != null) {
-                int remaining = toTake - taken;
-                if (BuildingStorageAccess.takeItem(level, mine,
-                        currentSmeltRecipe.input(), remaining)) {
-                    taken += remaining;
+            for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
+                if (r.output() != t) continue;
+                int avail = BuildingStorageAccess.countItem(level, building, r.input());
+                if (avail >= r.inputCount()) {
+                    isSmeltRecipe = false;
+                    return Optional.of(ProductionRecipe.of(
+                            r.input(), r.inputCount(), r.output(), r.count(), r.ticks()));
                 }
             }
         }
 
-        if (taken == 0) { goIdle(); return; }
-
-        entity.getPersonalInventory().addItem(
-                new ItemStack(currentSmeltRecipe.input(), taken));
-        currentBatchSize = taken;
-        phase = furnacePos != null
-                ? Phase.WALKING_TO_FURNACE : Phase.IDLE;
-    }
-
-    private void walkTo(BlockPos target, Phase nextPhase) {
-        if (target == null) { goIdle(); return; }
-
-        double distSq = entity.distanceToSqr(
-                target.getX(), target.getY(), target.getZ());
-
-        if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
-        } else {
-            entity.getNavigation().stop();
-            workTimer = 0;
-            workDuration = nextPhase == Phase.SMELTING && currentSmeltRecipe != null
-                    ? currentSmeltRecipe.ticks() * currentBatchSize
-                    : nextPhase == Phase.CRAFTING && currentCraftRecipe != null
-                    ? currentCraftRecipe.ticks()
-                    : 200;
-            phase = nextPhase;
-        }
-    }
-
-    private void smelt(ServerLevel level) {
-        entity.setCurrentActivity("Smelting " + currentSmeltRecipe.output());
-
-        workTimer++;
-
-        // Face furnace
-        if (furnacePos != null) {
-            entity.getLookControl().setLookAt(
-                    furnacePos.getX(), furnacePos.getY(), furnacePos.getZ());
-        }
-
-        // Play furnace sound periodically
-        if (workTimer % 40 == 0) {
-            level.playSound(null, entity.blockPosition(),
-                    SoundEvents.FURNACE_FIRE_CRACKLE,
-                    SoundSource.NEUTRAL, 0.5f, 1.0f);
-        }
-
-        if (workTimer >= workDuration) {
-            if (currentSmeltRecipe == null) { goIdle(); return; }
-
-            // Produce smelted output
-            int outputCount = currentBatchSize * currentSmeltRecipe.count();
-            entity.getPersonalInventory().addItem(
-                    new ItemStack(currentSmeltRecipe.output(), outputCount));
-
-            // Remove ores from inventory
-            removeFromInventory(currentSmeltRecipe.input(), currentBatchSize);
-
-
-
-            workTimer = 0;
-            currentSmeltRecipe = null;
-
-            // Check if we can now craft something
-            analyze();
-        }
-    }
-
-    private void craft(ServerLevel level) {
-        entity.setCurrentActivity("Crafting " + currentCraftRecipe.output());
-
-        workTimer++;
-
-        // Face anvil and swing hammer
-        if (anvilPos != null) {
-            entity.getLookControl().setLookAt(
-                    anvilPos.getX(), anvilPos.getY(), anvilPos.getZ());
-        }
-
-        if (workTimer % 15 == 0) {
-            entity.swing(InteractionHand.MAIN_HAND);
-            level.playSound(null, entity.blockPosition(),
-                    SoundEvents.ANVIL_USE,
-                    SoundSource.NEUTRAL, 0.5f,
-                    0.8f + entity.getRandom().nextFloat() * 0.4f);
-        }
-
-        if (workTimer >= workDuration) {
-            if (currentCraftRecipe == null) { goIdle(); return; }
-
-            // Produce crafted output
-            entity.getPersonalInventory().addItem(
-                    new ItemStack(currentCraftRecipe.output(),
-                            currentCraftRecipe.count()));
-
-            // Consume inputs
-            removeFromInventory(currentCraftRecipe.input(),
-                    currentCraftRecipe.inputCount());
-
-
-
-            workTimer = 0;
-
-            // Check if we can craft another batch
-            int remaining = countInInventory(currentCraftRecipe.input());
-            if (remaining >= currentCraftRecipe.inputCount()) {
-                workDuration = currentCraftRecipe.ticks();
-                // Continue crafting
-            } else {
-                currentCraftRecipe = null;
-                phase = Phase.DEPOSITING;
+        // ── Opportunistic: smelt any available ore ────────────────────────────
+        for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
+            int oreAvail  = countFromOreSource(level, r.input());
+            int ingotStock = BuildingStorageAccess.countItem(level, building, r.output());
+            int quota     = stockQuotas().getOrDefault(r.output(), 0);
+            if (oreAvail > 0 && ingotStock < quota) {
+                isSmeltRecipe = true;
+                return Optional.of(ProductionRecipe.of(
+                        r.input(), 1, r.output(), r.count(), r.ticks()));
             }
         }
-    }
 
-    private void deposit(ServerLevel level) {
-        entity.setCurrentActivity("Depositing goods");
-
-        if (blacksmith == null) { goIdle(); return; }
-
-        BlockPos target = blacksmith.getShape().getOrigin();
-        double distSq = entity.distanceToSqr(
-                target.getX(), target.getY(), target.getZ());
-
-        if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
-            return;
+        // ── Opportunistic: craft with available ingots ─────────────────────────
+        BlacksmithRecipeData.CraftingRecipe best = null;
+        double lowestRatio = Double.MAX_VALUE;
+        for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
+            int avail = BuildingStorageAccess.countItem(level, building, r.input());
+            if (avail < r.inputCount()) continue;
+            int stock = BuildingStorageAccess.countItem(level, building, r.output());
+            int quota = stockQuotas().getOrDefault(r.output(), 0);
+            if (stock >= quota) continue;
+            double ratio = quota == 0 ? 0.0 : (double) stock / quota;
+            if (ratio < lowestRatio) { lowestRatio = ratio; best = r; }
+        }
+        if (best != null) {
+            isSmeltRecipe = false;
+            return Optional.of(ProductionRecipe.of(
+                    best.input(), best.inputCount(), best.output(), best.count(), best.ticks()));
         }
 
-        entity.getNavigation().stop();
-        var inv = entity.getPersonalInventory();
-
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack stack = inv.getItem(i);
-            if (stack.isEmpty()) continue;
-            boolean stored = BuildingStorageAccess.storeItem(
-                    level, blacksmith, stack.copy());
-            if (stored) inv.setItem(i, ItemStack.EMPTY);
-        }
-
-        entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
-        goIdle();
+        return Optional.empty();
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
-        entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
-        goIdle();
+    protected int calculateBatchSize(ServerLevel level, ProductionRecipe recipe) {
+        Building source = isSmeltRecipe ? findOreSource(level) : workBuilding;
+        if (source == null) return 0;
+        int available = recipe.inputs().entrySet().stream()
+                .mapToInt(e -> BuildingStorageAccess.countItem(level, source, e.getKey())
+                        / e.getValue())
+                .min().orElse(0);
+        return Math.min(available, MAX_BATCH);
     }
 
-    private void goIdle() {
-        entity.clearCurrentActivity();
+    // =========================================================================
+    // Optional overrides
+    // =========================================================================
 
-        phase = Phase.IDLE;
-        idleCooldown = IDLE_COOLDOWN;
-        workTimer = 0;
-        currentSmeltRecipe = null;
-        currentCraftRecipe = null;
-        entity.getNavigation().stop();
+    /**
+     * Smelting: ore + fuel come from mine / stockpile.
+     * Crafting: ingots come from the blacksmith building itself.
+     */
+    @Override
+    protected Building resolveInputSource(ServerLevel level, Building workBuilding) {
+        return isSmeltRecipe ? findOreSource(level) : workBuilding;
     }
 
-    // --- Helpers ---
-
-    private Building findBlacksmith(ServerLevel level) {
-        return entity.getAssignedBuildingId()
-                .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
-                .filter(b -> b.getType() == BuildingType.BLACKSMITH)
-                .orElse(null);
+    /** Coal is needed only for smelting steps. */
+    @Override
+    protected Map<Item, Integer> fuelPerBatch(ProductionRecipe recipe) {
+        return isSmeltRecipe ? Map.of(Items.COAL, 2) : Map.of();
     }
 
-    private Building findBuilding(ServerLevel level,
-                                  BuildingType type) {
+    /**
+     * Builds a furnace step (smelt) or anvil step (craft) based on
+     * the {@link #isSmeltRecipe} flag. Returns empty if the required
+     * block is not present in the building.
+     */
+    @Override
+    protected List<ProductionStep> buildSteps(ServerLevel level, Building building,
+                                              ProductionRecipe recipe, int batchSize) {
+        int scaledTicks = Math.max(20,
+                (int)(recipe.ticks() * batchSize * productionSpeedMultiplier()));
+
+        Map<Item, Integer> consumes = new LinkedHashMap<>();
+        recipe.inputs().forEach((item, count) -> consumes.put(item, count * batchSize));
+
+        if (isSmeltRecipe) {
+            Optional<BlockPos> furnacePos = findBlock(level, building,
+                    b -> b instanceof AbstractFurnaceBlock);
+            if (furnacePos.isEmpty()) return List.of();
+
+            // Fuel consumed at the furnace
+            consumes.merge(Items.COAL, 2 * batchSize, Integer::sum);
+
+            Map<Item, Integer> produces = Map.of(
+                    recipe.output(), recipe.outputCount() * batchSize);
+
+            return List.of(new ProductionStep(
+                    furnacePos.get(), scaledTicks,
+                    SoundEvents.FURNACE_FIRE_CRACKLE, Items.AIR,
+                    consumes, produces));
+        } else {
+            Optional<BlockPos> anvilPos = findBlock(level, building,
+                    b -> b instanceof AnvilBlock);
+            if (anvilPos.isEmpty()) return List.of();
+
+            Map<Item, Integer> produces = Map.of(
+                    recipe.output(), recipe.outputCount() * batchSize);
+
+            return List.of(new ProductionStep(
+                    anvilPos.get(), scaledTicks,
+                    SoundEvents.ANVIL_USE, Items.IRON_AXE,
+                    consumes, produces));
+        }
+    }
+
+    @Override
+    protected Map<Item, Integer> stockQuotas() {
+        return Map.ofEntries(
+                Map.entry(Items.IRON_INGOT,       32),
+                Map.entry(Items.GOLD_INGOT,        8),
+                Map.entry(Items.COPPER_INGOT,     16),
+                Map.entry(Items.IRON_SWORD,        4),
+                Map.entry(Items.IRON_PICKAXE,      4),
+                Map.entry(Items.IRON_AXE,          4),
+                Map.entry(Items.IRON_SHOVEL,       2),
+                Map.entry(Items.IRON_HOE,          2),
+                Map.entry(Items.IRON_HELMET,       2),
+                Map.entry(Items.IRON_CHESTPLATE,   2),
+                Map.entry(Items.IRON_LEGGINGS,     2),
+                Map.entry(Items.IRON_BOOTS,        2),
+                Map.entry(Items.GOLDEN_SWORD,      1),
+                Map.entry(Items.GOLDEN_HELMET,     1));
+    }
+
+    @Override
+    protected List<Item> sellableOutputs() {
+        BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
+        Set<Item> items = new LinkedHashSet<>();
+        data.getCraftingRecipes().forEach(r -> items.add(r.output()));
+        data.getSmeltingRecipes().forEach(r -> items.add(r.output()));
+        return List.copyOf(items);
+    }
+
+    @Override
+    protected boolean canProduceItem(Item item) {
+        BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
+        return data.getSmeltingRecipes().stream().anyMatch(r -> r.output() == item)
+                || data.getCraftingRecipes().stream().anyMatch(r -> r.output() == item);
+    }
+
+    @Override
+    protected Map<Item, Integer> resourcesToBuy(ServerLevel level, Building building) {
+        BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
+        Map<Item, Integer> toBuy = new LinkedHashMap<>();
+
+        for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
+            int ingotStock = BuildingStorageAccess.countItem(level, building, r.output());
+            int quota = stockQuotas().getOrDefault(r.output(), 0);
+            if (ingotStock >= quota) continue;
+
+            int oreNeeded = (quota - ingotStock) / Math.max(1, r.count());
+            Building oreSource = findOreSource(level);
+            int oreAvail = oreSource != null
+                    ? BuildingStorageAccess.countItem(level, oreSource, r.input()) : 0;
+            if (oreAvail < oreNeeded) toBuy.put(r.input(), oreNeeded - oreAvail);
+        }
+        return toBuy;
+    }
+
+    @Override
+    protected void onProductionComplete(ServerLevel level,
+                                        ProductionRecipe recipe, int batchSize) {
+        if (workBuilding == null) return;
+        WorkplaceAssignmentManager.onWorkplaceProduction(
+                level, workBuilding.getId(),
+                net.minecraft.core.registries.BuiltInRegistries.ITEM
+                        .getKey(recipe.output()).toString(),
+                batchSize * recipe.outputCount());
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    /** Count of the given item in the mine or stockpile, whichever has more. */
+    private int countFromOreSource(ServerLevel level, Item item) {
+        Building source = findOreSource(level);
+        return source != null ? BuildingStorageAccess.countItem(level, source, item) : 0;
+    }
+
+    /** Find the village mine; fall back to the stockpile. */
+    private Building findOreSource(ServerLevel level) {
+        VillageSavedData data = VillageSavedData.get(level);
         return entity.getAssignedVillageName()
-                .flatMap(name -> VillageSavedData.get(level).getVillageByName(name))
-                .flatMap(village -> village.getBuildingIds().stream()
-                        .map(id -> VillageSavedData.get(level).getBuildingById(id))
-                        .filter(Optional::isPresent)
-                        .map(Optional::get)
-                        .filter(b -> b.getType() == type)
-                        .findFirst())
+                .flatMap(data::getVillageByName)
+                .flatMap(village -> {
+                    // Prefer mine
+                    Optional<Building> mine = village.getBuildingIds().stream()
+                            .map(data::getBuildingById)
+                            .filter(Optional::isPresent).map(Optional::get)
+                            .filter(b -> b.getType() == BuildingType.MINE)
+                            .findFirst();
+                    if (mine.isPresent()) return mine;
+                    // Fall back to stockpile
+                    return village.getBuildingIds().stream()
+                            .map(data::getBuildingById)
+                            .filter(Optional::isPresent).map(Optional::get)
+                            .filter(b -> b.getType() == BuildingType.STOCKPILE)
+                            .findFirst();
+                })
                 .orElse(null);
-    }
-
-    private <T> BlockPos findBlock(ServerLevel level, Class<T> blockClass) {
-        if (blacksmith == null) return null;
-        BlockPos min = blacksmith.getShape().getMin();
-        BlockPos max = blacksmith.getShape().getMax();
-
-        for (BlockPos pos : BlockPos.betweenClosed(min, max)) {
-            if (blockClass.isInstance(level.getBlockState(pos).getBlock())) {
-                return pos.immutable();
-            }
-        }
-        return null;
-    }
-
-    private BlockPos findAnvilPos(ServerLevel level) {
-        if (blacksmith == null) return null;
-        BlockPos min = blacksmith.getShape().getMin();
-        BlockPos max = blacksmith.getShape().getMax();
-
-        for (BlockPos pos : BlockPos.betweenClosed(min, max)) {
-            if (level.getBlockState(pos).is(BlockTags.ANVIL)) {
-                return pos.immutable();
-            }
-        }
-        return null;
-    }
-
-    private int countInBuildingAndInventory(ServerLevel level, Item item) {
-        return countInInventory(item)
-                + (blacksmith != null
-                ? BuildingStorageAccess.countItem(level, blacksmith, item)
-                : 0);
-    }
-
-    private int countInInventory(Item item) {
-        var inv = entity.getPersonalInventory();
-        int total = 0;
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack stack = inv.getItem(i);
-            if (stack.is(item)) total += stack.getCount();
-        }
-        return total;
-    }
-
-    private void removeFromInventory(Item item, int count) {
-        var inv = entity.getPersonalInventory();
-        int remaining = count;
-        for (int i = 0; i < inv.getContainerSize() && remaining > 0; i++) {
-            ItemStack stack = inv.getItem(i);
-            if (stack.is(item)) {
-                int take = Math.min(remaining, stack.getCount());
-                stack.shrink(take);
-                remaining -= take;
-                if (stack.isEmpty()) inv.setItem(i, ItemStack.EMPTY);
-            }
-        }
     }
 }

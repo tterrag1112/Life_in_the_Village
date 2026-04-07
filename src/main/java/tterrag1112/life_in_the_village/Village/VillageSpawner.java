@@ -21,6 +21,9 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcStartingWealth;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MerchantStartingStock;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Planning.*;
 import tterrag1112.life_in_the_village.Village.Simulation.VillageSimEngine;
@@ -218,6 +221,9 @@ public class VillageSpawner {
         // ── Phase 4: Spawn NPCs ───────────────────────────────────────────────
         spawnNpcs(level, typeData, village, data, placedBuildingsAll,
                 squareCenter, rng);
+
+        // ── Phase 4b: Merchant stall setup ───────────────────────────────────────
+        setupMerchantStalls(level, village, data, placedBuildingsAll, rng);
 
         // ── Phase 5: Decorate ─────────────────────────────────────────────────
         VillageDecorator.decorateVillage(
@@ -419,9 +425,8 @@ public class VillageSpawner {
                             ? assigned.getId() : null);
                 }
 
-                npc.receive(profession == Profession.MERCHANT
-                        ? CurrencyValue.ofGold(2)
-                        : CurrencyValue.ofSilver(5));
+                npc.receive(NpcStartingWealth.forProfession(profession, rng));
+
 
                 level.addFreshEntity(npc);
                 npcIdx++;
@@ -533,5 +538,57 @@ public class VillageSpawner {
             if (Math.abs(y - centreY) > 6) return false;
         }
         return true;
+    }
+    /**
+     * For each merchant NPC, claims the first free stall in their assigned
+     * market building at no cost, then stocks it based on village composition.
+     */
+    private static void setupMerchantStalls(ServerLevel level,
+                                            Village village,
+                                            VillageSavedData data,
+                                            Map<BuildingType, List<Building>> placedBuildingsAll,
+                                            Random rng) {
+
+        // Collect building types present for stock calculation
+        Set<BuildingType> presentTypes = placedBuildingsAll.keySet();
+
+        // Find all merchant NPCs in the village
+        net.minecraft.world.phys.AABB villageBounds = village.getBounds(data)
+                .map(b -> b.inflate(32))
+                .orElse(null);
+        if (villageBounds == null) return;
+
+        List<TownspersonMob> merchants = level.getEntitiesOfClass(
+                TownspersonMob.class, villageBounds,
+                mob -> mob.getProfession() == Profession.MERCHANT
+                        && mob.getAssignedVillageName()
+                        .map(n -> n.equals(village.getName()))
+                        .orElse(false));
+
+        for (TownspersonMob merchant : merchants) {
+            Building market = merchant.getAssignedBuildingId()
+                    .flatMap(data::getBuildingById)
+                    .filter(b -> b.getType() == BuildingType.MARKET)
+                    .orElse(null);
+            if (market == null) continue;
+
+            // Claim the next free stall at no cost (merchants get one free)
+            MarketStallPlacer.claimSlot(
+                            level, market,
+                            merchant.getUUID(),
+                            tterrag1112.life_in_the_village.Village.Economy.Market
+                                    .MarketStall.OwnerType.NPC,
+                            Long.MAX_VALUE, // purchased — never expires
+                            data)
+                    .ifPresent(stall -> {
+                        data.addMarketStall(stall);
+                        MarketStallPlacer.assignGoalIfNpc(level, stall);
+
+                        System.out.println("VillageSpawner: merchant "
+                                + merchant.getNpcName()
+                                + " claimed stall " + stall.getSlotIndex()
+                                + " in " + market.getName());
+                    });
+        }
     }
 }

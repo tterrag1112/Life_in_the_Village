@@ -411,6 +411,11 @@ public class VillageTypeDatagen implements DataProvider {
         b.add(building("MINE",        "mine/level_1"));
         b.add(building("BLACKSMITH",  "blacksmith/level_1"));
         b.add(building("INN",         "inn/level_1"));
+        b.add(building("CARPENTRY", "carpentry/level_1"));
+        b.add(building("STONEMASON", "blacksmith/level_1"));
+        b.add(building("WEAVER", "carpentry/level_1"));
+        b.add(building("CANDLEMAKER", "carpentry/level_1"));
+        b.add(building("MARKET", "market/level_1"));
         json.add("starter_buildings", b);
 
         JsonArray n = new JsonArray();
@@ -447,8 +452,8 @@ public class VillageTypeDatagen implements DataProvider {
         JsonArray b = new JsonArray();
         b.add(building("TOWN_HALL",  "town_hall/level_1"));
         b.add(building("STOCKPILE",  "stockpile/level_1"));
-        b.add(buildingN("FARMHOUSE", "farmhouse/level_1", 2));
-        b.add(building("HOUSE",      "house/level_1"));
+        b.add(buildingRange("FARMHOUSE", "farmhouse/level_1", 2, 4));
+        b.add(buildingN("HOUSE",      "house/level_1", 2));
         b.add(building("MARKET",     "market/level_1"));
         json.add("starter_buildings", b);
 

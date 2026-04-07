@@ -9,6 +9,8 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcWallet;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 
@@ -351,27 +353,11 @@ public class TradeRouteManager {
                                         int cost,
                                         ServerLevel level,
                                         VillageSavedData data) {
-        // Find the stockpile building for this village
+        // Road maintenance is a government expense — paid from the village treasury
         return data.getVillageById(villageId)
-                .flatMap(village -> village.getBuildingIds()
-                        .stream()
-                        .map(data::getBuildingById)
-                        .filter(Optional::isPresent)
-                        .map(Optional::get)
-                        .filter(b -> b.getType()
-                                == BuildingType.STOCKPILE)
-                        .findFirst())
-                .map(stockpile -> {
-                    // Check if village can afford upkeep
-                    CurrencyValue upkeep =
-                            CurrencyValue.ofSilver(cost);
-                    if (BuildingStorageAccess.canAfford(
-                            level, stockpile, upkeep)) {
-                        BuildingStorageAccess.deductCurrency(
-                                level, stockpile, upkeep);
-                        return true;
-                    }
-                    return false;
+                .map(village -> {
+                    long upkeepBronze = CurrencyValue.ofSilver(cost).toBronze();
+                    return village.withdrawFromTreasury(upkeepBronze);
                 })
                 .orElse(false);
     }

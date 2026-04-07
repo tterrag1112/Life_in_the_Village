@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Economy.Trade;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -22,57 +23,82 @@ public class CaravanGoodsSelector {
     private static final float TAKE_FRACTION   = 0.25f;
 
     /**
-     * Selects goods for a caravan based on origin surplus
-     * weighted toward destination needs.
+     * Selects goods from the origin village's surplus that the destination
+     * village actually needs (based on its VillageNeed snapshots).
+     *
+     * Items the destination needs most (CRITICAL / LOW) are picked first.
+     * If the destination has no computed needs yet, falls back to raw surplus.
      */
-    public static List<ItemStack> selectGoods(
-            ServerLevel level,
-            UUID originId, UUID destId,
-            VillageSavedData data) {
-
-        Village origin = data.getVillageById(originId)
-                .orElse(null);
-        Village dest   = data.getVillageById(destId)
-                .orElse(null);
-        if (origin == null || dest == null) {
-            return fallbackGoods();
-        }
-
-        // Get origin surpluses
-        Map<net.minecraft.world.item.Item, Integer> surpluses =
-                getVillageSurpluses(level, origin, data);
-
-        // Get destination needs
-        Set<net.minecraft.world.item.Item> needs =
-                getVillageNeeds(level, dest, data);
-
+    public static List<ItemStack> selectGoods(ServerLevel level,
+                                              Village origin,
+                                              Village destination,
+                                              VillageSavedData data) {
+        Map<Item, Integer> surpluses = getVillageSurpluses(level, origin, data);
         if (surpluses.isEmpty()) return fallbackGoods();
 
-        // Sort surpluses — items the destination needs come first
-        List<Map.Entry<net.minecraft.world.item.Item,
-                Integer>> sorted = surpluses.entrySet()
-                .stream()
-                .sorted((a, b) -> {
-                    boolean aNeed = needs.contains(a.getKey());
-                    boolean bNeed = needs.contains(b.getKey());
-                    if (aNeed && !bNeed) return -1;
-                    if (!aNeed && bNeed) return 1;
-                    return b.getValue() - a.getValue();
-                })
-                .limit(MAX_GOODS_TYPES)
-                .collect(Collectors.toList());
+        // Get destination's need breakdown across all categories
+        Map<Item, Integer> destDeficits = buildDestinationDeficits(destination);
 
-        // Build ItemStack list
         List<ItemStack> goods = new ArrayList<>();
-        for (var entry : sorted) {
-            int takeAmount = Math.max(1,
-                    (int)(entry.getValue() * TAKE_FRACTION));
-            takeAmount = Math.min(takeAmount, 64);
-            goods.add(new ItemStack(
-                    entry.getKey(), takeAmount));
+        int slotsRemaining = MAX_GOODS_TYPES; // keep existing constant
+
+        if (!destDeficits.isEmpty()) {
+            // Priority pass: items destination specifically needs
+            List<Item> neededItems = destDeficits.entrySet().stream()
+                    .filter(e -> surpluses.containsKey(e.getKey()))
+                    // Sort by severity: highest deficit first
+                    .sorted((a, b) -> b.getValue() - a.getValue())
+                    .map(Map.Entry::getKey)
+                    .collect(java.util.stream.Collectors.toList());
+
+            for (Item item : neededItems) {
+                if (slotsRemaining <= 0) break;
+                int available = surpluses.get(item);
+                int needed    = destDeficits.get(item);
+                int qty       = Math.min(available, Math.min(needed, 64));
+                if (qty <= 0) continue;
+                goods.add(new ItemStack(item, qty));
+                slotsRemaining--;
+            }
+        }
+
+        // Fill remaining slots with any surplus (original behaviour)
+        if (slotsRemaining > 0) {
+            for (Map.Entry<Item, Integer> e : surpluses.entrySet()) {
+                if (slotsRemaining <= 0) break;
+                // Skip items already included
+                if (goods.stream().anyMatch(s -> s.is(e.getKey()))) continue;
+                int qty = Math.min(e.getValue(), 64);
+                if (qty <= 0) continue;
+                goods.add(new ItemStack(e.getKey(), qty));
+                slotsRemaining--;
+            }
         }
 
         return goods.isEmpty() ? fallbackGoods() : goods;
+    }
+
+    /**
+     * Builds a map of item → deficit quantity from the destination village's
+     * computed needs. Reads itemBreakdown from each VillageNeed category.
+     */
+    private static Map<Item, Integer> buildDestinationDeficits(Village destination) {
+        Map<Item, Integer> deficits = new java.util.HashMap<>();
+        if (destination == null || destination.getNeeds() == null) return deficits;
+
+        for (var need : destination.getNeeds().values()) {
+            // Only pull from categories that are below SATISFIED
+            if (need.getLevel() == tterrag1112.life_in_the_village.Village.Needs.NeedLevel.SATISFIED
+                    || need.getLevel() == tterrag1112.life_in_the_village.Village.Needs.NeedLevel.SURPLUS) {
+                continue;
+            }
+            need.getItemBreakdown().forEach((item, deficit) -> {
+                if (deficit > 0) {
+                    deficits.merge(item, deficit, Integer::sum);
+                }
+            });
+        }
+        return deficits;
     }
 
     private static Map<net.minecraft.world.item.Item, Integer>

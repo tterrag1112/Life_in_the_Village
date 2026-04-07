@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 
 import java.util.*;
@@ -131,49 +132,34 @@ public class BuyFromNpcGoal extends Goal {
         if (target == null) { goIdle(); return; }
 
         TownspersonMob seller = target.seller();
-        if (seller == null || !seller.isAlive()) {
-            goIdle();
-            return;
-        }
-        entity.setCurrentActivity("Buying " + itemToBuy.get().getName() + "from " + seller.getNpcName());
+        if (seller == null || !seller.isAlive()) { goIdle(); return; }
 
+        entity.setCurrentActivity("Buying from " + seller.getNpcName());
 
         Item item = itemToBuy.get();
-        int qty = Math.min(quantity.get(),
-                target.listing().getQuantity());
+        int qty   = Math.min(quantity.get(), target.listing().getQuantity());
         long totalCost = target.listing().getPricePerItem() * qty;
         CurrencyValue cost = CurrencyValue.of(totalCost);
 
-        if (!entity.canAfford(cost)) { goIdle(); return; }
+        if (!entity.getWallet().canAfford(cost)) { goIdle(); return; }
 
-        // Take item from seller's building storage
+        // Take item from seller's building storage first, then personal inventory
         Building sellerBuilding = VillageSavedData.get(level)
                 .getBuildingById(target.listing().getSellerBuildingId())
                 .orElse(null);
 
         boolean taken = sellerBuilding != null
-                && BuildingStorageAccess.takeItem(
-                level, sellerBuilding, item, qty);
-
+                && BuildingStorageAccess.takeItem(level, sellerBuilding, item, qty);
         if (!taken) {
-            // Try seller's personal inventory
             taken = takeFromInventory(seller, item, qty);
         }
-
         if (!taken) { goIdle(); return; }
 
-        // Pay seller
-        if (entity.level() instanceof ServerLevel sl) {
-            entity.payWithBuilding(seller, cost, sl);
-        }
-        // Add to buyer's inventory or building
+        // NpcEconomy.npcPay: deducts from buyer wallet, credits seller wallet,
+        // fires visual on both
+        NpcEconomy.npcPay(entity, seller, cost, level);
+
         addToInventoryOrBuilding(level, item, qty);
-
-        System.out.println(entity.getNpcName() + " bought " + qty
-                + "x " + item.getDescriptionId()
-                + " from " + seller.getNpcName()
-                + " for " + cost);
-
         goIdle();
     }
 

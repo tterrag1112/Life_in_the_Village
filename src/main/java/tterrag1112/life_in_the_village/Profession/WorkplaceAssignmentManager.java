@@ -670,4 +670,77 @@ public class WorkplaceAssignmentManager {
             return FarmerTaskType.values()[new Random().nextInt(FarmerTaskType.values().length)];
         }
     }
+    // =========================================================================
+// NPC production notification
+// =========================================================================
+
+    /**
+     * Called when an NPC at a building produces crafted items (e.g. carpenter
+     * finishes a batch). For each online player assigned to that building:
+     * <ul>
+     *   <li>Advances any active QUOTA assignment whose target item matches</li>
+     *   <li>Awards a small amount of passive profession XP</li>
+     * </ul>
+     * This is distinct from {@link #onWorkplaceSale} (which fires on a market
+     * transaction) — production and sale are separate events. A carpenter
+     * produces planks, then later sells them; both events reward the player.
+     *
+     * @param level      server level
+     * @param buildingId UUID of the building where production occurred
+     * @param itemId     registry ID of the produced item (e.g. "minecraft:oak_planks")
+     * @param count      number of items produced in this batch
+     */
+    public static void onWorkplaceProduction(ServerLevel level,
+                                             UUID buildingId,
+                                             String itemId,
+                                             int count) {
+        if (count <= 0 || itemId == null || itemId.isEmpty()) return;
+
+        // Passive XP scales with output but is smaller than a full sale reward
+        int passiveXp = Math.max(1, count / 4);
+
+        level.getServer().getPlayerList().getPlayers().forEach(player -> {
+            PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
+            boolean dirty = false;
+
+            for (Map.Entry<PlayerProfession, PlayerWorkplace.WorkplaceEntry> e
+                    : profData.getAllWorkplaces().entrySet()) {
+
+                PlayerWorkplace.WorkplaceEntry entry = e.getValue();
+                if (!entry.buildingId().equals(buildingId)) continue;
+
+                PlayerProfession profession = e.getKey();
+
+                // Advance quota assignment if the produced item matches
+                PlayerWorkplace.WorkAssignment assignment = entry.currentAssignment();
+                if (assignment != null
+                        && assignment.type() == PlayerWorkplace.AssignmentType.QUOTA
+                        && assignment.targetItem().equals(itemId)
+                        && !assignment.isComplete()) {
+
+                    int newCount = Math.min(
+                            assignment.currentCount() + count,
+                            assignment.targetCount());
+
+                    profData.setWorkplace(profession,
+                            entry.withAssignment(assignment.withProgress(newCount)));
+
+                    player.displayClientMessage(Component.literal(
+                            "Quota progress: " + newCount + "/" + assignment.targetCount()
+                                    + " " + itemId.replace("minecraft:", "")
+                                    .replace("_", " ")), true);
+                    dirty = true;
+                }
+
+                // Award passive XP regardless of assignment type
+                UUID villageId = entry.villageId();
+                ProfessionEvents.onJobPostingCompleted(
+                        player, profession, passiveXp, villageId);
+            }
+
+            if (dirty) {
+                player.setData(ModData.PROFESSION_DATA, profData);
+            }
+        });
+    }
 }

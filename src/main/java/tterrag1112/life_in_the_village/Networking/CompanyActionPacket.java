@@ -229,16 +229,14 @@ public record CompanyActionPacket(
                     long amount = pkt.longParam();
                     if (amount <= 0) return;
 
-                    SimpleContainer wallet = playerWallet(player);
                     CurrencyValue cost = CurrencyValue.of(amount);
 
-                    if (!CoinHelper.canAfford(wallet, cost)) {
+                    if (!CoinHelper.playerCanAfford(player, cost)) {
                         fail(player, "Insufficient funds.");
                         return;
                     }
 
-                    CoinHelper.spend(wallet, cost);
-                    syncWallet(player, wallet);
+                    CoinHelper.playerPay(player, cost);
                     c.depositBronze(amount);
                     cdata.markDirty();
 

@@ -1,37 +1,62 @@
-// src/main/java/tterrag1112/life_in_the_village/Village/Economy/Production/ProductionRecipe.java
 package tterrag1112.life_in_the_village.Village.Economy.Resources;
 
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+
+import java.util.List;
+import java.util.Map;
 
 /**
- * A generic production recipe: consume {@code inputCount} of {@code input}
- * to produce {@code outputCount} of {@code output}, taking {@code ticks}
- * of work time per unit.
+ * Describes what an NPC produces in one production run.
  *
- * <p>This replaces the scattered recipe record types ({@code SmeltingRecipe},
- * {@code CraftingRecipe}, {@code CraftingRecipeEntry}) used by individual
- * profession goals. New professions should use this record directly.</p>
+ * <h3>Inputs</h3>
+ * A map of item → count-per-batch-unit supports multi-ingredient recipes
+ * (e.g. fletcher: sticks + flint + feather). Single-ingredient professions
+ * use the {@link #of} factory methods.
  *
- * <h3>Batching</h3>
- * A batch of size {@code N} consumes {@code N × inputCount} of input and
- * produces {@code N × outputCount} of output, taking {@code N × ticks}
- * total work time.
+ * <h3>Byproducts</h3>
+ * Fixed additional outputs produced once per production run regardless of
+ * batch size (e.g. bone meal left over from tanning, empty bottles from
+ * brewing). These are deposited alongside the primary output.
+ *
+ * <h3>Ticks</h3>
+ * Base ticks per-batch-unit BEFORE the {@code productionSpeedMultiplier}
+ * is applied. {@code buildSteps} in the goal is responsible for scaling.
  */
 public record ProductionRecipe(
-        Item input,
-        int inputCount,
-        Item output,
-        int outputCount,
-        int ticks
+        Map<Item, Integer> inputs,       // per-batch-unit
+        Item               output,
+        int                outputCount,  // per-batch-unit
+        int                ticks,        // per-batch-unit, unscaled
+        List<ItemStack>    byproducts    // fixed per production run
 ) {
-    /** Convenience: 1 input → 1 output in 40 ticks. */
-    public static ProductionRecipe simple(Item input, Item output) {
-        return new ProductionRecipe(input, 1, output, 1, 40);
+    // ── Convenience factories ─────────────────────────────────────────────
+
+    /** Single input, no byproducts. */
+    public static ProductionRecipe of(Item input, int inputCount,
+                                      Item output, int outputCount, int ticks) {
+        return new ProductionRecipe(
+                Map.of(input, inputCount), output, outputCount, ticks, List.of());
     }
 
-    /** Convenience: N inputs → M outputs in 40 ticks. */
+    /** Single input, with byproducts. */
     public static ProductionRecipe of(Item input, int inputCount,
-                                      Item output, int outputCount) {
-        return new ProductionRecipe(input, inputCount, output, outputCount, 40);
+                                      Item output, int outputCount, int ticks,
+                                      List<ItemStack> byproducts) {
+        return new ProductionRecipe(
+                Map.of(input, inputCount), output, outputCount, ticks, byproducts);
+    }
+
+    /** Multiple inputs, no byproducts. */
+    public static ProductionRecipe of(Map<Item, Integer> inputs,
+                                      Item output, int outputCount, int ticks) {
+        return new ProductionRecipe(inputs, output, outputCount, ticks, List.of());
+    }
+
+    /** Multiple inputs, with byproducts. */
+    public static ProductionRecipe of(Map<Item, Integer> inputs,
+                                      Item output, int outputCount, int ticks,
+                                      List<ItemStack> byproducts) {
+        return new ProductionRecipe(inputs, output, outputCount, ticks, byproducts);
     }
 }

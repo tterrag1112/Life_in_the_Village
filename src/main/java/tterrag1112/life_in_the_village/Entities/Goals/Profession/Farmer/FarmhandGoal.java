@@ -14,6 +14,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -76,12 +77,12 @@ public class FarmhandGoal extends Goal {
         }
 
         // Check role - only crop workers should use this goal
-        FarmRoleManager.FarmRole role = FarmRoleManager.getRole(entity);
+        FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
 
-        if (role == FarmRoleManager.FarmRole.ANIMAL_SPECIALIST ||
-                role == FarmRoleManager.FarmRole.ANIMAL_TENDER ||
-                role == FarmRoleManager.FarmRole.MARKET_SELLER ||
-                role == FarmRoleManager.FarmRole.FERTILIZER) {
+        if (role == FarmRole.ANIMAL_SPECIALIST ||
+                role == FarmRole.ANIMAL_TENDER ||
+                role == FarmRole.MARKET_SELLER ||
+                role == FarmRole.FERTILIZER) {
             return false; // These roles use different goals
         }
 
@@ -140,7 +141,7 @@ public class FarmhandGoal extends Goal {
         }
 
         // Get role to determine what tasks we can do
-        FarmRoleManager.FarmRole role = FarmRoleManager.getRole(entity);
+        FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
 
         // Clear task lists
         toHarvest.clear();
@@ -182,16 +183,16 @@ public class FarmhandGoal extends Goal {
         goIdle();
     }
 
-    private boolean canHarvest(FarmRoleManager.FarmRole role) {
-        return role == FarmRoleManager.FarmRole.GENERALIST ||
-                role == FarmRoleManager.FarmRole.CROP_SPECIALIST ||
-                role == FarmRoleManager.FarmRole.HARVESTER;
+    private boolean canHarvest(FarmRole role) {
+        return role == FarmRole.GENERALIST ||
+                role == FarmRole.CROP_SPECIALIST ||
+                role == FarmRole.HARVESTER;
     }
 
-    private boolean canPlant(FarmRoleManager.FarmRole role) {
-        return role == FarmRoleManager.FarmRole.GENERALIST ||
-                role == FarmRoleManager.FarmRole.CROP_SPECIALIST ||
-                role == FarmRoleManager.FarmRole.PLANTER;
+    private boolean canPlant(FarmRole role) {
+        return role == FarmRole.GENERALIST ||
+                role == FarmRole.CROP_SPECIALIST ||
+                role == FarmRole.PLANTER;
     }
 
     // =========================================================================

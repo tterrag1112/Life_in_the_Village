@@ -91,6 +91,9 @@ public final class TickSubsystemRegistry {
         // ── Road weathering (once per day, staggered) ────────────────────────
         register(new RoadWeatheringSystem());
 
+        register(new WanderingTraderTickSystem());
+
+
         LOGGER.info("Registered {} tick subsystems", SYSTEMS.size());
     }
 

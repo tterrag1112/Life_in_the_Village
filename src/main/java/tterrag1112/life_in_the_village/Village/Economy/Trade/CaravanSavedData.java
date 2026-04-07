@@ -18,6 +18,8 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -384,6 +386,9 @@ public class CaravanSavedData extends SavedData {
                 efficiency,
                 villageData);
 
+        // ── Pay the merchant their profit ─────────────────────────────────────
+        payMerchantProfit(caravan, level, villageData, efficiency);
+
         // Switch to returning
         caravan.setProgress(0.0);
         caravan.setState(Caravan.CaravanState.RETURNING);
@@ -423,12 +428,16 @@ public class CaravanSavedData extends SavedData {
             float chance = route.getDailyCaravanChance(road);
             if (RANDOM.nextFloat() > chance) continue;
 
+            Village originVillage = villageData.getVillageById(route.getVillageA()).orElse(null);
+            Village destVillage = villageData.getVillageById(route.getVillageB()).orElse(null);
+
+
             // Select goods
             List<ItemStack> goods =
                     CaravanGoodsSelector.selectGoods(
                             level,
-                            route.getVillageA(),
-                            route.getVillageB(),
+                            originVillage,
+                            destVillage,
                             villageData);
 
             // Scale guard count with cargo value
@@ -536,6 +545,44 @@ public class CaravanSavedData extends SavedData {
     public void removeCaravan(UUID id) {
         caravans.remove(id);
         setDirty();
+    }
+    /**
+     * Pays the caravan merchant a profit based on the trade efficiency and
+     * the approximate value of goods delivered.
+     *
+     * Profit = sum(item base prices) * efficiency * PROFIT_MARGIN
+     * Paid directly into the merchant entity's coin inventory.
+     */
+    private void payMerchantProfit(Caravan caravan, ServerLevel level,
+                                   VillageSavedData villageData,
+                                   double efficiency) {
+        if (caravan.getMerchantEntityId() == null) return;
+
+        var entity = level.getEntity(caravan.getMerchantEntityId());
+        if (!(entity instanceof TownspersonMob merchant)) return;
+
+        long totalValue = caravan.getGoods().stream()
+                .mapToLong(stack -> {
+                    long base = tterrag1112.life_in_the_village
+                            .Village.Economy.VillageEconomy
+                            .getBasePrice(stack.getItem());
+                    return base * stack.getCount();
+                })
+                .sum();
+
+        if (totalValue <= 0) return;
+
+        long profit = Math.max(1L, Math.round(totalValue * 0.15 * efficiency));
+
+        // Withdraw from destination village treasury
+        villageData.getVillageById(caravan.getDestVillageId())
+                .ifPresent(v -> v.withdrawFromTreasury(profit));
+
+        merchant.receive(CurrencyValue.of(profit));
+
+        System.out.println("CaravanSavedData: merchant "
+                + merchant.getNpcName() + " earned " + profit
+                + " bronze profit from delivery");
     }
 
 

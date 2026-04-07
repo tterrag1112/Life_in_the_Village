@@ -17,12 +17,10 @@ import tterrag1112.life_in_the_village.Village.Buildings.ExpansionRequest;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.Buildings.PlayerHousingData;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
-import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
-import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
+import tterrag1112.life_in_the_village.Village.Economy.*;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
-import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
-import tterrag1112.life_in_the_village.Village.Economy.VillageTreasury;
 import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
 import tterrag1112.life_in_the_village.Village.JobPosting;
 import tterrag1112.life_in_the_village.Village.Reputation.VillageReputation;
@@ -174,23 +172,36 @@ public class VillageSavedData extends SavedData implements
             List<TradeRoute>      tradeRoutes,
             List<TradeRoad>       tradeRoads,
             List<VillageTreasury> treasuries,
-            List<FarmBusinessLevel> farmBusinessLevels
+            List<FarmBusinessLevel> farmBusinessLevels,
+            List<MarketStall>     marketStalls,
+            Map<UUID, BuildingEconomy> buildingEconomies
+
     ) {
+        private static final Codec<UUID> UUID_STRING =
+                Codec.STRING.xmap(UUID::fromString, UUID::toString);
         public static final Codec<VillageEconomyData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
                         TradeRoute.CODEC.listOf()
-                                .optionalFieldOf("tradeRoutes", List.of())
+                                .optionalFieldOf("tradeRoutes", new ArrayList<>())
                                 .forGetter(VillageEconomyData::tradeRoutes),
                         TradeRoad.CODEC.listOf()
-                                .optionalFieldOf("tradeRoads", List.of())
+                                .optionalFieldOf("tradeRoads", new ArrayList<>())
                                 .forGetter(VillageEconomyData::tradeRoads),
                         VillageTreasury.CODEC.listOf()
-                                .optionalFieldOf("treasuries", List.of())
+                                .optionalFieldOf("treasuries", new ArrayList<>())
                                 .forGetter(VillageEconomyData::treasuries),
                         FarmBusinessLevel.CODEC.listOf()
-                                .optionalFieldOf("farmBusinessLevels", List.of())
-                                .forGetter(VillageEconomyData::farmBusinessLevels)
+                                .optionalFieldOf("farmBusinessLevels", new ArrayList<>())
+                                .forGetter(VillageEconomyData::farmBusinessLevels),
+                        MarketStall.CODEC.listOf()
+                                .optionalFieldOf("marketStalls", new ArrayList<>())
+                                .forGetter(VillageEconomyData::marketStalls),
+                        Codec.unboundedMap(UUID_STRING, BuildingEconomy.CODEC)
+                                .optionalFieldOf("buildingEconomies", new HashMap<>())
+                                .forGetter(VillageEconomyData::buildingEconomies)
+
                 ).apply(i, VillageEconomyData::new));
+
     }
 
     // ── 7. Property ───────────────────────────────────────────────────────────
@@ -247,7 +258,9 @@ public class VillageSavedData extends SavedData implements
                                     new ArrayList<>(d.tradeRoutes.values()),
                                     new ArrayList<>(d.tradeRoads.values()),
                                     new ArrayList<>(d.treasuries.values()),
-                                    new ArrayList<>(d.farmBusinessLevels.values()))),
+                                    new ArrayList<>(d.farmBusinessLevels.values()),
+                                    new ArrayList<>(d.marketStalls),
+                                    new HashMap<>(d.buildingEconomies))),
                     VillagePropertyData.CODEC
                             .fieldOf("propertyData")
                             .forGetter(d -> new VillagePropertyData(
@@ -301,6 +314,10 @@ public class VillageSavedData extends SavedData implements
         economyData.tradeRoutes().forEach(r -> data.tradeRoutes.put(r.getRouteId(), r));
         economyData.tradeRoads().forEach(r  -> data.tradeRoads.put(r.getRoadId(), r));
         economyData.treasuries().forEach(t  -> data.treasuries.put(t.getVillageId(), t));
+        economyData.marketStalls().forEach(s -> {
+            data.marketStalls.add(s);
+            data.stallIndex.put(s.getStallId(), s);
+        });
 
         // Property
         propertyData.properties().forEach(data.playerProperties::add);
@@ -360,6 +377,9 @@ public class VillageSavedData extends SavedData implements
     private final Map<UUID, TradeRoad>  tradeRoads  = new HashMap<>();
     private final Map<UUID, VillageTreasury> treasuries = new LinkedHashMap<>();
     private final Map<UUID, FarmBusinessLevel> farmBusinessLevels = new HashMap<>();
+    private final List<MarketStall> marketStalls     = new ArrayList<>();
+    private final Map<UUID, BuildingEconomy> buildingEconomies = new LinkedHashMap<>();
+    private final Map<UUID, MarketStall> stallIndex  = new HashMap<>();
 
 
 
@@ -883,5 +903,63 @@ public class VillageSavedData extends SavedData implements
     public void updateFarmBusinessLevel(FarmBusinessLevel level) {
         farmBusinessLevels.put(level.getFarmhouseId(), level);
         setDirty();
+    }
+    // =========================================================================
+// Market stalls
+// =========================================================================
+
+    public void addMarketStall(MarketStall stall) {
+        marketStalls.add(stall);
+        stallIndex.put(stall.getStallId(), stall);
+        setDirty();
+    }
+
+    public void removeMarketStall(UUID stallId) {
+        stallIndex.computeIfPresent(stallId, (k, v) -> {
+            marketStalls.remove(v);
+            return null;
+        });
+        setDirty();
+    }
+
+    public Optional<MarketStall> getStallById(UUID stallId) {
+        return Optional.ofNullable(stallIndex.get(stallId));
+    }
+
+    public List<MarketStall> getStallsForMarket(UUID marketBuildingId) {
+        return marketStalls.stream()
+                .filter(s -> s.getMarketBuildingId().equals(marketBuildingId))
+                .toList();
+    }
+
+    public List<MarketStall> getStallsForVillage(UUID villageId) {
+        return getVillageById(villageId)
+                .map(v -> v.getBuildingIds().stream()
+                        .flatMap(bid -> getStallsForMarket(bid).stream())
+                        .toList())
+                .orElse(List.of());
+    }
+
+    public Optional<MarketStall> getStallByOwner(UUID ownerUUID) {
+        return marketStalls.stream()
+                .filter(s -> s.isActive() && s.getOwnerUUID().equals(ownerUUID))
+                .findFirst();
+    }
+
+    public List<HouseholdData> getHouseholdsForVillage(UUID villageId) {
+        return getVillageById(villageId)
+                .map(v -> v.getBuildingIds().stream()
+                        .map(this::getHouseholdForBuilding)
+                        .filter(Optional::isPresent)
+                        .map(Optional::get)
+                        .toList())
+                .orElse(List.of());
+    }
+    public Optional<BuildingEconomy> getBuildingEconomy(UUID buildingId) {
+        return Optional.ofNullable(buildingEconomies.get(buildingId));
+    }
+    public BuildingEconomy getOrCreateBuildingEconomy(UUID buildingId) {
+        return buildingEconomies.computeIfAbsent(buildingId,
+                id -> BuildingEconomy.create(id, 0L));
     }
 }

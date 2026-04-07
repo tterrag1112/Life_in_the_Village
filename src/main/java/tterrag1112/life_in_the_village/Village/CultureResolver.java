@@ -31,9 +31,9 @@ import java.util.*;
  *   structures/{culture}/{building_type}/level_{n}.nbt
  *
  *   Examples:
- *     structures/default/blacksmith/level_1.nbt
- *     structures/default/house/level_1.nbt
- *     structures/nordic/blacksmith/level_1.nbt
+ *     structures/default/blacksmith/stall_1.nbt
+ *     structures/default/house/stall_1.nbt
+ *     structures/nordic/blacksmith/stall_1.nbt
  *     structures/highland/guard_tower/level_2.nbt
  * </pre>
  *
@@ -41,9 +41,9 @@ import java.util.*;
  * If a culture doesn't have a template for a specific building/level:
  * <ol>
  *   <li>Try {@code {culture}/{type}/level_{n}.nbt}</li>
- *   <li>Try {@code {culture}/{type}/level_1.nbt} (downgrade level)</li>
+ *   <li>Try {@code {culture}/{type}/stall_1.nbt} (downgrade level)</li>
  *   <li>Try {@code default/{type}/level_{n}.nbt} (fallback culture)</li>
- *   <li>Try {@code default/{type}/level_1.nbt} (fallback both)</li>
+ *   <li>Try {@code default/{type}/stall_1.nbt} (fallback both)</li>
  *   <li>Try legacy path {@code {type}/level_{n}.nbt} (no culture prefix)</li>
  * </ol>
  *

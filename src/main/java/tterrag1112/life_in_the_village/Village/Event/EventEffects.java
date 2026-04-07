@@ -8,9 +8,13 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import tterrag1112.life_in_the_village.Entities.ModEntities;
+import tterrag1112.life_in_the_village.Entities.NpcNameRegistry;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
@@ -57,6 +61,26 @@ public class EventEffects {
 
         // Announce end
         announceEvent(level, event, village, data, false);
+
+        if (event.getType() == VillageEvent.EventType.MARKET_DAY) {
+            String eventIdStr = event.getId().toString();
+            village.getBounds(data).ifPresent(bounds ->
+                    level.getEntitiesOfClass(
+                                    TownspersonMob.class,
+                                    bounds.inflate(64),
+                                    mob -> mob.getProfession() == Profession.WANDERING_TRADER
+                                            && eventIdStr.equals(mob.getPersistentData()
+                                            .getString("marketDayEventId")))
+                            .forEach(mob -> {
+                                mob.setCurrentActivity("Packing up...");
+                                // Short delay then discard — let them "walk away"
+                                // by setting the goal's spawn tick far in the past
+                                mob.getPersistentData().putLong(
+                                        "wt_spawnTick",
+                                        level.getGameTime() - 200000L);
+                            })
+            );
+        }
     }
 
     // =========================================================================
@@ -98,19 +122,92 @@ public class EventEffects {
     }
 
     private static void startMarketDay(ServerLevel level,
-                                       VillageEvent event, Village village, VillageSavedData data) {
-
-        // Merchants get a trade price reduction flag
+                                       VillageEvent event,
+                                       Village village,
+                                       VillageSavedData data) {
+        // ── Apply event override to all villagers ────────────────────────────
         getVillageNpcs(level, village, data).forEach(mob -> {
             mob.setEventOverride(VillageEvent.EventType.MARKET_DAY);
             if (mob.getProfession() == Profession.MERCHANT) {
-                // Signal merchant to offer discounts
                 mob.setEventTradeDiscount(0.8f); // 20% off
             }
         });
 
-        // Place market stalls
+        // ── Place market stalls ──────────────────────────────────────────────
         placeMarketDecorations(level, event, village, data);
+
+        // ── Spawn one wandering exotic trader near the market building ───────
+        spawnMarketDayTrader(level, village, data, event);
+    }
+
+    /**
+     * Spawns a wandering exotic trader adjacent to the village market for the
+     * duration of market day. The trader is tagged with the event ID so it can
+     * be discarded when the event ends.
+     */
+    private static void spawnMarketDayTrader(ServerLevel level,
+                                             Village village,
+                                             VillageSavedData data,
+                                             VillageEvent event) {
+        // Find the market building
+        Building market = village.getBuildingIds().stream()
+                .map(data::getBuildingById)
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .filter(b -> b.getType() == BuildingType.MARKET)
+                .findFirst()
+                .orElse(null);
+
+        BlockPos spawnPos;
+
+        if (market != null) {
+            // Spawn just outside the market — offset from its origin
+            BlockPos origin = market.getShape().getOrigin();
+            spawnPos = level.getHeightmapPos(
+                    net.minecraft.world.level.levelgen.Heightmap.Types
+                            .MOTION_BLOCKING_NO_LEAVES,
+                    origin.offset(
+                            4 + level.getRandom().nextInt(4),
+                            0,
+                            4 + level.getRandom().nextInt(4)));
+        } else {
+            // No market building — spawn at village centre if bounds are available
+            spawnPos = village.getBounds(data)
+                    .map(b -> BlockPos.containing(b.getCenter()))
+                    .map(c -> level.getHeightmapPos(
+                            net.minecraft.world.level.levelgen.Heightmap.Types
+                                    .MOTION_BLOCKING_NO_LEAVES, c))
+                    .orElse(null);
+            if (spawnPos == null) return;
+        }
+
+        TownspersonMob trader = ModEntities.TOWNSPERSON.get()
+                .create(level, net.minecraft.world.entity.EntitySpawnReason.NATURAL);
+        if (trader == null) return;
+
+        trader.setProfession(Profession.WANDERING_TRADER);
+
+        // Name the trader
+        var rng = level.getRandom();
+        String first = NpcNameRegistry.INSTANCE.generateFirstName(rng.nextBoolean(), rng);
+        String sur   = NpcNameRegistry.INSTANCE.generateSurname(rng);
+        trader.setNpcName(first + " " + sur);
+
+        // Tag with event ID so we can discard on event end
+        trader.getPersistentData().putString(
+                "marketDayEventId", event.getId().toString());
+
+        // Stamp the spawn tick so WanderingTraderGoal calculates lifespan
+        // from now — market day is 1 day, so the trader's 2-day lifespan
+        // covers the full event plus a short grace period after it ends
+        trader.getPersistentData().putLong("wt_spawnTick", level.getGameTime());
+
+        trader.setPos(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+        level.addFreshEntity(trader);
+
+        System.out.println("[EventEffects] Market day trader '"
+                + trader.getNpcName() + "' spawned at " + spawnPos
+                + " for " + village.getName());
     }
 
     private static void startFestivalOfLights(ServerLevel level,

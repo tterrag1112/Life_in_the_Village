@@ -4,32 +4,22 @@ import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
 
-/**
- * Daily treasury operations: wage payment to salaried NPCs and
- * debt deadline ticking for merchants. Called once per in-game day
- * from VillageDailyTickSystem.
- *
- * <p>Uses the existing {@link Village#depositToTreasury} /
- * {@link Village#withdrawFromTreasury} methods — no separate
- * VillageTreasury class needed.</p>
- */
 public final class TreasuryTickHandler {
 
     private static final long GUARD_WAGE     = 8L;
     private static final long KEEPER_WAGE    = 5L;
     private static final long INNKEEPER_WAGE = 4L;
+    private static final long MERCHANT_WAGE  = 6L;
 
     private TreasuryTickHandler() {}
 
     public static void tick(ServerLevel level, Village village,
                             VillageSavedData data, long currentTick) {
         if (!level.isLoaded(village.getVillageCentre())) {
-            // Unloaded — simulate wage drain only
             int estimatedGuards = data.getSimData(village.getId())
                     .map(s -> Math.max(1, s.getSimulatedPopulation() / 5))
                     .orElse(1);
@@ -48,11 +38,17 @@ public final class TreasuryTickHandler {
 
         for (TownspersonMob npc : npcs) {
             long wage = wageForProfession(npc.getProfession());
-            if (wage > 0 && village.withdrawFromTreasury(wage)) {
-                npc.receive(CurrencyValue.of(wage));
+            if (wage > 0) {
+                // NpcEconomy.payWage: withdraws from village treasury,
+                // credits wallet, fires visual on the NPC
+                NpcEconomy.payWage(npc, wage, level, data);
+
+                // Contribute a fraction to household pool after receiving
+                tterrag1112.life_in_the_village.Entities.HouseholdWealthManager
+                        .contributeToPool(npc, CurrencyValue.of(wage), data);
             }
 
-            // Tick merchant debt deadlines
+            // Merchant debt maintenance
             if (npc.getProfession() == Profession.MERCHANT) {
                 npc.getEconomy().tickDebtDeadline(currentTick);
                 npc.getEconomy().autoRepayDebt();
@@ -65,6 +61,7 @@ public final class TreasuryTickHandler {
             case GUARD            -> GUARD_WAGE;
             case STOCKPILE_KEEPER -> KEEPER_WAGE;
             case INNKEEPER        -> INNKEEPER_WAGE;
+            case MERCHANT         -> MERCHANT_WAGE;
             default               -> 0L;
         };
     }

@@ -4,9 +4,14 @@ package tterrag1112.life_in_the_village.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 public enum Profession {
-    NONE, CITIZEN, MERCHANT, FARMER, FARMHAND, BLACKSMITH, BUILDER,
+    NONE, CITIZEN, MERCHANT, WANDERING_TRADER, FARMER, FARMHAND, BLACKSMITH, BUILDER,
     GUARD, STOCKPILE_KEEPER, INNKEEPER, MINER,
     VILLAGE_LEADER, KINGDOM_RULER, CARPENTER,
+    MILLER,          // MILLER building — grinds wheat to flour
+    BAKER,           // BAKERY building — bakes bread from flour or wheat
+    STONEMASON,      // STONEMASON building — cuts stone into bricks/slabs/stairs
+    WEAVER,          // WEAVER building — wool into carpets and cloth goods
+    CANDLEMAKER,     // CANDLEMAKER building — honeycomb + string into candles
     GUILDMASTER, GUILDWORKER, ADVENTURER, COMPANY_WORKER,
 
     // ── Capital professions ───────────────────────────────────────────────────
@@ -70,6 +75,11 @@ public enum Profession {
             case TEMPLE          -> Profession.PRIEST;
             case TREASURY        -> Profession.GUARD;   // guarded, not staffed
             case HOUSE           -> Profession.NONE;
+            case MILLER          -> Profession.MILLER;
+            case STONEMASON      -> Profession.STONEMASON;
+            case WEAVER          -> Profession.WEAVER;
+            case CANDLEMAKER     -> Profession.CANDLEMAKER;
+            case BAKERY ->  Profession.BAKER;
             default              -> Profession.NONE;
         };
     }

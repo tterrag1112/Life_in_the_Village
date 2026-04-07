@@ -13,6 +13,8 @@ import tterrag1112.life_in_the_village.Gui.GuildScreen;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.*;
 import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
 import java.util.UUID;
 
@@ -215,11 +217,7 @@ public record GuildActionPacket(
             int finalXp = (int)(xpReward * mult);
 
             // Give coins
-            tterrag1112.life_in_the_village.Village.Economy.Currency
-                    .CoinHelper.giveCoins(player,
-                            tterrag1112.life_in_the_village.Village
-                                    .Economy.Currency.CurrencyValue
-                                    .of(coinReward));
+            CoinHelper.playerReceive(player, CurrencyValue.of(coinReward));
 
             // Give XP and check rank up
             guildData.addXp(player.getUUID(), finalXp);

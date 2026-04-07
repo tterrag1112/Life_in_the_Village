@@ -6,6 +6,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.phys.AABB;
+import tterrag1112.life_in_the_village.Entities.HouseholdWealthManager;
+import tterrag1112.life_in_the_village.Entities.ModEntities;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
@@ -25,6 +27,10 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.TreasuryTickHandler;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketRentManager;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MerchantStartingStock;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Event.VillageEventScheduler;
@@ -35,6 +41,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -242,6 +249,26 @@ class VillageDailyTickSystem implements TickSubsystem {
             // ── Simulation engine update ─────────────────────────────────────
             VillageSimEngine.tick(level, village, vdata, tick);
 
+            MarketRentManager.tick(level, village, vdata, tick);
+
+            HouseholdWealthManager.tickHouseholdSpending(level, village, vdata);
+
+
+            // Re-assign StallKeeperGoal to NPC stall owners whose goals
+// were lost on server restart
+            reAssignStallGoals(level, village, vdata, tick);
+            // Stock any empty merchant stalls on first load
+            if (tick <= 6000L) {
+                vdata.getStallsForVillage(village.getId()).forEach(stall -> {
+                    if (stall.isActive()
+                            && stall.getOwnerType() == MarketStall.OwnerType.NPC) {
+                        MerchantStartingStock.initialStockIfNeeded(
+                                level, stall, village, vdata);
+                    }
+                });
+            }
+
+
             // ── Kingdom economy (staggered separately) ───────────────────────
             for (Kingdom kingdom : vdata.getAllKingdoms()) {
                 long kOffset = Math.abs(
@@ -287,6 +314,23 @@ class VillageDailyTickSystem implements TickSubsystem {
         }
     }
 
+    private static void reAssignStallGoals(ServerLevel level,
+                                           Village village,
+                                           VillageSavedData vdata,
+                                           long tick) {
+        // Only run once per village on the first day tick after load
+        // Use a 5-minute window after server start to avoid doing this every day
+        if (tick > 6000L) return; // only within first ~5 minutes of world time
+
+        vdata.getStallsForVillage(village.getId()).forEach(stall -> {
+            if (!stall.isActive()) return;
+            if (stall.getOwnerType()
+                    != tterrag1112.life_in_the_village.Village.Economy.Market
+                    .MarketStall.OwnerType.NPC) return;
+
+            MarketStallPlacer.assignGoalIfNpc(level, stall);
+        });
+    }
     static void upgradePathsIfAffordable(ServerLevel level,
                                          Village village,
                                          VillageSavedData data) {
@@ -369,4 +413,126 @@ class VillageDailyTickSystem implements TickSubsystem {
 
         data.setDirty();
     }
+    // =============================================================================
+
+    }
+// WANDERING TRADER SPAWN SYSTEM
+// =============================================================================
+
+/**
+ * Periodically spawns wandering exotic traders near active trade roads.
+ *
+ * At most {@code MAX_ACTIVE_TRADERS} traders exist at once across the world.
+ * A new spawn attempt happens every {@code SPAWN_INTERVAL_TICKS} (roughly
+ * every 2 in-game days) with a random chance of success.
+ */
+class WanderingTraderTickSystem implements TickSubsystem {
+
+    private static final int  MAX_ACTIVE_TRADERS   = 3;
+    private static final long SPAWN_INTERVAL_TICKS = 24000L * 2;
+    private static final int  SPAWN_CHANCE          = 3; // 1-in-N
+
+    @Override public String name()     { return "wandering_trader_spawn"; }
+    @Override public int    interval() { return 1; } // gated internally
+    @Override public int    priority() { return 250; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        long tick = ctx.tick();
+        if (tick % SPAWN_INTERVAL_TICKS != 0) return;
+
+        ServerLevel level = ctx.level();
+
+        // Count existing wandering traders
+        AABB searchBounds = new AABB(-30000000, -256, -30000000,
+                30000000,  256,  30000000);
+        long active = level.getEntitiesOfClass(
+                        TownspersonMob.class,
+                        searchBounds,
+                        mob -> mob.getProfession()
+                                == tterrag1112.life_in_the_village.Profession.Profession
+                                .WANDERING_TRADER
+                                && mob.isAlive())
+                .size();
+
+        if (active >= MAX_ACTIVE_TRADERS) return;
+        if (level.getRandom().nextInt(SPAWN_CHANCE) != 0) return;
+
+        // Find a trade road block to spawn near
+        VillageSavedData vdata = ctx.villageData();
+        BlockPos spawnPos = findSpawnPosition(level, vdata);
+        if (spawnPos == null) return;
+
+        spawnWanderingTrader(level, spawnPos, vdata);
+    }
+
+    private BlockPos findSpawnPosition(ServerLevel level,
+                                       VillageSavedData vdata) {
+        // Gather all road blocks from all active roads
+        List<BlockPos> candidates = new java.util.ArrayList<>();
+        for (var route : vdata.getAllTradeRoutes()) {
+            vdata.getRoadById(route.getRoadId())
+                    .ifPresent(road -> candidates.addAll(road.getBlocks()));
+        }
+
+        if (candidates.isEmpty()) {
+            // No roads yet — spawn near any village
+            return vdata.getAllVillages().stream()
+                    .findFirst()
+                    .flatMap(v -> v.getBounds(vdata))
+                    .map(bounds -> {
+                        BlockPos centre = BlockPos.containing(bounds.getCenter());
+                        return centre.offset(
+                                level.getRandom().nextIntBetweenInclusive(-80, 80),
+                                0,
+                                level.getRandom().nextIntBetweenInclusive(-80, 80));
+                    })
+                    .orElse(null);
+        }
+
+        // Pick a random road block well away from either village endpoint
+        // (aim for the middle third of the road)
+        int start = candidates.size() / 3;
+        int end   = candidates.size() * 2 / 3;
+        if (start >= end) return candidates.get(0);
+
+        int idx = start + level.getRandom().nextInt(end - start);
+        BlockPos road = candidates.get(idx);
+
+        // Find surface height
+        return level.getHeightmapPos(
+                net.minecraft.world.level.levelgen.Heightmap.Types
+                        .MOTION_BLOCKING_NO_LEAVES,
+                road.offset(
+                        level.getRandom().nextIntBetweenInclusive(-8, 8),
+                        0,
+                        level.getRandom().nextIntBetweenInclusive(-8, 8)));
+    }
+
+    private void spawnWanderingTrader(ServerLevel level,
+                                      BlockPos pos,
+                                      VillageSavedData vdata) {
+        TownspersonMob trader = ModEntities.TOWNSPERSON.get()
+                .create(level, net.minecraft.world.entity.EntitySpawnReason.NATURAL);
+        if (trader == null) return;
+
+        trader.setProfession(
+                tterrag1112.life_in_the_village.Profession.Profession.WANDERING_TRADER);
+
+        // Give the trader a random name (not tied to any village)
+        var rng = level.getRandom();
+        String first = tterrag1112.life_in_the_village.Entities.NpcNameRegistry
+                .INSTANCE.generateFirstName(rng.nextBoolean(), rng);
+        String sur   = tterrag1112.life_in_the_village.Entities.NpcNameRegistry
+                .INSTANCE.generateSurname(rng);
+        trader.setNpcName(first + " " + sur);
+
+        // Wandering traders have no assigned village
+        trader.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+        level.addFreshEntity(trader);
+
+        System.out.println("[WanderingTrader] Spawned " + trader.getNpcName()
+                + " at " + pos);
+    }
+
 }

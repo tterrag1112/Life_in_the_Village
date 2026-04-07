@@ -3,9 +3,11 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.player.Player;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Baker.BakerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith.BlacksmithGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderMaintenanceGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Candlemaker.CandlemakerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Carpenter.CarpenterGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmerGoal;
@@ -17,8 +19,13 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.KingdomR
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.VillageLeaderGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.CaravanMerchantGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.WanderingTraderGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miller.MillerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miner.MinerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper.StockpileKeeperGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Stonemason.StonemasonGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Weaver.WeaverGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopStallDecisionGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -173,6 +180,8 @@ public final class ProfessionGoalFactory {
                     new SellToMarketGoal(npc, npc.getSellableItems(Profession.FARMER)));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new PostListingGoal(npc, npc.getSellableItems(Profession.FARMER)));
+            npc.goalSelector.addGoal(P_SOCIAL_LOW,        // ← new
+                    new WorkshopStallDecisionGoal(npc));
         });
 
         REGISTRARS.put(Profession.FARMHAND, npc -> {
@@ -192,14 +201,43 @@ public final class ProfessionGoalFactory {
                             () -> 16, 1200));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new SellToMarketGoal(npc, npc.getSellableItems(Profession.BLACKSMITH)));
+            npc.goalSelector.addGoal(P_SOCIAL_LOW,        // ← new
+                    new WorkshopStallDecisionGoal(npc));
         });
 
         REGISTRARS.put(Profession.CARPENTER, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new CarpenterGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new SellToMarketGoal(npc, npc.getSellableItems(Profession.CARPENTER)));
+            npc.goalSelector.addGoal(P_SOCIAL_LOW,        // ← new
+                    new WorkshopStallDecisionGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new PostListingGoal(npc, npc.getSellableItems(Profession.CARPENTER)));
+        });
+        REGISTRARS.put(Profession.MILLER, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new MillerGoal(npc));
+
+        });
+
+        REGISTRARS.put(Profession.BAKER, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BakerGoal(npc));
+        });
+
+        REGISTRARS.put(Profession.STONEMASON, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new StonemasonGoal(npc));
+        });
+
+        REGISTRARS.put(Profession.WEAVER, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new WeaverGoal(npc));
+        });
+
+        REGISTRARS.put(Profession.CANDLEMAKER, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new CandlemakerGoal(npc));
+        });
+
+// Update BLACKSMITH to use the migrated goal:
+        REGISTRARS.put(Profession.BLACKSMITH, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BlacksmithGoal(npc));
         });
 
         REGISTRARS.put(Profession.MINER, npc -> {
@@ -219,6 +257,13 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.MERCHANT, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new MerchantGoal(npc));
             npc.goalSelector.addGoal(P_SURVIVAL, new CaravanMerchantGoal(npc));
+        });
+        REGISTRARS.put(Profession.WANDERING_TRADER, npc -> {
+            // WanderingTraderGoal owns the entire lifecycle — no other work goals.
+            // Universal goals (float, open door, look at player) still apply,
+            // but social/sleep goals are suppressed because this NPC despawns.
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new WanderingTraderGoal(npc));
+
         });
 
         REGISTRARS.put(Profession.INNKEEPER, npc ->

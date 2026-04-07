@@ -186,6 +186,10 @@ public class WorkSchedule {
             case MINER             -> LATE_STARTER;
             case STOCKPILE_KEEPER  -> DEFAULT_SCHEDULE;
             case CARPENTER         -> EARLY_RISER;
+            case MILLER, BAKER  -> EARLY_RISER;   // up early, done before noon heat
+            case STONEMASON     -> DEFAULT_SCHEDULE;
+            case WEAVER         -> DEFAULT_SCHEDULE;
+            case CANDLEMAKER    -> DEFAULT_SCHEDULE;
             default                -> DEFAULT_SCHEDULE;
         };
     }

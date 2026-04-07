@@ -14,6 +14,8 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -155,7 +157,7 @@ public class BuyFromMarketGoal extends Goal {
                 .flatMap(name -> data.getVillageByName(name))
                 .map(Village::getId).orElse(null);
 
-        long maxSpend = (long)(entity.getWealth().toBronze() * MAX_SPEND_FRACTION);
+        long maxSpend = (long)(entity.getWallet().toBronze() * MAX_SPEND_FRACTION);
         long totalSpent = 0;
 
         for (BuyOrder order : shoppingList) {
@@ -167,35 +169,37 @@ public class BuyFromMarketGoal extends Goal {
 
             int affordable = (int)((maxSpend - totalSpent) / Math.max(1, price));
             int qty = Math.min(order.quantity, affordable);
-            qty = Math.min(qty, BuildingStorageAccess.countItem(level, market, order.item));
+            qty = Math.min(qty,
+                    BuildingStorageAccess.countItem(level, market, order.item));
             if (qty <= 0) continue;
 
             long totalCost = price * qty;
             CurrencyValue cost = CurrencyValue.of(totalCost);
-            if (!entity.canAfford(cost)) continue;
+            if (!entity.getWallet().canAfford(cost)) continue;
 
-            if (!BuildingStorageAccess.takeItem(level, market, order.item, qty)) continue;
+            if (!BuildingStorageAccess.takeItem(level, market, order.item, qty))
+                continue;
 
-            // Pay merchant if present, otherwise just spend
+            // Find stall source and merchant for routing
+            tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall stall =
+                    findStallWithItem(data, level, order.item);
             TownspersonMob merchant = findMerchant(level);
-            if (merchant != null) {
-                entity.pay(merchant, cost);
-            } else {
-                entity.spend(cost);
-            }
 
-            // Market tax to village treasury
+            // NpcEconomy.marketPurchase handles routing + visual
+            NpcEconomy.marketPurchase(entity, merchant, cost, level, data, stall);
+
+            // 10% market tax to village treasury
             if (villageId != null) {
-                data.getVillageById(villageId).ifPresent(village -> {
-                    long tax = totalCost / 10; // 10% market tax
-                    if (tax > 0) {
-                        village.depositToTreasury(tax);
+                long tax = totalCost / 10;
+                if (tax > 0) {
+                    data.getVillageById(villageId).ifPresent(v -> {
+                        v.depositToTreasury(tax);
                         data.setDirty();
-                    }
-                });
+                    });
+                }
             }
 
-            // Food → home storage; tools → personal inventory
+            // Food → house storage; tools → personal inventory
             if (isFood(order.item)) {
                 Building home = entity.getHouseId()
                         .flatMap(data::getBuildingById).orElse(null);
@@ -215,7 +219,71 @@ public class BuyFromMarketGoal extends Goal {
         }
     }
 
+    // Add this helper in BuyFromMarketGoal:
+    private tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall
+    findStallWithItem(VillageSavedData data,
+                      ServerLevel level,
+                      net.minecraft.world.item.Item item) {
+        if (market == null) return null;
+        return data.getStallsForMarket(market.getId()).stream()
+                .filter(s -> s.isActive()
+                        && !s.getChestPos().equals(net.minecraft.core.BlockPos.ZERO))
+                .filter(s -> {
+                    net.minecraft.world.level.block.entity.BlockEntity be =
+                            level.getBlockEntity(s.getChestPos());
+                    if (!(be instanceof net.minecraft.world.Container chest))
+                        return false;
+                    for (int i = 0; i < chest.getContainerSize(); i++) {
+                        if (chest.getItem(i).is(item)) return true;
+                    }
+                    return false;
+                })
+                .findFirst().orElse(null);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Checks if the purchased item was sourced from a stall chest and pays
+     * the stall owner directly.
+     *
+     * @return true if payment was routed to a stall owner, false if the item
+     *         came from the main market chest (caller pays the merchant instead)
+     */
+    private boolean payStallOwnerIfApplicable(ServerLevel level,
+                                              Building market,
+                                              Item item,
+                                              CurrencyValue cost,
+                                              VillageSavedData data) {
+        MarketStall stall = data.getStallsForMarket(market.getId()).stream()
+                .filter(s -> s.isActive()
+                        && !s.getChestPos().equals(BlockPos.ZERO))
+                .filter(s -> {
+                    net.minecraft.world.level.block.entity.BlockEntity be =
+                            level.getBlockEntity(s.getChestPos());
+                    if (!(be instanceof net.minecraft.world.Container chest))
+                        return false;
+                    for (int i = 0; i < chest.getContainerSize(); i++) {
+                        if (chest.getItem(i).is(item)) return true;
+                    }
+                    return false;
+                })
+                .findFirst().orElse(null);
+
+        if (stall == null) return false;
+
+        if (stall.getOwnerType() == MarketStall.OwnerType.NPC) {
+            level.getEntitiesOfClass(
+                            TownspersonMob.class,
+                            entity.getBoundingBox().inflate(128),
+                            mob -> mob.getUUID().equals(stall.getOwnerUUID()))
+                    .stream().findFirst()
+                    .ifPresent(owner -> owner.receive(cost));
+        }
+        // Player-owned stalls: revenue accumulates passively in the stall chest
+        // (handled when the player next interacts with the merchant)
+        return true;
+    }
 
     private boolean isFood(Item item) {
         return item.components().has(DataComponents.FOOD);

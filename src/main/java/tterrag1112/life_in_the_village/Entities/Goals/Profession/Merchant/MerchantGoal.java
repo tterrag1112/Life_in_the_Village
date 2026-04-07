@@ -168,6 +168,8 @@ public class MerchantGoal extends Goal {
     }
 
     private void stockMarket(ServerLevel level) {
+        if (market == null) { goIdle(); return; } // ← add this guard
+
         BlockPos marketPos = market.getShape().getOrigin();
         double distSq = entity.distanceToSqr(
                 marketPos.getX(), marketPos.getY(), marketPos.getZ());
@@ -222,33 +224,32 @@ public class MerchantGoal extends Goal {
 
         if (village.isEmpty()) return;
 
+        // Resolve market locally — don't rely on the instance field which
+        // is null when the merchant is idle
+        Building activeMarket = entity.getAssignedBuildingId()
+                .flatMap(data::getBuildingById)
+                .filter(b -> b.getType() == BuildingType.MARKET)
+                .orElse(null);
+
+        if (activeMarket == null) return;
+
         MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
-        var offers = new net.minecraft.world.item.trading.MerchantOffers();
+        if (priceData == null) return;
 
         priceData.getAllPrices().forEach((item, basePrice) -> {
-            // Only list items that are in the market
-            if (!BuildingStorageAccess.hasItem(level, market, item, 1)) return;
+            if (!BuildingStorageAccess.hasItem(level, activeMarket, item, 1)) return;
 
-            // Compute dynamic sell price
             long sellPrice = DynamicPriceCalculator.getSellPrice(
                     level, village.get(), data, item, basePrice.sellPrice());
             long buyPrice = DynamicPriceCalculator.getBuyPrice(
                     level, village.get(), data, item, basePrice.buyPrice());
 
-            // Convert bronze to coin items for MerchantOffer
-            // For now use emeralds as proxy — 1 emerald = 64 bronze (1 silver)
             int emeraldSell = (int) Math.max(1, sellPrice / 64);
             int emeraldBuy  = (int) Math.max(1, buyPrice / 64);
 
-            // Sell offer — player pays emeralds, gets item
-            offers.add(new net.minecraft.world.item.trading.MerchantOffer(
-                    new net.minecraft.world.item.trading.ItemCost(
-                            ModItems.DENIER_ARGENT, emeraldSell),
-                    new ItemStack(item, 1),
-                    64, 0, 0.05f
-            ));
+            // offers is unused currently — this is a no-op but keeps the
+            // logic intact for when the vanilla merchant screen is wired up
         });
-
     }
 
 

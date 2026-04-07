@@ -342,46 +342,6 @@ public class CoinHelper {
         }
     }
 
-    public static void giveCoins(ServerPlayer player, CurrencyValue amount) {
-        long remaining = amount.toBronze();
-
-        // Check player inventory for a purse first
-        net.minecraft.world.entity.player.Inventory inv = player.getInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack stack = inv.getItem(i);
-            if (!(stack.getItem() instanceof PurseItem)) continue;
-
-            long rem = remaining;
-            remaining = PurseItem.mutateContents(stack, contents -> {
-                long r = rem;
-                r = depositIntoPurse(contents, ModItems.DENIER_OR.get(),
-                        CurrencyValue.GOLD_VALUE, r);
-                r = depositIntoPurse(contents, ModItems.DENIER_ARGENT.get(),
-                        CurrencyValue.SILVER_VALUE, r);
-                r = depositIntoPurse(contents, ModItems.DENIER.get(),
-                        CurrencyValue.BRONZE_VALUE, r);
-                return r;
-            });
-
-            if (remaining == 0) return;
-        }
-
-        // Fall back to loose coins added directly to inventory
-        if (remaining > 0) {
-            long gold = remaining / CurrencyValue.GOLD_VALUE;
-            remaining %= CurrencyValue.GOLD_VALUE;
-            long silver = remaining / CurrencyValue.SILVER_VALUE;
-            remaining %= CurrencyValue.SILVER_VALUE;
-            long bronze = remaining;
-
-            if (gold > 0) player.getInventory().add(
-                    new ItemStack(ModItems.DENIER_OR.get(), (int) gold));
-            if (silver > 0) player.getInventory().add(
-                    new ItemStack(ModItems.DENIER_ARGENT.get(), (int) silver));
-            if (bronze > 0) player.getInventory().add(
-                    new ItemStack(ModItems.DENIER.get(), (int) bronze));
-        }
-    }
 
     private static long depositIntoPurse(
             PurseItem.PouchContents contents, Item coin, int value, long remaining) {
@@ -414,59 +374,11 @@ public class CoinHelper {
         return CurrencyValue.of(total);
     }
 
-    public static boolean payWithBuilding(SimpleContainer personalInv,
-                                          CurrencyValue amount,
-                                          ServerLevel level,
-                                          Building building) {
-        if (canAfford(personalInv, amount)) {
-            return spend(personalInv, amount);
-        }
-        if (building != null) {
-            long needed = amount.toBronze() - getWealth(personalInv).toBronze();
-            pullCoinsFromBuilding(personalInv, level, building, needed);
-        }
-        return spend(personalInv, amount);
-    }
 
-    private static void pullCoinsFromBuilding(SimpleContainer personalInv,
-                                              ServerLevel level,
-                                              tterrag1112.life_in_the_village.Village.Building building,
-                                              long bronzeNeeded) {
-        long remaining = bronzeNeeded;
 
-        for (var container : BuildingStorageAccess.findInventories(level, building)) {
-            for (int i = 0; i < container.getContainerSize() && remaining > 0; i++) {
-                ItemStack stack = container.getItem(i);
-                int value = CurrencyValue.valuePerCoin(stack.getItem());
-                if (value <= 0) continue;
 
-                long canTake = Math.min(stack.getCount(),
-                        (remaining + value - 1) / value); // ceiling division
-                stack.shrink((int) canTake);
-                if (stack.isEmpty()) container.setItem(i, ItemStack.EMPTY);
 
-                personalInv.addItem(new ItemStack(stack.getItem(), (int) canTake));
-                remaining -= canTake * value;
-            }
-            if (remaining <= 0) break;
-        }
-    }
 
-    // In CoinHelper.java
-    public static SimpleContainer snapshotInventory(ServerPlayer player) {
-        SimpleContainer c = new SimpleContainer(
-                player.getInventory().getContainerSize());
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++)
-            c.setItem(i, player.getInventory().getItem(i).copy());
-        return c;
-    }
-
-    public static void syncInventory(ServerPlayer player, SimpleContainer snapshot) {
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++)
-            player.getInventory().setItem(i, snapshot.getItem(i));
-        player.inventoryMenu.broadcastChanges();
-    }
-    // Add to CoinHelper.java:
 
 // =========================================================================
     // DEBT SYSTEM — simple borrow/repay for merchant NPCs
@@ -587,6 +499,80 @@ public class CoinHelper {
         if (spend(inventory, CurrencyValue.of(repayAmount))) {
             debt.repay(repayAmount);
         }
+    }
+
+
+    // =========================================================================
+// PLAYER OPERATIONS — work directly on live player inventory
+// =========================================================================
+
+    /**
+     * Removes coins from a player's inventory. Handles denomination
+     * breaking (e.g. spending 5b when player only has silver coins).
+     * Broadcasts inventory changes to the client automatically.
+     *
+     * This is the single correct way to deduct coins from a player.
+     * Do NOT use snapshotInventory + spend + syncInventory — that pattern
+     * creates a copy and risks losing changes made between snapshot and sync.
+     */
+    public static boolean playerPay(ServerPlayer player, CurrencyValue amount) {
+        SimpleContainer live = new SimpleContainer(
+                player.getInventory().getContainerSize());
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++)
+            live.setItem(i, player.getInventory().getItem(i));
+
+        if (!getWealth(live).isAffordable(amount)) return false;
+
+        boolean success = spend(live, amount);
+        if (success) {
+            for (int i = 0; i < player.getInventory().getContainerSize(); i++)
+                player.getInventory().setItem(i, live.getItem(i));
+            player.inventoryMenu.broadcastChanges();
+        }
+        return success;
+    }
+
+    /**
+     * Gives coins to a player's inventory, choosing the largest
+     * denomination that fits. Broadcasts changes to the client.
+     *
+     * This is the single correct way to give coins to a player.
+     */
+    public static void playerReceive(ServerPlayer player, CurrencyValue amount) {
+        long remaining = amount.toBronze();
+
+        var inv = player.getInventory();
+
+        // Prefer largest denomination to avoid inventory clutter
+        long gold   = remaining / CurrencyValue.GOLD_VALUE;
+        remaining  %= CurrencyValue.GOLD_VALUE;
+        long silver = remaining / CurrencyValue.SILVER_VALUE;
+        remaining  %= CurrencyValue.SILVER_VALUE;
+        long bronze = remaining;
+
+        if (gold   > 0) inv.add(new ItemStack(ModItems.DENIER_OR.get(),     (int) gold));
+        if (silver > 0) inv.add(new ItemStack(ModItems.DENIER_ARGENT.get(), (int) silver));
+        if (bronze > 0) inv.add(new ItemStack(ModItems.DENIER.get(),        (int) bronze));
+
+        player.inventoryMenu.broadcastChanges();
+    }
+
+    /**
+     * Returns the total coin wealth in a player's live inventory.
+     */
+    public static CurrencyValue getPlayerWealth(ServerPlayer player) {
+        long total = 0;
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            total += getStackValue(player.getInventory().getItem(i));
+        }
+        return CurrencyValue.of(total);
+    }
+
+    /**
+     * Returns true if the player can afford the given amount.
+     */
+    public static boolean playerCanAfford(ServerPlayer player, CurrencyValue amount) {
+        return getPlayerWealth(player).isAffordable(amount);
     }
 
 

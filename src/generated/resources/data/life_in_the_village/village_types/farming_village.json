@@ -25,7 +25,7 @@
     },
     {
       "type": "HOUSE",
-      "max_count": 4,
+      "max_count": 2,
       "min_count": 2,
       "structure": "house/level_1"
     },
@@ -65,12 +65,12 @@
     {
       "building_type": "TOWN_HALL",
       "family_role": "HEAD",
-      "profession": "VILLAGE_LEADER"
+      "profession": "BUILDER"
     },
     {
       "building_type": "TOWN_HALL",
-      "family_role": "HEAD",
-      "profession": "BUILDER"
+      "family_role": "UNASSIGNED",
+      "profession": "VILLAGE_LEADER"
     },
     {
       "building_type": "FARMHOUSE",

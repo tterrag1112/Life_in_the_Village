@@ -330,16 +330,7 @@ public class VillageLeaderGoal extends Goal {
 
     private Profession getProfessionForBuilding(
             BuildingType type) {
-        return switch (type) {
-            case BLACKSMITH      -> Profession.BLACKSMITH;
-            case FARMHOUSE       -> Profession.FARMER;
-            case MINE            -> Profession.MINER;
-            case MARKET          -> Profession.MERCHANT;
-            case INN             -> Profession.INNKEEPER;
-            case STOCKPILE       -> Profession.STOCKPILE_KEEPER;
-            case GUARD_TOWER     -> Profession.GUARD;
-            default              -> Profession.NONE;
-        };
+        return Profession.professionFor(type);
     }
 
     private boolean hasTreasuryCoins(ServerLevel level) {

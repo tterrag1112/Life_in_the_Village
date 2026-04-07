@@ -46,6 +46,22 @@
     {
       "type": "INN",
       "structure": "inn/level_1"
+    },
+    {
+      "type": "CARPENTRY",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "STONEMASON",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "WEAVER",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "CANDLEMAKER",
+      "structure": "carpentry/level_1"
     }
   ],
   "starter_items": [

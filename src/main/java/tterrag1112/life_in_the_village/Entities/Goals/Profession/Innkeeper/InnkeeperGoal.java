@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -158,9 +159,9 @@ public class InnkeeperGoal extends Goal {
                 new ItemStack(food.getItem(), 1));
 
         // Charge the NPC a small fee
-        CurrencyValue mealCost = CurrencyValue.of(4); // 4 bronze per meal
-        if (target.canAfford(mealCost)) {
-            target.pay(entity, mealCost);
+        CurrencyValue mealCost = CurrencyValue.of(4);
+        if (target.getWallet().canAfford(mealCost)) {
+            NpcEconomy.npcPay(target, entity, mealCost, level);
         }
 
         entity.swing(net.minecraft.world.InteractionHand.MAIN_HAND);

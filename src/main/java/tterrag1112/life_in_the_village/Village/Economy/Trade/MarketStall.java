@@ -1,6 +1,6 @@
 // New file: src/main/java/tterrag1112/life_in_the_village/Village/Economy/MarketStall.java
 
-package tterrag1112.life_in_the_village.Village.Economy;
+package tterrag1112.life_in_the_village.Village.Economy.Trade;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;

@@ -29,6 +29,7 @@ public class ModModelProvider extends ModelProvider {
         itemModels.generateFlatItem(ModItems.PURSE.get(), ModelTemplates.FLAT_HANDHELD_ITEM);
         itemModels.generateFlatItem(ModItems.MONEYBIN.get(), ModelTemplates.FLAT_HANDHELD_ITEM);
         itemModels.generateFlatItem(ModItems.VILLAGE_MAP.get(), ModelTemplates.FLAT_HANDHELD_ITEM);
+        itemModels.generateFlatItem(ModItems.WHEAT_FLOUR.get(), ModelTemplates.FLAT_ITEM);
         blockModels.createTrivialCube(ModBlocks.VILLAGE_FOUNDATION.get());
         blockModels.createTrivialCube(ModBlocks.GUARD_POST.get());
         this.generateGrimoir(itemModels, ModItems.KINGDOM_BOOK.get());

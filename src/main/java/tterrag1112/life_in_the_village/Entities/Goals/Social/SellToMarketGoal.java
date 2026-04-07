@@ -2,20 +2,20 @@ package tterrag1112.life_in_the_village.Entities.Goals.Social;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.DynamicPriceCalculator;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceData;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.*;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -43,6 +43,9 @@ public class SellToMarketGoal extends Goal {
     private TownspersonMob merchantNpc = null;
     private Map<Item, Integer> itemsToSell = new HashMap<>();
 
+    private MarketStall stallTarget = null;
+
+
     public SellToMarketGoal(TownspersonMob entity, Map<Item, Integer> sellableItems) {
         this.entity = entity;
         this.sellableItems = sellableItems;
@@ -51,7 +54,6 @@ public class SellToMarketGoal extends Goal {
 
     @Override
     public boolean canUse() {
-        // Only during social/idle time — don't interrupt work
         if (entity.isWorkTime()) return false;
         if (entity.shouldBeHome()) return false;
 
@@ -63,30 +65,24 @@ public class SellToMarketGoal extends Goal {
 
         VillageSavedData data = VillageSavedData.get(level);
 
-        // Find market in village
+        // Check own stall first
+        MarketStall ownStall = data.getStallByOwner(entity.getUUID()).orElse(null);
+        if (ownStall != null && ownStall.isActive()) {
+            stallTarget = ownStall;
+            market = data.getBuildingById(ownStall.getMarketBuildingId()).orElse(null);
+            merchantNpc = null;
+            return buildItemsToSell(level, data);
+        }
+
+        // No stall — find the merchant
+        stallTarget = null;
         market = findMarket(level, data);
         if (market == null) return false;
 
-        // Find merchant NPC at market
         merchantNpc = findMerchant(level);
         if (merchantNpc == null) return false;
 
-        // Check building storage threshold
-        Building assignedBuilding = entity.getAssignedBuildingId()
-                .flatMap(data::getBuildingById)
-                .orElse(null);
-        if (assignedBuilding == null) return false;
-
-        itemsToSell.clear();
-        for (Map.Entry<Item, Integer> entry : sellableItems.entrySet()) {
-            Item item = entry.getKey();
-            Integer count = entry.getValue();
-            if (hasSurplus(level, assignedBuilding, item)) {
-                itemsToSell.put(item, count - SELL_THRESHOLD);
-            }
-        }
-
-        return !itemsToSell.isEmpty();
+        return buildItemsToSell(level, data);
     }
 
     @Override
@@ -133,6 +129,21 @@ public class SellToMarketGoal extends Goal {
     private void sell(ServerLevel level) {
         sellTimer++;
 
+        VillageSavedData data = VillageSavedData.get(level);
+        Building assignedBuilding = entity.getAssignedBuildingId()
+                .flatMap(data::getBuildingById).orElse(null);
+        if (assignedBuilding == null) { goIdle(); return; }
+
+        if (stallTarget != null) {
+            // ── Own stall: deposit directly into stall chest ─────────────────
+            sellToOwnStall(level, assignedBuilding);
+        } else {
+            // ── Merchant: existing payment flow ──────────────────────────────
+            sellToMerchant(level, data, assignedBuilding);
+        }
+    }
+    private void sellToMerchant(ServerLevel level, VillageSavedData data,
+                                Building assignedBuilding) {
         if (merchantNpc == null || !merchantNpc.isAlive()) {
             goIdle();
             return;
@@ -143,29 +154,20 @@ public class SellToMarketGoal extends Goal {
                 merchantNpc.getX(), merchantNpc.getY() + merchantNpc.getEyeHeight(),
                 merchantNpc.getZ());
 
-        if (sellTimer < 20) return; // brief pause before transaction
+        if (sellTimer < 20) return;
 
-        VillageSavedData data = VillageSavedData.get(level);
         Optional<Village> village = entity.getAssignedVillageName()
                 .flatMap(name -> data.getVillageByName(name));
 
-        Building assignedBuilding = entity.getAssignedBuildingId()
-                .flatMap(data::getBuildingById)
-                .orElse(null);
-        if (assignedBuilding == null) { goIdle(); return; }
-
         MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
         boolean soldAnything = false;
-        long totalRevenue = 0L;
 
         for (Map.Entry<Item, Integer> entry : itemsToSell.entrySet()) {
             Item item = entry.getKey();
             int toSell = entry.getValue();
             if (toSell <= 0) continue;
 
-            // Get price merchant will pay
-            MarketPriceData.ItemPrice basePrice = priceData.getPrice(item)
-                    .orElse(null);
+            MarketPriceData.ItemPrice basePrice = priceData.getPrice(item).orElse(null);
             if (basePrice == null) continue;
 
             long pricePerItem = village.map(v ->
@@ -173,28 +175,28 @@ public class SellToMarketGoal extends Goal {
                             level, v, data, item, basePrice.buyPrice())
             ).orElse(basePrice.buyPrice());
 
-            // Check merchant can afford it
             CurrencyValue totalPayment = CurrencyValue.of(pricePerItem * toSell);
             if (!merchantNpc.canAffordWithBuilding(totalPayment, level)) {
-                // Sell as much as merchant can afford
                 long canAfford = merchantNpc.getWealth().toBronze() / pricePerItem;
                 toSell = (int) Math.min(toSell, canAfford);
                 if (toSell <= 0) continue;
                 totalPayment = CurrencyValue.of(pricePerItem * toSell);
             }
 
-            // Take items from building storage
             boolean taken = BuildingStorageAccess.takeItem(
                     level, assignedBuilding, item, toSell);
             if (!taken) continue;
 
-            // Deposit into market storage
             BuildingStorageAccess.storeItem(
                     level, market, new ItemStack(item, toSell));
 
-            // Merchant pays seller
-            merchantNpc.pay(entity, totalPayment);
-            totalRevenue += totalPayment.toBronze();
+            NpcEconomy.npcPay(merchantNpc, entity, totalPayment, level);
+
+// Record revenue to the seller's business treasury as well
+            CurrencyValue finalTotalPayment = totalPayment;
+            entity.getAssignedBuildingId().ifPresent(buildingId ->
+                    NpcEconomy.recordRevenue(entity, buildingId,
+                            finalTotalPayment, level, data));
 
             System.out.println(entity.getNpcName() + " sold " + toSell
                     + "x " + item.getDescriptionId()
@@ -204,15 +206,50 @@ public class SellToMarketGoal extends Goal {
         }
 
         if (soldAnything) {
-            // Regenerate merchant offers with new stock
             MerchantGoal merchantGoal = merchantNpc.getGoal(MerchantGoal.class);
             if (merchantGoal != null) {
                 merchantGoal.regenerateMarketOffers(level);
             }
-            if (entity.getProfession() == Profession.FARMER && totalRevenue > 0) {
-                tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager
-                        .onWorkplaceSale(level, assignedBuilding.getId(), (int) totalRevenue);
-            }
+        }
+
+        goIdle();
+    }
+
+    private void sellToOwnStall(ServerLevel level, Building assignedBuilding) {
+        if (stallTarget.getChestPos().equals(net.minecraft.core.BlockPos.ZERO)) {
+            goIdle(); return;
+        }
+
+        BlockEntity be = level.getBlockEntity(stallTarget.getChestPos());
+        if (!(be instanceof Container chest)) { goIdle(); return; }
+
+        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
+
+        for (Map.Entry<Item, Integer> entry : itemsToSell.entrySet()) {
+            Item item = entry.getKey();
+            int toMove = entry.getValue();
+            if (toMove <= 0) continue;
+
+            // Check how much is in building storage
+            int available = BuildingStorageAccess.countItem(level, assignedBuilding, item);
+            toMove = Math.min(toMove, available);
+            if (toMove <= 0) continue;
+
+            // Don't overfill chest — check remaining space
+            int chestSpace = countChestSpace(chest);
+            toMove = Math.min(toMove, chestSpace);
+            if (toMove <= 0) continue;
+
+            boolean taken = BuildingStorageAccess.takeItem(
+                    level, assignedBuilding, item, toMove);
+            if (!taken) continue;
+
+            // Move to chest
+            ItemStack toStore = new ItemStack(item, toMove);
+            addToChest(chest, toStore);
+
+            System.out.println(entity.getNpcName() + " stocked stall with "
+                    + toMove + "x " + item.getDescriptionId());
         }
 
         goIdle();
@@ -271,5 +308,55 @@ public class SellToMarketGoal extends Goal {
         return VillageEconomy.getListingsForItem(
                 level, villageId, item, level.getGameTime()
         ).isEmpty() ? 0 : 16;
+    }
+    private static int countChestSpace(Container chest) {
+        int space = 0;
+        for (int i = 0; i < chest.getContainerSize(); i++) {
+            ItemStack s = chest.getItem(i);
+            if (s.isEmpty()) {
+                space += 64;
+            } else {
+                space += s.getMaxStackSize() - s.getCount();
+            }
+        }
+        return space;
+    }
+
+    private static void addToChest(Container chest, ItemStack stack) {
+        // Merge with existing stacks first
+        for (int i = 0; i < chest.getContainerSize() && !stack.isEmpty(); i++) {
+            ItemStack ex = chest.getItem(i);
+            if (ex.is(stack.getItem()) && ex.getCount() < ex.getMaxStackSize()) {
+                int add = Math.min(ex.getMaxStackSize() - ex.getCount(), stack.getCount());
+                ex.grow(add);
+                stack.shrink(add);
+            }
+        }
+        // Then empty slots
+        for (int i = 0; i < chest.getContainerSize() && !stack.isEmpty(); i++) {
+            if (chest.getItem(i).isEmpty()) {
+                chest.setItem(i, stack.copy());
+                stack.setCount(0);
+            }
+        }
+    }
+    /**
+     * Checks building storage for sellable items above threshold and
+     * populates {@code itemsToSell}. Returns true if anything is ready to sell.
+     */
+    private boolean buildItemsToSell(ServerLevel level, VillageSavedData data) {
+        Building assignedBuilding = entity.getAssignedBuildingId()
+                .flatMap(data::getBuildingById)
+                .orElse(null);
+        if (assignedBuilding == null) return false;
+
+        itemsToSell.clear();
+        for (Map.Entry<Item, Integer> entry : sellableItems.entrySet()) {
+            Item item = entry.getKey();
+            if (hasSurplus(level, assignedBuilding, item)) {
+                itemsToSell.put(item, entry.getValue() - SELL_THRESHOLD);
+            }
+        }
+        return !itemsToSell.isEmpty();
     }
 }

@@ -22,6 +22,7 @@ public class ModItems {
     public static final DeferredItem<Item> VILLAGE_MAP = ITEMS.registerItem("village_map", VillageMapItem::new, props -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<Item> KINGDOM_BOOK = ITEMS.registerItem("kingdom_book", KingdomBookItem::new, props -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<Item> COMPANY_LEDGER = ITEMS.registerItem("company_ledger", CompanyLedgerItem::new, props -> new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> WHEAT_FLOUR = ITEMS.registerSimpleItem("wheat_flour");
 
 
 

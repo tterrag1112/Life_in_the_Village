@@ -10,8 +10,10 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -105,23 +107,37 @@ public class StockpileKeeperGoal extends Goal {
                                      Item item,
                                      int needed,
                                      long currentTick) {
+        UUID buildingId = entity.getAssignedBuildingId().orElse(null);
+        if (buildingId == null) return false;
+
+        VillageSavedData data = VillageSavedData.get(level);
+        BuildingEconomy bEconomy = data.getOrCreateBuildingEconomy(buildingId);
+
         return VillageEconomy.findCheapestSeller(
                 level, village.getId(), item,
                 entity.getX(), entity.getZ(), currentTick
         ).map(seller -> {
-            int qty   = Math.min(needed, seller.listing().getQuantity());
+            int  qty  = Math.min(needed, seller.listing().getQuantity());
             long cost = seller.listing().getPricePerItem() * qty;
 
-            if (!entity.canAffordWithBuilding(CurrencyValue.of(cost), level)) {
-                return false;
-            }
+            if (!bEconomy.canAfford(cost)) return false;
 
-            entity.payWithBuilding(seller.seller(), CurrencyValue.of(cost), level);
-            BuildingStorageAccess.storeItem(level, stockpile, new ItemStack(item, qty));
+            Building sellerBuilding = data
+                    .getBuildingById(seller.listing().getSellerBuildingId())
+                    .orElse(null);
+            if (sellerBuilding == null) return false;
 
-            System.out.println("StockpileKeeperGoal: bought " + qty
-                    + "x " + item.getDescriptionId() + " for restocking");
+            if (!BuildingStorageAccess.takeItem(
+                    level, sellerBuilding, item, qty)) return false;
+
+            // businessPay: building treasury pays seller wallet + fires visual
+            NpcEconomy.businessPay(buildingId, seller.seller(),
+                    CurrencyValue.of(cost), level, data);
+
+            BuildingStorageAccess.storeItem(
+                    level, stockpile, new ItemStack(item, qty));
             return true;
+
         }).orElse(false);
     }
 }

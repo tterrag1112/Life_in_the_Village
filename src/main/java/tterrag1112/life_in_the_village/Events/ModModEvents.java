@@ -289,7 +289,7 @@ public class ModModEvents {
 
         var menu = event.getContainer();
 
-        // Find the block pos from any non-player-inventory slot's container
+        // Find the block pos of the opened container
         net.minecraft.core.BlockPos containerPos = null;
         for (net.minecraft.world.inventory.Slot slot : menu.slots) {
             if (slot.container == player.getInventory()) continue;
@@ -307,63 +307,62 @@ public class ModModEvents {
         var building = data.getBuildingAt(containerPos).orElse(null);
         if (building == null) return;
 
+        // ── Ownership checks — no theft penalty for owned containers ─────────
+
+        // 1. Player owns the building via property system
         boolean playerOwnsBuilding = data.isPlayerOwned(building.getId())
                 && data.getPropertyForBuilding(building.getId())
                 .map(p -> p.playerId().equals(player.getUUID()))
                 .orElse(false);
+        if (playerOwnsBuilding) return;
 
-        if (!playerOwnsBuilding) {
-            // Look for slots where item count decreased
-            boolean stoleItems = false;
-            for (int i = 0; i < menu.slots.size(); i++) {
-                net.minecraft.world.inventory.Slot slot = menu.slots.get(i);
-                if (slot.container == player.getInventory()) continue;
+        // 2. Container is the player's own market stall chest
+        final net.minecraft.core.BlockPos finalContainerPos = containerPos;
+        boolean playerOwnsStall = data.getStallsForVillage(village.getId())
+                .stream()
+                .anyMatch(s -> s.isActive()
+                        && s.getOwnerUUID().equals(player.getUUID())
+                        && s.getChestPos().equals(finalContainerPos));
+        if (playerOwnsStall) return;
 
-                ItemStack current = slot.getItem();
-                ItemStack before  = snapshot.getOrDefault(i, ItemStack.EMPTY);
-
-                // Count decreased = items were removed
-                int removedCount = before.getCount() - current.getCount();
-                if (removedCount > 0 && !before.isEmpty()) {
-                    stoleItems = true;
-                    break;
-                }
-            }
-
-            if (stoleItems) {
-                tterrag1112.life_in_the_village.Village.VillageWarningSystem
-                        .issueWarning(player.getUUID(), village.getId(), level, data);
-                tterrag1112.life_in_the_village.Village.Reputation.ReputationManager
-                        .onStolenFromContainer(player, village.getId(), level);
-                player.displayClientMessage(
-                        net.minecraft.network.chat.Component.literal(
-                                        "You have been seen stealing from "
-                                                + village.getName() + "!")
-                                .withStyle(net.minecraft.ChatFormatting.RED),
-                        false);
-            }
-        }
-
-        // Diff: find slots where count increased
+        // ── Detect whether items were actually removed ────────────────────────
+        boolean stoleItems = false;
         for (int i = 0; i < menu.slots.size(); i++) {
             net.minecraft.world.inventory.Slot slot = menu.slots.get(i);
             if (slot.container == player.getInventory()) continue;
 
             ItemStack current = slot.getItem();
-            if (current.isEmpty()) continue;
+            ItemStack before  = snapshot.getOrDefault(i, ItemStack.EMPTY);
 
-            ItemStack before = snapshot.getOrDefault(i, ItemStack.EMPTY);
-            int addedCount = current.getCount() - before.getCount();
-            if (addedCount <= 0) continue;
-
-            String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
-                    .getKey(current.getItem()).toString();
-
-            tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager
-                    .onItemDelivered(player, itemId, addedCount, level);
-            CraftingOrderInteraction.onItemsDeposited(
-                    player, village.getId(), itemId, addedCount, level);
+            int removedCount = before.getCount() - current.getCount();
+            if (removedCount > 0 && !before.isEmpty()) {
+                stoleItems = true;
+                break;
+            }
         }
+
+        if (!stoleItems) return;
+
+        // ── Witness check — only penalise if a guard or adventurer sees it ────
+        TownspersonMob witness = findTheftWitness(level, player, containerPos);
+
+        if (witness != null) {
+            // Witnessed — apply full penalty and alert the witness
+            tterrag1112.life_in_the_village.Village.VillageWarningSystem
+                    .issueWarning(player.getUUID(), village.getId(), level, data);
+            tterrag1112.life_in_the_village.Village.Reputation.ReputationManager
+                    .onStolenFromContainer(player, village.getId(), level);
+
+            witness.setCurrentActivity("Witnessed theft!");
+
+            player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal(
+                                    witness.getNpcName() + " saw you steal from "
+                                            + village.getName() + "!")
+                            .withStyle(net.minecraft.ChatFormatting.RED),
+                    false);
+        }
+        // No witness — theft succeeds silently, no reputation change
     }
     @SubscribeEvent
     public static void onTownspersonDeath(LivingDeathEvent event) {
@@ -380,5 +379,45 @@ public class ModModEvents {
                 BusinessPurchaseManager.handleFarmerDeath(townsperson, level);
             }
         }
+    }
+    /**
+     * Looks for a guard or adventurer NPC within witness range of the theft.
+     * Uses a simple range check — no line-of-sight for now, but the range
+     * is kept tight (16 blocks) so it's easy to avoid by scouting first.
+     *
+     * Returns the first qualifying witness found, or null if unwitnessed.
+     */
+    private static tterrag1112.life_in_the_village.Entities.custom.TownspersonMob
+    findTheftWitness(ServerLevel level,
+                     ServerPlayer thief,
+                     net.minecraft.core.BlockPos theftPos) {
+
+        final double WITNESS_RANGE = 16.0;
+
+        net.minecraft.world.phys.AABB searchBox =
+                new net.minecraft.world.phys.AABB(theftPos).inflate(WITNESS_RANGE);
+
+        return level.getEntitiesOfClass(
+                        tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
+                        searchBox,
+                        npc -> {
+                            // Only guards and adventurers act as witnesses
+                            tterrag1112.life_in_the_village.Profession.Profession prof =
+                                    npc.getProfession();
+                            if (prof != tterrag1112.life_in_the_village.Profession.Profession.GUARD
+                                    && prof != tterrag1112.life_in_the_village.Profession.Profession.ADVENTURER
+                                    && prof != tterrag1112.life_in_the_village.Profession.Profession.GUILDWORKER) {
+                                return false;
+                            }
+                            // Must not be asleep or otherwise blocked
+                            if (npc.shouldBeHome()) return false;
+                            // Must be roughly facing or near the thief
+                            // (distance from NPC to theft pos, not from thief)
+                            return npc.blockPosition().distSqr(theftPos)
+                                    <= WITNESS_RANGE * WITNESS_RANGE;
+                        })
+                .stream()
+                .findFirst()
+                .orElse(null);
     }
 }

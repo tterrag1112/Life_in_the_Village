@@ -46,6 +46,8 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcWallet;
 import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
 
 import javax.annotation.Nullable;
@@ -441,39 +443,57 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public void addChildId(UUID childId)           { family.addChild(childId); }
 
     // =========================================================================
-    // INVENTORY & CURRENCY — delegated to EconomyComponent
-    // =========================================================================
+// INVENTORY & CURRENCY — delegated to EconomyComponent
+// =========================================================================
 
-    public EconomyComponent getEconomy() { return economy; }
+    public EconomyComponent getEconomy()             { return economy; }
+    public SimpleContainer getPersonalInventory()    { return economy.getInventory(); }
+    public NpcWallet getWallet()                     { return economy.getWallet(); }
 
-    public SimpleContainer getPersonalInventory() { return economy.getInventory(); }
-    public CurrencyValue getWealth()              { return economy.getWealth(); }
-    public boolean canAfford(CurrencyValue price) { return economy.canAfford(price); }
-    public boolean spend(CurrencyValue amount)    { return economy.spend(amount); }
-    public void receive(CurrencyValue amount)     { economy.receive(amount); }
+    // Wealth queries
+    public CurrencyValue getWealth()                 { return economy.getWealth(); }
+    public boolean canAfford(CurrencyValue price)    { return economy.canAfford(price); }
 
-    public boolean pay(TownspersonMob receiver, CurrencyValue amount) {
-        return economy.payTo(receiver.economy, amount);
-    }
-
-    public CurrencyValue getTotalWealth(ServerLevel level) {
-        Building building = getAssignedBuildingId()
-                .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
-                .orElse(null);
-        return CoinHelper.getTotalWealth(economy.getInventory(), level, building);
-    }
-
+    /**
+     * Combined affordability: personal wallet + assigned building treasury.
+     * Use for business purchases where the building funds the transaction.
+     */
     public boolean canAffordWithBuilding(CurrencyValue price, ServerLevel level) {
-        return getTotalWealth(level).isAffordable(price);
+        long buildingTreasury = getAssignedBuildingId()
+                .flatMap(id -> VillageSavedData.get(level).getBuildingEconomy(id))
+                .map(tterrag1112.life_in_the_village.Village.Economy
+                        .BuildingEconomy::getTreasury)
+                .orElse(0L);
+        return economy.canAffordWithBuilding(price, buildingTreasury);
     }
 
-    public boolean payWithBuilding(TownspersonMob receiver,
-                                   CurrencyValue amount,
-                                   ServerLevel level) {
-        Building building = getAssignedBuildingId()
-                .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
-                .orElse(null);
-        return CoinHelper.payWithBuilding(economy.getInventory(), amount, level, building);
+    /**
+     * Total wealth for display/AI decisions: personal + building treasury.
+     */
+    public CurrencyValue getTotalWealth(ServerLevel level) {
+        long buildingTreasury = getAssignedBuildingId()
+                .flatMap(id -> VillageSavedData.get(level).getBuildingEconomy(id))
+                .map(tterrag1112.life_in_the_village.Village.Economy
+                        .BuildingEconomy::getTreasury)
+                .orElse(0L);
+        return CurrencyValue.of(economy.getWealth().toBronze() + buildingTreasury);
+    }
+
+    // Personal wallet mutations — no visual, use NpcEconomy for visible transfers
+    public boolean spend(CurrencyValue amount)       { return economy.spend(amount); }
+    public void receive(CurrencyValue amount)        { economy.receive(amount); }
+
+    /**
+     * NPC-to-NPC payment with visual feedback.
+     * Prefer this over direct wallet manipulation for all observed transactions.
+     */
+    public boolean pay(TownspersonMob receiver,
+                       CurrencyValue amount) {
+        if (!(level() instanceof ServerLevel sl)) {
+            return economy.payTo(receiver.economy, amount);
+        }
+        return tterrag1112.life_in_the_village.Village.Economy.Currency
+                .NpcEconomy.npcPay(this, receiver, amount, sl);
     }
 
     // =========================================================================
