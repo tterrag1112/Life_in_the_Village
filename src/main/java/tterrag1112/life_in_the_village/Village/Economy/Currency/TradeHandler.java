@@ -60,10 +60,9 @@ public class TradeHandler {
         // Collect stall chest positions so stock counts exclude other stalls
         Set<BlockPos> allStallChests = allStallChestPositions(data, market);
 
-        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
         List<TradeOffer> offers = new ArrayList<>();
 
-        priceData.getAllPrices().forEach((item, basePrice) -> {
+        MarketPriceHelper.getAllExplicitPrices().forEach((item, basePrice) -> {
             long dynSell = village.map(v ->
                     DynamicPriceCalculator.getSellPrice(
                             level, v, data, item, basePrice.sellPrice())
@@ -80,6 +79,15 @@ public class TradeHandler {
 
             long boostedBuy = ProfessionPerkManager
                     .applyMerchantBuyPricePerk(player, dynBuy);
+
+            // Kingdom law: TRADE_TARIFFS — reflect surcharge in displayed prices
+            java.util.UUID vidForTariff = village.map(Village::getId).orElse(null);
+            discountedSell = Math.round(discountedSell
+                    * tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
+                    .tradeBuyMultiplier(player, data, vidForTariff));
+            boostedBuy = Math.round(boostedBuy
+                    * tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
+                    .tradeSellMultiplier(player, data, vidForTariff));
 
             // Stock = main chests + merchant's own stall (not other stalls)
             int stock = countMerchantStock(
@@ -152,9 +160,8 @@ public class TradeHandler {
             }
         }
 
-        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
-        MarketPriceData.ItemPrice basePrice = priceData.getPrice(item).orElse(null);
-        if (basePrice == null) return;
+        MarketPriceData.ItemPrice basePrice = MarketPriceHelper.getOrDefaultPrice(item);
+
 
         int quantity = packet.quantity();
 
@@ -190,6 +197,11 @@ public class TradeHandler {
             long pricePerItem = villageId != null
                     ? ReputationManager.applyDiscount(rawPrice, player, villageId, level)
                     : rawPrice;
+
+            // Kingdom law: TRADE_TARIFFS — outsiders pay a +20% surcharge
+            double tariffBuy = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
+                    .tradeBuyMultiplier(player, data, villageId);
+            pricePerItem = Math.round(pricePerItem * tariffBuy);
 
             // Afford check — uses getPlayerWealth, no snapshot
             quantity = Math.min(quantity,
@@ -270,6 +282,11 @@ public class TradeHandler {
             long pricePerItem = ProfessionPerkManager
                     .applyMerchantBuyPricePerk(player, rawBuyPrice);
 
+            // Kingdom law: TRADE_TARIFFS — outsiders receive 20% less
+            double tariffSell = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
+                    .tradeSellMultiplier(player, data, villageId);
+            pricePerItem = Math.round(pricePerItem * tariffSell);
+
             // Cap to merchant wealth
             long merchantWealth = merchant.getTotalWealth(level).toBronze();
             quantity = Math.min(quantity,
@@ -327,9 +344,8 @@ public class TradeHandler {
                 .map(h -> h.value()).orElse(null);
         if (item == null) return;
 
-        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
-        MarketPriceData.ItemPrice basePrice = priceData.getPrice(item).orElse(null);
-        if (basePrice == null) return;
+        MarketPriceData.ItemPrice basePrice = MarketPriceHelper.getOrDefaultPrice(item);
+
 
         if (packet.isBuying()) {
             int inInv = countInPersonalInventory(trader, item);

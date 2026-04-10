@@ -121,6 +121,37 @@ public class FarmPlot {
                 case PASTURE             -> Identifier.withDefaultNamespace("wheat");
             };
         }
+        // -------------------------------------------------------------------------
+        // Resolved block / item helpers
+        // -------------------------------------------------------------------------
+
+        /**
+         * Returns the actual {@link net.minecraft.world.level.block.Block}
+         * this crop type plants. Resolves the {@link #getCropBlock()} Identifier
+         * through the block registry.
+         *
+         * <p>Returns {@code null} for {@link #PASTURE} — pasture plots are not
+         * planted and callers must handle the null case.</p>
+         */
+        public net.minecraft.world.level.block.Block resolveCropBlock() {
+            if (this == PASTURE) return null;
+            return net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                    .get(getCropBlock())
+                    .map(h -> h.value())
+                    .orElse(net.minecraft.world.level.block.Blocks.WHEAT);
+        }
+
+        /**
+         * Returns the actual {@link net.minecraft.world.item.Item} used as
+         * seed for this crop type. Resolves the {@link #getSeedItem()}
+         * Identifier through the item registry.
+         */
+        public net.minecraft.world.item.Item resolveSeedItem() {
+            return net.minecraft.core.registries.BuiltInRegistries.ITEM
+                    .get(getSeedItem())
+                    .map(h -> h.value())
+                    .orElse(net.minecraft.world.item.Items.WHEAT_SEEDS);
+        }
 
         /**
          * Returns true if this plot type grows plantable crops.

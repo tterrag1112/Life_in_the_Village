@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
+import tterrag1112.life_in_the_village.Village.Travel.Roster;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -182,7 +183,8 @@ public class CaravanGuardGoal extends Goal {
 
         return CaravanSavedData.get(level)
                 .getCaravan(caravanId)
-                .map(Caravan::getMerchantEntityId)
+                .map(Caravan::getRoster)
+                .map(Roster::getPrincipalId)
                 .map(level::getEntity)
                 .orElse(null);
     }

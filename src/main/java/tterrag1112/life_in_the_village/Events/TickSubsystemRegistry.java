@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Events;
 import com.mojang.logging.LogUtils;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadWeatheringSystem;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasFillSystem;
 
 import java.util.*;
 
@@ -92,6 +93,17 @@ public final class TickSubsystemRegistry {
         register(new RoadWeatheringSystem());
 
         register(new WanderingTraderTickSystem());
+
+        register(new AtlasFillSystem());
+        register(new VillageRealisationSystem());
+        register(new RouteRealisationTickSystem());
+        register(new RoadEventTickSystem());
+        register(new BoatCaravanTickSystem());
+
+
+
+
+
 
 
         LOGGER.info("Registered {} tick subsystems", SYSTEMS.size());

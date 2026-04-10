@@ -2,6 +2,7 @@
 package tterrag1112.life_in_the_village.Profession;
 
 import com.mojang.serialization.Codec;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.item.Items;
@@ -100,9 +101,9 @@ public enum PlayerProfession {
             "Guard",
             new int[]{0, 120, 350, 800, 1800},
             Map.of(
+                    XpSource.KILL_MOB,       15,   // primary — killing hostile mobs
                     XpSource.JOB_POSTING,    60,   // patrol/security assignments
                     XpSource.CRAFT_RELEVANT,  6,   // crafting weapons & armour
-                    XpSource.BREAK_BLOCK,     1,   // minor — clearing threats
                     XpSource.SELL_TO_NPC,     3    // selling confiscated goods
             )
     );
@@ -116,7 +117,8 @@ public enum PlayerProfession {
         HARVEST_CROP,
         CRAFT_RELEVANT,
         SELL_TO_NPC,
-        JOB_POSTING
+        JOB_POSTING,
+        KILL_MOB
     }
 
     // =========================================================================
@@ -190,6 +192,14 @@ public enum PlayerProfession {
     /**
      * Returns true if breaking this block should award XP for this profession.
      */
+    /**
+     * Returns true if breaking this block should award XP for this profession.
+     *
+     * <p>Blacksmiths recognize ore blocks even if the miner is the one
+     * breaking them — the "blacksmith's eye" for raw material. Guards
+     * don't earn XP from breaking anything — they earn from
+     * {@link #isRelevantKill} instead.</p>
+     */
     public boolean isRelevantBlock(
             net.minecraft.world.level.block.state.BlockState state) {
         return switch (this) {
@@ -199,12 +209,15 @@ public enum PlayerProfession {
             case CARPENTER  -> state.is(BlockTags.LOGS)
                     || state.is(BlockTags.PLANKS);
             case FARMER     -> state.is(BlockTags.CROPS);
-            case BLACKSMITH -> false;
-            // Guards earn a tiny amount when clearing hostile mob spawning
-            // blocks (e.g. breaking spawners or mob-nest blocks). Using the
-            // WOOL tag as a proxy for structural blocks guards might clear.
-            case GUARD      -> false; // reserved — wire KILL_MOB later
-            case MERCHANT   -> false;
+            // Blacksmith: ore recognition — iron, gold, copper, and their
+            // deepslate variants. Overlaps with miner, which is intended.
+            case BLACKSMITH -> state.is(BlockTags.IRON_ORES)
+                    || state.is(BlockTags.GOLD_ORES)
+                    || state.is(BlockTags.COPPER_ORES)
+                    || state.is(net.minecraft.tags.BlockTags.create(
+                    Identifier.withDefaultNamespace("ancient_debris")));
+            case GUARD      -> false;   // Guards earn from KILL_MOB instead
+            case MERCHANT   -> false;   // Merchants earn from SELL_TO_NPC instead
         };
     }
 
@@ -247,6 +260,36 @@ public enum PlayerProfession {
                     || result.getItem() == Items.SHIELD
                     || result.getItem() == Items.ARROW
                     || result.getItem() == Items.CROSSBOW;
+        };
+    }
+    /**
+     * Returns true if selling this item should award XP for this profession.
+     *
+     * <p>For most professions this matches {@link #isRelevantCraft} — a
+     * blacksmith earns sell XP for selling things a blacksmith crafts. The
+     * key exception is {@link #MERCHANT}, which earns sell XP for selling
+     * <em>anything</em> — merchants are the trade-everything profession,
+     * and filtering their XP by item category makes the role unlevellable.</p>
+     */
+    public boolean isRelevantSell(
+            net.minecraft.world.item.ItemStack stack) {
+        if (this == MERCHANT) return true;
+        return isRelevantCraft(stack);
+    }
+
+    /**
+     * Returns true if killing this entity should award XP for this profession.
+     *
+     * <p>Only guards currently earn kill XP, and only from hostile mobs —
+     * not passive animals, not other players, not NPCs. A dedicated
+     * guard build that patrols and clears the night gets natural
+     * progression through this path.</p>
+     */
+    public boolean isRelevantKill(
+            net.minecraft.world.entity.LivingEntity entity) {
+        return switch (this) {
+            case GUARD -> entity instanceof net.minecraft.world.entity.monster.Enemy;
+            default    -> false;
         };
     }
 

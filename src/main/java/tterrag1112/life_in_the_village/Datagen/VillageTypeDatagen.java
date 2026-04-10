@@ -7,12 +7,23 @@ import com.google.gson.JsonObject;
 import net.minecraft.data.CachedOutput;
 import net.minecraft.data.DataProvider;
 import net.minecraft.data.PackOutput;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Cultures.Culture;
+import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.BuildingPlacer;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.CultureResolver;
+import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.logging.Level;
 
 /**
  * Generates all village type JSON files.
@@ -455,6 +466,8 @@ public class VillageTypeDatagen implements DataProvider {
         b.add(buildingRange("FARMHOUSE", "farmhouse/level_1", 2, 4));
         b.add(buildingN("HOUSE",      "house/level_1", 2));
         b.add(building("MARKET",     "market/level_1"));
+        b.add(building("MILLER", "miller/level_1"));
+        b.add(building("BAKERY", "bakery/level_1"));
         json.add("starter_buildings", b);
 
         JsonArray n = new JsonArray();
@@ -483,14 +496,8 @@ public class VillageTypeDatagen implements DataProvider {
         json.addProperty("culture", "default");
         json.add("shape_profile", shapeProfile("CLUSTERED", false, 1, 0.7f, false));
 
-        JsonArray b = new JsonArray();
-        b.add(building("TOWN_HALL",  "town_hall/level_1"));
-        b.add(building("STOCKPILE",  "stockpile/level_1"));
-        b.add(buildingN("MINE",      "mine/level_1",       2));
-        b.add(building("BLACKSMITH", "blacksmith/level_1"));
-        b.add(buildingN("HOUSE",     "house/level_1",      2));
-        b.add(building("INN",        "inn/level_1"));
-        json.add("starter_buildings", b);
+
+
 
         JsonArray n = new JsonArray();
         n.add(npc("BUILDER",          "TOWN_HALL",  "HEAD"));
@@ -765,6 +772,8 @@ public class VillageTypeDatagen implements DataProvider {
         return sp;
     }
 
+
+
     private CompletableFuture<?> saveVillageType(CachedOutput cache,
                                                  JsonObject json) {
         String type = json.get("type").getAsString();
@@ -798,4 +807,8 @@ public class VillageTypeDatagen implements DataProvider {
     public String getName() {
         return "Life in the Village Village Types";
     }
+
+
+
+
 }

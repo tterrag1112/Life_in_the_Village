@@ -8,6 +8,7 @@
     "street_density": 0.8,
     "walled_by_default": true
   },
+  "terrain_strategy": "SLOPE_AWARE",
   "starter_buildings": [
     {
       "type": "TOWN_HALL",

@@ -1,9 +1,11 @@
 // src/main/java/tterrag1112/life_in_the_village/Village/Buildings/BuildingType.java
 package tterrag1112.life_in_the_village.Village.Buildings;
 
+import tterrag1112.life_in_the_village.Profession.Profession;
+
 public enum BuildingType {
     TOWN_HALL, INN, GUILD_HALL, GUARD_TOWER, STOCKPILE, FARMHOUSE, HOUSE, MARKET, MINE, BLACKSMITH, CASTLE,
-    CARPENTRY,
+    CARPENTRY, CHAPEL,
 
     // Tier 1
     WELL,
@@ -41,4 +43,5 @@ public enum BuildingType {
 
     // Special — procedurally generated, not a placeable NBT structure
     TOWN_SQUARE
+
 }

@@ -48,6 +48,45 @@ public class CraftingOrder {
         public static final Codec<OrderStatus> CODEC =
                 Codec.STRING.xmap(OrderStatus::valueOf, OrderStatus::name);
     }
+    // -------------------------------------------------------------------------
+    // Urgency (derived from time-to-expiry)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Visual urgency tier for the commission board, derived from how much
+     * of the order's duration remains. Not persisted — recomputed each
+     * time from {@code expiryTick} vs current tick.
+     */
+    public enum Urgency {
+        /** Fresh — more than half the duration remaining. */
+        LOW,
+        /** Some pressure — between a quarter and half remaining. */
+        MEDIUM,
+        /** Nearly expired — less than a quarter of duration remaining. */
+        HIGH,
+        /** Technically past expiry but still claimable until swept. */
+        CRITICAL
+    }
+
+    /**
+     * Current urgency tier based on {@code currentTick}.
+     *
+     * @param currentTick the current server game time
+     * @return urgency tier — LOW for fresh orders, escalating to CRITICAL
+     *         as the expiry tick approaches and passes
+     */
+    public Urgency getUrgency(long currentTick) {
+        long totalDuration  = expiryTick - postedTick;
+        if (totalDuration <= 0) return Urgency.MEDIUM;
+
+        long elapsed    = currentTick - postedTick;
+        double fraction = (double) elapsed / (double) totalDuration;
+
+        if (fraction >= 1.0) return Urgency.CRITICAL;
+        if (fraction >= 0.75) return Urgency.HIGH;
+        if (fraction >= 0.50) return Urgency.MEDIUM;
+        return Urgency.LOW;
+    }
 
     // -------------------------------------------------------------------------
     // Codec

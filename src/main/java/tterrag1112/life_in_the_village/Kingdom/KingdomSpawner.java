@@ -12,27 +12,18 @@ import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper;
 import tterrag1112.life_in_the_village.Village.Simulation.VillageSimEngine;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageSpawner;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasSiteSelector;
+import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
 import java.util.*;
 import java.util.function.Consumer;
 
-/**
- * Spawns a complete kingdom — a named kingdom object plus 5–7 villages
- * distributed in a ring around the spawn origin, all assigned to the
- * kingdom with internal trade routes established between them.
- *
- * <h3>Chunk loading</h3>
- * Villages are placed 400–700 blocks from the origin. Those chunks are
- * almost certainly unloaded. {@link #ensureChunksLoaded} forces the
- * 5×5 chunk area around each candidate position to load before any
- * heightmap query or site prep runs — otherwise
- * {@code getHeight(MOTION_BLOCKING_NO_LEAVES)} returns 0 (maps to Y=-64)
- * and every spawn fails as unsuitable terrain.
- */
 public class KingdomSpawner {
 
     private static final int MIN_RADIUS             = 400;
@@ -43,7 +34,6 @@ public class KingdomSpawner {
     private static final int MAX_VILLAGES           = 7;
     private static final int CAPITAL_LEVEL_BOOST    = 3;
     /** Chunk radius to load around each candidate (5×5 area = 80 block radius). */
-    private static final int CHUNK_LOAD_RADIUS      = 4;
 
     private static final String[] CAPITAL_SUFFIXES = {
             "burg", "hold", "ford", "keep", "haven"
@@ -133,7 +123,6 @@ public class KingdomSpawner {
                 // Y = minY (-64 in 1.21) and produces bogus terrain scores.
                 progress.accept("  Loading chunks at "
                         + cx + ", " + cz + "...");
-                ensureChunksLoaded(level, cx, cz, CHUNK_LOAD_RADIUS);
 
                 // Now heightmap is valid
                 int surfY = level.getHeight(
@@ -245,44 +234,6 @@ public class KingdomSpawner {
         return Optional.of(kingdom);
     }
 
-    // =========================================================================
-    // Chunk loading
-    // =========================================================================
-
-    /**
-     * Forces all chunks in a square of radius {@code chunkRadius} around
-     * the given world position to reach {@link ChunkStatus#FULL}.
-     *
-     * <p>This is necessary before any heightmap query on distant positions
-     * because unloaded chunks return 0 from {@code getHeight()}, which
-     * maps to the world minimum Y (-64 in 1.21) and makes every terrain
-     * score appear as unsuitable ocean/void.
-     *
-     * <p>Loading chunks synchronously on the server thread is safe but
-     * slow — each chunk may need to be generated from scratch. For a
-     * 4-chunk radius that is 81 chunks, which can take several seconds
-     * in a fresh world. Progress messages in the calling loop keep the
-     * operator informed.
-     */
-    private static void ensureChunksLoaded(ServerLevel level,
-                                           int worldX, int worldZ,
-                                           int chunkRadius) {
-        int centreChunkX = worldX >> 4;
-        int centreChunkZ = worldZ >> 4;
-
-        for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
-            for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
-                int cx = centreChunkX + dx;
-                int cz = centreChunkZ + dz;
-                // getChunk with mustGenerate=true forces full generation
-                // if the chunk doesn't exist yet
-                ChunkAccess chunk = level.getChunk(
-                        cx, cz, ChunkStatus.FULL, true);
-                // chunk may be null only if mustGenerate=false — with
-                // true it always returns a chunk
-            }
-        }
-    }
 
     // =========================================================================
     // Name generation
@@ -385,7 +336,7 @@ public class KingdomSpawner {
             // ── Find a candidate position ─────────────────────────────────────────
             BlockPos villagePos = findCandidatePosition(
                     level, origin, angle, radius,
-                    placedPositions, isCapital, progress, rng);
+                    placedPositions, isCapital, villageType, progress, rng);
 
             if (villagePos == null) {
                 if (isCapital) {
@@ -477,64 +428,87 @@ public class KingdomSpawner {
         return Optional.of(kingdom);
     }
 
+    // =========================================================================
+    // Atlas-based candidate finder
+    // =========================================================================
+
+    /**
+     * Finds a village position at the requested angle and radius from the
+     * kingdom origin using the World Atlas. No chunk loading occurs.
+     *
+     * <p>The atlas is filled around the search target if needed (synchronous,
+     * budgeted). The site selector then picks the best-scoring buildable cell
+     * in an angular wedge centred on the requested angle.
+     *
+     * @return chosen position, or null if no buildable cell is available
+     */
     private static BlockPos findCandidatePosition(
-            ServerLevel level,
-            BlockPos origin,
-            double angle,
-            int radius,
-            List<BlockPos> placedPositions,
-            boolean isCapital,
-            Consumer<String> progress,
-            Random rng) {
+            ServerLevel level, BlockPos origin, double angle, int radius,
+            List<BlockPos> placedPositions, boolean isCapital,
+            String villageType,  // ← new parameter
+            java.util.function.Consumer<String> progress, java.util.Random rng) {
 
-        // Capitals get 3x the attempts and a wider angular search
-        int maxAttempts = isCapital ? MAX_PLACEMENT_ATTEMPTS * 3 : MAX_PLACEMENT_ATTEMPTS;
+        WorldAtlas atlas = WorldAtlas.get(level);
 
-        for (int attempt = 0; attempt < maxAttempts; attempt++) {
-            // For capitals: after the first few tries at the original angle,
-            // start sweeping other angles around the origin ring
-            double searchAngle;
-            if (isCapital && attempt >= MAX_PLACEMENT_ATTEMPTS) {
-                // Sweep evenly around the full ring on extended attempts
-                searchAngle = (2 * Math.PI * attempt / maxAttempts);
-            } else {
-                searchAngle = angle + (attempt > 0 ? rng.nextDouble() * 0.6 - 0.3 : 0);
+        int targetX = origin.getX() + (int)(Math.cos(angle) * radius);
+        int targetZ = origin.getZ() + (int)(Math.sin(angle) * radius);
+
+        progress.accept("  Filling atlas around " + targetX + "," + targetZ);
+        atlas.ensureRegionFilled(level, targetX, targetZ, 250, 50_000_000L);
+
+        double spread = Math.toRadians(25);
+        int minR = Math.max(0, radius - 200);
+        int maxR = radius + 200;
+
+        // Filter — same hard constraints as before
+        java.util.function.Predicate<AtlasCell> filter = cell -> {
+            BlockPos p = new BlockPos(
+                    cell.blockCenterX(),
+                    cell.centerY(),
+                    cell.blockCenterZ());
+
+            for (BlockPos placed : placedPositions) {
+                if (placed.distSqr(p)
+                        < (double) MIN_VILLAGE_SEPARATION
+                        * MIN_VILLAGE_SEPARATION) {
+                    return false;
+                }
             }
 
-            int attemptRadius = radius - (attempt % MAX_PLACEMENT_ATTEMPTS) * 20;
-            if (attemptRadius < MIN_RADIUS / 2) attemptRadius = MIN_RADIUS / 2;
+            return tterrag1112.life_in_the_village.Village.VillageSpawner
+                    .isFarEnoughFromExistingVillages(level, p);
+        };
 
-            int cx = origin.getX() + (int)(Math.cos(searchAngle) * attemptRadius);
-            int cz = origin.getZ() + (int)(Math.sin(searchAngle) * attemptRadius);
+        java.util.Optional<AtlasCell> bestOpt;
 
-            progress.accept("  Loading chunks at " + cx + ", " + cz + "...");
-            ensureChunksLoaded(level, cx, cz, CHUNK_LOAD_RADIUS);
-
-            int surfY = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, cx, cz);
-            if (surfY <= level.getMinY() + 4) {
-                progress.accept("  Attempt " + (attempt + 1) + ": void/ocean — retrying");
-                continue;
-            }
-
-            BlockPos candidate = new BlockPos(cx, surfY, cz);
-
-            boolean tooCloseToKingdom = placedPositions.stream()
-                    .anyMatch(p -> Math.sqrt(p.distSqr(candidate)) < MIN_VILLAGE_SEPARATION);
-            if (tooCloseToKingdom) {
-                progress.accept("  Attempt " + (attempt + 1) + ": too close to kingdom village — retrying");
-                continue;
-            }
-
-            if (!VillageSpawner.isFarEnoughFromExistingVillages(level, candidate)) {
-                progress.accept("  Attempt " + (attempt + 1) + ": too close to world village — retrying");
-                continue;
-            }
-
-            return candidate;
+        if ("trade_hub".equals(villageType)) {
+            // Trade hubs prefer cells near existing roads
+            bestOpt = AtlasSiteSelector.findBestScoredInWedge(
+                    atlas, origin.getX(), origin.getZ(),
+                    angle, spread, minR, maxR,
+                    filter,
+                    cell -> tradeHubRouteBonus(atlas, villageType,
+                            cell.blockCenterX(), cell.blockCenterZ()));
+        } else {
+            // Other village types use the original first-match logic
+            bestOpt = AtlasSiteSelector.findBestInWedge(
+                    atlas, origin.getX(), origin.getZ(),
+                    angle, spread, minR, maxR,
+                    filter);
         }
 
-        return null;
+        if (bestOpt.isEmpty()) {
+            progress.accept("  No buildable atlas cell in wedge "
+                    + (int) Math.toDegrees(angle) + "° ± 25°");
+            return null;
+        }
+
+        AtlasCell chosen = bestOpt.get();
+        BlockPos result = new BlockPos(
+                chosen.blockCenterX(), chosen.centerY(), chosen.blockCenterZ());
+        progress.accept("  Selected " + result.toShortString()
+                + " (" + chosen.category() + ", slope=" + chosen.slope() + ")");
+        return result;
     }
 
     /**
@@ -576,7 +550,6 @@ public class KingdomSpawner {
             int cx = kingdomOrigin.getX() + (int)(Math.cos(fbAngle) * fbRadius);
             int cz = kingdomOrigin.getZ() + (int)(Math.sin(fbAngle) * fbRadius);
 
-            ensureChunksLoaded(level, cx, cz, CHUNK_LOAD_RADIUS);
 
             int surfY = level.getHeight(
                     Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, cx, cz);
@@ -603,5 +576,140 @@ public class KingdomSpawner {
         }
 
         return Optional.empty();
+    }
+    // =========================================================================
+    // Plan-only kingdom creation
+    // =========================================================================
+
+    /**
+     * Creates a kingdom and its constituent villages as PLANNED records only.
+     * No blocks are placed and no NPCs are spawned. Each village is realised
+     * lazily by {@link tterrag1112.life_in_the_village.Events.VillageRealisationSystem}
+     * when a player enters its trigger radius.
+     *
+     * <p>This method replaces the old worldgen-time use of
+     * {@link #spawnComposed}. Use {@code spawnComposed} only when an
+     * immediate block-level placement is required (debug commands, etc.).
+     *
+     * <p>Trade routes are not established at plan time — they require
+     * block-level pathfinding across terrain that isn't loaded yet. Route
+     * creation is deferred to the first tick after all participating
+     * villages become realised.
+     */
+    public static java.util.Optional<tterrag1112.life_in_the_village.Kingdom.Kingdom>
+    planComposed(ServerLevel level,
+                 BlockPos origin,
+                 String kingdomName,
+                 String culture,
+                 java.util.List<String> composition,
+                 java.util.function.Consumer<String> progress) {
+
+        tterrag1112.life_in_the_village.Networking.VillageSavedData data =
+                tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+
+        if (data.getKingdomByName(kingdomName).isPresent()) {
+            progress.accept("Kingdom '" + kingdomName + "' already exists.");
+            return java.util.Optional.empty();
+        }
+        if (composition.isEmpty()) {
+            progress.accept("Composition list is empty — aborting.");
+            return java.util.Optional.empty();
+        }
+
+        java.util.Random rng = new java.util.Random(
+                (long) kingdomName.hashCode() * 31L + origin.hashCode());
+
+        int villageCount = composition.size();
+        progress.accept("Planning " + villageCount
+                + " virtual villages for kingdom '" + kingdomName + "'...");
+
+        tterrag1112.life_in_the_village.Kingdom.Kingdom kingdom =
+                new tterrag1112.life_in_the_village.Kingdom.Kingdom(kingdomName, culture);
+        data.addKingdom(kingdom);
+        kingdom.getHistory().recordEvent(
+                tterrag1112.life_in_the_village.Lore.HistoryTextGenerator.kingdomFounded(
+                        kingdomName, "world-gen", level.getGameTime()),
+                kingdomName);
+        kingdom.getHistory().setOrigin(
+                new tterrag1112.life_in_the_village.Lore.KingdomHistoryData.KingdomOriginData(
+                        tterrag1112.life_in_the_village.Lore.KingdomHistoryData.KingdomOrigins.FOUNDED_BY_PLAYER,
+                        "world-gen", new java.util.UUID(0, 0),
+                        "the wilderness", level.getGameTime(), 0, ""));
+        data.setDirty();
+
+        int    radius      = MIN_RADIUS + rng.nextInt(MAX_RADIUS - MIN_RADIUS);
+        double angleOffset = rng.nextDouble() * 2 * Math.PI;
+        java.util.List<BlockPos> placedPositions = new java.util.ArrayList<>();
+        java.util.Set<Integer>   usedSuffixes    = new java.util.HashSet<>();
+
+        for (int i = 0; i < villageCount; i++) {
+            boolean isCapital   = (i == 0);
+            String  villageType = composition.get(i);
+
+            if (tterrag1112.life_in_the_village.Village.VillageTypeRegistry.INSTANCE
+                    .getType(villageType) == null) {
+                progress.accept("  Warning: unknown type '" + villageType
+                        + "' — using 'default'");
+                villageType = "default";
+            }
+
+            double angle = angleOffset + (2 * Math.PI * i / villageCount);
+
+            BlockPos villagePos = findCandidatePosition(
+                    level, origin, angle, radius,
+                    placedPositions, isCapital, villageType, progress, rng);
+
+            if (villagePos == null) {
+                if (isCapital) {
+                    progress.accept("  Capital could not be placed — aborting '"
+                            + kingdomName + "'");
+                    data.removeKingdom(kingdom.getId());
+                    data.setDirty();
+                    return java.util.Optional.empty();
+                }
+                progress.accept("  Warning: could not place village "
+                        + (i + 1) + " — skipping");
+                continue;
+            }
+
+            String villageName = generateUniqueName(
+                    kingdomName, isCapital, i, rng, usedSuffixes);
+            progress.accept("  Planning "
+                    + (isCapital ? "capital " : "village ")
+                    + villageName + " at " + villagePos.toShortString());
+
+            Village planned =
+                    VillagePlanHelper
+                            .planVillage(level, data, villagePos,
+                                    villageType, villageName);
+
+            kingdom.addVillage(planned.getId());
+            placedPositions.add(villagePos);
+        }
+
+        data.setDirty();
+        progress.accept("Planned kingdom '" + kingdomName + "' with "
+                + kingdom.getVillageIds().size() + " villages");
+        return java.util.Optional.of(kingdom);
+    }
+
+    // Add this static helper to KingdomSpawner.java (or wherever site scoring lives):
+
+    /**
+     * Returns a site bonus for trade-hub villages based on how many
+     * existing roads pass within 256 blocks. Used by the seeder to
+     * make trade hubs preferentially spawn at route junctions.
+     *
+     * <p>Returns 0 for non-trade-hub types so calling this is always
+     * safe regardless of village type.
+     */
+    private static double tradeHubRouteBonus(WorldAtlas atlas,
+                                             String villageType,
+                                             int blockX, int blockZ) {
+        if (!"trade_hub".equals(villageType)) return 0.0;
+
+        int roadCount = atlas.countRoadsNear(blockX, blockZ, 256);
+        // Each nearby road contributes 0.5 to the bonus, capped at 3.0
+        return Math.min(3.0, roadCount * 0.5);
     }
 }

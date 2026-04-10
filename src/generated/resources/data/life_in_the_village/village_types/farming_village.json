@@ -32,6 +32,14 @@
     {
       "type": "MARKET",
       "structure": "market/level_1"
+    },
+    {
+      "type": "MILLER",
+      "structure": "miller/level_1"
+    },
+    {
+      "type": "BAKERY",
+      "structure": "bakery/level_1"
     }
   ],
   "starter_items": [

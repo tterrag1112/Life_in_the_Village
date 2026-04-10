@@ -28,7 +28,7 @@ import java.util.Map;
 public class StructureSizeCache {
 
     /** Fallback when a structure file cannot be loaded. */
-    public static final int DEFAULT_RADIUS = 8;
+    public static final int DEFAULT_RADIUS = 16;
     /** Minimum gap between any two building footprints (blocks). */
     public static final int MIN_GAP        = 3;
 
@@ -74,7 +74,7 @@ public class StructureSizeCache {
                 .fromNamespaceAndPath(
                         tterrag1112.life_in_the_village
                                 .Life_in_the_village.MODID,
-                        structurePath);
+                        "default/"+structurePath);
 
         var templateOpt = BuildingPlacer.loadTemplate(level, id);
         if (templateOpt.isEmpty()) {

@@ -16,36 +16,6 @@ import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 
-/**
- * Post-placement decoration for villages: roads, town square, perimeter,
- * furniture, flowers, weathering, and patrol routes.
- *
- * <h3>Key change: organic road system</h3>
- * Road placement now uses {@link VillageRoadNetwork} for the graph,
- * {@link OrganicRoadPlacer} for surface painting with weighted block
- * materials, and {@link BuildingFootprint} for collision avoidance.
- * Roads have organic edges where grass creeps in from the sides.
- *
- * <h3>Pass order — normal villages</h3>
- * <ol>
- *   <li>Town square</li>
- *   <li>Road network (organic, collision-aware)</li>
- *   <li>Support hollow ground under paths</li>
- *   <li>Village perimeter</li>
- *   <li>Per-building exterior decorations</li>
- *   <li>Proximity furniture</li>
- *   <li>Market stalls (town+ tier)</li>
- *   <li>Landmark (town+ tier)</li>
- *   <li>Flowers</li>
- *   <li>Weathering</li>
- *   <li>Guard patrol route</li>
- * </ol>
- *
- * <h3>Capital override</h3>
- * Capital streets use the pre-placement pass ({@link #placeCapitalStreets})
- * and the existing {@link CapitalStreetGraph} pipeline. The organic road
- * system is used for spur connections to non-face buildings only.
- */
 public class VillageDecorator {
 
     // =========================================================================
@@ -79,12 +49,10 @@ public class VillageDecorator {
         VillageSizeTier tier = VillageSizeTier.fromBuildingCount(
                 buildings.size() * 2);
 
-        boolean isCapital = layout != null && layout.hasCapitalStreetGraph();
 
         System.out.println("VillageDecorator: decorating "
                 + village.getName() + " (" + buildings.size()
-                + " buildings, " + tier.displayName
-                + (isCapital ? " [CAPITAL]" : "") + ")");
+                + " buildings, " + tier.displayName);
 
         // ── Step 1: Town square ───────────────────────────────────────────────
         BlockPos squareCenter = resolveSquareCenter(level, layout, buildings);
@@ -103,21 +71,6 @@ public class VillageDecorator {
         // ── Step 2: Road network ──────────────────────────────────────────────
         Set<Long> allPathXZ;
 
-        if (isCapital) {
-            // Capital: use existing pre-placed street graph (unchanged)
-            Set<Long> protectedXZ = collectBuildingXZ(buildings);
-            for (BlockPos p : squarePavement) {
-                protectedXZ.add(xzKey(p.getX(), p.getZ()));
-            }
-            StreetNetwork network = buildCapitalStreetNetwork(
-                    level, layout.getCapitalStreetGraph(),
-                    buildings, squareCenter, style, data, village,
-                    protectedXZ);
-            allPathXZ = new HashSet<>(protectedXZ);
-            for (BlockPos p : network.collectBlocks(StreetTier.TERTIARY)) {
-                allPathXZ.add(xzKey(p.getX(), p.getZ()));
-            }
-        } else {
             // Normal village: new organic road system
             if (footprint == null) {
                 footprint = BuildingFootprint.fromVillage(village, data);
@@ -130,13 +83,13 @@ public class VillageDecorator {
 
             VillageRoadNetwork roads = new VillageRoadNetwork(squareCenter);
             allPathXZ = roads.buildInitialNetwork(
-                    level, village, data, material, roadTier,
+                    level, village, data, layout.getTrunkGraph(), material, roadTier,
                     footprint, level.getRandom());
 
             // Add square pavement
             for (BlockPos p : squarePavement) {
                 allPathXZ.add(xzKey(p.getX(), p.getZ()));
-            }
+
         }
 
         village.setPathHubPos(squareCenter);
@@ -153,19 +106,11 @@ public class VillageDecorator {
         VillagePerimeter.place(level, village, data, style, tier, allPathXZ);
 
         // ── Step 5: Approach gradient ─────────────────────────────────────────
-        if (!isCapital) {
+
             placeApproachGradient(level, village, data, style, allPathXZ);
-        }
 
-        // ── Step 6: Capital courtyard fill ────────────────────────────────────
-        if (isCapital) {
-            placeCapitalCourtyards(level,
-                    layout.getCapitalStreetGraph(), style);
-        }
 
-        // ── Steps 7-11: Standard decorations ──────────────────────────────────
-        if (!isCapital) {
-            // Per-building exterior decorations
+
             buildings.stream()
                     .filter(b -> b.getType() != BuildingType.TOWN_SQUARE)
                     .forEach(b -> placeExteriorDecorations(
@@ -189,7 +134,7 @@ public class VillageDecorator {
             if (tier.flowerAttempts > 0) {
                 scatterFlowers(level, village, data, style,
                         tier.flowerAttempts);
-            }
+
         }
 
         // ── Step 12: Weathering ───────────────────────────────────────────────
@@ -285,156 +230,6 @@ public class VillageDecorator {
     // Capital street pre-placement (called by VillageSpawner BEFORE buildings)
     // =========================================================================
 
-    public static Set<Long> placeCapitalStreets(ServerLevel level,
-                                                Village village,
-                                                VillageSavedData data,
-                                                VillageLayout layout) {
-        if (!layout.hasCapitalStreetGraph()) return new HashSet<>();
-
-        CapitalStreetGraph graph = layout.getCapitalStreetGraph();
-        BlockPos centre = layout.getCenter();
-        VillageBiomeStyle style = VillageBiomeStyle.detect(level, centre);
-        Set<Long> placedXZ = new HashSet<>();
-
-        for (CapitalStreetGraph.StreetSegment seg : graph.getSegments()) {
-            StreetTier tier = convertTier(seg.tier);
-
-            int surfYA = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                    seg.a.x, seg.a.z);
-            int surfYB = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                    seg.b.x, seg.b.z);
-            BlockPos posA = new BlockPos(seg.a.x, surfYA, seg.a.z);
-            BlockPos posB = new BlockPos(seg.b.x, surfYB, seg.b.z);
-
-            List<BlockPos> route = seg.axisAligned
-                    ? straightLineRoute(posA, posB, level)
-                    : RoadRouter.findRoad(level, posA, posB, 200_000);
-
-            if (route.isEmpty()) continue;
-
-            List<BlockPos> placed = placeStreetSegment(
-                    level, route, style, tier, placedXZ);
-            placed.forEach(p -> placedXZ.add(xzKey(p.getX(), p.getZ())));
-
-            data.addVillagePath(new VillagePath(
-                    UUID.randomUUID(), village.getId(), placed,
-                    tier == StreetTier.PRIMARY
-                            ? VillagePath.PathTier.COBBLESTONE
-                            : tier == StreetTier.SECONDARY
-                            ? VillagePath.PathTier.GRAVEL
-                            : VillagePath.PathTier.DIRT));
-        }
-
-        data.setDirty();
-        return placedXZ;
-    }
-
-    // =========================================================================
-    // Capital street network (existing logic preserved)
-    // =========================================================================
-
-    private static StreetNetwork buildCapitalStreetNetwork(
-            ServerLevel level, CapitalStreetGraph graph,
-            List<Building> buildings, BlockPos squareCenter,
-            VillageBiomeStyle style, VillageSavedData data,
-            Village village, Set<Long> protectedXZ) {
-
-        StreetNetwork network = new StreetNetwork();
-        network.setHub(squareCenter);
-
-        Set<Long> cityBlockPlotXZ = new HashSet<>();
-        for (CapitalStreetGraph.CityBlock block : graph.getCityBlocks()) {
-            for (CapitalStreetGraph.BlockFacePlot plot : block.plots) {
-                if (plot.occupied) {
-                    cityBlockPlotXZ.add(xzKey(plot.x, plot.z));
-                }
-            }
-        }
-
-        Map<UUID, StreetNetwork.Node> nodeMap = new HashMap<>();
-        for (var gNode : graph.getNodes()) {
-            int surfY = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                    gNode.x, gNode.z);
-            BlockPos pos = new BlockPos(gNode.x, surfY, gNode.z);
-            StreetTier tier = convertTier(gNode.tier);
-            nodeMap.put(gNode.id, network.addNode(pos, tier, null));
-        }
-
-        for (var seg : graph.getSegments()) {
-            StreetNetwork.Node sA = nodeMap.get(seg.a.id);
-            StreetNetwork.Node sB = nodeMap.get(seg.b.id);
-            if (sA == null || sB == null) continue;
-
-            StreetTier tier = convertTier(seg.tier);
-            boolean alreadyPlaced =
-                    protectedXZ.contains(
-                            xzKey(sA.pos.getX(), sA.pos.getZ()))
-                            && protectedXZ.contains(
-                            xzKey(sB.pos.getX(), sB.pos.getZ()));
-
-            List<BlockPos> placed;
-            if (alreadyPlaced) {
-                placed = straightLineRoute(sA.pos, sB.pos, level);
-            } else {
-                List<BlockPos> route = seg.axisAligned
-                        ? straightLineRoute(sA.pos, sB.pos, level)
-                        : RoadRouter.findRoad(
-                        level, sA.pos, sB.pos, 200_000);
-                if (route.isEmpty()) continue;
-                placed = placeStreetSegment(
-                        level, route, style, tier, protectedXZ);
-                if (placed.isEmpty()) continue;
-                placed.forEach(p ->
-                        protectedXZ.add(xzKey(p.getX(), p.getZ())));
-                data.addVillagePath(new VillagePath(
-                        UUID.randomUUID(), village.getId(), placed,
-                        tier == StreetTier.PRIMARY
-                                ? VillagePath.PathTier.COBBLESTONE
-                                : VillagePath.PathTier.GRAVEL));
-            }
-            network.connect(sA, sB, tier, placed);
-        }
-
-        // Spur roads for non-face buildings
-        for (Building building : buildings) {
-            if (building.getType() == BuildingType.TOWN_SQUARE) continue;
-            BlockPos entrance = PathRouter.getBuildingEntrance(building);
-            long entranceKey = xzKey(entrance.getX(), entrance.getZ());
-            if (cityBlockPlotXZ.contains(entranceKey)) continue;
-
-            StreetNetwork.Node nearest = network.nearestNodeOfTier(
-                    entrance, StreetTier.TERTIARY);
-            if (nearest == null
-                    || nearest.pos.distSqr(entrance) > 40 * 40
-                    || nearest.pos.distSqr(entrance) < 4) continue;
-
-            List<BlockPos> spur = RoadRouter.findRoad(
-                    level, nearest.pos, entrance, 50_000);
-            if (spur.isEmpty()) continue;
-
-            ZoneRegistry.ZoneEntry zone =
-                    ZoneRegistry.get(building.getType());
-            StreetTier spurTier = zone.preferredStreet();
-
-            List<BlockPos> spurPlaced = placeStreetSegment(
-                    level, spur, style, spurTier, protectedXZ);
-            if (spurPlaced.isEmpty()) continue;
-
-            StreetNetwork.Node entryNode = network.addNode(
-                    entrance, spurTier, building.getId());
-            network.connect(nearest, entryNode, spurTier, spurPlaced);
-            spurPlaced.forEach(p ->
-                    protectedXZ.add(xzKey(p.getX(), p.getZ())));
-            data.addVillagePath(new VillagePath(
-                    UUID.randomUUID(), village.getId(), spurPlaced,
-                    VillagePath.PathTier.DIRT));
-        }
-
-        return network;
-    }
 
     // =========================================================================
     // Decoration methods (preserved from original)
@@ -575,28 +370,7 @@ public class VillageDecorator {
         });
     }
 
-    private static void placeCapitalCourtyards(ServerLevel level,
-                                               CapitalStreetGraph graph,
-                                               VillageBiomeStyle style) {
-        // Fill city block interiors with gravel/stone
-        for (CapitalStreetGraph.CityBlock block : graph.getCityBlocks()) {
-            int minX = block.minX + 2, maxX = block.maxX - 2;
-            int minZ = block.minZ + 2, maxZ = block.maxZ - 2;
-            for (int x = minX; x <= maxX; x++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    if (level.getRandom().nextFloat() > 0.4f) continue;
-                    int surfY = level.getHeight(
-                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-                    BlockPos pos = new BlockPos(x, surfY - 1, z);
-                    if (level.getBlockState(pos).is(Blocks.GRASS_BLOCK)
-                            || level.getBlockState(pos).is(Blocks.DIRT)) {
-                        level.setBlock(pos,
-                                Blocks.GRAVEL.defaultBlockState(), 3);
-                    }
-                }
-            }
-        }
-    }
+
 
     // =========================================================================
     // Street segment placement (used by capital streets only)
@@ -739,14 +513,6 @@ public class VillageDecorator {
         return line;
     }
 
-    private static StreetTier convertTier(
-            CapitalStreetGraph.StreetTier gTier) {
-        return switch (gTier) {
-            case PRIMARY   -> StreetTier.PRIMARY;
-            case SECONDARY -> StreetTier.SECONDARY;
-            default        -> StreetTier.TERTIARY;
-        };
-    }
 
     private static boolean isVegetation(BlockState state) {
         return state.is(Blocks.SHORT_GRASS)

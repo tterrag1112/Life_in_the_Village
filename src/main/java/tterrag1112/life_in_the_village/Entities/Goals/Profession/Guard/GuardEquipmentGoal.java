@@ -36,6 +36,12 @@ public class GuardEquipmentGoal extends Goal {
             EquipmentSlot.FEET
     );
 
+    // Commission board cooldown — guards post shortage orders at most once
+    // per in-game day to avoid flooding the board with every guard asking
+    // for the same sword.
+    private long lastOrderPostTick = Long.MIN_VALUE;
+    private static final long ORDER_POST_INTERVAL = 24000L;
+
     // Armor tier ranking for fallback selection
     private static final Map<String, Integer> ARMOR_TIER = Map.of(
             "leather", 1, "chainmail", 2, "iron", 3,
@@ -108,6 +114,9 @@ public class GuardEquipmentGoal extends Goal {
             }
         }
         updateWeapon(level, building.get());
+        // Commission board fallback — ask the player if barracks is empty
+        postWeaponOrderIfMissing(level, building.get());
+        postArmorOrderIfMissing(level, building.get());
 
     }
 
@@ -181,6 +190,89 @@ public class GuardEquipmentGoal extends Goal {
                 }
                 break;
             }
+        }
+    }
+
+    /**
+     * If the guard has no weapon and the barracks is out of stock, post
+     * a commission for an iron sword. Rate-limited to once per in-game day
+     * per guard.
+     */
+    private void postWeaponOrderIfMissing(ServerLevel level, Building building) {
+        if (!entity.getMainHandItem().isEmpty()) return;
+        if (BuildingStorageAccess.hasItem(level, building, Items.IRON_SWORD, 1)) return;
+        if (BuildingStorageAccess.hasItem(level, building, Items.STONE_SWORD, 1)) return;
+
+        long now = level.getGameTime();
+        if (now - lastOrderPostTick < ORDER_POST_INTERVAL) return;
+        lastOrderPostTick = now;
+
+        VillageSavedData data = VillageSavedData.get(level);
+        entity.getAssignedVillageName()
+                .flatMap(data::getVillageByName)
+                .ifPresent(village -> {
+                    tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager
+                            .postOrderIfNeeded(
+                                    entity.getUUID(),
+                                    village.getId(),
+                                    "minecraft:iron_sword",
+                                    1,
+                                    now,
+                                    data);
+                });
+    }
+
+    /**
+     * If any armor slot is entirely empty and the barracks has no armor
+     * for that slot at all, post a commission for a basic iron piece.
+     * Only posts one slot per call to avoid flooding.
+     */
+    private void postArmorOrderIfMissing(ServerLevel level, Building building) {
+        long now = level.getGameTime();
+        if (now - lastOrderPostTick < ORDER_POST_INTERVAL) return;
+
+        for (EquipmentSlot slot : ARMOR_SLOTS) {
+            ItemStack equipped = entity.getItemBySlot(slot);
+            if (!equipped.isEmpty()) continue;
+
+            // Find any armor in the barracks that fits this slot
+            boolean anyAvailable = false;
+            for (var container : BuildingStorageAccess.findInventories(level, building)) {
+                for (int i = 0; i < container.getContainerSize(); i++) {
+                    if (isArmorForSlot(container.getItem(i), slot)) {
+                        anyAvailable = true;
+                        break;
+                    }
+                }
+                if (anyAvailable) break;
+            }
+            if (anyAvailable) continue;
+
+            // Nothing in storage — post a commission for a basic iron piece
+            String itemId = switch (slot) {
+                case HEAD  -> "minecraft:iron_helmet";
+                case CHEST -> "minecraft:iron_chestplate";
+                case LEGS  -> "minecraft:iron_leggings";
+                case FEET  -> "minecraft:iron_boots";
+                default    -> null;
+            };
+            if (itemId == null) continue;
+
+            lastOrderPostTick = now;
+            final String finalItemId = itemId;
+            VillageSavedData data = VillageSavedData.get(level);
+            entity.getAssignedVillageName()
+                    .flatMap(data::getVillageByName)
+                    .ifPresent(village ->
+                            tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager
+                                    .postOrderIfNeeded(
+                                            entity.getUUID(),
+                                            village.getId(),
+                                            finalItemId,
+                                            1,
+                                            now,
+                                            data));
+            return; // one slot per call
         }
     }
 

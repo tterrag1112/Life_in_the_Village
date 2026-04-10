@@ -1,6 +1,9 @@
 // src/main/java/tterrag1112/life_in_the_village/Village/VillageTypeData.java
 package tterrag1112.life_in_the_village.Village;
 
+import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRule;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
+
 import java.util.List;
 
 /**
@@ -275,6 +278,28 @@ public class VillageTypeData {
                 ? capitalProfile : CapitalProfile.defaultRound();
         this.farmPlotConfig   = farmPlotConfig != null         // NEW
                 ? farmPlotConfig : FarmPlotConfig.defaultConfig();
+        this.terrainStrategy = TerrainStrategy.FLAT;
+    }
+    public VillageTypeData(String type, String culture,
+                           List<StarterBuilding> starterBuildings,
+                           List<StarterNpc>      starterNpcs,
+                           List<StarterItem>     starterItems,
+                           VillageShapeProfile   shapeProfile,
+                           CapitalProfile        capitalProfile,
+                           FarmPlotConfig        farmPlotConfig,
+                           TerrainStrategy       terrainStrategy) {
+        this.type             = type;
+        this.culture          = culture;
+        this.starterBuildings = List.copyOf(starterBuildings);
+        this.starterNpcs      = List.copyOf(starterNpcs);
+        this.starterItems     = List.copyOf(starterItems);
+        this.shapeProfile     = shapeProfile;
+        this.capitalProfile   = capitalProfile != null
+                ? capitalProfile : CapitalProfile.defaultRound();
+        this.farmPlotConfig   = farmPlotConfig != null         // NEW
+                ? farmPlotConfig : FarmPlotConfig.defaultConfig();
+        this.terrainStrategy = terrainStrategy != null
+                ? terrainStrategy : TerrainStrategy.FLAT;
     }
 
     // =========================================================================
@@ -289,5 +314,28 @@ public class VillageTypeData {
     public VillageShapeProfile   getShapeProfile()     { return shapeProfile;     }
     public CapitalProfile        getCapitalProfile()   { return capitalProfile;   }
     public FarmPlotConfig getFarmPlotConfig() { return farmPlotConfig; }  // NEW
+
+
+    /**
+     * Rule stack for shape-based layout planning. Populated either by
+     * parsing the {@code shape_rules} array in village type JSON, or
+     * synthesised from {@code shape_profile.shape_type} via
+     * {@link tterrag1112.life_in_the_village.Village.Planning.Rules.LegacyShapeBridge}
+     * if {@code shape_rules} is absent.
+     *
+     * <p>Phase 4a: populated but not yet consumed by the planner.
+     * Phase 4b: planner reads this and ignores the legacy enum entirely.
+     */
+    private List <ShapeRule> shapeRules = java.util.List.of();
+
+    public List<ShapeRule> getShapeRules() { return shapeRules; }
+    public void setShapeRules(List<ShapeRule> rules) {
+        this.shapeRules = java.util.List.copyOf(rules);
+    }
+    private final TerrainStrategy terrainStrategy;
+
+    public TerrainStrategy getTerrainStrategy() {
+        return terrainStrategy != null ? terrainStrategy : TerrainStrategy.FLAT;
+    }
 
 }

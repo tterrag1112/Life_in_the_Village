@@ -563,16 +563,16 @@ public class BuildingCommand {
 
         // Despawn all caravans first
         caravanData.getAllCaravans().forEach(c -> {
-            if (c.getMerchantEntityId() != null) {
-                var e = level.getEntity(c.getMerchantEntityId());
+            if (c.getRoster().getPrincipalId() != null) {
+                var e = level.getEntity(c.getRoster().getPrincipalId());
                 if (e != null) e.discard();
             }
-            c.getGuardEntityIds().stream()
+            c.getRoster().getEscortIds().stream()
                     .map(level::getEntity)
                     .filter(Objects::nonNull)
                     .forEach(net.minecraft.world.entity.Entity::discard);
-            if (c.getCartEntityId() != null) {
-                var e = level.getEntity(c.getCartEntityId());
+            if (c.getRoster().getSpawnedCarrierIds() != null) {
+                var e = level.getEntity(c.getRoster().getSpawnedCarrierIds().get(1));
                 if (e != null) e.discard();
             }
         });

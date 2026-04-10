@@ -321,6 +321,88 @@ public class RoadRouter {
 
         return placed;
     }
+    // =========================================================================
+    // Bridge placement (Phase 7b)
+    // =========================================================================
+
+    /**
+     * Places a simple plank deck bridge spanning from {@code entrance}
+     * to {@code exit}. Both endpoints should be on dry land at the
+     * shoreline of a water body.
+     *
+     * <h3>Bridge style</h3>
+     * Phase 7b uses the simplest possible bridge: a single layer of
+     * oak planks at a fixed deck height (one block above the higher
+     * of the two endpoint Ys), spanning straight across the water,
+     * width {@link #ROAD_HALF_WIDTH * 2 + 1} blocks. No railings, no
+     * supports, no decoration. This is intentional placeholder code —
+     * future phases will replace it with structure-based bridges
+     * loaded from NBT files for visual variety.
+     *
+     * <p>The deck is placed even if the path passes over solid blocks
+     * for part of the span; the only check is that the deck height is
+     * above the water surface.
+     *
+     * @return list of placed deck positions (the air position above
+     *         each plank, matching the convention used by
+     *         {@link #placeRoad})
+     */
+    public static List<BlockPos> placeBridge(ServerLevel level,
+                                             BlockPos entrance,
+                                             BlockPos exit) {
+        List<BlockPos> placed = new ArrayList<>();
+
+        int deckY = Math.max(entrance.getY(), exit.getY());
+
+        int dx = exit.getX() - entrance.getX();
+        int dz = exit.getZ() - entrance.getZ();
+        int steps = Math.max(Math.abs(dx), Math.abs(dz));
+        if (steps == 0) return placed;
+
+        // Determine perpendicular for width
+        int tx = Integer.signum(dx);
+        int tz = Integer.signum(dz);
+        int perpX = -tz;
+        int perpZ = tx;
+        if (perpX == 0 && perpZ == 0) perpX = 1;
+
+        BlockState plank = Blocks.OAK_PLANKS.defaultBlockState();
+
+        for (int s = 0; s <= steps; s++) {
+            float t = (float) s / steps;
+            int cx = Math.round(entrance.getX() + t * dx);
+            int cz = Math.round(entrance.getZ() + t * dz);
+
+            for (int w = -ROAD_HALF_WIDTH; w <= ROAD_HALF_WIDTH; w++) {
+                int x = cx + perpX * w;
+                int z = cz + perpZ * w;
+                BlockPos deckPos = new BlockPos(x, deckY, z);
+
+                BlockState existing = level.getBlockState(deckPos);
+                // Only place over air, water, or replaceable terrain
+                if (existing.isAir() || existing.liquid()
+                        || existing.is(BlockTags.REPLACEABLE)) {
+                    level.setBlock(deckPos, plank, 3);
+                }
+
+                // Clear the air block above so caravans can walk through
+                BlockPos above = deckPos.above();
+                BlockState aboveState = level.getBlockState(above);
+                if (aboveState.is(BlockTags.LEAVES)
+                        || aboveState.is(BlockTags.REPLACEABLE)) {
+                    level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
+                }
+
+                placed.add(deckPos.above()); // surface position convention
+            }
+        }
+
+        System.out.println("RoadRouter: placed plank bridge from "
+                + entrance.toShortString() + " to " + exit.toShortString()
+                + " (" + (steps + 1) + " spans, deckY=" + deckY + ")");
+
+        return placed;
+    }
     public static List<BlockPos> findRoadWithMerge(
             ServerLevel level,
             BlockPos from,

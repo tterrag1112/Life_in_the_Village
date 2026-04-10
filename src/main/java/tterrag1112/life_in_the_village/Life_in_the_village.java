@@ -23,7 +23,9 @@ import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
 import tterrag1112.life_in_the_village.Entities.client.TownspersonRenderer;
 import tterrag1112.life_in_the_village.Items.ModItems;
+import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.BuildingInhabitantRegistry;
 import tterrag1112.life_in_the_village.Village.Buildings.ModBuildings;
+import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRuleRegistration;
 
 import static net.neoforged.neoforge.common.NeoForgeMod.MOD_ID;
 
@@ -77,6 +79,8 @@ public class Life_in_the_village {
     private void commonSetup(final FMLCommonSetupEvent event) {
         // Some common setup code
         LOGGER.info("HELLO FROM COMMON SETUP");
+        ShapeRuleRegistration.registerBuiltins();
+        BuildingInhabitantRegistry.registerDefaults();
 
 
     }

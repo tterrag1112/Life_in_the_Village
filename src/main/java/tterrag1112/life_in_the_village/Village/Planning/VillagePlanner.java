@@ -1,3 +1,4 @@
+// src/main/java/tterrag1112/life_in_the_village/Village/Planning/VillagePlanner.java
 package tterrag1112.life_in_the_village.Village.Planning;
 
 import net.minecraft.core.BlockPos;
@@ -5,562 +6,590 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.BuildingInhabitantRegistry;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.TrunkGraph;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.TrunkRoadPlanner;
 import tterrag1112.life_in_the_village.Village.Decoration.TownSquarePlacer;
+import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
+import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRule;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
-import tterrag1112.life_in_the_village.Village.VillageTypeData.VillageShapeProfile;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
+import tterrag1112.life_in_the_village.World.Atlas.BiomeCategory;
+import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
 import java.util.*;
 
 /**
- * Produces a terrain-aware {@link VillageLayout} before any blocks are placed.
+ * Produces a {@link VillageLayout} from a {@link VillageTypeData} and the
+ * surrounding terrain. Phase 4b — fully rule-driven.
  *
- * <h3>Key fixes in this rewrite</h3>
- * <ul>
- *   <li><b>Building count expansion</b>: ALL shape planners call
- *       {@link #expandBuildingList} to respect min_count/max_count from
- *       the village type JSON. Previously only planRadial did this.</li>
- *   <li><b>Footprint-aware overlap</b>: ALL shape planners set footprint
- *       dimensions on every LayoutSlot via {@code slot.setFootprint(w, l)}.
- *       VillageLayout.tryAdd() then uses AABB overlap instead of radius
- *       circles, preventing buildings with large footprints from overlapping
- *       even when their centers are far apart.</li>
- *   <li><b>Angular retry</b>: {@link #resolveSlotOnRing} tries 12 angular
- *       offsets before giving up, instead of silently overlapping.</li>
- * </ul>
+ * <h3>Architecture</h3>
+ * The planner no longer branches on {@link ShapeType}. Instead, it:
+ * <ol>
+ *   <li>Analyses the terrain into a {@link TerrainProfile}.</li>
+ *   <li>Builds a {@link RuleContext} and applies every {@link ShapeRule}
+ *       from the village type's rule stack. Rules populate the context
+ *       with anchors, axes, zone assignments, adjacency requirements,
+ *       density, and the walled flag.</li>
+ *   <li>Runs a single unified placement pass that reads from the context.
+ *       The placement algorithm is the same for every shape — only the
+ *       rule outputs differ.</li>
+ *   <li>Runs the orthogonal post-passes (farm plots, decoration clusters,
+ *       water-edge buildings, Y clustering) that were already in place.</li>
+ * </ol>
+ *
+ * <h3>Capitals</h3>
+ * Capital-tier villages still delegate to {@link CapitalLayoutPlanner}.
+ * That subsystem has its own pipeline and is out of scope for this rewrite.
+ *
+ * <h3>Adding a new shape</h3>
+ * No code changes. Author a {@code shape_rules} array in the village type
+ * JSON. The rule types currently supported are: {@code anchor}, {@code axis},
+ * {@code zone}, {@code adjacency}, {@code density}, {@code walled}.
+ * If a shape needs a kind of rule that doesn't exist yet, add the rule
+ * type, register its parser, and the planner will automatically pick it
+ * up via {@link RuleContext}.
  */
 public class VillagePlanner {
+
+    // ── Tunables ─────────────────────────────────────────────────────────────
 
     private static final int DEFAULT_BUILDING_RADIUS = 8;
     private static final int FARM_PLOT_RADIUS        = 10;
     private static final int DECORATION_RADIUS       = 3;
-    private static final int MAX_ATTEMPTS            = 32;
+    private static final int MAX_TERRAIN_ATTEMPTS    = 32;
+
+    /** Angular jitter (degrees) when no axis is set — used for radial layouts. */
+    private static final double RADIAL_JITTER_DEG = 8;
+
+    /** How many angular offsets to try when a building's preferred slot collides. */
+    private static final double[] PLACEMENT_OFFSETS_DEG = {
+            0, 12, -12, 24, -24, 36, -36, 60, -60, 90, -90, 135, -135, 180
+    };
 
     // =========================================================================
-    // Entry point
+    // ENTRY POINT
     // =========================================================================
 
     public static Optional<VillageLayout> plan(
             ServerLevel level, BlockPos origin,
             VillageTypeData typeData, Random rng, int villageLevel) {
 
+        // ── Step 1: terrain ─────────────────────────────────────────────────
         TerrainProfile terrain = TerrainAnalyzer.analyze(level, origin);
         if (!terrain.isSuitable()) {
             System.out.println("VillagePlanner: unsuitable terrain at " + origin);
             return Optional.empty();
         }
 
-        // Expand building list ONCE — all shapes use this
+        // ── Step 2: expand the building list (respect min/max counts) ───────
         List<VillageTypeData.StarterBuilding> expanded =
                 expandBuildingList(typeData.getStarterBuildings(), rng);
         int buildingCount = expanded.size();
 
+        // ── Step 3: density profile + sizing infrastructure ─────────────────
         boolean isCapital = buildingCount >= LayoutDensityProfile.CAPITAL_THRESHOLD;
         LayoutDensityProfile density = isCapital
                 ? LayoutDensityProfile.forCapital(buildingCount)
                 : LayoutDensityProfile.forLevel(villageLevel);
 
         StructureSizeCache sizeCache = new StructureSizeCache(level);
-        VillageLayout layout = new VillageLayout(terrain, density);
-        BlockPos centre = snapToFlat(level, terrain, origin);
-        layout.setCenter(centre);
 
-        if (isCapital) {
-            VillageLayout capitalLayout = CapitalLayoutPlanner.plan(
-                    level, centre, typeData, density, terrain, sizeCache, rng);
-            if (capitalLayout != null) {
-                return Optional.of(capitalLayout);
+
+        // ── Step 5: build and apply the rule stack ──────────────────────────
+        RuleContext ctx = new RuleContext(terrain, origin, rng.nextLong());
+        for (ShapeRule rule : typeData.getShapeRules()) {
+            try {
+                rule.apply(ctx);
+            } catch (Exception e) {
+                System.out.println("VillagePlanner: rule '" + rule.typeName()
+                        + "' failed: " + e.getMessage());
             }
-            // ORGANIC capital falls through to radial
         }
 
-        VillageShapeProfile profile = typeData.getShapeProfile();
+        // ── Step 6: unified placement pass ──────────────────────────────────
+        VillageLayout layout = unifiedPlacement(
+                level, terrain, ctx, expanded, typeData,
+                density, sizeCache, rng);
 
-        switch (profile.shapeType()) {
-            case LINEAR    -> planLinear   (layout, level, expanded, centre, density, profile, rng, sizeCache);
-            case CLUSTERED -> planClustered(layout, level, expanded, centre, density, profile, rng, sizeCache);
-            case RIVERINE  -> planRiverine (layout, level, expanded, typeData, centre, density, profile, rng, sizeCache, terrain);
-            case HILLTOP   -> planHilltop  (layout, level, expanded, centre, density, profile, rng, sizeCache, terrain);
-            case PLAZA     -> planPlaza    (layout, level, expanded, centre, density, profile, rng, sizeCache);
-            case COURTYARD -> planCourtyard(layout, level, expanded, centre, density, profile, rng, sizeCache);
-            default        -> planRadial   (layout, level, expanded, centre, density, profile, rng, sizeCache);
-        }
-
+        // ── Step 7: orthogonal post-passes ──────────────────────────────────
         if (terrain.hasWater()) {
-            placeWaterEdgeBuildings(layout, level, typeData, centre, terrain, density, rng);
+            placeWaterEdgeBuildings(layout, level, typeData,
+                    layout.getCenter(), terrain, rng);
         }
-
         clusterBuildingYLevels(layout, level);
         placeFarmPlots(layout, level, terrain, density, typeData, rng);
         placeDecorationClusters(layout, level, terrain, density, rng);
 
-        System.out.println("VillagePlanner: planned " + profile.shapeType()
-                + " village — " + layout);
+        System.out.println("VillagePlanner: planned village (" + buildingCount
+                + " buildings, axis="
+                + (ctx.axisRad() != null
+                ? Math.toDegrees(ctx.axisRad()) + "°"
+                : "none")
+                + ", walled=" + ctx.forceWalled() + ") — " + layout);
         return Optional.of(layout);
     }
 
     // =========================================================================
-    // RADIAL
-    // =========================================================================
-
-    private static void planRadial(VillageLayout layout, ServerLevel level,
-                                   List<VillageTypeData.StarterBuilding> buildings,
-                                   BlockPos centre, LayoutDensityProfile density,
-                                   VillageShapeProfile profile, Random rng,
-                                   StructureSizeCache sizeCache) {
-        int r1 = density.getRing1Radius();
-        int r2 = density.getRing2Radius();
-        int minGap = Math.max(4, density.getBuildingSpacing() / 2);
-        List<LayoutSlot> placed = new ArrayList<>();
-
-        // Sort: town hall first, then by zone priority
-        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(buildings);
-
-        double angleStep = 360.0 / Math.max(1, sorted.size());
-        double currentAngle = 0;
-
-        for (VillageTypeData.StarterBuilding sb : sorted) {
-            BuildingType btype = parseBuildingType(sb);
-            if (btype == null) continue;
-
-            if (btype == BuildingType.TOWN_HALL) {
-                placed.add(placeTownHallSlot(layout, centre, sb, sizeCache));
-                continue;
-            }
-
-            BuildingZone zone = ZoneRegistry.zoneOf(btype);
-            int radius = zone.preferredRing <= 1 ? r1 : r2;
-            double angle = currentAngle;
-            currentAngle += angleStep;
-
-            LayoutSlot slot = tryPlaceOnRings(level, centre, sb, btype,
-                    angle, placed, sizeCache, minGap, r1, r2);
-
-            if (slot != null) {
-                layout.tryAdd(slot);
-                placed.add(slot);
-            } else {
-                lastResort(layout, level, centre, sb, btype, placed,
-                        sizeCache, minGap, r2, angle, rng);
-            }
-        }
-
-        placeTownSquare(layout, level, centre, r1);
-    }
-
-    // =========================================================================
-    // LINEAR
-    // =========================================================================
-
-    private static void planLinear(VillageLayout layout, ServerLevel level,
-                                   List<VillageTypeData.StarterBuilding> buildings,
-                                   BlockPos centre, LayoutDensityProfile density,
-                                   VillageShapeProfile profile, Random rng,
-                                   StructureSizeCache sizeCache) {
-        int[] axis = profile.forcedAxis()
-                ? flatDirVector(layout.getTerrain().bestFlatDir())
-                : new int[]{1, 0};
-        int perpX = axis[1], perpZ = -axis[0];
-
-        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(buildings);
-        List<LayoutSlot> placed = new ArrayList<>();
-        int spacing = (int)(density.getBuildingSpacing() * profile.streetDensity());
-        int halfWidth = spacing / 2 + DEFAULT_BUILDING_RADIUS + 2;
-
-        for (int i = 0; i < sorted.size(); i++) {
-            VillageTypeData.StarterBuilding sb = sorted.get(i);
-            BuildingType btype = parseBuildingType(sb);
-            if (btype == null) continue;
-
-            if (btype == BuildingType.TOWN_HALL) {
-                placed.add(placeTownHallSlot(layout, centre, sb, sizeCache));
-                continue;
-            }
-
-            int pairIdx = (i - 1) / 2; // skip town hall
-            int streetDist = spacing * (pairIdx + 1);
-            int side = (i % 2 == 0) ? 1 : -1;
-
-            int idealX = centre.getX() + axis[0] * streetDist + perpX * halfWidth * side;
-            int idealZ = centre.getZ() + axis[1] * streetDist + perpZ * halfWidth * side;
-
-            LayoutSlot slot = placeWithFootprint(level, layout,
-                    new BlockPos(idealX, centre.getY(), idealZ),
-                    sb, btype, sizeCache, density, rng, placed);
-            if (slot != null) placed.add(slot);
-        }
-
-        placeTownSquare(layout, level, centre, spacing);
-    }
-
-    // =========================================================================
-    // CLUSTERED
-    // =========================================================================
-
-    private static void planClustered(VillageLayout layout, ServerLevel level,
-                                      List<VillageTypeData.StarterBuilding> buildings,
-                                      BlockPos centre, LayoutDensityProfile density,
-                                      VillageShapeProfile profile, Random rng,
-                                      StructureSizeCache sizeCache) {
-        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(buildings);
-        List<LayoutSlot> placed = new ArrayList<>();
-
-        // Place town hall at center
-        for (var sb : sorted) {
-            if (sb.type().equals(BuildingType.TOWN_HALL.name())) {
-                placed.add(placeTownHallSlot(layout, centre, sb, sizeCache));
-                break;
-            }
-        }
-
-        // Remove town hall from remaining
-        List<VillageTypeData.StarterBuilding> remaining = new ArrayList<>(sorted);
-        remaining.removeIf(sb -> sb.type().equals(BuildingType.TOWN_HALL.name()));
-
-        int clusterCount = Math.max(3, Math.min(5, remaining.size() / 3));
-        int clusterRadius = density.getRing1Radius() + 8;
-        int withinSpacing = (int)(density.getBuildingSpacing() * 0.5f);
-
-        List<List<VillageTypeData.StarterBuilding>> clusters = new ArrayList<>();
-        for (int c = 0; c < clusterCount; c++) clusters.add(new ArrayList<>());
-        for (int i = 0; i < remaining.size(); i++) {
-            clusters.get(i % clusterCount).add(remaining.get(i));
-        }
-
-        for (int c = 0; c < clusterCount; c++) {
-            double angle = (2 * Math.PI * c / clusterCount)
-                    + (rng.nextDouble() - 0.5) * (Math.PI / clusterCount);
-            int ax = centre.getX() + (int)(Math.cos(angle) * clusterRadius);
-            int az = centre.getZ() + (int)(Math.sin(angle) * clusterRadius);
-            BlockPos anchor = solidSurface(level, new BlockPos(ax, centre.getY(), az));
-
-            for (int b = 0; b < clusters.get(c).size(); b++) {
-                VillageTypeData.StarterBuilding sb = clusters.get(c).get(b);
-                BuildingType btype = parseBuildingType(sb);
-                if (btype == null) continue;
-
-                double localAngle = 2 * Math.PI * b / Math.max(1, clusters.get(c).size());
-                int localDist = b == 0 ? 0 : withinSpacing;
-                int bx = anchor.getX() + (int)(Math.cos(localAngle) * localDist);
-                int bz = anchor.getZ() + (int)(Math.sin(localAngle) * localDist);
-
-                LayoutSlot slot = placeWithFootprint(level, layout,
-                        new BlockPos(bx, centre.getY(), bz),
-                        sb, btype, sizeCache, density, rng, placed);
-                if (slot != null) placed.add(slot);
-            }
-        }
-
-        placeTownSquare(layout, level, centre, clusterRadius / 2);
-    }
-
-    // =========================================================================
-    // RIVERINE
-    // =========================================================================
-
-    private static void planRiverine(VillageLayout layout, ServerLevel level,
-                                     List<VillageTypeData.StarterBuilding> buildings,
-                                     VillageTypeData typeData,
-                                     BlockPos centre, LayoutDensityProfile density,
-                                     VillageShapeProfile profile, Random rng,
-                                     StructureSizeCache sizeCache,
-                                     TerrainProfile terrain) {
-        if (!terrain.hasWater()) {
-            planRadial(layout, level, buildings, centre, density, profile, rng, sizeCache);
-            return;
-        }
-
-        TerrainAnalyzer.WaterBodyInfo water = terrain.waterBody();
-        BlockPos shore = water.nearestShore();
-        int inlandX = Integer.signum(centre.getX() - shore.getX());
-        int inlandZ = Integer.signum(centre.getZ() - shore.getZ());
-        int shoreX = inlandZ, shoreZ = -inlandX;
-
-        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(buildings);
-        List<LayoutSlot> placed = new ArrayList<>();
-        int spacing = density.getBuildingSpacing();
-
-        // Town hall inland from shore
-        for (var sb : sorted) {
-            if (sb.type().equals(BuildingType.TOWN_HALL.name())) {
-                BlockPos thPos = solidSurface(level,
-                        shore.offset(inlandX * 12, 0, inlandZ * 12));
-                placed.add(placeTownHallSlot(layout, thPos, sb, sizeCache));
-                break;
-            }
-        }
-
-        List<VillageTypeData.StarterBuilding> remaining = new ArrayList<>(sorted);
-        remaining.removeIf(sb -> sb.type().equals(BuildingType.TOWN_HALL.name()));
-
-        for (int i = 0; i < remaining.size(); i++) {
-            VillageTypeData.StarterBuilding sb = remaining.get(i);
-            BuildingType btype = parseBuildingType(sb);
-            if (btype == null) continue;
-
-            BuildingZone zone = ZoneRegistry.zoneOf(btype);
-            int inlandDist = switch (zone) {
-                case CIVIC, PRODUCTION -> 8 + spacing / 2;
-                case AGRICULTURAL      -> 28 + spacing;
-                default                -> 16 + spacing / 2;
-            };
-
-            int shoreDist = ((i / 2) + 1) * spacing;
-            int side = (i % 2 == 0) ? 1 : -1;
-
-            int bx = shore.getX() + shoreX * shoreDist * side + inlandX * inlandDist;
-            int bz = shore.getZ() + shoreZ * shoreDist * side + inlandZ * inlandDist;
-
-            LayoutSlot slot = placeWithFootprint(level, layout,
-                    new BlockPos(bx, centre.getY(), bz),
-                    sb, btype, sizeCache, density, rng, placed);
-            if (slot != null) placed.add(slot);
-        }
-
-        BlockPos sqPos = solidSurface(level,
-                shore.offset(inlandX * 6, 0, inlandZ * 6));
-        layout.addForced(new LayoutSlot(
-                LayoutSlot.SlotType.DECORATION, sqPos, TownSquarePlacer.RADIUS + 2));
-        layout.setTownSquarePos(sqPos);
-    }
-
-    // =========================================================================
-    // HILLTOP
-    // =========================================================================
-
-    private static void planHilltop(VillageLayout layout, ServerLevel level,
-                                    List<VillageTypeData.StarterBuilding> buildings,
-                                    BlockPos centre, LayoutDensityProfile density,
-                                    VillageShapeProfile profile, Random rng,
-                                    StructureSizeCache sizeCache,
-                                    TerrainProfile terrain) {
-        BlockPos peak = findHighestPoint(level, centre, 48);
-        layout.setCenter(peak);
-
-        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(buildings);
-        List<LayoutSlot> placed = new ArrayList<>();
-
-        for (var sb : sorted) {
-            if (sb.type().equals(BuildingType.TOWN_HALL.name())) {
-                placed.add(placeTownHallSlot(layout, peak, sb, sizeCache));
-                break;
-            }
-        }
-
-        List<VillageTypeData.StarterBuilding> remaining = new ArrayList<>(sorted);
-        remaining.removeIf(sb -> sb.type().equals(BuildingType.TOWN_HALL.name()));
-
-        // Sort: defensive first
-        remaining.sort(Comparator.comparingInt(sb -> {
-            try {
-                return switch (ZoneRegistry.zoneOf(BuildingType.valueOf(sb.type()))) {
-                    case DEFENSIVE -> 0; case CIVIC -> 1;
-                    case PRODUCTION -> 2; default -> 3;
-                };
-            } catch (IllegalArgumentException e) { return 4; }
-        }));
-
-        int tightSpacing = (int)(density.getBuildingSpacing() * 0.6f);
-        for (int i = 0; i < remaining.size(); i++) {
-            VillageTypeData.StarterBuilding sb = remaining.get(i);
-            BuildingType btype = parseBuildingType(sb);
-            if (btype == null) continue;
-
-            double angle = (2 * Math.PI * i / 5.0) + i * 0.4;
-            int radius = tightSpacing + i * (tightSpacing / 3);
-            int bx = peak.getX() + (int)(Math.cos(angle) * radius);
-            int bz = peak.getZ() + (int)(Math.sin(angle) * radius);
-
-            LayoutSlot slot = placeWithFootprint(level, layout,
-                    solidSurface(level, new BlockPos(bx, peak.getY(), bz)),
-                    sb, btype, sizeCache, density, rng, placed);
-            if (slot != null) placed.add(slot);
-        }
-
-        placeTownSquare(layout, level, peak, tightSpacing);
-    }
-
-    // =========================================================================
-    // PLAZA
-    // =========================================================================
-
-    private static void planPlaza(VillageLayout layout, ServerLevel level,
-                                  List<VillageTypeData.StarterBuilding> buildings,
-                                  BlockPos centre, LayoutDensityProfile density,
-                                  VillageShapeProfile profile, Random rng,
-                                  StructureSizeCache sizeCache) {
-        final int PLAZA_RADIUS = 14;
-
-        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(buildings);
-        List<LayoutSlot> placed = new ArrayList<>();
-
-        // Town hall north of plaza
-        for (var sb : sorted) {
-            if (sb.type().equals(BuildingType.TOWN_HALL.name())) {
-                BlockPos thPos = solidSurface(level,
-                        new BlockPos(centre.getX(), centre.getY(),
-                                centre.getZ() - PLAZA_RADIUS - DEFAULT_BUILDING_RADIUS));
-                placed.add(placeTownHallSlot(layout, thPos, sb, sizeCache));
-                break;
-            }
-        }
-
-        // Plaza decoration
-        BlockPos plazaPos = solidSurface(level, centre);
-        layout.addForced(new LayoutSlot(
-                LayoutSlot.SlotType.DECORATION, plazaPos, PLAZA_RADIUS));
-        layout.setTownSquarePos(plazaPos);
-
-        List<VillageTypeData.StarterBuilding> remaining = new ArrayList<>(sorted);
-        remaining.removeIf(sb -> sb.type().equals(BuildingType.TOWN_HALL.name()));
-
-        int perimeter = PLAZA_RADIUS + DEFAULT_BUILDING_RADIUS + 2;
-        int outer = perimeter + density.getRing1Radius();
-
-        for (int i = 0; i < remaining.size(); i++) {
-            VillageTypeData.StarterBuilding sb = remaining.get(i);
-            BuildingType btype = parseBuildingType(sb);
-            if (btype == null) continue;
-
-            BuildingZone zone = ZoneRegistry.zoneOf(btype);
-            int r = (zone == BuildingZone.RESIDENTIAL || zone == BuildingZone.AGRICULTURAL)
-                    ? outer : perimeter;
-
-            double angle = 2 * Math.PI * i / Math.max(1, remaining.size());
-            int idealX = centre.getX() + (int)(Math.cos(angle) * r);
-            int idealZ = centre.getZ() + (int)(Math.sin(angle) * r);
-
-            LayoutSlot slot = placeWithFootprint(level, layout,
-                    new BlockPos(idealX, centre.getY(), idealZ),
-                    sb, btype, sizeCache, density, rng, placed);
-            if (slot != null) placed.add(slot);
-        }
-    }
-
-    // =========================================================================
-    // COURTYARD
-    // =========================================================================
-
-    private static void planCourtyard(VillageLayout layout, ServerLevel level,
-                                      List<VillageTypeData.StarterBuilding> buildings,
-                                      BlockPos centre, LayoutDensityProfile density,
-                                      VillageShapeProfile profile, Random rng,
-                                      StructureSizeCache sizeCache) {
-        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(buildings);
-        List<LayoutSlot> placed = new ArrayList<>();
-
-        for (var sb : sorted) {
-            if (sb.type().equals(BuildingType.TOWN_HALL.name())) {
-                placed.add(placeTownHallSlot(layout, centre, sb, sizeCache));
-                break;
-            }
-        }
-
-        List<VillageTypeData.StarterBuilding> remaining = new ArrayList<>(sorted);
-        remaining.removeIf(sb -> sb.type().equals(BuildingType.TOWN_HALL.name()));
-
-        List<VillageTypeData.StarterBuilding> inner = new ArrayList<>();
-        List<VillageTypeData.StarterBuilding> outer = new ArrayList<>();
-
-        for (var sb : remaining) {
-            BuildingZone zone;
-            try { zone = ZoneRegistry.zoneOf(BuildingType.valueOf(sb.type())); }
-            catch (IllegalArgumentException e) { outer.add(sb); continue; }
-            if (zone == BuildingZone.CIVIC || zone == BuildingZone.PRODUCTION) {
-                inner.add(sb);
-            } else {
-                outer.add(sb);
-            }
-        }
-
-        int innerR = (int)(density.getRing1Radius() * 0.65f);
-        int outerR = density.getRing2Radius() + 8;
-        int minGap = Math.max(4, density.getBuildingSpacing() / 2);
-
-        placeOnRing(layout, level, inner, centre, innerR,
-                sizeCache, minGap, rng, placed);
-        placeOnRing(layout, level, outer, centre, outerR,
-                sizeCache, minGap, rng, placed);
-
-        placeTownSquare(layout, level, centre, innerR / 2);
-    }
-
-    // =========================================================================
-    // Shared: place on ring (COURTYARD helper)
-    // =========================================================================
-
-    private static void placeOnRing(VillageLayout layout, ServerLevel level,
-                                    List<VillageTypeData.StarterBuilding> buildings,
-                                    BlockPos centre, int radius,
-                                    StructureSizeCache sizeCache, int minGap,
-                                    Random rng, List<LayoutSlot> placed) {
-        if (buildings.isEmpty()) return;
-        double angleStep = 360.0 / buildings.size();
-        double angle = rng.nextDouble() * 360;
-
-        for (var sb : buildings) {
-            BuildingType btype = parseBuildingType(sb);
-            if (btype == null) { angle += angleStep; continue; }
-
-            LayoutSlot slot = resolveSlotOnRing(level, centre, radius,
-                    angle, sb.structure(), btype, placed, sizeCache, minGap);
-            if (slot != null) {
-                layout.tryAdd(slot);
-                placed.add(slot);
-            }
-            angle += angleStep;
-        }
-    }
-
-    // =========================================================================
-    // Shared: place with footprint (used by LINEAR, CLUSTERED, etc.)
+    // UNIFIED PLACEMENT
     // =========================================================================
 
     /**
-     * Resolves a building position near an ideal point using terrain
-     * jitter, then creates a LayoutSlot with actual footprint dimensions.
-     * Returns null if no valid position is found.
+     * The single placement algorithm that replaces all seven legacy
+     * {@code planX} methods.
+     *
+     * <h3>Algorithm</h3>
+     * <ol>
+     *   <li>Resolve the village centre from the {@code town_square} anchor
+     *       if set, otherwise snap to the nearest flat candidate.</li>
+     *   <li>Place the town hall at the centre.</li>
+     *   <li>For every other building, compute a target position from its
+     *       zone (ring + sector) and the village axis.</li>
+     *   <li>Apply adjacency constraints — if a building requires river or
+     *       coast, its target moves to the nearest cell that satisfies it,
+     *       or the building is dropped if none exists.</li>
+     *   <li>Resolve the target onto actual terrain with footprint-aware
+     *       overlap testing and angular retries.</li>
+     *   <li>Place the town square as a decoration slot.</li>
+     * </ol>
      */
-    private static LayoutSlot placeWithFootprint(
-            ServerLevel level, VillageLayout layout, BlockPos ideal,
-            VillageTypeData.StarterBuilding sb, BuildingType btype,
-            StructureSizeCache sizeCache, LayoutDensityProfile density,
-            Random rng, List<LayoutSlot> placed) {
+    private static VillageLayout unifiedPlacement(
+            ServerLevel level,
+            TerrainProfile terrain,
+            RuleContext ctx,
+            List<VillageTypeData.StarterBuilding> expanded,
+            VillageTypeData typeData,
+            LayoutDensityProfile density,
+            StructureSizeCache sizeCache,
+            Random rng) {
 
-        StructureSizeCache.FootprintInfo info =
-                sizeCache.get(sb.structure(), Rotation.NONE);
-        int w = info != null ? info.width() : 12;
-        int l = info != null ? info.length() : 12;
-        int slotRadius = Math.max(w, l) / 2 + 1;
+        VillageLayout layout = new VillageLayout(terrain, density);
 
-        BlockPos resolved = resolveOnTerrain(level, layout, ideal,
-                density.getBuildingJitter(), slotRadius, rng,
-                ZoneRegistry.zoneOf(btype) == BuildingZone.AGRICULTURAL);
+        // ── Resolve the centre ──────────────────────────────────────────────
+        BlockPos centre = resolveCentre(level, terrain, ctx);
+        layout.setCenter(centre);
 
-        if (resolved == null) return null;
+        // ── Sort: town hall first, then by zone priority ───────────────────
+        List<VillageTypeData.StarterBuilding> sorted = sortBuildings(expanded);
+        List<LayoutSlot> placed = new ArrayList<>();
 
-        // Check AABB overlap against placed list
+        // ── Place the town hall at the centre ──────────────────────────────
+        VillageTypeData.StarterBuilding townHallEntry = null;
+
+        TrunkGraph trunkGraph = TrunkRoadPlanner.plan(
+                level, centre,
+                typeData.getShapeProfile().shapeType(),
+                layout.getDensity(),
+                ctx);
+        layout.setTrunkGraph(trunkGraph);
+        // ── Build clusters and place each as a unit ─────────────────────────
+        List<BuildingCluster> clusters = buildClusters(sorted, townHallEntry);
+
+        for (BuildingCluster cluster : clusters) {
+            // Pick the cluster's anchor position using zone-default ring/angle
+            BuildingType firstMemberType = parseBuildingType(cluster.getMembers().get(0));
+            int ring = radiusForRing(layout.getDensity(),
+                    defaultRingFor(firstMemberType != null
+                            ? firstMemberType
+                            : BuildingType.HOUSE));
+            // Pick a provisional anchor on the ring, then snap it to the
+            // nearest trunk road position. Cluster members will be
+            // distributed along the trunk from this snapped anchor.
+            double anchorAngle = (cluster.getClusterId() * 360.0
+                    / Math.max(1, clusters.size())) + rng.nextInt(20) - 10;
+            BlockPos provisional = ringPoint(centre, ring, anchorAngle);
+            BlockPos clusterAnchor = trunkGraph.isEmpty()
+                    ? provisional
+                    : trunkGraph.nearestPointOnAnyEdge(provisional);
+            if (clusterAnchor == null) clusterAnchor = provisional;
+            cluster.setAnchor(clusterAnchor);
+
+            placeCluster(level, layout, terrain, ctx, cluster,
+                    sorted, density, sizeCache, rng, placed);
+        }
+        if (townHallEntry != null) {
+            placed.add(placeTownHallSlot(layout, centre, townHallEntry, sizeCache));
+        }
+
+        // ── Place every other building via the unified placer ──────────────
+        for (VillageTypeData.StarterBuilding sb : sorted) {
+            if (sb == townHallEntry) continue;
+            BuildingType btype = parseBuildingType(sb);
+            if (btype == null) continue;
+
+            placeOneBuilding(level, layout, terrain, ctx,
+                    sb, btype, density, sizeCache, rng, placed);
+        }
+
+        // ── Town square ─────────────────────────────────────────────────────
+        // The town_square anchor IS the centre when set; otherwise the
+        // square sits a short distance south of the town hall.
+        BlockPos squarePos = ctx.getAnchor("town_square") != null
+                ? ctx.getAnchor("town_square")
+                : centre.offset(0, 0, Math.max(density.getRing1Radius() / 3, 6));
+        squarePos = solidSurface(level, squarePos);
+        layout.addForced(new LayoutSlot(
+                LayoutSlot.SlotType.DECORATION, squarePos,
+                TownSquarePlacer.RADIUS + 2));
+        layout.setTownSquarePos(squarePos);
+
+        refineRotations(layout);
+
+        return layout;
+    }
+
+    // -------------------------------------------------------------------------
+    // Placement of a single non-town-hall building
+    // -------------------------------------------------------------------------
+
+    /**
+     * Decides where one building should go and registers it with the layout.
+     *
+     * <p>Reads zone and adjacency constraints from {@link RuleContext}.
+     * Falls back to {@link ZoneRegistry} for buildings that no rule has
+     * explicitly assigned a zone to.
+     */
+    private static void placeOneBuilding(
+            ServerLevel level,
+            VillageLayout layout,
+            TerrainProfile terrain,
+            RuleContext ctx,
+            VillageTypeData.StarterBuilding sb,
+            BuildingType btype,
+            LayoutDensityProfile density,
+            StructureSizeCache sizeCache,
+            Random rng,
+            List<LayoutSlot> placed) {
+
+        BlockPos centre = layout.getCenter();
+
+        // ── Resolve zone from rules, else fall back to ZoneRegistry ─────────
+        RuleContext.ZoneSpec ruleZone = ctx.getZone(btype);
+        int radius = radiusForRing(density,
+                ruleZone != null ? ruleZone.ring() : defaultRingFor(btype));
+
+        // ── Compute the building's preferred angle ──────────────────────────
+        // If the rule context has an angular sector, pick a random angle
+        // within it. Otherwise, distribute around the village.
+        double preferredDeg = pickPreferredAngle(ruleZone, ctx, placed.size(), rng);
+
+        // ── Compute the ideal world position ────────────────────────────────
+        BlockPos ideal = ringPoint(centre, radius, preferredDeg);
+
+        // ── Apply adjacency constraints ─────────────────────────────────────
+        // ── Resolve effective adjacency requirements ─────────────────────────
+        // Combine village-type rules (RuleContext) with building-intrinsic
+        // rules (BuildingInhabitantRegistry). Rule-context entries take
+        // precedence — if both sources mention the same feature, only the
+        // rule-context version is applied. This lets a village type override
+        // a building's intrinsic requirements when needed.
+        List<RuleContext.AdjacencyReq> reqs =
+                effectiveAdjacencyReqs(ctx, btype);
+
+        if (!reqs.isEmpty()) {
+            BlockPos adjusted = applyAdjacency(level, ideal, reqs, rng);
+            if (adjusted == null) {
+                System.out.println("VillagePlanner: dropping " + btype
+                        + " — adjacency requirement(s) unsatisfied: " + reqs);
+                return;
+            }
+            ideal = adjusted;
+        }
+
+        // ── Resolve onto actual terrain with retries ────────────────────────
+        LayoutSlot slot = resolveAndPlace(level, layout, ideal,
+                preferredDeg, radius, sb, btype, sizeCache, density, rng, placed);
+
+        if (slot != null) {
+            placed.add(slot);
+        } else {
+            System.out.println("VillagePlanner: WARN — could not place " + btype
+                    + " (preferred ring r=" + radius + ", angle=" + preferredDeg + "°)");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Centre resolution
+    // -------------------------------------------------------------------------
+
+    private static BlockPos resolveCentre(ServerLevel level,
+                                          TerrainProfile terrain,
+                                          RuleContext ctx) {
+        BlockPos anchor = ctx.getAnchor("town_square");
+        if (anchor != null) {
+            return solidSurface(level, anchor);
+        }
+        return snapToFlat(level, terrain, terrain.origin());
+    }
+
+    // -------------------------------------------------------------------------
+    // Ring & angle math
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns the world position on a ring at a given radius and degree
+     * angle, snapped to the surface Y. The angle is interpreted in the
+     * standard math convention (counterclockwise from +X / east).
+     */
+    private static BlockPos ringPoint(BlockPos centre, int radius, double angleDeg) {
+        double rad = Math.toRadians(angleDeg);
+        int x = centre.getX() + (int) (Math.cos(rad) * radius);
+        int z = centre.getZ() + (int) (Math.sin(rad) * radius);
+        return new BlockPos(x, centre.getY(), z);
+    }
+
+    /**
+     * Picks a preferred placement angle for a building.
+     *
+     * <p>Order of precedence:
+     * <ol>
+     *   <li>If the building's zone has an angular sector, pick a random
+     *       angle uniformly within it.</li>
+     *   <li>If the village has an axis, distribute buildings perpendicular
+     *       to it (linear-style — they fan out along the axis).</li>
+     *   <li>Otherwise, distribute around the full circle by index, with a
+     *       small random jitter so identical seeds don't overlap.</li>
+     * </ol>
+     */
+    private static double pickPreferredAngle(
+            RuleContext.ZoneSpec ruleZone,
+            RuleContext ctx,
+            int alreadyPlacedCount,
+            Random rng) {
+
+        // 1. Sector wins
+        if (ruleZone != null && ruleZone.sector() != null) {
+            int s = ruleZone.sector().startDeg();
+            int e = ruleZone.sector().endDeg();
+            // Handle wrap-around sectors
+            if (s > e) e += 360;
+            double pick = s + rng.nextDouble() * (e - s);
+            return ((pick % 360) + 360) % 360;
+        }
+
+        // 2. Axis-aware: spread along the perpendicular of the axis
+        if (ctx.axisRad() != null) {
+            // Half the buildings on each side, alternating
+            double axisDeg = Math.toDegrees(ctx.axisRad());
+            // Index 0 → 90° offset (one side), 1 → -90° (other), 2 → 90° + step, etc.
+            int side = (alreadyPlacedCount % 2 == 0) ? 1 : -1;
+            int step = alreadyPlacedCount / 2;
+            double offset = side * (90.0 - step * 8.0);
+            return ((axisDeg + offset) % 360 + 360) % 360;
+        }
+
+        // 3. Radial fallback — distribute around the circle by index
+        double base = (alreadyPlacedCount * 360.0) / Math.max(1, alreadyPlacedCount + 6);
+        double jitter = (rng.nextDouble() - 0.5) * 2 * RADIAL_JITTER_DEG;
+        return ((base + jitter) % 360 + 360) % 360;
+    }
+
+    private static int radiusForRing(LayoutDensityProfile density,
+                                     RuleContext.Ring ring) {
+        return switch (ring) {
+            case INNER  -> density.getRing1Radius();
+            case MIDDLE -> (density.getRing1Radius() + density.getRing2Radius()) / 2;
+            case OUTER  -> density.getRing2Radius();
+        };
+    }
+
+    private static RuleContext.Ring defaultRingFor(BuildingType type) {
+        BuildingZone zone = ZoneRegistry.zoneOf(type);
+        return zone.preferredRing <= 1 ? RuleContext.Ring.INNER : RuleContext.Ring.OUTER;
+    }
+
+    // -------------------------------------------------------------------------
+    // Adjacency
+    // -------------------------------------------------------------------------
+
+    /**
+     * Applies adjacency constraints to a target position. Returns the
+     * adjusted position, or null if no required constraint can be satisfied.
+     *
+     * <p>For now this consults the {@link WorldAtlas}: river/coast/water
+     * features are exactly what the atlas tracks per cell. If the atlas
+     * isn't filled around the target, falls back to a small radial scan
+     * using the level directly.
+     */
+    private static BlockPos applyAdjacency(ServerLevel level,
+                                           BlockPos target,
+                                           List<RuleContext.AdjacencyReq> reqs,
+                                           Random rng) {
+        WorldAtlas atlas = WorldAtlas.get(level);
+
+        for (RuleContext.AdjacencyReq req : reqs) {
+            boolean satisfied = checkFeatureAtlas(atlas, target, req.feature());
+            if (satisfied) continue;
+
+            // Search nearby cells for a satisfying position
+            BlockPos found = findFeatureNearby(atlas, target,
+                    req.feature(), req.maxDist());
+            if (found != null) {
+                target = new BlockPos(found.getX(), target.getY(), found.getZ());
+            } else if (req.required()) {
+                return null;
+            }
+        }
+        return target;
+    }
+
+    private static boolean checkFeatureAtlas(WorldAtlas atlas,
+                                             BlockPos pos, String feature) {
+        AtlasCell cell = atlas.getCellAtBlock(pos.getX(), pos.getZ());
+        if (cell == null) return false;
+        return switch (feature) {
+            case "river"  -> cell.isRiverAdj() || cell.isFreshwater();
+            case "coast"  -> cell.isCoast();
+            case "water"  -> cell.isCoast() || cell.isRiverAdj() || cell.isFreshwater();
+            case "forest" -> cell.category() == BiomeCategory.FOREST;
+            default        -> false;
+        };
+    }
+
+    private static BlockPos findFeatureNearby(WorldAtlas atlas, BlockPos centre,
+                                              String feature, int maxDist) {
+        // Atlas cells are 64 blocks; expand search radius accordingly
+        var nearby = atlas.cellsWithinRadius(
+                centre.getX(), centre.getZ(), maxDist + AtlasCell.CELL_SIZE);
+
+        AtlasCell best = null;
+        long bestDistSq = Long.MAX_VALUE;
+        for (AtlasCell cell : nearby) {
+            boolean hit = switch (feature) {
+                case "river"  -> cell.isRiverAdj() || cell.isFreshwater();
+                case "coast"  -> cell.isCoast();
+                case "water"  -> cell.isCoast() || cell.isRiverAdj() || cell.isFreshwater();
+                case "forest" -> cell.category() == BiomeCategory.FOREST;
+                default        -> false;
+            };
+            if (!hit) continue;
+            long dx = cell.blockCenterX() - centre.getX();
+            long dz = cell.blockCenterZ() - centre.getZ();
+            long dSq = dx * dx + dz * dz;
+            if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                best = cell;
+            }
+        }
+        if (best == null) return null;
+        return new BlockPos(best.blockCenterX(),
+                centre.getY(), best.blockCenterZ());
+    }
+
+    // -------------------------------------------------------------------------
+    // Resolve and place — terrain + footprint + retry
+    // -------------------------------------------------------------------------
+
+    /**
+     * Tries to place a building at its preferred angle, then at a series
+     * of angular offsets, performing footprint-aware overlap testing
+     * and terrain validation at each candidate position.
+     *
+     * <h3>Rotation handling</h3>
+     * Rotation is decided FIRST, before footprint dimensions are looked
+     * up. The cache is then queried with the chosen rotation so width
+     * and length are correct for the actual placement orientation.
+     */
+    private static LayoutSlot resolveAndPlace(
+            ServerLevel level,
+            VillageLayout layout,
+            BlockPos ideal,
+            double preferredDeg,
+            int radius,
+            VillageTypeData.StarterBuilding sb,
+            BuildingType btype,
+            StructureSizeCache sizeCache,
+            LayoutDensityProfile density,
+            Random rng,
+            List<LayoutSlot> placed) {
+
+        BlockPos centre = layout.getCenter();
         int minGap = VillageLayout.MIN_BUILDING_GAP;
+
+        // Try the ideal position first, then sweep through angular offsets.
+        for (double offsetDeg : PLACEMENT_OFFSETS_DEG) {
+            BlockPos target = (offsetDeg == 0)
+                    ? ideal
+                    : ringPoint(centre, radius, preferredDeg + offsetDeg);
+
+            // ── Step 1: decide rotation FIRST (face the centre/square) ──────
+            Rotation rotation = chooseFacingRotation(target, centre);
+
+            // ── Step 2: ask the cache for footprint AT that rotation ────────
+            StructureSizeCache.FootprintInfo info =
+                    sizeCache.get(sb.structure(), rotation);
+            int w = info != null ? info.width()  : 12;
+            int l = info != null ? info.length() : 12;
+            int slotRadius = Math.max(w, l) / 2 + 1;
+
+            // ── Step 3: resolve onto terrain ────────────────────────────────
+            BlockPos resolved = resolveOnTerrain(level, layout, target,
+                    density.getBuildingJitter(), slotRadius, rng,
+                    ZoneRegistry.zoneOf(btype) == BuildingZone.AGRICULTURAL);
+            if (resolved == null) continue;
+
+            // ── Step 4: footprint overlap check against placed slots ────────
+            if (overlapsAny(resolved, w, l, placed, minGap)) continue;
+
+            LayoutSlot slot = new LayoutSlot(
+                    resolved, btype, sb.structure(), slotRadius, rotation);
+            slot.setFootprint(w, l);
+            slot.setPadY(computePadY(level, resolved, w, l));
+            if (layout.tryAdd(slot)) return slot;
+        }
+
+        // ── Last-resort spiral outward — same shape, with rotation ──────────
+        for (int extraR = radius + 20; extraR <= radius + 200; extraR += 15) {
+            BlockPos target = ringPoint(centre, extraR,
+                    preferredDeg + rng.nextInt(60));
+            Rotation rotation = chooseFacingRotation(target, centre);
+
+            StructureSizeCache.FootprintInfo info =
+                    sizeCache.get(sb.structure(), rotation);
+            int w = info != null ? info.width()  : 12;
+            int l = info != null ? info.length() : 12;
+            int slotRadius = Math.max(w, l) / 2 + 1;
+
+            BlockPos resolved = resolveOnTerrain(level, layout, target,
+                    density.getBuildingJitter(), slotRadius, rng,
+                    ZoneRegistry.zoneOf(btype) == BuildingZone.AGRICULTURAL);
+            if (resolved == null) continue;
+            if (overlapsAny(resolved, w, l, placed, minGap)) continue;
+
+            LayoutSlot slot = new LayoutSlot(
+                    resolved, btype, sb.structure(), slotRadius, rotation);
+            slot.setFootprint(w, l);
+
+
+            layout.addForced(slot);
+            return slot;
+        }
+
+        return null;
+    }
+
+    private static boolean overlapsAny(BlockPos pos, int w, int l,
+                                       List<LayoutSlot> placed, int minGap) {
         for (LayoutSlot existing : placed) {
             int eW = existing.getFootprintWidth();
             int eL = existing.getFootprintLength();
             if (eW > 0 && eL > 0) {
                 if (VillageLayout.footprintOverlap(
-                        resolved, w, l,
-                        existing.getPos(), eW, eL, minGap)) {
-                    return null; // overlaps
+                        pos, w, l, existing.getPos(), eW, eL, minGap)) {
+                    return true;
                 }
+            } else {
+                double minDist = (Math.max(w, l) / 2.0)
+                        + existing.getRadius() + minGap;
+                if (pos.distSqr(existing.getPos()) < minDist * minDist) return true;
             }
         }
-
-        LayoutSlot slot = new LayoutSlot(resolved, btype, sb.structure(), slotRadius);
-        slot.setFootprint(w, l);
-        if (layout.tryAdd(slot)) return slot;
-        return null;
+        return false;
     }
 
     // =========================================================================
-    // Shared: town hall slot creation
+    // SHARED HELPERS — town hall, building list, sorting, parsing
     // =========================================================================
 
     private static LayoutSlot placeTownHallSlot(VillageLayout layout,
@@ -569,7 +598,7 @@ public class VillagePlanner {
                                                 StructureSizeCache sizeCache) {
         StructureSizeCache.FootprintInfo info =
                 sizeCache.get(sb.structure(), Rotation.NONE);
-        int w = info != null ? info.width() : 12;
+        int w = info != null ? info.width()  : 12;
         int l = info != null ? info.length() : 12;
         int slotR = Math.max(w, l) / 2 + 1;
 
@@ -580,152 +609,6 @@ public class VillagePlanner {
         return slot;
     }
 
-    // =========================================================================
-    // Shared: town square placement
-    // =========================================================================
-
-    private static void placeTownSquare(VillageLayout layout,
-                                        ServerLevel level,
-                                        BlockPos centre,
-                                        int offset) {
-        BlockPos sqPos = centre.offset(0, 0, Math.max(offset / 2, 6));
-        int sqSurfY = level.getHeight(
-                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                sqPos.getX(), sqPos.getZ());
-        sqPos = new BlockPos(sqPos.getX(), sqSurfY, sqPos.getZ());
-        layout.addForced(new LayoutSlot(
-                LayoutSlot.SlotType.DECORATION, sqPos,
-                TownSquarePlacer.RADIUS + 2));
-        layout.setTownSquarePos(sqPos);
-    }
-
-    // =========================================================================
-    // Ring placement with angular retry
-    // =========================================================================
-
-    /**
-     * Tries to place a building on a ring at the preferred angle,
-     * then at 12 angular offsets. Uses AABB overlap against placed list.
-     */
-    public static LayoutSlot resolveSlotOnRing(
-            ServerLevel level, BlockPos centre, int radius,
-            double preferredAngle, String structurePath,
-            BuildingType buildingType, List<LayoutSlot> existingSlots,
-            StructureSizeCache sizeCache, int minGap) {
-
-        StructureSizeCache.FootprintInfo info =
-                sizeCache.get(structurePath, Rotation.NONE);
-        int w = info != null ? info.width() : 12;
-        int l = info != null ? info.length() : 12;
-        int slotRadius = Math.max(w, l) / 2 + 1;
-
-        double[] offsets = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
-
-        for (double offset : offsets) {
-            double angle = Math.toRadians(preferredAngle + offset);
-            int x = centre.getX() + (int)(Math.cos(angle) * radius);
-            int z = centre.getZ() + (int)(Math.sin(angle) * radius);
-            int y = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-
-            BlockPos candidate = new BlockPos(x, y, z);
-
-            // AABB overlap check against all placed slots
-            boolean overlaps = false;
-            for (LayoutSlot existing : existingSlots) {
-                int eW = existing.getFootprintWidth();
-                int eL = existing.getFootprintLength();
-                if (eW > 0 && eL > 0) {
-                    if (VillageLayout.footprintOverlap(
-                            candidate, w, l,
-                            existing.getPos(), eW, eL, minGap)) {
-                        overlaps = true;
-                        break;
-                    }
-                } else {
-                    // Radius fallback
-                    double minDist = slotRadius + existing.getRadius() + minGap;
-                    if (candidate.distSqr(existing.getPos()) < minDist * minDist) {
-                        overlaps = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!overlaps) {
-                LayoutSlot slot = new LayoutSlot(candidate, buildingType,
-                        structurePath, slotRadius);
-                slot.setFootprint(w, l);
-                return slot;
-            }
-        }
-
-        return null;
-    }
-
-    // =========================================================================
-    // Ring placement helpers for RADIAL
-    // =========================================================================
-
-    private static LayoutSlot tryPlaceOnRings(
-            ServerLevel level, BlockPos centre,
-            VillageTypeData.StarterBuilding sb, BuildingType btype,
-            double angle, List<LayoutSlot> placed,
-            StructureSizeCache sizeCache, int minGap,
-            int r1, int r2) {
-
-        BuildingZone zone = ZoneRegistry.zoneOf(btype);
-        int radius = zone.preferredRing <= 1 ? r1 : r2;
-
-        // Try preferred ring
-        LayoutSlot slot = resolveSlotOnRing(level, centre, radius, angle,
-                sb.structure(), btype, placed, sizeCache, minGap);
-        if (slot != null) return slot;
-
-        // Try other ring
-        int altRadius = (radius == r1) ? r2 : r1;
-        slot = resolveSlotOnRing(level, centre, altRadius, angle,
-                sb.structure(), btype, placed, sizeCache, minGap);
-        if (slot != null) return slot;
-
-        // Try expansion ring
-        int r3 = r2 + (r2 - r1);
-        return resolveSlotOnRing(level, centre, r3, angle,
-                sb.structure(), btype, placed, sizeCache, minGap);
-    }
-
-    private static void lastResort(VillageLayout layout, ServerLevel level,
-                                   BlockPos centre,
-                                   VillageTypeData.StarterBuilding sb,
-                                   BuildingType btype,
-                                   List<LayoutSlot> placed,
-                                   StructureSizeCache sizeCache,
-                                   int minGap, int r2,
-                                   double angle, Random rng) {
-        for (int extraR = r2 + 20; extraR <= r2 + 200; extraR += 15) {
-            LayoutSlot slot = resolveSlotOnRing(level, centre, extraR,
-                    angle + rng.nextInt(60), sb.structure(), btype,
-                    placed, sizeCache, minGap);
-            if (slot != null) {
-                layout.addForced(slot);
-                placed.add(slot);
-                System.out.println("VillagePlanner: forced " + btype
-                        + " at r=" + extraR);
-                return;
-            }
-        }
-        System.out.println("VillagePlanner: WARN — could not place " + btype);
-    }
-
-    // =========================================================================
-    // Building list expansion
-    // =========================================================================
-
-    /**
-     * Expands StarterBuilding entries with min_count/max_count into
-     * individual entries. Each instance becomes a separate entry so
-     * the planner creates a slot for each.
-     */
     public static List<VillageTypeData.StarterBuilding> expandBuildingList(
             List<VillageTypeData.StarterBuilding> starters, Random rng) {
         List<VillageTypeData.StarterBuilding> expanded = new ArrayList<>();
@@ -739,10 +622,6 @@ public class VillagePlanner {
         }
         return expanded;
     }
-
-    // =========================================================================
-    // Sorting
-    // =========================================================================
 
     private static List<VillageTypeData.StarterBuilding> sortBuildings(
             List<VillageTypeData.StarterBuilding> buildings) {
@@ -765,7 +644,7 @@ public class VillagePlanner {
     }
 
     // =========================================================================
-    // Farm plots (FARMHOUSE-gated)
+    // ORTHOGONAL POST-PASSES (unchanged from previous version)
     // =========================================================================
 
     private static void placeFarmPlots(VillageLayout layout, ServerLevel level,
@@ -778,8 +657,8 @@ public class VillagePlanner {
                 .sum();
         if (farmhouseCount == 0) return;
 
-        VillageShapeProfile profile = typeData.getShapeProfile();
-        if (profile.shapeType() == ShapeType.HILLTOP) return;
+        // Hilltop villages historically opted out of farms; preserve that.
+        if (typeData.getShapeProfile().shapeType() == ShapeType.HILLTOP) return;
 
         int[] dir = flatDirVector(terrain.bestFlatDir());
         int perpX = dir[1], perpZ = -dir[0];
@@ -787,7 +666,7 @@ public class VillagePlanner {
         BlockPos centre = layout.getCenter();
 
         for (int i = 0; i < farmhouseCount; i++) {
-            int sideOffset = (i - (int)farmhouseCount / 2)
+            int sideOffset = (i - (int) farmhouseCount / 2)
                     * (FARM_PLOT_RADIUS * 2 + 4);
             int tx = centre.getX()
                     + dir[0] * Math.max(density.getFarmOffset(), perimeterRadius)
@@ -799,7 +678,6 @@ public class VillagePlanner {
             BlockPos idealPos = terrain.bestFlatNear(
                     tx - terrain.origin().getX(),
                     tz - terrain.origin().getZ());
-
             BlockPos resolved = resolveOnTerrain(level, layout, idealPos,
                     4, FARM_PLOT_RADIUS, rng, true);
             if (resolved != null) {
@@ -808,10 +686,6 @@ public class VillagePlanner {
             }
         }
     }
-
-    // =========================================================================
-    // Decoration clusters
-    // =========================================================================
 
     private static void placeDecorationClusters(VillageLayout layout,
                                                 ServerLevel level,
@@ -824,8 +698,8 @@ public class VillagePlanner {
 
         for (int i = 0; i < clusters; i++) {
             double angle = (2 * Math.PI * i / clusters) + rng.nextDouble() * 0.8;
-            int dx = (int)(Math.cos(angle) * gapRadius);
-            int dz = (int)(Math.sin(angle) * gapRadius);
+            int dx = (int) (Math.cos(angle) * gapRadius);
+            int dz = (int) (Math.sin(angle) * gapRadius);
 
             BlockPos ideal = terrain.bestFlatNear(dx, dz);
             BlockPos resolved = resolveOnTerrain(level, layout, ideal,
@@ -837,16 +711,11 @@ public class VillagePlanner {
         }
     }
 
-    // =========================================================================
-    // Water-edge buildings
-    // =========================================================================
-
     private static void placeWaterEdgeBuildings(VillageLayout layout,
                                                 ServerLevel level,
                                                 VillageTypeData typeData,
                                                 BlockPos centre,
                                                 TerrainProfile terrain,
-                                                LayoutDensityProfile density,
                                                 Random rng) {
         TerrainAnalyzer.WaterBodyInfo water = terrain.waterBody();
         if (water == null) return;
@@ -858,7 +727,8 @@ public class VillagePlanner {
         BlockPos docksPos = resolveOnTerrain(level, layout, docksIdeal,
                 3, DEFAULT_BUILDING_RADIUS, rng);
         if (docksPos != null) {
-            String path = findBuildingPath(typeData, BuildingType.DOCKS, "docks/level_1");
+            String path = findBuildingPath(typeData,
+                    BuildingType.DOCKS, "docks/level_1");
             layout.tryAdd(new LayoutSlot(docksPos, BuildingType.DOCKS,
                     path, DEFAULT_BUILDING_RADIUS));
         }
@@ -870,15 +740,12 @@ public class VillagePlanner {
         BlockPos millPos = resolveOnTerrain(level, layout, millIdeal,
                 4, DEFAULT_BUILDING_RADIUS, rng);
         if (millPos != null) {
-            String path = findBuildingPath(typeData, BuildingType.MILLER, "miller/level_1");
+            String path = findBuildingPath(typeData,
+                    BuildingType.MILLER, "miller/level_1");
             layout.tryAdd(new LayoutSlot(millPos, BuildingType.MILLER,
                     path, DEFAULT_BUILDING_RADIUS));
         }
     }
-
-    // =========================================================================
-    // Y clustering
-    // =========================================================================
 
     private static void clusterBuildingYLevels(VillageLayout layout,
                                                ServerLevel level) {
@@ -907,7 +774,7 @@ public class VillagePlanner {
     }
 
     // =========================================================================
-    // Terrain resolution
+    // TERRAIN RESOLUTION
     // =========================================================================
 
     private static BlockPos resolveOnTerrain(ServerLevel level, VillageLayout layout,
@@ -927,7 +794,7 @@ public class VillagePlanner {
             return candidate;
         }
 
-        for (int a = 0; a < MAX_ATTEMPTS / 2; a++) {
+        for (int a = 0; a < MAX_TERRAIN_ATTEMPTS / 2; a++) {
             int jx = rng.nextInt(jitterRange * 2 + 1) - jitterRange;
             int jz = rng.nextInt(jitterRange * 2 + 1) - jitterRange;
             candidate = solidSurface(level, ideal.offset(jx, 0, jz));
@@ -945,11 +812,12 @@ public class VillagePlanner {
         }
 
         int step = Math.max(4, DEFAULT_BUILDING_RADIUS + 2);
-        for (int ring = 1; ring <= MAX_ATTEMPTS / 2; ring++) {
+        for (int ring = 1; ring <= MAX_TERRAIN_ATTEMPTS / 2; ring++) {
             for (int[] off : new int[][]{
                     {ring, 0}, {-ring, 0}, {0, ring}, {0, -ring},
                     {ring, ring}, {-ring, ring}, {ring, -ring}, {-ring, -ring}}) {
-                candidate = solidSurface(level, ideal.offset(off[0] * step, 0, off[1] * step));
+                candidate = solidSurface(level,
+                        ideal.offset(off[0] * step, 0, off[1] * step));
                 if (isValidTerrain(terrain, candidate, radius, rejectWater, level)) {
                     return candidate;
                 }
@@ -966,7 +834,7 @@ public class VillagePlanner {
     }
 
     // =========================================================================
-    // Utility helpers
+    // SMALL UTILITIES
     // =========================================================================
 
     private static boolean isWaterAdjacent(ServerLevel level, BlockPos pos) {
@@ -993,19 +861,6 @@ public class VillagePlanner {
                 .orElseGet(() -> solidSurface(level, origin));
     }
 
-    private static BlockPos findHighestPoint(ServerLevel level, BlockPos centre,
-                                             int searchRadius) {
-        BlockPos best = solidSurface(level, centre);
-        int bestY = best.getY();
-        for (int dx = -searchRadius; dx <= searchRadius; dx += 4) {
-            for (int dz = -searchRadius; dz <= searchRadius; dz += 4) {
-                BlockPos c = solidSurface(level, centre.offset(dx, 0, dz));
-                if (c.getY() > bestY) { bestY = c.getY(); best = c; }
-            }
-        }
-        return best;
-    }
-
     private static int[] flatDirVector(TerrainAnalyzer.FlatDirection dir) {
         return switch (dir) {
             case NORTH -> new int[]{0, -1};
@@ -1021,5 +876,243 @@ public class VillagePlanner {
                 .filter(sb -> sb.type().equals(type.name()))
                 .map(VillageTypeData.StarterBuilding::structure)
                 .findFirst().orElse(fallback);
+    }
+    /**
+     * Chooses the rotation that makes the building face toward {@code target}.
+     * Mirrors {@code VillageSpawner.chooseFacingRotation} so the planner
+     * and spawner agree on which side is the entrance.
+     */
+    private static Rotation chooseFacingRotation(BlockPos buildPos, BlockPos target) {
+        int dx = target.getX() - buildPos.getX();
+        int dz = target.getZ() - buildPos.getZ();
+        if (Math.abs(dx) >= Math.abs(dz)) {
+            return dx > 0
+                    ? Rotation.COUNTERCLOCKWISE_90
+                    : Rotation.CLOCKWISE_90;
+        } else {
+            return dz > 0
+                    ? Rotation.NONE
+                    : Rotation.CLOCKWISE_180;
+        }
+    }
+    /**
+     * Returns the effective adjacency requirements for a building type by
+     * merging village-type rules with building-intrinsic specs.
+     *
+     * <p>Village-type rules win on feature collisions. If the rule context
+     * already says something about {@code river}, the intrinsic
+     * {@code river} requirement is suppressed even if it has a different
+     * distance or required flag.
+     *
+     * <p>Features mentioned only by the intrinsic spec are added as-is.
+     */
+    private static List<RuleContext.AdjacencyReq> effectiveAdjacencyReqs(
+            RuleContext ctx,
+            BuildingType btype) {
+
+        List<RuleContext.AdjacencyReq> ruleReqs = ctx.getAdjacencyReqs(btype);
+        var intrinsicSpec = BuildingInhabitantRegistry.getAdjacency(btype);
+
+        if (intrinsicSpec.isEmpty()) return ruleReqs;
+        if (ruleReqs.isEmpty()) return intrinsicSpec.getRequirements();
+
+        // Both sources present — merge with rule-context taking precedence
+        java.util.Set<String> covered = new java.util.HashSet<>();
+        for (RuleContext.AdjacencyReq r : ruleReqs) covered.add(r.feature());
+
+        List<RuleContext.AdjacencyReq> merged = new java.util.ArrayList<>(ruleReqs);
+        for (RuleContext.AdjacencyReq intrinsic : intrinsicSpec.getRequirements()) {
+            if (!covered.contains(intrinsic.feature())) {
+                merged.add(intrinsic);
+            }
+        }
+        return merged;
+    }
+    /**
+     * Computes the target pad Y for a building by sampling the terrain
+     * across its footprint and taking the median. Median is used rather
+     * than mean to avoid outlier columns (a single steep corner) from
+     * dragging the pad off the surrounding elevation.
+     *
+     * <p>This is called during planning so the slot has its committed
+     * pad Y before any terrain modification happens. The terrain prep
+     * step reads this value and makes the world match.
+     */
+    private static int computePadY(ServerLevel level, BlockPos centre,
+                                   int width, int length) {
+        int minX = centre.getX() - width / 2;
+        int maxX = centre.getX() + width / 2;
+        int minZ = centre.getZ() - length / 2;
+        int maxZ = centre.getZ() + length / 2;
+
+        java.util.List<Integer> samples = new java.util.ArrayList<>();
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                samples.add(level.getHeight(
+                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z));
+            }
+        }
+        java.util.Collections.sort(samples);
+        return samples.get(samples.size() / 2);
+    }
+
+    private static List<BuildingCluster> buildClusters(
+            List<VillageTypeData.StarterBuilding> sorted,
+            VillageTypeData.StarterBuilding townHallEntry) {
+
+        Map<BuildingZone, BuildingCluster> byZone = new EnumMap<>(BuildingZone.class);
+        int nextId = 0;
+        List<BuildingCluster> clusters = new ArrayList<>();
+
+        for (VillageTypeData.StarterBuilding sb : sorted) {
+            if (sb == townHallEntry) continue;
+            if ("TOWN_HALL".equals(sb.type())) continue;
+            BuildingType bt = parseBuildingType(sb);
+            if (bt == null) continue;
+
+            BuildingZone zone = ZoneRegistry.zoneOf(bt);
+            BuildingCluster cluster = byZone.get(zone);
+            if (cluster == null || cluster.getMembers().size() >= 5) {
+                cluster = new BuildingCluster(
+                        nextId++, zone, BuildingCluster.defaultShapeFor(zone));
+                byZone.put(zone, cluster);
+                clusters.add(cluster);
+            }
+            cluster.addMember(sb);  // ← StarterBuilding, not BuildingType
+        }
+        return clusters;
+    }
+    private static void placeCluster(
+            ServerLevel level, VillageLayout layout, TerrainProfile terrain,
+            RuleContext ctx, BuildingCluster cluster,
+            List<VillageTypeData.StarterBuilding> sorted,
+            LayoutDensityProfile density, StructureSizeCache sizeCache,
+            Random rng, List<LayoutSlot> placed) {
+
+        BlockPos anchor = cluster.getAnchor();
+        int memberCount = cluster.getMembers().size();
+        int memberIdx = 0;
+
+        for (VillageTypeData.StarterBuilding sb : cluster.getMembers()) {
+            BuildingType bt = parseBuildingType(sb);
+            if (bt == null) continue;
+
+            BlockPos memberPos = computeClusterMemberPos(
+                    cluster.getShape(), anchor, ctx, memberIdx, memberCount, rng);
+
+            int radius = radiusForRing(density,
+                    ctx.getZone(bt) != null ? ctx.getZone(bt).ring()
+                            : defaultRingFor(bt));
+            double preferredDeg = pickPreferredAngle(
+                    ctx.getZone(bt), ctx, placed.size(), rng);
+
+            List<RuleContext.AdjacencyReq> reqs = effectiveAdjacencyReqs(ctx, bt);
+            BlockPos ideal = memberPos;
+            if (!reqs.isEmpty()) {
+                BlockPos adjusted = applyAdjacency(level, ideal, reqs, rng);
+                if (adjusted == null) { memberIdx++; continue; }
+                ideal = adjusted;
+            }
+
+            LayoutSlot slot = resolveAndPlace(level, layout, ideal,
+                    preferredDeg, radius, sb, bt, sizeCache, density, rng, placed);
+            if (slot != null) {
+                slot.setClusterId(cluster.getClusterId());
+                placed.add(slot);
+            }
+            memberIdx++;
+        }
+    }
+
+    private static BlockPos computeClusterMemberPos(
+            BuildingCluster.Shape shape, BlockPos anchor,
+            RuleContext ctx, int memberIdx, int memberCount, Random rng) {
+
+        final int BUILDING_SPACING = 18;  // typical building width + gap
+
+        return switch (shape) {
+            case TIGHT_RING -> {
+                // Ring radius scales with member count so members don't crowd
+                int r = Math.max(12, (memberCount * BUILDING_SPACING) / 6);
+                double angle = (memberIdx * 360.0 / memberCount);
+                yield new BlockPos(
+                        anchor.getX() + (int)(Math.cos(Math.toRadians(angle)) * r),
+                        anchor.getY(),
+                        anchor.getZ() + (int)(Math.sin(Math.toRadians(angle)) * r));
+            }
+            case LINEAR_ROW -> {
+                double axisDeg = ctx.axisRad() != null
+                        ? Math.toDegrees(ctx.axisRad()) + 90
+                        : 0;
+                int offset = (memberIdx - memberCount / 2) * BUILDING_SPACING;
+                double rad = Math.toRadians(axisDeg);
+                yield new BlockPos(
+                        anchor.getX() + (int)(Math.cos(rad) * offset),
+                        anchor.getY(),
+                        anchor.getZ() + (int)(Math.sin(rad) * offset));
+            }
+            case LOOSE -> {
+                // Spread loosely scales with member count
+                int spread = BUILDING_SPACING + memberCount * 4;
+                int dx = rng.nextInt(spread * 2) - spread;
+                int dz = rng.nextInt(spread * 2) - spread;
+                yield new BlockPos(anchor.getX() + dx, anchor.getY(), anchor.getZ() + dz);
+            }
+        };
+    }
+    /**
+     * Walks the placed buildings and updates rotations to face the
+     * nearest neighbour rather than the village centre. This produces
+     * more natural-looking layouts where buildings face each other
+     * across small spaces rather than uniformly facing the distant centre.
+     *
+     * <p>Buildings within the same cluster prefer to face other cluster
+     * members. Buildings outside any cluster face their nearest building
+     * neighbour regardless of cluster.
+     */
+    private static void refineRotations(VillageLayout layout) {
+        List<LayoutSlot> buildings = layout.buildings();
+        for (LayoutSlot slot : buildings) {
+            LayoutSlot nearest = findNearestNeighbour(slot, buildings);
+            if (nearest == null) continue;
+
+            // Skip if the nearest is too close (would face directly into it)
+            int dx = nearest.getPos().getX() - slot.getPos().getX();
+            int dz = nearest.getPos().getZ() - slot.getPos().getZ();
+            if (dx * dx + dz * dz < 64) continue;  // less than 8 blocks away
+
+            slot.setRotation(chooseFacingRotation(slot.getPos(), nearest.getPos()));
+        }
+    }
+
+    private static LayoutSlot findNearestNeighbour(LayoutSlot self, List<LayoutSlot> all) {
+        LayoutSlot best = null;
+        double bestDistSq = Double.MAX_VALUE;
+        boolean preferCluster = self.getClusterId() >= 0;
+
+        for (LayoutSlot other : all) {
+            if (other == self) continue;
+            // If we're in a cluster, prefer cluster-mates
+            if (preferCluster && other.getClusterId() != self.getClusterId()) continue;
+
+            double d = self.getPos().distSqr(other.getPos());
+            if (d < bestDistSq) {
+                bestDistSq = d;
+                best = other;
+            }
+        }
+
+        // If no cluster-mate found, fall back to any neighbour
+        if (best == null && preferCluster) {
+            for (LayoutSlot other : all) {
+                if (other == self) continue;
+                double d = self.getPos().distSqr(other.getPos());
+                if (d < bestDistSq) {
+                    bestDistSq = d;
+                    best = other;
+                }
+            }
+        }
+        return best;
     }
 }

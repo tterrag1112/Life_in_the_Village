@@ -8,6 +8,7 @@
     "street_density": 1.2,
     "walled_by_default": true
   },
+  "terrain_strategy": "MOUNTAIN",
   "starter_buildings": [
     {
       "type": "CASTLE",

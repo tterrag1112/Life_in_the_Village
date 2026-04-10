@@ -2,13 +2,15 @@
 package tterrag1112.life_in_the_village.Village;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
 import net.minecraft.util.profiling.ProfilerFiller;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import net.minecraft.server.packs.resources.ResourceManager;
+import tterrag1112.life_in_the_village.Village.Planning.Rules.LegacyShapeBridge;
+import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRule;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 
 import java.io.InputStreamReader;
 import java.util.*;
@@ -17,30 +19,33 @@ import java.util.*;
  * Loads all village type definitions from
  * {@code data/<modid>/village_types/*.json}.
  *
- * <h3>JSON schema additions</h3>
+ * <h3>JSON schema</h3>
  * <pre>
  * {
  *   "type": "royal_capital",
  *   "culture": "default",
- *   "shape_profile": { ... },          // optional
- *   "capital_profile": {               // optional — only for capitals (20+ buildings)
- *     "layout_type":      "ROUND",     // ROUND | SQUARE | ORGANIC  (default ROUND)
- *     "grid_spacing":     0,           // 0 = auto-calculate        (default 0)
- *     "buildings_per_face": 2,         // buildings along each face (default 2)
- *     "building_width":  12,           // footprint width in blocks (default 12)
- *     "building_depth":  10,           // footprint depth in blocks (default 10)
- *     "face_setback":     2,           // road kerb to building     (default 2)
- *     "alley_gap":        2,           // gap between buildings     (default 2)
- *     "spoke_count":      6,           // radial avenues for ROUND  (default 6)
- *     "gate_roads":    true            // roads stop at city gate   (default true)
- *   },
+ *   "shape_profile":     { ... },      // optional — legacy enum-based shape
+ *   "shape_rules":       [ ... ],      // optional — Phase 4a rule stack
+ *   "capital_profile":   { ... },      // optional — only for capitals
+ *   "farm_plot_config":  { ... },      // optional
  *   "starter_buildings": [ ... ],
  *   "starter_npcs":      [ ... ],
  *   "starter_items":     [ ... ]
  * }
  * </pre>
+ *
+ * <h3>Shape rules vs. shape profile</h3>
+ * If a village type JSON contains an explicit {@code shape_rules} array, that
+ * array is parsed into a rule stack. Otherwise, the planner's legacy
+ * {@code shape_profile.shape_type} enum is translated into an equivalent
+ * rule stack via
+ * {@link tterrag1112.life_in_the_village.Village.Planning.Rules.LegacyShapeBridge}.
+ * The {@code shape_profile} field is still parsed for the planner to consume
+ * during Phase 4a — once Phase 4b lands, the enum becomes cosmetic and the
+ * rule stack is authoritative.
  */
-public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<String, VillageTypeData>> {
+public class VillageTypeRegistry
+        extends SimplePreparableReloadListener<Map<String, VillageTypeData>> {
 
     private static final Logger LOGGER =
             LoggerFactory.getLogger(VillageTypeRegistry.class);
@@ -109,7 +114,7 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
                     }
                 }
 
-                // ── Shape profile ──────────────────────────────────────────────
+                // ── Shape profile (legacy enum) ────────────────────────────────
                 VillageTypeData.VillageShapeProfile shapeProfile =
                         VillageTypeData.VillageShapeProfile.defaultProfile();
                 if (json.has("shape_profile")) {
@@ -124,17 +129,37 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
                                     sp.get("shape_type").getAsString(), location);
                         }
                     }
-                    boolean forcedAxis     = sp.has("forced_axis")
+                    boolean forcedAxis      = sp.has("forced_axis")
                             && sp.get("forced_axis").getAsBoolean();
-                    int maxRings           = sp.has("max_rings")
+                    int maxRings            = sp.has("max_rings")
                             ? sp.get("max_rings").getAsInt() : 2;
-                    float streetDensity    = sp.has("street_density")
+                    float streetDensity     = sp.has("street_density")
                             ? sp.get("street_density").getAsFloat() : 1.0f;
                     boolean walledByDefault = sp.has("walled_by_default")
                             && sp.get("walled_by_default").getAsBoolean();
                     shapeProfile = new VillageTypeData.VillageShapeProfile(
                             shapeType, forcedAxis, maxRings,
                             streetDensity, walledByDefault);
+                }
+
+                // ── Shape rules (Phase 4a) ─────────────────────────────────────
+                // If the JSON has an explicit shape_rules array, parse it.
+                // Otherwise synthesize a rule stack from the legacy
+                // shape_profile.shape_type enum via the bridge.
+                List<ShapeRule> shapeRules;
+                if (json.has("shape_rules")) {
+                    shapeRules = new ArrayList<>();
+                    for (var el : json.getAsJsonArray("shape_rules")) {
+                        if (!el.isJsonObject()) continue;
+                        ShapeRule rule = ShapeRule.Registry.parse(el.getAsJsonObject());
+                        if (rule != null) shapeRules.add(rule);
+                    }
+                    LOGGER.debug("Village type '{}' parsed {} explicit shape rules",
+                            type, shapeRules.size());
+                } else {
+                    shapeRules = LegacyShapeBridge.ruleStackFor(shapeProfile.shapeType());
+                    LOGGER.debug("Village type '{}' synthesized {} rules from legacy '{}'",
+                            type, shapeRules.size(), shapeProfile.shapeType());
                 }
 
                 // ── Capital profile ────────────────────────────────────────────
@@ -179,6 +204,11 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
                             buildingWidth, buildingDepth,
                             faceSetback, alleyGap, spokeCount, gateRoads);
                 }
+                String strategyName = json.has("terrain_strategy")
+                        ? json.get("terrain_strategy").getAsString() : null;
+                TerrainStrategy strategy = TerrainStrategy.fromName(strategyName);
+
+                // ── Farm plot config ───────────────────────────────────────────
                 VillageTypeData.FarmPlotConfig farmPlotConfig =
                         VillageTypeData.FarmPlotConfig.defaultConfig();
                 if (json.has("farm_plot_config")) {
@@ -210,10 +240,15 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
                             allowAnimalPens, plotsPerFarmhouse);
                 }
 
-                loaded.put(type, new VillageTypeData(
+                // ── Construct the type data and attach the rule stack ─────────
+                VillageTypeData typeData = new VillageTypeData(
                         type, culture, buildings, npcs, items,
-                        shapeProfile, capitalProfile, farmPlotConfig));
-                LOGGER.info("Loaded village type '{}'", type);
+                        shapeProfile, capitalProfile, farmPlotConfig);
+                typeData.setShapeRules(shapeRules);
+
+                loaded.put(type, typeData);
+                LOGGER.info("Loaded village type '{}' ({} shape rules)",
+                        type, shapeRules.size());
 
             } catch (Exception e) {
                 LOGGER.error("Failed to load village type from {}: {}",
@@ -230,6 +265,10 @@ public class VillageTypeRegistry extends SimplePreparableReloadListener<Map<Stri
         this.types = new HashMap<>(prepared);
         LOGGER.info("Village type registry loaded {} types", types.size());
     }
+
+    // =========================================================================
+    // Accessors
+    // =========================================================================
 
     public VillageTypeData getType(String type) {
         return types.getOrDefault(type,

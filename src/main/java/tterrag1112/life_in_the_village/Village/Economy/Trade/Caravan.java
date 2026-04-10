@@ -3,12 +3,16 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.Ingredient;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Travel.Roster;
+import tterrag1112.life_in_the_village.Village.Travel.TravellingGroup;
 
 import java.util.*;
 
-public class Caravan {
+public class Caravan implements TravellingGroup {
 
     public enum CaravanState {
         OUTBOUND,    // travelling from A to B
@@ -23,20 +27,16 @@ public class Caravan {
 
     public static final Codec<Caravan> CODEC =
             RecordCodecBuilder.create(instance -> instance.group(
-                    Codec.STRING.xmap(UUID::fromString,
-                                    UUID::toString)
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .fieldOf("caravanId")
                             .forGetter(Caravan::getCaravanId),
-                    Codec.STRING.xmap(UUID::fromString,
-                                    UUID::toString)
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .fieldOf("routeId")
                             .forGetter(Caravan::getRouteId),
-                    Codec.STRING.xmap(UUID::fromString,
-                                    UUID::toString)
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .fieldOf("originVillageId")
                             .forGetter(Caravan::getOriginVillageId),
-                    Codec.STRING.xmap(UUID::fromString,
-                                    UUID::toString)
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .fieldOf("destVillageId")
                             .forGetter(Caravan::getDestVillageId),
                     CaravanState.CODEC.fieldOf("state")
@@ -45,28 +45,12 @@ public class Caravan {
                             .forGetter(Caravan::getProgress),
                     Codec.LONG.fieldOf("dispatchTick")
                             .forGetter(Caravan::getDispatchTick),
-                    ItemStack.CODEC.listOf()
-                            .fieldOf("goods")
+                    ItemStack.CODEC.listOf().fieldOf("goods")
                             .forGetter(Caravan::getGoods),
                     Codec.INT.fieldOf("guardCount")
                             .forGetter(Caravan::getGuardCount),
-                    Codec.BOOL.fieldOf("isSpawned")
-                            .forGetter(c -> false),
-                    Codec.STRING.xmap(UUID::fromString,
-                                    UUID::toString)
-                            .optionalFieldOf("merchantEntityId")
-                            .forGetter(c -> Optional.ofNullable(
-                                    c.getMerchantEntityId())),
-                    Codec.STRING.xmap(UUID::fromString,
-                                    UUID::toString)
-                            .listOf()
-                            .fieldOf("guardEntityIds")
-                            .forGetter(Caravan::getGuardEntityIds),
-                    Codec.STRING.xmap(UUID::fromString,
-                                    UUID::toString)
-                            .optionalFieldOf("cartEntityId")
-                            .forGetter(c -> Optional.ofNullable(
-                                    c.getCartEntityId()))
+                    Roster.CODEC.fieldOf("roster")
+                            .forGetter(Caravan::getRoster)
             ).apply(instance, Caravan::fromCodec));
 
     // -------------------------------------------------------------------------
@@ -82,18 +66,17 @@ public class Caravan {
     private final long dispatchTick;
     private final List<ItemStack> goods;
     private final int guardCount;
+    private final Roster roster;
 
+    // Transient — never persisted directly; rebuilt at spawn
+    private transient boolean isSpawned = false;
     // Transient — never persisted
-    private boolean isSpawned       = false;
-    private UUID merchantEntityId   = null;
-    private List<UUID> guardEntityIds = new ArrayList<>();
-    private UUID cartEntityId       = null;
 
     public Caravan(UUID caravanId, UUID routeId,
                    UUID originVillageId, UUID destVillageId,
                    CaravanState state, double progress,
                    long dispatchTick, List<ItemStack> goods,
-                   int guardCount) {
+                   int guardCount, Roster roster) {
         this.caravanId       = caravanId;
         this.routeId         = routeId;
         this.originVillageId = originVillageId;
@@ -103,6 +86,7 @@ public class Caravan {
         this.dispatchTick    = dispatchTick;
         this.goods           = new ArrayList<>(goods);
         this.guardCount      = guardCount;
+        this.roster          = roster != null ? roster : new Roster();
     }
 
     public static Caravan fromCodec(
@@ -110,24 +94,24 @@ public class Caravan {
             UUID originVillageId, UUID destVillageId,
             CaravanState state, double progress,
             long dispatchTick, List<ItemStack> goods,
-            int guardCount, boolean isSpawned,
-            Optional<UUID> merchantEntityId,
-            List<UUID> guardEntityIds,
-            Optional<UUID> cartEntityId) {
-        Caravan c = new Caravan(caravanId, routeId,
-                originVillageId, destVillageId, state,
-                progress, dispatchTick, goods, guardCount);
-        // Never restore spawned state
-        c.isSpawned = false;
-        return c;
+            int guardCount, Roster roster) {
+        return new Caravan(caravanId, routeId,
+                originVillageId, destVillageId,
+                state, progress, dispatchTick,
+                goods, guardCount, roster);
     }
 
     public static Caravan create(UUID routeId,
                                  UUID originVillageId,
                                  UUID destVillageId,
+                                 UUID principalId,
+                                 UUID originMarketId,
                                  List<ItemStack> goods,
                                  int guardCount,
                                  long currentTick) {
+        Roster r = new Roster();
+        r.setPrincipalId(principalId);
+        r.setOriginBuildingId(originMarketId);
         return new Caravan(
                 UUID.randomUUID(),
                 routeId,
@@ -137,8 +121,8 @@ public class Caravan {
                 0.0,
                 currentTick,
                 goods,
-                guardCount
-        );
+                guardCount,
+                r);
     }
 
     // -------------------------------------------------------------------------
@@ -213,9 +197,17 @@ public class Caravan {
     public List<ItemStack> getGoods()    { return goods; }
     public int getGuardCount()           { return guardCount; }
     public boolean isSpawned()           { return isSpawned; }
-    public UUID getMerchantEntityId()    { return merchantEntityId; }
-    public List<UUID> getGuardEntityIds(){ return guardEntityIds; }
-    public UUID getCartEntityId()        { return cartEntityId; }
+
+    public Roster getRoster() { return roster; }
+
+    @Override
+    public List<UUID> getEntityIds() {
+        List<UUID> all = new ArrayList<>();
+        if (roster.getPrincipalId() != null) all.add(roster.getPrincipalId());
+        all.addAll(roster.getSpawnedEscortIds());
+        all.addAll(roster.getSpawnedCarrierIds());
+        return all;
+    }
 
     public void setState(CaravanState state) {
         this.state = state;
@@ -226,19 +218,69 @@ public class Caravan {
     public void setSpawned(boolean spawned) {
         this.isSpawned = spawned;
     }
-    public void setMerchantEntityId(UUID id) {
-        this.merchantEntityId = id;
+
+
+    // =========================================================================
+    // TravellingGroup implementation
+    // =========================================================================
+
+    @Override
+    public UUID groupId() { return caravanId; }
+
+    @Override
+    public List<BlockPos> getPath(ServerLevel level, VillageSavedData data) {
+        return data.getRouteById(routeId)
+                .flatMap(r -> data.getRoadById(r.getConnectionId()))
+                .map(TradeRoad::getBlocks)
+                .orElse(java.util.List.of());
     }
-    public void addGuardEntityId(UUID id) {
-        this.guardEntityIds.add(id);
+
+    @Override
+    public boolean isReversed() {
+        return state == CaravanState.RETURNING;
     }
-    public void setCartEntityId(UUID id) {
-        this.cartEntityId = id;
+
+    @Override
+    public double getSpeedMultiplier(ServerLevel level, VillageSavedData data) {
+        return data.getRouteById(routeId)
+                .flatMap(r -> data.getRoadById(r.getConnectionId()))
+                .map(TradeRoad::getSpeedMultiplier)
+                .orElse(1.0);
     }
-    public void clearEntityIds() {
-        this.merchantEntityId = null;
-        this.guardEntityIds.clear();
-        this.cartEntityId = null;
+
+    @Override
+    public void onSpawn(ServerLevel level, BlockPos spawnPos, VillageSavedData data) {
+        // Delegate to the existing spawn logic on CaravanSavedData.
+        // We can't call the private method directly from here, so the
+        // SavedData provides a public spawn helper that takes a Caravan.
+        CaravanSavedData.get(level).spawnCaravanEntities(this, spawnPos, level, data);
+    }
+
+    @Override
+    public void onDespawn(ServerLevel level) {
+        CaravanSavedData.get(level).despawnCaravanEntities(this, level);
+    }
+
+    @Override
+    public void onTickSpawned(ServerLevel level, VillageSavedData data) {
+        // CaravanMerchantGoal handles per-tick walking; nothing here
+    }
+
+    @Override
+    public void onTickSimulated(ServerLevel level, VillageSavedData data) {
+        // Engine advances progress; nothing else needed
+    }
+
+    @Override
+    public void onPathComplete(ServerLevel level, VillageSavedData data) {
+        if (state == CaravanState.OUTBOUND) {
+            state = CaravanState.DELIVERING;
+        }
+        // RETURNING completion is handled by CaravanSavedData.tick which
+        // checks for progress >= 1.0 and removes the caravan
+    }
+    public void onDespawned() {
         this.isSpawned = false;
+        roster.clearSpawned();
     }
 }

@@ -49,7 +49,6 @@ public class Village {
     private long lastNeedsUpdate = -1L;
     private VillagePath.PathTier pathTier;
 
-
     // =========================================================================
     // LAYOUT METADATA — persisted so the expansion system can use them
     // =========================================================================
@@ -61,8 +60,23 @@ public class Village {
      * Null before first spawn.
      */
     @Nullable private BlockPos villageCentre;
-    private String villageType;
 
+    /**
+     * True if the village has been fully realised — buildings placed,
+     * NPCs spawned, decorations applied. False for virtual villages
+     * that exist in save data but have not yet had their chunks touched.
+     */
+    private boolean realised = true;
+
+    /**
+     * Origin position chosen at plan time. For realised villages this
+     * equals {@link #villageCentre}. For unrealised villages this is
+     * the only spatial information we have — it's what the realisation
+     * trigger uses to test player proximity.
+     */
+    @Nullable private BlockPos plannedOrigin;
+
+    private String villageType;
 
     /**
      * Centre of the town square building.
@@ -84,7 +98,6 @@ public class Village {
     private int ring2Radius = 0;
 
     private final List<BlockPos> capitalGatePositions = new ArrayList<>();
-
 
     public void addGatePosition(BlockPos pos) {
         if (!capitalGatePositions.contains(pos))
@@ -118,7 +131,6 @@ public class Village {
      */
     private int currentLevel = 1;
 
-
     // ── Nested layout record ─────────────────────────────────────────────────
     // Groups all planner-generated metadata into one codec entry,
     // freeing up RecordCodecBuilder slots and keeping layout fields together.
@@ -131,7 +143,9 @@ public class Village {
             int  currentLevel,
             List<BlockPos> patrolWaypoints,
             long lastLevelUpTick,
-            List<BlockPos> capitalGatePositions
+            List<BlockPos> capitalGatePositions,
+            boolean realised,
+            Optional<BlockPos> plannedOrigin
     ) {
         static final Codec<VillageLayoutMeta> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -163,8 +177,23 @@ public class Village {
                         BlockPos.CODEC.listOf()
                                 .optionalFieldOf("capitalGatePositions",
                                         new ArrayList<>())
-                                .forGetter(VillageLayoutMeta::capitalGatePositions)
+                                .forGetter(VillageLayoutMeta::capitalGatePositions),
+                        Codec.BOOL
+                                .optionalFieldOf("realised", true)
+                                .forGetter(VillageLayoutMeta::realised),
+                        BlockPos.CODEC
+                                .optionalFieldOf("plannedOrigin")
+                                .forGetter(VillageLayoutMeta::plannedOrigin)
                 ).apply(i, VillageLayoutMeta::new));
+
+        /** Empty default used as the codec fallback when the field is absent. */
+        static VillageLayoutMeta empty() {
+            return new VillageLayoutMeta(
+                    Optional.empty(), Optional.empty(), Optional.empty(),
+                    0, 0, 1,
+                    new ArrayList<>(), 0L, new ArrayList<>(),
+                    true, Optional.empty());
+        }
 
         static VillageLayoutMeta from(Village v) {
             return new VillageLayoutMeta(
@@ -176,7 +205,9 @@ public class Village {
                     v.currentLevel,
                     new ArrayList<>(v.patrolWaypoints),
                     v.lastLevelUpTick,
-                    new ArrayList<>(v.capitalGatePositions));
+                    new ArrayList<>(v.capitalGatePositions),
+                    v.realised,
+                    Optional.ofNullable(v.plannedOrigin));
         }
 
         void applyTo(Village v) {
@@ -190,9 +221,11 @@ public class Village {
                 v.patrolWaypoints.addAll(patrolWaypoints);
             }
             v.lastLevelUpTick = lastLevelUpTick;
-            if(!capitalGatePositions.isEmpty()){
+            if (!capitalGatePositions.isEmpty()) {
                 v.capitalGatePositions.addAll(capitalGatePositions);
             }
+            v.realised      = realised;
+            v.plannedOrigin = plannedOrigin.orElse(null);
         }
     }
 
@@ -212,13 +245,22 @@ public class Village {
         this.preferredArmor    = new HashMap<>(preferredArmor);
         this.needs             = new EnumMap<>(NeedCategory.class);
         this.lastNeedsUpdate   = -1L;
-        this.villageType = villageType;
+        this.villageType       = villageType;
     }
 
     public Village(String name, String villageType) {
         this(name, UUID.randomUUID(),
                 new ArrayList<>(), new ArrayList<>(),
                 new HashMap<>(), new HashMap<>(), villageType);
+    }
+
+    /**
+     * Convenience constructor — creates a village with the default type.
+     * Used by the planning system, which sets the real type immediately
+     * after via {@link #setVillageType}.
+     */
+    public Village(String name) {
+        this(name, "default");
     }
 
     // =========================================================================
@@ -258,11 +300,7 @@ public class Village {
                             .forGetter(v -> Optional.ofNullable(v.villageLeaderId)),
                     // All layout/patrol/aging fields grouped into one entry
                     VillageLayoutMeta.CODEC
-                            .optionalFieldOf("layoutMeta",
-                                    new VillageLayoutMeta(
-                                            Optional.empty(), Optional.empty(),
-                                            Optional.empty(), 0, 0, 1,
-                                            new ArrayList<>(), 0L, new ArrayList<>()))
+                            .optionalFieldOf("layoutMeta", VillageLayoutMeta.empty())
                             .forGetter(VillageLayoutMeta::from),
                     Codec.STRING
                             .optionalFieldOf("villageType", "default")
@@ -283,7 +321,6 @@ public class Village {
                 return v;
             })
     );
-
 
     // =========================================================================
     // IDENTITY
@@ -316,6 +353,22 @@ public class Village {
     public void setRing2Radius(int r)             { this.ring2Radius    = r;   }
     public void setCurrentLevel(int level)        { this.currentLevel   = level; }
 
+    public boolean isRealised() { return realised; }
+    public void setRealised(boolean r) { this.realised = r; }
+
+    @Nullable public BlockPos getPlannedOrigin() { return plannedOrigin; }
+    public void setPlannedOrigin(@Nullable BlockPos pos) { this.plannedOrigin = pos; }
+
+    /**
+     * Returns the best known position for this village — the realised
+     * centre if available, otherwise the planned origin. Useful for
+     * distance checks that need to work on both planned and realised
+     * villages (e.g. minimum-separation tests during seeding).
+     */
+    @Nullable
+    public BlockPos getAnchorPos() {
+        return villageCentre != null ? villageCentre : plannedOrigin;
+    }
 
     /**
      * Convenience: set all layout fields from a completed
@@ -523,6 +576,10 @@ public class Village {
                         .map(h -> h.value()).orElse(null));
     }
 
+    // =========================================================================
+    // PATROLS
+    // =========================================================================
+
     private final List<BlockPos> patrolWaypoints = new ArrayList<>();
 
     public List<BlockPos> getPatrolWaypoints() {
@@ -538,12 +595,18 @@ public class Village {
         patrolWaypoints.add(pos);
     }
 
-    public VillagePath.PathTier getPathTier(){
+    // =========================================================================
+    // VILLAGE TYPE & PATH TIER
+    // =========================================================================
+
+    public VillagePath.PathTier getPathTier() {
         return VillagePath.PathTier.DIRT;
     }
-    public static void setPathTier(VillagePath.PathTier tier){
 
+    public static void setPathTier(VillagePath.PathTier tier) {
+        // TODO: per-village persistence
     }
-    public String getVillageType() { return villageType; }
 
+    public String getVillageType()                 { return villageType; }
+    public void   setVillageType(String type)      { this.villageType = type; }
 }

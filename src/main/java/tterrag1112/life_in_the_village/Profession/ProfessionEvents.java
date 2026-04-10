@@ -10,6 +10,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import tterrag1112.life_in_the_village.DataAttachments.ModData;
@@ -162,10 +163,10 @@ public class ProfessionEvents {
         PlayerProfessionData data = player.getData(ModData.PROFESSION_DATA);
 
         for (PlayerProfession prof : PlayerProfession.values()) {
-            if (prof.isRelevantCraft(soldItem)) {
+            if (prof.isRelevantSell(soldItem)) {
                 int xp = prof.getXpReward(PlayerProfession.XpSource.SELL_TO_NPC)
                         * amount;
-                awardXp(player, data, prof, xp);
+                if (xp > 0) awardXp(player, data, prof, xp);
             }
         }
 
@@ -177,6 +178,42 @@ public class ProfessionEvents {
             if (ProfessionPerkManager.hasDoubleReputationTrade(player)) {
                 ReputationManager.onTradeCompleted(player, villageId, level);
             }
+        }
+    }
+
+
+    // -------------------------------------------------------------------------
+    // Kill mob XP — primary progression path for Guards
+    // -------------------------------------------------------------------------
+
+    /**
+     * Awards KILL_MOB XP when a player (or their direct mount/projectile)
+     * kills a hostile entity. Scales with the entity's max health so
+     * killing a warden is worth more than killing a zombie.
+     *
+     * <p>Only fires for {@link net.minecraft.world.entity.monster.Enemy}
+     * subtypes — passive mob farms don't grant guard XP.</p>
+     */
+    @SubscribeEvent
+    public static void onKillMob(LivingDeathEvent event) {
+        // Attacker must be a server player (direct kill, mount, or projectile)
+        if (!(event.getSource().getEntity() instanceof ServerPlayer player)) return;
+
+        net.minecraft.world.entity.LivingEntity killed = event.getEntity();
+        if (killed instanceof ServerPlayer) return; // no PvP XP
+        if (killed instanceof tterrag1112.life_in_the_village.Entities.custom.TownspersonMob) return;
+
+        // Health-based multiplier — tougher mobs are worth more
+        float healthMult = Math.max(1.0f, killed.getMaxHealth() / 20.0f);
+
+        PlayerProfessionData data = player.getData(ModData.PROFESSION_DATA);
+
+        for (PlayerProfession prof : PlayerProfession.values()) {
+            if (!prof.isRelevantKill(killed)) continue;
+            int base = prof.getXpReward(PlayerProfession.XpSource.KILL_MOB);
+            if (base <= 0) continue;
+            int finalXp = Math.round(base * healthMult);
+            awardXp(player, data, prof, finalXp);
         }
     }
 

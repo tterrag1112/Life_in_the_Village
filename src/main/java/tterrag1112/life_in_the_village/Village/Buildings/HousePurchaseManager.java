@@ -85,6 +85,14 @@ public class HousePurchaseManager {
                     Component.literal("Could not determine village."), false);
             return;
         }
+        // Kingdom law: PROPERTY_RIGHTS — outsiders may not own property
+        if (!tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
+                .canPurchaseProperty(player, data, village.getId())) {
+            player.displayClientMessage(
+                    Component.literal("Only citizens of this kingdom may own property here. "
+                            + "(PROPERTY_RIGHTS is active.)"), false);
+            return;
+        }
 
         long price = calculatePrice(building, village, data);
         CurrencyValue cost = CurrencyValue.of(price);

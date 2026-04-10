@@ -6,10 +6,7 @@ import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.DynamicPriceCalculator;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceData;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.*;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -106,11 +103,12 @@ public class MerchantGoal extends Goal {
         VillageSavedData data = VillageSavedData.get(level);
         Optional<Village> village = entity.getAssignedVillageName()
                 .flatMap(name -> data.getVillageByName(name));
-        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
 
-        // Build a priority list — items with low market stock come first
+        // Build a priority list — items with low market stock come first.
+        // Uses MarketPriceHelper so every item (explicit or default) is
+        // considered, not just those with an explicit entry.
         List<Map.Entry<Item, MarketPriceData.ItemPrice>> prioritized =
-                new ArrayList<>(priceData.getAllPrices().entrySet());
+                new ArrayList<>(MarketPriceHelper.getAllExplicitPrices().entrySet());
         prioritized.sort((a, b) -> {
             int stockA = BuildingStorageAccess.countItem(level, market, a.getKey());
             int stockB = BuildingStorageAccess.countItem(level, market, b.getKey());
@@ -131,10 +129,11 @@ public class MerchantGoal extends Goal {
 
             int toTake = Math.min(available, 16);
 
-            long pricePerItem = village.map(v ->
-                    DynamicPriceCalculator.getBuyPrice(
-                            level, v, data, item, entry.getValue().buyPrice())
-            ).orElse(entry.getValue().buyPrice());
+            // Resolve buy price through the helper — handles village
+            // dynamic pricing when available, falls back to base otherwise
+            long pricePerItem = village
+                    .map(v -> MarketPriceHelper.getDynamicBuyPrice(level, v, item))
+                    .orElseGet(() -> MarketPriceHelper.getBaseBuyPrice(item));
 
             long totalCost = pricePerItem * toTake;
             CurrencyValue cost = CurrencyValue.of(totalCost);
@@ -233,10 +232,7 @@ public class MerchantGoal extends Goal {
 
         if (activeMarket == null) return;
 
-        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
-        if (priceData == null) return;
-
-        priceData.getAllPrices().forEach((item, basePrice) -> {
+        MarketPriceHelper.getAllExplicitPrices().forEach((item, basePrice) -> {
             if (!BuildingStorageAccess.hasItem(level, activeMarket, item, 1)) return;
 
             long sellPrice = DynamicPriceCalculator.getSellPrice(

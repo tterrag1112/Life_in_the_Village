@@ -27,6 +27,8 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.PlayerProfession;
 import tterrag1112.life_in_the_village.Profession.PlayerProfessionData;
 import tterrag1112.life_in_the_village.Profession.ProfessionEvents;
+import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
@@ -1100,9 +1102,9 @@ public class GuildCommands {
                 .stream()
                 .filter(TradeRoute::isTradeAllowed)
                 .filter(r -> villageData.getRoadById(
-                        r.getRoadId()).isPresent())
+                        r.getConnectionId()).isPresent())
                 .min(Comparator.comparingDouble(r ->
-                        villageData.getRoadById(r.getRoadId())
+                        villageData.getRoadById(r.getConnectionId())
                                 .map(road -> road.getBlocks()
                                         .isEmpty() ? Double.MAX_VALUE
                                         : road.getBlocks().get(0)
@@ -1118,7 +1120,7 @@ public class GuildCommands {
         }
 
         TradeRoad road = villageData.getRoadById(
-                nearestRoute.getRoadId()).orElse(null);
+                nearestRoute.getConnectionId()).orElse(null);
         if (road == null || road.getBlocks().isEmpty()) {
             src.sendFailure(Component.literal(
                     "Trade route has no road data."));
@@ -1131,15 +1133,35 @@ public class GuildCommands {
                 new ItemStack(net.minecraft.world.item.Items.OAK_LOG, 16),
                 new ItemStack(net.minecraft.world.item.Items.COBBLESTONE, 64)
         );
+        UUID principalId = villageData.reserveIdleMerchant(nearestRoute.getVillageA(), level);
+        if (principalId == null) {
+            // no merchant available — fail the command with a message
+            src.sendFailure(Component.literal("No idle merchant in origin village"));
+            return 0;
+        }
+        UUID originMarketId = villageData.getVillageById(nearestRoute.getVillageA())
+                .flatMap(v -> v.getBuildingIds().stream()
+                        .map(id -> villageData.getBuildingById(id).orElse(null))
+                        .filter(Objects::nonNull)
+                        .filter(b -> b.getType() == BuildingType.MARKET)
+                        .map(Building::getId)
+                        .findFirst())
+                .orElse(null);
 
         // Create caravan at start of road
         Caravan caravan = Caravan.create(
                 nearestRoute.getRouteId(),
                 nearestRoute.getVillageA(),
                 nearestRoute.getVillageB(),
+                principalId,
+                originMarketId,
                 goods,
                 2,
                 level.getGameTime());
+        var mob = level.getEntity(principalId);
+        if (mob instanceof TownspersonMob m) {
+            m.setCurrentExpeditionId(caravan.getCaravanId());
+        }
 
         caravanData.addCaravan(caravan);
 

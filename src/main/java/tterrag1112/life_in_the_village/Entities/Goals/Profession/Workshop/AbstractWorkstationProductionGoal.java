@@ -25,6 +25,7 @@ import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
@@ -537,7 +538,12 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
 
         if (marketTimer == 0) {
             Map<Item, Integer> toBuy = resourcesToBuy(level, workBuilding);
-            if (!toBuy.isEmpty()) executeBuy(level, toBuy);
+            if (!toBuy.isEmpty()) {
+                executeBuy(level, toBuy);
+                // Anything the market couldn't supply becomes a player
+                // commission — the board is the last-resort supplier.
+                postOrdersForUnavailable(level, toBuy);
+            }
 
             Map<Item, Integer> toSell = computeSurplusToSell(level);
             if (!toSell.isEmpty()) {
@@ -815,24 +821,13 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
     }
 
     protected Building findMarket(ServerLevel level) {
-        VillageSavedData data = VillageSavedData.get(level);
-        return entity.getAssignedVillageName()
-                .flatMap(data::getVillageByName)
-                .flatMap(village -> village.getBuildingIds().stream()
-                        .map(data::getBuildingById)
-                        .filter(Optional::isPresent)
-                        .map(Optional::get)
-                        .filter(b -> b.getType() == BuildingType.MARKET)
-                        .findFirst())
-                .orElse(null);
+        return ProductionHelpers.findMarketInVillage(entity, level).orElse(null);
     }
 
     protected Optional<Building> findAssignedBuilding(TownspersonMob npc,
                                                       ServerLevel level,
                                                       BuildingType type) {
-        return npc.getAssignedBuildingId()
-                .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
-                .filter(b -> b.getType() == type);
+        return ProductionHelpers.findAssignedBuilding(npc, level, type);
     }
 
     protected long getItemBuyPrice(ServerLevel level, Item item) {
@@ -878,5 +873,83 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
             }
         }
         return Optional.empty();
+    }
+    /**
+     * Returns the NPC's current specialization cast to the requested type,
+     * or {@code null} if no specialization is set or it's of a different type.
+     *
+     * <p>Subclasses use this in their {@code chooseRecipe} method to filter
+     * recipes based on per-NPC specialization without needing to touch
+     * the base class or alter the phase engine.</p>
+     *
+     * <p>Example:</p>
+     * <pre>
+     * BlacksmithSpecialization spec = getSpecialization(BlacksmithSpecialization.class);
+     * if (spec != null &amp;&amp; !spec.allowsOutput(recipe.output())) continue;
+     * </pre>
+     */
+    protected final <T extends ProfessionSpecialization> T getSpecialization(
+            Class<T> type) {
+        return SpecializationManager
+                .getSpecialization(entity, type);
+    }
+
+    /**
+     * Posts commission orders for any requested resources that the market
+     * also cannot supply. Called from {@link #marketVisit} after the buy
+     * attempt so only genuine shortages — ones no NPC seller has — make
+     * it to the player-facing board.
+     *
+     * <p>Deduplicates against existing orders from this NPC automatically
+     * via {@link tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager#postOrderIfNeeded}.
+     * Rate-limits to at most 3 new orders per market visit to prevent
+     * board flooding when a profession has many missing inputs.</p>
+     *
+     * @param level      current server level
+     * @param requested  items the NPC wanted to buy (typically from
+     *                   {@link #resourcesToBuy}) that may or may not
+     *                   have been available
+     */
+    protected final void postOrdersForUnavailable(ServerLevel level,
+                                                  Map<Item, Integer> requested) {
+        if (requested == null || requested.isEmpty()) return;
+        if (market == null) return;
+
+        VillageSavedData data = VillageSavedData.get(level);
+        java.util.UUID villageId = entity.getAssignedVillageName()
+                .flatMap(data::getVillageByName)
+                .map(tterrag1112.life_in_the_village.Village.Village::getId)
+                .orElse(null);
+        if (villageId == null) return;
+
+        int posted = 0;
+        for (Map.Entry<Item, Integer> entry : requested.entrySet()) {
+            if (posted >= 3) break; // flood prevention
+
+            Item item = entry.getKey();
+            int wanted = entry.getValue();
+            if (wanted <= 0) continue;
+
+            // If the market has ANY stock of this item, it's not a true
+            // shortage — the NPC just couldn't afford it or the buy was
+            // interrupted. Skip.
+            int marketStock = BuildingStorageAccess.countItem(level, market, item);
+            if (marketStock > 0) continue;
+
+            // True shortage — no NPC in the village can supply this.
+            // Hand it to the player via the commission board.
+            String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                    .getKey(item).toString();
+
+            tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager
+                    .postOrderIfNeeded(
+                            entity.getUUID(),
+                            villageId,
+                            itemId,
+                            Math.min(wanted, 32), // cap per order
+                            level.getGameTime(),
+                            data);
+            posted++;
+        }
     }
 }

@@ -27,6 +27,7 @@ import tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.EconomicBalance;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
@@ -374,8 +375,8 @@ public class FarmerGoal extends Goal {
         FarmPlot plot = findPlotContaining(level, targetPos);
         if (plot == null) { toReplant.remove(0); return; }
 
-        Block cropBlock = getCropBlockForPlot(plot);
-        Item  seedItem  = getSeedItemForPlot(plot);
+        Block cropBlock = plot.getCropType().resolveCropBlock();
+        Item  seedItem  = plot.getCropType().resolveSeedItem();
         if (cropBlock == null) { toReplant.remove(0); return; }
 
         boolean taken = BuildingStorageAccess.takeItem(level, farmhouse, seedItem, 1);
@@ -398,7 +399,8 @@ public class FarmerGoal extends Goal {
     private void buySeeds(ServerLevel level) {
         entity.setCurrentActivity("Buying seeds");
 
-        Building market = findMarket(level);
+        Building market = ProductionHelpers.findMarketInVillage(entity, level).orElse(null);
+
         if (market == null) { goIdle(); return; }
 
         BlockPos target = market.getShape().getOrigin();
@@ -431,7 +433,7 @@ public class FarmerGoal extends Goal {
             int plotSize = plot.getFarmlandBlocks(level).size();
             if (plotSize == 0) continue;
 
-            Item seedItem = getSeedItemForPlot(plot);
+            Item seedItem = plot.getCropType().resolveSeedItem();
             int currentSeeds = countSeedsInFarmhouse(level, seedItem);
             int needed = Math.max(0, plotSize - currentSeeds);
             if (needed <= 0) continue;
@@ -487,18 +489,7 @@ public class FarmerGoal extends Goal {
     // Helpers
     // =========================================================================
 
-    private Building findMarket(ServerLevel level) {
-        VillageSavedData data = VillageSavedData.get(level);
-        return entity.getAssignedVillageName()
-                .flatMap(name -> data.getVillageByName(name))
-                .flatMap(v -> v.getBuildingIds().stream()
-                        .map(data::getBuildingById)
-                        .filter(Optional::isPresent)
-                        .map(Optional::get)
-                        .filter(b -> b.getType() == BuildingType.MARKET)
-                        .findFirst())
-                .orElse(null);
-    }
+
 
     private FarmPlot findPlotContaining(ServerLevel level, BlockPos pos) {
         for (FarmPlot plot : assignedPlots) {
@@ -509,32 +500,12 @@ public class FarmerGoal extends Goal {
         return null;
     }
 
-    private Block getCropBlockForPlot(FarmPlot plot) {
-        return switch (plot.getCropType()) {
-            case WHEAT, GRAIN, MIXED  -> Blocks.WHEAT;
-            case CARROTS, VEGETABLE   -> Blocks.CARROTS;
-            case POTATOES             -> Blocks.POTATOES;
-            case BEETROOT             -> Blocks.BEETROOTS;
-            case ORCHARD              -> Blocks.WHEAT; // placeholder
-            case PASTURE              -> null;
-        };
-    }
 
-    private Item getSeedItemForPlot(FarmPlot plot) {
-        return switch (plot.getCropType()) {
-            case WHEAT, GRAIN, MIXED  -> Items.WHEAT_SEEDS;
-            case CARROTS, VEGETABLE   -> Items.CARROT;
-            case POTATOES             -> Items.POTATO;
-            case BEETROOT             -> Items.BEETROOT_SEEDS;
-            case ORCHARD              -> Items.WHEAT_SEEDS; // placeholder
-            case PASTURE              -> Items.WHEAT_SEEDS; // unused
-        };
-    }
 
     private boolean needsSeeds(ServerLevel level) {
         if (farmhouse == null) return false;
         for (FarmPlot plot : assignedPlots) {
-            Item seedItem = getSeedItemForPlot(plot);
+            Item seedItem = plot.getCropType().resolveSeedItem();
             int available = countSeedsInFarmhouse(level, seedItem);
             int needed = plot.getFarmlandBlocks(level).size();
             if (available < needed) {

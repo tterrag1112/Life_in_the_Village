@@ -9,6 +9,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Needs.NeedLevel;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -402,6 +403,12 @@ public class VillageExpansionManager {
                                                         tick);
                                 default -> null;
                             };
+                    if (building.getType() == BuildingType.DOCKS) {
+                        TradeRouteManager.establishRoutes(level, village, data);
+                        // establishRoutes already handles sea routes when a village
+                        // has a dock — calling it re-runs both land and sea route
+                        // establishment, picking up the new dock automatically.
+                    }
 
                     if (event != null) {
                         k.getHistory().recordEvent(event,

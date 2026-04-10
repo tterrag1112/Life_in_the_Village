@@ -107,13 +107,43 @@ public class VillageRoadNetwork {
     public Set<Long> buildInitialNetwork(ServerLevel level,
                                          Village village,
                                          VillageSavedData data,
+                                         TrunkGraph trunkGraph,
                                          PathMaterial material,
                                          RoadShape.RoadTier tier,
                                          BuildingFootprint footprint,
                                          RandomSource random) {
         Set<Long> placedXZ = new HashSet<>();
 
-        // Collect building entrances
+        // ── Pass 1: Render trunk edges ──────────────────────────────────────
+        for (TrunkGraph.Edge edge : trunkGraph.getEdges()) {
+            OrganicRoadPlacer.PlacementResult result =
+                    OrganicRoadPlacer.place(level, edge.centerline,
+                            material, edge.tier, footprint, random);
+
+            Segment trunkSeg = new Segment(
+                    UUID.randomUUID(),
+                    edge.a.pos, edge.b.pos,
+                    null, null,
+                    edge.centerline,
+                    result.placedBlocks(),
+                    edge.tier);
+            segments.add(trunkSeg);
+
+            for (BlockPos pos : result.placedBlocks()) {
+                long key = packXZ(pos.getX(), pos.getZ());
+                activeRoadXZ.add(key);
+                placedXZ.add(key);
+            }
+
+            footprint.reserveRoad(edge.centerline, edge.tier.reservedHalfWidth());
+
+            data.addVillagePath(new VillagePath(
+                    trunkSeg.segmentId(), village.getId(),
+                    result.placedBlocks(), edge.centerline,
+                    toPathTier(edge.tier)));
+        }
+
+        // ── Pass 2: Building spurs to nearest trunk point ───────────────────
         List<Building> buildings = village.getBuildingIds().stream()
                 .map(data::getBuildingById)
                 .filter(Optional::isPresent)
@@ -123,60 +153,43 @@ public class VillageRoadNetwork {
         for (Building building : buildings) {
             BlockPos entrance = PathRouter.getBuildingEntrance(building);
             buildingEntrances.put(building.getId(), entrance);
-        }
 
-        // Sort by distance from hub so closer buildings connect first
-        List<Map.Entry<UUID, BlockPos>> sorted = buildingEntrances.entrySet()
-                .stream()
-                .sorted(Comparator.comparingDouble(e ->
-                        e.getValue().distSqr(hub)))
-                .toList();
+            // Nearest point on the trunk graph, not nearest segment endpoint
+            BlockPos trunkPoint = trunkGraph.nearestPointOnAnyEdge(entrance);
+            if (trunkPoint == null) trunkPoint = hub;
 
-        for (Map.Entry<UUID, BlockPos> entry : sorted) {
-            UUID buildingId = entry.getKey();
-            BlockPos entrance = entry.getValue();
-
-            // Find best connection point: nearest existing road position
-            // or hub if this is the first road
-            BlockPos branchFrom = findNearestConnection(entrance);
-
-            // Route centerline
+            // Short straight spur — no A* yet (reuse existing L-router or
+            // switch to RoadRouter.findRoad in a polish pass)
             List<BlockPos> centerline = OrganicRoadPlacer.routeCenterline(
-                    branchFrom, entrance, level);
-
+                    trunkPoint, entrance, level);
             if (centerline.isEmpty()) continue;
 
-            // Place road
             OrganicRoadPlacer.PlacementResult result =
                     OrganicRoadPlacer.place(level, centerline, material,
-                            tier, footprint, random);
+                            RoadShape.RoadTier.VILLAGE_PATH, footprint, random);
 
-            // Register segment
-            Segment segment = new Segment(
+            Segment spur = new Segment(
                     UUID.randomUUID(),
-                    branchFrom, entrance,
-                    null, buildingId,
+                    trunkPoint, entrance,
+                    null, building.getId(),
                     centerline,
                     result.placedBlocks(),
-                    tier);
-            segments.add(segment);
+                    RoadShape.RoadTier.VILLAGE_PATH);
+            segments.add(spur);
 
-            // Update active road positions
             for (BlockPos pos : result.placedBlocks()) {
                 long key = packXZ(pos.getX(), pos.getZ());
                 activeRoadXZ.add(key);
                 placedXZ.add(key);
             }
 
-            // Reserve road space in footprint grid
             footprint.reserveRoad(centerline,
-                    RoadShape.RoadTier.TOWN_ROAD.reservedHalfWidth());
+                    RoadShape.RoadTier.VILLAGE_PATH.reservedHalfWidth());
 
-            // Register as VillagePath for persistence
             data.addVillagePath(new VillagePath(
-                    segment.segmentId(), village.getId(),
+                    spur.segmentId(), village.getId(),
                     result.placedBlocks(), centerline,
-                    toPathTier(tier)));
+                    toPathTier(RoadShape.RoadTier.VILLAGE_PATH)));
         }
 
         return placedXZ;

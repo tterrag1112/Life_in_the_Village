@@ -345,13 +345,13 @@ public class FarmhandGoal extends Goal {
         }
 
         // Get crop block for this plot
-        Block cropBlock = getCropBlockForPlot();
+        Block cropBlock = assignedPlot.getCropType().resolveCropBlock();
         if (cropBlock == null) {
             toReplant.remove(0);
             return; // PASTURE — no crops to plant
         }
 
-        Item seedItem = getSeedItemForPlot();
+        Item seedItem = assignedPlot.getCropType().resolveSeedItem();
 
         // Get seed from farmhouse storage
         boolean taken = BuildingStorageAccess.takeItem(level, farmhouse, seedItem, 1);
@@ -372,29 +372,7 @@ public class FarmhandGoal extends Goal {
     // Helper Methods
     // =========================================================================
 
-    private Block getCropBlockForPlot() {
-        if (assignedPlot == null) return Blocks.WHEAT;
-        return switch (assignedPlot.getCropType()) {
-            case WHEAT, GRAIN, MIXED -> Blocks.WHEAT;
-            case CARROTS, VEGETABLE -> Blocks.CARROTS;
-            case POTATOES -> Blocks.POTATOES;
-            case BEETROOT -> Blocks.BEETROOTS;
-            case ORCHARD -> Blocks.WHEAT; // Placeholder
-            case PASTURE -> null;
-        };
-    }
 
-    private Item getSeedItemForPlot() {
-        if (assignedPlot == null) return Items.WHEAT_SEEDS;
-        return switch (assignedPlot.getCropType()) {
-            case WHEAT, GRAIN, MIXED -> Items.WHEAT_SEEDS;
-            case CARROTS, VEGETABLE -> Items.CARROT;
-            case POTATOES -> Items.POTATO;
-            case BEETROOT -> Items.BEETROOT_SEEDS;
-            case ORCHARD -> Items.WHEAT_SEEDS; // Placeholder
-            case PASTURE -> Items.WHEAT_SEEDS; // Unused
-        };
-    }
 
     private boolean isPersonalInventoryNearlyFull() {
         SimpleContainer inv = entity.getPersonalInventory();

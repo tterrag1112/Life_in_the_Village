@@ -54,6 +54,10 @@ public class BlacksmithGoal extends AbstractWorkstationProductionGoal {
     /**
      * Prioritises smelt (build ingot stock) over craft.
      * Uses productionTarget() to pick the specific item.
+     *
+     * <p>Honors the NPC's {@link BlacksmithSpecialization} — a TOOLSMITH
+     * will skip armor and weapon recipes even if they would otherwise match.
+     * A null or GENERALIST specialization accepts everything.</p>
      */
     @Override
     protected Optional<ProductionRecipe> chooseRecipe(ServerLevel level,
@@ -61,12 +65,16 @@ public class BlacksmithGoal extends AbstractWorkstationProductionGoal {
         BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
         Optional<Item> target = productionTarget(level, building);
 
+        // Read this NPC's specialization (may be null → treat as generalist)
+        BlacksmithSpecialization spec = getSpecialization(BlacksmithSpecialization.class);
+
         // ── Try to fill the priority target ──────────────────────────────────
         if (target.isPresent()) {
             Item t = target.get();
 
             for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
                 if (r.output() != t) continue;
+                if (spec != null && !spec.allowsOutput(r.output())) continue;
                 if (countFromOreSource(level, r.input()) > 0) {
                     isSmeltRecipe = true;
                     return Optional.of(ProductionRecipe.of(
@@ -76,6 +84,7 @@ public class BlacksmithGoal extends AbstractWorkstationProductionGoal {
 
             for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
                 if (r.output() != t) continue;
+                if (spec != null && !spec.allowsOutput(r.output())) continue;
                 int avail = BuildingStorageAccess.countItem(level, building, r.input());
                 if (avail >= r.inputCount()) {
                     isSmeltRecipe = false;
@@ -86,6 +95,8 @@ public class BlacksmithGoal extends AbstractWorkstationProductionGoal {
         }
 
         // ── Opportunistic: smelt any available ore ────────────────────────────
+        // Smelting is allowed for every specialization — ingots are inputs
+        // to the spec's real recipes, not finished goods.
         for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
             int oreAvail  = countFromOreSource(level, r.input());
             int ingotStock = BuildingStorageAccess.countItem(level, building, r.output());
@@ -101,6 +112,9 @@ public class BlacksmithGoal extends AbstractWorkstationProductionGoal {
         BlacksmithRecipeData.CraftingRecipe best = null;
         double lowestRatio = Double.MAX_VALUE;
         for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
+            // Filter by specialization — toolsmith skips armor, etc.
+            if (spec != null && !spec.allowsOutput(r.output())) continue;
+
             int avail = BuildingStorageAccess.countItem(level, building, r.input());
             if (avail < r.inputCount()) continue;
             int stock = BuildingStorageAccess.countItem(level, building, r.output());

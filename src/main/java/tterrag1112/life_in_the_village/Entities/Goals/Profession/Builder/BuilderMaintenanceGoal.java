@@ -68,10 +68,7 @@ public class BuilderMaintenanceGoal extends Goal {
     private int    repairTimer  = 0;
     private Building targetBuilding = null;
 
-    // In-memory condition map — used until Building.condition field is added
-    // Key: building UUID, Value: last-repaired game tick
-    private static final Map<UUID, Long> lastRepairTick = new HashMap<>();
-    private static final long MAINTENANCE_INTERVAL = 24000L * 7; // once a week
+
 
     // -------------------------------------------------------------------------
     // Constructor
@@ -201,8 +198,6 @@ public class BuilderMaintenanceGoal extends Goal {
         VillageWeathering.repair(level, targetBuilding, style,
                 level.getRandom());
 
-        // Record the repair so this building won't be targeted again soon
-        lastRepairTick.put(targetBuilding.getId(), level.getGameTime());
 
         // Update the building's condition in VillageSavedData
         VillageSavedData data = VillageSavedData.get(level);
@@ -236,7 +231,6 @@ public class BuilderMaintenanceGoal extends Goal {
                 .orElse(null);
         if (village == null) return null;
 
-        long currentTick = level.getGameTime();
 
         return village.getBuildingIds().stream()
                 .map(data::getBuildingById)
@@ -245,11 +239,6 @@ public class BuilderMaintenanceGoal extends Goal {
                 // Skip the town hall — players are responsible for it
                 .filter(b -> b.getType() != BuildingType.TOWN_HALL)
                 // Skip recently repaired buildings
-                .filter(b -> {
-                    Long last = lastRepairTick.get(b.getId());
-                    return last == null
-                            || currentTick - last >= MAINTENANCE_INTERVAL;
-                })
                 // Prioritise worst condition first
                 .max(Comparator.comparingInt(b ->
                         conditionPriority(b.getCondition())))

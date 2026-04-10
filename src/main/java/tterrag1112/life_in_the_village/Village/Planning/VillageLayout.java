@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning;
 
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.TrunkGraph;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -22,8 +23,12 @@ public class VillageLayout {
     private final LayoutDensityProfile density;
     private final List<LayoutSlot>     slots = new ArrayList<>();
 
+    private TrunkGraph trunkGraph;
+
+    public TrunkGraph getTrunkGraph() { return trunkGraph; }
+    public void setTrunkGraph(TrunkGraph g) { this.trunkGraph = g; }
+
     private BlockPos center;
-    private CapitalStreetGraph capitalStreetGraph = null;
     private final List<BlockPos> gatePositions = new ArrayList<>();
     private BlockPos townSquarePos;
 
@@ -166,9 +171,7 @@ public class VillageLayout {
     public BlockPos  getTownSquarePos()               { return townSquarePos; }
     public void      setTownSquarePos(BlockPos pos)   { townSquarePos = pos; }
 
-    public CapitalStreetGraph getCapitalStreetGraph()                      { return capitalStreetGraph; }
-    public void               setCapitalStreetGraph(CapitalStreetGraph g)  { capitalStreetGraph = g; }
-    public boolean            hasCapitalStreetGraph()                      { return capitalStreetGraph != null; }
+
 
     public void addGatePosition(BlockPos pos)    { gatePositions.add(pos); }
     public List<BlockPos> getGatePositions()      { return Collections.unmodifiableList(gatePositions); }
@@ -190,9 +193,6 @@ public class VillageLayout {
                 + ", farms=" + farmPlots().size()
                 + ", decorations=" + decorations().size()
                 + ", suitability=" + String.format("%.2f", terrain.suitability())
-                + ", density=" + density.label()
-                + (hasCapitalStreetGraph()
-                ? ", capital gates=" + gatePositions.size() : "")
-                + "]";
+                + ", density=" + density.label();
     }
 }

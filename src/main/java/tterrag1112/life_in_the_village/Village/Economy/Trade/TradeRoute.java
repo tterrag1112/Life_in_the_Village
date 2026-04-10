@@ -43,8 +43,8 @@ public class TradeRoute {
                             .forGetter(TradeRoute::getVillageB),
                     Codec.STRING.xmap(UUID::fromString,
                                     UUID::toString)
-                            .fieldOf("roadId")
-                            .forGetter(TradeRoute::getRoadId),
+                            .fieldOf("connectionId")
+                            .forGetter(TradeRoute::getConnectionId),
                     RouteStatus.CODEC.fieldOf("status")
                             .forGetter(TradeRoute::getStatus),
                     RouteType.CODEC.fieldOf("routeType")
@@ -65,7 +65,7 @@ public class TradeRoute {
     private final UUID routeId;
     private final UUID villageA;
     private final UUID villageB;
-    private final UUID roadId;
+    private final UUID connectionId;
     private RouteStatus status;
     private final RouteType routeType;
     private final long establishedTick;
@@ -79,7 +79,7 @@ public class TradeRoute {
         this.routeId        = routeId;
         this.villageA       = villageA;
         this.villageB       = villageB;
-        this.roadId         = roadId;
+        this.connectionId         = roadId;
         this.status         = status;
         this.routeType      = routeType;
         this.establishedTick = establishedTick;
@@ -88,7 +88,7 @@ public class TradeRoute {
     }
 
     public static TradeRoute create(UUID villageA, UUID villageB,
-                                    UUID roadId, RouteType type,
+                                    UUID connectionId, RouteType type,
                                     long currentTick) {
         double penalty = switch (type) {
             case KINGDOM_INTERNAL -> 0.0;
@@ -99,7 +99,7 @@ public class TradeRoute {
         return new TradeRoute(
                 UUID.randomUUID(),
                 villageA, villageB,
-                roadId,
+                connectionId,
                 RouteStatus.ACTIVE,
                 type,
                 currentTick,
@@ -170,7 +170,7 @@ public class TradeRoute {
     public UUID getRouteId()               { return routeId; }
     public UUID getVillageA()              { return villageA; }
     public UUID getVillageB()              { return villageB; }
-    public UUID getRoadId()                { return roadId; }
+    public UUID getConnectionId()                { return connectionId; }
     public RouteStatus getStatus()         { return status; }
     public RouteType getRouteType()        { return routeType; }
     public long getEstablishedTick()       { return establishedTick; }

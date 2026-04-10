@@ -88,19 +88,26 @@ public final class MarketPriceHelper {
     /**
      * Dynamic sell price — base price modified by village supply/demand.
      * Falls back to base price if the village is null.
+     *
+     * <p>Culture-aware pricing is not yet wired — {@code Village} does not
+     * currently expose a {@code getCulture()} method. When it does, swap the
+     * base-price call to the culture-aware overload and the rest of the
+     * dynamic pipeline stays unchanged.</p>
      */
     public static long getDynamicSellPrice(ServerLevel level,
                                            Village village, Item item) {
-        //long base = getBaseSellPrice(village != null ? village.getCulture() : null, item);
         long base = getBaseSellPrice(item);
         if (village == null) return base;
         VillageSavedData data = VillageSavedData.get(level);
         return DynamicPriceCalculator.getSellPrice(level, village, data, item, base);
     }
 
+    /**
+     * Dynamic buy price — base price modified by village supply/demand.
+     * See {@link #getDynamicSellPrice} for culture-aware pricing note.
+     */
     public static long getDynamicBuyPrice(ServerLevel level,
                                           Village village, Item item) {
-       // long base = getBaseBuyPrice(village != null ? village.getCulture() : null, item);
         long base = getBaseBuyPrice(item);
         if (village == null) return base;
         VillageSavedData data = VillageSavedData.get(level);
@@ -144,5 +151,37 @@ public final class MarketPriceHelper {
         MarketPriceData data = MarketPriceRegistry.INSTANCE.getDefault();
         if (data == null) return Optional.empty();
         return data.getPrice(item);
+    }
+
+    /**
+     * Returns a resolved {@link MarketPriceData.ItemPrice} for any item —
+     * explicit if listed, otherwise a synthetic entry filled from the
+     * culture's default_buy/default_sell. Never returns empty.
+     *
+     * <p>Use this when you need both buy and sell prices at once
+     * (e.g. building a trade offer). Prefer {@link #getBaseBuyPrice} /
+     * {@link #getBaseSellPrice} when you only need one side.</p>
+     */
+    public static MarketPriceData.ItemPrice getOrDefaultPrice(Item item) {
+        MarketPriceData data = MarketPriceRegistry.INSTANCE.getDefault();
+        if (data != null) {
+            Optional<MarketPriceData.ItemPrice> explicit = data.getPrice(item);
+            if (explicit.isPresent()) return explicit.get();
+            return new MarketPriceData.ItemPrice(item,
+                    data.getBuyPriceOrDefault(item),
+                    data.getSellPriceOrDefault(item));
+        }
+        return new MarketPriceData.ItemPrice(item, EMERGENCY_BUY, EMERGENCY_SELL);
+    }
+
+    /**
+     * Returns all explicit price entries from the default culture,
+     * suitable for iterating when building a trade screen.
+     * Does NOT include synthetic defaults — if you want every item
+     * in the registry, use {@link BuiltInRegistries#ITEM} directly.
+     */
+    public static java.util.Map<Item, MarketPriceData.ItemPrice> getAllExplicitPrices() {
+        MarketPriceData data = MarketPriceRegistry.INSTANCE.getDefault();
+        return data != null ? data.getAllPrices() : java.util.Map.of();
     }
 }

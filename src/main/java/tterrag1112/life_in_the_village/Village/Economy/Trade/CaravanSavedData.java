@@ -3,13 +3,16 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.animal.equine.Llama;
 import net.minecraft.world.entity.vehicle.minecart.MinecartChest;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
@@ -18,7 +21,10 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Travel.Roster;
+import tterrag1112.life_in_the_village.Village.Travel.TravellingGroupEngine;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -26,10 +32,7 @@ import java.util.stream.Collectors;
 
 public class CaravanSavedData extends SavedData {
 
-    private static final int    SPAWN_RADIUS  = 64;
     private static final int    TICK_INTERVAL = 20;
-    private static final double BASE_PROGRESS_PER_TICK = 0.002;
-
     private static final Random RANDOM        = new Random();
 
     public static final SavedDataType<CaravanSavedData> TYPE =
@@ -67,8 +70,7 @@ public class CaravanSavedData extends SavedData {
     // Tick
     // -------------------------------------------------------------------------
 
-    public void tick(ServerLevel level,
-                     VillageSavedData villageData) {
+    public void tick(ServerLevel level, VillageSavedData villageData) {
         long currentTick = level.getGameTime();
         if (currentTick - lastTickTime < TICK_INTERVAL) return;
         lastTickTime = currentTick;
@@ -77,82 +79,46 @@ public class CaravanSavedData extends SavedData {
         List<UUID> toRemove = new ArrayList<>();
 
         for (Caravan caravan : caravans.values()) {
-            if (caravan.getState()
-                    == Caravan.CaravanState.FAILED) {
+            if (caravan.getState() == Caravan.CaravanState.FAILED) {
                 if (caravan.isSpawned()) {
-                    despawnCaravan(caravan, level);
+                    despawnCaravanEntities(caravan, level);
                 }
                 toRemove.add(caravan.getCaravanId());
                 dirty = true;
                 continue;
             }
 
-            // Get road for position calculation
-            TradeRoad road = villageData
-                    .getRouteById(caravan.getRouteId())
-                    .flatMap(r -> villageData
-                            .getRoadById(r.getRoadId()))
-                    .orElse(null);
-
-            double speedMult = road != null
-                    ? road.getSpeedMultiplier() : 1.0;
-
-            // Proximity check
-            BlockPos caravanPos = road != null
-                    ? caravan.getWorldPosition(road.getBlocks())
-                    : null;
-
-            if (caravanPos != null) {
-                boolean playerNearby = isPlayerNearby(
-                        level, caravanPos, SPAWN_RADIUS);
-
-                if (playerNearby && !caravan.isSpawned()) {
-                    spawnCaravan(caravan, caravanPos,
-                            level, villageData);
-                    dirty = true;
-                } else if (!playerNearby
-                        && caravan.isSpawned()) {
-                    despawnCaravan(caravan, level);
-                    dirty = true;
-                }
+            // ── Engine tick: handles spawn/despawn/progress/completion ──────
+            if (TravellingGroupEngine.tick(caravan, level, villageData, currentTick)) {
+                dirty = true;
             }
 
-            // Tick simulation for unspawned caravans
-            if (!caravan.isSpawned()) {
-                if (caravan.tick(currentTick, speedMult)) {
-                    dirty = true;
-                }
-            } else {
-                // Update spawned caravan position along road
-                if (road != null) {
-                    updateSpawnedPosition(
-                            caravan, road, level, currentTick,
-                            speedMult);
-                }
-            }
-
-            // Handle delivery
-            if (caravan.getState()
-                    == Caravan.CaravanState.DELIVERING) {
+            // ── Caravan-specific delivery handling ──────────────────────────
+            if (caravan.getState() == Caravan.CaravanState.DELIVERING) {
                 handleDelivery(caravan, level, villageData);
                 dirty = true;
             }
 
-            // Handle return completion
-            if (caravan.getState()
-                    == Caravan.CaravanState.RETURNING
+            // ── Returning caravan reached origin ────────────────────────────
+            if (caravan.getState() == Caravan.CaravanState.RETURNING
                     && caravan.getProgress() >= 1.0) {
-                toRemove.add(caravan.getCaravanId());
-                if (caravan.isSpawned()) {
-                    despawnCaravan(caravan, level);
+                // Caravan home — release the merchant
+                UUID principalId = caravan.getRoster().getPrincipalId();
+                if (principalId != null) {
+                    var ent = level.getEntity(principalId);
+                    if (ent instanceof TownspersonMob mob) {
+                        mob.setCurrentExpeditionId(null);
+                    }
                 }
+                if (caravan.isSpawned()) {
+                    despawnCaravanEntities(caravan, level);
+                }
+                toRemove.add(caravan.getCaravanId());
                 dirty = true;
             }
         }
 
-        toRemove.forEach(id -> {
-            caravans.remove(id);
-        });
+        toRemove.forEach(id -> caravans.remove(id));
 
         // Try to dispatch new caravans
         if (currentTick % 24000L == 0) {
@@ -167,199 +133,150 @@ public class CaravanSavedData extends SavedData {
     // Spawning
     // -------------------------------------------------------------------------
 
-    private void spawnCaravan(Caravan caravan,
-                              BlockPos pos,
-                              ServerLevel level,
-                              VillageSavedData villageData) {
-        RandomSource random = level.getRandom();
-        // Spawn merchant NPC
-        TownspersonMob merchant = ModEntities.TOWNSPERSON
-                .get().create(level,
-                        net.minecraft.world.entity
-                                .EntitySpawnReason.NATURAL);
-        if (merchant != null) {
-            merchant.setProfession(
-                    Profession.MERCHANT);
-            merchant.setAssignedVillageName(
-                    villageData.getVillageById(
-                                    caravan.getOriginVillageId())
-                            .map(v -> v.getName())
-                            .orElse("Unknown"));
-            merchant.setPos(pos.getX() + 0.5,
-                    pos.getY(), pos.getZ() + 0.5);
-            String firstName = NpcNameRegistry.INSTANCE
-                    .generateFirstName(merchant.isMale(), random);
-            String surname = NpcNameRegistry.INSTANCE
-                    .generateSurname(random);
-            merchant.setNpcName(firstName + " " + surname);
-            //merchant.setCustomNameVisible(true);
-            level.addFreshEntity(merchant);
-            caravan.setMerchantEntityId(merchant.getUUID());
-            merchant.setCaravanId(caravan.getCaravanId());
+    public void spawnCaravanEntities(Caravan caravan,
+                                     BlockPos pos,
+                                     ServerLevel level,
+                                     VillageSavedData villageData) {
+        // This method is called from Caravan.onSpawn via the travelling
+        // group engine. Scope: bring the caravan from dehydrated to
+        // realised, using the pooled principal from the village merchant
+        // pool.
+        if (level == null) return;
 
+        RandomSource random = level.getRandom();
+        Roster roster = caravan.getRoster();
+        UUID principalId = roster.getPrincipalId();
+
+        // ── Principal: find the pooled merchant ───────────────────────────
+        TownspersonMob merchant = null;
+        if (principalId != null) {
+            var existing = level.getEntity(principalId);
+            if (existing instanceof TownspersonMob mob && !mob.isRemoved()) {
+                merchant = mob;
+            }
         }
 
-        // Spawn guards
+        // Fallback: if the pooled merchant can't be found (saved data
+        // inconsistency, villager died while simulated, etc.), spawn a
+        // fresh merchant and log the issue. This keeps caravans working
+        // even if pooling fails; Phase 7d will make the pool more robust.
+        if (merchant == null) {
+            System.out.println("CaravanSavedData: pooled merchant " + principalId
+                    + " unavailable — spawning fresh merchant");
+            merchant = ModEntities.TOWNSPERSON.get()
+                    .create(level, EntitySpawnReason.NATURAL);
+            if (merchant != null) {
+                merchant.setProfession(Profession.MERCHANT);
+                merchant.setAssignedVillageName(
+                        villageData.getVillageById(caravan.getOriginVillageId())
+                                .map(Village::getName)
+                                .orElse("Unknown"));
+                String firstName = NpcNameRegistry.INSTANCE
+                        .generateFirstName(merchant.isMale(), random);
+                String surname = NpcNameRegistry.INSTANCE.generateSurname(random);
+                merchant.setNpcName(firstName + " " + surname);
+                roster.setPrincipalId(merchant.getUUID());
+            }
+        }
+
+        if (merchant != null) {
+            merchant.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+            if (!merchant.isAlive() || merchant.isRemoved()) {
+                level.addFreshEntity(merchant);
+            }
+            merchant.setCaravanId(caravan.getCaravanId());
+            merchant.setCurrentExpeditionId(caravan.getCaravanId());
+        }
+
+        // ── Guards: still spawned fresh in Phase 7c ────────────────────────
+        // Phase 7d will pull guards from the village barracks inventory.
         int guardCount = caravan.getGuardCount();
         for (int i = 0; i < guardCount; i++) {
-            TownspersonMob guard = ModEntities.TOWNSPERSON
-                    .get().create(level,
-                            net.minecraft.world.entity
-                                    .EntitySpawnReason.NATURAL);
+            TownspersonMob guard = ModEntities.TOWNSPERSON.get()
+                    .create(level, EntitySpawnReason.NATURAL);
             if (guard == null) continue;
 
-            guard.setProfession(
-                    Profession.GUARD);
+            guard.setProfession(Profession.GUARD);
             guard.setAssignedVillageName(
-                    villageData.getVillageById(
-                                    caravan.getOriginVillageId())
-                            .map(v -> v.getName())
+                    villageData.getVillageById(caravan.getOriginVillageId())
+                            .map(Village::getName)
                             .orElse("Unknown"));
 
-            // Spread guards around the caravan
-            double angle = (i / (double) guardCount)
-                    * Math.PI * 2;
+            double angle = (i / (double) guardCount) * Math.PI * 2;
             double offsetX = Math.cos(angle) * 3;
             double offsetZ = Math.sin(angle) * 3;
-
             guard.setPos(pos.getX() + offsetX + 0.5,
                     pos.getY(),
                     pos.getZ() + offsetZ + 0.5);
+
             String firstName = NpcNameRegistry.INSTANCE
                     .generateFirstName(guard.isMale(), random);
-            String surname = NpcNameRegistry.INSTANCE
-                    .generateSurname(random);
+            String surname = NpcNameRegistry.INSTANCE.generateSurname(random);
             guard.setNpcName(firstName + " " + surname);
             level.addFreshEntity(guard);
-            caravan.addGuardEntityId(guard.getUUID());
             guard.setCaravanId(caravan.getCaravanId());
+            roster.getSpawnedEscortIds().add(guard.getUUID());
         }
 
-        // Spawn chest minecart
-        // Replace MinecartChest spawn with chested llama
-        Llama llama =
-                new Llama(
-                        EntityType.LLAMA, level);
-
-        llama.setPos(
-                pos.getX() + 0.5,
-                pos.getY(),
-                pos.getZ() + 0.5);
-
-// Give it a chest
+        // ── Llama: still spawned fresh in Phase 7c ────────────────────────
+        Llama llama = new Llama(EntityType.LLAMA, level);
+        llama.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
         llama.setChest(true);
-
-// Fill chest with goods
         List<ItemStack> goods = caravan.getGoods();
         var llamaInv = llama.getInventory();
-        for (int i = 0; i < Math.min(goods.size(),
-                llamaInv.getContainerSize() - 1); i++) {
-            // Slot 0 is saddle/carpet, goods start at slot 1
+        for (int i = 0; i < Math.min(goods.size(), llamaInv.getContainerSize() - 1); i++) {
             llamaInv.setItem(i + 1, goods.get(i).copy());
         }
-
-// Give it a carpet so it looks like a trade llama
-        llama.setBodyArmorItem(new ItemStack(
-                net.minecraft.world.item.Items.BLUE_CARPET));
-
+        llama.setBodyArmorItem(new ItemStack(Items.BLUE_CARPET));
         llama.setTamed(true);
-        llama.setCustomName(
-                net.minecraft.network.chat.Component
-                        .literal("Caravan Llama"));
+        llama.setCustomName(Component.literal("Caravan Llama"));
         llama.setCustomNameVisible(true);
-
         level.addFreshEntity(llama);
-        caravan.setCartEntityId(llama.getUUID());
+        roster.getSpawnedCarrierIds().add(llama.getUUID());
 
-        if (merchant != null
-                && caravan.getCartEntityId() != null) {
-            var llamaEntity = level.getEntity(
-                    caravan.getCartEntityId());
-            if (llamaEntity instanceof
-                    Llama l) {
-                // Leash llama to merchant so it follows automatically
-                l.setLeashedTo(merchant, true);
-            }
+        if (merchant != null) {
+            llama.setLeashedTo(merchant, true);
         }
 
         caravan.setSpawned(true);
     }
 
-    private void despawnCaravan(Caravan caravan,
-                                ServerLevel level) {
-        // Sync progress from merchant position before despawn
-        if (caravan.getMerchantEntityId() != null) {
-            var merchant = level.getEntity(
-                    caravan.getMerchantEntityId());
-            if (merchant != null) merchant.discard();
-        }
+    public void despawnCaravanEntities(Caravan caravan, ServerLevel level) {
+        if (level == null) return;
+        Roster roster = caravan.getRoster();
 
-        caravan.getGuardEntityIds().stream()
-                .map(level::getEntity)
-                .filter(Objects::nonNull)
-                .forEach(net.minecraft.world.entity.Entity
-                        ::discard);
-
-        if (caravan.getCartEntityId() != null) {
-            var llama = level.getEntity(
-                    caravan.getCartEntityId());
-            if (llama != null && llama.isAlive()) {
-                // Drop leash before discarding
-                if (llama instanceof Llama l) {
-                    l.dropLeash();
-                }
-                llama.discard();
+        // Principal: discard the entity but KEEP the villager "away"
+        // status. The entity record will be restored when the caravan
+        // is re-realised later.
+        UUID principalId = roster.getPrincipalId();
+        if (principalId != null) {
+            var ent = level.getEntity(principalId);
+            if (ent instanceof TownspersonMob mob && !mob.isRemoved()) {
+                // Don't clear currentExpeditionId — the merchant is
+                // still on the caravan, just not currently in the world
+                mob.discard();
             }
         }
 
-        caravan.clearEntityIds();
+        // Escorts: discard entirely in Phase 7c (they're spawned fresh each time)
+        for (UUID id : roster.getSpawnedEscortIds()) {
+            var ent = level.getEntity(id);
+            if (ent != null && !ent.isRemoved()) ent.discard();
+        }
+
+        // Carriers (llama): discard — the animal is ephemeral until Phase 7d
+        for (UUID id : roster.getSpawnedCarrierIds()) {
+            var ent = level.getEntity(id);
+            if (ent instanceof Llama llama && llama.isAlive()) {
+                llama.dropLeash();
+            }
+            if (ent != null && !ent.isRemoved()) ent.discard();
+        }
+
+        caravan.onDespawned();
     }
 
-    // -------------------------------------------------------------------------
-    // Spawned position update
-    // -------------------------------------------------------------------------
 
-    private void updateSpawnedPosition(Caravan caravan,
-                                       TradeRoad road,
-                                       ServerLevel level,
-                                       long currentTick,
-                                       double speedMult) {
-        // Advance progress
-        double increment = 0.0001 * speedMult;
-        caravan.setProgress(Math.min(1.0,
-                caravan.getProgress() + increment));
-
-        // Get target position on road
-        BlockPos target = caravan.getWorldPosition(
-                road.getBlocks());
-        if (target == null) return;
-
-        // Move merchant toward target
-        if (caravan.getMerchantEntityId() != null) {
-            var merchant = level.getEntity(
-                    caravan.getMerchantEntityId());
-            if (merchant instanceof TownspersonMob npc) {
-                npc.getNavigation().moveTo(
-                        target.getX() + 0.5,
-                        target.getY(),
-                        target.getZ() + 0.5,
-                        0.6);
-            }
-        }
-
-
-        // Check if arrived
-        if (caravan.getProgress() >= 1.0) {
-            if (caravan.getState()
-                    == Caravan.CaravanState.OUTBOUND) {
-                caravan.setState(
-                        Caravan.CaravanState.DELIVERING);
-            } else if (caravan.getState()
-                    == Caravan.CaravanState.RETURNING) {
-                despawnCaravan(caravan, level);
-            }
-        }
-    }
 
     // -------------------------------------------------------------------------
     // Delivery
@@ -373,7 +290,7 @@ public class CaravanSavedData extends SavedData {
                 .getRouteBetween(caravan.getOriginVillageId(),
                         caravan.getDestVillageId())
                 .flatMap(route -> villageData
-                        .getRoadById(route.getRoadId())
+                        .getRoadById(route.getConnectionId())
                         .map(road -> route
                                 .getTradeEfficiency(road)))
                 .orElse(0.5);
@@ -406,70 +323,71 @@ public class CaravanSavedData extends SavedData {
     private void dispatchNewCaravans(ServerLevel level,
                                      VillageSavedData villageData,
                                      long currentTick) {
-        for (TradeRoute route
-                : villageData.getAllTradeRoutes()) {
+        for (TradeRoute route : villageData.getAllTradeRoutes()) {
             if (!route.isTradeAllowed()) continue;
 
-            // Check if there's already a caravan on this route
-            boolean hasActiveCaravan = caravans.values()
-                    .stream()
-                    .anyMatch(c -> c.getRouteId()
-                            .equals(route.getRouteId())
-                            && c.getState()
-                            != Caravan.CaravanState.FAILED);
+            boolean hasActiveCaravan = caravans.values().stream()
+                    .anyMatch(c -> c.getRouteId().equals(route.getRouteId())
+                            && c.getState() != Caravan.CaravanState.FAILED);
             if (hasActiveCaravan) continue;
 
-            // Roll daily chance
-            TradeRoad road = villageData
-                    .getRoadById(route.getRoadId())
-                    .orElse(null);
-            if (road == null) continue;
+            // Get the connection (road or sea route) from the route
+            var connOpt = villageData.getConnectionById(route.getConnectionId());
+            if (connOpt.isEmpty()) continue;
+            var connection = connOpt.get();
+            if (connection.getMode() != TradeConnection.Mode.LAND) continue; // skip sea routes
+            TradeRoad road = (TradeRoad) connection;
 
             float chance = route.getDailyCaravanChance(road);
             if (RANDOM.nextFloat() > chance) continue;
 
             Village originVillage = villageData.getVillageById(route.getVillageA()).orElse(null);
             Village destVillage = villageData.getVillageById(route.getVillageB()).orElse(null);
+            if (originVillage == null || destVillage == null) continue;
 
+            // ── Reserve a merchant from the origin village ────────────────
+            UUID principalId = villageData.reserveIdleMerchant(originVillage.getId(), level);
+            if (principalId == null) {
+                // No idle merchant available — skip this route today
+                continue;
+            }
 
-            // Select goods
-            List<ItemStack> goods =
-                    CaravanGoodsSelector.selectGoods(
-                            level,
-                            originVillage,
-                            destVillage,
-                            villageData);
+            // Find the origin market building to record as the roster's origin
+            UUID originMarketId = findFirstBuildingOfType(
+                    originVillage, BuildingType.MARKET, villageData);
 
-            // Scale guard count with cargo value
+            List<ItemStack> goods = CaravanGoodsSelector.selectGoods(
+                    level, originVillage, destVillage, villageData);
             int guardCount = calculateGuardCount(goods);
 
             Caravan caravan = Caravan.create(
                     route.getRouteId(),
                     route.getVillageA(),
                     route.getVillageB(),
+                    principalId,
+                    originMarketId,
                     goods,
                     guardCount,
                     currentTick);
 
-            // In dispatchNewCaravans, after caravan is created
-// Check if this is the first ever caravan on this route
-            boolean isFirst = caravans.values().stream()
-                    .filter(c -> c.getRouteId()
-                            .equals(route.getRouteId()))
-                    .count() == 1; // just added this one
+            // After Caravan.create:
+            var mob = level.getEntity(principalId);
+            if (mob instanceof TownspersonMob m) {
+                m.setCurrentExpeditionId(caravan.getCaravanId());
+            }
 
+            caravans.put(caravan.getCaravanId(), caravan);
+            route.setLastCaravanTick(currentTick);
+
+            // History event for first caravan on a new route
+            boolean isFirst = caravans.values().stream()
+                    .filter(c -> c.getRouteId().equals(route.getRouteId()))
+                    .count() == 1;
             if (isFirst) {
-                villageData.getKingdomForVillage(
-                                route.getVillageA())
+                villageData.getKingdomForVillage(route.getVillageA())
                         .ifPresent(k -> {
-                            String originName = villageData
-                                    .getVillageById(route.getVillageA())
-                                    .map(v -> v.getName())
-                                    .orElse("unknown");
-                            String destName = villageData
-                                    .getVillageById(route.getVillageB())
-                                    .map(v -> v.getName())
-                                    .orElse("unknown");
+                            String originName = originVillage.getName();
+                            String destName = destVillage.getName();
                             k.getHistory().recordEvent(
                                     HistoryTextGenerator.firstCaravan(
                                             originName, destName,
@@ -480,24 +398,28 @@ public class CaravanSavedData extends SavedData {
                         });
             }
 
-            caravans.put(caravan.getCaravanId(), caravan);
-            route.setLastCaravanTick(currentTick);
-
-            System.out.println("CaravanSavedData: dispatched "
-                    + "caravan from "
-                    + villageData.getVillageById(
-                            route.getVillageA())
-                    .map(v -> v.getName())
-                    .orElse("unknown")
-                    + " to "
-                    + villageData.getVillageById(
-                            route.getVillageB())
-                    .map(v -> v.getName())
-                    .orElse("unknown")
-                    + " with " + goods.size()
-                    + " goods types and "
-                    + guardCount + " guards");
+            System.out.println("CaravanSavedData: dispatched caravan from "
+                    + originVillage.getName() + " to " + destVillage.getName()
+                    + " with principal " + principalId.toString().substring(0, 8)
+                    + ", " + goods.size() + " goods, " + guardCount + " guards");
         }
+    }
+
+
+
+    /**
+     * Finds the first building of the given type in a village, or null.
+     */
+    private UUID findFirstBuildingOfType(Village village,
+                                         BuildingType type,
+                                         VillageSavedData villageData) {
+        for (UUID buildingId : village.getBuildingIds()) {
+            var building = villageData.getBuildingById(buildingId).orElse(null);
+            if (building != null && building.getType() == type) {
+                return buildingId;
+            }
+        }
+        return null;
     }
 
     private static int calculateGuardCount(
@@ -556,9 +478,9 @@ public class CaravanSavedData extends SavedData {
     private void payMerchantProfit(Caravan caravan, ServerLevel level,
                                    VillageSavedData villageData,
                                    double efficiency) {
-        if (caravan.getMerchantEntityId() == null) return;
+        if (caravan.getRoster().getPrincipalId() == null) return;
 
-        var entity = level.getEntity(caravan.getMerchantEntityId());
+        var entity = level.getEntity(caravan.getRoster().getPrincipalId());
         if (!(entity instanceof TownspersonMob merchant)) return;
 
         long totalValue = caravan.getGoods().stream()

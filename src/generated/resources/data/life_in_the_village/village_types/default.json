@@ -62,6 +62,10 @@
     {
       "type": "CANDLEMAKER",
       "structure": "carpentry/level_1"
+    },
+    {
+      "type": "MARKET",
+      "structure": "market/level_1"
     }
   ],
   "starter_items": [

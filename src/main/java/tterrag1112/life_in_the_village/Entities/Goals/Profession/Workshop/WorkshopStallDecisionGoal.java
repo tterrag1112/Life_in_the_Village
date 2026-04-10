@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 
 import java.util.EnumSet;
 
@@ -86,7 +87,7 @@ public class WorkshopStallDecisionGoal extends Goal {
         VillageSavedData data = VillageSavedData.get(level);
 
         // Find the market for this NPC's village
-        Building market = findMarket(level, data);
+        Building market = ProductionHelpers.findMarketInVillage(entity, level).orElse(null);
         if (market == null) return;
 
         boolean hasStall = data.getStallByOwner(entity.getUUID()).isPresent();
@@ -118,19 +119,4 @@ public class WorkshopStallDecisionGoal extends Goal {
                 });
     }
 
-    // =========================================================================
-    // Helpers
-    // =========================================================================
-
-    private Building findMarket(ServerLevel level, VillageSavedData data) {
-        return entity.getAssignedVillageName()
-                .flatMap(data::getVillageByName)
-                .flatMap(village -> village.getBuildingIds().stream()
-                        .map(data::getBuildingById)
-                        .filter(java.util.Optional::isPresent)
-                        .map(java.util.Optional::get)
-                        .filter(b -> b.getType() == BuildingType.MARKET)
-                        .findFirst())
-                .orElse(null);
-    }
 }

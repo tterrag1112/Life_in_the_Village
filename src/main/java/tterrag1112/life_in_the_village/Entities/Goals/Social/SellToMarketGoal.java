@@ -16,6 +16,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -76,10 +77,11 @@ public class SellToMarketGoal extends Goal {
 
         // No stall — find the merchant
         stallTarget = null;
-        market = findMarket(level, data);
+        market = ProductionHelpers.findMarketInVillage(entity, level).orElse(null);
         if (market == null) return false;
 
-        merchantNpc = findMerchant(level);
+        merchantNpc = ProductionHelpers.findMerchantAt(level, market).orElse(null);
+
         if (merchantNpc == null) return false;
 
         return buildItemsToSell(level, data);
@@ -159,7 +161,6 @@ public class SellToMarketGoal extends Goal {
         Optional<Village> village = entity.getAssignedVillageName()
                 .flatMap(name -> data.getVillageByName(name));
 
-        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
         boolean soldAnything = false;
 
         for (Map.Entry<Item, Integer> entry : itemsToSell.entrySet()) {
@@ -167,8 +168,7 @@ public class SellToMarketGoal extends Goal {
             int toSell = entry.getValue();
             if (toSell <= 0) continue;
 
-            MarketPriceData.ItemPrice basePrice = priceData.getPrice(item).orElse(null);
-            if (basePrice == null) continue;
+            MarketPriceData.ItemPrice basePrice = MarketPriceHelper.getOrDefaultPrice(item);
 
             long pricePerItem = village.map(v ->
                     DynamicPriceCalculator.getBuyPrice(
@@ -223,7 +223,6 @@ public class SellToMarketGoal extends Goal {
         BlockEntity be = level.getBlockEntity(stallTarget.getChestPos());
         if (!(be instanceof Container chest)) { goIdle(); return; }
 
-        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
 
         for (Map.Entry<Item, Integer> entry : itemsToSell.entrySet()) {
             Item item = entry.getKey();
@@ -267,29 +266,7 @@ public class SellToMarketGoal extends Goal {
         sellTimer = 0;
     }
 
-    private Building findMarket(ServerLevel level, VillageSavedData data) {
-        return entity.getAssignedVillageName()
-                .flatMap(name -> data.getVillageByName(name))
-                .flatMap(village -> village.getBuildingIds().stream()
-                        .map(data::getBuildingById)
-                        .filter(Optional::isPresent)
-                        .map(Optional::get)
-                        .filter(b -> b.getType() == BuildingType.MARKET)
-                        .findFirst())
-                .orElse(null);
-    }
 
-    private TownspersonMob findMerchant(ServerLevel level) {
-        if (market == null) return null;
-        return level.getEntitiesOfClass(
-                TownspersonMob.class,
-                market.getShape().toAABB().inflate(16),
-                mob -> mob.getProfession() == Profession.MERCHANT
-                        && mob.getAssignedBuildingId()
-                        .map(id -> id.equals(market.getId()))
-                        .orElse(false)
-        ).stream().findFirst().orElse(null);
-    }
 
     private boolean hasSurplus(ServerLevel level, Building building, Item item) {
         int count = BuildingStorageAccess.countItem(level, building, item);

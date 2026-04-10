@@ -14,8 +14,11 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.level.ChunkEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper;
 import tterrag1112.life_in_the_village.Village.VillageSpawner;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
+import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
 import java.util.*;
 
@@ -119,87 +122,81 @@ public class NaturalVillageSpawnEvent {
 
     private static void processSpawn(PendingSpawn spawn) {
         ServerLevel level = spawn.level;
-
-        // Abort if level was unloaded between queue and processing
         if (level.getServer() == null) return;
 
         // Re-check minimum distance now that more villages may have spawned
-        // since the chunk load event
-        BlockPos origin = new BlockPos(spawn.worldX, 64, spawn.worldZ);
-        if (!VillageSpawner.isFarEnoughFromExistingVillages(level, origin)) return;
+        BlockPos checkPos = new BlockPos(spawn.worldX, 64, spawn.worldZ);
+        if (!VillageSpawner.isFarEnoughFromExistingVillages(level, checkPos)) return;
 
-        // Surface Y — heightmap is valid here because we're not inside a chunk load
-        int surfY = level.getHeight(
-                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                spawn.worldX, spawn.worldZ);
-        if (surfY <= level.getMinY() + 8) return; // ocean floor / void
+        // ── Atlas query for site validity and biome ──────────────────────────
+        WorldAtlas atlas =
+                WorldAtlas.get(level);
+        AtlasCell cell =
+                atlas.ensureCell(level, spawn.worldX, spawn.worldZ);
 
-        BlockPos spawnPos = new BlockPos(spawn.worldX, surfY, spawn.worldZ);
+        if (!cell.isBuildable()) return;          // ocean/void
+        if (cell.isSteep())      return;          // too rough
+        if (cell.centerY() <= level.getMinY() + 8) return;
 
-        // Pick a biome-appropriate village type
-        String type = chooseBiomeAwareType(level, spawnPos, spawn.rng);
+        BlockPos spawnPos = new BlockPos(
+                cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
+
+        String type = chooseTypeFromCell(cell, spawn.rng);
+        if (type == null) return;
         String name = generateName(spawn.rng);
 
-        System.out.println("NaturalVillageSpawn: spawning '"
-                + name + "' (" + type + ") at " + spawnPos.toShortString());
+        System.out.println("NaturalVillageSpawn: spawning '" + name
+                + "' (" + type + ", " + cell.category() + ") at "
+                + spawnPos.toShortString());
 
-        VillageSpawner.spawnVillage(level, spawnPos, type, name);
-    }
+        VillagePlanHelper.planVillage(
+                level,
+                tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level),
+                spawnPos, type, name);    }
 
     // =========================================================================
-    // Biome-aware type selection
+    // Atlas-cell-based type selection
     // =========================================================================
 
     /**
-     * Chooses a village type that fits the biome at the given position.
-     *
-     * <p>The selection order is:
-     * <ol>
-     *   <li>Water nearby → {@code riverside_town} if the type exists</li>
-     *   <li>Snowy/cold biome → {@code farming_village} (potatoes)</li>
-     *   <li>Desert/savanna → {@code trade_hub} (merchants, not farmers)</li>
-     *   <li>Forest/taiga → {@code mining_camp} or {@code default}</li>
-     *   <li>Plains/meadow → {@code farming_village}</li>
-     *   <li>Otherwise → weighted random from available types</li>
-     * </ol>
+     * Chooses a village type appropriate for the given atlas cell's
+     * biome category and water adjacency. Returns null to abort the spawn.
      */
-    private static String chooseBiomeAwareType(ServerLevel level,
-                                               BlockPos pos,
-                                               Random rng) {
-        Set<String> available = VillageTypeRegistry.INSTANCE.getAvailableTypes();
+    private static String chooseTypeFromCell(
+            AtlasCell cell,
+            java.util.Random rng) {
 
-        // ── Water check ───────────────────────────────────────────────────────
-        if (hasWaterNearby(level, pos, 80) && available.contains("riverside_town")) {
+        java.util.Set<String> available =
+                VillageTypeRegistry.INSTANCE.getAvailableTypes();
+
+        // ── Water adjacency: prefer riverside type if any water touches us ───
+        if ((cell.isCoast() || cell.isRiverAdj())
+                && available.contains("riverside_town")) {
             return "riverside_town";
         }
 
-        // ── Biome check ───────────────────────────────────────────────────────
-        ResourceKey<Biome> biomeKey = level.getBiome(pos).unwrapKey().orElse(null);
-        if (biomeKey != null) {
-            String path = biomeKey.registry().getPath();
-
-            boolean isSnowy   = path.contains("snowy") || path.contains("frozen") || path.contains("ice");
-            boolean isDesert  = path.contains("desert") || path.contains("badlands") || path.contains("savanna");
-            boolean isForest  = path.contains("forest") || path.contains("taiga");
-            boolean isPlains  = path.contains("plains") || path.contains("meadow") || path.contains("steppe");
-            boolean isOcean   = path.contains("ocean") || path.contains("beach");
-
-            if (isOcean) return null; // abort — don't spawn in oceans
-
-            if (isSnowy && available.contains("farming_village"))
-                return "farming_village";
-            if (isDesert && available.contains("trade_hub"))
-                return "trade_hub";
-            if (isForest && available.contains("mining_camp"))
-                return rng.nextBoolean() ? "mining_camp" : "default";
-            if (isPlains && available.contains("farming_village"))
-                return rng.nextFloat() < 0.6f ? "farming_village" : "default";
+        // ── Category preferences ─────────────────────────────────────────────
+        switch (cell.category()) {
+            case OCEAN, VOID -> { return null; }
+            case SNOWY -> {
+                if (available.contains("farming_village")) return "farming_village";
+            }
+            case DESERT, SAVANNA -> {
+                if (available.contains("trade_hub")) return "trade_hub";
+            }
+            case FOREST -> {
+                if (available.contains("mining_camp"))
+                    return rng.nextBoolean() ? "mining_camp" : "default";
+            }
+            case PLAINS -> {
+                if (available.contains("farming_village"))
+                    return rng.nextFloat() < 0.6f ? "farming_village" : "default";
+            }
+            default -> {}
         }
 
-        // ── Weighted random fallback ──────────────────────────────────────────
-        // "default" is 3× more likely than any specialist type to keep
-        // the world feeling like a normal village landscape
-        List<String> weightedPool = new ArrayList<>();
+        // ── Weighted random fallback (default 3× any specialist) ─────────────
+        java.util.List<String> weightedPool = new java.util.ArrayList<>();
         for (String t : available) {
             weightedPool.add(t);
             if (t.equals("default")) {
@@ -210,20 +207,7 @@ public class NaturalVillageSpawnEvent {
         return weightedPool.get(rng.nextInt(weightedPool.size()));
     }
 
-    private static boolean hasWaterNearby(ServerLevel level, BlockPos pos, int radius) {
-        // Sample 8 radial points at the given radius
-        for (int i = 0; i < 8; i++) {
-            double angle = 2 * Math.PI * i / 8;
-            int sx = pos.getX() + (int)(Math.cos(angle) * radius);
-            int sz = pos.getZ() + (int)(Math.sin(angle) * radius);
-            int sy = level.getHeight(Heightmap.Types.WORLD_SURFACE, sx, sz);
-            // Water surface is below WORLD_SURFACE but at or above
-            // MOTION_BLOCKING_NO_LEAVES — detect by checking block state
-            BlockPos check = new BlockPos(sx, sy - 1, sz);
-            if (level.isWaterAt(check) || level.isWaterAt(check.above())) return true;
-        }
-        return false;
-    }
+
 
     // =========================================================================
     // Name generation

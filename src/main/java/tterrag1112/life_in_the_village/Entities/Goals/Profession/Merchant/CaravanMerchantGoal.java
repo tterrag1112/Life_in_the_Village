@@ -80,7 +80,7 @@ public class CaravanMerchantGoal extends Goal {
         TradeRoad road = VillageSavedData.get(level)
                 .getRouteById(caravan.getRouteId())
                 .flatMap(r -> VillageSavedData.get(level)
-                        .getRoadById(r.getRoadId()))
+                        .getRoadById(r.getConnectionId()))
                 .orElse(null);
         if (road == null || road.getBlocks().isEmpty()) return;
 
@@ -189,7 +189,7 @@ public class CaravanMerchantGoal extends Goal {
                 .getRouteById(caravan.getRouteId())
                 .flatMap(r -> VillageSavedData.get(
                                 (ServerLevel) entity.level())
-                        .getRoadById(r.getRoadId()))
+                        .getRoadById(r.getConnectionId()))
                 .ifPresent(road -> {
                     // Speed scales with road quality
                 });

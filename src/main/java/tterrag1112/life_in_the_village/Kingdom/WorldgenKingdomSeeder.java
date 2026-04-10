@@ -3,15 +3,15 @@ package tterrag1112.life_in_the_village.Kingdom;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.chunk.ChunkAccess;
-import net.minecraft.world.level.chunk.status.ChunkStatus;
-import net.minecraft.world.level.levelgen.Heightmap;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasSiteSelector;
+import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
 import java.util.*;
 
@@ -23,7 +23,6 @@ public class WorldgenKingdomSeeder {
     private static final int MIN_KINGDOMS      = 2;
     private static final int MAX_KINGDOMS      = 4;
     private static final int SPAWN_INTERVAL    = 600;
-    private static final int CHUNK_LOAD_RADIUS = 4;
 
     // {cultureName, capitalVillageType}
     private static final String[][] CULTURES = {
@@ -60,8 +59,11 @@ public class WorldgenKingdomSeeder {
         }
 
         ScheduledKingdom next = scheduled.remove(0);
-        processSpawn(overworld, next);
-        scheduledDelay = SPAWN_INTERVAL;
+        boolean completed = processSpawn(overworld, next);
+        // Only advance to the next kingdom after this one is actually placed.
+        // If processSpawn returned false it re-queued itself at the front for a
+        // quick retry — don't overwrite its short delay with the long interval.
+        scheduledDelay = completed ? SPAWN_INTERVAL : 5;
     }
 
     private static void planKingdoms(ServerLevel level, long tick) {
@@ -85,24 +87,56 @@ public class WorldgenKingdomSeeder {
         scheduledDelay = 20;
     }
 
-    private static void processSpawn(ServerLevel level, ScheduledKingdom sk) {
-        if (level.getServer() == null) return;
-        System.out.println("[WorldGenKingdomSeeder] Loading chunks around "
-                + sk.cx + "," + sk.cz + " for '" + sk.name + "'...");
-        ensureChunksLoaded(level, sk.cx, sk.cz, CHUNK_LOAD_RADIUS);
-        int surfY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, sk.cx, sk.cz);
-        if (surfY <= level.getMinY() + 8) {
-            System.out.println("[WorldGenKingdomSeeder] '" + sk.name
-                    + "' skipped — ocean/void at " + sk.cx + "," + sk.cz
-                    + " (surfY=" + surfY + ")");
-            return;
+    private static boolean processSpawn(ServerLevel level, ScheduledKingdom sk) {
+        if (level.getServer() == null) return true; // nothing to retry
+
+        WorldAtlas atlas =
+                WorldAtlas.get(level);
+
+        // ── Step 1: ensure atlas is filled around the planned centre ─────────
+        // 30 ms budget per call — big enough to finish a fresh 800-block region
+        // in one or two passes, small enough that a single tick is still under
+        // the server's soft 50 ms budget.
+        boolean done = atlas.ensureRegionFilled(
+                level, sk.cx, sk.cz, 800, 30_000_000L);
+
+        if (!done) {
+            scheduled.add(0, sk);
+            System.out.println("[WorldGenKingdomSeeder] Atlas fill in progress for '"
+                    + sk.name + "' — deferring");
+            return false;
         }
-        BlockPos origin = new BlockPos(sk.cx, surfY, sk.cz);
+
+        // ── Step 2: find best site within the filled region ──────────────────
+        java.util.Optional<AtlasCell> bestOpt =
+                AtlasSiteSelector.findBest(
+                        atlas, sk.cx, sk.cz, 700,
+                        c -> c.isBuildable()
+                                && c.centerY() > level.getMinY() + 8);
+
+        if (bestOpt.isEmpty()) {
+            System.out.println("[WorldGenKingdomSeeder] '" + sk.name
+                    + "' skipped — no suitable atlas cell within 700 blocks of "
+                    + sk.cx + "," + sk.cz);
+            return true;
+        }
+
+        AtlasCell cell = bestOpt.get();
+        BlockPos origin = new BlockPos(
+                cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
+
         System.out.println("[WorldGenKingdomSeeder] Spawning '" + sk.name
                 + "' (" + sk.culture + ") at " + origin.toShortString()
+                + " | biome=" + cell.category()
                 + " | " + sk.composition);
-        KingdomSpawner.spawnComposed(level, origin, sk.name, sk.culture, sk.composition,
+
+        // ── Step 3: plan the kingdom — create virtual records only ───────────
+        // Actual block placement is deferred to VillageRealisationSystem
+        // which fires when players walk near each village origin.
+        KingdomSpawner.planComposed(level, origin, sk.name, sk.culture,
+                sk.composition,
                 msg -> System.out.println("  " + msg));
+        return true;
     }
 
     // First kingdom always gets default culture so there is always a royal capital.
@@ -140,12 +174,6 @@ public class WorldgenKingdomSeeder {
         return av.contains(pref) ? pref : fallback;
     }
 
-    private static void ensureChunksLoaded(ServerLevel level, int worldX, int worldZ, int r) {
-        int cx = worldX >> 4, cz = worldZ >> 4;
-        for (int dx = -r; dx <= r; dx++)
-            for (int dz = -r; dz <= r; dz++)
-                level.getChunk(cx + dx, cz + dz, ChunkStatus.FULL, true);
-    }
 
     // Name tables — indexed by style (independent of actual culture for variety)
     private static final String[][] PREFIXES = {
@@ -168,3 +196,4 @@ public class WorldgenKingdomSeeder {
     private record ScheduledKingdom(int cx, int cz, String name,
                                     String culture, List<String> composition) {}
 }
+

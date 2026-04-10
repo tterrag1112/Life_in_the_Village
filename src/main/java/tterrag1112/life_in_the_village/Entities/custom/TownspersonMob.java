@@ -142,6 +142,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     @Nullable private UUID companyId = null;
     private boolean workingBlocked = false;
     private String currentActivity = "";
+    private UUID currentExpeditionId = null;
 
     // =========================================================================
     // EVENTS — festival/event overrides
@@ -842,6 +843,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         getCaravanId().ifPresent(id -> output.store("caravanId", UUIDUtil.CODEC, id));
         if (companyId != null) output.putString("companyId", companyId.toString());
         if (combatRole != null) output.putString("combatRole", combatRole.name());
+        if (currentExpeditionId != null) {
+            output.putString("currentExpeditionId", currentExpeditionId.toString());
+        }
 
         // ── Identity ─────────────────────────────────────────────────────────
         output.putString("npcName", appearance.getName());
@@ -919,6 +923,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             try { setCombatRoleSilent(CombatRole.valueOf(s)); }
             catch (IllegalArgumentException ignored) {}
         });
+
+        input.read("currentExpeditionID", UUIDUtil.CODEC).ifPresent(this::setCurrentExpeditionId);
 
         // ── Identity ─────────────────────────────────────────────────────────
         input.read("npcName", Codec.STRING).ifPresent(s -> {
@@ -1017,5 +1023,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         mob -> mob.getUUID().equals(id))
                 .stream().findFirst();
     }
+    public UUID getCurrentExpeditionId() { return currentExpeditionId; }
+
+    public void setCurrentExpeditionId(UUID id) {
+        this.currentExpeditionId = id;
+    }
+
+    public boolean isAway() { return currentExpeditionId != null; }
 
 }

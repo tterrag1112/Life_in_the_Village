@@ -39,6 +39,13 @@ public final class TreasuryTickHandler {
         for (TownspersonMob npc : npcs) {
             long wage = wageForProfession(npc.getProfession());
             if (wage > 0) {
+                // Kingdom law: MINIMUM_WAGE — apply floor if the village's
+                // kingdom has the law active. Applied per-NPC because
+                // different villages in different kingdoms may share this
+                // tick pass.
+                wage = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
+                        .applyMinimumWage(data, village.getId(), wage);
+
                 // NpcEconomy.payWage: withdraws from village treasury,
                 // credits wallet, fires visual on the NPC
                 NpcEconomy.payWage(npc, wage, level, data);
