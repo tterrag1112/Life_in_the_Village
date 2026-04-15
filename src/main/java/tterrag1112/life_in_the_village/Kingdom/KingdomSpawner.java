@@ -596,8 +596,7 @@ public class KingdomSpawner {
      * creation is deferred to the first tick after all participating
      * villages become realised.
      */
-    public static java.util.Optional<tterrag1112.life_in_the_village.Kingdom.Kingdom>
-    planComposed(ServerLevel level,
+    public static java.util.Optional<Kingdom> planComposed(ServerLevel level,
                  BlockPos origin,
                  String kingdomName,
                  String culture,
@@ -642,50 +641,82 @@ public class KingdomSpawner {
         java.util.List<BlockPos> placedPositions = new java.util.ArrayList<>();
         java.util.Set<Integer>   usedSuffixes    = new java.util.HashSet<>();
 
-        for (int i = 0; i < villageCount; i++) {
-            boolean isCapital   = (i == 0);
-            String  villageType = composition.get(i);
+        // ── Atlas preparation ────────────────────────────────────────────────────
+        tterrag1112.life_in_the_village.World.Atlas.WorldAtlas atlas =
+                tterrag1112.life_in_the_village.World.Atlas.WorldAtlas.get(level);
 
-            if (tterrag1112.life_in_the_village.Village.VillageTypeRegistry.INSTANCE
-                    .getType(villageType) == null) {
-                progress.accept("  Warning: unknown type '" + villageType
-                        + "' — using 'default'");
-                villageType = "default";
-            }
+        int fillRadius = 2500; // covers default-budget claims with headroom
+        progress.accept("Filling atlas around kingdom origin (" + fillRadius + " blocks)...");
+        atlas.ensureRegionFilled(level, origin.getX(), origin.getZ(),
+                fillRadius, 80_000_000L);
+        atlas.ensureRegionsIndexed(
+                tterrag1112.life_in_the_village.World.Atlas.WorldAtlas.blockToCell(origin.getX()),
+                tterrag1112.life_in_the_village.World.Atlas.WorldAtlas.blockToCell(origin.getZ()),
+                (fillRadius >> tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_SHIFT) + 2);
 
-            double angle = angleOffset + (2 * Math.PI * i / villageCount);
+// ── Compute territorial claim ────────────────────────────────────────────
+        tterrag1112.life_in_the_village.Kingdom.KingdomClaim territorialClaim =
+                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.compute(
+                        atlas, origin,
+                        tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET);
+        kingdom.setTerritorialClaim(territorialClaim);
+        progress.accept("Claimed " + territorialClaim.size() + " cells (home="
+                + territorialClaim.homeCategoryName() + ")");
 
-            BlockPos villagePos = findCandidatePosition(
-                    level, origin, angle, radius,
-                    placedPositions, isCapital, villageType, progress, rng);
+        if (territorialClaim.size() < composition.size()) {
+            progress.accept("Warning: claim has fewer cells (" + territorialClaim.size()
+                    + ") than villages to place (" + composition.size() + ")");
+        }
 
-            if (villagePos == null) {
+// ── Plan village placements ──────────────────────────────────────────────
+        java.util.List<tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.PlacementResult>
+                placements = tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.plan(
+                atlas, territorialClaim, origin, composition);
+
+
+        for (int i = 0; i < placements.size(); i++) {
+            var placement = placements.get(i);
+            boolean isCapital = (i == 0);
+
+            if (!placement.placed()) {
                 if (isCapital) {
-                    progress.accept("  Capital could not be placed — aborting '"
-                            + kingdomName + "'");
+                    progress.accept("  Capital could not be placed — aborting '" + kingdomName + "'");
                     data.removeKingdom(kingdom.getId());
                     data.setDirty();
                     return java.util.Optional.empty();
                 }
-                progress.accept("  Warning: could not place village "
-                        + (i + 1) + " — skipping");
+                progress.accept("  Skipping '" + placement.villageType() + "' — no cell matched");
                 continue;
             }
 
-            String villageName = generateUniqueName(
-                    kingdomName, isCapital, i, rng, usedSuffixes);
+            String villageName = generateUniqueName(kingdomName, isCapital, i, rng, usedSuffixes);
             progress.accept("  Planning "
                     + (isCapital ? "capital " : "village ")
-                    + villageName + " at " + villagePos.toShortString());
+                    + villageName + " (" + placement.villageType()
+                    + (placement.relaxed() ? ", relaxed tag match" : "")
+                    + ") at " + placement.position().toShortString()
+                    + " score=" + String.format("%.2f", placement.score()));
 
-            Village planned =
-                    VillagePlanHelper
-                            .planVillage(level, data, villagePos,
-                                    villageType, villageName);
+            tterrag1112.life_in_the_village.Village.Village planned =
+                    tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper
+                            .planVillage(level, data, placement.position(),
+                                    placement.villageType(), villageName);
+            boolean clashesWithExisting = data.getAllVillages().stream()
+                    .anyMatch(v -> {
+                        BlockPos anchor = v.getAnchorPos();
+                        return anchor != null
+                                && anchor.distSqr(placement.position()) < 100 * 100; // 100 block min
+                    });
+            if (clashesWithExisting) {
+                progress.accept("  Skipping '" + placement.villageType()
+                        + "' — too close to a village from another kingdom");
+                continue;
+            }
 
             kingdom.addVillage(planned.getId());
-            placedPositions.add(villagePos);
+            placedPositions.add(placement.position());
         }
+
 
         data.setDirty();
         progress.accept("Planned kingdom '" + kingdomName + "' with "

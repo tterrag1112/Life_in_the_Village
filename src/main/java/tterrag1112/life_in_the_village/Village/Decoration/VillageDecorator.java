@@ -81,16 +81,24 @@ public class VillageDecorator {
             RoadShape.RoadTier roadTier = RoadShape.fromPathTier(
                     village.getPathTier());
 
-            VillageRoadNetwork roads = new VillageRoadNetwork(squareCenter);
-            allPathXZ = roads.buildInitialNetwork(
-                    level, village, data, layout.getTrunkGraph(), material, roadTier,
-                    footprint, level.getRandom());
+        VillageRoadNetwork roads = new VillageRoadNetwork(squareCenter);
+        allPathXZ = roads.buildInitialNetwork(
+                level, village, data, layout, material, roadTier,
+                footprint, level.getRandom());
 
             // Add square pavement
             for (BlockPos p : squarePavement) {
                 allPathXZ.add(xzKey(p.getX(), p.getZ()));
 
         }
+        System.out.println("VillageDecorator: road network produced "
+                + allPathXZ.size() + " path XZ positions across "
+                + data.getPathsForVillage(village.getId()).size() + " VillagePaths");
+        int totalBlocks = 0;
+        for (VillagePath path : data.getPathsForVillage(village.getId())) {
+            totalBlocks += path.getBlocks().size();
+        }
+        System.out.println("VillageDecorator: total placed road blocks = " + totalBlocks);
 
         village.setPathHubPos(squareCenter);
         data.setDirty();
@@ -103,11 +111,11 @@ public class VillageDecorator {
         TerrainSmoother.supportPathBlocks(level, allPathBlocks);
 
         // ── Step 4: Perimeter ─────────────────────────────────────────────────
-        VillagePerimeter.place(level, village, data, style, tier, allPathXZ);
+        //VillagePerimeter.place(level, village, data, style, tier, allPathXZ);
 
         // ── Step 5: Approach gradient ─────────────────────────────────────────
 
-            placeApproachGradient(level, village, data, style, allPathXZ);
+            //placeApproachGradient(level, village, data, style, allPathXZ);
 
 
 
@@ -139,6 +147,19 @@ public class VillageDecorator {
 
         // ── Step 12: Weathering ───────────────────────────────────────────────
         VillageWeathering.weather(level, village, data, style);
+
+        // Diagnostic: check if roads survived weathering
+        int survivingRoadBlocks = 0;
+        for (VillagePath path : data.getPathsForVillage(village.getId())) {
+            for (BlockPos pos : path.getBlocks()) {
+                var state = level.getBlockState(pos.below());
+                if (!state.is(Blocks.GRASS_BLOCK) && !state.is(Blocks.DIRT)) {
+                    survivingRoadBlocks++;
+                }
+            }
+        }
+        System.out.println("VillageDecorator: " + survivingRoadBlocks
+                + " road blocks still non-grass after decoration");
 
         // ── Step 13: Guard patrol route ────────────────────────────────────────
         VillagePatrolRouteBuilder.build(level, village, data);

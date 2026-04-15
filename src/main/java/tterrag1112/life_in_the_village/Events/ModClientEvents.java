@@ -35,6 +35,7 @@ import tterrag1112.life_in_the_village.Entities.ModModelLayers;
 import tterrag1112.life_in_the_village.Entities.client.TownspersonModel;
 import tterrag1112.life_in_the_village.Entities.client.TownspersonRenderer;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Gui.Map.Kingdom.ContinentMapScreen;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Magic.ManaSystem.ModManaHandler;
 import tterrag1112.life_in_the_village.Networking.KeyData;
@@ -45,6 +46,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.ModBuildings;
 
 import java.util.Optional;
 
+
 @EventBusSubscriber(modid = Life_in_the_village.MODID, value = Dist.CLIENT)
 public class ModClientEvents {
 
@@ -53,6 +55,7 @@ public class ModClientEvents {
         event.register(ModKeymappings.PRESS_V.get());
         event.register(ModKeymappings.PRESS_C.get());
         event.register(ModKeymappings.PRESS_X.get());
+        event.register(ModKeymappings.PRESS_K.get());
     }
 
     @SubscribeEvent
@@ -90,6 +93,9 @@ public class ModClientEvents {
         }
         while (ModKeymappings.PRESS_X.get().consumeClick()){
             ClientPacketDistributor.sendToServer(new KeyData("tterrag1112", 13));
+        }
+        while (ModKeymappings.PRESS_K.get().consumeClick()) {
+            ContinentMapScreen.openForPlayer();
         }
     }
 

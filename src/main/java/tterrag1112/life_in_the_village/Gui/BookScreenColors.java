@@ -22,4 +22,34 @@ public final class BookScreenColors {
     public static final int COL_DISABLED = 0xFFCCBB99;
 
 
+    // Ocean / water
+    public static final int OCEAN_DEEP        = 0xFF1F3A5F;
+    public static final int OCEAN_SHALLOW     = 0xFF3A6E9A;
+    public static final int FRESHWATER        = 0xFF5590B8;
+
+    // Terrain
+    public static final int TERRAIN_PLAINS    = 0xFFC8D890;
+    public static final int TERRAIN_FOREST    = 0xFF6B8A3E;
+    public static final int TERRAIN_MOUNTAIN  = 0xFF8A7A6A;
+    public static final int TERRAIN_HILLS     = 0xFFA89868;
+    public static final int TERRAIN_DESERT    = 0xFFE8D68A;
+    public static final int TERRAIN_SNOW      = 0xFFE8ECF2;
+    public static final int TERRAIN_SWAMP     = 0xFF6A7A4A;
+    public static final int TERRAIN_BEACH     = 0xFFE8D8A8;
+
+    // Kingdom territory overlays (semi-transparent)
+    public static final int KINGDOM_FOCUS_TINT   = 0x55D4B870;
+    public static final int KINGDOM_FOREIGN_TINT = 0x33A89060;
+    public static final int KINGDOM_BORDER_FOCUS   = 0xFFB8860B;
+    public static final int KINGDOM_BORDER_FOREIGN = 0xFF7A6040;
+
+    // Routes
+    public static final int ROUTE_LAND        = 0xFF5A3A1A;
+    public static final int ROUTE_SEA         = 0xFF2A5A8A;
+
+    // Markers
+    public static final int VILLAGE_MARKER    = 0xFF8B1A1A;
+    public static final int VILLAGE_CAPITAL   = 0xFFB8860B;
+
+
 }

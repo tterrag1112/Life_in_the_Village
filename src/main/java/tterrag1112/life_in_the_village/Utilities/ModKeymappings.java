@@ -11,9 +11,17 @@ public class ModKeymappings {
     private static final KeyMapping KEY_MAPPING_X = new KeyMapping("key.liv.x", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_X, KeyMapping.Category.MISC);
 
 
+    private static final KeyMapping CONTINENT_MAP_KEY = new KeyMapping(
+            "key.liv.k",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_K,
+            KeyMapping.Category.MISC);
+
+
     public static final Lazy<KeyMapping> PRESS_V = Lazy.lazy(() -> KEY_MAPPING_V);
     public static final Lazy<KeyMapping> PRESS_C = Lazy.lazy(() -> KEY_MAPPING_C);
     public static final Lazy<KeyMapping> PRESS_X = Lazy.lazy(() -> KEY_MAPPING_X);
+    public static final Lazy<KeyMapping> PRESS_K = Lazy.lazy(() -> CONTINENT_MAP_KEY);
 
 
 

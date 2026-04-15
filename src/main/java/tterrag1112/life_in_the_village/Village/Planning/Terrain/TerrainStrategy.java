@@ -3,7 +3,6 @@ package tterrag1112.life_in_the_village.Village.Planning.Terrain;
 
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
-import tterrag1112.life_in_the_village.Village.Planning.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.Steps.*;
 

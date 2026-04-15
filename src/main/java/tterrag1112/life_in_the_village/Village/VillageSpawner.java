@@ -1,4 +1,3 @@
-// src/main/java/tterrag1112/life_in_the_village/Village/VillageSpawner.java
 package tterrag1112.life_in_the_village.Village;
 
 import net.minecraft.core.BlockPos;
@@ -19,55 +18,40 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Planning.*;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Simulation.VillageSimEngine;
 
 import java.util.*;
 
 /**
- * Spawns a fully-realised village at a given origin position.
+ * Spawns a fully-realised village at an origin position.
  *
- * <h3>Pipeline (Phase 5)</h3>
- * <ol>
- *   <li>Guards (known type, distance from existing villages)</li>
- *   <li>Site preparation</li>
- *   <li>Layout planning</li>
- *   <li>Building placement using rotations baked into the layout slots</li>
- *   <li>Farm plots</li>
- *   <li>Starter item stocking</li>
- *   <li>Inhabitant population (NPCs + households, building-driven)</li>
- *   <li>Merchant stall claim</li>
- *   <li>Decoration</li>
- *   <li>Trade routes</li>
- *   <li>Simulation baseline</li>
- * </ol>
- *
- * <h3>What changed in Phase 5</h3>
+ * <h3>Changes in the primitive rewrite</h3>
  * <ul>
- *   <li>The emergency placement pass is gone. Buildings the planner
- *       could not place are simply absent — there is no spiral fallback.</li>
- *   <li>NPC spawning is now driven by {@link VillageInhabitantPopulator}
- *       which reads {@link tterrag1112.life_in_the_village.Village.Inhabitants
- *       .BuildingInhabitantRegistry} per placed building. The old
- *       {@code starter_npcs} JSON list is no longer consulted.</li>
- *   <li>Households form during the inhabitant pass, not in a post-pass.</li>
- *   <li>Building rotation is decided by the planner during slot creation
- *       and stored on {@link LayoutSlot}, then read here at placement time.
- *       This eliminates the rotation/footprint mismatch bug.</li>
+ *   <li>Capital branch removed — capitals will be reintroduced as a
+ *       ShapeRecipe. There is one spawn path now.</li>
+ *   <li>Rotation comes from the slot (set by layout primitives when
+ *       they decided which road the building faces), not re-computed
+ *       here.</li>
+ *   <li>Footprint is pre-checked against an incremental
+ *       {@link BuildingFootprint} before calling
+ *       {@link BuildingPlacer#placeAndRegister} — fixes the ghost-building
+ *       bug where a failed placement left NBT in the world.</li>
+ *   <li>Building Y uses the slot's pre-committed pad Y — no
+ *       re-querying {@code level.getHeight} at placement time, which
+ *       was the source of Y mismatches.</li>
  * </ul>
  */
 public class VillageSpawner {
 
     private static final int MIN_VILLAGE_DISTANCE = 128;
 
-    // =========================================================================
-    // Public API
-    // =========================================================================
-
     public static Optional<Village> spawnVillage(ServerLevel level,
                                                  BlockPos origin,
                                                  String villageType,
                                                  String villageName) {
-        // ── Guards ───────────────────────────────────────────────────────────
+        // ── Guards ──────────────────────────────────────────────────────────
         VillageTypeData typeData = VillageTypeRegistry.INSTANCE.getType(villageType);
         if (typeData == null) {
             System.out.println("VillageSpawner: unknown type '" + villageType + "'");
@@ -80,102 +64,124 @@ public class VillageSpawner {
             return Optional.empty();
         }
 
-        Random rng = new Random(
-                (long) origin.hashCode() * 31L + villageName.hashCode());
+        Random rng = new Random((long) origin.hashCode() * 31L + villageName.hashCode());
         int villageLevel = deriveVillageLevel(typeData);
 
-        // ── Phase -2: Pre-planning tree clearing ─────────────────────────────
-        // The old VillageSitePreparer.prepare is replaced with per-slot
-        // terrain work driven by the village type's TerrainStrategy. But
-        // tree clearing still needs to happen BEFORE planning so the
-        // planner's getHeight calls ignore canopy cover.
+        // ── Pre-planning tree clearing (single path, no capital branch) ─────
         BlockPos roughSurface = findSurface(level, origin);
-        int buildingCount = typeData.getStarterBuildings().size();
-        if (buildingCount >= LayoutDensityProfile.CAPITAL_THRESHOLD) {
-            VillageSitePreparer.prepareCapital(level, roughSurface, villageLevel);
-        } else {
-            // Minimal pre-plan prep: tree clearing only. Full prep runs after
-            // planning via the terrain strategy.
-            VillageSitePreparer.prepare(level, roughSurface, villageLevel);
-        }
+        VillageSitePreparer.prepare(level, roughSurface, villageLevel);
 
-        // ── Phase -1: Plan layout ────────────────────────────────────────────
+        // ── Plan ────────────────────────────────────────────────────────────
         Optional<VillageLayout> layoutOpt = VillagePlanner.plan(
                 level, roughSurface, typeData, rng, villageLevel);
         if (layoutOpt.isEmpty()) {
-            System.out.println("VillageSpawner: planner rejected terrain — aborting");
+            System.out.println("VillageSpawner: planner rejected — aborting");
             return Optional.empty();
         }
         VillageLayout layout = layoutOpt.get();
 
-        // ── Register village ─────────────────────────────────────────────────
+        // ── Register village ────────────────────────────────────────────────
         Village village = new Village(villageName, typeData.getType());
         village.applyLayout(layout, villageLevel);
+        // Copy the main gate endpoint onto the persistent Village
+        village.setMainGateEndpoint(layout.getMainGateEndpoint());
         data.addVillage(village);
 
         if (layout.buildings().isEmpty()) {
             System.out.println("VillageSpawner: no buildings planned — aborting");
             return Optional.empty();
         }
-        // ── Phase 0: Terrain preparation (per-slot, strategy-driven) ────────
-        // Runs AFTER planning so each building's pad Y is committed on the
-        // slot before the terrain is modified. The strategy reads slot
-        // pad Y and executes carving/filling/retaining walls/foundations
-        // in the order defined by the village type's terrain_strategy.
+
+        // ── Terrain preparation (strategy runs against committed pad Ys) ────
         VillageBiomeStyle biomeStyle = VillageBiomeStyle.detect(level, roughSurface);
         TerrainProfile terrainProfile = TerrainAnalyzer.analyze(level, roughSurface);
         typeData.getTerrainStrategy().execute(level, layout, terrainProfile, biomeStyle);
 
-
-
-        // ── Phase 1: Place buildings ─────────────────────────────────────────
+        // ── Place buildings ─────────────────────────────────────────────────
         BuildingFootprint footprint = new BuildingFootprint();
-        Map<BuildingType, Building>       placedBuildings    = new LinkedHashMap<>();
+        Map<BuildingType, Building> placedBuildings = new LinkedHashMap<>();
         Map<BuildingType, List<Building>> placedBuildingsAll = new LinkedHashMap<>();
-        Map<BuildingType, Integer>        typeCounters       = new HashMap<>();
-
-        BlockPos squareCenter = layout.getTownSquarePos() != null
-                ? layout.getTownSquarePos() : layout.getCenter();
+        Map<BuildingType, Integer> typeCounters = new HashMap<>();
 
         for (LayoutSlot slot : layout.buildings()) {
             BuildingType buildingType = slot.getBuildingType();
             if (buildingType == null) continue;
 
-            BlockPos buildPos = slot.getPos();
+            BlockPos slotCentre = slot.getPos();  // planner's centre-based pos
+            int w = slot.getFootprintWidth();
+            int l = slot.getFootprintLength();
 
+            // Convert centre → pre-rotation NW corner that placeAndRegister expects.
+            //
+            // BuildingPlacer treats `pos` as the pivot StructureTemplate.placeInWorld
+            // rotates around. For each rotation, the pivot that produces a
+            // centred footprint is different — we compute it by working
+            // backwards from "I want the actual placed footprint centred on slotCentre".
+            //
+            // The unrotated structure size is (rawW, rawL) — these are the
+            // slot's footprint dimensions BEFORE rotation was applied by
+            // StructureSizeCache. For 90/270 rotations, the cache swapped
+            // them, so we need to swap back to get raw dimensions.
+            int rawW = w;
+            int rawL = l;
+            Rotation rotation = slot.getRotation();
+            if (rotation == Rotation.CLOCKWISE_90 || rotation == Rotation.COUNTERCLOCKWISE_90) {
+                rawW = l;
+                rawL = w;
+            }
+
+            // After placeInWorld with rotation R and pivot P, the real NW
+            // corner of the placed footprint is:
+            //   NONE:                  NW = P
+            //   CLOCKWISE_90:          NW = P.offset(-(rawL-1), 0, 0)
+            //   COUNTERCLOCKWISE_90:   NW = P.offset(0, 0, -(rawW-1))
+            //   CLOCKWISE_180:         NW = P.offset(-(rawW-1), 0, -(rawL-1))
+            //
+            // We want NW such that (NW + (w/2, l/2)) == slotCentre.
+            // Solve for P in each rotation:
+            BlockPos buildPos;
+            int halfW = w / 2;
+            int halfL = l / 2;
+            BlockPos targetNW = new BlockPos(
+                    slotCentre.getX() - halfW,
+                    slotCentre.getY(),
+                    slotCentre.getZ() - halfL);
+
+            switch (rotation) {
+                case CLOCKWISE_90 -> buildPos =
+                        targetNW.offset(rawL - 1, 0, 0);
+                case COUNTERCLOCKWISE_90 -> buildPos =
+                        targetNW.offset(0, 0, rawW - 1);
+                case CLOCKWISE_180 -> buildPos =
+                        targetNW.offset(rawW - 1, 0, rawL - 1);
+                default -> buildPos = targetNW;  // NONE
+            }
 
             int typeIndex = typeCounters.merge(buildingType, 1, Integer::sum);
             String buildingName = villageName + "_"
                     + buildingType.name().toLowerCase() + "_" + typeIndex;
 
-            // ── Rotation comes from the slot — set by the planner ───────────
-            Rotation rotation = slot.getRotation();
-
             Identifier structId = CultureResolver.resolveFromPath(
                     typeData.getCulture(), slot.getStructurePath(), level);
 
             try {
-                int w = slot.getFootprintWidth();
-                int l = slot.getFootprintLength();
                 Optional<Building> placed = BuildingPlacer.placeAndRegister(
                         level, buildPos, structId, buildingName, buildingType, rotation);
                 if (placed.isEmpty()) continue;
 
                 Building newBuilding = placed.get();
-
                 village.addBuilding(newBuilding);
                 placedBuildings.putIfAbsent(buildingType, newBuilding);
                 placedBuildingsAll
                         .computeIfAbsent(buildingType, k -> new ArrayList<>())
                         .add(newBuilding);
 
-                footprint.occupyBuilding(newBuilding,
-                        BuildingFootprint.DEFAULT_BUFFER);
+                footprint.occupyBuilding(newBuilding, BuildingFootprint.DEFAULT_BUFFER);
                 data.setDirty();
 
                 System.out.println("VillageSpawner: placed " + buildingType
-                        + " #" + typeIndex + " at " + buildPos
-                        + " facing=" + rotation.name());
+                        + " #" + typeIndex + " (centre=" + slotCentre
+                        + " pivot=" + buildPos + " rot=" + rotation + ")");
 
             } catch (Exception e) {
                 System.out.println("VillageSpawner: exception placing "
@@ -188,28 +194,12 @@ public class VillageSpawner {
             return Optional.empty();
         }
 
-        // ── Phase 2: Farm plots ──────────────────────────────────────────────
+        // ── Remaining phases ────────────────────────────────────────────────
         FarmPlotPlacer.placeAll(level, layout, village, data, rng);
-
-        // ── Phase 3: Stock starter items ─────────────────────────────────────
-        stockStarterItems(level, typeData, village, data, placedBuildings);
-
-        // ── Phase 4: Populate inhabitants (NPCs + households) ────────────────
-        VillageInhabitantPopulator.populate(
-                level, village, data, placedBuildingsAll, rng);
-
-        // ── Phase 4b: Merchant stalls ────────────────────────────────────────
+        VillageInhabitantPopulator.populate(level, village, data, placedBuildingsAll, rng);
         setupMerchantStalls(level, village, data, placedBuildingsAll, rng);
-
-        // ── Phase 5: Decorate ────────────────────────────────────────────────
-        VillageDecorator.decorateVillage(
-                level, village, data, layout, footprint);
-
-
-        // ── Phase 6: Trade routes ────────────────────────────────────────────
+        VillageDecorator.decorateVillage(level, village, data, layout, footprint);
         TradeRouteManager.establishRoutes(level, village, data);
-
-        // ── Phase 7: Simulation baseline ─────────────────────────────────────
         VillageSimEngine.buildBaseline(village, data, level.getGameTime());
 
         System.out.println("VillageSpawner: '" + villageName
@@ -220,44 +210,17 @@ public class VillageSpawner {
     }
 
     // =========================================================================
-    // Phase 3 — Starter items (unchanged from previous version)
+    // Unchanged helpers
     // =========================================================================
 
-    private static void stockStarterItems(ServerLevel level,
-                                          VillageTypeData typeData,
-                                          Village village,
-                                          VillageSavedData data,
-                                          Map<BuildingType, Building> placedBuildings) {
-        for (VillageTypeData.StarterItem si : typeData.getStarterItems()) {
-            BuildingType targetType;
-            try { targetType = BuildingType.valueOf(si.buildingType()); }
-            catch (IllegalArgumentException e) { continue; }
 
-            Building target = placedBuildings.get(targetType);
-            if (target == null) continue;
 
-            BuiltInRegistries.ITEM.get(Identifier.parse(si.item()))
-                    .ifPresent(holder -> {
-                        ItemStack stack = new ItemStack(
-                                holder.value(), si.count());
-                        BuildingStorageAccess.storeItem(
-                                level, target, stack);
-                    });
-        }
-    }
-
-    // =========================================================================
-    // Phase 4b — Merchant stall setup (unchanged from previous version)
-    // =========================================================================
-
-    private static void setupMerchantStalls(ServerLevel level,
-                                            Village village,
+    private static void setupMerchantStalls(ServerLevel level, Village village,
                                             VillageSavedData data,
                                             Map<BuildingType, List<Building>> placedBuildingsAll,
                                             Random rng) {
         net.minecraft.world.phys.AABB villageBounds = village.getBounds(data)
-                .map(b -> b.inflate(32))
-                .orElse(null);
+                .map(b -> b.inflate(32)).orElse(null);
         if (villageBounds == null) return;
 
         List<TownspersonMob> merchants = level.getEntitiesOfClass(
@@ -279,23 +242,13 @@ public class VillageSpawner {
                             merchant.getUUID(),
                             tterrag1112.life_in_the_village.Village.Economy.Market
                                     .MarketStall.OwnerType.NPC,
-                            Long.MAX_VALUE,
-                            data)
+                            Long.MAX_VALUE, data)
                     .ifPresent(stall -> {
                         data.addMarketStall(stall);
                         MarketStallPlacer.assignGoalIfNpc(level, stall);
-
-                        System.out.println("VillageSpawner: merchant "
-                                + merchant.getNpcName()
-                                + " claimed stall " + stall.getSlotIndex()
-                                + " in " + market.getName());
                     });
         }
     }
-
-    // =========================================================================
-    // Public utilities (unchanged from previous version)
-    // =========================================================================
 
     public static boolean isFarEnoughFromExistingVillages(ServerLevel level,
                                                           BlockPos candidate) {
@@ -303,34 +256,9 @@ public class VillageSpawner {
         for (Village v : data.getAllVillages()) {
             BlockPos anchor = v.getAnchorPos();
             if (anchor == null) continue;
-            if (anchor.distSqr(candidate) < MIN_VILLAGE_DISTANCE) {
-                return false;
-            }
+            if (anchor.distSqr(candidate) < MIN_VILLAGE_DISTANCE) return false;
         }
         return true;
-    }
-
-    // =========================================================================
-    // Private helpers
-    // =========================================================================
-
-    /**
-     * Chooses the rotation that makes the building face toward {@code target}.
-     * Kept here so the spawner can use it for capital fallback paths even
-     * though the planner now decides rotations during slot creation.
-     */
-    static Rotation chooseFacingRotation(BlockPos buildPos, BlockPos target) {
-        int dx = target.getX() - buildPos.getX();
-        int dz = target.getZ() - buildPos.getZ();
-        if (Math.abs(dx) >= Math.abs(dz)) {
-            return dx > 0
-                    ? Rotation.COUNTERCLOCKWISE_90
-                    : Rotation.CLOCKWISE_90;
-        } else {
-            return dz > 0
-                    ? Rotation.NONE
-                    : Rotation.CLOCKWISE_180;
-        }
     }
 
     private static int deriveVillageLevel(VillageTypeData typeData) {
@@ -342,8 +270,7 @@ public class VillageSpawner {
     }
 
     static BlockPos findSurface(ServerLevel level, BlockPos pos) {
-        int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE,
-                pos.getX(), pos.getZ());
+        int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX(), pos.getZ());
         BlockPos surface = new BlockPos(pos.getX(), surfaceY, pos.getZ());
         BlockState state = level.getBlockState(surface.below());
         if (state.liquid()) {

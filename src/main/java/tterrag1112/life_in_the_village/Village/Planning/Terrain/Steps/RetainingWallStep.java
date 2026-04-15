@@ -8,7 +8,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStep;
-import tterrag1112.life_in_the_village.Village.Planning.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
 
 /**

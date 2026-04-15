@@ -176,15 +176,15 @@ public class PathMaterial {
     public static PathMaterial cobblestone() {
         return new PathMaterial("cobblestone",
                 List.of(
-                        new WeightedBlock(Blocks.COBBLESTONE, 0.55f),
+                        new WeightedBlock(Blocks.STONE, 0.55f),
                         new WeightedBlock(Blocks.ANDESITE, 0.20f),
-                        new WeightedBlock(Blocks.STONE, 0.15f),
-                        new WeightedBlock(Blocks.GRAVEL, 0.10f)
+                        new WeightedBlock(Blocks.COBBLESTONE, 0.15f),
+                        new WeightedBlock(Blocks.STONE_BRICKS, 0.10f)
                 ),
                 List.of(
-                        new WeightedBlock(Blocks.GRAVEL, 0.4f),
-                        new WeightedBlock(Blocks.COBBLESTONE, 0.3f),
-                        new WeightedBlock(Blocks.COARSE_DIRT, 0.3f)
+                        new WeightedBlock(Blocks.ANDESITE, 0.4f),
+                        new WeightedBlock(Blocks.STONE, 0.3f),
+                        new WeightedBlock(Blocks.COBBLESTONE, 0.3f)
                 ));
     }
 

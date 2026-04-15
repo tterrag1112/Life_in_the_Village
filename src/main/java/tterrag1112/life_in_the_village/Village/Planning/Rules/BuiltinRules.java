@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Village.Planning.Rules;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 
 import java.util.*;
 
@@ -147,12 +148,12 @@ public final class BuiltinRules {
         }
 
         /**
-         * Maps a {@link tterrag1112.life_in_the_village.Village.Planning.TerrainAnalyzer.FlatDirection}
+         * Maps a {@link TerrainAnalyzer.FlatDirection}
          * to a radian angle on the standard math plane (counterclockwise
          * from positive X / east).
          */
         private static double flatDirectionToRadians(
-                tterrag1112.life_in_the_village.Village.Planning.TerrainAnalyzer.FlatDirection dir) {
+                TerrainAnalyzer.FlatDirection dir) {
             return switch (dir) {
                 case EAST  -> 0.0;
                 case NORTH -> -Math.PI / 2;   // -Z in Minecraft is north

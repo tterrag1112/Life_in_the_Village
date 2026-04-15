@@ -166,6 +166,23 @@ public class ModModEvents {
                 GuildActionPacket.CODEC,
                 GuildActionPacket::handle);
 
+        registrar.playToServer(
+                RequestKingdomMapSyncPacket.TYPE,
+                RequestKingdomMapSyncPacket.CODEC,
+                RequestKingdomMapSyncPacket::handle);
+        registrar.playToClient(
+                KingdomMapSyncPacket.TYPE,
+                KingdomMapSyncPacket.STREAM_CODEC,
+                KingdomMapSyncPacket::handle);
+        registrar.playToServer(
+                RequestContinentMapSyncPacket.TYPE,
+                RequestContinentMapSyncPacket.CODEC,
+                RequestContinentMapSyncPacket::handle);
+        registrar.playToClient(
+                ContinentMapSyncPacket.TYPE,
+                ContinentMapSyncPacket.STREAM_CODEC,
+                ContinentMapSyncPacket::handle);
+
     }
 
     @SubscribeEvent
@@ -180,6 +197,10 @@ public class ModModEvents {
         DebugTickCommand.register(event.getDispatcher());
         FarmCommands.register(event.getDispatcher());
         BalanceTestCommands.register(event.getDispatcher());
+        AtlasRegionDebugCommand.register(event.getDispatcher());
+        VillageTagsDebugCommand.register(event.getDispatcher());
+        KingdomClaimDebugCommand.register(event.getDispatcher());
+        PlacementFailuresDebugCommand.register(event.getDispatcher());
 
     }
 

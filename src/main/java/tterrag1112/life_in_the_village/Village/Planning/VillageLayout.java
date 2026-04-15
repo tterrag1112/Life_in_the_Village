@@ -1,62 +1,117 @@
 package tterrag1112.life_in_the_village.Village.Planning;
 
 import net.minecraft.core.BlockPos;
-import tterrag1112.life_in_the_village.Village.Decoration.Roads.TrunkGraph;
+import net.minecraft.server.level.ServerLevel;
+import org.jetbrains.annotations.Nullable;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Holds the planned layout for a village before any blocks are placed.
+ * Holds the planned layout for a village. After the primitive rewrite,
+ * this class is the single source of truth for both buildings and road
+ * primitives — the old separate TrunkGraph is gone.
  *
- * <h3>Key change: footprint-aware overlap</h3>
- * {@link #tryAdd(LayoutSlot)} uses actual structure footprint dimensions
- * (width × length) for AABB overlap testing instead of circular radius
- * checks. PATH_NODE and DECORATION slots are excluded from building
- * overlap tests — only building slots block other buildings.
+ * <h3>Road storage</h3>
+ * Road primitives are added via {@link #addRoad(RoadPrimitive, ServerLevel, long)},
+ * which immediately computes and caches the centerline. Callers should
+ * use the returned centerline directly rather than recomputing it.
  */
 public class VillageLayout {
 
-    private final TerrainProfile       terrain;
+    private final TerrainProfile terrain;
     private final LayoutDensityProfile density;
-    private final List<LayoutSlot>     slots = new ArrayList<>();
+    private final List<LayoutSlot> slots = new ArrayList<>();
 
-    private TrunkGraph trunkGraph;
+    private int civicRingRadius = 0;
 
-    public TrunkGraph getTrunkGraph() { return trunkGraph; }
-    public void setTrunkGraph(TrunkGraph g) { this.trunkGraph = g; }
+    public int getCivicRingRadius() { return civicRingRadius; }
+    public void setCivicRingRadius(int r) { this.civicRingRadius = r; }
+
+
+    // ── Road primitives & cached centerlines ───────────────────────────────
+    private final List<RoadPrimitive> roadPrimitives = new ArrayList<>();
+    private final Map<RoadPrimitive, List<BlockPos>> centerlines = new IdentityHashMap<>();
+    /**
+     * Footprint grid of road reservations accumulated as primitives are
+     * added. Layout primitives consult this during placement so
+     * buildings never land on top of a road centerline.
+     */
+    private final BuildingFootprint roadFootprint = new BuildingFootprint();
+
+    public BuildingFootprint getRoadFootprint() { return roadFootprint; }
 
     private BlockPos center;
-    private final List<BlockPos> gatePositions = new ArrayList<>();
     private BlockPos townSquarePos;
+    private int townSquareRadius = 0;
+    @Nullable private BlockPos mainGateEndpoint;
 
-    /** Minimum gap in blocks between building edges for AABB overlap. */
+    private final List<BlockPos> gatePositions = new ArrayList<>();
+
     public static final int MIN_BUILDING_GAP = 4;
 
     public VillageLayout(TerrainProfile terrain, LayoutDensityProfile density) {
         this.terrain = terrain;
         this.density = density;
-        this.center  = terrain.origin();
+        this.center = terrain.origin();
     }
 
     // =========================================================================
-    // Slot management
+    // Road management
     // =========================================================================
 
-    /**
-     * Tries to add a slot, rejecting it if it overlaps an existing building.
-     *
-     * <p>Only BUILDING slots are tested against each other. PATH_NODE and
-     * DECORATION slots never block building placement. FARM_PLOT slots
-     * block other farm plots and buildings, but not decorations.</p>
-     *
-     * <p>When both slots have footprint dimensions set, uses AABB overlap
-     * with {@link #MIN_BUILDING_GAP}. Otherwise falls back to radius circles.</p>
-     *
-     * @return true if the slot was accepted, false if it overlaps
-     */
+    /** Adds a road primitive and computes+caches its centerline. */
+    public List<BlockPos> addRoad(RoadPrimitive primitive, ServerLevel level, long worldSeed) {
+        List<BlockPos> cl = primitive.computeCenterline(level, worldSeed);
+        roadPrimitives.add(primitive);
+        centerlines.put(primitive, cl);
+        // Reserve the road's blocks so building primitives won't collide
+        roadFootprint.reserveRoad(cl, primitive.tier().reservedHalfWidth());
+        return cl;
+    }
+
+    public List<RoadPrimitive> getRoadPrimitives() {
+        return Collections.unmodifiableList(roadPrimitives);
+    }
+
+    public List<BlockPos> getCenterline(RoadPrimitive primitive) {
+        return centerlines.getOrDefault(primitive, List.of());
+    }
+
+    public Collection<List<BlockPos>> getAllCenterlines() {
+        return centerlines.values();
+    }
+
+    /** Reserves all road centerlines in a footprint grid. */
+    public void reserveRoads(BuildingFootprint footprint) {
+        for (RoadPrimitive rp : roadPrimitives) {
+            List<BlockPos> cl = centerlines.get(rp);
+            if (cl != null && !cl.isEmpty()) {
+                footprint.reserveRoad(cl, rp.tier().reservedHalfWidth());
+            }
+        }
+    }
+
+    /** Returns the nearest centerline point across all roads, or null if empty. */
+    public BlockPos nearestCenterlinePoint(BlockPos target) {
+        BlockPos best = null;
+        double bestSq = Double.MAX_VALUE;
+        for (List<BlockPos> cl : centerlines.values()) {
+            for (BlockPos p : cl) {
+                double d = p.distSqr(target);
+                if (d < bestSq) { bestSq = d; best = p; }
+            }
+        }
+        return best;
+    }
+
+    // =========================================================================
+    // Slot management (unchanged behaviour)
+    // =========================================================================
+
     public boolean tryAdd(LayoutSlot slot) {
         for (LayoutSlot existing : slots) {
             if (!shouldCheckOverlap(slot, existing)) continue;
@@ -66,65 +121,38 @@ public class VillageLayout {
         return true;
     }
 
-    /**
-     * Adds a slot unconditionally, bypassing the overlap check.
-     */
-    public void addForced(LayoutSlot slot) {
-        slots.add(slot);
-    }
+    public void addForced(LayoutSlot slot) { slots.add(slot); }
 
     private boolean shouldCheckOverlap(LayoutSlot candidate, LayoutSlot existing) {
-        // PATH_NODE never blocks anything
         if (existing.getSlotType() == LayoutSlot.SlotType.PATH_NODE) return false;
-
-        // DECORATION only blocks other decorations, not buildings
         if (existing.getSlotType() == LayoutSlot.SlotType.DECORATION
                 && candidate.getSlotType() != LayoutSlot.SlotType.DECORATION) return false;
-
-        // Buildings block buildings and are blocked by buildings
         if (candidate.getSlotType() == LayoutSlot.SlotType.BUILDING) {
             return existing.getSlotType() == LayoutSlot.SlotType.BUILDING;
         }
-
-        // Farm plots block other farm plots and buildings
         if (candidate.getSlotType() == LayoutSlot.SlotType.FARM_PLOT) {
             return existing.getSlotType() == LayoutSlot.SlotType.FARM_PLOT
                     || existing.getSlotType() == LayoutSlot.SlotType.BUILDING;
         }
-
         return candidate.getSlotType() == existing.getSlotType();
     }
 
     private boolean slotsOverlap(LayoutSlot a, LayoutSlot b) {
-        int aW = a.getFootprintWidth();
-        int aL = a.getFootprintLength();
-        int bW = b.getFootprintWidth();
-        int bL = b.getFootprintLength();
-
+        int aW = a.getFootprintWidth(), aL = a.getFootprintLength();
+        int bW = b.getFootprintWidth(), bL = b.getFootprintLength();
         if (aW > 0 && aL > 0 && bW > 0 && bL > 0) {
-            return footprintOverlap(
-                    a.getPos(), aW, aL,
-                    b.getPos(), bW, bL,
-                    MIN_BUILDING_GAP);
+            return footprintOverlap(a.getPos(), aW, aL, b.getPos(), bW, bL, MIN_BUILDING_GAP);
         }
         return a.overlaps(b);
     }
 
-    static boolean footprintOverlap(BlockPos aPos, int aW, int aL,
-                                    BlockPos bPos, int bW, int bL,
-                                    int gap) {
-        int aMinX = aPos.getX() - aW / 2 - gap;
-        int aMaxX = aPos.getX() + aW / 2 + gap;
-        int aMinZ = aPos.getZ() - aL / 2 - gap;
-        int aMaxZ = aPos.getZ() + aL / 2 + gap;
-
-        int bMinX = bPos.getX() - bW / 2;
-        int bMaxX = bPos.getX() + bW / 2;
-        int bMinZ = bPos.getZ() - bL / 2;
-        int bMaxZ = bPos.getZ() + bL / 2;
-
-        return aMinX < bMaxX && aMaxX > bMinX
-                && aMinZ < bMaxZ && aMaxZ > bMinZ;
+    public static boolean footprintOverlap(BlockPos aPos, int aW, int aL,
+                                           BlockPos bPos, int bW, int bL, int gap) {
+        int aMinX = aPos.getX() - aW / 2 - gap, aMaxX = aPos.getX() + aW / 2 + gap;
+        int aMinZ = aPos.getZ() - aL / 2 - gap, aMaxZ = aPos.getZ() + aL / 2 + gap;
+        int bMinX = bPos.getX() - bW / 2, bMaxX = bPos.getX() + bW / 2;
+        int bMinZ = bPos.getZ() - bL / 2, bMaxZ = bPos.getZ() + bL / 2;
+        return aMinX < bMaxX && aMaxX > bMinX && aMinZ < bMaxZ && aMaxZ > bMinZ;
     }
 
     // =========================================================================
@@ -136,45 +164,44 @@ public class VillageLayout {
                 .filter(s -> s.getSlotType() == LayoutSlot.SlotType.BUILDING)
                 .collect(Collectors.toList());
     }
-
     public List<LayoutSlot> farmPlots() {
         return slots.stream()
                 .filter(s -> s.getSlotType() == LayoutSlot.SlotType.FARM_PLOT)
                 .collect(Collectors.toList());
     }
-
     public List<LayoutSlot> decorations() {
         return slots.stream()
                 .filter(s -> s.getSlotType() == LayoutSlot.SlotType.DECORATION)
                 .collect(Collectors.toList());
     }
-
     public List<LayoutSlot> pathNodes() {
         return slots.stream()
                 .filter(s -> s.getSlotType() == LayoutSlot.SlotType.PATH_NODE)
                 .collect(Collectors.toList());
     }
-
-    public List<LayoutSlot> buildingSlotsCopy() {
-        return new ArrayList<>(buildings());
-    }
+    public List<LayoutSlot> buildingSlotsCopy() { return new ArrayList<>(buildings()); }
 
     // =========================================================================
     // Accessors
     // =========================================================================
 
-    public TerrainProfile       getTerrain()           { return terrain; }
-    public LayoutDensityProfile getDensity()           { return density; }
-    public List<LayoutSlot>     getAllSlots()           { return slots; }
-    public BlockPos             getCenter()            { return center; }
-    public void                 setCenter(BlockPos c)  { center = c; }
-    public BlockPos  getTownSquarePos()               { return townSquarePos; }
-    public void      setTownSquarePos(BlockPos pos)   { townSquarePos = pos; }
+    public TerrainProfile getTerrain() { return terrain; }
+    public LayoutDensityProfile getDensity() { return density; }
+    public List<LayoutSlot> getAllSlots() { return slots; }
+    public BlockPos getCenter() { return center; }
+    public void setCenter(BlockPos c) { center = c; }
 
+    public BlockPos getTownSquarePos() { return townSquarePos; }
+    public void setTownSquarePos(BlockPos pos) { townSquarePos = pos; }
 
+    public int getTownSquareRadius() { return townSquareRadius; }
+    public void setTownSquareRadius(int r) { townSquareRadius = r; }
 
-    public void addGatePosition(BlockPos pos)    { gatePositions.add(pos); }
-    public List<BlockPos> getGatePositions()      { return Collections.unmodifiableList(gatePositions); }
+    @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
+    public void setMainGateEndpoint(@Nullable BlockPos pos) { mainGateEndpoint = pos; }
+
+    public void addGatePosition(BlockPos pos) { gatePositions.add(pos); }
+    public List<BlockPos> getGatePositions() { return Collections.unmodifiableList(gatePositions); }
 
     public BlockPos nearestGate(int x, int z) {
         BlockPos best = null;
@@ -191,8 +218,8 @@ public class VillageLayout {
     public String toString() {
         return "VillageLayout[buildings=" + buildings().size()
                 + ", farms=" + farmPlots().size()
-                + ", decorations=" + decorations().size()
+                + ", roads=" + roadPrimitives.size()
                 + ", suitability=" + String.format("%.2f", terrain.suitability())
-                + ", density=" + density.label();
+                + ", density=" + density.label() + "]";
     }
 }

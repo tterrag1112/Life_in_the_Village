@@ -49,6 +49,9 @@ public class Village {
     private long lastNeedsUpdate = -1L;
     private VillagePath.PathTier pathTier;
 
+    @Nullable private BlockPos mainGateEndpoint;
+
+
     // =========================================================================
     // LAYOUT METADATA — persisted so the expansion system can use them
     // =========================================================================
@@ -145,7 +148,8 @@ public class Village {
             long lastLevelUpTick,
             List<BlockPos> capitalGatePositions,
             boolean realised,
-            Optional<BlockPos> plannedOrigin
+            Optional<BlockPos> plannedOrigin,
+            Optional<BlockPos> mainGateEndpoint
     ) {
         static final Codec<VillageLayoutMeta> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -183,16 +187,18 @@ public class Village {
                                 .forGetter(VillageLayoutMeta::realised),
                         BlockPos.CODEC
                                 .optionalFieldOf("plannedOrigin")
-                                .forGetter(VillageLayoutMeta::plannedOrigin)
+                                .forGetter(VillageLayoutMeta::plannedOrigin),
+                        BlockPos.CODEC
+                                .optionalFieldOf("mainGateEndpoint")
+                                .forGetter(VillageLayoutMeta::mainGateEndpoint)
                 ).apply(i, VillageLayoutMeta::new));
 
-        /** Empty default used as the codec fallback when the field is absent. */
         static VillageLayoutMeta empty() {
             return new VillageLayoutMeta(
                     Optional.empty(), Optional.empty(), Optional.empty(),
                     0, 0, 1,
                     new ArrayList<>(), 0L, new ArrayList<>(),
-                    true, Optional.empty());
+                    true, Optional.empty(), Optional.empty());
         }
 
         static VillageLayoutMeta from(Village v) {
@@ -207,7 +213,8 @@ public class Village {
                     v.lastLevelUpTick,
                     new ArrayList<>(v.capitalGatePositions),
                     v.realised,
-                    Optional.ofNullable(v.plannedOrigin));
+                    Optional.ofNullable(v.plannedOrigin),
+                    Optional.ofNullable(v.mainGateEndpoint));
         }
 
         void applyTo(Village v) {
@@ -226,6 +233,7 @@ public class Village {
             }
             v.realised      = realised;
             v.plannedOrigin = plannedOrigin.orElse(null);
+            mainGateEndpoint.ifPresent(p -> v.mainGateEndpoint = p);
         }
     }
 
@@ -358,6 +366,15 @@ public class Village {
 
     @Nullable public BlockPos getPlannedOrigin() { return plannedOrigin; }
     public void setPlannedOrigin(@Nullable BlockPos pos) { this.plannedOrigin = pos; }
+    /**
+     * The outward endpoint of the main road — the village's "front gate."
+     * Trade routes prefer this as the handoff point instead of the
+     * village centre. Null for villages that don't have a main road
+     * (e.g. clustered layouts where the trade route simply enters the
+     * nearest perimeter path).
+     */
+    @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
+    public void setMainGateEndpoint(@Nullable BlockPos pos) { this.mainGateEndpoint = pos; }
 
     /**
      * Returns the best known position for this village — the realised
@@ -387,6 +404,7 @@ public class Village {
         this.ring1Radius   = layout.getDensity().getRing1Radius();
         this.ring2Radius   = layout.getDensity().getRing2Radius();
         this.currentLevel  = villageLevel;
+        this.mainGateEndpoint = layout.getMainGateEndpoint();
     }
 
     /**

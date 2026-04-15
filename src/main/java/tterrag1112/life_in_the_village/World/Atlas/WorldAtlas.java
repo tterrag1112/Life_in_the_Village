@@ -5,6 +5,9 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+import tterrag1112.life_in_the_village.World.Atlas.Regions.AtlasOcean;
+import tterrag1112.life_in_the_village.World.Atlas.Regions.AtlasRegion;
+import tterrag1112.life_in_the_village.World.Atlas.Regions.AtlasRegionIndex;
 
 import javax.annotation.Nullable;
 import java.util.*;
@@ -42,7 +45,8 @@ public class WorldAtlas extends SavedData {
     public record AtlasSnapshot(
             List<AtlasCell> cells,
             List<Long> roadCellKeys,
-            List<List<UUID>> roadCellRoadIds
+            List<List<UUID>> roadCellRoadIds,
+            AtlasRegionIndex regionIndex
     ) {
         public static final Codec<AtlasSnapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 AtlasCell.CODEC.listOf()
@@ -54,7 +58,10 @@ public class WorldAtlas extends SavedData {
                 Codec.STRING.xmap(UUID::fromString, UUID::toString)
                         .listOf().listOf()
                         .optionalFieldOf("roadCellRoadIds", new ArrayList<>())
-                        .forGetter(AtlasSnapshot::roadCellRoadIds)
+                        .forGetter(AtlasSnapshot::roadCellRoadIds),
+                AtlasRegionIndex.CODEC
+                        .optionalFieldOf("regionIndex", new AtlasRegionIndex())
+                        .forGetter(AtlasSnapshot::regionIndex)
         ).apply(i, AtlasSnapshot::new));
     }
 
@@ -62,7 +69,6 @@ public class WorldAtlas extends SavedData {
             snap -> {
                 WorldAtlas a = new WorldAtlas();
                 for (AtlasCell c : snap.cells()) a.cells.put(c.key(), c);
-                // Rebuild the road map from the parallel lists
                 int n = Math.min(snap.roadCellKeys().size(),
                         snap.roadCellRoadIds().size());
                 for (int idx = 0; idx < n; idx++) {
@@ -70,6 +76,7 @@ public class WorldAtlas extends SavedData {
                             snap.roadCellKeys().get(idx),
                             new ArrayList<>(snap.roadCellRoadIds().get(idx)));
                 }
+                a.regionIndex = snap.regionIndex();
                 return a;
             },
             atlas -> {
@@ -80,7 +87,8 @@ public class WorldAtlas extends SavedData {
                     roadIds.add(new ArrayList<>(entry.getValue()));
                 }
                 return new AtlasSnapshot(
-                        new ArrayList<>(atlas.cells.values()), keys, roadIds);
+                        new ArrayList<>(atlas.cells.values()),
+                        keys, roadIds, atlas.regionIndex);
             }
     );
 
@@ -101,6 +109,9 @@ public class WorldAtlas extends SavedData {
     private final Map<Long, AtlasCell> cells = new HashMap<>();
 
     private final Map<Long, List<UUID>> cellRoads = new HashMap<>();
+
+    private AtlasRegionIndex regionIndex = new AtlasRegionIndex();
+
 
     public int size() { return cells.size(); }
 
@@ -392,4 +403,27 @@ public class WorldAtlas extends SavedData {
         }
         return copy;
     }
+
+    public AtlasRegionIndex getRegionIndex() { return regionIndex; }
+
+    @Nullable
+    public AtlasRegion getRegionAt(int cellX, int cellZ) {
+        return regionIndex.getRegionAt(cellX, cellZ);
+    }
+
+    @Nullable
+    public AtlasOcean getOceanAt(int cellX, int cellZ) {
+        return regionIndex.getOceanAt(cellX, cellZ);
+    }
+
+    /**
+     * Ensures the region/ocean index covers the area around the given
+     * cell coordinate. Idempotent — already-indexed cells are skipped.
+     * Call after ensureRegionFilled() so all relevant cells are sampled.
+     */
+    public void ensureRegionsIndexed(int cellX, int cellZ, int radiusCells) {
+        regionIndex.buildAround(this, cellX, cellZ, radiusCells);
+        setDirty();
+    }
+
 }

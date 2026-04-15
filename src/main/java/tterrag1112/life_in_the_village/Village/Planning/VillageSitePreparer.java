@@ -47,11 +47,6 @@ public class VillageSitePreparer {
         prepare(level, centre, villageLevel, false);
     }
 
-    public static void prepareCapital(ServerLevel level,
-                                      BlockPos centre,
-                                      int villageLevel) {
-        prepare(level, centre, villageLevel, true);
-    }
 
     private static void prepare(ServerLevel level,
                                 BlockPos centre,

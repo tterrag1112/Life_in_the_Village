@@ -7,6 +7,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 
 import java.util.*;
 
@@ -618,6 +619,8 @@ public class RoadRouter {
                 || existing.is(Blocks.BEDROCK)
                 || existing.is(BlockTags.PLANKS)
                 || existing.is(Blocks.OBSIDIAN)) return;
+
+
 
         level.setBlock(roadPos, switch (quality) {
             case COBBLESTONE -> Blocks.COBBLESTONE.defaultBlockState();

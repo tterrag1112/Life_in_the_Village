@@ -2,6 +2,8 @@ package tterrag1112.life_in_the_village.World.Atlas;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.StreamCodec;
 
 /**
  * One cell of the World Atlas — a 64×64 block region with sampled
@@ -109,4 +111,37 @@ public record AtlasCell(
 
     public static int unpackX(long key) { return (int) (key & 0xFFFFFFFFL); }
     public static int unpackZ(long key) { return (int) ((key >>> 32) & 0xFFFFFFFFL); }
+    public static final net.minecraft.network.codec.StreamCodec<io.netty.buffer.ByteBuf, AtlasCell>
+            STREAM_CODEC = new net.minecraft.network.codec.StreamCodec<>() {
+        @Override
+        public AtlasCell decode(io.netty.buffer.ByteBuf buf) {
+            int cellX = buf.readInt();
+            int cellZ = buf.readInt();
+            int centerY = buf.readInt();
+            int minY = buf.readInt();
+            int maxY = buf.readInt();
+            int biomeLen = buf.readShort();
+            byte[] biomeBytes = new byte[biomeLen];
+            buf.readBytes(biomeBytes);
+            String biomeKey = new String(biomeBytes, java.nio.charset.StandardCharsets.UTF_8);
+            BiomeCategory category = BiomeCategory.values()[buf.readByte()];
+            int flags = buf.readInt();
+            return new AtlasCell(cellX, cellZ, centerY, minY, maxY,
+                    biomeKey, category, flags);
+        }
+
+        @Override
+        public void encode(io.netty.buffer.ByteBuf buf, AtlasCell c) {
+            buf.writeInt(c.cellX());
+            buf.writeInt(c.cellZ());
+            buf.writeInt(c.centerY());
+            buf.writeInt(c.minY());
+            buf.writeInt(c.maxY());
+            byte[] b = c.biomeKey().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            buf.writeShort(b.length);
+            buf.writeBytes(b);
+            buf.writeByte(c.category().ordinal());
+            buf.writeInt(c.flags());
+        }
+    };
 }

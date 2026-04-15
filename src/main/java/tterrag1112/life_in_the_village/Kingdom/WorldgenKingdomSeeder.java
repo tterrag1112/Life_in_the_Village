@@ -88,18 +88,12 @@ public class WorldgenKingdomSeeder {
     }
 
     private static boolean processSpawn(ServerLevel level, ScheduledKingdom sk) {
-        if (level.getServer() == null) return true; // nothing to retry
+        if (level.getServer() == null) return true;
 
-        WorldAtlas atlas =
-                WorldAtlas.get(level);
+        WorldAtlas atlas = WorldAtlas.get(level);
 
         // ── Step 1: ensure atlas is filled around the planned centre ─────────
-        // 30 ms budget per call — big enough to finish a fresh 800-block region
-        // in one or two passes, small enough that a single tick is still under
-        // the server's soft 50 ms budget.
-        boolean done = atlas.ensureRegionFilled(
-                level, sk.cx, sk.cz, 800, 30_000_000L);
-
+        boolean done = atlas.ensureRegionFilled(level, sk.cx, sk.cz, 800, 30_000_000L);
         if (!done) {
             scheduled.add(0, sk);
             System.out.println("[WorldGenKingdomSeeder] Atlas fill in progress for '"
@@ -111,13 +105,11 @@ public class WorldgenKingdomSeeder {
         java.util.Optional<AtlasCell> bestOpt =
                 AtlasSiteSelector.findBest(
                         atlas, sk.cx, sk.cz, 700,
-                        c -> c.isBuildable()
-                                && c.centerY() > level.getMinY() + 8);
+                        c -> c.isBuildable() && c.centerY() > level.getMinY() + 8);
 
         if (bestOpt.isEmpty()) {
             System.out.println("[WorldGenKingdomSeeder] '" + sk.name
-                    + "' skipped — no suitable atlas cell within 700 blocks of "
-                    + sk.cx + "," + sk.cz);
+                    + "' skipped — no suitable atlas cell within 700 blocks");
             return true;
         }
 
@@ -125,18 +117,88 @@ public class WorldgenKingdomSeeder {
         BlockPos origin = new BlockPos(
                 cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
 
-        System.out.println("[WorldGenKingdomSeeder] Spawning '" + sk.name
-                + "' (" + sk.culture + ") at " + origin.toShortString()
-                + " | biome=" + cell.category()
-                + " | " + sk.composition);
+        // ── Step 3: kingdom-to-kingdom spacing check ─────────────────────────
+        tterrag1112.life_in_the_village.Networking.VillageSavedData data =
+                tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
 
-        // ── Step 3: plan the kingdom — create virtual records only ───────────
-        // Actual block placement is deferred to VillageRealisationSystem
-        // which fires when players walk near each village origin.
-        KingdomSpawner.planComposed(level, origin, sk.name, sk.culture,
+        BlockPos chosenOrigin = trySpacedOrigin(atlas, level, data, sk, origin);
+        if (chosenOrigin == null) {
+            System.out.println("[WorldGenKingdomSeeder] '" + sk.name
+                    + "' skipped — no spacing-clear origin found near "
+                    + sk.cx + "," + sk.cz);
+            return true;
+        }
+
+        System.out.println("[WorldGenKingdomSeeder] Spawning '" + sk.name
+                + "' (" + sk.culture + ") at " + chosenOrigin.toShortString()
+                + " | biome=" + cell.category() + " | " + sk.composition);
+
+        KingdomSpawner.planComposed(level, chosenOrigin, sk.name, sk.culture,
                 sk.composition,
                 msg -> System.out.println("  " + msg));
         return true;
+    }
+
+    /**
+     * Searches for a kingdom origin near the requested point that doesn't
+     * overlap any existing kingdom's claim. Tries the requested point
+     * first, then jittered points outward in a spiral. If no point in the
+     * search radius is clear at the default budget, retries with a reduced
+     * budget projection (allowing the kingdom to squeeze into a smaller
+     * gap). Returns the chosen origin or null if nothing fits.
+     */
+    private static BlockPos trySpacedOrigin(
+            WorldAtlas atlas, ServerLevel level,
+            tterrag1112.life_in_the_village.Networking.VillageSavedData data,
+            ScheduledKingdom sk, BlockPos preferred) {
+
+        float[] budgetTrials = {
+                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET,
+                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET * 0.6f,
+                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET * 0.35f
+        };
+
+        java.util.Random rng = new java.util.Random(
+                (long) sk.name.hashCode() * 2654435761L ^ level.getSeed());
+
+        for (float budget : budgetTrials) {
+            int projected = tterrag1112.life_in_the_village.Kingdom
+                    .KingdomSpacingChecker.estimateProjectedRadius(budget);
+
+            // Try the preferred point first
+            if (tterrag1112.life_in_the_village.Kingdom.KingdomSpacingChecker
+                    .isSpacedClear(data, preferred, projected)) {
+                return preferred;
+            }
+
+            // Spiral outward — 12 attempts at increasing offsets
+            for (int attempt = 1; attempt <= 12; attempt++) {
+                int offset = 200 * attempt;
+                double angle = rng.nextDouble() * 2 * Math.PI;
+                int tx = preferred.getX() + (int)(Math.cos(angle) * offset);
+                int tz = preferred.getZ() + (int)(Math.sin(angle) * offset);
+
+                // Re-fill atlas around the candidate so the site selector has data
+                atlas.ensureRegionFilled(level, tx, tz, 600, 30_000_000L);
+                var altOpt = AtlasSiteSelector.findBest(atlas, tx, tz, 500,
+                        c -> c.isBuildable() && c.centerY() > level.getMinY() + 8);
+                if (altOpt.isEmpty()) continue;
+
+                AtlasCell altCell = altOpt.get();
+                BlockPos alt = new BlockPos(
+                        altCell.blockCenterX(), altCell.centerY(), altCell.blockCenterZ());
+
+                if (tterrag1112.life_in_the_village.Kingdom.KingdomSpacingChecker
+                        .isSpacedClear(data, alt, projected)) {
+                    System.out.println("[WorldGenKingdomSeeder] '" + sk.name
+                            + "' relocated to " + alt.toShortString()
+                            + " (offset " + offset + ", budget " + budget + ")");
+                    return alt;
+                }
+            }
+            // None worked at this budget — try a smaller one
+        }
+        return null;
     }
 
     // First kingdom always gets default culture so there is always a royal capital.

@@ -52,6 +52,8 @@ public class LayoutSlot {
     public int getClusterId() { return clusterId; }
     public void setClusterId(int id) { this.clusterId = id; }
 
+
+
     /** Rotation that will be applied at placement. Defaults to NONE. */
     private Rotation rotation = Rotation.NONE;
 
@@ -175,6 +177,10 @@ public class LayoutSlot {
      * Used by code that still expects a single radius value.
      */
     public int getRadius() { return Math.max(halfW, halfL); }
+
+    public int frontFaceLength() {
+        return footprintWidth > 0 ? footprintWidth : halfW * 2;
+    }
 
     public void snapY(int newY) {
         this.pos = new BlockPos(pos.getX(), newY, pos.getZ());

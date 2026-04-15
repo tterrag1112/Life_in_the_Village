@@ -90,6 +90,8 @@ public class Kingdom {
                                             new ArrayList<>())
                                     .forGetter(k -> new ArrayList<>(
                                             k.activeLaws)),
+                            KingdomClaim.CODEC.optionalFieldOf("territorialClaim")
+                                    .forGetter(k -> java.util.Optional.ofNullable(k.territorialClaim)),
                             KingdomGovernanceData.CODEC
                                     .fieldOf("governance")
                                     .forGetter(k -> new KingdomGovernanceData(
@@ -110,6 +112,7 @@ public class Kingdom {
             Optional<UUID> rulerPlayer,
             Map<UUID, DiplomaticRelation> relations,
             List<KingdomLaw> laws,
+            Optional<KingdomClaim> claim,
             KingdomGovernanceData governance) {
         Kingdom k = new Kingdom(id, name, culture);
         k.villageIds.addAll(villageIds);
@@ -117,13 +120,12 @@ public class Kingdom {
         rulerPlayer.ifPresent(pid -> k.rulerPlayerId = pid);
         k.relations.putAll(relations);
         k.activeLaws.addAll(laws);
+        claim.ifPresent(c -> k.territorialClaim = c);
         k.treasuryBronze   = governance.treasuryBronze();
         k.incomeTaxRate    = governance.incomeTaxRate();
         k.flatUpkeepBronze = governance.flatUpkeepBronze();
         k.lastTaxTick      = governance.lastTaxTick();
-        k.history          = governance.history() != null
-                ? governance.history()
-                : new KingdomHistoryData();
+        k.history          = governance.history() != null ? governance.history() : new KingdomHistoryData();
         return k;
     }
 
@@ -144,6 +146,7 @@ public class Kingdom {
     private long flatUpkeepBronze               = 32L; // 32 bronze per village per day
     private long lastTaxTick                    = -1L;
     private KingdomHistoryData history = new KingdomHistoryData();
+    private KingdomClaim territorialClaim = null; // nullable — older saves won't have it
 
 
     // =========================================================================
@@ -376,6 +379,12 @@ public class Kingdom {
     public KingdomHistoryData getHistory() {
         if (history == null) history = new KingdomHistoryData();
         return history;
+    }
+    public java.util.Optional<KingdomClaim> getTerritorialClaim() {
+        return java.util.Optional.ofNullable(territorialClaim);
+    }
+    public void setTerritorialClaim(KingdomClaim claim) {
+        this.territorialClaim = claim;
     }
 
 }

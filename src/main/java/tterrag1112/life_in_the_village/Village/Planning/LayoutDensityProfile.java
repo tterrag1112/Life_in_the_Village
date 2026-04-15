@@ -116,37 +116,7 @@ public class LayoutDensityProfile {
     }
 
 
-    public static LayoutDensityProfile forCapital(int buildingCount) {
-        // Scale radii with building count so 36-building capitals are
-        // bigger than 28-building ones
-        float scale = Math.max(1.0f, buildingCount / 20.0f);
-
-        int ring1Radius = (int)(28 * scale);   // ~50 for 36 buildings
-        int ring2Radius = Math.max(100, (int)(52 * scale));
-        // 100-block minimum ensures at least a 5×5 grid node array
-// (multiples of 36 within 100+18=118: -108,-72,-36,0,36,72,108 → 7 values,
-//  forming a ~5×5 inner grid → ~16 city blocks → ~64 plots)
-        int ring3Radius = (int)(80 * scale);   // ~144
-
-        return new LayoutDensityProfile(
-                10,         // villageLevel
-                32,         // buildingSpacing — tighter than hamlet but not cramped
-                3,          // buildingJitter — minimal; capitals are orderly
-                ring1Radius,
-                ring2Radius,
-                ring3Radius,
-                ring3Radius + 20,  // farmOffset — farms beyond the outer wall
-                8,          // decorationClusters
-                3,          // pathWidth
-                true,       // useRing2
-                true,       // useRing3
-                2,          // minGap — allow buildings to be close
-                "CAPITAL"
-        );
-    }
-
     // Also add this constant used below:
-    public static final int CAPITAL_THRESHOLD = 20;
 
     // Accessors
     public int     getVillageLevel()       { return villageLevel;       }

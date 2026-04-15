@@ -21,6 +21,7 @@ import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.WrappedGoal;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.RangedAttackMob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
@@ -266,6 +267,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         updateDisplayName();
     }
 
+
+    @Override
+    protected void pickUpItem(ServerLevel level, ItemEntity entity) {
+        super.pickUpItem(level, entity);
+    }
 
     private void updateDisplayName() {
         String base = appearance.getName() != null ? appearance.getName() : "";

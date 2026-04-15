@@ -533,6 +533,10 @@ public class TradeRouteManager {
 
     private static BlockPos getVillageCenter(Village village,
                                              VillageSavedData data) {
+        // Prefer the main gate endpoint so trade routes attach at the
+        // village border instead of cutting into the interior.
+        BlockPos gate = village.getMainGateEndpoint();
+        if (gate != null) return gate;
         return village.getBounds(data)
                 .map(b -> BlockPos.containing(b.getCenter()))
                 .orElse(null);

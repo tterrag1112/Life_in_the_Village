@@ -34,6 +34,15 @@ import tterrag1112.life_in_the_village.Village.VillageSpawner;
  */
 public class VillageRealisationSystem implements TickSubsystem {
 
+
+    // Add at top of VillageRealisationSystem class
+    private final java.util.Map<java.util.UUID, FailureRecord> failureHistory = new java.util.HashMap<>();
+
+    private record FailureRecord(int attempts, long nextAttemptTick) {}
+
+    private static final int MAX_RETRY_ATTEMPTS = 5;
+    private static final long[] BACKOFF_TICKS = {100L, 400L, 1200L, 3600L, 12000L};
+
     /** Player must be within this many blocks of a planned village origin. */
     private static final int REALISE_RADIUS = 256;
 
@@ -51,13 +60,21 @@ public class VillageRealisationSystem implements TickSubsystem {
         if (level.dimension() != Level.OVERWORLD) return;
 
         VillageSavedData data = ctx.villageData();
+        long currentTick = level.getGameTime();
 
-        // ── Find the closest planned village to any player ───────────────────
         Village target = null;
         double bestDistSq = REALISE_RADIUS_SQ;
 
         for (Village v : data.getAllVillages()) {
             if (!VillagePlanHelper.isPlanned(v)) continue;
+
+            // Skip villages in failure cooldown
+            FailureRecord failureState = failureHistory.get(v.getId());
+            if (failureState != null) {
+                if (failureState.attempts() >= MAX_RETRY_ATTEMPTS) continue;
+                if (currentTick < failureState.nextAttemptTick()) continue;
+            }
+
             BlockPos origin = v.getPlannedOrigin();
             if (origin == null) continue;
 
@@ -74,7 +91,6 @@ public class VillageRealisationSystem implements TickSubsystem {
 
         if (target == null) return;
 
-        // ── Realise the chosen village ───────────────────────────────────────
         BlockPos origin = target.getPlannedOrigin();
         String   type   = target.getVillageType();
         String   name   = target.getName();
@@ -82,10 +98,116 @@ public class VillageRealisationSystem implements TickSubsystem {
         System.out.println("VillageRealisationSystem: realising '" + name
                 + "' (" + type + ") at " + origin.toShortString());
 
-        // The existing spawner creates a NEW Village record. We need to
-        // remove the planned placeholder first so there's no duplicate,
-        // then rename the spawned village back to the planned name/kingdom.
+        java.util.UUID targetId = target.getId();
         realisePlannedVillage(level, data, target);
+
+        // If the village is still planned (i.e. spawn failed), record the failure
+        // so we back off instead of hammering the same spot every tick.
+        // We check by name since the UUID changes between planned and realised.
+        boolean stillPlanned = data.getAllVillages().stream()
+                .anyMatch(v -> v.getName().equals(name) && VillagePlanHelper.isPlanned(v));
+
+        if (stillPlanned) {
+            FailureRecord prev = failureHistory.get(targetId);
+            // The planned village got a new UUID after restore — migrate the record
+            java.util.UUID newId = data.getAllVillages().stream()
+                    .filter(v -> v.getName().equals(name))
+                    .findFirst().map(Village::getId).orElse(targetId);
+            int attempts = prev == null ? 1 : prev.attempts() + 1;
+            long backoff = BACKOFF_TICKS[Math.min(attempts - 1, BACKOFF_TICKS.length - 1)];
+            failureHistory.remove(targetId);
+            failureHistory.put(newId, new FailureRecord(attempts, currentTick + backoff));
+
+            boolean replanned = tryReplan(level, data, name, type, origin);
+            if (replanned) {
+                failureHistory.remove(targetId);
+                System.out.println("VillageRealisationSystem: replanned '" + name
+                        + "' to a new location after " + attempts + " failures");
+            } else {
+                System.out.println("VillageRealisationSystem: giving up on '" + name
+                        + "' after " + MAX_RETRY_ATTEMPTS + " failures at "
+                        + origin.toShortString() + " — no alternative cell available");
+            }
+        }
+            failureHistory.remove(targetId);
+    }
+    /**
+     * Attempts to find a better cell for a persistently-failing planned
+     * village. Walks the village's kingdom's territorial claim, runs the
+     * current placement scorer over every cell, and moves the village to
+     * the top-scoring one — provided the new score is significantly
+     * better than the current location's. Returns false if no better
+     * cell exists.
+     */
+    private static boolean tryReplan(ServerLevel level, VillageSavedData data,
+                                     String name, String villageType,
+                                     BlockPos currentOrigin) {
+        var kingdomOpt = data.getAllKingdoms().stream()
+                .filter(k -> data.getAllVillages().stream()
+                        .anyMatch(v -> v.getName().equals(name)
+                                && k.containsVillage(v.getId())))
+                .findFirst();
+        if (kingdomOpt.isEmpty()) return false;
+
+        var kingdom = kingdomOpt.get();
+        var claim = kingdom.getTerritorialClaim().orElse(null);
+        if (claim == null) return false;
+
+        var typeData = tterrag1112.life_in_the_village.Village.VillageTypeRegistry
+                .INSTANCE.getType(villageType);
+        if (typeData == null) return false;
+
+        var atlas = tterrag1112.life_in_the_village.World.Atlas.WorldAtlas.get(level);
+
+        // Other already-realised village positions in this kingdom act as
+        // proximity penalties so we don't replan onto a neighbour.
+        java.util.List<BlockPos> peerPositions = new java.util.ArrayList<>();
+        for (var vid : kingdom.getVillageIds()) {
+            var peer = data.getVillageById(vid).orElse(null);
+            if (peer == null || peer.getName().equals(name)) continue;
+            BlockPos anchor = peer.getAnchorPos();
+            if (anchor != null) peerPositions.add(anchor);
+        }
+
+        BlockPos capitalOrigin = new BlockPos(
+                tterrag1112.life_in_the_village.World.Atlas.AtlasCell.unpackX(claim.originCellKey())
+                        << tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_SHIFT,
+                64,
+                tterrag1112.life_in_the_village.World.Atlas.AtlasCell.unpackZ(claim.originCellKey())
+                        << tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_SHIFT);
+
+        tterrag1112.life_in_the_village.World.Atlas.AtlasCell bestCell = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+
+        for (long key : claim.claimedCellKeys()) {
+            var cell = atlas.getCellByCoord(
+                    tterrag1112.life_in_the_village.World.Atlas.AtlasCell.unpackX(key),
+                    tterrag1112.life_in_the_village.World.Atlas.AtlasCell.unpackZ(key));
+            if (cell == null) continue;
+            if (!tterrag1112.life_in_the_village.Kingdom.Placement.VillageTypeMatcher
+                    .cellMatchesType(cell, typeData)) continue;
+
+            double s = tterrag1112.life_in_the_village.Kingdom.Placement
+                    .VillagePlacementScorer.score(
+                            atlas, cell, typeData, capitalOrigin, peerPositions);
+            if (s > bestScore) { bestScore = s; bestCell = cell; }
+        }
+
+        if (bestCell == null) return false;
+
+        BlockPos newPos = new BlockPos(
+                bestCell.blockCenterX(), bestCell.centerY(), bestCell.blockCenterZ());
+
+        // Don't bother moving if the "best" cell is the current one
+        if (newPos.equals(currentOrigin)) return false;
+
+        // Update the planned village's origin
+        var villageOpt = data.getAllVillages().stream()
+                .filter(v -> v.getName().equals(name)).findFirst();
+        if (villageOpt.isEmpty()) return false;
+        villageOpt.get().setPlannedOrigin(newPos);
+        data.setDirty();
+        return true;
     }
 
     /**
@@ -114,22 +236,35 @@ public class VillageRealisationSystem implements TickSubsystem {
         String   type   = planned.getVillageType();
         java.util.UUID plannedId = planned.getId();
 
-        // Remember kingdom membership if any
         java.util.Optional<tterrag1112.life_in_the_village.Kingdom.Kingdom> kingdomOpt
                 = data.getKingdomForVillage(plannedId);
 
-        // Remove the placeholder so the spawner doesn't see a duplicate name
         data.removeVillage(plannedId);
         kingdomOpt.ifPresent(k -> k.removeVillage(plannedId));
         data.setDirty();
 
-        // Hand off to the normal spawner
-        java.util.Optional<Village> spawnedOpt =
-                VillageSpawner.spawnVillage(level, origin, type, name);
+        // ── Instrumented spawn attempt ────────────────────────────────────────
+        tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
+                .beginAttempt();
 
-        if (spawnedOpt.isEmpty()) {
-            // Spawn failed (terrain unsuitable, etc.) — restore the planned
-            // placeholder so the system can retry later when conditions change.
+        java.util.Optional<Village> spawnedOpt;
+        try {
+            spawnedOpt = VillageSpawner.spawnVillage(level, origin, type, name);
+        } catch (Exception e) {
+            tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
+                    .record(
+                            tterrag1112.life_in_the_village.Kingdom.Placement
+                                    .PlacementFailureRecorder.Reason.PLANNER_EXCEPTION,
+                            e.getClass().getSimpleName() + ": " + e.getMessage(),
+                            origin, type);
+            spawnedOpt = java.util.Optional.empty();
+        }
+
+        boolean succeeded = spawnedOpt.isPresent();
+        tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
+                .endAttempt(succeeded, type, origin);
+
+        if (!succeeded) {
             System.out.println("VillageRealisationSystem: spawn failed for '"
                     + name + "' — restoring planned state");
             Village restored = new Village(name);

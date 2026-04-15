@@ -2,7 +2,7 @@ package tterrag1112.life_in_the_village.Village.Planning.Rules;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Planning.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 
 import javax.annotation.Nullable;
 import java.util.*;
