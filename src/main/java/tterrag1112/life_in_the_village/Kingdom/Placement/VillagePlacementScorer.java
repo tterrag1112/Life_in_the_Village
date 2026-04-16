@@ -134,6 +134,39 @@ public final class VillagePlacementScorer {
     }
 
     // =========================================================================
+    // Pass-1 scoring (loose thresholds — candidates forwarded to deep inspection)
+    // =========================================================================
+
+    /**
+     * Lightweight scorer with relaxed water/steep/buildable thresholds.
+     * Used by {@link ClaimVillagePlacer} to collect the top-N candidates
+     * before running {@link DeepTerrainInspector} on them. The full
+     * {@link #score} method is then applied only to deep-inspection survivors.
+     *
+     * <p>Returns {@link Double#NEGATIVE_INFINITY} only for clearly hopeless
+     * cells (> 40% water, > 40% steep, < 25% buildable, or proximity reject).
+     */
+    static double quickScore(WorldAtlas atlas, AtlasCell cell,
+                             VillageTypeData type,
+                             BlockPos capitalOrigin,
+                             List<BlockPos> placedPositions) {
+        float waterFrac = waterFraction(atlas, cell);
+        if (waterFrac > 0.40f) return Double.NEGATIVE_INFINITY;
+
+        float steepFrac = steepFraction(atlas, cell);
+        if (steepFrac > 0.40f) return Double.NEGATIVE_INFINITY;
+
+        float buildFrac = buildableFraction(atlas, cell);
+        if (buildFrac < 0.25f) return Double.NEGATIVE_INFINITY;
+
+        // Compact score matching TerrainAnalyzer's suitability formula at cell resolution.
+        // Tag-specific bonuses are omitted here — they run in Pass 3 via the full scorer.
+        double s = buildFrac - waterFrac * 2.0 - steepFrac * 0.3;
+        s -= proximityPenalty(cell, placedPositions);
+        return s;
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 

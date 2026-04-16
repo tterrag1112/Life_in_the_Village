@@ -17,9 +17,11 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Kingdom.Placement.DeepTerrainInspector;
 import tterrag1112.life_in_the_village.Village.Planning.*;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasSampler;
 import tterrag1112.life_in_the_village.Village.Simulation.VillageSimEngine;
 
 import java.util.*;
@@ -46,6 +48,11 @@ import java.util.*;
 public class VillageSpawner {
 
     private static final int MIN_VILLAGE_DISTANCE = 128;
+
+    /** Maximum offset (blocks) searched during local refinement. */
+    private static final int LOCAL_REFINEMENT_RADIUS = 40;
+    /** Grid step for the local refinement search. */
+    private static final int LOCAL_SEARCH_STEP = 8;
 
     public static Optional<Village> spawnVillage(ServerLevel level,
                                                  BlockPos origin,
@@ -74,8 +81,23 @@ public class VillageSpawner {
         // ── Plan ────────────────────────────────────────────────────────────
         Optional<VillageLayout> layoutOpt = VillagePlanner.plan(
                 level, roughSurface, typeData, rng, villageLevel);
+
         if (layoutOpt.isEmpty()) {
-            System.out.println("VillageSpawner: planner rejected — aborting");
+            // Safety net: TerrainAnalyzer rejected the planned position. Search a
+            // small radius for a better offset (handles noise-vs-chunk height
+            // disagreements of a few blocks, or minor water/cliff at the planned spot).
+            BlockPos refined = findBetterLocalSite(level, roughSurface, LOCAL_REFINEMENT_RADIUS);
+            if (refined != null) {
+                System.out.println("VillageSpawner: local refinement — retrying at "
+                        + refined.toShortString());
+                VillageSitePreparer.prepare(level, refined, villageLevel);
+                layoutOpt = VillagePlanner.plan(level, refined, typeData, rng, villageLevel);
+                if (layoutOpt.isPresent()) roughSurface = refined;
+            }
+        }
+
+        if (layoutOpt.isEmpty()) {
+            System.out.println("VillageSpawner: planner rejected (incl. local refinement) — aborting");
             return Optional.empty();
         }
         VillageLayout layout = layoutOpt.get();
@@ -207,6 +229,45 @@ public class VillageSpawner {
                 + " farms=" + layout.farmPlots().size());
 
         return Optional.of(village);
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    /**
+     * Searches a grid of offsets within {@code radius} blocks of {@code origin}
+     * for the position with the highest predicted terrain suitability (using
+     * {@link DeepTerrainInspector} — noise-only, no chunk loading). Returns the
+     * best candidate whose predicted suitability exceeds the
+     * {@code TerrainProfile.isSuitable()} threshold, or {@code null} if none do.
+     *
+     * <p>Uses a 20-block inspection radius for speed — enough to rank candidates.
+     */
+    private static BlockPos findBetterLocalSite(ServerLevel level,
+                                                BlockPos origin,
+                                                int radius) {
+        BlockPos best = null;
+        float bestSuit = 0.05f; // must beat isSuitable() threshold to be worth trying
+
+        for (int dx = -radius; dx <= radius; dx += LOCAL_SEARCH_STEP) {
+            for (int dz = -radius; dz <= radius; dz += LOCAL_SEARCH_STEP) {
+                if (dx == 0 && dz == 0) continue; // origin already failed
+                if ((long) dx * dx + (long) dz * dz > (long) radius * radius) continue;
+
+                int bx = origin.getX() + dx;
+                int bz = origin.getZ() + dz;
+                int y  = AtlasSampler.sampleHeight(level, bx, bz);
+                BlockPos candidate = new BlockPos(bx, y, bz);
+
+                float suit = DeepTerrainInspector.inspect(level, candidate, 20).suitability();
+                if (suit > bestSuit) {
+                    bestSuit = suit;
+                    best = candidate;
+                }
+            }
+        }
+        return best;
     }
 
     // =========================================================================
