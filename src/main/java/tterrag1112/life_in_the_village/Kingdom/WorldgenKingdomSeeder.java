@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasSiteSelector;
+import tterrag1112.life_in_the_village.World.Atlas.BiomeCategory;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
 import java.util.*;
@@ -24,6 +25,18 @@ public class WorldgenKingdomSeeder {
     private static final int MAX_KINGDOMS      = 4;
     private static final int SPAWN_INTERVAL    = 600;
 
+    /** Radius (blocks) used for the regional viability scan. */
+    private static final int VIABILITY_CHECK_RADIUS = 1000;
+    /**
+     * Minimum number of buildable, non-steep, non-ocean cells that must exist
+     * within {@link #VIABILITY_CHECK_RADIUS} blocks of a candidate kingdom origin.
+     * A region that can't meet this floor (e.g. a tiny island or cliff face) can't
+     * host the kingdom's village portfolio.
+     */
+    private static final int MIN_VIABLE_CELLS = 80;
+    /** Maximum fraction of ocean cells in the viability region before rejecting. */
+    private static final float MAX_OCEAN_FRACTION = 0.30f;
+
     // {cultureName, capitalVillageType}
     private static final String[][] CULTURES = {
             { "default",  "royal_capital"    },
@@ -34,6 +47,7 @@ public class WorldgenKingdomSeeder {
     private static boolean seederRan  = false;
     private static final List<ScheduledKingdom> scheduled = new ArrayList<>();
     private static int scheduledDelay = 0;
+    private static int deferralCount  = 0;
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
@@ -96,8 +110,10 @@ public class WorldgenKingdomSeeder {
         boolean done = atlas.ensureRegionFilled(level, sk.cx, sk.cz, 800, 30_000_000L);
         if (!done) {
             scheduled.add(0, sk);
-            System.out.println("[WorldGenKingdomSeeder] Atlas fill in progress for '"
-                    + sk.name + "' — deferring");
+            if (++deferralCount % 20 == 0) {
+                System.out.println("[WorldGenKingdomSeeder] Atlas fill in progress for '"
+                        + sk.name + "' — deferring (" + deferralCount + " defers so far)");
+            }
             return false;
         }
 
@@ -167,7 +183,8 @@ public class WorldgenKingdomSeeder {
 
             // Try the preferred point first
             if (tterrag1112.life_in_the_village.Kingdom.KingdomSpacingChecker
-                    .isSpacedClear(data, preferred, projected)) {
+                    .isSpacedClear(data, preferred, projected)
+                    && isViableOriginRegion(atlas, preferred)) {
                 return preferred;
             }
 
@@ -189,7 +206,8 @@ public class WorldgenKingdomSeeder {
                         altCell.blockCenterX(), altCell.centerY(), altCell.blockCenterZ());
 
                 if (tterrag1112.life_in_the_village.Kingdom.KingdomSpacingChecker
-                        .isSpacedClear(data, alt, projected)) {
+                        .isSpacedClear(data, alt, projected)
+                        && isViableOriginRegion(atlas, alt)) {
                     System.out.println("[WorldGenKingdomSeeder] '" + sk.name
                             + "' relocated to " + alt.toShortString()
                             + " (offset " + offset + ", budget " + budget + ")");
@@ -199,6 +217,37 @@ public class WorldgenKingdomSeeder {
             // None worked at this budget — try a smaller one
         }
         return null;
+    }
+
+    /**
+     * Returns {@code true} if the region around {@code origin} contains enough
+     * buildable, non-steep land to host a kingdom's village portfolio.
+     *
+     * <p>Rejects origins where:
+     * <ul>
+     *   <li>Ocean biome cells exceed {@link #MAX_OCEAN_FRACTION} of the region
+     *       (island / coastal fringe with no buildable hinterland), or</li>
+     *   <li>Fewer than {@link #MIN_VIABLE_CELLS} cells are both buildable and
+     *       non-steep (cliff face, mountain range, etc.).</li>
+     * </ul>
+     */
+    private static boolean isViableOriginRegion(WorldAtlas atlas, BlockPos origin) {
+        int viable = 0, total = 0, ocean = 0;
+        for (AtlasCell c : atlas.cellsWithinRadius(
+                origin.getX(), origin.getZ(), VIABILITY_CHECK_RADIUS)) {
+            total++;
+            if (c.category() == BiomeCategory.OCEAN
+                    || c.has(AtlasCell.FLAG_HAS_OCEAN)) {
+                ocean++;
+            } else if (c.isBuildable() && !c.isSteep()) {
+                viable++;
+            }
+        }
+        if (total == 0) return false;
+        if ((float) ocean / total >= MAX_OCEAN_FRACTION) {
+            return false; // too much ocean — no viable hinterland
+        }
+        return viable >= MIN_VIABLE_CELLS;
     }
 
     // First kingdom always gets default culture so there is always a royal capital.

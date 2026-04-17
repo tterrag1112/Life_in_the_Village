@@ -114,22 +114,33 @@ public class VillageRealisationSystem implements TickSubsystem {
                     .filter(v -> v.getName().equals(name))
                     .findFirst().map(Village::getId).orElse(targetId);
             int attempts = prev == null ? 1 : prev.attempts() + 1;
-            long backoff = BACKOFF_TICKS[Math.min(attempts - 1, BACKOFF_TICKS.length - 1)];
             failureHistory.remove(targetId);
-            failureHistory.put(newId, new FailureRecord(attempts, currentTick + backoff));
 
-            boolean replanned = tryReplan(level, data, name, type, origin);
-            if (replanned) {
-                failureHistory.remove(targetId);
-                System.out.println("VillageRealisationSystem: replanned '" + name
-                        + "' to a new location after " + attempts + " failures");
+            if (attempts >= MAX_RETRY_ATTEMPTS) {
+                // Permanently remove the village — deleting it from data prevents
+                // the retry loop from restarting after a server restart (since the
+                // in-memory failureHistory doesn't survive restarts).
+                data.removeVillage(newId);
+                data.getAllKingdoms().forEach(k -> k.removeVillage(newId));
+                data.setDirty();
+                System.out.println("VillageRealisationSystem: abandoned '" + name
+                        + "' after " + attempts + " failures — removed from kingdom");
             } else {
-                System.out.println("VillageRealisationSystem: giving up on '" + name
-                        + "' after " + MAX_RETRY_ATTEMPTS + " failures at "
-                        + origin.toShortString() + " — no alternative cell available");
+                long backoff = BACKOFF_TICKS[attempts - 1];
+                failureHistory.put(newId, new FailureRecord(attempts, currentTick + backoff));
+                boolean replanned = tryReplan(level, data, name, type, origin);
+                if (replanned) {
+                    System.out.println("VillageRealisationSystem: replanned '" + name
+                            + "' to a new location after " + attempts + " failures");
+                } else {
+                    System.out.println("VillageRealisationSystem: no better cell for '" + name
+                            + "' after " + attempts + " failures — will retry with backoff "
+                            + backoff + " ticks");
+                }
             }
-        }
+        } else {
             failureHistory.remove(targetId);
+        }
     }
     /**
      * Attempts to find a better cell for a persistently-failing planned
