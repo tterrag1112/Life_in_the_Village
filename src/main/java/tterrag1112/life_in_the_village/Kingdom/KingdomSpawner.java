@@ -669,9 +669,17 @@ public class KingdomSpawner {
         }
 
 // ── Plan village placements ──────────────────────────────────────────────
+        // Collect positions of all villages already in the world so the placer
+        // can use proximity penalties to avoid cross-kingdom co-location.
+        java.util.List<BlockPos> existingVillagePositions = data.getAllVillages().stream()
+                .map(tterrag1112.life_in_the_village.Village.Village::getAnchorPos)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toList());
+
         java.util.List<tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.PlacementResult>
                 placements = tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.plan(
-                atlas, territorialClaim, origin, composition);
+                atlas, territorialClaim, origin, composition,
+                existingVillagePositions, level);
 
 
         for (int i = 0; i < placements.size(); i++) {
@@ -689,6 +697,21 @@ public class KingdomSpawner {
                 continue;
             }
 
+            // Check for clash with any existing village BEFORE adding to saved data.
+            // (Previously this check ran after planVillage() added the village, causing
+            //  it to always match itself at dist=0 and silently skip all placements.)
+            final BlockPos pos = placement.position();
+            boolean clashesWithExisting = data.getAllVillages().stream()
+                    .anyMatch(v -> {
+                        BlockPos anchor = v.getAnchorPos();
+                        return anchor != null && anchor.distSqr(pos) < 100L * 100L;
+                    });
+            if (clashesWithExisting) {
+                progress.accept("  Skipping '" + placement.villageType()
+                        + "' — too close to a village from another kingdom");
+                continue;
+            }
+
             String villageName = generateUniqueName(kingdomName, isCapital, i, rng, usedSuffixes);
             progress.accept("  Planning "
                     + (isCapital ? "capital " : "village ")
@@ -701,17 +724,6 @@ public class KingdomSpawner {
                     tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper
                             .planVillage(level, data, placement.position(),
                                     placement.villageType(), villageName);
-            boolean clashesWithExisting = data.getAllVillages().stream()
-                    .anyMatch(v -> {
-                        BlockPos anchor = v.getAnchorPos();
-                        return anchor != null
-                                && anchor.distSqr(placement.position()) < 100 * 100; // 100 block min
-                    });
-            if (clashesWithExisting) {
-                progress.accept("  Skipping '" + placement.villageType()
-                        + "' — too close to a village from another kingdom");
-                continue;
-            }
 
             kingdom.addVillage(planned.getId());
             placedPositions.add(placement.position());
