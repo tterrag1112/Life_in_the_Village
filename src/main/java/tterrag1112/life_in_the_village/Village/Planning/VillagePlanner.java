@@ -62,10 +62,13 @@ public class VillagePlanner {
 
         // 1. Terrain analysis
         TerrainProfile terrain = TerrainAnalyzer.analyze(level, origin);
-        if (!terrain.isSuitable()) {
+        if (!terrain.isSuitableFor(typeData.getTags())) {
+            float typeSuit = TerrainProfile.computeSuitability(
+                    terrain.flatRatio(), terrain.waterRatio(), terrain.steepRatio(),
+                    typeData.getTags());
             String detail = String.format(
-                    "suitability=%.2f (flat=%.2f water=%.2f steep=%.2f tree=%.2f) hasWater=%s hasRidges=%d",
-                    terrain.suitability(),
+                    "suitability=%.2f type_suitability=%.2f (flat=%.2f water=%.2f steep=%.2f tree=%.2f) hasWater=%s hasRidges=%d",
+                    terrain.suitability(), typeSuit,
                     terrain.flatRatio(),
                     terrain.waterRatio(),
                     terrain.steepRatio(),

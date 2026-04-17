@@ -136,7 +136,10 @@ public final class ClaimVillagePlacer {
             List<BlockPos> placedPositions, boolean isCapital, String typeId,
             Set<Long> reservedCells) {
 
-        int footprintRadius = DeepTerrainInspector.footprintRadius(type);
+        // Cap at 48 blocks (TerrainAnalyzer's actual radius) — the full footprintRadius
+        // can reach 170 blocks which produces ~29K samples per call × 150 calls per
+        // planComposed() = ~4M AtlasSampler calls in a single server tick (server freeze).
+        int footprintRadius = Math.min(DeepTerrainInspector.footprintRadius(type), 48);
 
         // ── Pass 1: loose atlas filter — collect top-N candidates ─────────────
         List<Map.Entry<AtlasCell, Double>> pass1 = new ArrayList<>();
@@ -167,7 +170,8 @@ public final class ClaimVillagePlacer {
             AtlasCell cell = e.getKey();
             BlockPos centre = new BlockPos(
                     cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
-            if (DeepTerrainInspector.inspect(level, centre, footprintRadius).predictsSuitable()) {
+            if (DeepTerrainInspector.inspect(level, centre, footprintRadius)
+                    .predictsSuitableFor(type.getTags())) {
                 pass2.add(e);
             }
         }
@@ -229,7 +233,8 @@ public final class ClaimVillagePlacer {
             AtlasCell cell = e.getKey();
             BlockPos centre = new BlockPos(
                     cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
-            if (DeepTerrainInspector.inspect(level, centre, footprintRadius).predictsSuitable()) {
+            if (DeepTerrainInspector.inspect(level, centre, footprintRadius)
+                    .predictsSuitableFor(type.getTags())) {
                 relaxedCandidates.add(e);
             }
         }

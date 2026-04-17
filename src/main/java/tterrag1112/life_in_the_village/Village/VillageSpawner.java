@@ -86,7 +86,7 @@ public class VillageSpawner {
             // Safety net: TerrainAnalyzer rejected the planned position. Search a
             // small radius for a better offset (handles noise-vs-chunk height
             // disagreements of a few blocks, or minor water/cliff at the planned spot).
-            BlockPos refined = findBetterLocalSite(level, roughSurface, LOCAL_REFINEMENT_RADIUS);
+            BlockPos refined = findBetterLocalSite(level, roughSurface, LOCAL_REFINEMENT_RADIUS, typeData);
             if (refined != null) {
                 System.out.println("VillageSpawner: local refinement — retrying at "
                         + refined.toShortString());
@@ -239,16 +239,20 @@ public class VillageSpawner {
      * Searches a grid of offsets within {@code radius} blocks of {@code origin}
      * for the position with the highest predicted terrain suitability (using
      * {@link DeepTerrainInspector} — noise-only, no chunk loading). Returns the
-     * best candidate whose predicted suitability exceeds the
-     * {@code TerrainProfile.isSuitable()} threshold, or {@code null} if none do.
+     * best candidate whose predicted type-aware suitability exceeds the threshold,
+     * or {@code null} if none do.
      *
      * <p>Uses a 20-block inspection radius for speed — enough to rank candidates.
+     * The type-aware formula is used so RIVERSIDE villages are scored on their
+     * proximity to water rather than penalised for it.
      */
     private static BlockPos findBetterLocalSite(ServerLevel level,
                                                 BlockPos origin,
-                                                int radius) {
+                                                int radius,
+                                                VillageTypeData typeData) {
+        java.util.Set<tterrag1112.life_in_the_village.Village.VillageTag> tags = typeData.getTags();
         BlockPos best = null;
-        float bestSuit = 0.05f; // must beat isSuitable() threshold to be worth trying
+        float bestSuit = 0.05f;
 
         for (int dx = -radius; dx <= radius; dx += LOCAL_SEARCH_STEP) {
             for (int dz = -radius; dz <= radius; dz += LOCAL_SEARCH_STEP) {
@@ -260,7 +264,10 @@ public class VillageSpawner {
                 int y  = AtlasSampler.sampleHeight(level, bx, bz);
                 BlockPos candidate = new BlockPos(bx, y, bz);
 
-                float suit = DeepTerrainInspector.inspect(level, candidate, 20).suitability();
+                var result = DeepTerrainInspector.inspect(level, candidate, 20);
+                float suit = tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile
+                        .computeSuitability(result.flatRatio(), result.waterRatio(),
+                                result.steepRatio(), tags);
                 if (suit > bestSuit) {
                     bestSuit = suit;
                     best = candidate;

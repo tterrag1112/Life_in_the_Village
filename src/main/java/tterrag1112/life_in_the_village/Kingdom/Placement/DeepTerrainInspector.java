@@ -2,9 +2,13 @@ package tterrag1112.life_in_the_village.Kingdom.Placement;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Village.VillageTag;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
+import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasSampler;
 import tterrag1112.life_in_the_village.World.Atlas.BiomeCategory;
+
+import java.util.Set;
 
 /**
  * Noise-only terrain quality predictor for atlas-level village planning.
@@ -49,6 +53,16 @@ public final class DeepTerrainInspector {
          */
         public boolean predictsSuitable() {
             return suitability > 0.05f;
+        }
+
+        /**
+         * Type-aware variant — uses {@link TerrainProfile#computeSuitability} so
+         * the prediction matches the same formula {@link VillagePlanner} uses at
+         * realisation time. RIVERSIDE/COASTAL sites with high water ratios will
+         * pass where the generic check would reject them.
+         */
+        public boolean predictsSuitableFor(Set<VillageTag> tags) {
+            return TerrainProfile.computeSuitability(flatRatio, waterRatio, steepRatio, tags) > 0.05f;
         }
     }
 
