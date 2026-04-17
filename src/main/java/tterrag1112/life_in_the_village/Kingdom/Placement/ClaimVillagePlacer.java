@@ -2,7 +2,6 @@
 package tterrag1112.life_in_the_village.Kingdom.Placement;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Kingdom.KingdomClaim;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
@@ -57,7 +56,7 @@ public final class ClaimVillagePlacer {
     private static final int CAPITAL_SEARCH_RADIUS = 300;
 
     /**
-     * Number of atlas-level candidates forwarded from Pass 1 to deep inspection.
+     * Number of atlas-level candidates forwarded from Pass 1 to the full scorer.
      */
     private static final int PASS1_MAX_CANDIDATES = 15;
 
@@ -79,18 +78,16 @@ public final class ClaimVillagePlacer {
     /**
      * Plans positions for each village type within the claim.
      *
-     * @param compositionTypes       list of village type ids, index 0 = capital
+     * @param compositionTypes         list of village type ids, index 0 = capital
      * @param existingVillagePositions anchor positions of already-planned/realised
-     *                               villages from other kingdoms — used to seed
-     *                               the proximity-penalty list
-     * @param level                  server level (needed by deep terrain inspector)
+     *                                 villages from other kingdoms — used to seed
+     *                                 the proximity-penalty list
      */
     public static List<PlacementResult> plan(WorldAtlas atlas,
                                              KingdomClaim claim,
                                              BlockPos capitalOrigin,
                                              List<String> compositionTypes,
-                                             List<BlockPos> existingVillagePositions,
-                                             ServerLevel level) {
+                                             List<BlockPos> existingVillagePositions) {
         List<PlacementResult> results = new ArrayList<>();
         // Seed with cross-kingdom positions so the proximity penalty prevents overlap.
         List<BlockPos> placedPositions = new ArrayList<>(existingVillagePositions);
@@ -114,7 +111,7 @@ public final class ClaimVillagePlacer {
 
             boolean isCapital = (i == 0);
             PlacementResult best = selectCell(
-                    atlas, level, type, claimedCells, capitalOrigin,
+                    atlas, type, claimedCells, capitalOrigin,
                     placedPositions, isCapital, typeId, reservedCells);
 
             results.add(best);
@@ -127,19 +124,14 @@ public final class ClaimVillagePlacer {
     }
 
     // =========================================================================
-    // Three-pass selection
+    // Two-pass selection (atlas-only — no chunk loading or noise sampling)
     // =========================================================================
 
     private static PlacementResult selectCell(
-            WorldAtlas atlas, ServerLevel level, VillageTypeData type,
+            WorldAtlas atlas, VillageTypeData type,
             List<AtlasCell> claimedCells, BlockPos capitalOrigin,
             List<BlockPos> placedPositions, boolean isCapital, String typeId,
             Set<Long> reservedCells) {
-
-        // Cap at 48 blocks (TerrainAnalyzer's actual radius) — the full footprintRadius
-        // can reach 170 blocks which produces ~29K samples per call × 150 calls per
-        // planComposed() = ~4M AtlasSampler calls in a single server tick (server freeze).
-        int footprintRadius = Math.min(DeepTerrainInspector.footprintRadius(type), 48);
 
         // ── Pass 1: loose atlas filter — collect top-N candidates ─────────────
         List<Map.Entry<AtlasCell, Double>> pass1 = new ArrayList<>();
@@ -164,28 +156,11 @@ public final class ClaimVillagePlacer {
         pass1.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
         if (pass1.size() > PASS1_MAX_CANDIDATES) pass1 = pass1.subList(0, PASS1_MAX_CANDIDATES);
 
-        // ── Pass 2: deep terrain inspection — reject predicted failures ────────
-        List<Map.Entry<AtlasCell, Double>> pass2 = new ArrayList<>();
-        for (var e : pass1) {
-            AtlasCell cell = e.getKey();
-            BlockPos centre = new BlockPos(
-                    cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
-            if (DeepTerrainInspector.inspect(level, centre, footprintRadius)
-                    .predictsSuitableFor(type.getTags())) {
-                pass2.add(e);
-            }
-        }
-
-        // If deep inspection rejected every candidate, fall back to the pass-1 list
-        // so planning isn't entirely starved on unusual terrain configurations.
-        // The realiser has its own TerrainAnalyzer gate as a final safety net.
-        List<Map.Entry<AtlasCell, Double>> candidates = pass2.isEmpty() ? pass1 : pass2;
-
-        // ── Pass 3: full scorer — pick best from survivors ────────────────────
+        // ── Pass 2: full scorer — pick best candidate ─────────────────────────
         AtlasCell bestCell  = null;
         double    bestScore = Double.NEGATIVE_INFINITY;
 
-        for (var e : candidates) {
+        for (var e : pass1) {
             AtlasCell cell = e.getKey();
             double s = VillagePlacementScorer.score(
                     atlas, cell, type, capitalOrigin, placedPositions);
@@ -203,7 +178,6 @@ public final class ClaimVillagePlacer {
         if (bestCell != null) return makeResult(typeId, bestCell, bestScore, false);
 
         // ── Relaxed fallback — drop category tags, keep physical gates ────────
-        // Same two-step (quickScore → score) but with cellMatchesRelaxed.
         List<Map.Entry<AtlasCell, Double>> relaxedPass1 = new ArrayList<>();
 
         for (AtlasCell cell : claimedCells) {
@@ -227,20 +201,7 @@ public final class ClaimVillagePlacer {
         if (relaxedPass1.size() > PASS1_MAX_CANDIDATES)
             relaxedPass1 = relaxedPass1.subList(0, PASS1_MAX_CANDIDATES);
 
-        // Deep inspection on relaxed candidates
-        List<Map.Entry<AtlasCell, Double>> relaxedCandidates = new ArrayList<>();
         for (var e : relaxedPass1) {
-            AtlasCell cell = e.getKey();
-            BlockPos centre = new BlockPos(
-                    cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
-            if (DeepTerrainInspector.inspect(level, centre, footprintRadius)
-                    .predictsSuitableFor(type.getTags())) {
-                relaxedCandidates.add(e);
-            }
-        }
-        if (relaxedCandidates.isEmpty()) relaxedCandidates = relaxedPass1;
-
-        for (var e : relaxedCandidates) {
             AtlasCell cell = e.getKey();
             double s = VillagePlacementScorer.score(
                     atlas, cell, type, capitalOrigin, placedPositions);

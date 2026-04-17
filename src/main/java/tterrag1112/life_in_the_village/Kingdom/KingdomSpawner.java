@@ -679,7 +679,7 @@ public class KingdomSpawner {
         java.util.List<tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.PlacementResult>
                 placements = tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.plan(
                 atlas, territorialClaim, origin, composition,
-                existingVillagePositions, level);
+                existingVillagePositions);
 
 
         for (int i = 0; i < placements.size(); i++) {
