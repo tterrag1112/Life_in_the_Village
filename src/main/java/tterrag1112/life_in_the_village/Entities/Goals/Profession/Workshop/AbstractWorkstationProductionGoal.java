@@ -29,6 +29,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpe
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
+import tterrag1112.life_in_the_village.Profession.NpcProfessionXp;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 
 import javax.annotation.Nullable;
@@ -103,11 +104,12 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
                                               ProductionRecipe recipe, int batchSize) {
         BlockPos station = findWorkstation(level, building).orElse(null);
 
-        // ── Role speed factor applied on top of profession speed multiplier ──
+        // Combine: base × profession override × role (apprentice slowdown) ÷ NPC XP bonus
         int scaledTicks = Math.max(20,
                 (int)(recipe.ticks() * batchSize
                         * productionSpeedMultiplier()
-                        * roleSpeedMultiplier()));        // ← new factor
+                        * roleSpeedMultiplier()
+                        / NpcProfessionXp.getSpeedMultiplier(entity)));
 
         Map<Item, Integer> consumes = new LinkedHashMap<>();
         recipe.inputs().forEach((item, count) ->
@@ -473,6 +475,17 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
                 for (ItemStack byproduct : currentRecipe.byproducts()) {
                     entity.getPersonalInventory().addItem(byproduct.copy());
                 }
+
+                // Award NPC XP for completing a production run
+                NpcProfessionXp.add(entity, NpcProfessionXp.XP_PER_PRODUCTION_CYCLE);
+
+                // Quality bonus — senior NPCs occasionally produce an extra output
+                float qualityChance = NpcProfessionXp.getQualityChance(entity);
+                if (qualityChance > 0 && entity.getRandom().nextFloat() < qualityChance) {
+                    entity.getPersonalInventory().addItem(
+                            new ItemStack(currentRecipe.output(), currentBatchSize));
+                }
+
                 onProductionComplete(level, currentRecipe, currentBatchSize);
                 phase = Phase.DEPOSITING;
             } else {

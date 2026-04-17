@@ -10,7 +10,9 @@ public enum FarmRole implements tterrag1112.life_in_the_village.Profession.Roles
     PLANTER,
     MARKET_SELLER,
     ANIMAL_TENDER,
-    FERTILIZER;
+    FERTILIZER,
+    /** Learner hired via a FARMHAND job posting with APPRENTICE type. Works at 60% speed. */
+    APPRENTICE;
 
     // ── Self-register ─────────────────────────────────────────────────────────
     static {
@@ -20,4 +22,14 @@ public enum FarmRole implements tterrag1112.life_in_the_village.Profession.Roles
     @Override public boolean isGeneralist()   { return this == GENERALIST; }
     @Override public boolean isMarketSeller() { return this == MARKET_SELLER; }
     @Override public boolean splitsTime()     { return this == GENERALIST; }
+    @Override public boolean isApprentice()   { return this == APPRENTICE; }
+
+    /** Speed multiplier for production and task work relative to a GENERALIST. */
+    public float productionSpeedMultiplier() {
+        return switch (this) {
+            case APPRENTICE    -> 0.60f;
+            case MARKET_SELLER -> 0.0f;
+            default            -> 1.0f;
+        };
+    }
 }
