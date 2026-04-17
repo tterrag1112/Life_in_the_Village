@@ -4,8 +4,10 @@ package tterrag1112.life_in_the_village.Village.Planning.Terrain;
 import net.minecraft.core.BlockPos;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Village.Planning.VillagePlanner;
+import tterrag1112.life_in_the_village.Village.VillageTag;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Immutable snapshot of the terrain analysis around a village origin.
@@ -58,6 +60,35 @@ public record TerrainProfile(
     public int heightVariance() { return maxY - minY; }
 
     public boolean isSuitable() { return suitability > 0.05f; }
+
+    /**
+     * Type-aware suitability formula.
+     *
+     * <ul>
+     *   <li>RIVERSIDE / COASTAL: water proximity is the desired outcome —
+     *       the water penalty is removed. Only sites that are &gt;60% submerged
+     *       are rejected (penalised by the excess).</li>
+     *   <li>MOUNTAIN / DEFENSIVE: steep terrain is expected for highland or
+     *       fortress siting — the steep penalty is reduced to near-zero.</li>
+     *   <li>All others: the standard formula applies.</li>
+     * </ul>
+     */
+    public static float computeSuitability(float flatRatio, float waterRatio,
+                                           float steepRatio, Set<VillageTag> tags) {
+        if (tags.contains(VillageTag.RIVERSIDE) || tags.contains(VillageTag.COASTAL)) {
+            float excessWater = Math.max(0f, waterRatio - 0.6f) * 5.0f;
+            return flatRatio - excessWater - steepRatio * 0.5f;
+        }
+        if (tags.contains(VillageTag.MOUNTAIN) || tags.contains(VillageTag.DEFENSIVE)) {
+            return flatRatio - waterRatio * 2.0f - steepRatio * 0.05f;
+        }
+        return flatRatio - waterRatio * 2.0f - steepRatio * 0.3f;
+    }
+
+    /** Type-aware suitability check — uses {@link #computeSuitability} for the village's tags. */
+    public boolean isSuitableFor(Set<VillageTag> tags) {
+        return computeSuitability(flatRatio, waterRatio, steepRatio, tags) > 0.05f;
+    }
 
     /** True if a significant water body was detected near the site. */
     public boolean hasWater() { return waterBody != null; }

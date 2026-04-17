@@ -170,7 +170,8 @@ public final class ClaimVillagePlacer {
             AtlasCell cell = e.getKey();
             BlockPos centre = new BlockPos(
                     cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
-            if (DeepTerrainInspector.inspect(level, centre, footprintRadius).predictsSuitable()) {
+            if (DeepTerrainInspector.inspect(level, centre, footprintRadius)
+                    .predictsSuitableFor(type.getTags())) {
                 pass2.add(e);
             }
         }
@@ -232,7 +233,8 @@ public final class ClaimVillagePlacer {
             AtlasCell cell = e.getKey();
             BlockPos centre = new BlockPos(
                     cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
-            if (DeepTerrainInspector.inspect(level, centre, footprintRadius).predictsSuitable()) {
+            if (DeepTerrainInspector.inspect(level, centre, footprintRadius)
+                    .predictsSuitableFor(type.getTags())) {
                 relaxedCandidates.add(e);
             }
         }
