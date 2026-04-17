@@ -47,6 +47,7 @@ public class WorldgenKingdomSeeder {
     private static boolean seederRan  = false;
     private static final List<ScheduledKingdom> scheduled = new ArrayList<>();
     private static int scheduledDelay = 0;
+    private static int deferralCount  = 0;
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
@@ -109,8 +110,10 @@ public class WorldgenKingdomSeeder {
         boolean done = atlas.ensureRegionFilled(level, sk.cx, sk.cz, 800, 30_000_000L);
         if (!done) {
             scheduled.add(0, sk);
-            System.out.println("[WorldGenKingdomSeeder] Atlas fill in progress for '"
-                    + sk.name + "' — deferring");
+            if (++deferralCount % 20 == 0) {
+                System.out.println("[WorldGenKingdomSeeder] Atlas fill in progress for '"
+                        + sk.name + "' — deferring (" + deferralCount + " defers so far)");
+            }
             return false;
         }
 
