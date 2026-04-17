@@ -11,47 +11,62 @@ import java.util.*;
 
 public enum PlayerProfession {
 
+    // =========================================================================
+    // XP balance rationale
+    // =========================================================================
+    // Thresholds are designed so that:
+    //   Apprentice → Journeyman  feels achievable in a few focused sessions
+    //   Journeyman → Expert      requires consistent work over many sessions
+    //   Expert → Master          demands meaningful specialisation and dedication
+    //   Master → Grandmaster     is a long-term achievement — weeks of regular play
+    //
+    // Per-action rewards are deliberately small. Simple repetitive tasks
+    // (breaking one block, harvesting one crop) give 1–3 XP. Only job
+    // posting completions and mentor-bonused activities give meaningful jumps.
+    // This prevents rushing the curve by grinding a single simple action.
+    // =========================================================================
+
     FARMER(
             "Farmer",
-            new int[]{0, 100, 300, 700, 1500},
+            new int[]{0, 500, 2_500, 10_000, 40_000},
             Map.of(
-                    XpSource.HARVEST_CROP,   10,
-                    XpSource.SELL_TO_NPC,     5,
-                    XpSource.JOB_POSTING,    50,
-                    XpSource.CRAFT_RELEVANT,  3
+                    XpSource.HARVEST_CROP,   3,    // 3 XP — simple repetitive action
+                    XpSource.SELL_TO_NPC,    1,    // 1 XP per item sold (cumulative)
+                    XpSource.JOB_POSTING,   25,    // 25 XP — meaningful task completion
+                    XpSource.CRAFT_RELEVANT, 2     // 2 XP — e.g. baking bread
             )
     ),
 
     BLACKSMITH(
             "Blacksmith",
-            new int[]{0, 150, 400, 900, 2000},
+            new int[]{0, 500, 2_500, 10_000, 40_000},
             Map.of(
-                    XpSource.BREAK_BLOCK,     2,
-                    XpSource.CRAFT_RELEVANT,  8,
-                    XpSource.SELL_TO_NPC,     6,
-                    XpSource.JOB_POSTING,    60
+                    XpSource.BREAK_BLOCK,    1,    // 1 XP — smelting ore blocks
+                    XpSource.CRAFT_RELEVANT, 4,    // 4 XP — crafting a sword/tool
+                    XpSource.SELL_TO_NPC,    2,    // 2 XP per item sold
+                    XpSource.JOB_POSTING,   30     // 30 XP — completing a smith commission
             )
     ),
 
     CARPENTER(
             "Carpenter",
-            new int[]{0, 100, 300, 700, 1500},
+            new int[]{0, 500, 2_500, 10_000, 40_000},
             Map.of(
-                    XpSource.BREAK_BLOCK,     2,
-                    XpSource.CRAFT_RELEVANT,  8,
-                    XpSource.SELL_TO_NPC,     5,
-                    XpSource.JOB_POSTING,    50
+                    XpSource.BREAK_BLOCK,    1,    // 1 XP — chopping a log
+                    XpSource.CRAFT_RELEVANT, 3,    // 3 XP — planks, doors, chests
+                    XpSource.SELL_TO_NPC,    2,    // 2 XP per item sold
+                    XpSource.JOB_POSTING,   25     // 25 XP — lumber delivery
             )
     ),
 
     MINER(
             "Miner",
-            new int[]{0, 100, 250, 600, 1400},
+            new int[]{0, 500, 2_500, 10_000, 40_000},
             Map.of(
-                    XpSource.BREAK_BLOCK,     5,
-                    XpSource.SELL_TO_NPC,     4,
-                    XpSource.JOB_POSTING,    40,
-                    XpSource.CRAFT_RELEVANT,  2
+                    XpSource.BREAK_BLOCK,    2,    // 2 XP — ore and stone (filtered by isRelevantBlock)
+                    XpSource.SELL_TO_NPC,    1,    // 1 XP per ore sold
+                    XpSource.JOB_POSTING,   20,    // 20 XP — ore delivery order
+                    XpSource.CRAFT_RELEVANT, 1     // 1 XP — stone processing
             )
     ),
 
@@ -71,12 +86,12 @@ public enum PlayerProfession {
      */
     MERCHANT(
             "Merchant",
-            new int[]{0, 120, 350, 800, 1800},
+            new int[]{0, 500, 2_500, 10_000, 40_000},
             Map.of(
-                    XpSource.SELL_TO_NPC,    15,   // primary — every trade tick
-                    XpSource.JOB_POSTING,    70,   // completing trade assignments
-                    XpSource.CRAFT_RELEVANT,  4,   // crafting trade goods
-                    XpSource.BREAK_BLOCK,     0    // not applicable
+                    XpSource.SELL_TO_NPC,    2,    // 2 XP per item sold — primary source
+                    XpSource.JOB_POSTING,   35,    // 35 XP — completing a trade assignment
+                    XpSource.CRAFT_RELEVANT, 2,    // 2 XP — crafting trade goods
+                    XpSource.BREAK_BLOCK,    0     // not applicable
             )
     ),
 
@@ -99,12 +114,12 @@ public enum PlayerProfession {
      */
     GUARD(
             "Guard",
-            new int[]{0, 120, 350, 800, 1800},
+            new int[]{0, 500, 2_500, 10_000, 40_000},
             Map.of(
-                    XpSource.KILL_MOB,       15,   // primary — killing hostile mobs
-                    XpSource.JOB_POSTING,    60,   // patrol/security assignments
-                    XpSource.CRAFT_RELEVANT,  6,   // crafting weapons & armour
-                    XpSource.SELL_TO_NPC,     3    // selling confiscated goods
+                    XpSource.KILL_MOB,       5,    // 5 XP × health mult — primary source
+                    XpSource.JOB_POSTING,   30,    // 30 XP — patrol/security assignments
+                    XpSource.CRAFT_RELEVANT, 3,    // 3 XP — crafting weapons & armour
+                    XpSource.SELL_TO_NPC,    1     // 1 XP — minor
             )
     );
 

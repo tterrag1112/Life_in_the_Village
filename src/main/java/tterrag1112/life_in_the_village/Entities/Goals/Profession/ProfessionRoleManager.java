@@ -137,6 +137,16 @@ public final class ProfessionRoleManager {
         return role == null || role.splitsTime();
     }
 
+    /**
+     * Returns true if the NPC is in an apprentice role for any profession type.
+     * Works across {@code WorkshopRole}, {@code FarmRole}, and any future role
+     * enum that implements {@link tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole#isApprentice()}.
+     */
+    public static boolean isApprentice(TownspersonMob npc) {
+        tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role = getRole(npc);
+        return role != null && role.isApprentice();
+    }
+
     // =========================================================================
     // Worker finding — shared by all role assigners
     // =========================================================================

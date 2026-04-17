@@ -47,4 +47,14 @@ public interface ProfessionRole {
      * Generalists return true; all specialised roles return false.
      */
     boolean splitsTime();
+
+    /**
+     * True if this NPC is in the learner/apprentice tier for their profession.
+     * Apprentices work at reduced speed and are candidates for promotion when
+     * a senior worker retires or vacates their slot.
+     *
+     * <p>Defaults to {@code false} so existing role enums that predate this
+     * method compile without changes until they are individually updated.</p>
+     */
+    default boolean isApprentice() { return false; }
 }

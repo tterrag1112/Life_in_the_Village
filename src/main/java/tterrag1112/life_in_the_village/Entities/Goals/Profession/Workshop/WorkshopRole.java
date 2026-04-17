@@ -42,6 +42,7 @@ public enum WorkshopRole implements tterrag1112.life_in_the_village.Profession.R
     @Override public boolean isGeneralist()   { return this == GENERALIST; }
     @Override public boolean isMarketSeller() { return this == MARKET_SELLER; }
     @Override public boolean splitsTime()     { return this == GENERALIST; }
+    @Override public boolean isApprentice()   { return this == APPRENTICE; }
 
     /** Speed multiplier relative to a standard PRODUCER. */
     public float productionSpeedMultiplier() {
