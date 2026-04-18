@@ -189,6 +189,7 @@ public final class ClusteredRecipe implements ShapeRecipe {
                 gateRoad, pctx.level, pctx.worldSeed);
         allRoadsForSnap.add(gateLine);
         pctx.layout.setMainGateEndpoint(gateEnd);
+        pctx.layout.addGatePosition(gateEnd);
 
         // Mark cluster 0 as the town square position so the decorator
         // and trade systems have something to anchor to. No civic ring

@@ -73,6 +73,8 @@ public final class DocksideRecipe implements ShapeRecipe {
                 pctx.level, pctx.worldSeed);
         // Gate endpoint = shore (boats arrive there)
         pctx.layout.setMainGateEndpoint(shoreEnd);
+        pctx.layout.addGatePosition(inlandEnd);
+        pctx.layout.addGatePosition(shoreEnd);
 
         // Town square ~1/3 of the way from inland end toward the shore
         BlockPos squarePos = mainCenterline.get(mainCenterline.size() / 3);

@@ -67,7 +67,7 @@ public class TradeRouteManager {
     public static void establishRoutes(ServerLevel level,
                                        Village newVillage,
                                        VillageSavedData data) {
-        BlockPos newCenter = getVillageCenter(newVillage, data);
+        BlockPos newCenter = getVillageCenter(newVillage, null, data);
         if (newCenter == null) return;
 
         int buildingCount = newVillage.getBuildingIds().size();
@@ -92,7 +92,7 @@ public class TradeRouteManager {
                 .filter(v -> data.getRouteBetween(
                         newVillage.getId(), v.getId()).isEmpty())
                 .filter(v -> {
-                    BlockPos vc = getVillageCenter(v, data);
+                    BlockPos vc = getVillageCenter(v, newCenter, data);
                     if (vc == null) return false;
                     double dist = Math.sqrt(
                             Math.pow(newCenter.getX() - vc.getX(), 2)
@@ -100,7 +100,7 @@ public class TradeRouteManager {
                     return dist <= MAX_ROUTE_DISTANCE;
                 })
                 .sorted(Comparator.comparingDouble(v -> {
-                    BlockPos vc = getVillageCenter(v, data);
+                    BlockPos vc = getVillageCenter(v, newCenter, data);
                     if (vc == null) return Double.MAX_VALUE;
                     return newCenter.distSqr(vc);
                 }))
@@ -108,7 +108,7 @@ public class TradeRouteManager {
                 .toList();
 
         for (Village target : candidates) {
-            BlockPos targetCenter = getVillageCenter(target, data);
+            BlockPos targetCenter = getVillageCenter(target, newCenter, data);
             if (targetCenter == null) continue;
 
             establishOneRoute(level, atlas, newVillage, target,
@@ -532,9 +532,13 @@ public class TradeRouteManager {
     }
 
     private static BlockPos getVillageCenter(Village village,
+                                             BlockPos otherPos,
                                              VillageSavedData data) {
-        // Prefer the main gate endpoint so trade routes attach at the
-        // village border instead of cutting into the interior.
+        // Pick the arm endpoint facing the other village so trade routes
+        // attach at the gate nearest to their destination.
+        if (!village.getCapitalGatePositions().isEmpty() && otherPos != null) {
+            return village.nearestCapitalGate(otherPos.getX(), otherPos.getZ());
+        }
         BlockPos gate = village.getMainGateEndpoint();
         if (gate != null) return gate;
         return village.getBounds(data)

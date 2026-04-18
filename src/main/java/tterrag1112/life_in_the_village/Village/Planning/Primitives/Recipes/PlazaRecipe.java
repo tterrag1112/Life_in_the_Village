@@ -137,6 +137,7 @@ public final class PlazaRecipe implements ShapeRecipe {
 
             BlockPos focal = spurCenterline.get(spurCenterline.size() - 1);
             if (isMain) mainGate = focal;
+            pctx.layout.addGatePosition(focal);
 
             new LayoutPrimitive.BuildingCircle(
                     focal,

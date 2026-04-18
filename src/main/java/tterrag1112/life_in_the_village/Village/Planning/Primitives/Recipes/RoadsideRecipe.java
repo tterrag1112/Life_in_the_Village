@@ -53,6 +53,8 @@ public final class RoadsideRecipe implements ShapeRecipe {
                         RoadShape.RoadTier.VILLAGE_ROAD),
                 pctx.level, pctx.worldSeed);
         pctx.layout.setMainGateEndpoint(mainEnd);
+        pctx.layout.addGatePosition(mainStart);
+        pctx.layout.addGatePosition(mainEnd);
 
         // ── Determine which side is "away from feature" ────────────────────
         // Default to left. If water or a ridge is on the left side

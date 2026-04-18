@@ -661,8 +661,8 @@ public class RoadRouter {
     // Tree clearing
     // =========================================================================
 
-    private static void clearTreesAt(ServerLevel level,
-                                     int x, int z, int fromY) {
+    public static void clearTreesAt(ServerLevel level,
+                                    int x, int z, int fromY) {
         for (int y = fromY + 20; y >= fromY - 1; y--) {
             BlockPos   pos   = new BlockPos(x, y, z);
             BlockState state = level.getBlockState(pos);

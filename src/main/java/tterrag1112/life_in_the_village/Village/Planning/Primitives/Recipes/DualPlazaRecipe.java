@@ -75,6 +75,8 @@ public final class DualPlazaRecipe implements ShapeRecipe {
                 pctx.level, pctx.worldSeed);
 
         pctx.layout.setMainGateEndpoint(gate1End);
+        pctx.layout.addGatePosition(gate1End);
+        pctx.layout.addGatePosition(gate2End);
 
         List<List<BlockPos>> allRoads = new ArrayList<>();
         allRoads.add(connector);
