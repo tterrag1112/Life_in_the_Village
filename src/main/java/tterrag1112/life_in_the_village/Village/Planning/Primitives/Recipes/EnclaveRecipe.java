@@ -197,6 +197,7 @@ public final class EnclaveRecipe implements ShapeRecipe {
                 pctx.level, pctx.worldSeed);
         allRoads.add(gateRoad);
         pctx.layout.setMainGateEndpoint(gateOutside);
+        pctx.layout.addGatePosition(gateOutside);
 
         // ── Agricultural OUTSIDE the wall (only on the gate side) ──────────
         var agri = pctx.claimByZone(BuildingZone.AGRICULTURAL, 1000);

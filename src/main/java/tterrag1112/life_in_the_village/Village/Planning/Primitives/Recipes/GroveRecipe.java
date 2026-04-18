@@ -76,8 +76,10 @@ public final class GroveRecipe implements ShapeRecipe {
             allRoads.add(spurLine);
 
             RecipeHelpers.scatterBucketAtRoadEnd(pctx, spurLine, bucket);
-            if (i == 0 && !spurLine.isEmpty()) {
-                mainGate = spurLine.get(spurLine.size() - 1);
+            BlockPos focal = spurLine.isEmpty() ? null : spurLine.get(spurLine.size() - 1);
+            if (focal != null) pctx.layout.addGatePosition(focal);
+            if (i == 0 && focal != null) {
+                mainGate = focal;
             }
         }
         if (mainGate != null) pctx.layout.setMainGateEndpoint(mainGate);

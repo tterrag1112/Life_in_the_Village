@@ -62,6 +62,8 @@ public final class LinearRecipe implements ShapeRecipe {
         // Gate endpoint = whichever end is closer to the world spawn-ish
         // direction. For now just pick mainEnd; trade routes will work either way.
         pctx.layout.setMainGateEndpoint(mainEnd);
+        pctx.layout.addGatePosition(mainStart);
+        pctx.layout.addGatePosition(mainEnd);
 
         // ── Town square at the midpoint ────────────────────────────────────
         BlockPos squareMid = mainCenterline.get(mainCenterline.size() / 2);

@@ -112,6 +112,8 @@ public final class RiverineRecipe implements ShapeRecipe {
         BlockPos gate = mainStart.distSqr(shore) > mainEnd.distSqr(shore)
                 ? mainStart : mainEnd;
         pctx.layout.setMainGateEndpoint(gate);
+        pctx.layout.addGatePosition(mainStart);
+        pctx.layout.addGatePosition(mainEnd);
 
         // ── Town square at the midpoint of the main road ───────────────────
         BlockPos squareMid = mainCenterline.get(mainCenterline.size() / 2);

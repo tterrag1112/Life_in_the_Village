@@ -79,8 +79,8 @@ public final class RouteRealisationSystem {
             return;
         }
 
-        BlockPos hubA = resolveHub(villageA.get(), data);
-        BlockPos hubB = resolveHub(villageB.get(), data);
+        BlockPos hubA = resolveHub(villageA.get(), villageB.get(), data);
+        BlockPos hubB = resolveHub(villageB.get(), villageA.get(), data);
 
         System.out.println("RouteRealisationSystem: realising road "
                 + road.getRoadId().toString().substring(0, 8)
@@ -129,10 +129,19 @@ public final class RouteRealisationSystem {
     }
 
     private static BlockPos resolveHub(Village village,
+                                       Village otherVillage,
                                        VillageSavedData data) {
+        BlockPos otherAnchor = otherVillage != null ? otherVillage.getAnchorPos() : null;
+        // Pick the arm endpoint nearest the other village so the road
+        // docks at the gate facing the destination.
+        if (village.hasCapitalGates() && otherAnchor != null) {
+            return village.nearestCapitalGate(otherAnchor.getX(), otherAnchor.getZ());
+        }
         if (village.hasCapitalGates()) {
             return village.getCapitalGatePositions().get(0);
         }
+        BlockPos gate = village.getMainGateEndpoint();
+        if (gate != null) return gate;
         return village.getEffectivePathHub(data);
     }
 }

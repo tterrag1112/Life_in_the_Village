@@ -93,6 +93,12 @@ public final class CrossroadsRecipe implements ShapeRecipe {
 
         // Gate endpoint: the longer arm's far end (primary)
         pctx.layout.setMainGateEndpoint(primaryEndA);
+        // Register all four arm ends so directional routing can pick the
+        // gate facing the destination village.
+        pctx.layout.addGatePosition(primaryEndA);
+        pctx.layout.addGatePosition(primaryEndB);
+        pctx.layout.addGatePosition(secondaryEndA);
+        pctx.layout.addGatePosition(secondaryEndB);
 
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
         allRoadsForSnap.add(primaryA);
