@@ -42,6 +42,8 @@ public final class SprawlRecipe implements ShapeRecipe {
                         RoadShape.RoadTier.VILLAGE_ROAD),
                 pctx.level, pctx.worldSeed);
         pctx.layout.setMainGateEndpoint(mainEnd);
+        pctx.layout.addGatePosition(mainStart);
+        pctx.layout.addGatePosition(mainEnd);
         // No town square call — SPRAWL has no central plaza.
         // Mark a nominal centre for downstream systems.
         pctx.layout.setTownSquarePos(centre);

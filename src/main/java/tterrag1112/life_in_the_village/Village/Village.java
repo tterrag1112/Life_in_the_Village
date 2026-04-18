@@ -405,6 +405,11 @@ public class Village {
         this.ring2Radius   = layout.getDensity().getRing2Radius();
         this.currentLevel  = villageLevel;
         this.mainGateEndpoint = layout.getMainGateEndpoint();
+        for (BlockPos gp : layout.getGatePositions()) {
+            if (!capitalGatePositions.contains(gp)) {
+                capitalGatePositions.add(gp);
+            }
+        }
     }
 
     /**

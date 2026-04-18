@@ -161,6 +161,7 @@ public final class HilltopRecipe implements ShapeRecipe {
                 pctx.level, pctx.worldSeed);
 
         pctx.layout.setMainGateEndpoint(base);
+        pctx.layout.addGatePosition(base);
 
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
         allRoadsForSnap.add(seg1);

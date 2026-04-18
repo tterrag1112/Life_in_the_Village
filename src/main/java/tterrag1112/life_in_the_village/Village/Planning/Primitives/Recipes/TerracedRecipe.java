@@ -193,6 +193,7 @@ public final class TerracedRecipe implements ShapeRecipe {
         pctx.layout.setTownSquarePos(topCentre);
         pctx.layout.setTownSquareRadius(4);
         pctx.layout.setMainGateEndpoint(mainGate);
+        pctx.layout.addGatePosition(mainGate);
 
         // ── Agricultural at the very bottom of the slope ───────────────────
         // Farms make sense on the flat below the village

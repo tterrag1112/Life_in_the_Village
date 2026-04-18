@@ -3,7 +3,11 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.OrganicRoadPlacer;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -144,10 +148,21 @@ public final class RouteRealiser {
 
         if (blockPath.isEmpty()) return List.of();
 
-        // ── Step 3: place road blocks along the assembled path ──────────────
-        List<BlockPos> placed = RoadRouter.placeRoad(level, blockPath, quality);
+        // ── Step 3: clear trees along the centerline ────────────────────────
+        for (BlockPos p : blockPath) {
+            RoadRouter.clearTreesAt(level, p.getX(), p.getZ(), p.getY());
+        }
 
-        // ── Step 4: place any bridges that were detected ────────────────────
+        // ── Step 4: paint surface with organic zone placement ───────────────
+        PathMaterial material = PathMaterial.cobblestone();
+        RoadShape.RoadTier tier = RoadShape.RoadTier.TOWN_ROAD;
+        RandomSource rng = RandomSource.create(
+                blockPath.get(0).asLong() ^ blockPath.get(blockPath.size() - 1).asLong());
+        OrganicRoadPlacer.PlacementResult result =
+                OrganicRoadPlacer.place(level, blockPath, material, tier, null, rng);
+        List<BlockPos> placed = result.placedBlocks();
+
+        // ── Step 5: place any bridges that were detected ────────────────────
         for (WaterSpan span : bridgeSpans) {
             List<BlockPos> bridgeBlocks = RoadRouter.placeBridge(
                     level, span.entrance, span.exit);
@@ -175,7 +190,15 @@ public final class RouteRealiser {
                                                    List<BlockPos> blockPath,
                                                    RoadRouter.RoadQuality quality) {
         if (blockPath.isEmpty()) return List.of();
-        List<BlockPos> placed = RoadRouter.placeRoad(level, blockPath, quality);
+        for (BlockPos p : blockPath) {
+            RoadRouter.clearTreesAt(level, p.getX(), p.getZ(), p.getY());
+        }
+        PathMaterial material = PathMaterial.cobblestone();
+        RoadShape.RoadTier tier = RoadShape.RoadTier.TOWN_ROAD;
+        RandomSource rng = RandomSource.create(blockPath.get(0).asLong());
+        OrganicRoadPlacer.PlacementResult result =
+                OrganicRoadPlacer.place(level, blockPath, material, tier, null, rng);
+        List<BlockPos> placed = result.placedBlocks();
 
         // Detect bridges on the direct path itself
         if (blockPath.size() >= 2) {

@@ -87,6 +87,7 @@ public final class OutpostRecipe implements ShapeRecipe {
                     pctx.level, pctx.worldSeed);
             allRoads.add(path);
             RecipeHelpers.scatterBucketAtRoadEnd(pctx, path, bucket);
+            pctx.layout.addGatePosition(stationFocal);
 
             if (i == 0) mainGate = stationFocal;
         }

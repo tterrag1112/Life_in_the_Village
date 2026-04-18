@@ -129,6 +129,8 @@ public final class ChainRecipe implements ShapeRecipe {
 
         // Gate endpoint = chord A (one end of the curve)
         pctx.layout.setMainGateEndpoint(chordA);
+        pctx.layout.addGatePosition(chordA);
+        pctx.layout.addGatePosition(chordB);
 
         // ── Town square at the apex of the curve (centerline midpoint) ─────
         BlockPos squareApex = mainCenterline.get(mainCenterline.size() / 2);

@@ -99,6 +99,8 @@ public final class RadialRecipe implements ShapeRecipe {
                 mainRoad, pctx.level, pctx.worldSeed);
 
         pctx.layout.setMainGateEndpoint(mainEnd);
+        pctx.layout.addGatePosition(mainStart);
+        pctx.layout.addGatePosition(mainEnd);
 
         // Stamp the main road with backfill slots for houses/wells
         pctx.offerRoadSlots(mainCenterline, 8, 8, TAGS_MAIN_ROAD, 35);
