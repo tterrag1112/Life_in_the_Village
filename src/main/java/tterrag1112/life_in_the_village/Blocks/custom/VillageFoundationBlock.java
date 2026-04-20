@@ -28,6 +28,8 @@ import net.neoforged.neoforge.transfer.energy.EnergyHandler;
 import net.neoforged.neoforge.transfer.energy.SimpleEnergyHandler;
 import org.jspecify.annotations.Nullable;
 import tterrag1112.life_in_the_village.Blocks.Entity.custom.VillageFoundationBlockEntity;
+import tterrag1112.life_in_the_village.Gui.StockpileScreen;
+import tterrag1112.life_in_the_village.Networking.StockpileContentsPacket;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.ModBuildings;
 

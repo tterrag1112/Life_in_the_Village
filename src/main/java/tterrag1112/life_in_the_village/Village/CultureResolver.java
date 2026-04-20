@@ -34,7 +34,7 @@ import java.util.*;
  *     structures/default/blacksmith/stall_1.nbt
  *     structures/default/house/stall_1.nbt
  *     structures/nordic/blacksmith/stall_1.nbt
- *     structures/highland/guard_tower/level_2.nbt
+ *     structures/highland/guard_tower/level_1.nbt
  * </pre>
  *
  * <h3>Fallback chain</h3>

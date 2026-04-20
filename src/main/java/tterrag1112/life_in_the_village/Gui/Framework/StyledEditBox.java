@@ -21,8 +21,10 @@ public class StyledEditBox extends EditBox {
         setTextColorUneditable(BookScreenColors.LIGHT);
     }
 
+
+
     @Override
-    protected void renderWidget(GuiGraphics g, int mouseX, int mouseY,
+    public void renderWidget(GuiGraphics g, int mouseX, int mouseY,
                                 float partialTick) {
         int x = getX(), y = getY(), w = getWidth(), h = getHeight();
         int bg;

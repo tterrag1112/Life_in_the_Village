@@ -23,12 +23,14 @@ public class StyledButton extends Button {
      * Returns a builder that produces a {@link StyledButton}. Use exactly
      * like {@code Button.builder(msg, onPress)}.
      */
-    public static Builder builder(Component msg, OnPress onPress) {
-        return new Builder(msg, onPress);
+
+    public static StyledButton.Builder builder(Component msg, OnPress onPress) {
+
+        return new StyledButton.Builder(msg, onPress);
     }
 
     @Override
-    protected void renderWidget(GuiGraphics g, int mouseX, int mouseY,
+    protected void renderContents(GuiGraphics g, int mouseX, int mouseY,
                                 float partialTick) {
         int x = getX(), y = getY(), w = getWidth(), h = getHeight();
         int bg;
@@ -49,16 +51,19 @@ public class StyledButton extends Button {
                 txt, false);
     }
 
+
+
     /**
      * Mirrors {@link Button.Builder} but builds a {@link StyledButton}.
      * Only the most-used setters are surfaced; add more as needed.
      */
-    public static class Builder {
+    public static class Builder extends Button.Builder {
         private final Component msg;
         private final OnPress onPress;
         private int x, y, width = 150, height = 20;
 
-        Builder(Component msg, OnPress onPress) {
+        public Builder(Component msg, OnPress onPress) {
+            super(msg, onPress);
             this.msg = msg;
             this.onPress = onPress;
         }

@@ -3,6 +3,8 @@ package tterrag1112.life_in_the_village.Gui.Framework;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.world.entity.LivingEntity;
+import net.neoforged.api.distmarker.OnlyIn;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -12,7 +14,7 @@ import javax.annotation.Nullable;
 
 /**
  * NPC portrait widget. Renders a live rotating 3D bust of the NPC using
- * {@link InventoryScreen#renderEntityInInventory}. Falls back to initials
+ * {@link InventoryScreen#renderEntityInInventoryFollowsAngle}. Falls back to initials
  * when no preview entity is available.
  *
  * <p>Rotation: one full Y-axis revolution every 160 ticks (8 s).
@@ -70,7 +72,7 @@ public final class Portrait {
         float yaw = ((tick + partialTick) * 360f / 160f) % 360f;
         entity.yBodyRot = yaw;
         entity.yHeadRot = yaw;
-        entity.yRot     = yaw;
+        //entity.yRot     = yaw;
 
         int cx = x + size / 2;
         int cy = y + size - 2;
@@ -79,13 +81,8 @@ public final class Portrait {
         g.enableScissor(x + 1, y + 1, x + size - 1, y + size - 1);
         try {
             float yawRad = (float) Math.toRadians(yaw);
-            Quaternionf rotation = new Quaternionf().rotateY(yawRad);
-            InventoryScreen.renderEntityInInventory(
-                    g, cx, cy, scale,
-                    new Vector3f(0f, 0f, 0f),
-                    rotation,
-                    null,
-                    entity);
+            //Quaternionf rotation = new Quaternionf().rotateY(yawRad);
+            InventoryScreen.renderEntityInInventoryFollowsAngle(g, x, cx, y, cy, scale, 0f, 0f, 0f, entity);
         } finally {
             g.disableScissor();
         }

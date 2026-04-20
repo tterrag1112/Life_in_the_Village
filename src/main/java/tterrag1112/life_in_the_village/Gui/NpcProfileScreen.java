@@ -3,7 +3,10 @@ package tterrag1112.life_in_the_village.Gui;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.Framework.Portrait;
@@ -127,7 +130,7 @@ public class NpcProfileScreen extends Screen {
     @Override
     public void onClose() {
         previewEntity = null;
-        PacketDistributor.sendToServer(new CloseNpcProfilePacket(snapshot.npcId()));
+        ClientPacketDistributor.sendToServer(new CloseNpcProfilePacket(snapshot.npcId()));
         super.onClose();
     }
 
@@ -206,14 +209,16 @@ public class NpcProfileScreen extends Screen {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
+        double mx = event.x();
+        double my = event.y();
+        int button = event.button();
         if (sidebar.mouseClicked(mx, my)) return true;
-        return super.mouseClicked(mx, my, button);
+        return super.mouseClicked(event, isDoubleClick);
     }
 
     @Override
-    public boolean keyPressed(int key, int scan, int mods) {
-        if (sidebar.keyPressed(key)) return true;
-        return super.keyPressed(key, scan, mods);
+    public boolean keyPressed(KeyEvent event) {
+        return super.keyPressed(event);
     }
 }

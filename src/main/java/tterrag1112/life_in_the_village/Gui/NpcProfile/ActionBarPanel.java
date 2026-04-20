@@ -2,12 +2,16 @@ package tterrag1112.life_in_the_village.Gui.NpcProfile;
 
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.network.chat.Component;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Gui.BookScreenColors;
 import tterrag1112.life_in_the_village.Gui.Framework.StyledButton;
 import tterrag1112.life_in_the_village.Networking.NpcProfileActionPacket;
 import tterrag1112.life_in_the_village.Networking.NpcProfileSnapshot;
 
+import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -87,8 +91,8 @@ public class ActionBarPanel implements NpcProfilePanel {
     private int addBtn(UUID npcId, String label,
                        NpcProfileActionPacket.Action action, int idx) {
         StyledButton btn = StyledButton.builder(
-                        net.minecraft.network.chat.Component.literal(label),
-                        b -> PacketDistributor.sendToServer(
+                        Component.literal(label),
+                        sb -> ClientPacketDistributor.sendToServer(
                                 new NpcProfileActionPacket(npcId, action)))
                 .pos(0, idx * 24)
                 .size(140, 20)

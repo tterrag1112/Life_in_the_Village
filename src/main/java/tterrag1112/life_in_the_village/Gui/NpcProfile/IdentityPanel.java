@@ -33,7 +33,7 @@ public class IdentityPanel implements NpcProfilePanel {
 
         long tick = Minecraft.getInstance().level != null
                 ? Minecraft.getInstance().level.getGameTime() : 0L;
-        float partialTick = Minecraft.getInstance().getFrameTime();
+        float partialTick = Minecraft.getInstance().getFrameTimeNs();
 
         // Portrait
         Portrait.AppearanceSnapshot appearance = new Portrait.AppearanceSnapshot(

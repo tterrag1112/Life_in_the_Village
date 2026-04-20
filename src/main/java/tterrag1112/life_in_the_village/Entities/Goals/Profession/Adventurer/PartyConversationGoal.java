@@ -164,7 +164,7 @@ public class PartyConversationGoal extends Goal {
         if (isRaining && !wasRaining) {
             wasRaining = true;
             return switch (getRole()) {
-                case SWORDSMAN -> "Rain won't slow us down. Keep moving.";
+                case SWORDSMAN, SPEARMAN -> "Rain won't slow us down. Keep moving.";
                 case ARCHER    -> "Wet bowstring... range will be off.";
                 case MAGE      -> "Fascinating — the ambient mana density rises in rain.";
                 case HEALER    -> "Stay dry if you can. Wet wounds fester.";
@@ -175,7 +175,7 @@ public class PartyConversationGoal extends Goal {
         if (!isRaining && wasRaining) {
             wasRaining = false;
             return switch (getRole()) {
-                case SWORDSMAN -> "Rain's let up. Good.";
+                case SWORDSMAN, SPEARMAN -> "Rain's let up. Good.";
                 case ARCHER    -> "Finally. String's been useless in that downpour.";
                 case MAGE      -> "The mana settles. We can proceed more safely now.";
                 case HEALER    -> "Good. Damp air was making my potions unstable.";
@@ -185,7 +185,7 @@ public class PartyConversationGoal extends Goal {
 
         if (level.isThundering() && level.getRandom().nextInt(100) == 0) {
             return switch (getRole()) {
-                case SWORDSMAN -> "I've fought in worse storms than this.";
+                case SWORDSMAN, SPEARMAN -> "I've fought in worse storms than this.";
                 case ARCHER    -> "Can't shoot in this wind!";
                 case MAGE      -> "The lightning... I could channel that.";
                 case HEALER    -> "Keep together. Lightning is unpredictable.";
@@ -260,7 +260,7 @@ public class PartyConversationGoal extends Goal {
                                 String mageLine, String healerLine,
                                 String scoutLine) {
         return switch (getRole()) {
-            case SWORDSMAN -> swordsmanLine;
+            case SWORDSMAN, SPEARMAN -> swordsmanLine;
             case ARCHER    -> archerLine;
             case MAGE      -> mageLine;
             case HEALER    -> healerLine;
@@ -281,7 +281,7 @@ public class PartyConversationGoal extends Goal {
         // Player just took significant damage (>20% of max)
         if (currentHp < prev - (maxHp * 0.2f)) {
             return switch (getRole()) {
-                case SWORDSMAN -> "I've got them! Stay back!";
+                case SWORDSMAN, SPEARMAN -> "I've got them! Stay back!";
                 case ARCHER    -> "I see it — covering!";
                 case MAGE      -> "Hold — I'll bind them!";
                 case HEALER    -> currentHp < maxHp * 0.4f
@@ -335,7 +335,7 @@ public class PartyConversationGoal extends Goal {
                     // Comment at 50% and near completion
                     if (prog >= 0.5f && prog < 0.55f) {
                         return switch (getRole()) {
-                            case SWORDSMAN -> "Halfway there. Keep the pace.";
+                            case SWORDSMAN, SPEARMAN -> "Halfway there. Keep the pace.";
                             case ARCHER    -> "Good progress. "
                                     + q.getCurrentCount() + " down.";
                             case MAGE      -> "The contract proceeds "
@@ -348,7 +348,7 @@ public class PartyConversationGoal extends Goal {
 
                     if (prog >= 0.9f && prog < 0.95f) {
                         return switch (getRole()) {
-                            case SWORDSMAN -> "Almost done. One last push.";
+                            case SWORDSMAN, SPEARMAN -> "Almost done. One last push.";
                             case ARCHER    -> "Nearly there — "
                                     + (q.getTargetCount()
                                     - q.getCurrentCount()) + " left.";
@@ -373,7 +373,7 @@ public class PartyConversationGoal extends Goal {
         if (timeOfDay >= 11500 && timeOfDay < 12000
                 && level.getRandom().nextInt(5) == 0) {
             return switch (getRole()) {
-                case SWORDSMAN -> "Sun's going down. We should camp soon.";
+                case SWORDSMAN, SPEARMAN -> "Sun's going down. We should camp soon.";
                 case ARCHER    -> "Can't shoot what I can't see. "
                         + "Find us a camp.";
                 case MAGE      -> "Night amplifies certain... energies.";
@@ -387,7 +387,7 @@ public class PartyConversationGoal extends Goal {
         if (timeOfDay >= 23000
                 && level.getRandom().nextInt(5) == 0) {
             return switch (getRole()) {
-                case SWORDSMAN -> "First light. Time to move.";
+                case SWORDSMAN, SPEARMAN -> "First light. Time to move.";
                 case ARCHER    -> "Good light. My aim is best at dawn.";
                 case MAGE      -> "The night's power fades. "
                         + "A new day begins.";
@@ -436,7 +436,7 @@ public class PartyConversationGoal extends Goal {
         String playerName = player.getName().getString();
 
         String[] lines = switch (getRole()) {
-            case SWORDSMAN -> new String[]{
+            case SWORDSMAN, SPEARMAN -> new String[]{
                     "Eyes forward.",
                     questsDone > 0
                             ? questsDone + " contracts done. "

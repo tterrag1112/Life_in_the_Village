@@ -36,6 +36,7 @@ public interface ShapeRecipe {
             case OUTPOST -> new OutpostRecipe();
             case TERRACED -> new TerracedRecipe();
             case ENCLAVE -> new EnclaveRecipe();
+            case DUMBELL -> new DumbellRecipe();
             default -> {
                 System.out.println("ShapeRecipe: " + shape
                         + " not yet implemented — falling back to RADIAL");

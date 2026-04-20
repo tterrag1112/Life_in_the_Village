@@ -134,7 +134,7 @@ public class PartyFollowGoal extends Goal {
 
         // Formation offsets [forward, right] in blocks
         double[] offset = switch (getRole()) {
-            case SWORDSMAN -> new double[]{-1.5,  0.8};
+            case SWORDSMAN, SPEARMAN -> new double[]{-1.5,  0.8};
             case ARCHER    -> new double[]{-3.0, -1.5};
             case MAGE      -> new double[]{-4.0,  0.5};
             case HEALER    -> new double[]{-4.5, -0.5};

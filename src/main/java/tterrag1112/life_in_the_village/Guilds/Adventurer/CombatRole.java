@@ -33,6 +33,14 @@ public enum CombatRole {
             "Frontline fighter. Draws enemy attention.",
             "⚔"
     ),
+    SPEARMAN(
+            Items.IRON_SPEAR,
+            5,
+            1.0f,   // movement speed modifier
+            1.2f,   // damage multiplier
+            "",
+            "⚔"
+    ),
 
     /**
      * Ranged damage dealer. Stays 8–14 blocks from target.
@@ -88,7 +96,9 @@ public enum CombatRole {
             0.8f,
             "Fast and perceptive. Detects threats early.",
             "◈"
-    );
+    ),
+
+    ;
 
     public final Item  primaryWeapon;
     /** Preferred blocks from target before engaging. */

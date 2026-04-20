@@ -453,6 +453,7 @@ public class PartyCampGoal extends net.minecraft.world.entity.ai.goal.Goal {
         if (entity.getCombatRole() == null) return "Resting...";
         return switch (entity.getCombatRole()) {
             case SWORDSMAN -> "Keeping watch";
+            case SPEARMAN -> "Keeping watch";
             case ARCHER    -> "Fletching arrows";
             case MAGE      -> "Studying grimoire";
             case HEALER    -> "Preparing potions";

@@ -96,7 +96,8 @@ public class VillageTypeData {
         DUAL_PLAZA,
         OUTPOST,
         TERRACED,
-        ENCLAVE
+        ENCLAVE,
+        DUMBELL
     }
 
     // =========================================================================

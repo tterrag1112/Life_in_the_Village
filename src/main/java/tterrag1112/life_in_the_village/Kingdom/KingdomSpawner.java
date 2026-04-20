@@ -1,4 +1,3 @@
-// src/main/java/tterrag1112/life_in_the_village/Village/KingdomSpawner.java
 package tterrag1112.life_in_the_village.Kingdom;
 
 import net.minecraft.core.BlockPos;
