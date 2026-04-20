@@ -62,7 +62,7 @@ public class StockpileScreen extends Screen {
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float pt) {
         g.fill(0, 0, width, height, 0xC0000000);
-        Chrome.draw(g, panelX, panelY, DIMS);
+        Chrome.draw(g, panelX, panelY, DIMS, Chrome.PARCHMENT);
         g.drawCenteredString(font, title.getString(),
                 width / 2, panelY + 5, BookScreenColors.DARK);
         if (stacks.isEmpty()) {
