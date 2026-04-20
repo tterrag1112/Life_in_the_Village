@@ -15,9 +15,9 @@ import javax.annotation.Nullable;
  *
  * <p>Rotation: one full Y-axis revolution every 160 ticks (8 s).
  *
- * <p>Signature used: {@code InventoryScreen.renderEntityInInventoryFollowsAngle(
+ * <p>Signature used: {@code InventoryScreen.renderEntityInInventoryFollowsMouse(
  *     GuiGraphics, int x1, int y1, int x2, int y2,
- *     int scale, float yOffset, float angleX, float angleY, LivingEntity)}
+ *     int scale, float yOffset, float mouseX, float mouseY, LivingEntity)}
  */
 public final class Portrait {
 
@@ -46,15 +46,13 @@ public final class Portrait {
     private Portrait() {}
 
     /**
-     * Draws a {@code size × size} portrait at (x, y).
-     *
-     * @param tick        current game tick (drives Y-axis rotation)
-     * @param partialTick sub-tick interpolation fraction
+     * Draws a {@code size × size} portrait at (x, y). The entity looks toward
+     * the mouse cursor.
      */
     public static void draw(GuiGraphics g, Font font,
                             int x, int y, int size,
                             @Nullable AppearanceSnapshot appearance,
-                            long tick, float partialTick) {
+                            int mouseX, int mouseY) {
         g.fill(x, y, x + size, y + size, BookScreenColors.SIDEBAR);
         g.renderOutline(x, y, size, size, BookScreenColors.BORDER);
 
@@ -64,19 +62,14 @@ public final class Portrait {
             return;
         }
 
-        float yaw = ((tick + partialTick) * 360f / 160f) % 360f;
-        // angleX drives yRot = angleX * 20 inside the method; divide to get target yaw
-        float angleX = yaw / 20f;
-
         g.enableScissor(x + 1, y + 1, x + size - 1, y + size - 1);
         try {
-            InventoryScreen.renderEntityInInventoryFollowsAngle(
+            InventoryScreen.renderEntityInInventoryFollowsMouse(
                     g,
                     x, y, x + size, y + size,
                     size / 2,
                     0f,
-                    angleX,
-                    0f,
+                    mouseX, mouseY,
                     entity);
         } finally {
             g.disableScissor();
