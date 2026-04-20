@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Profession;
 
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
+import tterrag1112.life_in_the_village.Items.ModItems;
 
 import java.util.*;
 
@@ -59,7 +60,7 @@ public final class ProfessionSupplyChain {
                 Items.BEETROOT_SEEDS, Items.PUMPKIN_SEEDS, Items.MELON_SEEDS));
 
         // ── MILLER ────────────────────────────────────────────────────────────
-        out.put(Profession.MILLER, List.of(Items.WHEAT));      // milled wheat re-sold as flour stand-in
+        out.put(Profession.MILLER, List.of(ModItems.WHEAT_FLOUR.get()));      // milled wheat re-sold as flour stand-in
         in.put(Profession.MILLER, List.of(Items.WHEAT));
 
         // ── BAKER ─────────────────────────────────────────────────────────────

@@ -88,8 +88,8 @@ public class VillageTypeDatagen implements DataProvider {
                 .building(BuildingType.STOCKPILE,   "stockpile/level_1")
                 .building(BuildingType.BLACKSMITH,  "blacksmith/level_1")
                 .building(BuildingType.CARPENTRY,   "carpentry/level_1")
-                .building(BuildingType.STONEMASON,  "blacksmith/level_1")
-                .building(BuildingType.WEAVER,      "carpentry/level_1")
+                .building(BuildingType.STONEMASON,  "stonemason/level_1")
+                .building(BuildingType.WEAVER,      "weaver/level_1")
                 .building(BuildingType.GUARD_TOWER, "guard_tower/level_1")
                 .building(BuildingType.FARMHOUSE,   "farmhouse/level_1")
                 .buildingN(BuildingType.HOUSE,      "house/level_1", 4)
@@ -412,4 +412,7 @@ public class VillageTypeDatagen implements DataProvider {
     public String getName() {
         return "Life in the Village Village Types";
     }
+
+
+
 }
