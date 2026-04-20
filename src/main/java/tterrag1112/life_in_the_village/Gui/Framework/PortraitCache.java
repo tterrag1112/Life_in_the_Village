@@ -1,7 +1,5 @@
 package tterrag1112.life_in_the_village.Gui.Framework;
 
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 
 import javax.annotation.Nullable;
@@ -13,7 +11,6 @@ import java.util.UUID;
  * Client-side LRU cache mapping NPC UUIDs to their preview entities.
  * Capped at {@value MAX_ENTRIES} entries; clears on world disconnect.
  */
-@OnlyIn(Dist.CLIENT)
 public final class PortraitCache {
 
     private static final int MAX_ENTRIES = 16;
