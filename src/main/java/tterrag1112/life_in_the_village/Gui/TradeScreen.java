@@ -43,6 +43,7 @@ public class TradeScreen extends Screen {
     private final TooltipLayer tooltips = new TooltipLayer();
     private int panelX, panelY;
     private int lastMouseX, lastMouseY;
+    private boolean shiftHeld = false;
 
     public TradeScreen(UUID merchantId, String merchantName,
                        List<TradeOffer> offers, long playerWealth) {
@@ -103,7 +104,7 @@ public class TradeScreen extends Screen {
         if (!isBuying && !offer.canSell()) return false;
         Identifier itemId = BuiltInRegistries.ITEM.getKey(offer.item());
         if (itemId == null) return false;
-        int quantity = Screen.hasShiftDown() ? 64 : 1;
+        int quantity = shiftHeld ? 64 : 1;
         PacketDistributor.sendToServer(
                 new TradeActionPacket(merchantId, itemId, isBuying, quantity));
         return true;
@@ -157,6 +158,7 @@ public class TradeScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
+        shiftHeld = event.hasShiftDown();
         if (scrollList != null
                 && scrollList.mouseClicked(lastMouseX, lastMouseY, event.button()))
             return true;
