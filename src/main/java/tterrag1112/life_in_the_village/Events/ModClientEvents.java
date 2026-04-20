@@ -19,10 +19,12 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import tterrag1112.life_in_the_village.Gui.Framework.PortraitCache;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -82,6 +84,11 @@ public class ModClientEvents {
         event.registerEntityRenderer(ModEntities.TOWNSPERSON.get(), TownspersonRenderer::new);
     }
 
+
+    @SubscribeEvent
+    public static void onClientDisconnect(ClientPlayerNetworkEvent.LoggingOut event) {
+        PortraitCache.clear();
+    }
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event){
