@@ -1,6 +1,5 @@
 package tterrag1112.life_in_the_village.Gui.NpcProfile;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -31,15 +30,11 @@ public class IdentityPanel implements NpcProfilePanel {
                        int mouseX, int mouseY) {
         int x = area.x() + 4, y = area.y() + 6;
 
-        long tick = Minecraft.getInstance().level != null
-                ? Minecraft.getInstance().level.getGameTime() : 0L;
-        float partialTick = Minecraft.getInstance().getFrameTime();
-
         // Portrait
         Portrait.AppearanceSnapshot appearance = new Portrait.AppearanceSnapshot(
                 s.name(), s.isMale(), s.age(), s.skinId(), s.hairStyle(),
                 s.hairColor(), s.professionName(), previewEntity);
-        Portrait.draw(g, font, x, y, PORTRAIT_SIZE, appearance, tick, partialTick);
+        Portrait.draw(g, font, x, y, PORTRAIT_SIZE, appearance, mouseX, mouseY);
 
         // Name + profession to the right of the portrait
         int tx = x + PORTRAIT_SIZE + 6;
