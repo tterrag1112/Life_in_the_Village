@@ -20,6 +20,7 @@ import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Guilds.Companies.Company;
 import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
 import tterrag1112.life_in_the_village.Networking.CraftingOrderInteraction;
+import tterrag1112.life_in_the_village.Entities.NpcProfileHub;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.*;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -35,41 +36,22 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Handles all player→NPC interactions, extracting the logic from
- * {@code TownspersonMob.mobInteract()}.
+ * Thin delegator for player→NPC right-click interactions.
  *
- * <h3>Why extract this?</h3>
- * The old {@code mobInteract} was a 200+ line switch statement that mixed
- * profession routing, GUI opening, debug info, and greeting logic in one
- * method. Every new profession or interaction type required editing
- * TownspersonMob directly.
+ * <p>All professions except {@code WANDERING_TRADER} now open the unified
+ * NPC profile screen via {@link NpcProfileHub#open}. Individual actions
+ * (trade, guild, assign work, etc.) are triggered from within the screen
+ * and handled back here or in the Hub as needed.
  *
- * <h3>Design</h3>
- * Each profession's interaction is a private static method. The public
- * {@link #handle} method does common checks (client-side guard, debug stick,
- * greeting prefix) and then dispatches to the appropriate handler.
- *
- * <h3>Greeting integration</h3>
- * Before any profession-specific interaction, the NPC speaks a contextual
- * one-liner via {@link NpcDialogue#getGreeting}. This is shown as a chat
- * message prefixed with the NPC's name in brackets. Professions that open
- * a GUI (merchant, guild worker) show the greeting before the screen opens.
- *
- * <h3>Usage</h3>
- * In {@code TownspersonMob.mobInteract}:
- * <pre>
- * {@code @Override}
- * public InteractionResult mobInteract(Player player, InteractionHand hand) {
- *     return NpcInteractionHandler.handle(this, player, hand);
- * }
- * </pre>
+ * <p>The old per-profession private methods are retained and package-accessible
+ * so that {@link NpcProfileHub} can invoke them when processing action packets.
  */
 public final class NpcInteractionHandler {
 
     private NpcInteractionHandler() {}
 
     // =========================================================================
-    // Entry point
+    // Entry point — thin delegator
     // =========================================================================
 
     public static InteractionResult handle(TownspersonMob npc,
@@ -87,36 +69,28 @@ public final class NpcInteractionHandler {
         if (!(npc.level() instanceof ServerLevel level)) return InteractionResult.PASS;
         if (!(player instanceof ServerPlayer sp)) return InteractionResult.PASS;
 
-        // ── Contextual greeting (shown before any GUI) ───────────────────────
-        String greeting = NpcDialogue.getGreeting(npc, sp, level);
-        sp.displayClientMessage(
-                Component.literal("[" + npc.getNpcName() + "] ")
-                        .withStyle(ChatFormatting.YELLOW)
-                        .append(Component.literal(greeting)
-                                .withStyle(ChatFormatting.WHITE)),
-                false);
+        // Wandering traders bypass the profile screen
+        if (npc.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.WANDERING_TRADER) {
+            return handleWanderingTrader(npc, sp, level);
+        }
 
-        // ── Profession dispatch ──────────────────────────────────────────────
-        return switch (npc.getProfession()) {
-            case MERCHANT       -> handleMerchant(npc, sp, level);
-            case WANDERING_TRADER -> handleWanderingTrader(npc, sp, level);
-            case GUARD          -> handleGuard(npc, sp, level);
-            case INNKEEPER      -> handleInnkeeper(npc, sp, level);
-            case GUILDWORKER    -> handleGuildWorker(npc, sp, level, hand);
-            case VILLAGE_LEADER -> handleVillageLeader(npc, sp, level);
-            case ADVENTURER     -> handleAdventurer(npc, sp, level, hand);
-            case COMPANY_WORKER -> handleCompanyWorker(npc, sp, level);
+        // All other professions → unified profile screen
+        NpcProfileHub.open(npc, sp, level);
+        return InteractionResult.SUCCESS;
+    }
 
-            // Work-assignment professions: shift-interact for assignment
-            case FARMER, BLACKSMITH, CARPENTER, MINER, STOCKPILE_KEEPER ->
-                    handleWorkAssignable(npc, sp, level);
+    // =========================================================================
+    // Public helpers called by NpcProfileHub action dispatch
+    // =========================================================================
 
-            default -> {
-                // NPCs without special interactions just greet
-                // (greeting was already shown above)
-                yield InteractionResult.SUCCESS;
-            }
-        };
+    /**
+     * Exposed for {@link NpcProfileHub} to call when the player presses the
+     * "Rent Stall" action inside the profile screen.
+     */
+    public static void handleRentStallAction(TownspersonMob npc,
+                                             ServerPlayer player,
+                                             ServerLevel level) {
+        tryRentStall(npc, player, level);
     }
 
     // =========================================================================

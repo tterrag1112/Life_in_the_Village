@@ -183,6 +183,28 @@ public class ModModEvents {
                 ContinentMapSyncPacket.STREAM_CODEC,
                 ContinentMapSyncPacket::handle);
 
+        // ── NPC Profile Screen (Slice 3) ─────────────────────────────────────
+        registrar.playToClient(
+                OpenNpcProfilePacket.TYPE,
+                OpenNpcProfilePacket.CODEC,
+                OpenNpcProfilePacket::handle);
+        registrar.playToClient(
+                NpcProfileSyncPacket.TYPE,
+                NpcProfileSyncPacket.CODEC,
+                NpcProfileSyncPacket::handle);
+        registrar.playToServer(
+                RequestNpcProfileSyncPacket.TYPE,
+                RequestNpcProfileSyncPacket.CODEC,
+                RequestNpcProfileSyncPacket::handle);
+        registrar.playToServer(
+                NpcProfileActionPacket.TYPE,
+                NpcProfileActionPacket.CODEC,
+                NpcProfileActionPacket::handle);
+        registrar.playToServer(
+                CloseNpcProfilePacket.TYPE,
+                CloseNpcProfilePacket.CODEC,
+                CloseNpcProfilePacket::handle);
+
     }
 
     @SubscribeEvent
