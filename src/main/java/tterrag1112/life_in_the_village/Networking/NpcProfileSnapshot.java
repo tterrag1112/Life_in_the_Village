@@ -1,0 +1,192 @@
+package tterrag1112.life_in_the_village.Networking;
+
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Client-safe snapshot of everything the NPC profile screen needs to render.
+ * Built server-side by {@code NpcProfileSnapshotBuilder} and delivered to the
+ * client via {@code OpenNpcProfilePacket} / {@code NpcProfileSyncPacket}.
+ *
+ * <p>All fields are plain, primitive, or string so the record is trivially
+ * encoded and never captures live entity references.
+ */
+public record NpcProfileSnapshot(
+        // -------------------------------------------------------------
+        // Identity
+        // -------------------------------------------------------------
+        UUID   npcId,
+        String name,
+        boolean isMale,
+        int    age,
+        String lifeStage,
+        String professionName,
+        String combatRoleName,
+        int    skinId,
+        int    hairStyle,
+        int    hairColor,
+        List<String> traits,
+        String adventurerTitle,
+
+        // -------------------------------------------------------------
+        // Family
+        // -------------------------------------------------------------
+        String familyRole,
+        String spouseName,     // "" = no spouse
+        String headName,       // "" = no household head
+        int    childrenCount,
+        String houseName,      // "" = homeless
+
+        // -------------------------------------------------------------
+        // Work
+        // -------------------------------------------------------------
+        String buildingName,   // "" = unassigned
+        String buildingType,
+        String villageName,    // shared with Reputation panel
+        String currentActivity,
+        boolean isWorkTime,
+        boolean isSleepTime,
+        boolean isSocialTime,
+
+        // -------------------------------------------------------------
+        // Reputation
+        // -------------------------------------------------------------
+        UUID   villageId,              // {@link #NIL_UUID} if no village
+        int    villageReputationScore,
+        String villageTierName,
+        int    personalDelta,
+
+        // -------------------------------------------------------------
+        // Dialogue
+        // -------------------------------------------------------------
+        String dialogueLine,
+
+        // -------------------------------------------------------------
+        // Action-bar availability (server-authoritative)
+        // -------------------------------------------------------------
+        boolean canTrade,
+        boolean canOpenGuild,
+        boolean canAssignWork,
+        boolean canOpenCompanyWorker,
+        boolean canShowVillageBook,
+        boolean canShowCraftingOrders,
+        boolean canRentStall
+) {
+
+    /** Sentinel representing "no village association". */
+    public static final UUID NIL_UUID = new UUID(0L, 0L);
+
+    // =========================================================================
+    // StreamCodec
+    // =========================================================================
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, NpcProfileSnapshot> CODEC =
+            StreamCodec.of(
+                    (buf, s) -> {
+                        buf.writeUUID(s.npcId);
+                        buf.writeUtf(s.name);
+                        buf.writeBoolean(s.isMale);
+                        buf.writeVarInt(s.age);
+                        buf.writeUtf(s.lifeStage);
+                        buf.writeUtf(s.professionName);
+                        buf.writeUtf(s.combatRoleName);
+                        buf.writeVarInt(s.skinId);
+                        buf.writeVarInt(s.hairStyle);
+                        buf.writeVarInt(s.hairColor);
+                        buf.writeVarInt(s.traits.size());
+                        s.traits.forEach(buf::writeUtf);
+                        buf.writeUtf(s.adventurerTitle);
+
+                        buf.writeUtf(s.familyRole);
+                        buf.writeUtf(s.spouseName);
+                        buf.writeUtf(s.headName);
+                        buf.writeVarInt(s.childrenCount);
+                        buf.writeUtf(s.houseName);
+
+                        buf.writeUtf(s.buildingName);
+                        buf.writeUtf(s.buildingType);
+                        buf.writeUtf(s.villageName);
+                        buf.writeUtf(s.currentActivity);
+                        buf.writeBoolean(s.isWorkTime);
+                        buf.writeBoolean(s.isSleepTime);
+                        buf.writeBoolean(s.isSocialTime);
+
+                        buf.writeUUID(s.villageId);
+                        buf.writeVarInt(s.villageReputationScore);
+                        buf.writeUtf(s.villageTierName);
+                        buf.writeVarInt(s.personalDelta);
+
+                        buf.writeUtf(s.dialogueLine);
+
+                        buf.writeBoolean(s.canTrade);
+                        buf.writeBoolean(s.canOpenGuild);
+                        buf.writeBoolean(s.canAssignWork);
+                        buf.writeBoolean(s.canOpenCompanyWorker);
+                        buf.writeBoolean(s.canShowVillageBook);
+                        buf.writeBoolean(s.canShowCraftingOrders);
+                        buf.writeBoolean(s.canRentStall);
+                    },
+                    buf -> {
+                        UUID   npcId          = buf.readUUID();
+                        String name           = buf.readUtf();
+                        boolean isMale        = buf.readBoolean();
+                        int    age            = buf.readVarInt();
+                        String lifeStage      = buf.readUtf();
+                        String profession     = buf.readUtf();
+                        String combat         = buf.readUtf();
+                        int    skinId         = buf.readVarInt();
+                        int    hairStyle      = buf.readVarInt();
+                        int    hairColor      = buf.readVarInt();
+                        int    traitCount     = buf.readVarInt();
+                        List<String> traits   = new ArrayList<>(traitCount);
+                        for (int i = 0; i < traitCount; i++) traits.add(buf.readUtf());
+                        String adventurerTitle = buf.readUtf();
+
+                        String familyRole    = buf.readUtf();
+                        String spouseName    = buf.readUtf();
+                        String headName      = buf.readUtf();
+                        int    childrenCount = buf.readVarInt();
+                        String houseName     = buf.readUtf();
+
+                        String buildingName  = buf.readUtf();
+                        String buildingType  = buf.readUtf();
+                        String villageName   = buf.readUtf();
+                        String activity      = buf.readUtf();
+                        boolean isWorkTime   = buf.readBoolean();
+                        boolean isSleepTime  = buf.readBoolean();
+                        boolean isSocialTime = buf.readBoolean();
+
+                        UUID   villageId     = buf.readUUID();
+                        int    repScore      = buf.readVarInt();
+                        String tierName      = buf.readUtf();
+                        int    personalDelta = buf.readVarInt();
+
+                        String dialogueLine  = buf.readUtf();
+
+                        boolean canTrade              = buf.readBoolean();
+                        boolean canOpenGuild          = buf.readBoolean();
+                        boolean canAssignWork         = buf.readBoolean();
+                        boolean canOpenCompanyWorker  = buf.readBoolean();
+                        boolean canShowVillageBook    = buf.readBoolean();
+                        boolean canShowCraftingOrders = buf.readBoolean();
+                        boolean canRentStall          = buf.readBoolean();
+
+                        return new NpcProfileSnapshot(
+                                npcId, name, isMale, age, lifeStage, profession,
+                                combat, skinId, hairStyle, hairColor, traits,
+                                adventurerTitle,
+                                familyRole, spouseName, headName, childrenCount,
+                                houseName,
+                                buildingName, buildingType, villageName, activity,
+                                isWorkTime, isSleepTime, isSocialTime,
+                                villageId, repScore, tierName, personalDelta,
+                                dialogueLine,
+                                canTrade, canOpenGuild, canAssignWork,
+                                canOpenCompanyWorker, canShowVillageBook,
+                                canShowCraftingOrders, canRentStall);
+                    });
+}

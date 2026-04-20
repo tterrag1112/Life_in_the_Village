@@ -115,6 +115,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final FamilyComponent family = new FamilyComponent();
     private final EconomyComponent economy = new EconomyComponent();
     private final AppearanceComponent appearance = new AppearanceComponent();
+    private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -151,6 +152,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     @Nullable private VillageEvent.EventType eventOverride = null;
     private float eventTradeDiscount = 1.0f;
+
+    // =========================================================================
+    // CONVERSATION LOCK — freezes the NPC while a player has the profile open
+    // =========================================================================
+
+    /** Player currently holding the profile conversation, or {@code null}. */
+    @Nullable private UUID conversationPartner = null;
+    /** Server tick when the current lock expires (safety auto-unlock). */
+    private long conversationUnlockTick = 0L;
+    /** Was AI disabled before the conversation started? (restore on unlock.) */
+    private boolean conversationPrevNoAi = false;
 
     // =========================================================================
     // CONSTRUCTOR
@@ -450,6 +462,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public void addChildId(UUID childId)           { family.addChild(childId); }
 
     // =========================================================================
+    // RELATIONSHIPS — delegated to NpcRelationshipComponent
+    // =========================================================================
+
+    public NpcRelationshipComponent getRelationships()  { return relationships; }
+    public int getRelationshipDelta(UUID playerId)      { return relationships.getDelta(playerId); }
+    public int adjustRelationship(UUID playerId, int d) { return relationships.adjust(playerId, d); }
+
+    // =========================================================================
 // INVENTORY & CURRENCY — delegated to EconomyComponent
 // =========================================================================
 
@@ -634,6 +654,58 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     }
 
     // =========================================================================
+    // CONVERSATION LOCK — used by NpcProfileHub so the NPC doesn't wander off
+    // while a player has its profile screen open. Auto-unlocks after a
+    // safety timeout if the client fails to send a close packet.
+    // =========================================================================
+
+    /** True while a player is holding this NPC in a conversation. */
+    public boolean isInConversation() { return conversationPartner != null; }
+
+    /** Player currently holding the conversation, or empty. */
+    public Optional<UUID> getConversationPartner() {
+        return Optional.ofNullable(conversationPartner);
+    }
+
+    /**
+     * Locks the NPC for a player conversation. Idempotent when called again
+     * with the same player; rejects other players while one lock is active.
+     *
+     * @param playerId     the player opening the conversation
+     * @param currentTick  current server tick
+     * @param timeoutTicks max ticks the lock may survive without a close
+     * @return {@code true} if the lock is held by {@code playerId} after call
+     */
+    public boolean lockForConversation(UUID playerId,
+                                       long currentTick,
+                                       long timeoutTicks) {
+        if (conversationPartner != null && !conversationPartner.equals(playerId)) {
+            return false;
+        }
+        if (conversationPartner == null) {
+            conversationPrevNoAi = isNoAi();
+            setNoAi(true);
+        }
+        conversationPartner   = playerId;
+        conversationUnlockTick = currentTick + Math.max(1L, timeoutTicks);
+        return true;
+    }
+
+    /**
+     * Clears the conversation lock if {@code playerId} holds it (or always,
+     * when {@code playerId} is {@code null} — used by the safety timeout).
+     * Restores the previous {@code NoAi} state.
+     */
+    public void unlockConversation(@Nullable UUID playerId) {
+        if (conversationPartner == null) return;
+        if (playerId != null && !playerId.equals(conversationPartner)) return;
+        conversationPartner    = null;
+        conversationUnlockTick = 0L;
+        setNoAi(conversationPrevNoAi);
+        conversationPrevNoAi   = false;
+    }
+
+    // =========================================================================
     // GOAL HELPER — used by ProfessionGoalFactory and NpcInteractionHandler
     // =========================================================================
 
@@ -750,6 +822,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         super.customServerAiStep(level);
         tickAging(level);
         tickHouseCheck(level);
+        tickConversationLock(level);
+    }
+
+    private void tickConversationLock(ServerLevel level) {
+        if (conversationPartner == null) return;
+        if (level.getGameTime() >= conversationUnlockTick) {
+            unlockConversation(null);
+        }
     }
 
     private void tickAging(ServerLevel level) {
@@ -891,6 +971,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             items.set(i, economy.getInventory().getItem(i));
         }
         net.minecraft.world.ContainerHelper.saveAllItems(output, items, false);
+
+        // ── Relationships ────────────────────────────────────────────────────
+        String rel = relationships.encode();
+        if (!rel.isEmpty()) output.putString("npcRelationships", rel);
     }
 
     // =========================================================================
@@ -995,6 +1079,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         for (int i = 0; i < items.size(); i++) {
             economy.getInventory().setItem(i, items.get(i));
         }
+
+        // ── Relationships ────────────────────────────────────────────────────
+        input.read("npcRelationships", Codec.STRING).ifPresent(relationships::decode);
 
         // ── Sync entity data from loaded state ───────────────────────────────
         entityData.set(LIFE_STAGE, getLifeStage().name());
