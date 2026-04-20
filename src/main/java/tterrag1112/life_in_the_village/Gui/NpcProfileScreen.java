@@ -96,7 +96,7 @@ public class NpcProfileScreen extends Screen {
 
         // Build panels — ActionBarPanel needs add/remove widget callbacks
         panels = NpcProfilePanelRegistry.build(
-                btn -> { addWidget(btn); btn.visible = false; },
+                btn -> { addRenderableWidget(btn); btn.visible = false; },
                 btn -> { removeWidget(btn); });
 
         // Notify all panels of initial snapshot

@@ -3,10 +3,6 @@ package tterrag1112.life_in_the_village.Gui.Framework;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
-import net.minecraft.world.entity.LivingEntity;
-import net.neoforged.api.distmarker.OnlyIn;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.BookScreenColors;
 
@@ -14,15 +10,14 @@ import javax.annotation.Nullable;
 
 /**
  * NPC portrait widget. Renders a live rotating 3D bust of the NPC using
- * {@link InventoryScreen#renderEntityInInventoryFollowsAngle}. Falls back to initials
+ * {@link InventoryScreen#renderEntityInInventory}. Falls back to initials
  * when no preview entity is available.
  *
  * <p>Rotation: one full Y-axis revolution every 160 ticks (8 s).
  *
- * <p>Signature used: {@code InventoryScreen.renderEntityInInventory(
- *     GuiGraphics, int cx, int cy, int scale,
- *     Vector3f translation, Quaternionf rotation,
- *     Quaternionf cameraOrientation, LivingEntity entity)}
+ * <p>Signature used: {@code InventoryScreen.renderEntityInInventoryFollowsAngle(
+ *     GuiGraphics, int x1, int y1, int x2, int y2,
+ *     int scale, float yOffset, float angleX, float angleY, LivingEntity)}
  */
 public final class Portrait {
 
@@ -70,19 +65,19 @@ public final class Portrait {
         }
 
         float yaw = ((tick + partialTick) * 360f / 160f) % 360f;
-        entity.yBodyRot = yaw;
-        entity.yHeadRot = yaw;
-        //entity.yRot     = yaw;
-
-        int cx = x + size / 2;
-        int cy = y + size - 2;
-        int scale = size / 2;
+        // angleX drives yRot = angleX * 20 inside the method; divide to get target yaw
+        float angleX = yaw / 20f;
 
         g.enableScissor(x + 1, y + 1, x + size - 1, y + size - 1);
         try {
-            float yawRad = (float) Math.toRadians(yaw);
-            //Quaternionf rotation = new Quaternionf().rotateY(yawRad);
-            InventoryScreen.renderEntityInInventoryFollowsAngle(g, x, cx, y, cy, scale, 0f, 0f, 0f, entity);
+            InventoryScreen.renderEntityInInventoryFollowsAngle(
+                    g,
+                    x, y, x + size, y + size,
+                    size / 2,
+                    0f,
+                    angleX,
+                    0f,
+                    entity);
         } finally {
             g.disableScissor();
         }

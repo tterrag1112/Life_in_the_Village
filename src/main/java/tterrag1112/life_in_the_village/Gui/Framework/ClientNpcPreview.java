@@ -2,8 +2,6 @@ package tterrag1112.life_in_the_village.Gui.Framework;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -15,7 +13,6 @@ import javax.annotation.Nullable;
  * mirrors an NPC snapshot. The entity is never ticked or rendered in the
  * world — it exists solely as a render target for the NPC portrait.
  */
-@OnlyIn(Dist.CLIENT)
 public final class ClientNpcPreview {
 
     private ClientNpcPreview() {}
