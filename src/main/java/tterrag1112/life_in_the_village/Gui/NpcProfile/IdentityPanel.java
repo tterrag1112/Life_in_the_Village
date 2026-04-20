@@ -1,19 +1,29 @@
 package tterrag1112.life_in_the_village.Gui.NpcProfile;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.BookScreenColors;
 import tterrag1112.life_in_the_village.Gui.Framework.Pill;
 import tterrag1112.life_in_the_village.Gui.Framework.Portrait;
 import tterrag1112.life_in_the_village.Gui.Framework.StatBox;
 import tterrag1112.life_in_the_village.Networking.NpcProfileSnapshot;
 
-import java.util.List;
+import javax.annotation.Nullable;
 
 /** Renders name, portrait, age, life stage, profession, and personality traits. */
 public class IdentityPanel implements NpcProfilePanel {
 
-    private static final int PORTRAIT_SIZE = 48;
+    private static final int PORTRAIT_SIZE = 60;
+
+    @Nullable
+    private TownspersonMob previewEntity;
+
+    /** Called by {@code NpcProfileScreen} whenever the preview entity is created or replaced. */
+    public void setPreviewEntity(@Nullable TownspersonMob entity) {
+        this.previewEntity = entity;
+    }
 
     @Override
     public void render(GuiGraphics g, Font font,
@@ -21,10 +31,15 @@ public class IdentityPanel implements NpcProfilePanel {
                        int mouseX, int mouseY) {
         int x = area.x() + 4, y = area.y() + 6;
 
+        long tick = Minecraft.getInstance().level != null
+                ? Minecraft.getInstance().level.getGameTime() : 0L;
+        float partialTick = Minecraft.getInstance().getFrameTime();
+
         // Portrait
         Portrait.AppearanceSnapshot appearance = new Portrait.AppearanceSnapshot(
-                s.name(), s.isMale(), s.age(), s.skinId(), s.hairStyle());
-        Portrait.draw(g, font, x, y, PORTRAIT_SIZE, appearance, 0L);
+                s.name(), s.isMale(), s.age(), s.skinId(), s.hairStyle(),
+                s.hairColor(), s.professionName(), previewEntity);
+        Portrait.draw(g, font, x, y, PORTRAIT_SIZE, appearance, tick, partialTick);
 
         // Name + profession to the right of the portrait
         int tx = x + PORTRAIT_SIZE + 6;

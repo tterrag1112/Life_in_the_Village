@@ -5,8 +5,12 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Gui.Framework.Portrait;
+import tterrag1112.life_in_the_village.Gui.Framework.PortraitCache;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
 import tterrag1112.life_in_the_village.Gui.NpcProfile.ActionBarPanel;
+import tterrag1112.life_in_the_village.Gui.NpcProfile.IdentityPanel;
 import tterrag1112.life_in_the_village.Gui.NpcProfile.NpcProfilePanel;
 import tterrag1112.life_in_the_village.Gui.NpcProfile.NpcProfilePanelRegistry;
 import tterrag1112.life_in_the_village.Networking.CloseNpcProfilePacket;
@@ -45,6 +49,8 @@ public class NpcProfileScreen extends Screen {
 
     private int panelX, panelY;
     private NpcProfilePanel.PageArea pageArea;
+
+    private TownspersonMob previewEntity;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Construction
@@ -93,6 +99,10 @@ public class NpcProfileScreen extends Screen {
         // Notify all panels of initial snapshot
         panels.values().forEach(p -> p.onSnapshotUpdated(snapshot));
 
+        // Build or fetch preview entity from cache, pass to IdentityPanel
+        previewEntity = PortraitCache.getOrCreate(snapshot.npcId(), buildAppearance(snapshot));
+        pushPreviewEntity();
+
         // Layout action buttons for initial section
         layoutActionButtons();
     }
@@ -116,6 +126,7 @@ public class NpcProfileScreen extends Screen {
 
     @Override
     public void onClose() {
+        previewEntity = null;
         PacketDistributor.sendToServer(new CloseNpcProfilePacket(snapshot.npcId()));
         super.onClose();
     }
@@ -126,9 +137,32 @@ public class NpcProfileScreen extends Screen {
 
     /** Called by {@code NpcProfileSyncPacket.handle} on the client thread. */
     public void applySync(NpcProfileSnapshot fresh) {
+        boolean appearanceChanged = fresh.skinId() != snapshot.skinId()
+                || fresh.hairStyle() != snapshot.hairStyle()
+                || fresh.hairColor() != snapshot.hairColor()
+                || fresh.age() != snapshot.age()
+                || !fresh.professionName().equals(snapshot.professionName());
         this.snapshot = fresh;
         panels.values().forEach(p -> p.onSnapshotUpdated(fresh));
+
+        if (appearanceChanged) {
+            previewEntity = PortraitCache.rebuild(fresh.npcId(), buildAppearance(fresh));
+            pushPreviewEntity();
+        }
         layoutActionButtons();
+    }
+
+    private Portrait.AppearanceSnapshot buildAppearance(NpcProfileSnapshot s) {
+        return new Portrait.AppearanceSnapshot(
+                s.name(), s.isMale(), s.age(), s.skinId(), s.hairStyle(),
+                s.hairColor(), s.professionName(), null);
+    }
+
+    private void pushPreviewEntity() {
+        NpcProfilePanel panel = panels.get(NpcProfilePanelRegistry.Section.IDENTITY);
+        if (panel instanceof IdentityPanel ip) {
+            ip.setPreviewEntity(previewEntity);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
