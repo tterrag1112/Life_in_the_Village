@@ -54,11 +54,11 @@ public final class NeedMeter {
 
     private static int colorForLevel(String level) {
         return switch (level == null ? "" : level.toUpperCase()) {
-            case "SURPLUS"   -> BookScreenColors.GREEN_TXT;
-            case "SATISFIED" -> BookScreenColors.DARK;
-            case "SHORTAGE"  -> BookScreenColors.AMBER;
-            case "CRISIS"    -> BookScreenColors.RED_TXT;
-            default          -> BookScreenColors.MID;
+            case "SURPLUS"             -> BookScreenColors.GREEN_TXT;
+            case "SATISFIED"           -> BookScreenColors.DARK;
+            case "SHORTAGE", "LOW"     -> BookScreenColors.AMBER;
+            case "CRISIS",  "CRITICAL" -> BookScreenColors.RED_TXT;
+            default                    -> BookScreenColors.MID;
         };
     }
 }
