@@ -142,7 +142,7 @@ Flag for deletion (not comment-out):
 
 ### 4A.3 — Rewrite the screen
 Required elements:
-- `Chrome.draw(g, x, y, dims, palette)` — always pass palette explicitly.
+- `Chrome.draw(g, x, y, dims, palette)` — **palette is required (5 args)**; omitting it is a compile error. For parchment-style screens use `Chrome.PARCHMENT`. Also call `Chrome.drawSidebarBg(g, x, y, dims)` separately if the screen has a sidebar.
 - `Sidebar<Section>` for section selection if multi-section.
 - `ScrollList<RowType>` for each scrolling list.
 - Private row records (NOT public, NOT in Framework package).
@@ -386,6 +386,7 @@ For the **screen itself**:
 - [ ] No `BookScreenColors` values are copied as local `static final int`
       constants — the framework and screen refer to `BookScreenColors.X`
       directly.
+- [ ] `Chrome.draw` called with **5** arguments — `(g, x, y, dims, palette)`. Four-arg calls are a compile error.
 - [ ] No manual `g.fill(...)` for panel backgrounds.
 - [ ] No manual scrollbar drawing.
 - [ ] No `drawBook` / `drawSidebar` / `drawStatBox` helpers remain in the
