@@ -126,6 +126,26 @@ public class PlayerWorkplace {
                     sourceBuildingId, destinationBuildingId);
         }
 
+        /**
+         * Returns a copy with the task type, priority, and destination
+         * overridden. Used to upgrade legacy {@link AssignmentType}-only
+         * assignments to proper typed tasks via a chained call from the
+         * call site — less churn than reshaping every constructor.
+         */
+        public WorkAssignment withType(WorkTaskType newType,
+                                       TaskPriority newPriority,
+                                       String destBuildingId) {
+            return new WorkAssignment(type, description, targetItem,
+                    targetCount, currentCount, issuedTick, deadlineTick,
+                    xpReward, coinReward, newType, newPriority,
+                    sourceBuildingId, destBuildingId);
+        }
+
+        /** Short form — keep existing source/destination, just set type and priority. */
+        public WorkAssignment withType(WorkTaskType newType, TaskPriority newPriority) {
+            return withType(newType, newPriority, destinationBuildingId);
+        }
+
         // ── Convenience accessors ─────────────────────────────────────────────
 
         public boolean hasTargetItem() {

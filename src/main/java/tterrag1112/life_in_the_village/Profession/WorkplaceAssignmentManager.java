@@ -542,7 +542,8 @@ public class WorkplaceAssignmentManager {
                                 getQuotaCount(level), 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
-                                getQuotaCount(level) * 2L);
+                                getQuotaCount(level) * 2L)
+                                .withType(WorkTaskType.GATHER, TaskPriority.NORMAL);
 
                         case MIXED_CROPS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.QUOTA,
@@ -551,7 +552,8 @@ public class WorkplaceAssignmentManager {
                                 getQuotaCount(level) / 2, 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 10,
-                                getQuotaCount(level) * 3L);
+                                getQuotaCount(level) * 3L)
+                                .withType(WorkTaskType.GATHER, TaskPriority.NORMAL);
 
                         case ANIMAL_PRODUCTS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.QUOTA,
@@ -560,84 +562,105 @@ public class WorkplaceAssignmentManager {
                                 getQuotaCount(level) / 4, 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 20,
-                                getQuotaCount(level) * 8L);
+                                getQuotaCount(level) * 8L)
+                                .withType(WorkTaskType.GATHER, TaskPriority.NORMAL);
 
+                        // MARKET_SALES tracks coin volume, not item deposits.
+                        // Kept as BUSYWORK for now — triggers through onWorkplaceSale.
                         case MARKET_SALES -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.QUOTA,
                                 "Sell " + getQuotaCount(level) + " worth of farm goods at market",
-                                "minecraft:emerald", // Placeholder for coin tracking
+                                "minecraft:emerald",
                                 getQuotaCount(level), 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 30,
-                                getQuotaCount(level) * 5L);
+                                getQuotaCount(level) * 5L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.NORMAL);
                     };
                 } else {
                     // Low-level task assignments
                     FarmerTaskType taskType = chooseTaskType(level);
                     yield switch (taskType) {
+                        // HARVEST_PLOT is a proper HARVEST task — 10 mature crop
+                        // breaks anywhere count toward it, detected by
+                        // TaskCompletionEvents.onCropHarvest.
                         case HARVEST_PLOT -> new PlayerWorkplace.WorkAssignment(
-                                PlayerWorkplace.AssignmentType.TASK,
-                                "Harvest all mature crops from the assigned farm plot",
-                                null, 1, 0,
+                                PlayerWorkplace.AssignmentType.QUOTA,
+                                "Harvest 10 mature crops from the farm plots",
+                                "", 10, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                20, 4L);
+                                20, 4L)
+                                .withType(WorkTaskType.HARVEST, TaskPriority.NORMAL);
 
+                        // The following are filler tasks until dedicated event
+                        // hooks are written (seed planting, bone-meal usage,
+                        // animal feeding). BUSYWORK at LOW so real work preempts.
                         case PLANT_SEEDS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Plant 64 seeds in empty farmland",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                15, 3L);
+                                15, 3L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case FEED_ANIMALS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Feed 8 animals in the pen to prepare for breeding",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                25, 5L);
+                                25, 5L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case COLLECT_PRODUCTS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Collect eggs, milk, or wool from animals in the pen",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                20, 4L);
+                                20, 4L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case FERTILIZE_CROPS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Apply bone meal to crops to accelerate growth",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                18, 3L);
+                                18, 3L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case MARKET_DELIVERY -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Take farm goods to the market and manage the stall for 2 hours",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                30, 6L);
+                                30, 6L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
                     };
                 }
             }
 
             // ── BLACKSMITH ────────────────────────────────────────────────────
+            // Quota = craft iron pickaxes (CRAFT type — detected via ItemCraftedEvent).
+            // Simple tasks are BUSYWORK until dedicated event hooks exist.
             case BLACKSMITH -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
-                    "Craft and deliver " + getQuotaCount(level) + " iron tools",
+                    "Craft and deliver " + getQuotaCount(level) + " iron pickaxes",
                     "minecraft:iron_pickaxe",
                     getQuotaCount(level), 0,
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 8L)
+                    .withType(WorkTaskType.CRAFT, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleBlacksmithTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 6L);
+                    30, 6L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── CARPENTER ────────────────────────────────────────────────────
+            // Quota = craft oak planks (CRAFT type — detected via ItemCraftedEvent).
             case CARPENTER -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
@@ -647,54 +670,63 @@ public class WorkplaceAssignmentManager {
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 3L)
+                    .withType(WorkTaskType.CRAFT, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleCarpenterTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 4L);
+                    30, 4L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── MINER ────────────────────────────────────────────────────────
+            // Quota = deliver raw iron (GATHER type — detected via onItemDelivered).
             case MINER -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
-                    "Mine and deliver " + getQuotaCount(level) + " iron ore",
+                    "Mine and deliver " + getQuotaCount(level) + " raw iron",
                     "minecraft:raw_iron",
                     getQuotaCount(level), 0,
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 4L)
+                    .withType(WorkTaskType.GATHER, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleMinerTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 5L);
+                    30, 5L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── MERCHANT ─────────────────────────────────────────────────────
-            // Merchants are assessed on how much they sell and how many goods
-            // they move through the market. Low-level tasks are about stocking
-            // and pricing; high-level quotas require selling specific volumes.
+            // Merchant quota tracks sale volume, which comes through
+            // onWorkplaceSale rather than item deposits — so it's BUSYWORK
+            // at NORMAL priority until a dedicated sale-based advancement
+            // hook is written. Simple tasks remain BUSYWORK/LOW.
             case MERCHANT -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
                     "Sell " + getQuotaCount(level) + " items at the market",
-                    "minecraft:paper",          // placeholder — any item sold counts
+                    "minecraft:paper",
                     getQuotaCount(level), 0,
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 5L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleMerchantTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 8L);
+                    30, 8L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── GUARD ─────────────────────────────────────────────────────────
-            // Guards are assessed on patrols and security readiness. Low-level
-            // tasks are about inspections and equipment; high-level quotas
-            // require delivering a stockpile of weapons or armour for the garrison.
+            // Quota = deliver iron swords to the garrison (GATHER type —
+            // detected via onItemDelivered to the guard tower's chest).
+            // Simple tasks remain BUSYWORK/LOW until patrol waypoints /
+            // bounty boards are wired up.
             case GUARD -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
@@ -704,12 +736,14 @@ public class WorkplaceAssignmentManager {
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 10L)
+                    .withType(WorkTaskType.GATHER, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleGuardTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 7L);
+                    30, 7L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
         };
     }
 
