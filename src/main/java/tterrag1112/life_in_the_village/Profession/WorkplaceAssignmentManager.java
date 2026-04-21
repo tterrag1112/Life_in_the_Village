@@ -5,6 +5,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -14,6 +15,9 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Profession.Tasks.TaskPriority;
+import tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType;
+import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
 import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -124,25 +128,57 @@ public class WorkplaceAssignmentManager {
         PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
         if (entry == null) return;
 
-        if (entry.currentAssignment() != null) {
-            PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
-
-            if (a.isComplete()) {
-                completeAssignment(player, npc, profession, profData, data, level);
-            } else if (a.isExpired(level.getGameTime())) {
-                player.displayClientMessage(Component.literal(
-                        "[" + npc.getNpcName() + "] You missed your deadline. "
-                                + "I'll give you another task."), false);
-                issueAssignment(player, npc, profession, profData, level);
-            } else {
-                player.displayClientMessage(Component.literal(
-                                "[" + npc.getNpcName() + "] Current task: " + a.description()
-                                        + "\nProgress: " + a.currentCount() + "/" + a.targetCount()),
-                        false);
-            }
-        } else {
-            issueAssignment(player, npc, profession, profData, level);
+        List<PlayerWorkplace.WorkAssignment> tasks = new ArrayList<>(entry.activeTasks());
+        // Pull legacy currentAssignment into the display list if the new list is empty
+        if (tasks.isEmpty() && entry.currentAssignment() != null) {
+            tasks.add(entry.currentAssignment());
         }
+
+        // 1) Complete any finished task first
+        for (PlayerWorkplace.WorkAssignment t : tasks) {
+            if (t.isComplete()) {
+                completeAssignment(player, npc, profession, profData, data, level, t);
+                return;
+            }
+        }
+
+        // 2) Drop any expired tasks and issue replacements
+        long now = level.getGameTime();
+        boolean removedExpired = false;
+        List<PlayerWorkplace.WorkAssignment> stillActive = new ArrayList<>();
+        for (PlayerWorkplace.WorkAssignment t : tasks) {
+            if (t.isExpired(now)) removedExpired = true;
+            else stillActive.add(t);
+        }
+        if (removedExpired) {
+            profData.setWorkplace(profession, entry.withTasks(stillActive));
+            player.setData(ModData.PROFESSION_DATA, profData);
+            player.displayClientMessage(Component.literal(
+                    "[" + npc.getNpcName() + "] You missed a deadline. "
+                            + "I'll give you another task."), false);
+            issueAssignment(player, npc, profession, profData, level);
+            return;
+        }
+
+        // 3) If no active tasks, issue a new one
+        if (stillActive.isEmpty()) {
+            issueAssignment(player, npc, profession, profData, level);
+            return;
+        }
+
+        // 4) Otherwise print the full active list, sorted by priority (already sorted)
+        StringBuilder msg = new StringBuilder();
+        msg.append("[").append(npc.getNpcName()).append("] Your tasks:");
+        for (PlayerWorkplace.WorkAssignment t : stillActive) {
+            msg.append("\n  [").append(t.priority().name()).append("] ")
+               .append(t.taskType().displayName()).append(" — ")
+               .append(t.description());
+            if (t.targetCount() > 1) {
+                msg.append("  (").append(t.currentCount()).append("/")
+                   .append(t.targetCount()).append(")");
+            }
+        }
+        player.displayClientMessage(Component.literal(msg.toString()), false);
     }
 
 
@@ -153,30 +189,67 @@ public class WorkplaceAssignmentManager {
 
     /**
      * Called when a player deposits items into a building chest.
-     * Advances any matching quota assignment.
+     * Advances every matching task across all of the player's active workplaces.
+     *
+     * <p>Matches any task whose {@link WorkTaskType#isItemDeliveryType()} is
+     * true (GATHER, DELIVER, RESTOCK) and whose {@code targetItem} equals the
+     * deposited itemId. Also matches legacy QUOTA-type assignments that don't
+     * have a proper task type set, for backward compatibility with old saves.</p>
      */
     public static void onItemDelivered(ServerPlayer player,
                                        String itemId,
                                        int count,
                                        ServerLevel level) {
         PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
+        boolean anyChanged = false;
 
-        profData.getAllWorkplaces().forEach((profession, entry) -> {
-            if (entry.currentAssignment() == null) return;
-            PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
-            if (a.type() != PlayerWorkplace.AssignmentType.QUOTA) return;
-            if (!a.targetItem().equals(itemId)) return;
+        for (var wp : profData.getAllWorkplaces().entrySet()) {
+            PlayerProfession profession = wp.getKey();
+            PlayerWorkplace.WorkplaceEntry entry = wp.getValue();
 
-            int newCount = Math.min(a.currentCount() + count, a.targetCount());
-            profData.setWorkplace(profession, entry.withAssignment(a.withProgress(newCount)));
+            // Iterate active tasks (new multi-task list)
+            List<PlayerWorkplace.WorkAssignment> updated =
+                    new ArrayList<>(entry.activeTasks());
+            boolean thisChanged = false;
+            for (int i = 0; i < updated.size(); i++) {
+                PlayerWorkplace.WorkAssignment t = updated.get(i);
+                if (t.isComplete()) continue;
+                if (!t.hasTargetItem() || !t.targetItem().equals(itemId)) continue;
+                if (!t.taskType().isItemDeliveryType()
+                        && t.type() != PlayerWorkplace.AssignmentType.QUOTA) continue;
 
-            player.displayClientMessage(Component.literal(
-                            "Quota progress: " + newCount + "/" + a.targetCount()
-                                    + " " + itemId.replace("minecraft:", "").replace("_", " ")),
-                    true);
-        });
+                int newCount = Math.min(t.currentCount() + count, t.targetCount());
+                updated.set(i, t.withProgress(newCount));
+                thisChanged = true;
 
-        player.setData(ModData.PROFESSION_DATA, profData);
+                player.displayClientMessage(Component.literal(
+                                t.taskType().displayName() + " progress: " + newCount
+                                        + "/" + t.targetCount() + " "
+                                        + itemId.replace("minecraft:", "").replace("_", " ")),
+                        true);
+            }
+            if (thisChanged) {
+                profData.setWorkplace(profession, entry.withTasks(updated));
+                anyChanged = true;
+            }
+
+            // Legacy fallback — old saves that still store the task in
+            // currentAssignment rather than activeTasks
+            PlayerWorkplace.WorkAssignment legacy = entry.currentAssignment();
+            if (legacy != null && !legacy.isComplete()
+                    && legacy.type() == PlayerWorkplace.AssignmentType.QUOTA
+                    && legacy.hasTargetItem()
+                    && legacy.targetItem().equals(itemId)) {
+                int newCount = Math.min(legacy.currentCount() + count, legacy.targetCount());
+                profData.setWorkplace(profession, entry.withAssignment(legacy.withProgress(newCount)));
+                anyChanged = true;
+                player.displayClientMessage(Component.literal(
+                                "Quota progress: " + newCount + "/" + legacy.targetCount()
+                                        + " " + itemId.replace("minecraft:", "").replace("_", " ")),
+                        true);
+            }
+        }
+        if (anyChanged) player.setData(ModData.PROFESSION_DATA, profData);
     }
 
     // =========================================================================
@@ -227,7 +300,11 @@ public class WorkplaceAssignmentManager {
         });
     }
 
-    // Update assignment completion to include business bonus
+    /**
+     * Legacy single-task completion — finds the first completed task in the
+     * active list (or the legacy currentAssignment) and pays it out. Kept so
+     * existing call sites that don't specify which task compile.
+     */
     public static void completeAssignment(ServerPlayer player,
                                           TownspersonMob npc,
                                           PlayerProfession profession,
@@ -237,19 +314,45 @@ public class WorkplaceAssignmentManager {
         PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
         if (entry == null) return;
 
-        PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
-        if (a == null || !a.isComplete()) return;
+        // Try the active list first
+        for (PlayerWorkplace.WorkAssignment t : entry.activeTasks()) {
+            if (t.isComplete()) {
+                completeAssignment(player, npc, profession, profData, data, level, t);
+                return;
+            }
+        }
+        // Fall back to the legacy currentAssignment
+        PlayerWorkplace.WorkAssignment legacy = entry.currentAssignment();
+        if (legacy != null && legacy.isComplete()) {
+            completeAssignment(player, npc, profession, profData, data, level, legacy);
+        }
+    }
+
+    /**
+     * Completes a specific task and pays out rewards. Removes the task from
+     * the active list (or clears the legacy currentAssignment if that's where
+     * it came from) and issues a replacement task automatically.
+     */
+    public static void completeAssignment(ServerPlayer player,
+                                          TownspersonMob npc,
+                                          PlayerProfession profession,
+                                          PlayerProfessionData profData,
+                                          VillageSavedData data,
+                                          ServerLevel level,
+                                          PlayerWorkplace.WorkAssignment completed) {
+        PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
+        if (entry == null || completed == null || !completed.isComplete()) return;
 
         // Award XP
         ProfessionEvents.onJobPostingCompleted(
-                player, profession, a.xpReward(), entry.villageId());
+                player, profession, completed.xpReward(), entry.villageId());
 
-        // Calculate reward with business bonus
-        long baseReward = a.coinReward();
+        // Calculate reward with business bonus (farmer only)
+        long baseReward  = completed.coinReward();
         long finalReward = baseReward;
-
         if (profession == PlayerProfession.FARMER) {
-            Optional<FarmBusinessLevel> businessLevel = data.getFarmBusinessLevel(entry.buildingId());
+            Optional<FarmBusinessLevel> businessLevel =
+                    data.getFarmBusinessLevel(entry.buildingId());
             if (businessLevel.isPresent()) {
                 finalReward = businessLevel.get().calculateTaskPayment(
                         baseReward, profData.getLevel(profession));
@@ -263,10 +366,24 @@ public class WorkplaceAssignmentManager {
 
         player.displayClientMessage(Component.literal(
                         "[" + npc.getNpcName() + "] Well done! Here is your reward: "
-                                + reward + " + " + a.xpReward() + " XP")
+                                + reward + " + " + completed.xpReward() + " XP")
                 .withStyle(net.minecraft.ChatFormatting.GREEN), false);
 
-        profData.setWorkplace(profession, entry.withAssignment(null));
+        // Remove the completed task — from activeTasks if present, else
+        // clear the legacy currentAssignment
+        PlayerWorkplace.WorkplaceEntry updated = entry;
+        boolean inActiveList = entry.activeTasks().stream()
+                .anyMatch(t -> t.issuedTick() == completed.issuedTick()
+                        && t.description().equals(completed.description()));
+        if (inActiveList) {
+            updated = updated.withTaskRemoved(completed);
+        }
+        if (entry.currentAssignment() != null
+                && entry.currentAssignment().issuedTick() == completed.issuedTick()) {
+            updated = updated.withAssignment(null);
+        }
+
+        profData.setWorkplace(profession, updated);
         player.setData(ModData.PROFESSION_DATA, profData);
 
         issueAssignment(player, npc, profession, profData, level);
@@ -297,14 +414,94 @@ public class WorkplaceAssignmentManager {
     // Issue assignment
     // =========================================================================
 
+    /**
+     * Checks village-level demand (open crafting orders) and returns a typed,
+     * HIGH-priority task if one matches the player's profession. When there
+     * are active needs, this returns a concrete {@link WorkTaskType#CRAFT}
+     * or {@link WorkTaskType#DELIVER} task that is actually completable by
+     * {@code TaskCompletionEvents}. When nothing is pending it returns empty
+     * and the caller falls back to the operational quota/busywork generator.
+     *
+     * <p>Priority tiers applied:</p>
+     * <ul>
+     *   <li>Open crafting order the profession can fulfil → CRAFT, HIGH</li>
+     *   <li>No demand → caller's fallback (NORMAL quota or LOW busywork)</li>
+     * </ul>
+     */
+    private static Optional<PlayerWorkplace.WorkAssignment> tryGenerateNeedBasedTask(
+            PlayerProfession profession,
+            PlayerProfessionData profData,
+            ServerLevel level) {
+
+        PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
+        if (entry == null) return Optional.empty();
+
+        VillageSavedData data = VillageSavedData.get(level);
+        List<CraftingOrder> orders = data.getOrdersForVillage(entry.villageId());
+        if (orders.isEmpty()) return Optional.empty();
+
+        // Find the most urgent open order this profession can produce
+        for (CraftingOrder order : orders) {
+            if (!order.isOpen()) continue;
+            if (order.getRemainingCount() <= 0) continue;
+
+            Item item = resolveItem(order.getItemId());
+            if (item == null) continue;
+
+            // Filter by profession — does a Blacksmith normally craft this item?
+            if (!professionProducesItem(profession, new ItemStack(item))) continue;
+
+            int remaining = order.getRemainingCount();
+            long tick = level.getGameTime();
+            int xp = profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING);
+
+            String desc = "Craft and deliver " + remaining + "× "
+                    + item.getDescription().getString()
+                    + " (open village order)";
+
+            return Optional.of(PlayerWorkplace.WorkAssignment.quota(
+                    desc, order.getItemId(), remaining,
+                    tick, tick + QUOTA_DEADLINE,
+                    xp + 20,
+                    order.getBronzeReward(),
+                    WorkTaskType.CRAFT,
+                    TaskPriority.HIGH,
+                    entry.buildingId().toString()));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * True if the profession's relevance checks recognise the given item
+     * as something they normally craft. Delegates to the profession's own
+     * {@code isRelevantCraft} method so the logic stays in one place.
+     */
+    private static boolean professionProducesItem(PlayerProfession profession,
+                                                  ItemStack stack) {
+        return profession.isRelevantCraft(stack);
+    }
+
+    private static Item resolveItem(String itemId) {
+        try {
+            var key = net.minecraft.resources.Identifier.parse(itemId);
+            return net.minecraft.core.registries.BuiltInRegistries.ITEM
+                    .get(key).map(h -> h.value()).orElse(null);
+        } catch (Exception e) { return null; }
+    }
+
     public static void issueAssignment(ServerPlayer player,
                                        TownspersonMob npc,
                                        PlayerProfession profession,
                                        PlayerProfessionData profData,
                                        ServerLevel level) {
         int lvl = profData.getLevel(profession);
+
+        // Step 1: Try a need-based HIGH-priority task (crafting orders).
+        // Falls back to operational NORMAL task if nothing is pending.
         PlayerWorkplace.WorkAssignment assignment =
-                generateAssignment(profession, lvl, level.getGameTime());
+                tryGenerateNeedBasedTask(profession, profData, level)
+                        .orElseGet(() -> generateAssignment(
+                                profession, lvl, level.getGameTime()));
 
         PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
         if (entry == null) return;
@@ -345,7 +542,8 @@ public class WorkplaceAssignmentManager {
                                 getQuotaCount(level), 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
-                                getQuotaCount(level) * 2L);
+                                getQuotaCount(level) * 2L)
+                                .withType(WorkTaskType.GATHER, TaskPriority.NORMAL);
 
                         case MIXED_CROPS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.QUOTA,
@@ -354,7 +552,8 @@ public class WorkplaceAssignmentManager {
                                 getQuotaCount(level) / 2, 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 10,
-                                getQuotaCount(level) * 3L);
+                                getQuotaCount(level) * 3L)
+                                .withType(WorkTaskType.GATHER, TaskPriority.NORMAL);
 
                         case ANIMAL_PRODUCTS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.QUOTA,
@@ -363,84 +562,105 @@ public class WorkplaceAssignmentManager {
                                 getQuotaCount(level) / 4, 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 20,
-                                getQuotaCount(level) * 8L);
+                                getQuotaCount(level) * 8L)
+                                .withType(WorkTaskType.GATHER, TaskPriority.NORMAL);
 
+                        // MARKET_SALES tracks coin volume, not item deposits.
+                        // Kept as BUSYWORK for now — triggers through onWorkplaceSale.
                         case MARKET_SALES -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.QUOTA,
                                 "Sell " + getQuotaCount(level) + " worth of farm goods at market",
-                                "minecraft:emerald", // Placeholder for coin tracking
+                                "minecraft:emerald",
                                 getQuotaCount(level), 0,
                                 currentTick, currentTick + QUOTA_DEADLINE,
                                 profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING) + 30,
-                                getQuotaCount(level) * 5L);
+                                getQuotaCount(level) * 5L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.NORMAL);
                     };
                 } else {
                     // Low-level task assignments
                     FarmerTaskType taskType = chooseTaskType(level);
                     yield switch (taskType) {
+                        // HARVEST_PLOT is a proper HARVEST task — 10 mature crop
+                        // breaks anywhere count toward it, detected by
+                        // TaskCompletionEvents.onCropHarvest.
                         case HARVEST_PLOT -> new PlayerWorkplace.WorkAssignment(
-                                PlayerWorkplace.AssignmentType.TASK,
-                                "Harvest all mature crops from the assigned farm plot",
-                                null, 1, 0,
+                                PlayerWorkplace.AssignmentType.QUOTA,
+                                "Harvest 10 mature crops from the farm plots",
+                                "", 10, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                20, 4L);
+                                20, 4L)
+                                .withType(WorkTaskType.HARVEST, TaskPriority.NORMAL);
 
+                        // The following are filler tasks until dedicated event
+                        // hooks are written (seed planting, bone-meal usage,
+                        // animal feeding). BUSYWORK at LOW so real work preempts.
                         case PLANT_SEEDS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Plant 64 seeds in empty farmland",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                15, 3L);
+                                15, 3L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case FEED_ANIMALS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Feed 8 animals in the pen to prepare for breeding",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                25, 5L);
+                                25, 5L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case COLLECT_PRODUCTS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Collect eggs, milk, or wool from animals in the pen",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                20, 4L);
+                                20, 4L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case FERTILIZE_CROPS -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Apply bone meal to crops to accelerate growth",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                18, 3L);
+                                18, 3L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
                         case MARKET_DELIVERY -> new PlayerWorkplace.WorkAssignment(
                                 PlayerWorkplace.AssignmentType.TASK,
                                 "Take farm goods to the market and manage the stall for 2 hours",
-                                null, 1, 0,
+                                "", 1, 0,
                                 currentTick, currentTick + TASK_DEADLINE,
-                                30, 6L);
+                                30, 6L)
+                                .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
                     };
                 }
             }
 
             // ── BLACKSMITH ────────────────────────────────────────────────────
+            // Quota = craft iron pickaxes (CRAFT type — detected via ItemCraftedEvent).
+            // Simple tasks are BUSYWORK until dedicated event hooks exist.
             case BLACKSMITH -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
-                    "Craft and deliver " + getQuotaCount(level) + " iron tools",
+                    "Craft and deliver " + getQuotaCount(level) + " iron pickaxes",
                     "minecraft:iron_pickaxe",
                     getQuotaCount(level), 0,
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 8L)
+                    .withType(WorkTaskType.CRAFT, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleBlacksmithTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 6L);
+                    30, 6L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── CARPENTER ────────────────────────────────────────────────────
+            // Quota = craft oak planks (CRAFT type — detected via ItemCraftedEvent).
             case CARPENTER -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
@@ -450,54 +670,63 @@ public class WorkplaceAssignmentManager {
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 3L)
+                    .withType(WorkTaskType.CRAFT, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleCarpenterTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 4L);
+                    30, 4L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── MINER ────────────────────────────────────────────────────────
+            // Quota = deliver raw iron (GATHER type — detected via onItemDelivered).
             case MINER -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
-                    "Mine and deliver " + getQuotaCount(level) + " iron ore",
+                    "Mine and deliver " + getQuotaCount(level) + " raw iron",
                     "minecraft:raw_iron",
                     getQuotaCount(level), 0,
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 4L)
+                    .withType(WorkTaskType.GATHER, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleMinerTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 5L);
+                    30, 5L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── MERCHANT ─────────────────────────────────────────────────────
-            // Merchants are assessed on how much they sell and how many goods
-            // they move through the market. Low-level tasks are about stocking
-            // and pricing; high-level quotas require selling specific volumes.
+            // Merchant quota tracks sale volume, which comes through
+            // onWorkplaceSale rather than item deposits — so it's BUSYWORK
+            // at NORMAL priority until a dedicated sale-based advancement
+            // hook is written. Simple tasks remain BUSYWORK/LOW.
             case MERCHANT -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
                     "Sell " + getQuotaCount(level) + " items at the market",
-                    "minecraft:paper",          // placeholder — any item sold counts
+                    "minecraft:paper",
                     getQuotaCount(level), 0,
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 5L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleMerchantTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 8L);
+                    30, 8L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
 
             // ── GUARD ─────────────────────────────────────────────────────────
-            // Guards are assessed on patrols and security readiness. Low-level
-            // tasks are about inspections and equipment; high-level quotas
-            // require delivering a stockpile of weapons or armour for the garrison.
+            // Quota = deliver iron swords to the garrison (GATHER type —
+            // detected via onItemDelivered to the guard tower's chest).
+            // Simple tasks remain BUSYWORK/LOW until patrol waypoints /
+            // bounty boards are wired up.
             case GUARD -> isQuota
                     ? new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.QUOTA,
@@ -507,12 +736,14 @@ public class WorkplaceAssignmentManager {
                     currentTick, currentTick + QUOTA_DEADLINE,
                     profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING),
                     getQuotaCount(level) * 10L)
+                    .withType(WorkTaskType.GATHER, TaskPriority.NORMAL)
                     : new PlayerWorkplace.WorkAssignment(
                     PlayerWorkplace.AssignmentType.TASK,
                     getSimpleGuardTask(level),
-                    null, 1, 0,
+                    "", 1, 0,
                     currentTick, currentTick + TASK_DEADLINE,
-                    30, 7L);
+                    30, 7L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
         };
     }
 
@@ -711,24 +942,46 @@ public class WorkplaceAssignmentManager {
 
                 PlayerProfession profession = e.getKey();
 
-                // Advance quota assignment if the produced item matches
-                PlayerWorkplace.WorkAssignment assignment = entry.currentAssignment();
-                if (assignment != null
-                        && assignment.type() == PlayerWorkplace.AssignmentType.QUOTA
-                        && assignment.targetItem().equals(itemId)
-                        && !assignment.isComplete()) {
+                // Advance matching tasks in the active list — CRAFT/SMELT/
+                // PROCESS/GATHER/DELIVER with this item
+                List<PlayerWorkplace.WorkAssignment> updated =
+                        new ArrayList<>(entry.activeTasks());
+                boolean thisChanged = false;
+                for (int i = 0; i < updated.size(); i++) {
+                    PlayerWorkplace.WorkAssignment t = updated.get(i);
+                    if (t.isComplete()) continue;
+                    if (!t.hasTargetItem() || !t.targetItem().equals(itemId)) continue;
+                    boolean matches = t.taskType().isProductionType()
+                            || t.taskType().isItemDeliveryType()
+                            || t.type() == PlayerWorkplace.AssignmentType.QUOTA;
+                    if (!matches) continue;
 
-                    int newCount = Math.min(
-                            assignment.currentCount() + count,
-                            assignment.targetCount());
-
-                    profData.setWorkplace(profession,
-                            entry.withAssignment(assignment.withProgress(newCount)));
+                    int newCount = Math.min(t.currentCount() + count, t.targetCount());
+                    updated.set(i, t.withProgress(newCount));
+                    thisChanged = true;
 
                     player.displayClientMessage(Component.literal(
-                            "Quota progress: " + newCount + "/" + assignment.targetCount()
-                                    + " " + itemId.replace("minecraft:", "")
+                            t.taskType().displayName() + " progress: "
+                                    + newCount + "/" + t.targetCount() + " "
+                                    + itemId.replace("minecraft:", "")
                                     .replace("_", " ")), true);
+                }
+                if (thisChanged) {
+                    profData.setWorkplace(profession, entry.withTasks(updated));
+                    dirty = true;
+                }
+
+                // Legacy fallback — update the single currentAssignment
+                PlayerWorkplace.WorkAssignment legacy = entry.currentAssignment();
+                if (legacy != null
+                        && legacy.type() == PlayerWorkplace.AssignmentType.QUOTA
+                        && legacy.hasTargetItem()
+                        && legacy.targetItem().equals(itemId)
+                        && !legacy.isComplete()) {
+                    int newCount = Math.min(
+                            legacy.currentCount() + count, legacy.targetCount());
+                    profData.setWorkplace(profession,
+                            entry.withAssignment(legacy.withProgress(newCount)));
                     dirty = true;
                 }
 
