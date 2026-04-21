@@ -70,7 +70,8 @@ public class Caravan implements TravellingGroup {
 
     // Transient — never persisted directly; rebuilt at spawn
     private transient boolean isSpawned = false;
-    // Transient — never persisted
+    // Transient — overrides road block lookup when set by debug dispatch command
+    @org.jetbrains.annotations.Nullable private transient List<BlockPos> overridePath;
 
     public Caravan(UUID caravanId, UUID routeId,
                    UUID originVillageId, UUID destVillageId,
@@ -218,6 +219,10 @@ public class Caravan implements TravellingGroup {
     public void setSpawned(boolean spawned) {
         this.isSpawned = spawned;
     }
+
+    @org.jetbrains.annotations.Nullable
+    public List<BlockPos> getOverridePath() { return overridePath; }
+    public void setOverridePath(List<BlockPos> path) { this.overridePath = path; }
 
 
     // =========================================================================

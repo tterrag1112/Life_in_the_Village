@@ -31,10 +31,15 @@ import tterrag1112.life_in_the_village.Village.Economy.Market.MarketRentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MerchantStartingStock;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.BoatCaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadEventScheduler;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Event.VillageEventScheduler;
 import tterrag1112.life_in_the_village.Village.Needs.VillageNeedsCalculator;
@@ -572,5 +577,53 @@ class RoadEventTickSystem implements TickSubsystem {
     @Override
     public void tick(TickContext ctx) {
         RoadEventScheduler.tick(ctx.level(), ctx.villageData());
+    }
+}
+
+class GraphEdgeRealizationSystem implements TickSubsystem {
+    private static final int REALISE_RADIUS = 384;
+
+    @Override public String name()     { return "graph_edge_realization"; }
+    @Override public int    interval() { return 40; }
+    @Override public int    priority() { return 150; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        ServerLevel level = ctx.level();
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = roadData.getGraph();
+
+        List<? extends ServerPlayer> players = level.players();
+        if (players.isEmpty()) return;
+
+        for (RoadEdge edge : graph.allEdges()) {
+            if (edge.isRealized()) continue;
+            if (edge.getCellPath().isEmpty()) continue;
+            if (!isPlayerNearEdge(players, edge)) continue;
+
+            EdgeRealizer.realizeEdge(level, edge, graph, ctx.villageData());
+
+            if (!edge.getBlockPath().isEmpty()) {
+                roadData.markDirty();
+                System.out.println("[GraphEdgeRealizationSystem] Realized edge "
+                        + edge.getEdgeId().toString().substring(0, 8) + "… ("
+                        + edge.getBlockPath().size() + " blocks)");
+            }
+            break; // one per scan
+        }
+    }
+
+    private static boolean isPlayerNearEdge(List<? extends ServerPlayer> players,
+                                             RoadEdge edge) {
+        long radiusSq = (long) REALISE_RADIUS * REALISE_RADIUS;
+        for (long cellKey : edge.getCellPath()) {
+            BlockPos center = AtlasRouteRouter.cellKeyToBlockCenter(cellKey);
+            for (ServerPlayer p : players) {
+                long dx = (long)(p.getX() - center.getX());
+                long dz = (long)(p.getZ() - center.getZ());
+                if (dx * dx + dz * dz <= radiusSq) return true;
+            }
+        }
+        return false;
     }
 }

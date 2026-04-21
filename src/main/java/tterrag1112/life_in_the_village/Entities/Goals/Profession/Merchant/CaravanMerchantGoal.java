@@ -77,14 +77,19 @@ public class CaravanMerchantGoal extends Goal {
             return;
         }
 
-        TradeRoad road = VillageSavedData.get(level)
-                .getRouteById(caravan.getRouteId())
-                .flatMap(r -> VillageSavedData.get(level)
-                        .getRoadById(r.getConnectionId()))
-                .orElse(null);
-        if (road == null || road.getBlocks().isEmpty()) return;
-
-        List<BlockPos> blocks = road.getBlocks();
+        List<BlockPos> blocks;
+        List<BlockPos> overridePath = caravan.getOverridePath();
+        if (overridePath != null && !overridePath.isEmpty()) {
+            blocks = overridePath;
+        } else {
+            TradeRoad road = VillageSavedData.get(level)
+                    .getRouteById(caravan.getRouteId())
+                    .flatMap(r -> VillageSavedData.get(level)
+                            .getRoadById(r.getConnectionId()))
+                    .orElse(null);
+            if (road == null || road.getBlocks().isEmpty()) return;
+            blocks = road.getBlocks();
+        }
         boolean returning = caravan.getState()
                 == Caravan.CaravanState.RETURNING;
 
