@@ -36,7 +36,9 @@ public record OpenVillageBookPacket(
         // Per-building purchase entries for the Company Buildings page
         List<PurchasableBuildingEntry> purchasableBuildings,
         String seasonName,          // e.g. "Autumn" or "Winter"
-        int    openOrderCount       // number of unclaimed crafting orders
+        int    openOrderCount,      // number of unclaimed crafting orders
+        List<CommissionEntry>        commissions,
+        String openSection          // "" = OVERVIEW, else Section enum name to open
 ) implements CustomPacketPayload {
 
     // =========================================================================
@@ -155,6 +157,10 @@ public record OpenVillageBookPacket(
                 }
                 buf.writeUtf(pkt.seasonName());
                 buf.writeVarInt(pkt.openOrderCount());
+                buf.writeVarInt(pkt.commissions().size());
+                for (CommissionEntry ce : pkt.commissions())
+                    CommissionEntry.STREAM_CODEC.encode(buf, ce);
+                buf.writeUtf(pkt.openSection());
             },
 
             // -----------------------------------------------------------------
@@ -222,6 +228,11 @@ public record OpenVillageBookPacket(
                 }
                 String  seasonName     = buf.readUtf();
                 int     openOrderCount = buf.readVarInt();
+                int     cCount = buf.readVarInt();
+                List<CommissionEntry> commissions = new ArrayList<>();
+                for (int i = 0; i < cCount; i++)
+                    commissions.add(CommissionEntry.STREAM_CODEC.decode(buf));
+                String openSection = buf.readUtf();
 
                 return new OpenVillageBookPacket(
                         villageId, villageName, leaderName, tierName,
@@ -231,7 +242,8 @@ public record OpenVillageBookPacket(
                         kingdom, event, routeCount,
                         hasCompany, companyId, companyName,
                         workerCount, companyBuildings,
-                        purchasable,seasonName, openOrderCount);
+                        purchasable, seasonName, openOrderCount,
+                        commissions, openSection);
             }
     );
 

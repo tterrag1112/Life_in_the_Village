@@ -5,6 +5,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
+import tterrag1112.life_in_the_village.Gui.Commissions.CommissionBoardPanel;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
 import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket;
@@ -27,7 +28,7 @@ public class VillageBookScreen extends Screen {
     private static final int MAP_H     = 180;
 
     private enum Section {
-        OVERVIEW, HOUSING, COMPANY_BUILDINGS, STATISTICS, MAP, STANDINGS
+        OVERVIEW, HOUSING, COMPANY_BUILDINGS, STATISTICS, COMMISSIONS, MAP, STANDINGS
     }
 
     private enum PurchaseAction { BUY_HOUSE, BUY_COMPANY_BUILDING }
@@ -52,10 +53,15 @@ public class VillageBookScreen extends Screen {
     private final VillageMapRenderer mapRenderer = new VillageMapRenderer();
     private Sidebar<Section> sidebar;
     private ScrollList<PurchaseRow> purchaseList;
+    private CommissionBoardPanel commissionPanel;
 
     public VillageBookScreen(OpenVillageBookPacket data) {
         super(Component.literal("Village — " + data.villageName()));
         this.data = data;
+        if (!data.openSection().isEmpty()) {
+            try { currentSection = Section.valueOf(data.openSection()); }
+            catch (IllegalArgumentException ignored) {}
+        }
     }
 
     @Override
@@ -124,11 +130,12 @@ public class VillageBookScreen extends Screen {
 
         sidebar = new Sidebar<>(bookX + 2, bookY + 30, SIDEBAR_W - 2, 18,
                 List.of(
-                        new Sidebar.Entry<>(Section.OVERVIEW,   "Overview",    true),
-                        new Sidebar.Entry<>(Section.HOUSING,    "Housing",     true),
-                        new Sidebar.Entry<>(Section.STATISTICS, "Statistics",  true),
-                        new Sidebar.Entry<>(Section.MAP,        "Map",         true),
-                        new Sidebar.Entry<>(Section.STANDINGS,  "My Standing", true)
+                        new Sidebar.Entry<>(Section.OVERVIEW,     "Overview",     true),
+                        new Sidebar.Entry<>(Section.HOUSING,      "Housing",      true),
+                        new Sidebar.Entry<>(Section.STATISTICS,   "Statistics",   true),
+                        new Sidebar.Entry<>(Section.COMMISSIONS,  "Commissions",  true),
+                        new Sidebar.Entry<>(Section.MAP,          "Map",          true),
+                        new Sidebar.Entry<>(Section.STANDINGS,    "My Standing",  true)
                 ),
                 () -> currentSection == Section.COMPANY_BUILDINGS
                         ? Section.STANDINGS : currentSection,
@@ -219,6 +226,7 @@ public class VillageBookScreen extends Screen {
             case HOUSING           -> drawPurchaseSectionHeader(g, px, py, pw, "Your wallet:", true);
             case COMPANY_BUILDINGS -> drawCompanyBuildingsPage(g, px, py, pw, maxY);
             case STATISTICS        -> drawStatistics(g, px, py, pw, maxY);
+            case COMMISSIONS       -> drawCommissions(g, px, py, pw, maxY - py, mx, my);
             case MAP               -> drawMap(g, px, py, pw, maxY, mx, my);
             case STANDINGS         -> drawStandings(g, px, py, pw, maxY);
         }
@@ -458,6 +466,18 @@ public class VillageBookScreen extends Screen {
         }
     }
 
+    private void drawCommissions(GuiGraphics g, int px, int py, int pw, int ph,
+                                  int mx, int my) {
+        if (commissionPanel == null) {
+            commissionPanel = new CommissionBoardPanel(orderId ->
+                    ClientPacketDistributor.sendToServer(new VillageActionPacket(
+                            VillageActionPacket.ActionType.CLAIM_COMMISSION,
+                            data.villageId(), orderId, "", 0)));
+        }
+        commissionPanel.setEntries(data.commissions());
+        commissionPanel.render(g, font, px, py, pw, ph, mx, my);
+    }
+
     private void drawMap(GuiGraphics g, int px, int py, int pw, int maxY,
                          int mx, int my) {
         int mapLeft = px + (pw - MAP_W) / 2;
@@ -626,12 +646,16 @@ public class VillageBookScreen extends Screen {
 
         if (sidebar.mouseClicked(mx, my)) return true;
         if (purchaseList != null && purchaseList.mouseClicked(mx, my, event.button())) return true;
+        if (currentSection == Section.COMMISSIONS && commissionPanel != null
+                && commissionPanel.mouseClicked(mx, my, event.button())) return true;
         return super.mouseClicked(event, isDoubleClick);
     }
 
     @Override
     public boolean mouseScrolled(double mx, double my, double sx, double sy) {
         if (purchaseList != null && purchaseList.mouseScrolled(mx, my, sy)) return true;
+        if (currentSection == Section.COMMISSIONS && commissionPanel != null
+                && commissionPanel.mouseScrolled(mx, my, sy)) return true;
         return super.mouseScrolled(mx, my, sx, sy);
     }
 
@@ -699,6 +723,7 @@ public class VillageBookScreen extends Screen {
             case HOUSING           -> "Housing";
             case COMPANY_BUILDINGS -> "Buy Building";
             case STATISTICS        -> "Statistics";
+            case COMMISSIONS       -> "Commissions";
             case MAP               -> "Map";
             case STANDINGS         -> "My Standing";
         };
@@ -727,6 +752,15 @@ public class VillageBookScreen extends Screen {
             UUID villageId,
             net.minecraft.server.level.ServerLevel level,
             tterrag1112.life_in_the_village.Networking.VillageSavedData vdata) {
+        sendOpenPacket(player, villageId, level, vdata, "");
+    }
+
+    public static void sendOpenPacket(
+            net.minecraft.server.level.ServerPlayer player,
+            UUID villageId,
+            net.minecraft.server.level.ServerLevel level,
+            tterrag1112.life_in_the_village.Networking.VillageSavedData vdata,
+            String openSection) {
 
         var village = vdata.getVillageById(villageId).orElse(null);
         if (village == null) return;
@@ -867,6 +901,13 @@ public class VillageBookScreen extends Screen {
         int openOrderCount   = (int) vdata.getOrdersForVillage(village.getId())
                 .stream().filter(CraftingOrder::isOpen).count();
 
+        java.util.List<tterrag1112.life_in_the_village.Networking.CommissionEntry> commissions =
+                vdata.getOrdersForVillage(villageId).stream()
+                        .filter(tterrag1112.life_in_the_village.Village.Economy.CraftingOrder::isActive)
+                        .map(order -> tterrag1112.life_in_the_village.Networking.CommissionEntry
+                                .fromOrder(order, level, player))
+                        .toList();
+
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
                 new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket(
                         villageId, village.getName(), leaderName, tier,
@@ -876,6 +917,7 @@ public class VillageBookScreen extends Screen {
                         kingdomName, activeEvent, routeCount,
                         hasCompanyHere, companyId, companyName,
                         companyWorkerCount, companyBuildingNames,
-                        purchasable, seasonName, openOrderCount));
+                        purchasable, seasonName, openOrderCount,
+                        commissions, openSection));
     }
 }
