@@ -18,11 +18,35 @@ public class Quest {
     // Enums
     // -------------------------------------------------------------------------
 
+    /**
+     * Guild-specific quest type names.
+     *
+     * <p>Each constant maps to a {@link tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType}
+     * via {@link #toWorkTaskType()} so guild quests and profession work
+     * assignments share a single completion-detection code path. Adding
+     * new guild-only flavours still requires an entry here, but the
+     * actual detection logic lives with {@code WorkTaskType}.</p>
+     */
     public enum QuestType {
         GATHER, HUNT, EXPLORE, ESCORT, DELIVER;
 
         public static final Codec<QuestType> CODEC = Codec.STRING.xmap(
                 QuestType::valueOf, QuestType::name);
+
+        /**
+         * Maps this guild quest type to the shared task-type vocabulary.
+         * EXPLORE maps to SURVEY since mechanically they're identical
+         * (travel to a location and return with information).
+         */
+        public tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType toWorkTaskType() {
+            return switch (this) {
+                case GATHER  -> tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType.GATHER;
+                case HUNT    -> tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType.HUNT;
+                case EXPLORE -> tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType.SURVEY;
+                case ESCORT  -> tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType.ESCORT;
+                case DELIVER -> tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType.DELIVER;
+            };
+        }
     }
 
     public enum QuestDifficulty {

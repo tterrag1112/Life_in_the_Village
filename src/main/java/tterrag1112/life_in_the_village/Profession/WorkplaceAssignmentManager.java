@@ -5,6 +5,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -14,6 +15,9 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Profession.Tasks.TaskPriority;
+import tterrag1112.life_in_the_village.Profession.Tasks.WorkTaskType;
+import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
 import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -297,14 +301,94 @@ public class WorkplaceAssignmentManager {
     // Issue assignment
     // =========================================================================
 
+    /**
+     * Checks village-level demand (open crafting orders) and returns a typed,
+     * HIGH-priority task if one matches the player's profession. When there
+     * are active needs, this returns a concrete {@link WorkTaskType#CRAFT}
+     * or {@link WorkTaskType#DELIVER} task that is actually completable by
+     * {@code TaskCompletionEvents}. When nothing is pending it returns empty
+     * and the caller falls back to the operational quota/busywork generator.
+     *
+     * <p>Priority tiers applied:</p>
+     * <ul>
+     *   <li>Open crafting order the profession can fulfil → CRAFT, HIGH</li>
+     *   <li>No demand → caller's fallback (NORMAL quota or LOW busywork)</li>
+     * </ul>
+     */
+    private static Optional<PlayerWorkplace.WorkAssignment> tryGenerateNeedBasedTask(
+            PlayerProfession profession,
+            PlayerProfessionData profData,
+            ServerLevel level) {
+
+        PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
+        if (entry == null) return Optional.empty();
+
+        VillageSavedData data = VillageSavedData.get(level);
+        List<CraftingOrder> orders = data.getOrdersForVillage(entry.villageId());
+        if (orders.isEmpty()) return Optional.empty();
+
+        // Find the most urgent open order this profession can produce
+        for (CraftingOrder order : orders) {
+            if (!order.isOpen()) continue;
+            if (order.getRemainingCount() <= 0) continue;
+
+            Item item = resolveItem(order.getItemId());
+            if (item == null) continue;
+
+            // Filter by profession — does a Blacksmith normally craft this item?
+            if (!professionProducesItem(profession, new ItemStack(item))) continue;
+
+            int remaining = order.getRemainingCount();
+            long tick = level.getGameTime();
+            int xp = profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING);
+
+            String desc = "Craft and deliver " + remaining + "× "
+                    + item.getDescription().getString()
+                    + " (open village order)";
+
+            return Optional.of(PlayerWorkplace.WorkAssignment.quota(
+                    desc, order.getItemId(), remaining,
+                    tick, tick + QUOTA_DEADLINE,
+                    xp + 20,
+                    order.getBronzeReward(),
+                    WorkTaskType.CRAFT,
+                    TaskPriority.HIGH,
+                    entry.buildingId().toString()));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * True if the profession's relevance checks recognise the given item
+     * as something they normally craft. Delegates to the profession's own
+     * {@code isRelevantCraft} method so the logic stays in one place.
+     */
+    private static boolean professionProducesItem(PlayerProfession profession,
+                                                  ItemStack stack) {
+        return profession.isRelevantCraft(stack);
+    }
+
+    private static Item resolveItem(String itemId) {
+        try {
+            var key = net.minecraft.resources.Identifier.parse(itemId);
+            return net.minecraft.core.registries.BuiltInRegistries.ITEM
+                    .get(key).map(h -> h.value()).orElse(null);
+        } catch (Exception e) { return null; }
+    }
+
     public static void issueAssignment(ServerPlayer player,
                                        TownspersonMob npc,
                                        PlayerProfession profession,
                                        PlayerProfessionData profData,
                                        ServerLevel level) {
         int lvl = profData.getLevel(profession);
+
+        // Step 1: Try a need-based HIGH-priority task (crafting orders).
+        // Falls back to operational NORMAL task if nothing is pending.
         PlayerWorkplace.WorkAssignment assignment =
-                generateAssignment(profession, lvl, level.getGameTime());
+                tryGenerateNeedBasedTask(profession, profData, level)
+                        .orElseGet(() -> generateAssignment(
+                                profession, lvl, level.getGameTime()));
 
         PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
         if (entry == null) return;

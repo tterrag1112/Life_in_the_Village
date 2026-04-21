@@ -77,10 +77,16 @@ public final class NpcInteractionHandler {
                                            InteractionHand hand) {
         if (npc.level().isClientSide()) return InteractionResult.SUCCESS;
 
-        // ── Debug: stick shows info ──────────────────────────────────────────
+        // ── Debug: stick right-click ─────────────────────────────────────────
+        // Normal click → full debug info (phase, blocking reason, XP, role, etc.)
+        // Shift + click → list NPC's personal inventory contents
         if (hand == InteractionHand.MAIN_HAND
                 && player.getMainHandItem().is(Items.STICK)) {
-            npc.showDebugInfo(player);
+            if (player.isShiftKeyDown()) {
+                npc.showInventoryInfo(player);
+            } else {
+                npc.showDebugInfo(player);
+            }
             return InteractionResult.SUCCESS;
         }
 

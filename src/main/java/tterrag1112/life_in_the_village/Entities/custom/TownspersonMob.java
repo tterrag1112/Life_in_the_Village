@@ -142,7 +142,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     @Nullable private UUID assignedPlotId = null;
     @Nullable private UUID companyId = null;
     private boolean workingBlocked = false;
-    private String currentActivity = "";
+    private tterrag1112.life_in_the_village.Entities.ActivityState activityState =
+            tterrag1112.life_in_the_village.Entities.ActivityState.IDLE;
     private UUID currentExpeditionId = null;
 
     // =========================================================================
@@ -293,8 +294,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         if (!adventurerTitle.isEmpty()) {
             display.append(" ").append(adventurerTitle);
         }
-        if (!currentActivity.isEmpty()) {
-            display.append(" — ").append(currentActivity);
+        String actDisplay = activityState.toDisplayString();
+        if (!actDisplay.isEmpty()) {
+            display.append(" — ").append(actDisplay);
         }
 
         String finalName = display.toString().trim();
@@ -565,13 +567,30 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public boolean isWorkingBlocked()                   { return workingBlocked; }
     public void setIsWorkingBlocked(boolean blocked)     { this.workingBlocked = blocked; }
 
+    /** Sets the NPC's current activity from a plain string (backward-compatible entry point). */
     public void setCurrentActivity(String activity) {
-        if (activity.equals(currentActivity)) return;
-        currentActivity = activity;
+        setActivityState(tterrag1112.life_in_the_village.Entities.ActivityState.of(activity));
+    }
+
+    /** Full structured setter — use this when you also want to record a blocking reason. */
+    public void setActivityState(tterrag1112.life_in_the_village.Entities.ActivityState state) {
+        if (state == null) state = tterrag1112.life_in_the_village.Entities.ActivityState.IDLE;
+        if (state.equals(activityState)) return;
+        activityState = state;
         updateDisplayName();
     }
-    public void clearCurrentActivity() { setCurrentActivity(""); }
-    public String getCurrentActivity() { return currentActivity; }
+
+    public void clearCurrentActivity() {
+        setActivityState(tterrag1112.life_in_the_village.Entities.ActivityState.IDLE);
+    }
+
+    /** Returns the display-safe activity string (no internal blocking reason). */
+    public String getCurrentActivity() { return activityState.toDisplayString(); }
+
+    /** Returns the full structured activity state for debug and goal use. */
+    public tterrag1112.life_in_the_village.Entities.ActivityState getActivityState() {
+        return activityState;
+    }
 
     // =========================================================================
     // COMPANY
@@ -713,32 +732,113 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     // =========================================================================
 
     public void showDebugInfo(Player player) {
+        tterrag1112.life_in_the_village.Entities.ActivityState as = activityState;
+
         player.displayClientMessage(Component.literal(
                         "=== " + getDisplayName().getString() + " ===")
                 .withStyle(ChatFormatting.GOLD), false);
-        player.displayClientMessage(Component.literal("UUID: " + getUUID()), false);
-        player.displayClientMessage(Component.literal("Profession: " + getProfession()), false);
-        player.displayClientMessage(Component.literal("Life Stage: " + getLifeStage()
-                + " (age " + age + " days)"), false);
-        player.displayClientMessage(Component.literal("Family Role: " + getFamilyRole()), false);
-        player.displayClientMessage(Component.literal("Traits: "
-                + (getTraits().isEmpty() ? "none"
-                : getTraits().stream().map(Enum::name)
-                .collect(Collectors.joining(", ")))), false);
-        player.displayClientMessage(Component.literal("Wealth: " + getWealth()), false);
-        player.displayClientMessage(Component.literal("House: "
-                + getHouseId().map(UUID::toString).orElse("none")), false);
-        player.displayClientMessage(Component.literal("Building: "
-                + getAssignedBuildingId().map(UUID::toString).orElse("none")), false);
-        player.displayClientMessage(Component.literal("Village: "
-                + getAssignedVillageName().orElse("none")), false);
-        player.displayClientMessage(Component.literal("Activity: "
-                + (currentActivity.isEmpty() ? "idle" : currentActivity)), false);
-        player.displayClientMessage(Component.literal("Phase: " + getCurrentPhase()), false);
-        if (combatRole != null) {
-            player.displayClientMessage(Component.literal("Combat Role: "
-                    + combatRole.name()), false);
+
+        // ── Identity ──────────────────────────────────────────────────────────
+        player.displayClientMessage(Component.literal(
+                "UUID: " + getUUID()), false);
+        player.displayClientMessage(Component.literal(
+                "Profession: " + getProfession().getDisplayName()
+                        + " (" + getProfession().name() + ")"), false);
+        player.displayClientMessage(Component.literal(
+                "Life Stage: " + getLifeStage()
+                        + " (age " + age + " days)"), false);
+        player.displayClientMessage(Component.literal(
+                "Family Role: " + getFamilyRole()), false);
+
+        // ── Personality & economy ─────────────────────────────────────────────
+        player.displayClientMessage(Component.literal(
+                "Traits: " + (getTraits().isEmpty() ? "none"
+                        : getTraits().stream().map(Enum::name)
+                        .collect(Collectors.joining(", ")))), false);
+        player.displayClientMessage(Component.literal(
+                "Wealth: " + getWealth()
+                        + "  |  Wallet: " + getWallet().toValue()), false);
+
+        // ── Assignments ───────────────────────────────────────────────────────
+        player.displayClientMessage(Component.literal(
+                "Village: " + getAssignedVillageName().orElse("none")), false);
+        player.displayClientMessage(Component.literal(
+                "Building: " + getAssignedBuildingId().map(UUID::toString).orElse("none")), false);
+        player.displayClientMessage(Component.literal(
+                "House: " + getHouseId().map(UUID::toString).orElse("none")), false);
+
+        // ── Schedule & work state ─────────────────────────────────────────────
+        player.displayClientMessage(Component.literal(
+                "Schedule phase: " + getCurrentPhase()
+                        + "  |  Work blocked: " + workingBlocked), false);
+
+        // ── Activity — always shown; blocking reason shown when present ────────
+        if (as.isEmpty()) {
+            player.displayClientMessage(Component.literal(
+                    "Activity: idle").withStyle(ChatFormatting.GRAY), false);
+        } else {
+            net.minecraft.ChatFormatting actColour =
+                    as.isBlocked() ? ChatFormatting.RED : ChatFormatting.WHITE;
+            player.displayClientMessage(Component.literal(
+                            "Activity: " + as.toDisplayString())
+                    .withStyle(actColour), false);
+            if (as.isBlocked()) {
+                player.displayClientMessage(Component.literal(
+                                "  Blocking: " + as.blockingReason())
+                        .withStyle(ChatFormatting.RED), false);
+            }
         }
+
+        // ── NPC experience ────────────────────────────────────────────────────
+        int npcXp  = tterrag1112.life_in_the_village.Profession.NpcProfessionXp.get(this);
+        int npcLvl = tterrag1112.life_in_the_village.Profession.NpcProfessionXp.getLevel(this);
+        player.displayClientMessage(Component.literal(
+                "NPC XP: " + npcXp
+                        + "  |  Tier: " + tterrag1112.life_in_the_village.Profession.NpcProfessionXp.TIER_NAMES[npcLvl]
+                        + " (lv" + npcLvl + ")"), false);
+
+        // ── Role ──────────────────────────────────────────────────────────────
+        tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role =
+                tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager.getRole(this);
+        player.displayClientMessage(Component.literal(
+                "Role: " + (role != null ? role.name() : "none")
+                        + (role != null && role.isApprentice() ? " [apprentice]" : "")), false);
+
+        // ── Combat role (guards / adventurers only) ───────────────────────────
+        if (combatRole != null) {
+            player.displayClientMessage(Component.literal(
+                    "Combat Role: " + combatRole.name()), false);
+        }
+    }
+
+    /**
+     * Lists the NPC's personal inventory contents as chat messages.
+     * Called on shift + right-click with a stick.
+     */
+    public void showInventoryInfo(Player player) {
+        net.minecraft.world.SimpleContainer inv = getPersonalInventory();
+        player.displayClientMessage(Component.literal(
+                        "=== Inventory: " + getNpcName() + " ===")
+                .withStyle(ChatFormatting.AQUA), false);
+
+        boolean empty = true;
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            net.minecraft.world.item.ItemStack stack = inv.getItem(i);
+            if (stack.isEmpty()) continue;
+            empty = false;
+            player.displayClientMessage(Component.literal(
+                    "  [" + i + "] " + stack.getCount() + "x "
+                            + stack.getHoverName().getString()), false);
+        }
+        if (empty) {
+            player.displayClientMessage(Component.literal(
+                    "  (empty)").withStyle(ChatFormatting.GRAY), false);
+        }
+
+        // Also show wallet balance for quick reference
+        player.displayClientMessage(Component.literal(
+                "  Wallet: " + getWallet().toValue())
+                .withStyle(ChatFormatting.YELLOW), false);
     }
 
     // =========================================================================
@@ -999,7 +1099,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Sync entity data from loaded state ───────────────────────────────
         entityData.set(LIFE_STAGE, getLifeStage().name());
         entityData.set(FAMILY_ROLE, family.getRole().name());
-        currentActivity = "";
+        activityState = tterrag1112.life_in_the_village.Entities.ActivityState.IDLE;
         updateDisplayName();
         updateScale();
     }
