@@ -54,6 +54,9 @@ public class Village {
     /** Road graph: the UUID of the VILLAGE_DOCK node this village is wired to. Null until Phase 3a seeding. */
     @Nullable private UUID dockNodeId;
 
+    /** True for villages created at or after Phase 3b; the graph connector system routes their connectors. */
+    private boolean useGraphConnector = true;
+
     // =========================================================================
     // LAYOUT METADATA — persisted so the expansion system can use them
     // =========================================================================
@@ -317,11 +320,15 @@ public class Village {
                             .forGetter(Village::getVillageType),
                     Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .optionalFieldOf("dockNodeId")
-                            .forGetter(v -> Optional.ofNullable(v.dockNodeId))
+                            .forGetter(v -> Optional.ofNullable(v.dockNodeId)),
+                    Codec.BOOL
+                            .optionalFieldOf("useGraphConnector", false)
+                            .forGetter(Village::useGraphConnector)
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
-                               layoutMeta, villageType, dockNodeId) -> {
+                               layoutMeta, villageType, dockNodeId,
+                               useGraphConnector) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -332,6 +339,7 @@ public class Village {
                 villageLeaderId.ifPresent(v::setVillageLeaderId);
                 layoutMeta.applyTo(v);
                 dockNodeId.ifPresent(v::setDockNodeId);
+                v.useGraphConnector = useGraphConnector;
                 return v;
             })
     );
@@ -384,6 +392,8 @@ public class Village {
 
     public Optional<UUID> getDockNodeId() { return Optional.ofNullable(dockNodeId); }
     public void setDockNodeId(UUID id) { this.dockNodeId = id; }
+
+    public boolean useGraphConnector() { return useGraphConnector; }
 
     /**
      * Returns the best known position for this village — the realised

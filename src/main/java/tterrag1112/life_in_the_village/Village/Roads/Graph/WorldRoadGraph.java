@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Village.Roads.Graph;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.core.BlockPos;
 
 import java.util.*;
 
@@ -105,6 +106,102 @@ public class WorldRoadGraph {
 
     /** Exposes the spatial index for validator sanity checks. */
     public EdgeGridIndex getSpatialIndex() { return spatialIndex; }
+
+    /**
+     * Returns all nodes whose stored position is within {@code radiusBlocks}
+     * of (blockX, blockZ). Linear scan over all nodes — acceptable for the
+     * small node counts expected in Phase 3b.
+     */
+    public List<RoadNode> nodesNear(int blockX, int blockZ, int radiusBlocks) {
+        long rSqL = (long) radiusBlocks * radiusBlocks;
+        List<RoadNode> result = new ArrayList<>();
+        for (RoadNode node : nodes.values()) {
+            long dx = node.position().getX() - blockX;
+            long dz = node.position().getZ() - blockZ;
+            if (dx * dx + dz * dz <= rSqL) result.add(node);
+        }
+        return result;
+    }
+
+    /**
+     * Result of a {@link #splitEdgeAtCell} operation.
+     *
+     * @param junctionNodeId the new TRUNK_JUNCTION node inserted at the split point
+     * @param newEdgeAId     the half-edge from original nodeA to the junction
+     * @param newEdgeBId     the half-edge from the junction to original nodeB
+     */
+    public record SplitResult(UUID junctionNodeId, UUID newEdgeAId, UUID newEdgeBId) {}
+
+    /**
+     * Splits the edge at the given cell key. Inserts a {@link RoadNode.NodeType#TRUNK_JUNCTION}
+     * at {@code junctionPos} (caller is responsible for surface-snapping). Preserves tier,
+     * meanderProfile, maintenance, and maintainerVillageIds on both halves. If the original
+     * edge was realized, splits the block path at the block closest to junctionPos.
+     *
+     * @return the split result, or empty if the edge is not found or splitCellKey is not in its path
+     */
+    public Optional<SplitResult> splitEdgeAtCell(UUID edgeId, long splitCellKey,
+                                                  BlockPos junctionPos) {
+        RoadEdge edge = edges.get(edgeId);
+        if (edge == null) return Optional.empty();
+
+        List<Long> cellPath = edge.getCellPath();
+        int splitIdx = cellPath.indexOf(splitCellKey);
+        if (splitIdx < 0) return Optional.empty();
+
+        // Build half-paths (junction cell included in both to preserve continuity)
+        List<Long> halfPathA = new ArrayList<>(cellPath.subList(0, splitIdx + 1));
+        List<Long> halfPathB = new ArrayList<>(cellPath.subList(splitIdx, cellPath.size()));
+
+        // Split block path proportionally by nearest block to junctionPos
+        List<BlockPos> blockA = new ArrayList<>();
+        List<BlockPos> blockB = new ArrayList<>();
+        if (edge.isRealized() && !edge.getBlockPath().isEmpty()) {
+            List<BlockPos> bp = edge.getBlockPath();
+            int splitBlockIdx = 0;
+            double bestDist = Double.MAX_VALUE;
+            for (int i = 0; i < bp.size(); i++) {
+                double d = bp.get(i).distSqr(junctionPos);
+                if (d < bestDist) { bestDist = d; splitBlockIdx = i; }
+            }
+            blockA = new ArrayList<>(bp.subList(0, splitBlockIdx + 1));
+            blockB = new ArrayList<>(bp.subList(splitBlockIdx, bp.size()));
+        }
+
+        // Distribute stale cells to the half that covers them
+        Set<Long> halfASet = new HashSet<>(halfPathA);
+        Set<Long> halfBSet = new HashSet<>(halfPathB);
+
+        RoadNode junctionNode = new RoadNode(UUID.randomUUID(), junctionPos,
+                RoadNode.NodeType.TRUNK_JUNCTION, Optional.empty());
+
+        RoadEdge halfA = RoadEdge.create(
+                edge.getNodeAId(), junctionNode.nodeId(),
+                halfPathA, edge.getTier(), edge.getMeanderProfile());
+        halfA.setMaintenance(edge.getMaintenance());
+        halfA.getMaintainerVillageIds().addAll(edge.getMaintainerVillageIds());
+        for (long stale : edge.getStaleCells()) {
+            if (halfASet.contains(stale)) halfA.markCellStale(stale);
+        }
+        if (!blockA.isEmpty()) halfA.markRealized(blockA);
+
+        RoadEdge halfB = RoadEdge.create(
+                junctionNode.nodeId(), edge.getNodeBId(),
+                halfPathB, edge.getTier(), edge.getMeanderProfile());
+        halfB.setMaintenance(edge.getMaintenance());
+        halfB.getMaintainerVillageIds().addAll(edge.getMaintainerVillageIds());
+        for (long stale : edge.getStaleCells()) {
+            if (halfBSet.contains(stale)) halfB.markCellStale(stale);
+        }
+        if (!blockB.isEmpty()) halfB.markRealized(blockB);
+
+        removeEdge(edgeId);
+        addNode(junctionNode);
+        addEdge(halfA);
+        addEdge(halfB);
+
+        return Optional.of(new SplitResult(junctionNode.nodeId(), halfA.getEdgeId(), halfB.getEdgeId()));
+    }
 
     // ── Internal ─────────────────────────────────────────────────────────────
 

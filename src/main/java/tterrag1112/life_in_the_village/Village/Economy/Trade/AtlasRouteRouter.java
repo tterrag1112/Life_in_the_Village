@@ -78,18 +78,28 @@ public class AtlasRouteRouter {
      * multiplier applied to their traversal cost, biasing the router
      * toward paths that pass through them.
      *
-     * <h3>Use case</h3>
-     * Pass the cell keys of planned trade-hub villages to encourage
-     * routes between distant settlements to bend toward them. Combined
-     * with the road-cell discount that favours existing roads, this
-     * produces emergent trunk-and-spur topologies where trade hubs
-     * naturally form at route junctions.
-     *
      * @param attractors set of cell keys to favour, or null for none
      */
     public static List<Long> findRoute(WorldAtlas atlas,
                                        BlockPos from, BlockPos to,
                                        Set<Long> attractors) {
+        return findRoute(atlas, from, to, attractors, null);
+    }
+
+    /**
+     * Finds a cell-level path with per-cell attractor discount multipliers.
+     * If {@code attractorDiscounts} contains a cell key, that multiplier is
+     * used instead of the flat {@link #ATTRACTOR_DISCOUNT}. Per-cell discounts
+     * supersede the road-cell discount — the corridor already accounts for
+     * the existing road, so both are not applied together.
+     *
+     * @param attractors        flat attractor set (null = none)
+     * @param attractorDiscounts per-cell multipliers keyed by cell key (null = use flat discount only)
+     */
+    public static List<Long> findRoute(WorldAtlas atlas,
+                                       BlockPos from, BlockPos to,
+                                       Set<Long> attractors,
+                                       Map<Long, Float> attractorDiscounts) {
         int startCx = WorldAtlas.blockToCell(from.getX());
         int startCz = WorldAtlas.blockToCell(from.getZ());
         int endCx   = WorldAtlas.blockToCell(to.getX());
@@ -141,14 +151,19 @@ public class AtlasRouteRouter {
                     float cost = cellCost(cell);
                     if (cost >= Float.MAX_VALUE / 2) continue; // impassable
 
-                    // Discount cells that already carry a road
-                    if (!atlas.getRoadsForCellKey(nKey).isEmpty()) {
-                        cost *= ROAD_DISCOUNT;
-                    }
-
-                    // Discount attractor cells (planned trade-hub villages)
-                    if (attractors != null && attractors.contains(nKey)) {
-                        cost *= ATTRACTOR_DISCOUNT;
+                    // Per-cell corridor discount supersedes both road and flat-attractor discounts.
+                    Float attrDiscount = (attractorDiscounts != null) ? attractorDiscounts.get(nKey) : null;
+                    if (attrDiscount != null) {
+                        cost *= attrDiscount;
+                    } else {
+                        // Standard road discount
+                        if (!atlas.getRoadsForCellKey(nKey).isEmpty()) {
+                            cost *= ROAD_DISCOUNT;
+                        }
+                        // Flat trade-hub attractor
+                        if (attractors != null && attractors.contains(nKey)) {
+                            cost *= ATTRACTOR_DISCOUNT;
+                        }
                     }
 
                     boolean diagonal = dx != 0 && dz != 0;
