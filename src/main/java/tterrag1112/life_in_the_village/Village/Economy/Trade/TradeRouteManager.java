@@ -67,6 +67,7 @@ public class TradeRouteManager {
     public static void establishRoutes(ServerLevel level,
                                        Village newVillage,
                                        VillageSavedData data) {
+        if (newVillage.useGraphConnector()) return; // Phase 3b handles new-village routing
         BlockPos newCenter = getVillageCenter(newVillage, null, data);
         if (newCenter == null) return;
 
@@ -319,10 +320,10 @@ public class TradeRouteManager {
      * {@link WorldAtlas#ensureRegionFilled} at each. The total budget
      * is split across hops so the server tick isn't starved.
      */
-    private static void prefillAtlasCorridor(ServerLevel level,
-                                             WorldAtlas atlas,
-                                             BlockPos from,
-                                             BlockPos to) {
+    public static void prefillAtlasCorridor(ServerLevel level,
+                                            WorldAtlas atlas,
+                                            BlockPos from,
+                                            BlockPos to) {
         int dx = to.getX() - from.getX();
         int dz = to.getZ() - from.getZ();
         double dist = Math.sqrt(dx * dx + dz * dz);

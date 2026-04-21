@@ -17,6 +17,8 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Placement.DeepTerrainInspector;
 import tterrag1112.life_in_the_village.Village.Planning.*;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
@@ -221,7 +223,14 @@ public class VillageSpawner {
         VillageInhabitantPopulator.populate(level, village, data, placedBuildingsAll, rng);
         setupMerchantStalls(level, village, data, placedBuildingsAll, rng);
         VillageDecorator.decorateVillage(level, village, data, layout, footprint);
-        TradeRouteManager.establishRoutes(level, village, data);
+        TradeRouteManager.establishRoutes(level, village, data); // no-op for useGraphConnector villages
+        if (village.useGraphConnector()) {
+            WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+            ConnectorPlanner.ConnectorPlanResult result = ConnectorPlanner.planConnector(
+                    level, roadData.getGraph(), data, village,
+                    ConnectorPlanner.DEFAULT_SEARCH_RADIUS);
+            System.out.println("[ConnectorPlanner] " + result.planSummary());
+        }
         VillageSimEngine.buildBaseline(village, data, level.getGameTime());
 
         System.out.println("VillageSpawner: '" + villageName
