@@ -159,7 +159,41 @@ Event routing order (inside `mouseClicked`):
 
 Use NeoForge 1.21.x signatures — see Step 8.
 
-### 4A.4 — Preserve exactly
+### 4A.3b — Large file rewrites: use sentinel-marker chunking
+
+**Recurring issue:** a single `Write` that emits 600+ lines of Java frequently
+hits a stream idle timeout mid-response (`API Error: Stream idle timeout —
+partial response received`) and produces a truncated, uncompilable file. Any
+migrated screen over ~400 lines should be written in small chunks instead.
+
+The proven pattern (used successfully for CompanyWorkerScreen and
+KingdomBookScreen):
+
+1. **Write the skeleton first.** Use a single `Write` call containing the
+   package, imports, class declaration, constants, enums, record types, and a
+   series of `// §NAME§` sentinel markers — one per logical section. Keep
+   this skeleton under ~80 lines so it completes well inside the timeout.
+
+2. **Replace one marker per `Edit` call.** Each `Edit` swaps a single
+   `// §NAME§` line for its full section body. Order sections by logical
+   dependency (state → lifecycle → data load → widgets → render → page
+   renderers → navigation → mouse → helpers) so every partial state of the
+   file is itself coherent.
+
+3. **Keep each section ≤ ~80 lines** of output. If one section is too big
+   (e.g. `drawHistory` or `buildWidgets` with ten sidebar entries), split it
+   into two markers like `§BUILD_WIDGETS§` and `§BUILD_SUBS§`.
+
+4. **Verify no markers leak.** After the last `Edit`, run
+   `grep -n "§" <file>` — if it returns lines, a section was missed. Also
+   `wc -l` the file to confirm the final line count matches the expected
+   reduction.
+
+Use `§...§` (or any other character rare in Java source) as the sentinel so
+the markers can never accidentally collide with code. Do NOT use `//` or
+`TODO` markers — they match grep queries across the rest of the codebase.
+
+
 - Packet contracts (both `Open<X>Packet` and `<X>ActionPacket`) must not change
 - Panel dimensions
 - Section order and labels
@@ -393,6 +427,9 @@ For the **screen itself**:
       screen file.
 - [ ] Event signatures match Step 6.
 - [ ] `StyledButton.builder(...)` not `StyledButton.Builder(...)`.
+- [ ] If the source was large (≥400 lines), the rewrite used the sentinel-
+      marker chunking pattern from 4A.3b — and `grep "§" <file>` returns no
+      leftover markers.
 
 For **new screens**:
 - [ ] Packet registered in `ModModEvents.registerPayloads`.
