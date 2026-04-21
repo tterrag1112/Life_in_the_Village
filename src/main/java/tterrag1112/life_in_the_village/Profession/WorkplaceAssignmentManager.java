@@ -456,7 +456,7 @@ public class WorkplaceAssignmentManager {
             int xp = profession.getXpReward(PlayerProfession.XpSource.JOB_POSTING);
 
             String desc = "Craft and deliver " + remaining + "× "
-                    + item.getDescription().getString()
+                    + item.getDescriptionId()
                     + " (open village order)";
 
             return Optional.of(PlayerWorkplace.WorkAssignment.quota(
