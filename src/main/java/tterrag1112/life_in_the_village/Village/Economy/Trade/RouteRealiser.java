@@ -174,30 +174,50 @@ public final class RouteRealiser {
     }
 
     /**
-     * Generates a drift-noise centerline between two points. If {@code data}
-     * is provided and a nearby existing road is found within 1000 blocks of
-     * the segment midpoint, routes through that road block as a merge point
-     * so parallel roads naturally join each other.
+     * Generates a subsampled drift-noise centerline between two points.
+     * Subsampling to every {@link #CENTERLINE_STRIDE}-th point before handing
+     * the path to {@link OrganicRoadPlacer} dramatically reduces placed block
+     * counts while keeping the road shape, since the placer re-queries the
+     * surface heightmap for each X,Z position it paints anyway.
+     *
+     * <p>If {@code data} is provided and a suitable existing road block is
+     * found along the route corridor (directional, lateral, and detour checks
+     * all pass), the hop routes through that block so parallel routes merge
+     * rather than running side-by-side.
      */
+    private static final int CENTERLINE_STRIDE = 4;
+
     private static List<BlockPos> driftedHop(ServerLevel level,
                                               BlockPos from, BlockPos to,
                                               VillageSavedData data) {
         if (data != null) {
             BlockPos merge = RoadRouter.findMergePoint(from, to, data);
-            // Only use merge if it's not too close to either endpoint
-            if (merge != null
-                    && !merge.closerThan(from, 32)
-                    && !merge.closerThan(to, 32)) {
-                List<BlockPos> seg1 = RoadPrimitive.tradeCenterline(
-                        level, from, merge, 6.0, level.getSeed());
-                List<BlockPos> seg2 = RoadPrimitive.tradeCenterline(
-                        level, merge, to, 6.0, level.getSeed());
+            if (merge != null) {
+                List<BlockPos> seg1 = subsample(
+                        RoadPrimitive.tradeCenterline(level, from, merge, 6.0, level.getSeed()),
+                        CENTERLINE_STRIDE);
+                List<BlockPos> seg2 = subsample(
+                        RoadPrimitive.tradeCenterline(level, merge, to, 6.0, level.getSeed()),
+                        CENTERLINE_STRIDE);
                 List<BlockPos> combined = new ArrayList<>(seg1);
                 if (seg2.size() > 1) combined.addAll(seg2.subList(1, seg2.size()));
                 return combined;
             }
         }
-        return RoadPrimitive.tradeCenterline(level, from, to, 6.0, level.getSeed());
+        return subsample(
+                RoadPrimitive.tradeCenterline(level, from, to, 6.0, level.getSeed()),
+                CENTERLINE_STRIDE);
+    }
+
+    /** Keeps every {@code stride}-th point, always including the last. */
+    private static List<BlockPos> subsample(List<BlockPos> path, int stride) {
+        if (path.size() <= 2 || stride <= 1) return path;
+        List<BlockPos> out = new ArrayList<>((path.size() / stride) + 2);
+        for (int i = 0; i < path.size() - 1; i += stride) {
+            out.add(path.get(i));
+        }
+        out.add(path.get(path.size() - 1));
+        return out;
     }
 
     /** Appends a hop's blocks, skipping the first to avoid duplicating junctions. */

@@ -843,14 +843,41 @@ public class RoadRouter {
         return ((long)(x + 30_000_000)) << 32 | (z + 30_000_000);
     }
     /**
-     * Returns the road block nearest to the midpoint of from→to that
-     * lies within 1000 blocks, or {@code null} if no road is close enough.
-     * Used by the drift-based trade road realiser to merge parallel routes.
+     * Returns a road block from any already-realised road that lies within
+     * 1000 blocks of the from→to corridor and can serve as a natural merge
+     * point, or {@code null} if none qualifies.
+     *
+     * <p>Three filters prevent zig-zag routing:
+     * <ol>
+     *   <li><b>Directional</b>: the candidate must project onto the from→to
+     *       line within (exclusionDist, directDist - exclusionDist), so it
+     *       genuinely lies between the endpoints.</li>
+     *   <li><b>Lateral</b>: the candidate must be within 25% of directDist
+     *       perpendicular to the route, so we don't hook toward a distant
+     *       parallel road.</li>
+     *   <li><b>Detour</b>: total rerouted distance must be ≤ 115% of the
+     *       direct distance, so only small deviations merge.</li>
+     * </ol>
      */
     public static BlockPos findMergePoint(
             BlockPos from, BlockPos to,
             tterrag1112.life_in_the_village.Networking.VillageSavedData data) {
         final int MERGE_SNAP_RADIUS = 1000;
+
+        double directX = to.getX() - from.getX();
+        double directZ = to.getZ() - from.getZ();
+        double directDist = Math.sqrt(directX * directX + directZ * directZ);
+        if (directDist < 1) return null;
+
+        // Unit vector along from→to and its perpendicular
+        double ux = directX / directDist;
+        double uz = directZ / directDist;
+
+        // Exclude candidates within 20% of segment length (min 64 blocks) of either endpoint
+        double exclusionDist = Math.max(64, directDist * 0.20);
+        // Allow at most 25% of segment length lateral offset
+        double maxLateral    = directDist * 0.25;
+
         int midX = (from.getX() + to.getX()) / 2;
         int midZ = (from.getZ() + to.getZ()) / 2;
 
@@ -861,16 +888,37 @@ public class RoadRouter {
                 : data.getAllTradeRoads()) {
             List<BlockPos> blocks = road.getBlocks();
             for (int i = 0; i < blocks.size(); i += 8) {
-                BlockPos b   = blocks.get(i);
-                double   dx  = b.getX() - midX;
-                double   dz  = b.getZ() - midZ;
-                double   dSq = dx * dx + dz * dz;
+                BlockPos b = blocks.get(i);
+
+                // Directional filter: candidate must lie within the forward corridor
+                double bx   = b.getX() - from.getX();
+                double bz   = b.getZ() - from.getZ();
+                double proj = bx * ux + bz * uz;
+                if (proj < exclusionDist || proj > directDist - exclusionDist) continue;
+
+                // Lateral filter: candidate must be close to the route axis
+                double lateral = Math.abs(bx * uz - bz * ux);
+                if (lateral > maxLateral) continue;
+
+                double dx  = b.getX() - midX;
+                double dz  = b.getZ() - midZ;
+                double dSq = dx * dx + dz * dz;
                 if (dSq < bestMergeDist) {
                     bestMergeDist  = dSq;
                     bestMergePoint = b;
                 }
             }
         }
+
+        // Detour filter: merged path must not be significantly longer than direct
+        if (bestMergePoint != null) {
+            double d1 = Math.sqrt(bestMergePoint.distSqr(from));
+            double d2 = Math.sqrt(bestMergePoint.distSqr(to));
+            if (d1 + d2 > directDist * 1.15) {
+                return null;
+            }
+        }
+
         return bestMergePoint;
     }
 
