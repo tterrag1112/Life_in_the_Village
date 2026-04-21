@@ -128,25 +128,57 @@ public class WorkplaceAssignmentManager {
         PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
         if (entry == null) return;
 
-        if (entry.currentAssignment() != null) {
-            PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
-
-            if (a.isComplete()) {
-                completeAssignment(player, npc, profession, profData, data, level);
-            } else if (a.isExpired(level.getGameTime())) {
-                player.displayClientMessage(Component.literal(
-                        "[" + npc.getNpcName() + "] You missed your deadline. "
-                                + "I'll give you another task."), false);
-                issueAssignment(player, npc, profession, profData, level);
-            } else {
-                player.displayClientMessage(Component.literal(
-                                "[" + npc.getNpcName() + "] Current task: " + a.description()
-                                        + "\nProgress: " + a.currentCount() + "/" + a.targetCount()),
-                        false);
-            }
-        } else {
-            issueAssignment(player, npc, profession, profData, level);
+        List<PlayerWorkplace.WorkAssignment> tasks = new ArrayList<>(entry.activeTasks());
+        // Pull legacy currentAssignment into the display list if the new list is empty
+        if (tasks.isEmpty() && entry.currentAssignment() != null) {
+            tasks.add(entry.currentAssignment());
         }
+
+        // 1) Complete any finished task first
+        for (PlayerWorkplace.WorkAssignment t : tasks) {
+            if (t.isComplete()) {
+                completeAssignment(player, npc, profession, profData, data, level, t);
+                return;
+            }
+        }
+
+        // 2) Drop any expired tasks and issue replacements
+        long now = level.getGameTime();
+        boolean removedExpired = false;
+        List<PlayerWorkplace.WorkAssignment> stillActive = new ArrayList<>();
+        for (PlayerWorkplace.WorkAssignment t : tasks) {
+            if (t.isExpired(now)) removedExpired = true;
+            else stillActive.add(t);
+        }
+        if (removedExpired) {
+            profData.setWorkplace(profession, entry.withTasks(stillActive));
+            player.setData(ModData.PROFESSION_DATA, profData);
+            player.displayClientMessage(Component.literal(
+                    "[" + npc.getNpcName() + "] You missed a deadline. "
+                            + "I'll give you another task."), false);
+            issueAssignment(player, npc, profession, profData, level);
+            return;
+        }
+
+        // 3) If no active tasks, issue a new one
+        if (stillActive.isEmpty()) {
+            issueAssignment(player, npc, profession, profData, level);
+            return;
+        }
+
+        // 4) Otherwise print the full active list, sorted by priority (already sorted)
+        StringBuilder msg = new StringBuilder();
+        msg.append("[").append(npc.getNpcName()).append("] Your tasks:");
+        for (PlayerWorkplace.WorkAssignment t : stillActive) {
+            msg.append("\n  [").append(t.priority().name()).append("] ")
+               .append(t.taskType().displayName()).append(" — ")
+               .append(t.description());
+            if (t.targetCount() > 1) {
+                msg.append("  (").append(t.currentCount()).append("/")
+                   .append(t.targetCount()).append(")");
+            }
+        }
+        player.displayClientMessage(Component.literal(msg.toString()), false);
     }
 
 
@@ -157,30 +189,67 @@ public class WorkplaceAssignmentManager {
 
     /**
      * Called when a player deposits items into a building chest.
-     * Advances any matching quota assignment.
+     * Advances every matching task across all of the player's active workplaces.
+     *
+     * <p>Matches any task whose {@link WorkTaskType#isItemDeliveryType()} is
+     * true (GATHER, DELIVER, RESTOCK) and whose {@code targetItem} equals the
+     * deposited itemId. Also matches legacy QUOTA-type assignments that don't
+     * have a proper task type set, for backward compatibility with old saves.</p>
      */
     public static void onItemDelivered(ServerPlayer player,
                                        String itemId,
                                        int count,
                                        ServerLevel level) {
         PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
+        boolean anyChanged = false;
 
-        profData.getAllWorkplaces().forEach((profession, entry) -> {
-            if (entry.currentAssignment() == null) return;
-            PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
-            if (a.type() != PlayerWorkplace.AssignmentType.QUOTA) return;
-            if (!a.targetItem().equals(itemId)) return;
+        for (var wp : profData.getAllWorkplaces().entrySet()) {
+            PlayerProfession profession = wp.getKey();
+            PlayerWorkplace.WorkplaceEntry entry = wp.getValue();
 
-            int newCount = Math.min(a.currentCount() + count, a.targetCount());
-            profData.setWorkplace(profession, entry.withAssignment(a.withProgress(newCount)));
+            // Iterate active tasks (new multi-task list)
+            List<PlayerWorkplace.WorkAssignment> updated =
+                    new ArrayList<>(entry.activeTasks());
+            boolean thisChanged = false;
+            for (int i = 0; i < updated.size(); i++) {
+                PlayerWorkplace.WorkAssignment t = updated.get(i);
+                if (t.isComplete()) continue;
+                if (!t.hasTargetItem() || !t.targetItem().equals(itemId)) continue;
+                if (!t.taskType().isItemDeliveryType()
+                        && t.type() != PlayerWorkplace.AssignmentType.QUOTA) continue;
 
-            player.displayClientMessage(Component.literal(
-                            "Quota progress: " + newCount + "/" + a.targetCount()
-                                    + " " + itemId.replace("minecraft:", "").replace("_", " ")),
-                    true);
-        });
+                int newCount = Math.min(t.currentCount() + count, t.targetCount());
+                updated.set(i, t.withProgress(newCount));
+                thisChanged = true;
 
-        player.setData(ModData.PROFESSION_DATA, profData);
+                player.displayClientMessage(Component.literal(
+                                t.taskType().displayName() + " progress: " + newCount
+                                        + "/" + t.targetCount() + " "
+                                        + itemId.replace("minecraft:", "").replace("_", " ")),
+                        true);
+            }
+            if (thisChanged) {
+                profData.setWorkplace(profession, entry.withTasks(updated));
+                anyChanged = true;
+            }
+
+            // Legacy fallback — old saves that still store the task in
+            // currentAssignment rather than activeTasks
+            PlayerWorkplace.WorkAssignment legacy = entry.currentAssignment();
+            if (legacy != null && !legacy.isComplete()
+                    && legacy.type() == PlayerWorkplace.AssignmentType.QUOTA
+                    && legacy.hasTargetItem()
+                    && legacy.targetItem().equals(itemId)) {
+                int newCount = Math.min(legacy.currentCount() + count, legacy.targetCount());
+                profData.setWorkplace(profession, entry.withAssignment(legacy.withProgress(newCount)));
+                anyChanged = true;
+                player.displayClientMessage(Component.literal(
+                                "Quota progress: " + newCount + "/" + legacy.targetCount()
+                                        + " " + itemId.replace("minecraft:", "").replace("_", " ")),
+                        true);
+            }
+        }
+        if (anyChanged) player.setData(ModData.PROFESSION_DATA, profData);
     }
 
     // =========================================================================
@@ -231,7 +300,11 @@ public class WorkplaceAssignmentManager {
         });
     }
 
-    // Update assignment completion to include business bonus
+    /**
+     * Legacy single-task completion — finds the first completed task in the
+     * active list (or the legacy currentAssignment) and pays it out. Kept so
+     * existing call sites that don't specify which task compile.
+     */
     public static void completeAssignment(ServerPlayer player,
                                           TownspersonMob npc,
                                           PlayerProfession profession,
@@ -241,19 +314,45 @@ public class WorkplaceAssignmentManager {
         PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
         if (entry == null) return;
 
-        PlayerWorkplace.WorkAssignment a = entry.currentAssignment();
-        if (a == null || !a.isComplete()) return;
+        // Try the active list first
+        for (PlayerWorkplace.WorkAssignment t : entry.activeTasks()) {
+            if (t.isComplete()) {
+                completeAssignment(player, npc, profession, profData, data, level, t);
+                return;
+            }
+        }
+        // Fall back to the legacy currentAssignment
+        PlayerWorkplace.WorkAssignment legacy = entry.currentAssignment();
+        if (legacy != null && legacy.isComplete()) {
+            completeAssignment(player, npc, profession, profData, data, level, legacy);
+        }
+    }
+
+    /**
+     * Completes a specific task and pays out rewards. Removes the task from
+     * the active list (or clears the legacy currentAssignment if that's where
+     * it came from) and issues a replacement task automatically.
+     */
+    public static void completeAssignment(ServerPlayer player,
+                                          TownspersonMob npc,
+                                          PlayerProfession profession,
+                                          PlayerProfessionData profData,
+                                          VillageSavedData data,
+                                          ServerLevel level,
+                                          PlayerWorkplace.WorkAssignment completed) {
+        PlayerWorkplace.WorkplaceEntry entry = profData.getWorkplace(profession).orElse(null);
+        if (entry == null || completed == null || !completed.isComplete()) return;
 
         // Award XP
         ProfessionEvents.onJobPostingCompleted(
-                player, profession, a.xpReward(), entry.villageId());
+                player, profession, completed.xpReward(), entry.villageId());
 
-        // Calculate reward with business bonus
-        long baseReward = a.coinReward();
+        // Calculate reward with business bonus (farmer only)
+        long baseReward  = completed.coinReward();
         long finalReward = baseReward;
-
         if (profession == PlayerProfession.FARMER) {
-            Optional<FarmBusinessLevel> businessLevel = data.getFarmBusinessLevel(entry.buildingId());
+            Optional<FarmBusinessLevel> businessLevel =
+                    data.getFarmBusinessLevel(entry.buildingId());
             if (businessLevel.isPresent()) {
                 finalReward = businessLevel.get().calculateTaskPayment(
                         baseReward, profData.getLevel(profession));
@@ -267,10 +366,24 @@ public class WorkplaceAssignmentManager {
 
         player.displayClientMessage(Component.literal(
                         "[" + npc.getNpcName() + "] Well done! Here is your reward: "
-                                + reward + " + " + a.xpReward() + " XP")
+                                + reward + " + " + completed.xpReward() + " XP")
                 .withStyle(net.minecraft.ChatFormatting.GREEN), false);
 
-        profData.setWorkplace(profession, entry.withAssignment(null));
+        // Remove the completed task — from activeTasks if present, else
+        // clear the legacy currentAssignment
+        PlayerWorkplace.WorkplaceEntry updated = entry;
+        boolean inActiveList = entry.activeTasks().stream()
+                .anyMatch(t -> t.issuedTick() == completed.issuedTick()
+                        && t.description().equals(completed.description()));
+        if (inActiveList) {
+            updated = updated.withTaskRemoved(completed);
+        }
+        if (entry.currentAssignment() != null
+                && entry.currentAssignment().issuedTick() == completed.issuedTick()) {
+            updated = updated.withAssignment(null);
+        }
+
+        profData.setWorkplace(profession, updated);
         player.setData(ModData.PROFESSION_DATA, profData);
 
         issueAssignment(player, npc, profession, profData, level);
@@ -795,24 +908,46 @@ public class WorkplaceAssignmentManager {
 
                 PlayerProfession profession = e.getKey();
 
-                // Advance quota assignment if the produced item matches
-                PlayerWorkplace.WorkAssignment assignment = entry.currentAssignment();
-                if (assignment != null
-                        && assignment.type() == PlayerWorkplace.AssignmentType.QUOTA
-                        && assignment.targetItem().equals(itemId)
-                        && !assignment.isComplete()) {
+                // Advance matching tasks in the active list — CRAFT/SMELT/
+                // PROCESS/GATHER/DELIVER with this item
+                List<PlayerWorkplace.WorkAssignment> updated =
+                        new ArrayList<>(entry.activeTasks());
+                boolean thisChanged = false;
+                for (int i = 0; i < updated.size(); i++) {
+                    PlayerWorkplace.WorkAssignment t = updated.get(i);
+                    if (t.isComplete()) continue;
+                    if (!t.hasTargetItem() || !t.targetItem().equals(itemId)) continue;
+                    boolean matches = t.taskType().isProductionType()
+                            || t.taskType().isItemDeliveryType()
+                            || t.type() == PlayerWorkplace.AssignmentType.QUOTA;
+                    if (!matches) continue;
 
-                    int newCount = Math.min(
-                            assignment.currentCount() + count,
-                            assignment.targetCount());
-
-                    profData.setWorkplace(profession,
-                            entry.withAssignment(assignment.withProgress(newCount)));
+                    int newCount = Math.min(t.currentCount() + count, t.targetCount());
+                    updated.set(i, t.withProgress(newCount));
+                    thisChanged = true;
 
                     player.displayClientMessage(Component.literal(
-                            "Quota progress: " + newCount + "/" + assignment.targetCount()
-                                    + " " + itemId.replace("minecraft:", "")
+                            t.taskType().displayName() + " progress: "
+                                    + newCount + "/" + t.targetCount() + " "
+                                    + itemId.replace("minecraft:", "")
                                     .replace("_", " ")), true);
+                }
+                if (thisChanged) {
+                    profData.setWorkplace(profession, entry.withTasks(updated));
+                    dirty = true;
+                }
+
+                // Legacy fallback — update the single currentAssignment
+                PlayerWorkplace.WorkAssignment legacy = entry.currentAssignment();
+                if (legacy != null
+                        && legacy.type() == PlayerWorkplace.AssignmentType.QUOTA
+                        && legacy.hasTargetItem()
+                        && legacy.targetItem().equals(itemId)
+                        && !legacy.isComplete()) {
+                    int newCount = Math.min(
+                            legacy.currentCount() + count, legacy.targetCount());
+                    profData.setWorkplace(profession,
+                            entry.withAssignment(legacy.withProgress(newCount)));
                     dirty = true;
                 }
 
