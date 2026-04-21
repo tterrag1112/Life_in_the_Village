@@ -10,6 +10,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 import tterrag1112.life_in_the_village.Gui.VillageBookScreen;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
+import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 
 import java.util.UUID;
 
@@ -23,7 +24,7 @@ public record VillageActionPacket(
 
     public enum ActionType {
         BUY_HOUSE,
-        // Future: APPLY_FOR_LEADERSHIP, FORM_COMPANY, COMPLETE_JOB, etc.
+        CLAIM_COMMISSION,
     }
 
     public static final Type<VillageActionPacket> TYPE = new Type<>(
@@ -85,6 +86,11 @@ public record VillageActionPacket(
                     // Re-send updated screen data
                     VillageBookScreen.sendOpenPacket(
                             player, pkt.villageId(), level, data);
+                }
+                case CLAIM_COMMISSION -> {
+                    CraftingOrderManager.claimOrder(player, pkt.targetId(), level);
+                    VillageBookScreen.sendOpenPacket(
+                            player, pkt.villageId(), level, data, "COMMISSIONS");
                 }
             }
         });

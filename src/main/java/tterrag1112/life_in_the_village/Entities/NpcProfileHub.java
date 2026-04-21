@@ -179,9 +179,14 @@ public final class NpcProfileHub {
     private static void doShowCraftingOrders(TownspersonMob npc,
                                              ServerPlayer player,
                                              ServerLevel level) {
-        tterrag1112.life_in_the_village.Networking.CraftingOrderInteraction
-                .showOrderHint(player, npc, level);
-        pushSync(npc, player, level);
+        npc.getAssignedVillageName().ifPresent(vName -> {
+            VillageSavedData data = VillageSavedData.get(level);
+            data.getVillageByName(vName).ifPresent(village -> {
+                npc.unlockConversation(player.getUUID());
+                tterrag1112.life_in_the_village.Gui.VillageBookScreen
+                        .sendOpenPacket(player, village.getId(), level, data, "COMMISSIONS");
+            });
+        });
     }
 
     private static void doRentStall(TownspersonMob npc,
