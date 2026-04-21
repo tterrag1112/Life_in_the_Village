@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Gui.Framework;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Gui.BookScreenColors;
 
 import java.util.List;
@@ -15,6 +16,11 @@ import java.util.function.Supplier;
  * highlighted background and gold accent for the active row, a "&gt; "
  * marker prefix, and dim text for disabled rows.
  *
+ * <p>An optional {@code footerRenderer} callback is invoked at the end of
+ * {@link #render} so screens like CompanyManagementScreen can draw a
+ * treasury/summary block at the bottom of the sidebar strip without
+ * reaching inside Sidebar internals.
+ *
  * @param <S> the section enum the host screen uses for navigation
  */
 public class Sidebar<S extends Enum<S>> {
@@ -26,19 +32,24 @@ public class Sidebar<S extends Enum<S>> {
     private final List<Entry<S>> entries;
     private final Supplier<S> currentSection;
     private final Consumer<S> onSelect;
+    /** Called once per frame after all nav rows are drawn. May be null. */
+    private final @Nullable Consumer<GuiGraphics> footerRenderer;
 
     /**
-     * @param x,y origin of the sidebar (top-left)
-     * @param w width of the sidebar in pixels (not the whole chrome — just the strip)
-     * @param rowH per-row height including the gap below
-     * @param entries the rows to draw, in order
+     * @param x,y            origin of the sidebar (top-left)
+     * @param w              width of the sidebar strip in pixels
+     * @param rowH           per-row height including the gap below
+     * @param entries        the rows to draw, in order
      * @param currentSection supplier for the active section (re-read every frame)
-     * @param onSelect callback fired when the user clicks an enabled row
+     * @param onSelect       callback fired when the user clicks an enabled row
+     * @param footerRenderer optional callback drawn after all nav rows; receives
+     *                       the same {@link GuiGraphics}. Pass {@code null} for none.
      */
     public Sidebar(int x, int y, int w, int rowH,
                    List<Entry<S>> entries,
                    Supplier<S> currentSection,
-                   Consumer<S> onSelect) {
+                   Consumer<S> onSelect,
+                   @Nullable Consumer<GuiGraphics> footerRenderer) {
         this.x = x;
         this.y = y;
         this.w = w;
@@ -46,9 +57,20 @@ public class Sidebar<S extends Enum<S>> {
         this.entries = entries;
         this.currentSection = currentSection;
         this.onSelect = onSelect;
+        this.footerRenderer = footerRenderer;
     }
 
-    /** Draws every row; uses the current font from Minecraft. */
+    /**
+     * Convenience constructor without a footer — existing callers unchanged.
+     */
+    public Sidebar(int x, int y, int w, int rowH,
+                   List<Entry<S>> entries,
+                   Supplier<S> currentSection,
+                   Consumer<S> onSelect) {
+        this(x, y, w, rowH, entries, currentSection, onSelect, null);
+    }
+
+    /** Draws every row, then the optional footer. Uses the current font from Minecraft. */
     public void render(GuiGraphics g, int mouseX, int mouseY) {
         Font font = Minecraft.getInstance().font;
         int ny = y;
@@ -68,6 +90,7 @@ public class Sidebar<S extends Enum<S>> {
                     x + 6, ny + (rowH - 9) / 2, color, false);
             ny += rowH;
         }
+        if (footerRenderer != null) footerRenderer.accept(g);
     }
 
     /** Tests the click against each row; consumes and dispatches if hit. */
