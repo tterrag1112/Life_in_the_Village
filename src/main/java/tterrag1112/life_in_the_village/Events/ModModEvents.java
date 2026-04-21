@@ -223,6 +223,7 @@ public class ModModEvents {
         VillageTagsDebugCommand.register(event.getDispatcher());
         KingdomClaimDebugCommand.register(event.getDispatcher());
         PlacementFailuresDebugCommand.register(event.getDispatcher());
+        RoadDebugCommand.register(event.getDispatcher());
 
     }
 

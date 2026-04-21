@@ -365,6 +365,22 @@ public sealed interface RoadPrimitive
         return out;
     }
 
+    /**
+     * Generates a surface-snapped drift-noise centerline for trade road
+     * realisation. Replaces A* diagonals with organic curves — the same
+     * DriftNoise used by {@link StraightRoad}, seeded from the world seed
+     * and the endpoint positions for determinism.
+     *
+     * @param driftAmplitude max perpendicular wander in blocks (6 = visible)
+     */
+    public static List<BlockPos> tradeCenterline(ServerLevel level,
+                                                 BlockPos from, BlockPos to,
+                                                 double driftAmplitude,
+                                                 long worldSeed) {
+        long seed = DriftNoise.localSeed(worldSeed, from, to);
+        return driftedLine(level, from, to, driftAmplitude, seed);
+    }
+
     // =========================================================================
     // Drift noise — deterministic 1D value noise
     // =========================================================================

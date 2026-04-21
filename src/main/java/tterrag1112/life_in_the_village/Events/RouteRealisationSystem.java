@@ -90,7 +90,7 @@ public final class RouteRealisationSystem {
         List<BlockPos> placed = RouteRealiser.realiseBetween(
                 level, road.getCellPath(),
                 hubA, hubB,
-                RoadRouter.RoadQuality.COBBLESTONE);
+                RoadRouter.RoadQuality.COBBLESTONE, data);
 
         if (placed.isEmpty()) {
             System.out.println("RouteRealisationSystem: realisation produced "

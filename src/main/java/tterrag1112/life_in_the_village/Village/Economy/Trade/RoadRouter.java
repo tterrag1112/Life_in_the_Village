@@ -2,6 +2,7 @@
 package tterrag1112.life_in_the_village.Village.Economy.Trade;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
@@ -410,7 +411,7 @@ public class RoadRouter {
             BlockPos to,
             tterrag1112.life_in_the_village.Networking.VillageSavedData data) {
 
-        final int MERGE_SNAP_RADIUS = 120; // blocks — how close a road must be to trigger merge
+        final int MERGE_SNAP_RADIUS = 1000; // blocks — how close a road must be to trigger merge
 
         // ── Find nearest existing road block to the route midpoint ───────────
         int midX = (from.getX() + to.getX()) / 2;
@@ -666,6 +667,12 @@ public class RoadRouter {
         for (int y = fromY + 20; y >= fromY - 1; y--) {
             BlockPos   pos   = new BlockPos(x, y, z);
             BlockState state = level.getBlockState(pos);
+            // Stripped logs are building materials — never remove them
+            if (state.is(BlockTags.LOGS)) {
+                String blockPath = BuiltInRegistries.BLOCK
+                        .getKey(state.getBlock()).getPath();
+                if (blockPath.contains("stripped")) continue;
+            }
             if (state.is(BlockTags.LOGS)
                     || state.is(BlockTags.LEAVES)
                     || state.is(BlockTags.REPLACEABLE)
@@ -835,6 +842,38 @@ public class RoadRouter {
     private static long xzKey(int x, int z) {
         return ((long)(x + 30_000_000)) << 32 | (z + 30_000_000);
     }
+    /**
+     * Returns the road block nearest to the midpoint of from→to that
+     * lies within 1000 blocks, or {@code null} if no road is close enough.
+     * Used by the drift-based trade road realiser to merge parallel routes.
+     */
+    public static BlockPos findMergePoint(
+            BlockPos from, BlockPos to,
+            tterrag1112.life_in_the_village.Networking.VillageSavedData data) {
+        final int MERGE_SNAP_RADIUS = 1000;
+        int midX = (from.getX() + to.getX()) / 2;
+        int midZ = (from.getZ() + to.getZ()) / 2;
+
+        BlockPos bestMergePoint = null;
+        double   bestMergeDist  = (double) MERGE_SNAP_RADIUS * MERGE_SNAP_RADIUS;
+
+        for (tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad road
+                : data.getAllTradeRoads()) {
+            List<BlockPos> blocks = road.getBlocks();
+            for (int i = 0; i < blocks.size(); i += 8) {
+                BlockPos b   = blocks.get(i);
+                double   dx  = b.getX() - midX;
+                double   dz  = b.getZ() - midZ;
+                double   dSq = dx * dx + dz * dz;
+                if (dSq < bestMergeDist) {
+                    bestMergeDist  = dSq;
+                    bestMergePoint = b;
+                }
+            }
+        }
+        return bestMergePoint;
+    }
+
     public static BlockPos nearestRoadBlock(
             BlockPos pos,
             int radiusBlocks,
