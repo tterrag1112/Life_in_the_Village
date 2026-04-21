@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Commands;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -13,13 +14,22 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer.ParticleEmission;
+import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
+import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
+import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
 import java.util.*;
 
@@ -74,6 +84,19 @@ public class RoadGraphDebugCommand {
                                         .executes(RoadGraphDebugCommand::showMaintenance))
                                 .then(Commands.literal("show_overgrowth")
                                         .executes(RoadGraphDebugCommand::showOvergrowth))
+                                .then(Commands.literal("seed_great_road")
+                                        .then(Commands.argument("x1", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z1", IntegerArgumentType.integer())
+                                        .then(Commands.argument("x2", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z2", IntegerArgumentType.integer())
+                                                .executes(RoadGraphDebugCommand::seedGreatRoad))))))
+                                .then(Commands.literal("connect_village")
+                                        .then(Commands.argument("villageName", StringArgumentType.word())
+                                        .then(Commands.argument("targetEdgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::connectVillage))))
+                                .then(Commands.literal("dispatch_caravan")
+                                        .then(Commands.argument("villageName", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::dispatchCaravan)))
                         )
                 )
         );
@@ -406,6 +429,323 @@ public class RoadGraphDebugCommand {
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "Showing overgrowth preview for " + ec + " edges."), false);
         return ec;
+    }
+
+    // =========================================================================
+    // seed_great_road
+    // =========================================================================
+
+    private static int seedGreatRoad(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        int x1 = IntegerArgumentType.getInteger(ctx, "x1");
+        int z1 = IntegerArgumentType.getInteger(ctx, "z1");
+        int x2 = IntegerArgumentType.getInteger(ctx, "x2");
+        int z2 = IntegerArgumentType.getInteger(ctx, "z2");
+
+        int y1 = level.isLoaded(new BlockPos(x1, 0, z1))
+                ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x1, z1) : 64;
+        int y2 = level.isLoaded(new BlockPos(x2, 0, z2))
+                ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x2, z2) : 64;
+
+        BlockPos from = new BlockPos(x1, y1, z1);
+        BlockPos to   = new BlockPos(x2, y2, z2);
+
+        WorldAtlas atlas = WorldAtlas.get(level);
+        prefillAtlasCorridor(level, atlas, from, to);
+
+        List<Long> cellPath = AtlasRouteRouter.findRoute(atlas, from, to);
+        if (cellPath.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No cell path found between (" + x1 + "," + z1 + ") and (" + x2 + "," + z2 + ")."));
+            return 0;
+        }
+
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        WorldRoadGraph     graph    = roadData.getGraph();
+
+        RoadNode nodeA = new RoadNode(UUID.randomUUID(), from,
+                RoadNode.NodeType.GREAT_ROAD_ANCHOR, Optional.empty());
+        RoadNode nodeB = new RoadNode(UUID.randomUUID(), to,
+                RoadNode.NodeType.GREAT_ROAD_ANCHOR, Optional.empty());
+        graph.addNode(nodeA);
+        graph.addNode(nodeB);
+
+        RoadEdge edge = RoadEdge.create(nodeA.nodeId(), nodeB.nodeId(), cellPath,
+                RoadEdge.EdgeTier.GREAT_ROAD,
+                new RoadEdge.MeanderProfile(6.0f, 0.02f, from.asLong()));
+        graph.addEdge(edge);
+
+        List<String> warnings = GraphInvariantValidator.validate(graph);
+        warnings.forEach(w -> System.out.println("[RoadGraph Validator] " + w));
+        if (warnings.isEmpty()) {
+            System.out.println("[RoadGraph Validator] Graph OK — "
+                    + graph.allNodes().size() + " nodes, " + graph.allEdges().size() + " edges.");
+        }
+        roadData.markDirty();
+
+        String na = nodeA.nodeId().toString().substring(0, 8);
+        String nb = nodeB.nodeId().toString().substring(0, 8);
+        String eid = edge.getEdgeId().toString().substring(0, 8);
+        int cells = cellPath.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Seeded great road: nodes " + na + "… ↔ " + nb + "… edge=" + eid
+                + "… (" + cells + " cells)"), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // connect_village
+    // =========================================================================
+
+    private static int connectVillage(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level   = ctx.getSource().getLevel();
+        VillageSavedData villageData = VillageSavedData.get(level);
+        WorldRoadSavedData roadData  = WorldRoadSavedData.get(level);
+        WorldRoadGraph     graph     = roadData.getGraph();
+        WorldAtlas         atlas     = WorldAtlas.get(level);
+
+        String villageName = StringArgumentType.getString(ctx, "villageName");
+        String edgePrefix  = StringArgumentType.getString(ctx, "targetEdgeId").toLowerCase(Locale.ROOT);
+
+        Village village = villageData.getAllVillages().stream()
+                .filter(v -> v.getName().toLowerCase(Locale.ROOT).contains(villageName.toLowerCase(Locale.ROOT)))
+                .findFirst().orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal("No village matching '" + villageName + "'."));
+            return 0;
+        }
+
+        List<RoadEdge> edgeMatches = new ArrayList<>();
+        for (RoadEdge e : graph.allEdges()) {
+            if (e.getEdgeId().toString().startsWith(edgePrefix)) edgeMatches.add(e);
+        }
+        if (edgeMatches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal("No edge matching prefix '" + edgePrefix + "'."));
+            return 0;
+        }
+        if (edgeMatches.size() > 1) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Ambiguous edge prefix '" + edgePrefix + "' (" + edgeMatches.size() + " matches)."));
+            return 0;
+        }
+        RoadEdge targetEdge = edgeMatches.get(0);
+
+        BlockPos anchor = village.getAnchorPos();
+        if (anchor == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Village '" + village.getName() + "' has no anchor position."));
+            return 0;
+        }
+
+        List<Long> cellPath = targetEdge.getCellPath();
+        if (cellPath.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal("Target edge has no cell path."));
+            return 0;
+        }
+
+        // Find nearest cell on edge to village anchor
+        int bestIdx = 0;
+        double bestDist = Double.MAX_VALUE;
+        for (int i = 0; i < cellPath.size(); i++) {
+            BlockPos center = AtlasRouteRouter.cellKeyToBlockCenter(cellPath.get(i));
+            double dx = center.getX() - anchor.getX();
+            double dz = center.getZ() - anchor.getZ();
+            double d  = dx * dx + dz * dz;
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+
+        BlockPos junctionRaw = AtlasRouteRouter.cellKeyToBlockCenter(cellPath.get(bestIdx));
+        int jy = level.isLoaded(junctionRaw)
+                ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, junctionRaw.getX(), junctionRaw.getZ())
+                : 64;
+        BlockPos junctionPos = new BlockPos(junctionRaw.getX(), jy, junctionRaw.getZ());
+
+        // Split edge: remove old edge, create TRUNK_JUNCTION + two half-edges
+        graph.removeEdge(targetEdge.getEdgeId());
+
+        RoadNode junctionNode = new RoadNode(UUID.randomUUID(), junctionPos,
+                RoadNode.NodeType.TRUNK_JUNCTION, Optional.empty());
+        graph.addNode(junctionNode);
+
+        List<Long> halfPathA = new ArrayList<>(cellPath.subList(0, bestIdx + 1));
+        List<Long> halfPathB = new ArrayList<>(cellPath.subList(bestIdx, cellPath.size()));
+
+        RoadEdge halfA = RoadEdge.create(targetEdge.getNodeAId(), junctionNode.nodeId(),
+                halfPathA, targetEdge.getTier(), targetEdge.getMeanderProfile());
+        RoadEdge halfB = RoadEdge.create(junctionNode.nodeId(), targetEdge.getNodeBId(),
+                halfPathB, targetEdge.getTier(), targetEdge.getMeanderProfile());
+        graph.addEdge(halfA);
+        graph.addEdge(halfB);
+
+        // Compute docking geometry for village
+        VillageDockingPoint dock = VillageDockingPoint.compute(village, junctionPos, level, villageData);
+
+        // Pre-fill atlas and route the connector
+        prefillAtlasCorridor(level, atlas, anchor, junctionPos);
+        List<Long> connectorPath = AtlasRouteRouter.findRoute(atlas, anchor, junctionPos);
+        if (connectorPath.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Could not find connector route from '" + village.getName() + "' to junction."));
+            return 0;
+        }
+
+        RoadNode dockNode = new RoadNode(UUID.randomUUID(), dock.dockingAnchor(),
+                RoadNode.NodeType.VILLAGE_DOCK, Optional.empty());
+        graph.addNode(dockNode);
+
+        RoadEdge connectorEdge = RoadEdge.create(dockNode.nodeId(), junctionNode.nodeId(),
+                connectorPath, RoadEdge.EdgeTier.CONNECTOR,
+                new RoadEdge.MeanderProfile(4.0f, 0.02f, dock.dockingAnchor().asLong()));
+        graph.addEdge(connectorEdge);
+
+        village.setDockNodeId(dockNode.nodeId());
+        villageData.setDirty();
+
+        List<String> warnings = GraphInvariantValidator.validate(graph);
+        warnings.forEach(w -> System.out.println("[RoadGraph Validator] " + w));
+        if (warnings.isEmpty()) {
+            System.out.println("[RoadGraph Validator] Graph OK — "
+                    + graph.allNodes().size() + " nodes, " + graph.allEdges().size() + " edges.");
+        }
+        roadData.markDirty();
+
+        String vn  = village.getName();
+        String eid = targetEdge.getEdgeId().toString().substring(0, 8);
+        String jid = junctionNode.nodeId().toString().substring(0, 8);
+        String did = dockNode.nodeId().toString().substring(0, 8);
+        String cid = connectorEdge.getEdgeId().toString().substring(0, 8);
+        int    cc  = connectorPath.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Connected '" + vn + "' to edge " + eid + "…. Junction=" + jid
+                + "… dock=" + did + "… connector=" + cid + "… (" + cc + " cells)"), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // dispatch_caravan
+    // =========================================================================
+
+    private static int dispatchCaravan(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level   = ctx.getSource().getLevel();
+        VillageSavedData villageData = VillageSavedData.get(level);
+        WorldRoadSavedData roadData  = WorldRoadSavedData.get(level);
+        WorldRoadGraph     graph     = roadData.getGraph();
+
+        String villageName = StringArgumentType.getString(ctx, "villageName");
+
+        Village village = villageData.getAllVillages().stream()
+                .filter(v -> v.getName().toLowerCase(Locale.ROOT).contains(villageName.toLowerCase(Locale.ROOT)))
+                .findFirst().orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal("No village matching '" + villageName + "'."));
+            return 0;
+        }
+
+        Optional<UUID> dockIdOpt = village.getDockNodeId();
+        if (dockIdOpt.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Village '" + village.getName() + "' has no dock node. Run connect_village first."));
+            return 0;
+        }
+
+        RoadNode dockNode = graph.getNode(dockIdOpt.get());
+        if (dockNode == null) {
+            ctx.getSource().sendFailure(Component.literal("Dock node not found in graph."));
+            return 0;
+        }
+
+        // Find CONNECTOR edge incident to dock node
+        RoadEdge connectorEdge = null;
+        for (RoadEdge e : graph.allEdges()) {
+            if ((e.getNodeAId().equals(dockNode.nodeId()) || e.getNodeBId().equals(dockNode.nodeId()))
+                    && e.getTier() == RoadEdge.EdgeTier.CONNECTOR) {
+                connectorEdge = e;
+                break;
+            }
+        }
+        if (connectorEdge == null) {
+            ctx.getSource().sendFailure(Component.literal("No CONNECTOR edge found for dock node."));
+            return 0;
+        }
+
+        UUID junctionNodeId = connectorEdge.getNodeAId().equals(dockNode.nodeId())
+                ? connectorEdge.getNodeBId() : connectorEdge.getNodeAId();
+
+        // Find any edge incident to the junction (not the connector itself)
+        RoadEdge greatRoadEdge = null;
+        for (RoadEdge e : graph.allEdges()) {
+            if (e.getEdgeId().equals(connectorEdge.getEdgeId())) continue;
+            if (e.getNodeAId().equals(junctionNodeId) || e.getNodeBId().equals(junctionNodeId)) {
+                greatRoadEdge = e;
+                break;
+            }
+        }
+        if (greatRoadEdge == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No road edge found at junction. Ensure the great road was seeded."));
+            return 0;
+        }
+
+        // Force-realize both edges
+        EdgeRealizer.realizeEdge(level, connectorEdge, graph, villageData);
+        EdgeRealizer.realizeEdge(level, greatRoadEdge, graph, villageData);
+
+        if (connectorEdge.getBlockPath().isEmpty() || greatRoadEdge.getBlockPath().isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Edge realization produced empty block paths — check logs for detail."));
+            return 0;
+        }
+        roadData.markDirty();
+
+        // Build combined block path: connector + overlap-trim + great-road segment
+        List<BlockPos> fullPath = new ArrayList<>(connectorEdge.getBlockPath());
+        List<BlockPos> roadPath = greatRoadEdge.getBlockPath();
+        int skip = Math.min(3, roadPath.size());
+        fullPath.addAll(roadPath.subList(skip, roadPath.size()));
+
+        Caravan testCaravan = Caravan.create(
+                UUID.randomUUID(),   // synthetic routeId
+                village.getId(),
+                UUID.randomUUID(),   // synthetic destVillageId
+                UUID.randomUUID(),   // principalId — fresh merchant will spawn
+                UUID.randomUUID(),   // originMarketId
+                List.of(),
+                0,
+                level.getGameTime());
+        testCaravan.setOverridePath(fullPath);
+        CaravanSavedData.get(level).addCaravan(testCaravan);
+
+        String vn   = village.getName();
+        String ceid = connectorEdge.getEdgeId().toString().substring(0, 8);
+        String geid = greatRoadEdge.getEdgeId().toString().substring(0, 8);
+        int    plen = fullPath.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Dispatched test caravan from '" + vn + "': connector=" + ceid
+                + "… + road=" + geid + "… → " + plen + " blocks total."), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Atlas pre-fill helper (mirrors TradeRouteManager.prefillAtlasCorridor)
+    // =========================================================================
+
+    private static void prefillAtlasCorridor(ServerLevel level, WorldAtlas atlas,
+                                              BlockPos from, BlockPos to) {
+        int    dx       = to.getX() - from.getX();
+        int    dz       = to.getZ() - from.getZ();
+        double dist     = Math.sqrt((double) dx * dx + (double) dz * dz);
+        int    hopSize  = 800;
+        int    hops     = Math.max(1, (int) Math.ceil(dist / hopSize));
+        long   perHop   = 50_000_000L / hops;  // 50 ms total budget
+        for (int i = 0; i <= hops; i++) {
+            float t = (float) i / hops;
+            int x = (int)(from.getX() + dx * t);
+            int z = (int)(from.getZ() + dz * t);
+            atlas.ensureRegionFilled(level, x, z, 256, perHop);
+        }
     }
 
     // =========================================================================

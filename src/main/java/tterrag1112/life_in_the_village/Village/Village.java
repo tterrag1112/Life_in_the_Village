@@ -51,6 +51,8 @@ public class Village {
 
     @Nullable private BlockPos mainGateEndpoint;
 
+    /** Road graph: the UUID of the VILLAGE_DOCK node this village is wired to. Null until Phase 3a seeding. */
+    @Nullable private UUID dockNodeId;
 
     // =========================================================================
     // LAYOUT METADATA — persisted so the expansion system can use them
@@ -312,11 +314,14 @@ public class Village {
                             .forGetter(VillageLayoutMeta::from),
                     Codec.STRING
                             .optionalFieldOf("villageType", "default")
-                            .forGetter(Village::getVillageType)
+                            .forGetter(Village::getVillageType),
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                            .optionalFieldOf("dockNodeId")
+                            .forGetter(v -> Optional.ofNullable(v.dockNodeId))
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
-                               layoutMeta, villageType) -> {
+                               layoutMeta, villageType, dockNodeId) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -326,6 +331,7 @@ public class Village {
                 v.treasuryBronze = treasuryBronze;
                 villageLeaderId.ifPresent(v::setVillageLeaderId);
                 layoutMeta.applyTo(v);
+                dockNodeId.ifPresent(v::setDockNodeId);
                 return v;
             })
     );
@@ -375,6 +381,9 @@ public class Village {
      */
     @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
     public void setMainGateEndpoint(@Nullable BlockPos pos) { this.mainGateEndpoint = pos; }
+
+    public Optional<UUID> getDockNodeId() { return Optional.ofNullable(dockNodeId); }
+    public void setDockNodeId(UUID id) { this.dockNodeId = id; }
 
     /**
      * Returns the best known position for this village — the realised
