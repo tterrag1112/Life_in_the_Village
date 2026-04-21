@@ -5,9 +5,11 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.OrganicRoadPlacer;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -64,25 +66,27 @@ public final class RouteRealiser {
             rawWaypoints.add(surfaceCenter(level, key));
         }
 
-        return realiseFromWaypoints(level, rawWaypoints, quality);
+        return realiseFromWaypoints(level, rawWaypoints, quality, null);
     }
 
     /**
      * Realises a cell path between two specific endpoints. The first
      * and last waypoints become the provided hubs instead of the cell
      * centres, so the road lands precisely at the village boundaries.
+     *
+     * @param data saved data used for merge-point detection (may be null)
      */
     public static List<BlockPos> realiseBetween(ServerLevel level,
                                                 List<Long> cellPath,
                                                 BlockPos startHub,
                                                 BlockPos endHub,
-                                                RoadRouter.RoadQuality quality) {
+                                                RoadRouter.RoadQuality quality,
+                                                VillageSavedData data) {
         if (cellPath.isEmpty()) return List.of();
 
         if (cellPath.size() == 1) {
-            // Single-cell route — direct hub-to-hub
-            List<BlockPos> direct = RoadRouter.findRoad(
-                    level, startHub, endHub, 30_000);
+            // Single-cell route — direct hub-to-hub via drift path
+            List<BlockPos> direct = driftedHop(level, startHub, endHub, data);
             return placeWithBridges(level, direct, quality);
         }
 
@@ -93,7 +97,7 @@ public final class RouteRealiser {
         }
         rawWaypoints.add(endHub);
 
-        return realiseFromWaypoints(level, rawWaypoints, quality);
+        return realiseFromWaypoints(level, rawWaypoints, quality, data);
     }
 
     // =========================================================================
@@ -101,18 +105,19 @@ public final class RouteRealiser {
     // =========================================================================
 
     /**
-     * Smooths the waypoint list, then routes between consecutive
-     * smoothed waypoints, placing bridges over wide water spans.
+     * Smooths the waypoint list, then generates drift-noise centerlines
+     * between consecutive smoothed waypoints, placing bridges over water.
      */
     private static List<BlockPos> realiseFromWaypoints(
             ServerLevel level,
             List<BlockPos> rawWaypoints,
-            RoadRouter.RoadQuality quality) {
+            RoadRouter.RoadQuality quality,
+            VillageSavedData data) {
 
         // ── Step 1: smooth the waypoint sequence ────────────────────────────
         List<BlockPos> smoothed = RoutePathSmoother.smooth(level, rawWaypoints);
 
-        // ── Step 2: route between smoothed waypoints, handling water ────────
+        // ── Step 2: drift centerlines between waypoints, bridging water ─────
         List<BlockPos> blockPath = new ArrayList<>();
         List<WaterSpan> bridgeSpans = new ArrayList<>();
 
@@ -123,26 +128,22 @@ public final class RouteRealiser {
             // Detect water spans on the straight line between a and b
             List<WaterSpan> spans = detectWaterSpans(level, a, b);
             if (spans.isEmpty()) {
-                // Plain land hop — small budget, smoothed waypoints are close
-                List<BlockPos> hop = RoadRouter.findRoad(level, a, b, 4_000);
+                // Plain land hop — organic drift path, no A* diagonals
+                List<BlockPos> hop = driftedHop(level, a, b, data);
                 appendHop(blockPath, hop);
                 continue;
             }
 
-            // Water present — route to first bridge entrance, place the
-            // bridge, then route from the bridge exit to the next
-            // segment endpoint. Multiple spans on one segment are
-            // handled by repeating this process.
+            // Water present — drift to each bridge entrance, bridge, drift on
             BlockPos cursor = a;
             for (WaterSpan span : spans) {
-                List<BlockPos> beforeBridge = RoadRouter.findRoad(
-                        level, cursor, span.entrance, 4_000);
+                List<BlockPos> beforeBridge = driftedHop(level, cursor, span.entrance, null);
                 appendHop(blockPath, beforeBridge);
                 bridgeSpans.add(span);
                 cursor = span.exit;
             }
-            // Final leg from the last bridge exit to b
-            List<BlockPos> afterBridge = RoadRouter.findRoad(level, cursor, b, 4_000);
+            // Final leg from last bridge exit to b
+            List<BlockPos> afterBridge = driftedHop(level, cursor, b, null);
             appendHop(blockPath, afterBridge);
         }
 
@@ -170,6 +171,33 @@ public final class RouteRealiser {
         }
 
         return placed;
+    }
+
+    /**
+     * Generates a drift-noise centerline between two points. If {@code data}
+     * is provided and a nearby existing road is found within 1000 blocks of
+     * the segment midpoint, routes through that road block as a merge point
+     * so parallel roads naturally join each other.
+     */
+    private static List<BlockPos> driftedHop(ServerLevel level,
+                                              BlockPos from, BlockPos to,
+                                              VillageSavedData data) {
+        if (data != null) {
+            BlockPos merge = RoadRouter.findMergePoint(from, to, data);
+            // Only use merge if it's not too close to either endpoint
+            if (merge != null
+                    && !merge.closerThan(from, 32)
+                    && !merge.closerThan(to, 32)) {
+                List<BlockPos> seg1 = RoadPrimitive.tradeCenterline(
+                        level, from, merge, 6.0, level.getSeed());
+                List<BlockPos> seg2 = RoadPrimitive.tradeCenterline(
+                        level, merge, to, 6.0, level.getSeed());
+                List<BlockPos> combined = new ArrayList<>(seg1);
+                if (seg2.size() > 1) combined.addAll(seg2.subList(1, seg2.size()));
+                return combined;
+            }
+        }
+        return RoadPrimitive.tradeCenterline(level, from, to, 6.0, level.getSeed());
     }
 
     /** Appends a hop's blocks, skipping the first to avoid duplicating junctions. */

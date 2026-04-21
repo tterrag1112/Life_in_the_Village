@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Village.Decoration.Roads;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -124,9 +125,10 @@ public class OrganicRoadPlacer {
                         Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, wx, wz);
                 BlockPos placePos = new BlockPos(wx, surfY - 1, wz);
 
-                // Don't place road on water
+                // Don't place road on water or existing building materials
                 BlockState existing = level.getBlockState(placePos);
                 if (existing.liquid()) continue;
+                if (isProtectedSurface(existing)) continue;
 
                 // Place road surface block
                 level.setBlock(placePos, state, 3);
@@ -246,6 +248,24 @@ public class OrganicRoadPlacer {
     // =========================================================================
     // Vegetation detection
     // =========================================================================
+
+    private static boolean isProtectedSurface(BlockState s) {
+        return s.is(Blocks.DIRT_PATH)
+                || s.is(Blocks.COBBLESTONE_SLAB)
+                || s.is(Blocks.STONE_BRICKS)
+                || s.is(Blocks.STONE_BRICK_SLAB)
+                || s.is(Blocks.CHISELED_STONE_BRICKS)
+                || s.is(Blocks.SMOOTH_STONE)
+                || s.is(Blocks.SMOOTH_STONE_SLAB)
+                || s.is(BlockTags.PLANKS)
+                || s.is(BlockTags.WOODEN_SLABS)
+                || s.is(BlockTags.WOOL_CARPETS)
+                || s.is(Blocks.SANDSTONE)
+                || s.is(Blocks.SMOOTH_SANDSTONE)
+                || s.is(Blocks.PACKED_ICE)
+                || s.is(Blocks.MUD)
+                || s.is(BlockTags.LOGS); // includes stripped logs (building columns)
+    }
 
     private static boolean isVegetation(BlockState state) {
         return state.is(Blocks.SHORT_GRASS)
