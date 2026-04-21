@@ -224,6 +224,7 @@ public class ModModEvents {
         KingdomClaimDebugCommand.register(event.getDispatcher());
         PlacementFailuresDebugCommand.register(event.getDispatcher());
         RoadDebugCommand.register(event.getDispatcher());
+        RoadGraphDebugCommand.register(event.getDispatcher());
 
     }
 
