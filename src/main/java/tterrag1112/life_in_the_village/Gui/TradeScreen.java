@@ -9,6 +9,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ItemStack;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Gui.Framework.Chrome;
 import tterrag1112.life_in_the_village.Gui.Framework.CoinRow;
@@ -105,7 +106,7 @@ public class TradeScreen extends Screen {
         Identifier itemId = BuiltInRegistries.ITEM.getKey(offer.item());
         if (itemId == null) return false;
         int quantity = shiftHeld ? 64 : 1;
-        PacketDistributor.sendToServer(
+        ClientPacketDistributor.sendToServer(
                 new TradeActionPacket(merchantId, itemId, isBuying, quantity));
         return true;
     }

@@ -30,6 +30,7 @@ public class GuildScreen extends Screen {
     private ScrollList<OpenGuildScreenPacket.QuestEntry> questList;
     private ScrollList<OpenGuildScreenPacket.RosterEntry> rosterList;
 
+
     public GuildScreen(OpenGuildScreenPacket data) {
         super(Component.literal("Guild Hall"));
         this.data = data;
@@ -134,7 +135,7 @@ public class GuildScreen extends Screen {
     public void render(GuiGraphics g, int mx, int my, float pt) {
         tooltips.reset();
         g.fill(0, 0, width, height, 0x88000000);
-        Chrome.draw(g, bookX, bookY, Chrome.BOOK);
+        Chrome.draw(g, bookX, bookY, Chrome.BOOK, Chrome.PARCHMENT);
         Chrome.drawSidebarBg(g, bookX, bookY, Chrome.BOOK);
         drawSidebarContent(g);
         sidebar.render(g, mx, my);
