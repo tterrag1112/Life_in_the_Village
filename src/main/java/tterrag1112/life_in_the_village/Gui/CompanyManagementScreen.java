@@ -165,7 +165,7 @@ public class CompanyManagementScreen extends Screen {
     public void render(GuiGraphics g, int mx, int my, float pt) {
         tooltips.reset();
         g.fill(0, 0, width, height, 0x88000000);
-        Chrome.draw(g, bookX, bookY, Chrome.BOOK);
+        Chrome.draw(g, bookX, bookY, Chrome.BOOK, Chrome.PARCHMENT);
         Chrome.drawSidebarBg(g, bookX, bookY, Chrome.BOOK);
         drawSidebarHeader(g);
         sidebar.render(g, mx, my);

@@ -180,7 +180,7 @@ public class NpcProfileScreen extends Screen {
         g.fill(0, 0, width, height, 0xC0000000);
 
         // Chrome
-        Chrome.draw(g, panelX, panelY, DIMS);
+        Chrome.draw(g, panelX, panelY, DIMS, Chrome.PARCHMENT);
         Chrome.drawSidebarBg(g, panelX, panelY, DIMS);
 
         // Title bar
