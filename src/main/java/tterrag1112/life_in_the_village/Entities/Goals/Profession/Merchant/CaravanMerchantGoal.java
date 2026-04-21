@@ -25,6 +25,7 @@ public class CaravanMerchantGoal extends Goal {
     private final TownspersonMob entity;
     private int currentRoadIndex = -1;
     private BlockPos currentWaypoint = null;
+    private boolean hasLoggedPath = false;
 
     public CaravanMerchantGoal(TownspersonMob entity) {
         this.entity = entity;
@@ -45,6 +46,7 @@ public class CaravanMerchantGoal extends Goal {
     public void start() {
         currentRoadIndex = -1;
         currentWaypoint  = null;
+        hasLoggedPath    = false;
         entity.setCurrentActivity("Travelling...");
     }
 
@@ -81,6 +83,19 @@ public class CaravanMerchantGoal extends Goal {
         List<BlockPos> overridePath = caravan.getOverridePath();
         if (overridePath != null && !overridePath.isEmpty()) {
             blocks = overridePath;
+            if (!hasLoggedPath) {
+                TradeRoad logRoad = VillageSavedData.get(level)
+                        .getRouteById(caravan.getRouteId())
+                        .flatMap(r -> VillageSavedData.get(level).getRoadById(r.getConnectionId()))
+                        .orElse(null);
+                int tradeCnt = (logRoad != null && !logRoad.getBlocks().isEmpty())
+                        ? logRoad.getBlocks().size() : -1;
+                System.out.println("[CaravanGoal] Caravan " + caravanId.toString().substring(0, 8)
+                        + ": overridePath=" + overridePath.size() + " blocks"
+                        + ", tradeRoutePath=" + (tradeCnt < 0 ? "null" : tradeCnt + " blocks")
+                        + ", selected=overridePath");
+                hasLoggedPath = true;
+            }
         } else {
             TradeRoad road = VillageSavedData.get(level)
                     .getRouteById(caravan.getRouteId())
