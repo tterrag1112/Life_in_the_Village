@@ -8,6 +8,8 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ConnectorAllee;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.MilestoneDecorator;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.RoadOvergrowthDecorator;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
@@ -119,6 +121,10 @@ public final class EdgeRealizer {
                 + primitives.size() + " primitives, culture=" + culture);
 
         edge.markRealized(fullPath);
+
+        // Decoration passes (run even on re-realization; decorators skip already-placed positions)
+        MilestoneDecorator.decorate(level, edge, graph);       // GREAT_ROAD only
+        RoadOvergrowthDecorator.decorate(level, edge, graph);  // all tiers
     }
 
     // =========================================================================

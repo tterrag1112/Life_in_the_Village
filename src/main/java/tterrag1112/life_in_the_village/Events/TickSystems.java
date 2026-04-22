@@ -736,3 +736,18 @@ class ParallelismCleanupSystem implements TickSubsystem {
         }
     }
 }
+
+// =============================================================================
+// NODE DECORATION (interval = 20, priority = 200)
+// =============================================================================
+
+class NodeDecorationTickSystem implements TickSubsystem {
+    @Override public String name()     { return "node_decoration"; }
+    @Override public int    interval() { return 20; }
+    @Override public int    priority() { return 200; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        NodeDecorationSystem.tick(ctx.level(), ctx.villageData());
+    }
+}

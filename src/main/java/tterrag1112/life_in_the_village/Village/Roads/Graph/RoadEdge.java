@@ -94,7 +94,10 @@ public class RoadEdge {
                     .forGetter(e -> e.realized),
             RoadPrimitive.CODEC.listOf()
                     .optionalFieldOf("primitives", new ArrayList<>())
-                    .forGetter(e -> e.primitives != null ? e.primitives : new ArrayList<>())
+                    .forGetter(e -> e.primitives != null ? e.primitives : new ArrayList<>()),
+            BlockPos.CODEC.listOf()
+                    .optionalFieldOf("decorationPositions", new ArrayList<>())
+                    .forGetter(e -> e.decorationPositions)
     ).apply(i, RoadEdge::fromCodec));
 
     private static RoadEdge fromCodec(
@@ -103,7 +106,8 @@ public class RoadEdge {
             EdgeTier tier, MeanderProfile meanderProfile,
             int maintenance, long trafficCounter,
             List<UUID> maintainerVillageIds, List<Long> staleList,
-            boolean realized, List<RoadPrimitive> primitives) {
+            boolean realized, List<RoadPrimitive> primitives,
+            List<BlockPos> decorationPositions) {
         RoadEdge e = new RoadEdge(
                 edgeId, nodeAId, nodeBId,
                 new ArrayList<>(cellPath), new ArrayList<>(blockPath),
@@ -112,6 +116,7 @@ public class RoadEdge {
                 new ArrayList<>(maintainerVillageIds), new HashSet<>(staleList),
                 realized);
         e.primitives = primitives.isEmpty() ? null : new ArrayList<>(primitives);
+        e.decorationPositions = new ArrayList<>(decorationPositions);
         return e;
     }
 
@@ -131,6 +136,8 @@ public class RoadEdge {
     Set<Long> staleCells;
     boolean realized;
     List<RoadPrimitive> primitives;
+    /** Block positions of all placed decoration blocks along this edge (persistent). */
+    List<BlockPos> decorationPositions;
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
@@ -153,6 +160,7 @@ public class RoadEdge {
         this.maintainerVillageIds = maintainerVillageIds;
         this.staleCells          = staleCells;
         this.realized            = realized;
+        this.decorationPositions = new ArrayList<>();
     }
 
     /** Convenience constructor for new edges that have not yet been realized. */
@@ -223,4 +231,9 @@ public class RoadEdge {
     public boolean isRealized()                  { return realized; }
     public List<RoadPrimitive> getPrimitives()   { return primitives != null ? primitives : List.of(); }
     public boolean hasPrimitives()               { return primitives != null && !primitives.isEmpty(); }
+
+    public List<BlockPos> getDecorationPositions() { return decorationPositions; }
+    public void addDecorationPosition(BlockPos pos) { decorationPositions.add(pos.immutable()); }
+    public void clearDecorationPositions()          { decorationPositions.clear(); }
+    public boolean hasDecorations()                 { return !decorationPositions.isEmpty(); }
 }

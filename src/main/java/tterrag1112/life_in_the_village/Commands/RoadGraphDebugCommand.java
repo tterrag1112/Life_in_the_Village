@@ -37,6 +37,9 @@ import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
 import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.JunctionDecorator;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.MilestoneDecorator;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.RoadOvergrowthDecorator;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
@@ -141,6 +144,14 @@ public class RoadGraphDebugCommand {
                                         .then(Commands.argument("edgeId", StringArgumentType.word())
                                         .then(Commands.argument("value", IntegerArgumentType.integer(0, 100))
                                                 .executes(RoadGraphDebugCommand::forceMaintenance))))
+                                .then(Commands.literal("redecorate_edge")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::redecoratEdge)))
+                                .then(Commands.literal("redecorate_node")
+                                        .then(Commands.argument("nodeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::redecoratNode)))
+                                .then(Commands.literal("show_decorations")
+                                        .executes(RoadGraphDebugCommand::showDecorations))
                         )
                 )
         );
@@ -1507,6 +1518,138 @@ public class RoadGraphDebugCommand {
                         + " → " + value + ". Re-realized: " + edge.isRealized()
                         + " (" + edge.getBlockPath().size() + " blocks)."), false);
         return 1;
+    }
+
+    // =========================================================================
+    // redecorate_edge
+    // =========================================================================
+
+    private static int redecoratEdge(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ctx.getSource().getPlayerOrException();
+        ServerLevel level      = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph   = rData.getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        String prefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "edgeId");
+        if (edge == null) return 0;
+
+        // Remove previously placed decoration blocks from the world
+        int removed = 0;
+        for (BlockPos pos : edge.getDecorationPositions()) {
+            if (level.isLoaded(pos)) {
+                level.removeBlock(pos, false);
+                removed++;
+            }
+        }
+        edge.clearDecorationPositions();
+
+        // Re-run decoration passes
+        MilestoneDecorator.decorate(level, edge, graph);
+        RoadOvergrowthDecorator.decorate(level, edge, graph);
+        rData.markDirty();
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        int newCount = edge.getDecorationPositions().size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[redecorate_edge] Edge " + shortId + ": removed " + removed
+                        + " old blocks, placed " + newCount + " new decoration blocks."), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // redecorate_node
+    // =========================================================================
+
+    private static int redecoratNode(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ctx.getSource().getPlayerOrException();
+        ServerLevel level      = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph   = rData.getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        String input = StringArgumentType.getString(ctx, "nodeId").toLowerCase(Locale.ROOT);
+
+        List<RoadNode> matches = new ArrayList<>();
+        for (RoadNode n : graph.allNodes()) {
+            if (n.nodeId().toString().startsWith(input)) matches.add(n);
+        }
+        if (matches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal("No node matches prefix '" + input + "'."));
+            return 0;
+        }
+        if (matches.size() > 1) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Ambiguous node prefix '" + input + "' (" + matches.size() + " matches)."));
+            return 0;
+        }
+        RoadNode node = matches.get(0);
+
+        // Remove previously placed decoration blocks
+        int removed = 0;
+        for (BlockPos pos : node.getDecorationPositions()) {
+            if (level.isLoaded(pos)) {
+                level.removeBlock(pos, false);
+                removed++;
+            }
+        }
+        node.clearDecorationPositions();
+
+        // Re-decorate
+        JunctionDecorator.decorate(level, node, graph, vData);
+        rData.markDirty();
+
+        String shortId = node.nodeId().toString().substring(0, 8);
+        int newCount = node.getDecorationPositions().size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[redecorate_node] Node " + shortId + " [" + node.type() + "]: removed "
+                        + removed + " old blocks, placed " + newCount + " new blocks."), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // show_decorations
+    // =========================================================================
+
+    private static int showDecorations(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level   = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        List<ParticleEmission> emissions = new ArrayList<>();
+        int edgeDecorCount = 0, nodeDecorCount = 0;
+
+        for (RoadEdge edge : graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_STANDARD)) {
+            for (BlockPos pos : edge.getDecorationPositions()) {
+                if (pos.distSqr(player.blockPosition()) > (long) RADIUS_STANDARD * RADIUS_STANDARD) continue;
+                emissions.add(new ParticleEmission(pos.above(), ParticleTypes.HAPPY_VILLAGER,
+                        RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+                edgeDecorCount++;
+            }
+        }
+
+        for (RoadNode node : graph.allNodes()) {
+            if (node.position().distSqr(player.blockPosition()) > (long) RADIUS_STANDARD * RADIUS_STANDARD) continue;
+            for (BlockPos pos : node.getDecorationPositions()) {
+                emissions.add(new ParticleEmission(pos.above(), ParticleTypes.END_ROD,
+                        RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+                nodeDecorCount++;
+            }
+        }
+
+        if (!emissions.isEmpty()) {
+            RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
+        }
+
+        int ec = edgeDecorCount, nc = nodeDecorCount;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[show_decorations] " + ec + " edge decoration blocks, "
+                        + nc + " node decoration blocks within " + RADIUS_STANDARD + " blocks."), false);
+        return ec + nc;
     }
 
     // =========================================================================

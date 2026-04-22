@@ -102,6 +102,7 @@ public final class TickSubsystemRegistry {
         register(new BoatCaravanTickSystem());
         register(new GraphEdgeRealizationSystem());
         register(new ParallelismCleanupSystem());
+        register(new NodeDecorationTickSystem());
 
         // ── Debug visualization (every-tick, low priority) ────────────────────
         register(RoadDebugVisualizer.INSTANCE);

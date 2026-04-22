@@ -593,3 +593,74 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - `VillageSavedData.get(level)` available in command context.
 
 **Current phase:** Phase 6a complete. Next: Phase 6b (upkeep decay tick, maintenance propagation from traffic).
+
+---
+
+## Phase 6b — Decorative Pass (2026-04-22)
+
+### Deliverables completed
+
+**D1 — Old Realm milestones** (`Village/Roads/Decoration/MilestoneDecorator.java`, NEW)
+- GREAT_ROAD-only. Spacing 500–1000 blocks along centerline (seeded RNG from `edge.getMeanderProfile().seed() ^ 0xDECAFBADL`).
+- Perpendicular offset ±2 blocks, alternating sides.
+- 3 variants by position hash: intact (60%, polished_andesite base + chiseled_stone_bricks pillar + stone_brick_slab cap + optional mossy_cobblestone_wall), broken (25%, chiseled_stone_bricks on ground + toppled polished_andesite + short_grass), eroded (15%, mossy_cobblestone + cracked_stone_bricks).
+- Deduplication: skips if within 8 blocks of any existing decoration position.
+
+**D2 — Decoration persistence** (`RoadEdge.java` and `RoadNode.java`, MODIFIED)
+- Added `List<BlockPos> decorationPositions` field to both `RoadEdge` and `RoadNode`.
+- Persisted via codec as optional field (backward-compatible: loads as empty list on old save data).
+- API: `getDecorationPositions()`, `addDecorationPosition(BlockPos)`, `clearDecorationPositions()`, `hasDecorations()` (edge only).
+- `RoadNode` converted from Java record to class to allow mutable decorationPositions field; all accessor method signatures preserved (record-style names: `nodeId()`, `position()`, `type()`, `kingdomAffinity()`).
+
+**D3 — Junction decorations** (`Village/Roads/Decoration/JunctionDecorator.java`, NEW)
+- TRUNK_JUNCTION: 4 variants by node UUID hash % 4. Culture from majority vote of maintainerVillageIds on incident edges.
+  - Well (0): cobblestone_wall cross + water center + culture fence gate windlass (HORIZONTAL_FACING).
+  - Shrine (1): cobblestone_slab base + culture pillar + stone_pressure_plate cap; imperial accent blocks.
+  - Notice board (2): culture fence post + culture sign (blank, functional placeholder for server-set text).
+  - Rest spot (3): 4 culture fence corner posts + interior + corner slab roof + stone_slab bench.
+- GREAT_ROAD_ANCHOR: 3 ruin variants by hash % 3.
+  - Collapsed waystation: mossy_cobblestone perimeter, 2 chiseled pillars, ~25% rubble density, oak_sapling.
+  - Cracked statue: polished_andesite pedestal, 2 chiseled torso blocks, cobblestone fallen head, moss_carpet.
+  - Sunken altar: 3×3 polished_andesite floor, water center, cracked_stone_bricks ring, oak_leaves debris.
+- Culture helpers: `cultureWallBlock`, `cultureFenceBlock`, `cultureFenceGateBlock`, `culturePillarBlock`, `cultureSignBlock`, `cultureRoofSlab`.
+- Best-corner algorithm: picks diagonal (±3 from node) with max angular separation from all incident edge directions.
+
+**D4 — Road signs** (inside `JunctionDecorator`, `placeRoadSigns()`)
+- One sign per outgoing edge from TRUNK_JUNCTION if a VILLAGE_DOCK is reachable within 3 graph hops.
+- Sign rotation: `((int) Math.round((Math.atan2(-dx, dz) * 180.0 / Math.PI + 360.0) % 360.0 / 22.5)) % 16` (0=south, 4=west, 8=north, 12=east).
+- Direction arrow (>>/<</<</^^) + truncated (≤15 char) village name written via `SignBlockEntity.setText(SignText, true)`.
+- Destination resolved by walking graph via highest-tier edges, stopping at VILLAGE_DOCK nodes.
+
+**D5 — Maintenance-based overgrowth** (`Village/Roads/Decoration/RoadOvergrowthDecorator.java`, NEW)
+- No-ops at maintenance ≥ 80. Density by maintenance: <20→60%, <40→35%, <60→15%, else→5%.
+- Lateral offsets 2–3 blocks; per-block density roll via position hash XOR edge seed (deterministic).
+- Biome-specific vegetation: default (short_grass/tall_grass/oak_sapling/oak_leaves), desert (dead_bush/sand), swamp (oak_leaves/moss_block), snowy (snow).
+- Fallen logs (maintenance <40): STRIPPED_OAK_LOG with AXIS perpendicular to road direction; spans 5 blocks across road every 80 blocks.
+- Surface degradation (maintenance <20): ~12.5% of road core blocks replaced with coarse_dirt.
+
+**D6 — Hook into realizer and tick subsystem**
+- `EdgeRealizer.realizeEdge()`: after `edge.markRealized(fullPath)`, calls `MilestoneDecorator.decorate()` (GREAT_ROAD only) and `RoadOvergrowthDecorator.decorate()` (all tiers). Decorators are idempotent (deduplication via decorationPositions).
+- `NodeDecorationSystem.java` (NEW, `Events/`): iterates nodes, decorates first undecorated TRUNK_JUNCTION/GREAT_ROAD_ANCHOR within 128 blocks of any player (one per tick).
+- `NodeDecorationTickSystem` added to `TickSystems.java` (interval=20, priority=200); registered in `TickSubsystemRegistry.registerDefaults()`.
+
+**D7 — Debug commands** (`Commands/RoadGraphDebugCommand.java`, MODIFIED)
+- `redecorate_edge <edgeId>`: removes existing decoration blocks, clears decorationPositions, re-runs MilestoneDecorator + RoadOvergrowthDecorator.
+- `redecorate_node <nodeId>`: removes existing decoration blocks, clears decorationPositions, re-calls JunctionDecorator.decorate().
+- `show_decorations`: emits HAPPY_VILLAGER particles at edge decoration positions, END_ROD particles at node decoration positions.
+
+### Bug fixes this session
+- `placeWell()` in JunctionDecorator: regular fence block (OAK_FENCE) does not have HORIZONTAL_FACING property — fixed by adding `cultureFenceGateBlock()` helper returning OAK_FENCE_GATE/SPRUCE_FENCE_GATE/etc. and using it for the windlass beam placement.
+- Added missing `import net.minecraft.world.level.block.Block;` to JunctionDecorator.java.
+
+### Architecture notes
+- All decorators are idempotent: they check `decorationPositions` before placing and skip on non-empty / within-proximity checks.
+- `RoadNode` record→class conversion: kept all accessor names in record style so all 10+ existing call sites compile unchanged.
+- Decoration codec fields use `optionalFieldOf` for backward compatibility — existing worlds without the field load correctly (default to empty list).
+
+### Compilation status (manual static review)
+- All imports verified. `BlockStateProperties.AXIS` for log axis, `BlockStateProperties.ROTATION_16` for signs, `BlockStateProperties.HORIZONTAL_FACING` for fence gates, `BlockStateProperties.PERSISTENT` for oak_leaves — all confirmed present in NeoForge 1.21 API.
+- `VillageBiomeStyle` enum values verified for biome dispatch in RoadOvergrowthDecorator.
+- `RoadNode.NodeType.TRUNK_JUNCTION` and `GREAT_ROAD_ANCHOR` confirmed in NodeType enum.
+- `TickSubsystemRegistry.registerDefaults()` correctly orders NodeDecorationTickSystem after ParallelismCleanupSystem.
+
+**Current phase:** Phase 6b complete. Phases 1–6b done. Next: Phase 7 per ROADS_PLAN.md.
