@@ -22,6 +22,9 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.GraphTradeRouteEstablisher;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer.ParticleEmission;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
@@ -38,7 +41,9 @@ import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
+import tterrag1112.life_in_the_village.World.SeasonTracker;
 
+import javax.annotation.Nullable;
 import java.util.*;
 
 /**
@@ -125,6 +130,17 @@ public class RoadGraphDebugCommand {
                                         .then(Commands.argument("x", IntegerArgumentType.integer())
                                         .then(Commands.argument("z", IntegerArgumentType.integer())
                                                 .executes(RoadGraphDebugCommand::invalidateCell))))
+                                .then(Commands.literal("material_preview")
+                                        .then(Commands.argument("culture", StringArgumentType.word())
+                                        .then(Commands.argument("tier", StringArgumentType.word())
+                                        .then(Commands.argument("maintenance", IntegerArgumentType.integer(0, 100))
+                                                .executes(RoadGraphDebugCommand::materialPreview)
+                                                .then(Commands.argument("season", StringArgumentType.word())
+                                                        .executes(RoadGraphDebugCommand::materialPreviewWithSeason))))))
+                                .then(Commands.literal("force_maintenance")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                        .then(Commands.argument("value", IntegerArgumentType.integer(0, 100))
+                                                .executes(RoadGraphDebugCommand::forceMaintenance))))
                         )
                 )
         );
@@ -1387,6 +1403,110 @@ public class RoadGraphDebugCommand {
                 () -> Component.literal("[invalidate_cell] Marked cell ("
                         + cellX + "," + cellZ + ") stale on " + count + " edge(s)"), false);
         return count;
+    }
+
+    // =========================================================================
+    // material_preview
+    // =========================================================================
+
+    private static int materialPreview(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        return runMaterialPreview(ctx, null);
+    }
+
+    private static int materialPreviewWithSeason(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        String seasonStr = StringArgumentType.getString(ctx, "season").toUpperCase(Locale.ROOT);
+        SeasonTracker.Season season;
+        try {
+            season = SeasonTracker.Season.valueOf(seasonStr);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown season '" + seasonStr + "'. Valid: SPRING, SUMMER, AUTUMN, WINTER."));
+            return 0;
+        }
+        return runMaterialPreview(ctx, season);
+    }
+
+    private static int runMaterialPreview(CommandContext<CommandSourceStack> ctx,
+                                          @Nullable SeasonTracker.Season season)
+            throws CommandSyntaxException {
+        ctx.getSource().getPlayerOrException();
+
+        String culture     = StringArgumentType.getString(ctx, "culture");
+        String tierStr     = StringArgumentType.getString(ctx, "tier").toUpperCase(Locale.ROOT);
+        int    maintenance = IntegerArgumentType.getInteger(ctx, "maintenance");
+
+        RoadShape.RoadTier tier;
+        try {
+            tier = RoadShape.RoadTier.valueOf(tierStr);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown tier '" + tierStr + "'. Valid: FOOTPATH, VILLAGE_PATH, VILLAGE_ROAD, TOWN_ROAD, CAPITAL_ROAD."));
+            return 0;
+        }
+
+        PathMaterial mat = PathMaterial.resolve(
+                VillageBiomeStyle.PLAINS, culture, maintenance, tier, season);
+
+        String header = "--- material_preview ---"
+                + " culture=" + culture
+                + " tier=" + tier
+                + " maintenance=" + maintenance
+                + " season=" + (season != null ? season : "none")
+                + " → name=" + mat.getName();
+        ctx.getSource().sendSuccess(() -> Component.literal(header), false);
+
+        ctx.getSource().sendSuccess(() -> Component.literal("  Core blocks:"), false);
+        for (PathMaterial.WeightedBlock wb : mat.getCoreBlocks()) {
+            String key = wb.block().getDescriptionId();
+            String line = "    " + key + " weight=" + String.format("%.2f", wb.weight());
+            ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+        }
+
+        ctx.getSource().sendSuccess(() -> Component.literal("  Edge blocks:"), false);
+        for (PathMaterial.WeightedBlock wb : mat.getEdgeBlocks()) {
+            String key = wb.block().getDescriptionId();
+            String line = "    " + key + " weight=" + String.format("%.2f", wb.weight());
+            ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+        }
+
+        return 1;
+    }
+
+    // =========================================================================
+    // force_maintenance
+    // =========================================================================
+
+    private static int forceMaintenance(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ctx.getSource().getPlayerOrException();
+        ServerLevel level   = ctx.getSource().getLevel();
+        WorldRoadSavedData roadData  = WorldRoadSavedData.get(level);
+        WorldRoadGraph     graph     = roadData.getGraph();
+        VillageSavedData   villageData = VillageSavedData.get(level);
+
+        String edgePrefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT);
+        int    value      = IntegerArgumentType.getInteger(ctx, "value");
+
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, edgePrefix, "edgeId");
+        if (edge == null) return 0;
+
+        int oldMaintenance = edge.getMaintenance();
+        edge.setMaintenance(value);
+
+        // Force re-realization so material changes take effect immediately
+        edge.unrealize();
+        edge.clearStaleness();
+        EdgeRealizer.realizeEdge(level, edge, graph, villageData);
+        roadData.markDirty();
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_maintenance] Edge " + shortId + ": maintenance " + oldMaintenance
+                        + " → " + value + ". Re-realized: " + edge.isRealized()
+                        + " (" + edge.getBlockPath().size() + " blocks)."), false);
+        return 1;
     }
 
     // =========================================================================

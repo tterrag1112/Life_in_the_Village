@@ -23,14 +23,15 @@ import java.util.UUID;
  *
  * <h3>Pipeline</h3>
  * <ol>
+ *   <li>Resolve material context via {@link EdgeMaterialResolver} (biome, culture,
+ *       maintenance, season axes applied).</li>
  *   <li>Build (or reuse) the edge's primitive chain via
  *       {@link PrimitiveChainBuilder}.</li>
  *   <li>For each primitive, compute its centerline and place road blocks via
- *       {@link UnifiedRoadPlacer}.</li>
+ *       {@link UnifiedRoadPlacer} — passing culture for architectural detail passes.</li>
  *   <li>{@link RoadPrimitive.ArmApproach} segments use the owning village's
  *       biome-appropriate path material and receive a roadside allée via
  *       {@link ConnectorAllee}.</li>
- *   <li>{@link RoadPrimitive.SmoothedPath} segments use cobblestone.</li>
  *   <li>All per-primitive centerlines are concatenated and the edge is
  *       marked realized via {@link RoadEdge#markRealized}.</li>
  * </ol>
@@ -62,6 +63,12 @@ public final class EdgeRealizer {
                 + ", tier=" + edge.getTier()
                 + ", cellPath=" + edge.getCellPath().size() + " cells");
 
+        // Resolve material and culture for this edge
+        EdgeMaterialResolver.MaterialContext matCtx =
+                EdgeMaterialResolver.resolveForEdge(level, edge, graph, data);
+        PathMaterial edgeMaterial = matCtx.material();
+        String culture = matCtx.culture();
+
         // Build or reuse primitive chain
         List<RoadPrimitive> primitives = edge.hasPrimitives()
                 ? edge.getPrimitives()
@@ -78,17 +85,19 @@ public final class EdgeRealizer {
         }
 
         List<BlockPos> fullPath = new ArrayList<>();
+        RoadShape.RoadTier edgeTier = PrimitiveChainBuilder.edgeTierToRoadTier(edge.getTier());
 
         for (RoadPrimitive primitive : primitives) {
             List<BlockPos> centerline = primitive.computeCenterline(level, level.getSeed());
             if (centerline.size() < 2) continue;
 
             List<BlockPos> placed = switch (primitive) {
-                case RoadPrimitive.ArmApproach arm -> placeArm(level, arm, centerline, edge, data);
-                case RoadPrimitive.SmoothedPath sp -> UnifiedRoadPlacer.place(
-                        level, centerline, PathMaterial.cobblestone(), sp.tier(), edge);
-                default -> UnifiedRoadPlacer.place(level, centerline, PathMaterial.cobblestone(),
-                        PrimitiveChainBuilder.edgeTierToRoadTier(edge.getTier()), edge);
+                case RoadPrimitive.ArmApproach arm ->
+                        placeArm(level, arm, centerline, edge, data);
+                case RoadPrimitive.SmoothedPath sp ->
+                        UnifiedRoadPlacer.place(level, centerline, edgeMaterial, sp.tier(), edge, culture);
+                default ->
+                        UnifiedRoadPlacer.place(level, centerline, edgeMaterial, edgeTier, edge, culture);
             };
 
             if (fullPath.isEmpty()) {
@@ -107,7 +116,7 @@ public final class EdgeRealizer {
 
         System.out.println("[EdgeRealizer] Realized edge " + shortId
                 + ": " + fullPath.size() + " blocks, "
-                + primitives.size() + " primitives");
+                + primitives.size() + " primitives, culture=" + culture);
 
         edge.markRealized(fullPath);
     }
@@ -136,7 +145,9 @@ public final class EdgeRealizer {
                     + "; using cobblestone material");
         }
 
-        List<BlockPos> placed = UnifiedRoadPlacer.place(level, centerline, material, arm.tier(), edge);
+        // Arm approaches use the village's own culture for architectural details
+        List<BlockPos> placed = UnifiedRoadPlacer.place(
+                level, centerline, material, arm.tier(), edge, villageType);
 
         if (village != null) {
             double armDirRad = Math.atan2(

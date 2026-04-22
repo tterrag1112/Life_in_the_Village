@@ -9,32 +9,35 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
+import tterrag1112.life_in_the_village.World.SeasonTracker;
 
+import javax.annotation.Nullable;
 import java.util.*;
 
 /**
  * Defines a road surface as a weighted mix of blocks.
  *
- * <h3>Example</h3>
- * A cobblestone road might be:
- * <pre>
- *   cobblestone: 60%
- *   andesite:    20%
- *   stone:       10%
- *   gravel:      10%
- * </pre>
+ * <h3>Resolution</h3>
+ * The primary entry point is {@link #resolve} which applies biome, culture,
+ * maintenance, tier, and season axes in priority order. The legacy
+ * {@link #forBiomeAndTier} delegate is kept for backward compatibility.
  *
- * Each time a road block is placed, one entry is sampled based on weights.
- * This produces natural-looking variation without hand-painting every block.
+ * <h3>Culture palettes</h3>
+ * <ul>
+ *   <li><b>default</b> — biome-tier base unchanged (dirt/gravel/cobble/stone brick)</li>
+ *   <li><b>imperial</b> — stone_bricks + polished_andesite core, stone_slab drainage edge</li>
+ *   <li><b>highland</b> — cobblestone + mossy + gravel core, cobblestone edge</li>
+ *   <li><b>nordic</b> — smooth_stone + planks core, spruce_slab edge</li>
+ *   <li>Unknown/null → default</li>
+ * </ul>
  *
- * <h3>Edge blending</h3>
- * Roads also define an "edge" material for their outer 1-2 blocks, which
- * transitions from the road surface to the natural terrain. For example,
- * a cobblestone road might have coarse_dirt edges that fade to grass.
+ * <h3>Maintenance decay</h3>
+ * Maintenance &lt; 40: mossy variants in core, coarse_dirt weight on edge.
+ * Maintenance &lt; 15: gravel replaces some cobble, grass_block on edge.
  *
- * <h3>Upgrades</h3>
- * Materials are tiered. When a village upgrades its roads, the PathMaterial
- * is swapped — the road positions stay the same, only the surface changes.
+ * <h3>Old Realm (GREAT_ROAD)</h3>
+ * {@link #oldRealm()} returns a fixed "eternally weathered" palette that ignores
+ * all other axes. Great roads never decay (invariant 3).
  */
 public class PathMaterial {
 
@@ -88,26 +91,14 @@ public class PathMaterial {
     // Sampling
     // =========================================================================
 
-    /**
-     * Samples a core road block based on weights.
-     * Called for the center and inner portions of the road.
-     */
     public BlockState sampleCore(RandomSource random) {
         return sample(coreBlocks, totalCoreWeight, random);
     }
 
-    /**
-     * Samples an edge/transition block based on weights.
-     * Called for the outer 1-2 blocks of the road where it meets terrain.
-     */
     public BlockState sampleEdge(RandomSource random) {
         return sample(edgeBlocks, totalEdgeWeight, random);
     }
 
-    /**
-     * Returns the primary (highest weight) core block.
-     * Used for validation and display purposes.
-     */
     public Block primaryBlock() {
         return coreBlocks.stream()
                 .max(Comparator.comparingDouble(WeightedBlock::weight))
@@ -139,10 +130,154 @@ public class PathMaterial {
     }
 
     // =========================================================================
-    // Built-in presets (biome-aware)
+    // Full resolution entry point
     // =========================================================================
 
-    /** Dirt path — bare earth with occasional grass. Tier 0. */
+    /**
+     * Resolves the PathMaterial for a road position, applying all axes in order:
+     * biome → culture → maintenance → season.
+     *
+     * @param biome       biome style at the road location
+     * @param culture     culture string ("imperial", "highland", "nordic", "default", or null)
+     * @param maintenance 0–100; 100 = perfect, 0 = abandoned
+     * @param tier        road width tier (determines base material class)
+     * @param season      current season, or null for no seasonal overlay
+     */
+    public static PathMaterial resolve(VillageBiomeStyle biome,
+                                       @Nullable String culture,
+                                       int maintenance,
+                                       RoadShape.RoadTier tier,
+                                       @Nullable SeasonTracker.Season season) {
+        // 1. Culture overlay (supersedes biome for imperial/highland/nordic)
+        PathMaterial base;
+        String eff = (culture == null || culture.isEmpty()) ? "default" : culture;
+        base = switch (eff) {
+            case "imperial" -> imperial();
+            case "highland" -> highland();
+            case "nordic"   -> nordic(biome);
+            default         -> baseForRoadTier(biome, tier);
+        };
+
+        // 2. Maintenance decay (skipped for Great Roads — callers must not pass those here)
+        if (maintenance < 40) {
+            base = applyMaintenanceDecay(base, maintenance);
+        }
+
+        // 3. Seasonal overlay
+        if (season == SeasonTracker.Season.WINTER
+                && isDirtTier(tier)) {
+            base = applyWinterDirtOverlay(base);
+        } else if (season == SeasonTracker.Season.AUTUMN) {
+            base = applyAutumnEdge(base);
+        }
+
+        return base;
+    }
+
+    /**
+     * Backward-compatible delegate. Equivalent to
+     * {@code resolve(biome, "default", 100, RoadShape.fromPathTier(tier), null)}.
+     */
+    public static PathMaterial forBiomeAndTier(VillageBiomeStyle biome,
+                                               VillagePath.PathTier tier) {
+        if (biome == VillageBiomeStyle.DESERT) return desert();
+        if (biome == VillageBiomeStyle.SNOWY) return snowy();
+
+        return switch (tier) {
+            case DIRT        -> dirt();
+            case GRAVEL      -> gravel();
+            case COBBLESTONE -> cobblestone();
+            case STONE_BRICK -> stoneBrick();
+        };
+    }
+
+    // =========================================================================
+    // Base palette by road tier (default culture)
+    // =========================================================================
+
+    private static PathMaterial baseForRoadTier(VillageBiomeStyle biome,
+                                                 RoadShape.RoadTier tier) {
+        if (biome == VillageBiomeStyle.DESERT) return desert();
+        if (biome == VillageBiomeStyle.SNOWY)  return snowy();
+        return switch (tier) {
+            case FOOTPATH, VILLAGE_PATH -> dirt();
+            case VILLAGE_ROAD           -> cobblestone();
+            case TOWN_ROAD, CAPITAL_ROAD -> stoneBrick();
+        };
+    }
+
+    private static boolean isDirtTier(RoadShape.RoadTier tier) {
+        return tier == RoadShape.RoadTier.FOOTPATH || tier == RoadShape.RoadTier.VILLAGE_PATH;
+    }
+
+    // =========================================================================
+    // Maintenance decay modifier
+    // =========================================================================
+
+    private static PathMaterial applyMaintenanceDecay(PathMaterial base, int maintenance) {
+        List<WeightedBlock> newCore = new ArrayList<>(base.coreBlocks.size());
+        for (WeightedBlock wb : base.coreBlocks) {
+            Block decayed = decayBlock(wb.block, maintenance);
+            newCore.add(new WeightedBlock(decayed, wb.weight));
+        }
+
+        List<WeightedBlock> newEdge = new ArrayList<>(base.edgeBlocks);
+        // maintenance < 40: add coarse_dirt weight to edge (20%)
+        float edgeDirtWeight = base.totalEdgeWeight * 0.20f;
+        newEdge.add(new WeightedBlock(Blocks.COARSE_DIRT, edgeDirtWeight));
+
+        // maintenance < 15: further deterioration — grass on edge
+        if (maintenance < 15) {
+            float grassWeight = base.totalEdgeWeight * 0.15f;
+            newEdge.add(new WeightedBlock(Blocks.GRASS_BLOCK, grassWeight));
+        }
+
+        return new PathMaterial(base.name + "_worn", newCore, newEdge);
+    }
+
+    /** Substitutes stone-family blocks for their weathered equivalents. */
+    private static Block decayBlock(Block b, int maintenance) {
+        if (b == Blocks.COBBLESTONE) {
+            if (maintenance < 15) return Blocks.GRAVEL;
+            return Blocks.MOSSY_COBBLESTONE;
+        }
+        if (b == Blocks.STONE_BRICKS || b == Blocks.CHISELED_STONE_BRICKS) {
+            return Blocks.MOSSY_STONE_BRICKS;
+        }
+        return b;
+    }
+
+    // =========================================================================
+    // Seasonal overlays
+    // =========================================================================
+
+    private static PathMaterial applyWinterDirtOverlay(PathMaterial base) {
+        // Swap 40% of core blocks to snow-related variants on dirt-tier roads
+        List<WeightedBlock> newCore = new ArrayList<>(base.coreBlocks.size() + 2);
+        float totalW = base.totalCoreWeight;
+        float snowWeight = totalW * 0.4f;
+        float remaining = totalW * 0.6f;
+        float scale = remaining / totalW;
+        for (WeightedBlock wb : base.coreBlocks) {
+            newCore.add(new WeightedBlock(wb.block, wb.weight * scale));
+        }
+        newCore.add(new WeightedBlock(Blocks.SNOW_BLOCK, snowWeight * 0.5f));
+        newCore.add(new WeightedBlock(Blocks.GRASS_BLOCK, snowWeight * 0.5f));
+        return new PathMaterial(base.name + "_winter", newCore, base.edgeBlocks);
+    }
+
+    private static PathMaterial applyAutumnEdge(PathMaterial base) {
+        List<WeightedBlock> newEdge = new ArrayList<>(base.edgeBlocks);
+        float leafWeight = base.totalEdgeWeight * 0.05f;
+        newEdge.add(new WeightedBlock(Blocks.OAK_LEAVES, leafWeight));
+        return new PathMaterial(base.name + "_autumn", base.coreBlocks, newEdge);
+    }
+
+    // =========================================================================
+    // Built-in presets — biome base palettes
+    // =========================================================================
+
+    /** Dirt path — bare earth with occasional grass. */
     public static PathMaterial dirt() {
         return new PathMaterial("dirt",
                 List.of(
@@ -157,7 +292,7 @@ public class PathMaterial {
                 ));
     }
 
-    /** Gravel path — packed gravel with stone chips. Tier 1. */
+    /** Gravel path — packed gravel with stone chips. */
     public static PathMaterial gravel() {
         return new PathMaterial("gravel",
                 List.of(
@@ -172,7 +307,7 @@ public class PathMaterial {
                 ));
     }
 
-    /** Cobblestone road — mixed stone surface. Tier 2. */
+    /** Cobblestone road — mixed stone surface. */
     public static PathMaterial cobblestone() {
         return new PathMaterial("cobblestone",
                 List.of(
@@ -188,7 +323,7 @@ public class PathMaterial {
                 ));
     }
 
-    /** Stone brick road — refined surface for wealthy villages. Tier 3. */
+    /** Stone brick road — refined surface for wealthy villages. */
     public static PathMaterial stoneBrick() {
         return new PathMaterial("stone_brick",
                 List.of(
@@ -234,20 +369,98 @@ public class PathMaterial {
                 ));
     }
 
-    /**
-     * Returns the appropriate material for a biome style and tier.
-     */
-    public static PathMaterial forBiomeAndTier(VillageBiomeStyle biome,
-                                               VillagePath.PathTier tier) {
-        // Desert and snowy have their own palettes at all tiers
-        if (biome == VillageBiomeStyle.DESERT) return desert();
-        if (biome == VillageBiomeStyle.SNOWY) return snowy();
+    // =========================================================================
+    // Culture-specific palettes
+    // =========================================================================
 
-        return switch (tier) {
-            case DIRT        -> dirt();
-            case GRAVEL      -> gravel();
-            case COBBLESTONE -> cobblestone();
-            case STONE_BRICK -> stoneBrick();
-        };
+    /**
+     * Imperial culture: formal paved road imitating Old Realm engineering.
+     * Straight, stone-brick dominant with polished accents. Drainage edge.
+     */
+    public static PathMaterial imperial() {
+        return new PathMaterial("imperial",
+                List.of(
+                        new WeightedBlock(Blocks.STONE_BRICKS, 0.50f),
+                        new WeightedBlock(Blocks.COBBLESTONE, 0.30f),
+                        new WeightedBlock(Blocks.CHISELED_STONE_BRICKS, 0.10f),
+                        new WeightedBlock(Blocks.POLISHED_ANDESITE, 0.10f)
+                ),
+                List.of(
+                        new WeightedBlock(Blocks.STONE_BRICK_SLAB, 0.6f),
+                        new WeightedBlock(Blocks.STONE_SLAB, 0.4f)
+                ));
+    }
+
+    /**
+     * Highland culture: rugged terrain-adapted road.
+     * Cobblestone/mossy/gravel mix. Retaining walls placed architecturally.
+     */
+    public static PathMaterial highland() {
+        return new PathMaterial("highland",
+                List.of(
+                        new WeightedBlock(Blocks.COBBLESTONE, 0.50f),
+                        new WeightedBlock(Blocks.MOSSY_COBBLESTONE, 0.20f),
+                        new WeightedBlock(Blocks.STONE, 0.20f),
+                        new WeightedBlock(Blocks.GRAVEL, 0.10f)
+                ),
+                List.of(
+                        new WeightedBlock(Blocks.GRAVEL, 0.5f),
+                        new WeightedBlock(Blocks.COBBLESTONE, 0.5f)
+                ));
+    }
+
+    /**
+     * Nordic culture: mixed stone-and-plank road.
+     * In swamp/river biomes, planks dominate (corduroy road style).
+     *
+     * @param biome biome context; swamp and jungle shift plank weight higher
+     */
+    public static PathMaterial nordic(VillageBiomeStyle biome) {
+        boolean wetBiome = biome == VillageBiomeStyle.SWAMP;
+        if (wetBiome) {
+            return new PathMaterial("nordic_wet",
+                    List.of(
+                            new WeightedBlock(Blocks.SPRUCE_PLANKS, 0.60f),
+                            new WeightedBlock(Blocks.OAK_PLANKS, 0.20f),
+                            new WeightedBlock(Blocks.SMOOTH_STONE, 0.10f),
+                            new WeightedBlock(Blocks.STONE_BRICKS, 0.10f)
+                    ),
+                    List.of(
+                            new WeightedBlock(Blocks.SPRUCE_SLAB, 0.6f),
+                            new WeightedBlock(Blocks.GRAVEL, 0.4f)
+                    ));
+        }
+        return new PathMaterial("nordic",
+                List.of(
+                        new WeightedBlock(Blocks.SMOOTH_STONE, 0.30f),
+                        new WeightedBlock(Blocks.STONE_BRICKS, 0.20f),
+                        new WeightedBlock(Blocks.OAK_PLANKS, 0.30f),
+                        new WeightedBlock(Blocks.SPRUCE_PLANKS, 0.20f)
+                ),
+                List.of(
+                        new WeightedBlock(Blocks.SPRUCE_SLAB, 0.5f),
+                        new WeightedBlock(Blocks.GRAVEL, 0.5f)
+                ));
+    }
+
+    /**
+     * Old Realm great-road palette: ancient, eternally weathered, durable.
+     * This palette is applied to all GREAT_ROAD edges regardless of culture or
+     * maintenance (invariant 3 — great roads never decay).
+     */
+    public static PathMaterial oldRealm() {
+        return new PathMaterial("old_realm",
+                List.of(
+                        new WeightedBlock(Blocks.MOSSY_COBBLESTONE, 0.35f),
+                        new WeightedBlock(Blocks.CRACKED_STONE_BRICKS, 0.30f),
+                        new WeightedBlock(Blocks.STONE_BRICKS, 0.20f),
+                        new WeightedBlock(Blocks.MOSSY_STONE_BRICKS, 0.10f),
+                        new WeightedBlock(Blocks.COBBLESTONE, 0.05f)
+                ),
+                List.of(
+                        new WeightedBlock(Blocks.STONE_BRICK_SLAB, 0.45f),
+                        new WeightedBlock(Blocks.STONE_SLAB, 0.40f),
+                        new WeightedBlock(Blocks.GRASS_BLOCK, 0.15f)
+                ));
     }
 }

@@ -7,6 +7,7 @@ import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.BiomeCategory;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
+import javax.annotation.Nullable;
 import java.util.*;
 
 /**
@@ -86,6 +87,76 @@ public class AtlasRouteRouter {
         return findRoute(atlas, from, to, attractors, null);
     }
 
+    // =========================================================================
+    // CellCostModifier — culture-specific routing behaviour
+    // =========================================================================
+
+    /**
+     * Adjusts the per-cell traversal cost produced by {@link #cellCost} to
+     * reflect a village culture's routing preferences. Applied after all other
+     * cost modifiers (road discount, attractor discount) have been applied.
+     *
+     * <p>The modifier receives the <em>base</em> cost for the cell (before
+     * road/attractor discounts) and may scale it up or down. Return
+     * {@code base} unchanged for no effect.
+     */
+    @FunctionalInterface
+    public interface CellCostModifier {
+        float adjust(float baseCost, AtlasCell cell);
+    }
+
+    /**
+     * Returns the routing cost modifier for the given culture string.
+     * Unknown or null cultures return the identity modifier (no change).
+     *
+     * <ul>
+     *   <li><b>imperial</b> — ×1.2 on steep cells (prefers straight over hills)</li>
+     *   <li><b>highland</b> — ×0.7 on steep cells, ×1.1 on flat cells
+     *       (prefers terrain variation, hugs hills)</li>
+     *   <li><b>nordic</b> — ×0.6 on swamp cells, ×0.8 on river-adjacent cells
+     *       (routes along water features)</li>
+     *   <li><b>default</b> / null — no adjustment</li>
+     * </ul>
+     */
+    public static CellCostModifier modifierForCulture(@Nullable String culture) {
+        if (culture == null) return (base, cell) -> base;
+        return switch (culture) {
+            case "imperial" -> (base, cell) -> cell != null && cell.isSteep()
+                    ? base * 1.2f
+                    : base;
+            case "highland" -> (base, cell) -> {
+                if (cell == null) return base;
+                if (cell.isSteep()) return base * 0.7f;
+                if (!cell.isSteep() && cell.slope() <= 2) return base * 1.1f;
+                return base;
+            };
+            case "nordic" -> (base, cell) -> {
+                if (cell == null) return base;
+                if (cell.has(AtlasCell.FLAG_HAS_SWAMP)) return base * 0.6f;
+                if (cell.isRiverAdj() || cell.has(AtlasCell.FLAG_HAS_BEACH)) return base * 0.8f;
+                return base;
+            };
+            default -> (base, cell) -> base;
+        };
+    }
+
+    /**
+     * Finds a cell-level path with per-cell attractor discount multipliers
+     * and an optional culture-specific cost modifier.
+     *
+     * @param attractors         flat attractor set (null = none)
+     * @param attractorDiscounts per-cell multipliers keyed by cell key (null = use flat discount only)
+     * @param modifier           culture cost modifier applied to base cell cost (null = identity)
+     */
+    public static List<Long> findRoute(WorldAtlas atlas,
+                                       BlockPos from, BlockPos to,
+                                       @Nullable Set<Long> attractors,
+                                       @Nullable Map<Long, Float> attractorDiscounts,
+                                       @Nullable CellCostModifier modifier) {
+        // Delegate to the main implementation with modifier injected
+        return findRouteInternal(atlas, from, to, attractors, attractorDiscounts, modifier);
+    }
+
     /**
      * Finds a cell-level path with per-cell attractor discount multipliers.
      * If {@code attractorDiscounts} contains a cell key, that multiplier is
@@ -100,6 +171,18 @@ public class AtlasRouteRouter {
                                        BlockPos from, BlockPos to,
                                        Set<Long> attractors,
                                        Map<Long, Float> attractorDiscounts) {
+        return findRouteInternal(atlas, from, to, attractors, attractorDiscounts, null);
+    }
+
+    // =========================================================================
+    // Core A* implementation — shared by all findRoute overloads
+    // =========================================================================
+
+    private static List<Long> findRouteInternal(WorldAtlas atlas,
+                                                 BlockPos from, BlockPos to,
+                                                 @Nullable Set<Long> attractors,
+                                                 @Nullable Map<Long, Float> attractorDiscounts,
+                                                 @Nullable CellCostModifier modifier) {
         int startCx = WorldAtlas.blockToCell(from.getX());
         int startCz = WorldAtlas.blockToCell(from.getZ());
         int endCx   = WorldAtlas.blockToCell(to.getX());
@@ -150,6 +233,11 @@ public class AtlasRouteRouter {
                     AtlasCell cell = atlas.getCellByCoord(nx, nz);
                     float cost = cellCost(cell);
                     if (cost >= Float.MAX_VALUE / 2) continue; // impassable
+
+                    // Culture-specific modifier applied to base cost before discounts.
+                    if (modifier != null) {
+                        cost = modifier.adjust(cost, cell);
+                    }
 
                     // Per-cell corridor discount supersedes both road and flat-attractor discounts.
                     Float attrDiscount = (attractorDiscounts != null) ? attractorDiscounts.get(nKey) : null;

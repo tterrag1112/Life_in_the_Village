@@ -219,9 +219,13 @@ public final class ConnectorPlanner {
                     CorridorAttractorBuilder.buildAttractors(
                             graph, dockingAnchor, c.targetPos, CORRIDOR_PADDING);
 
+            // Culture-specific routing cost modifier for this village
+            AtlasRouteRouter.CellCostModifier costModifier =
+                    AtlasRouteRouter.modifierForCulture(village.getVillageType());
+
             List<Long> cellPath = AtlasRouteRouter.findRoute(
                     atlas, dockingAnchor, c.targetPos,
-                    attractors.cellKeys(), attractors.discounts());
+                    attractors.cellKeys(), attractors.discounts(), costModifier);
 
             if (!cellPath.isEmpty()) {
                 routed.add(new RouteCandidate(c, dock, cellPath));

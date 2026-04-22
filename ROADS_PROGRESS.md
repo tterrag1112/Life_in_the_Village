@@ -526,3 +526,70 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
   accessible from `Commands` package ✓
 
 **Current phase:** Phase 5c complete. Phase 5 (Graph Realization) fully done. Next: Phase 6 (upkeep / traffic propagation).
+
+---
+
+## Phase 6a — Material & Culture System (2026-04-22)
+
+### Deliverables completed
+
+**D1 (BLOCKING) — Gapped road placement fix** (`Village/Roads/Realization/UnifiedRoadPlacer.java`)
+- Root cause: `RoutePathSmoother.smooth()` produces Catmull-Rom waypoints ~12–13 blocks apart; `OrganicRoadPlacer.place()` places one cross-section per point with no interpolation.
+- Fix: added `densify(List<BlockPos> waypoints, ServerLevel level)` — for each consecutive pair, steps = max(|Δx|, |Δz|), then linearly interpolates and surface-snaps each step. Identical algorithm to the private `RoadRouter.densify`.
+- Bridge detection runs on the original sparse centerline before densification; all block placement uses the dense list.
+- `place()` signature extended with `@Nullable String culture` parameter.
+- Added culture-specific architectural passes: `imperialGutterPass()`, `highlandRetainingWallPass()`, `nordicCorduroyPass()`.
+- Added seasonal overlay pass: `winterSnowPass()`.
+- Added `computePerp()` helper for perpendicular direction vectors.
+
+**D2 — Tier widths already correct** (no change, confirmed from PrimitiveChainBuilder.edgeTierToRoadTier mapping set in Phase 5a)
+
+**D3 — PathMaterial.resolve()** (`Village/Decoration/Roads/PathMaterial.java`)
+- Added `resolve(VillageBiomeStyle, String culture, int maintenance, RoadShape.RoadTier, SeasonTracker.Season)`.
+- Culture palettes: `imperial()`, `highland()`, `nordic(VillageBiomeStyle)`, `oldRealm()`.
+- Maintenance decay: `applyMaintenanceDecay()` — mossy substitutions at <40, grass at <15.
+- Seasonal overlays: `applyWinterDirtOverlay()` (40% snow in core for dirt-tier roads), `applyAutumnEdge()` (5% oak_leaves on edge).
+- `forBiomeAndTier()` kept for backward compatibility.
+
+**D4 — Culture routing cost modifiers** (`Village/Economy/Trade/AtlasRouteRouter.java`)
+- Added `CellCostModifier` functional interface: `float adjust(float baseCost, AtlasCell cell)`.
+- Added `modifierForCulture(@Nullable String culture)` factory (imperial ×1.2 steep, highland ×0.7 steep/×1.1 flat, nordic ×0.6 swamp/×0.8 river-adj, default=identity).
+- Added 6-arg `findRoute()` overload accepting `CellCostModifier`.
+- Extracted core A* into private `findRouteInternal()`; modifier applied to base cost before road/attractor discounts. Old overloads delegate to it.
+- `ConnectorPlanner.java`: retrieves culture modifier via `AtlasRouteRouter.modifierForCulture(village.getVillageType())` and passes to 6-arg overload.
+
+**D5 — Great-road Old Realm palette** (`Village/Decoration/Roads/PathMaterial.java`)
+- `oldRealm()`: mossy_cobblestone (35%), cracked_stone_bricks (30%), stone_bricks (20%), mossy_stone_bricks (10%), cobblestone (5%). Edge: stone_brick_slab/stone_slab/grass_block.
+- Invariant 3 honored: `EdgeMaterialResolver` short-circuits to `oldRealm()` with null culture for GREAT_ROAD tier — no culture/maintenance/season overlays applied.
+
+**D6 — Seasonal overlay** (part of PathMaterial.resolve() and UnifiedRoadPlacer passes)
+- WINTER: 40% snow/grass substitution on FOOTPATH/VILLAGE_PATH tier roads. Block placement pass sprinkles SNOW_LAYER on placed surface.
+- AUTUMN: 5% oak_leaves on edge palette.
+- Uses `SeasonTracker.currentSeason(level)` — deterministic from game time, no new state.
+
+**D7 — EdgeMaterialResolver + EdgeRealizer wiring** (new file `Village/Roads/Realization/EdgeMaterialResolver.java`)
+- `MaterialContext` record: `PathMaterial material, @Nullable String culture`.
+- `resolveForEdge()`: GREAT_ROAD → oldRealm()/null; others → biome + culture + maintenance + season → PathMaterial.resolve().
+- Culture resolution: CONNECTOR/LOCAL from VILLAGE_DOCK endpoint village; TRUNK from majority vote of maintainerVillageIds; GREAT_ROAD null.
+- Biome detected from nodeA position; fallback to first cell centre.
+- `EdgeRealizer.java` rewritten: calls EdgeMaterialResolver, passes culture to all UnifiedRoadPlacer.place() calls. ArmApproach arms use village.getVillageType() as culture.
+
+**D8 — Debug commands** (`Commands/RoadGraphDebugCommand.java`)
+- `material_preview <culture> <tier> <maintenance> [season]`: resolves PathMaterial for given axes against PLAINS biome, prints name + all weighted core/edge blocks. No world effect.
+- `force_maintenance <edgeId> <value>`: sets edge maintenance to value (0–100), unrealizes and force-re-realizes immediately so material changes take effect. Reports old→new maintenance and realized block count.
+
+### Architecture notes
+- `Village.getCulture()` does not exist — used `Village.getVillageType()` throughout.
+- Culture routing modifiers applied to base cell cost BEFORE road/attractor discounts, so existing road cheapness still acts as a corridor attractant even for cultures with elevated cell costs.
+- Densification is O(path_length × steps_per_segment) — for typical 4-cell edges with 13-block spacing this is ~50 dense points vs 4 sparse, well within budget.
+- Bridge detection correctness: running detection on the original sparse waypoints (4–20 points) keeps the WATER_SAMPLE_STEP threshold (4 blocks → 16 squared) meaningful. Dense path (1-block steps, distSq=1) would short-circuit every span.
+
+### Compilation status (manual static review)
+- All new imports present. `PathMaterial.WeightedBlock.block()` accessor used (record component getter).
+- `RoadShape.RoadTier.valueOf()` valid for CLI parsing (enum name match).
+- `SeasonTracker.Season.valueOf()` valid.
+- `edge.unrealize()`, `edge.clearStaleness()`, `edge.setMaintenance()` all confirmed in RoadEdge.java.
+- `resolveEdgeByPrefix()` already existed in RoadGraphDebugCommand — reused.
+- `VillageSavedData.get(level)` available in command context.
+
+**Current phase:** Phase 6a complete. Next: Phase 6b (upkeep decay tick, maintenance propagation from traffic).
