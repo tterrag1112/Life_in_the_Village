@@ -5,10 +5,14 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Persists the {@link WorldRoadGraph} for the overworld alongside the village atlas.
@@ -32,18 +36,26 @@ public class WorldRoadSavedData extends SavedData {
 
     // ── Codec ────────────────────────────────────────────────────────────────
 
-    private record Snapshot(WorldRoadGraph graph, boolean migrated) {
+    private static final Codec<UUID> UUID_CODEC =
+            Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
+    private record Snapshot(WorldRoadGraph graph, boolean migrated,
+                             Map<UUID, VillageUpkeepLedger> ledgers) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
                 Codec.BOOL.optionalFieldOf("migrated", false)
-                        .forGetter(Snapshot::migrated)
+                        .forGetter(Snapshot::migrated),
+                Codec.unboundedMap(UUID_CODEC, VillageUpkeepLedger.CODEC)
+                        .optionalFieldOf("upkeepLedgers", new HashMap<>())
+                        .forGetter(Snapshot::ledgers)
         ).apply(i, Snapshot::new));
     }
 
     public static final Codec<WorldRoadSavedData> CODEC = Snapshot.CODEC.xmap(
             snap -> {
-                WorldRoadSavedData data = new WorldRoadSavedData(snap.graph(), snap.migrated());
+                WorldRoadSavedData data = new WorldRoadSavedData(
+                        snap.graph(), snap.migrated(), new HashMap<>(snap.ledgers()));
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -55,7 +67,7 @@ public class WorldRoadSavedData extends SavedData {
                 }
                 return data;
             },
-            data -> new Snapshot(data.graph, data.migrated)
+            data -> new Snapshot(data.graph, data.migrated, new HashMap<>(data.ledgers))
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -68,6 +80,8 @@ public class WorldRoadSavedData extends SavedData {
 
     private final WorldRoadGraph graph;
     private boolean migrated;
+    /** Village UUID → upkeep ledger. Populated lazily on first upkeep cycle. */
+    private final Map<UUID, VillageUpkeepLedger> ledgers;
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
@@ -75,11 +89,14 @@ public class WorldRoadSavedData extends SavedData {
     public WorldRoadSavedData() {
         this.graph    = new WorldRoadGraph();
         this.migrated = false;
+        this.ledgers  = new HashMap<>();
     }
 
-    private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated) {
+    private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated,
+                                Map<UUID, VillageUpkeepLedger> ledgers) {
         this.graph    = graph;
         this.migrated = migrated;
+        this.ledgers  = ledgers;
     }
 
     // ── Accessor ─────────────────────────────────────────────────────────────
@@ -95,6 +112,21 @@ public class WorldRoadSavedData extends SavedData {
     public boolean isMigrated() { return migrated; }
 
     public void setMigrated(boolean migrated) { this.migrated = migrated; }
+
+    /** Returns the ledger for {@code villageId}, creating it if absent. */
+    public VillageUpkeepLedger getOrCreateLedger(UUID villageId) {
+        return ledgers.computeIfAbsent(villageId, k -> new VillageUpkeepLedger());
+    }
+
+    /** Returns the ledger for {@code villageId}, or {@code null} if none recorded yet. */
+    public VillageUpkeepLedger getLedger(UUID villageId) {
+        return ledgers.get(villageId);
+    }
+
+    /** Unmodifiable view of all ledgers. */
+    public Map<UUID, VillageUpkeepLedger> getLedgers() {
+        return java.util.Collections.unmodifiableMap(ledgers);
+    }
 
     /** Exposes {@link SavedData#setDirty()} to external callers. */
     public void markDirty() { setDirty(); }

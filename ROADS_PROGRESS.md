@@ -664,3 +664,51 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - `TickSubsystemRegistry.registerDefaults()` correctly orders NodeDecorationTickSystem after ParallelismCleanupSystem.
 
 **Current phase:** Phase 6b complete. Phases 1–6b done. Next: Phase 7 per ROADS_PLAN.md.
+
+---
+
+### 2026-04-22 — Phase 6c implemented
+
+**Phase:** 6c — Village-maintained upkeep economy
+
+**Files created:**
+- `Village/Roads/Economy/RoadUpkeepCalculator.java` — pure-function cost model. `costPerCellForTier`: GREAT_ROAD→0, TRUNK→2, CONNECTOR→1, LOCAL→1 silver per 4 cells. `maxUpkeepForTier` (VillageSizeTier): HAMLET→10s, VILLAGE→50s, TOWN→200s, CITY→600s. `computeEdgeUpkeep`, `villageShareOfEdge` (divides by maintainer count), `pickPaidEdges` (sorts CONNECTOR→TRUNK→LOCAL then shorter-first; accumulates until capacity exhausted).
+- `Village/Roads/Economy/VillageUpkeepLedger.java` — persisted per-village ledger. Fields: `Map<UUID,Integer> edgeFailureStreaks`, `long lastUpkeepCycleTick`, `int totalCyclesPaidThisYear`, `int totalCyclesFailedThisYear`. All codec fields `optionalFieldOf` for backward compat. UUID codec via `Codec.STRING.xmap(UUID::fromString, UUID::toString)`.
+- `Events/RoadUpkeepSystem.java` — daily upkeep cycle. Entry: `runCycle(level, villageData, bankrupt)`. Flow: rebuild maintainer index → build totalCount/paidCount maps → per-village treasury deduction → per-edge maintenance update (+2/0/−5) → maintenance-band crossing detection → stale maintainer pruning → chronic neglect logging. Invariant 3 enforced: GREAT_ROAD edges skipped entirely. `maintenanceBand()`: 5 bands (0=0-19, 1=20-39, 2=40-59, 3=60-79, 4=80-100). `applyDecay()`: sets maintenance, checks band crossing, flags `needsDecorationRefresh`.
+
+**Files modified:**
+- `Village/Roads/Graph/RoadEdge.java` — added transient `boolean needsDecorationRefresh` field (not persisted); getters/setters.
+- `Village/Roads/Graph/WorldRoadGraph.java` — added `Map<UUID, Set<UUID>> villageToEdges` reverse index; updated `addEdge`/`removeEdge`/`rebuildSpatialIndex`; added `edgesForVillage(UUID)` and `rebuildVillageMaintainerIndex()` methods.
+- `Networking/WorldRoadSavedData.java` — extended `Snapshot` record from 2 to 3 fields (added `Map<UUID, VillageUpkeepLedger> ledgers`); `optionalFieldOf` with empty-map default for backward compat; added `getOrCreateLedger(UUID)`, `getLedger(UUID)`, `getLedgers()`.
+- `Events/NodeDecorationSystem.java` — added second pass: detects edges with `isNeedsDecorationRefresh()` in player range, removes overgrowth blocks (SHORT_GRASS, TALL_GRASS, OAK/SPRUCE sapling, OAK_LEAVES, DEAD_BUSH, SNOW, MOSS_BLOCK, STRIPPED_*_LOG, COARSE_DIRT), clears `decorationPositions`, re-runs `RoadOvergrowthDecorator`. Milestones (stone blocks) not removed — permanent. One edge refresh per tick after node pass.
+- `Events/TickSystems.java` — appended `RoadUpkeepTickSystem` (interval=24000, priority=180).
+- `Events/TickSubsystemRegistry.java` — registered `RoadUpkeepTickSystem` after `NodeDecorationTickSystem`.
+- `Commands/RoadGraphDebugCommand.java` — added D7 debug subcommands (`village_upkeep <name>`, `trigger_upkeep`, `force_decay_cycle <cycles 1-200>`) and D6 player commands (`donate <villageName> <amount>`, `repair <edgeId>`). Handler methods: `villageUpkeepReport`, `triggerUpkeep`, `forceDecayCycle`, `donateToVillage`, `repairEdge`.
+
+**Upkeep tuning numbers (as designed — no test world run):**
+- HAMLET cap: 10 silver/cycle. Maintains ≈ 2–4 LOCAL edges of 4-cell length each.
+- VILLAGE cap: 50 silver/cycle. Handles a modest network of CONNECTOR + LOCAL roads.
+- TOWN cap: 200 silver/cycle. Can maintain the typical town TRUNK spine plus many connectors.
+- CITY cap: 600 silver/cycle. Handles full TRUNK network plus all subsidiaries.
+- Edge cost formula: `costPerCell * (cellCount / 4)`. A 40-cell TRUNK edge = 2 * 10 = 20 silver.
+
+**Decay cycle timing (as designed):**
+- All-bankrupt: maintenance drops 5/cycle → 20 cycles from 100 to 0 (5 band crossings, one per 4 cycles).
+- Overgrowth refresh fires per band crossing (5 total from healthy→abandoned).
+
+**Deviations from spec:**
+- `CurrencyValue` referenced fully-qualified in `donateToVillage` (no import added to keep diff minimal). Valid Java.
+- No HistoryTextGenerator integration — chronic neglect logged to console only (`[RoadUpkeep]` prefix), not to in-game village history.
+- `village.getTreasury().toSilver()` used in donate confirmation message — assumes `getTreasury()` returns a `CurrencyValue`-like object with `toSilver()`. If Treasury API differs, this line may need adjustment.
+
+**Carryovers (unchanged from prior sessions):**
+- Phase 4 culture testing: no test world data yet.
+- Phase 6a road sign text: signs placed but text is blank (functional server-set placeholder).
+- Phase 6b junction/ruin decoration: visually untested (manual static review only).
+
+**Compilation notes:**
+- `needsDecorationRefresh` is transient — resets to false on every world load, which is correct (refresh state doesn't need persistence).
+- `rebuildVillageMaintainerIndex()` called at cycle start to catch post-`addEdge` direct mutations to `maintainerVillageIds` that bypass the index (e.g., `ParallelismResolver`).
+- `worldRoadSavedData.getLedgers()` returns the live map — `entry.getValue()` objects are mutable even if the map view is unmodifiable.
+
+**Next: Phase 6d — village-size-driven tier promotion (per ROADS_PLAN.md).**

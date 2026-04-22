@@ -37,9 +37,13 @@ import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
 import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
+import tterrag1112.life_in_the_village.Events.RoadUpkeepSystem;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.JunctionDecorator;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.MilestoneDecorator;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.RoadOvergrowthDecorator;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.RoadUpkeepCalculator;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
@@ -152,7 +156,28 @@ public class RoadGraphDebugCommand {
                                                 .executes(RoadGraphDebugCommand::redecoratNode)))
                                 .then(Commands.literal("show_decorations")
                                         .executes(RoadGraphDebugCommand::showDecorations))
+                                .then(Commands.literal("village_upkeep")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::villageUpkeepReport)))
+                                .then(Commands.literal("trigger_upkeep")
+                                        .executes(RoadGraphDebugCommand::triggerUpkeep))
+                                .then(Commands.literal("force_decay_cycle")
+                                        .then(Commands.argument("cycles", IntegerArgumentType.integer(1, 200))
+                                                .executes(RoadGraphDebugCommand::forceDecayCycle)))
                         )
+                )
+        );
+
+        // ── Donate and repair (non-debug, player-facing) ──────────────────────
+        dispatcher.register(Commands.literal("liv")
+                .then(Commands.literal("road")
+                        .then(Commands.literal("donate")
+                                .then(Commands.argument("villageName", StringArgumentType.word())
+                                .then(Commands.argument("amount", IntegerArgumentType.integer(1))
+                                        .executes(RoadGraphDebugCommand::donateToVillage))))
+                        .then(Commands.literal("repair")
+                                .then(Commands.argument("edgeId", StringArgumentType.word())
+                                        .executes(RoadGraphDebugCommand::repairEdge)))
                 )
         );
     }
@@ -1664,5 +1689,178 @@ public class RoadGraphDebugCommand {
     private static int safeGroundHeight(ServerLevel level, int x, int z) {
         if (!level.isLoaded(new BlockPos(x, 0, z))) return 64;
         return level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+    }
+
+    // =========================================================================
+    // D7 — village_upkeep report
+    // =========================================================================
+
+    private static int villageUpkeepReport(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = rData.getGraph();
+
+        Village village = vData.getAllVillages().stream()
+                .filter(v -> v.getName().toLowerCase(java.util.Locale.ROOT)
+                        .contains(namePart.toLowerCase(java.util.Locale.ROOT)))
+                .findFirst().orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal("No village matching: " + namePart));
+            return 0;
+        }
+
+        VillageSizeTier sizeTier = VillageSizeTier.fromBuildingCount(village.getBuildingIds().size());
+        int capacity = RoadUpkeepCalculator.maxUpkeepForTier(sizeTier);
+        int totalOwed = RoadUpkeepCalculator.computeVillageUpkeep(village, graph);
+        VillageUpkeepLedger ledger = rData.getLedger(village.getId());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("[village_upkeep] ").append(village.getName())
+                .append(" [").append(sizeTier.displayName).append("]")
+                .append("  capacity=").append(capacity).append("s/cycle")
+                .append("  treasury=").append(village.getTreasury().toSilver()).append("s")
+                .append("  totalOwed=").append(totalOwed).append("s/cycle");
+        if (ledger != null) {
+            sb.append("  paid=").append(ledger.getTotalCyclesPaidThisYear())
+                    .append("  failed=").append(ledger.getTotalCyclesFailedThisYear());
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
+
+        // Per-edge detail
+        graph.rebuildVillageMaintainerIndex();
+        for (UUID eid : graph.edgesForVillage(village.getId())) {
+            RoadEdge edge = graph.getEdge(eid);
+            if (edge == null || edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD) continue;
+            int share = RoadUpkeepCalculator.villageShareOfEdge(village.getId(), edge);
+            int streak = ledger != null ? ledger.getFailureStreak(eid) : 0;
+            String shortId = eid.toString().substring(0, 8);
+            String edgeInfo = "  edge " + shortId + " [" + edge.getTier() + "]"
+                    + " cells=" + edge.getCellPath().size()
+                    + " share=" + share + "s"
+                    + " maint=" + edge.getMaintenance()
+                    + " failStreak=" + streak
+                    + (streak >= 10 ? " *** CHRONIC ***" : "");
+            ctx.getSource().sendSuccess(() -> Component.literal(edgeInfo), false);
+        }
+        return 1;
+    }
+
+    // =========================================================================
+    // D7 — trigger_upkeep
+    // =========================================================================
+
+    private static int triggerUpkeep(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+        long before = level.getGameTime();
+        RoadUpkeepSystem.runCycle(level, vData, false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[trigger_upkeep] One upkeep cycle executed at tick " + before + "."), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // D7 — force_decay_cycle
+    // =========================================================================
+
+    private static int forceDecayCycle(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        int cycles = IntegerArgumentType.getInteger(ctx, "cycles");
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        for (int i = 0; i < cycles; i++) {
+            RoadUpkeepSystem.runCycle(level, vData, true);
+        }
+
+        int c = cycles;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_decay_cycle] " + c + " bankrupt cycle(s) applied to all non-great-road edges."
+                + " Use /liv road debug show_maintenance to view."), false);
+        return cycles;
+    }
+
+    // =========================================================================
+    // D6 — donate to village treasury
+    // =========================================================================
+
+    private static int donateToVillage(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        int silverAmount = IntegerArgumentType.getInteger(ctx, "amount");
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        Village village = vData.getAllVillages().stream()
+                .filter(v -> v.getName().toLowerCase(java.util.Locale.ROOT)
+                        .contains(namePart.toLowerCase(java.util.Locale.ROOT)))
+                .findFirst().orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal("No village matching: " + namePart));
+            return 0;
+        }
+
+        long bronzeAmount = (long) silverAmount * tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue.SILVER_VALUE;
+        village.depositToTreasury(bronzeAmount);
+        vData.setDirty();
+
+        String vName = village.getName();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[donate] Added " + silverAmount + "s to " + vName
+                        + " treasury (now " + village.getTreasury().toSilver() + "s)."), false);
+        return silverAmount;
+    }
+
+    // =========================================================================
+    // D6 — repair edge (set maintenance to 100, clear failure streaks)
+    // =========================================================================
+
+    private static int repairEdge(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        String prefix = StringArgumentType.getString(ctx, "edgeId");
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = rData.getGraph();
+
+        RoadEdge edge = resolveEdgeByPrefix(graph, prefix);
+        if (edge == null) {
+            ctx.getSource().sendFailure(Component.literal("No edge matching prefix: " + prefix));
+            return 0;
+        }
+        if (edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Great roads cannot be repaired — they never decay (invariant 3)."));
+            return 0;
+        }
+
+        int prevMaint = edge.getMaintenance();
+        edge.setMaintenance(100);
+        edge.setNeedsDecorationRefresh(true);
+
+        // Clear failure streaks in all village ledgers for this edge
+        UUID edgeId = edge.getEdgeId();
+        int streaksCleared = 0;
+        for (java.util.Map.Entry<UUID, VillageUpkeepLedger> entry : rData.getLedgers().entrySet()) {
+            int streak = entry.getValue().getFailureStreak(edgeId);
+            if (streak > 0) {
+                entry.getValue().resetFailureStreak(edgeId);
+                streaksCleared++;
+            }
+        }
+
+        rData.markDirty();
+        String shortId = edgeId.toString().substring(0, 8);
+        int cleared = streaksCleared;
+        int prev = prevMaint;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[repair] Edge " + shortId + " maintenance " + prev + " → 100."
+                        + " Cleared failure streaks for " + cleared + " village(s)."
+                        + " Overgrowth will refresh when in player range."), false);
+        return 1;
     }
 }

@@ -751,3 +751,17 @@ class NodeDecorationTickSystem implements TickSubsystem {
         NodeDecorationSystem.tick(ctx.level(), ctx.villageData());
     }
 }
+// =============================================================================
+// ROAD UPKEEP (once per game-day, interval = 24000, priority = 180)
+// =============================================================================
+
+class RoadUpkeepTickSystem implements TickSubsystem {
+    @Override public String name()     { return "road_upkeep"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 180; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        RoadUpkeepSystem.runCycle(ctx.level(), ctx.villageData(), false);
+    }
+}

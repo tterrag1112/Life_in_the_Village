@@ -139,6 +139,13 @@ public class RoadEdge {
     /** Block positions of all placed decoration blocks along this edge (persistent). */
     List<BlockPos> decorationPositions;
 
+    /**
+     * Transient flag: maintenance crossed a Phase 6b band boundary this upkeep
+     * cycle and the overgrowth decoration should be refreshed when the edge is
+     * next in player range. Not persisted — cleared when decoration runs.
+     */
+    boolean needsDecorationRefresh = false;
+
     // ── Constructors ─────────────────────────────────────────────────────────
 
     /** Full constructor — used by codec deserialization and internally. */
@@ -236,4 +243,7 @@ public class RoadEdge {
     public void addDecorationPosition(BlockPos pos) { decorationPositions.add(pos.immutable()); }
     public void clearDecorationPositions()          { decorationPositions.clear(); }
     public boolean hasDecorations()                 { return !decorationPositions.isEmpty(); }
+
+    public boolean isNeedsDecorationRefresh()              { return needsDecorationRefresh; }
+    public void setNeedsDecorationRefresh(boolean refresh) { this.needsDecorationRefresh = refresh; }
 }

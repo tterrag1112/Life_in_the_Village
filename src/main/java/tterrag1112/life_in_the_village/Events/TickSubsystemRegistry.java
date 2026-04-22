@@ -103,6 +103,7 @@ public final class TickSubsystemRegistry {
         register(new GraphEdgeRealizationSystem());
         register(new ParallelismCleanupSystem());
         register(new NodeDecorationTickSystem());
+        register(new RoadUpkeepTickSystem());
 
         // ── Debug visualization (every-tick, low priority) ────────────────────
         register(RoadDebugVisualizer.INSTANCE);

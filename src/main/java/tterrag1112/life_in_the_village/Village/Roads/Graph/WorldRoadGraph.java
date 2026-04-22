@@ -58,18 +58,33 @@ public class WorldRoadGraph {
      */
     private final Map<Long, Set<UUID>> cellToEdges = new HashMap<>();
 
+    /**
+     * Reverse map: village UUID → set of edge IDs where that village appears in
+     * {@link RoadEdge#getMaintainerVillageIds()}.
+     * Transient — rebuilt from edge list on every load and kept in sync by
+     * {@link #addEdge} and {@link #removeEdge}.
+     *
+     * <p>Note: direct mutations of {@link RoadEdge#getMaintainerVillageIds()} bypass
+     * this map. Call {@link #rebuildVillageMaintainerIndex()} before relying on it
+     * after any such mutation (e.g. the parallelism merger).
+     */
+    private final Map<UUID, Set<UUID>> villageToEdges = new HashMap<>();
+
     // ── Graph mutation ───────────────────────────────────────────────────────
 
     public void addNode(RoadNode node) {
         nodes.put(node.nodeId(), node);
     }
 
-    /** Adds an edge and registers it in the spatial index and cellToEdges map. */
+    /** Adds an edge and registers it in the spatial index, cellToEdges, and villageToEdges maps. */
     public void addEdge(RoadEdge edge) {
         edges.put(edge.getEdgeId(), edge);
         spatialIndex.addEdge(edge);
         for (long cellKey : edge.getCellPath()) {
             cellToEdges.computeIfAbsent(cellKey, k -> new HashSet<>()).add(edge.getEdgeId());
+        }
+        for (UUID vid : edge.getMaintainerVillageIds()) {
+            villageToEdges.computeIfAbsent(vid, k -> new HashSet<>()).add(edge.getEdgeId());
         }
     }
 
@@ -78,7 +93,7 @@ public class WorldRoadGraph {
         nodes.remove(id);
     }
 
-    /** Removes an edge and unregisters it from the spatial index and cellToEdges map. */
+    /** Removes an edge and unregisters it from the spatial index, cellToEdges, and villageToEdges maps. */
     public void removeEdge(UUID id) {
         RoadEdge edge = edges.remove(id);
         if (edge != null) {
@@ -88,6 +103,13 @@ public class WorldRoadGraph {
                 if (set != null) {
                     set.remove(id);
                     if (set.isEmpty()) cellToEdges.remove(cellKey);
+                }
+            }
+            for (UUID vid : edge.getMaintainerVillageIds()) {
+                Set<UUID> set = villageToEdges.get(vid);
+                if (set != null) {
+                    set.remove(id);
+                    if (set.isEmpty()) villageToEdges.remove(vid);
                 }
             }
         }
@@ -138,6 +160,31 @@ public class WorldRoadGraph {
 
     /** Exposes the cellToEdges map for validator sanity checks. */
     public Map<Long, Set<UUID>> getCellToEdges() { return Collections.unmodifiableMap(cellToEdges); }
+
+    /**
+     * Returns the IDs of all edges where {@code villageId} appears in
+     * {@link RoadEdge#getMaintainerVillageIds()}.
+     * O(1) via the {@link #villageToEdges} reverse map.
+     * Returns an empty set if the village maintains no edges.
+     */
+    public Set<UUID> edgesForVillage(UUID villageId) {
+        Set<UUID> set = villageToEdges.get(villageId);
+        return set != null ? Collections.unmodifiableSet(set) : Set.of();
+    }
+
+    /**
+     * Fully rebuilds the {@link #villageToEdges} reverse map from current edge state.
+     * Call this before an upkeep cycle to ensure the map is consistent even if
+     * {@link RoadEdge#getMaintainerVillageIds()} was mutated directly after {@link #addEdge}.
+     */
+    public void rebuildVillageMaintainerIndex() {
+        villageToEdges.clear();
+        for (RoadEdge edge : edges.values()) {
+            for (UUID vid : edge.getMaintainerVillageIds()) {
+                villageToEdges.computeIfAbsent(vid, k -> new HashSet<>()).add(edge.getEdgeId());
+            }
+        }
+    }
 
     /**
      * Returns all nodes whose stored position is within {@code radiusBlocks}
@@ -239,14 +286,18 @@ public class WorldRoadGraph {
 
     // ── Internal ─────────────────────────────────────────────────────────────
 
-    /** Clears and repopulates the spatial index and cellToEdges map from current edge state. */
+    /** Clears and repopulates the spatial index, cellToEdges, and villageToEdges maps from current edge state. */
     void rebuildSpatialIndex() {
         spatialIndex.clear();
         cellToEdges.clear();
+        villageToEdges.clear();
         for (RoadEdge edge : edges.values()) {
             spatialIndex.addEdge(edge);
             for (long cellKey : edge.getCellPath()) {
                 cellToEdges.computeIfAbsent(cellKey, k -> new HashSet<>()).add(edge.getEdgeId());
+            }
+            for (UUID vid : edge.getMaintainerVillageIds()) {
+                villageToEdges.computeIfAbsent(vid, k -> new HashSet<>()).add(edge.getEdgeId());
             }
         }
     }
