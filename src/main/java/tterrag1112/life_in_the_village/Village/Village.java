@@ -13,7 +13,10 @@ import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.EdgeTierManager;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
@@ -43,6 +46,9 @@ public class Village {
     private Map<String, String>        preferredArmor;
     private long                       treasuryBronze = 0L;
     @Nullable private UUID             villageLeaderId = null;
+
+    /** Transient: last computed size tier. Null until first access; recomputed after building count changes. */
+    @Nullable private transient VillageSizeTier storedSizeTier = null;
 
     // Needs — recomputed daily, only lastNeedsUpdate persisted
     private Map<NeedCategory, VillageNeed> needs = new EnumMap<>(NeedCategory.class);
@@ -463,6 +469,44 @@ public class Village {
 
     public void removeBuilding(Building building) {
         buildingIds.remove(building.getId());
+    }
+
+    // =========================================================================
+    // SIZE TIER — lazy transient cache + tier-change hook
+    // =========================================================================
+
+    /** Returns the current size tier, computed from the current building count. */
+    public VillageSizeTier getSizeTier() {
+        if (storedSizeTier == null) {
+            storedSizeTier = VillageSizeTier.fromBuildingCount(buildingIds.size());
+        }
+        return storedSizeTier;
+    }
+
+    /**
+     * Call this whenever the building count changes and a ServerLevel is available.
+     * Recomputes the size tier and, if it changed, fires {@link #onSizeTierChanged}.
+     */
+    public void checkAndFireTierChangeHook(ServerLevel level) {
+        VillageSizeTier newTier = VillageSizeTier.fromBuildingCount(buildingIds.size());
+        VillageSizeTier oldTier = getSizeTier();
+        storedSizeTier = newTier;
+        if (oldTier != newTier) {
+            onSizeTierChanged(oldTier, newTier, level);
+        }
+    }
+
+    private void onSizeTierChanged(VillageSizeTier oldTier, VillageSizeTier newTier, ServerLevel level) {
+        VillageSavedData vData   = VillageSavedData.get(level);
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        java.util.List<tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge> changed =
+                EdgeTierManager.reconcileEdgesForVillage(this, rData.getGraph(), vData);
+        if (!changed.isEmpty()) {
+            rData.markDirty();
+        }
+        System.out.println("[TierPromotion] Village " + getName()
+                + " size " + oldTier + " → " + newTier
+                + "; " + changed.size() + " edge(s) updated");
     }
 
     // =========================================================================

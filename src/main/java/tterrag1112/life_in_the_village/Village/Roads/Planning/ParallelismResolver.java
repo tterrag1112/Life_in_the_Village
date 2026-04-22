@@ -3,9 +3,13 @@ package tterrag1112.life_in_the_village.Village.Roads.Planning;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.EdgeTierManager;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.TierPromotionRules;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 
@@ -140,6 +144,21 @@ public final class ParallelismResolver {
 
         // Survivor's primitive chain is now stale (endpoints may differ after merge)
         survivor.clearPrimitives();
+
+        // D5 Phase 6d: maintainer list just changed — reconcile effective tier
+        {
+            VillageSavedData vData = VillageSavedData.get(level);
+            List<Village> tierMaintainers = new ArrayList<>();
+            for (UUID mid : survivor.getMaintainerVillageIds()) {
+                vData.getVillageById(mid).ifPresent(tierMaintainers::add);
+            }
+            if (!tierMaintainers.isEmpty()) {
+                RoadEdge.EdgeTier effective = TierPromotionRules.effectiveTier(tierMaintainers);
+                if (effective != survivor.getTier()) {
+                    EdgeTierManager.applyTierChange(survivor, effective, level, graph);
+                }
+            }
+        }
 
         UUID removedId = split2.newEdgeAId();
 

@@ -765,3 +765,17 @@ class RoadUpkeepTickSystem implements TickSubsystem {
         RoadUpkeepSystem.runCycle(ctx.level(), ctx.villageData(), false);
     }
 }
+// =============================================================================
+// TIER RECONCILIATION (every 2 in-game days, interval = 48000, priority = 170)
+// =============================================================================
+
+class TierReconciliationTickSystem implements TickSubsystem {
+    @Override public String name()     { return "tier_reconciliation"; }
+    @Override public int    interval() { return 48000; }
+    @Override public int    priority() { return 170; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        TierReconciliationSystem.runReconciliation(ctx.level(), ctx.villageData());
+    }
+}

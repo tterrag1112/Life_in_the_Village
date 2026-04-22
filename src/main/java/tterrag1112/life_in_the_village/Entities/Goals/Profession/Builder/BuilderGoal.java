@@ -615,6 +615,7 @@ public class BuilderGoal extends Goal {
 
                 data.getVillageByName(villageName).ifPresent(v -> {
                     v.getBuildingIds().add(placed.getId());
+                    v.checkAndFireTierChangeHook(level);
 
                     // Connect a path from the new building to the village hub
                     connectExpansionPath(level, placed, v, data);

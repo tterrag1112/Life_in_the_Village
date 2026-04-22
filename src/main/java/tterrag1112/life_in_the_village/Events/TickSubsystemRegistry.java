@@ -104,6 +104,7 @@ public final class TickSubsystemRegistry {
         register(new ParallelismCleanupSystem());
         register(new NodeDecorationTickSystem());
         register(new RoadUpkeepTickSystem());
+        register(new TierReconciliationTickSystem());
 
         // ── Debug visualization (every-tick, low priority) ────────────────────
         register(RoadDebugVisualizer.INSTANCE);

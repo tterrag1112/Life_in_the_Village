@@ -712,3 +712,51 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - `worldRoadSavedData.getLedgers()` returns the live map — `entry.getValue()` objects are mutable even if the map view is unmodifiable.
 
 **Next: Phase 6d — village-size-driven tier promotion (per ROADS_PLAN.md).**
+
+---
+
+### 2026-04-22 — Phase 6d implemented
+
+**Phase:** 6d — Village-size-driven tier promotion
+
+**Files created:**
+- `Village/Roads/Economy/TierPromotionRules.java` — pure-function tier mapping. `naturalTierForVillage`: HAMLET→LOCAL, VILLAGE→CONNECTOR, TOWN/CITY→TRUNK. `effectiveTier(List<Village>)`: max of all maintainers' natural tiers (TOWN+HAMLET edge = TRUNK). `canBeChanged(RoadEdge)`: GREAT_ROAD always excluded. `tierRank()` helper for max-comparison.
+- `Village/Roads/Economy/EdgeTierManager.java` — tier change applicator. `reconcileEdgesForVillage`: iterates all maintained edges, computes effective tier, calls `applyTierChange` on mismatch. `applyTierChange`: sets tier, calls `unrealize()` (clears blockPath + primitives), clears decorationPositions so re-realized edge re-decorates fresh.
+- `Events/TierReconciliationSystem.java` — periodic safety-net scan. `runReconciliation`: iterates all villages, reconciles each; logs if changes found (indicates hook missed something).
+
+**Files modified:**
+- `Village/Village.java` — added `@Nullable private transient VillageSizeTier storedSizeTier` (not persisted; recomputed on first access). `getSizeTier()` lazy-init accessor. `checkAndFireTierChangeHook(ServerLevel)`: compares stored vs computed tier, fires `onSizeTierChanged` on change, updates stored. `onSizeTierChanged`: calls `EdgeTierManager.reconcileEdgesForVillage`, marks roadData dirty if edges changed. Added imports: WorldRoadSavedData, VillageSizeTier, EdgeTierManager.
+- `Entities/Goals/Profession/Builder/BuilderGoal.java` — added `v.checkAndFireTierChangeHook(level)` after `v.getBuildingIds().add(placed.getId())` — primary natural growth path.
+- `Village/Decoration/TownSquarePlacer.java` — added `village.checkAndFireTierChangeHook(level)` after `village.addBuilding(square)`.
+- `Commands/BuildingCommand.java` — added `village.get().checkAndFireTierChangeHook(level)` after manual building assignment command.
+- `Village/Roads/Planning/ConnectorPlanner.java` — replaced hardcoded `EdgeTier.CONNECTOR` with `TierPromotionRules.naturalTierForVillage(VillageSizeTier.fromBuildingCount(...))`. New connectors now get the correct initial tier from village size (invariant 6).
+- `Village/Roads/Planning/ParallelismResolver.java` — after maintainer transfer (`survivor.clearPrimitives()`), computes effective tier from merged maintainer list and calls `EdgeTierManager.applyTierChange` if tier changed. Added imports: VillageSavedData, EdgeTierManager, TierPromotionRules, Village.
+- `Events/TickSystems.java` — appended `TierReconciliationTickSystem` (interval=48000, priority=170).
+- `Events/TickSubsystemRegistry.java` — registered `TierReconciliationTickSystem` after `RoadUpkeepTickSystem`.
+- `Commands/RoadGraphDebugCommand.java` — added D7 commands: `village_tier <name>` (size tier, natural tier, per-edge current/effective with mismatch flags), `promote_village <name> <HAMLET|VILLAGE|TOWN|CITY>` (forces tier computation without changing building count, triggers reconciliation), `reconcile_all` (runs full reconciliation scan immediately). Added imports: EdgeTierManager, TierPromotionRules, TierReconciliationSystem.
+
+**Architecture notes:**
+- `storedSizeTier` is transient (not in Village codec) — reinitialized from building count on each world load. No codec migration needed.
+- Hook coverage: BuilderGoal (main NPC builder path), TownSquarePlacer (town square), BuildingCommand (manual command path). VillageSpawner skipped — no edges exist at spawn time. TierReconciliationSystem catches any missed paths.
+- `applyTierChange` calls `edge.unrealize()` which clears blockPath + primitives + sets realized=false. Re-realization picks up new tier from `edge.getTier()` at `PrimitiveChainBuilder` and `EdgeMaterialResolver` call sites (verified: both call `edge.getTier()` at realization time — D6 is a no-op change).
+- Multi-maintainer tier: effective = max of all maintainers' natural tiers. Removing the only high-tier maintainer causes demotion at next reconcile or immediately on maintainer removal.
+- `promote_village` debug command forces tier on edges WITHOUT changing building count — useful for testing without growing the village naturally. The forced tier is computed per-edge using `max(forced, real_maintainers)` so shared edges with other large villages still reflect those villages' tiers.
+
+**Test world observations (manual static review — no test world run):**
+- HAMLET → VILLAGE transition: hook fires in BuilderGoal when 4th building is placed; connector demoted from CONNECTOR to LOCAL if the 4th building brings the count to VILLAGE threshold... wait, HAMLET is 1-3, VILLAGE is 4-8. So at 4 buildings: HAMLET→VILLAGE. `naturalTier` goes LOCAL→CONNECTOR. Connector gets promoted. `unrealize()` called. Next pass of GraphEdgeRealizationSystem re-realizes with CONNECTOR width/material.
+- VILLAGE → TOWN transition: at 9 buildings: CONNECTOR→TRUNK.
+- ConnectorPlanner: a new HAMLET village now creates a LOCAL edge instead of CONNECTOR. First building count is usually 1 (initial spawn) → LOCAL. Grows as village grows via reconcile/hook.
+
+**Deviations from spec:**
+- `onSizeTierChanged` uses fully-qualified `tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge` reference in the list type rather than adding another import to Village.java. Valid Java.
+- `promote_village` does NOT permanently change `storedSizeTier` on the village — it only applies tier changes to edges for the forced size. The stored tier remains driven by actual building count. This is intentional: the command tests the promotion pipeline without data corruption.
+- VillageSpawner not wired: initial spawn creates edges after buildings, so hook would fire but edges don't exist yet. Reconcile handles this correctly.
+
+**Carryovers (unchanged):**
+- Phase 4 culture testing: no test world data yet.
+- Phase 6a road sign text: signs placed, text blank (server-set placeholder).
+- Phase 6b junction/ruin decoration: visually untested.
+
+**Phase 6 complete.** Phases 6a + 6b + 6c + 6d all done.
+
+**Next: Phase 7a — deterministic great-road anchor graph at worldgen. The headline feature.**

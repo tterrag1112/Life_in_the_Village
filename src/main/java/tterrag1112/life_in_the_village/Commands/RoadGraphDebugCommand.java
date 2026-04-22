@@ -42,8 +42,11 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.JunctionDecorator;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.MilestoneDecorator;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.RoadOvergrowthDecorator;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.EdgeTierManager;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.RoadUpkeepCalculator;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.TierPromotionRules;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
+import tterrag1112.life_in_the_village.Events.TierReconciliationSystem;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
@@ -164,6 +167,15 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("force_decay_cycle")
                                         .then(Commands.argument("cycles", IntegerArgumentType.integer(1, 200))
                                                 .executes(RoadGraphDebugCommand::forceDecayCycle)))
+                                .then(Commands.literal("village_tier")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::villageTierReport)))
+                                .then(Commands.literal("promote_village")
+                                        .then(Commands.argument("villageName", StringArgumentType.word())
+                                        .then(Commands.argument("newTier", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::promoteVillage))))
+                                .then(Commands.literal("reconcile_all")
+                                        .executes(RoadGraphDebugCommand::reconcileAll))
                         )
                 )
         );
@@ -1862,5 +1874,163 @@ public class RoadGraphDebugCommand {
                         + " Cleared failure streaks for " + cleared + " village(s)."
                         + " Overgrowth will refresh when in player range."), false);
         return 1;
+    }
+
+    // =========================================================================
+    // D7 — village_tier report
+    // =========================================================================
+
+    private static int villageTierReport(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = rData.getGraph();
+
+        Village village = vData.getAllVillages().stream()
+                .filter(v -> v.getName().toLowerCase(java.util.Locale.ROOT)
+                        .contains(namePart.toLowerCase(java.util.Locale.ROOT)))
+                .findFirst().orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal("No village matching: " + namePart));
+            return 0;
+        }
+
+        VillageSizeTier sizeTier = VillageSizeTier.fromBuildingCount(village.getBuildingIds().size());
+        RoadEdge.EdgeTier naturalTier = TierPromotionRules.naturalTierForVillage(sizeTier);
+        StringBuilder sb = new StringBuilder();
+        sb.append("[village_tier] ").append(village.getName())
+                .append(" | buildings=").append(village.getBuildingIds().size())
+                .append(" | sizeTier=").append(sizeTier)
+                .append(" | naturalTier=").append(naturalTier).append("\n");
+
+        int mismatches = 0;
+        for (UUID edgeId : graph.edgesForVillage(village.getId())) {
+            RoadEdge edge = graph.getEdge(edgeId);
+            if (edge == null) continue;
+            String shortId = edgeId.toString().substring(0, 8);
+
+            // Compute effective tier for this edge
+            List<Village> maintainers = new ArrayList<>();
+            for (UUID vid : edge.getMaintainerVillageIds()) {
+                vData.getVillageById(vid).ifPresent(maintainers::add);
+            }
+            RoadEdge.EdgeTier effective = maintainers.isEmpty()
+                    ? edge.getTier()
+                    : TierPromotionRules.effectiveTier(maintainers);
+
+            boolean mismatch = effective != edge.getTier()
+                    && TierPromotionRules.canBeChanged(edge);
+            if (mismatch) mismatches++;
+
+            sb.append("  edge ").append(shortId)
+                    .append(" current=").append(edge.getTier())
+                    .append(" effective=").append(effective)
+                    .append(" maintainers=").append(edge.getMaintainerVillageIds().size());
+            if (mismatch) sb.append(" *** MISMATCH ***");
+            sb.append("\n");
+        }
+
+        if (mismatches > 0) {
+            sb.append("[village_tier] ").append(mismatches)
+                    .append(" mismatch(es) found — run reconcile_all to fix.");
+        }
+
+        String report = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(report), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // D7 — promote_village (force size tier for testing)
+    // =========================================================================
+
+    private static int promoteVillage(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        String namePart  = StringArgumentType.getString(ctx, "villageName");
+        String tierName  = StringArgumentType.getString(ctx, "newTier").toUpperCase(java.util.Locale.ROOT);
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = rData.getGraph();
+
+        Village village = vData.getAllVillages().stream()
+                .filter(v -> v.getName().toLowerCase(java.util.Locale.ROOT)
+                        .contains(namePart.toLowerCase(java.util.Locale.ROOT)))
+                .findFirst().orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal("No village matching: " + namePart));
+            return 0;
+        }
+
+        VillageSizeTier targetSize;
+        try {
+            targetSize = VillageSizeTier.valueOf(tierName);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown tier '" + tierName + "'. Use: HAMLET, VILLAGE, TOWN, CITY"));
+            return 0;
+        }
+
+        // Force the stored tier to the requested value and reconcile edges
+        VillageSizeTier oldTier = village.getSizeTier();
+        // Bypass building count by directly setting storedSizeTier via reconcile
+        // We achieve this by temporarily treating the effective tier as the target
+        // and applying it to all maintained edges directly
+        List<RoadEdge> changed = new ArrayList<>();
+        for (UUID edgeId : graph.edgesForVillage(village.getId())) {
+            RoadEdge edge = graph.getEdge(edgeId);
+            if (edge == null || !TierPromotionRules.canBeChanged(edge)) continue;
+
+            // Rebuild maintainer list but substitute this village's size with targetSize
+            List<Village> maintainers = new ArrayList<>();
+            for (UUID vid : edge.getMaintainerVillageIds()) {
+                if (vid.equals(village.getId())) continue; // substituted below
+                vData.getVillageById(vid).ifPresent(maintainers::add);
+            }
+            // Add synthetic entry for this village at the forced tier
+            RoadEdge.EdgeTier forced = TierPromotionRules.naturalTierForVillage(targetSize);
+            // Effective = max of forced + real maintainers' tiers
+            RoadEdge.EdgeTier effective = forced;
+            for (Village m : maintainers) {
+                RoadEdge.EdgeTier t = TierPromotionRules.naturalTierForVillage(
+                        VillageSizeTier.fromBuildingCount(m.getBuildingIds().size()));
+                if (TierPromotionRules.tierRank(t) > TierPromotionRules.tierRank(effective)) {
+                    effective = t;
+                }
+            }
+
+            if (effective != edge.getTier()) {
+                EdgeTierManager.applyTierChange(edge, effective, level, graph);
+                changed.add(edge);
+            }
+        }
+
+        if (!changed.isEmpty()) rData.markDirty();
+
+        String vName = village.getName();
+        VillageSizeTier finalTarget = targetSize;
+        int cnt = changed.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[promote_village] " + vName
+                        + " treated as " + finalTarget
+                        + " (was " + oldTier + "); "
+                        + cnt + " edge(s) updated."), false);
+        return cnt;
+    }
+
+    // =========================================================================
+    // D7 — reconcile_all
+    // =========================================================================
+
+    private static int reconcileAll(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+        int changed = TierReconciliationSystem.runReconciliation(level, vData);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[reconcile_all] Reconciliation complete. " + changed + " edge(s) changed tier."), false);
+        return changed;
     }
 }

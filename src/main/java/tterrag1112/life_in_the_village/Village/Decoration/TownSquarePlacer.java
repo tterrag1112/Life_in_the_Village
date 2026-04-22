@@ -439,6 +439,7 @@ public class TownSquarePlacer {
 
         data.addBuilding(square);
         village.addBuilding(square);
+        village.checkAndFireTierChangeHook(level);
         data.setDirty();
 
         System.out.println("TownSquarePlacer: registered town square "

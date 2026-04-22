@@ -307,6 +307,7 @@ public class BuildingCommand {
                                                     }
 
                                                     village.get().addBuilding(building.get());
+                                                    village.get().checkAndFireTierChangeHook(level);
                                                     data.setDirty();
                                                     PacketDistributor.sendToPlayer(
                                                             (ServerPlayer) ctx.getSource().getEntity(),

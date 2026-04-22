@@ -11,6 +11,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.TierPromotionRules;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
@@ -305,10 +307,13 @@ public final class ConnectorPlanner {
         // Create the CONNECTOR edge
         long meanderSeed = (long) village.getId().getMostSignificantBits()
                 ^ (long) village.getId().getLeastSignificantBits();
+        // D5 Phase 6d: initial tier derives from village size (invariant 6)
+        RoadEdge.EdgeTier initialTier = TierPromotionRules.naturalTierForVillage(
+                VillageSizeTier.fromBuildingCount(village.getBuildingIds().size()));
         RoadEdge connectorEdge = RoadEdge.create(
                 dockNode.nodeId(), junctionNodeId,
                 connectorCellPath,
-                RoadEdge.EdgeTier.CONNECTOR,
+                initialTier,
                 new RoadEdge.MeanderProfile(3.0f, 0.1f, meanderSeed));
         connectorEdge.setMaintenance(100);
         connectorEdge.getMaintainerVillageIds().add(village.getId());
