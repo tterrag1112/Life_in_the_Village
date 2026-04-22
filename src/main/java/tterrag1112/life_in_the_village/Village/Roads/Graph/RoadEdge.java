@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Village.Roads.Graph;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 
 import java.util.*;
 
@@ -90,7 +91,10 @@ public class RoadEdge {
                     .optionalFieldOf("staleCells", new ArrayList<>())
                     .forGetter(e -> new ArrayList<>(e.staleCells)),
             Codec.BOOL.optionalFieldOf("realized", false)
-                    .forGetter(e -> e.realized)
+                    .forGetter(e -> e.realized),
+            RoadPrimitive.CODEC.listOf()
+                    .optionalFieldOf("primitives", new ArrayList<>())
+                    .forGetter(e -> e.primitives != null ? e.primitives : new ArrayList<>())
     ).apply(i, RoadEdge::fromCodec));
 
     private static RoadEdge fromCodec(
@@ -99,14 +103,16 @@ public class RoadEdge {
             EdgeTier tier, MeanderProfile meanderProfile,
             int maintenance, long trafficCounter,
             List<UUID> maintainerVillageIds, List<Long> staleList,
-            boolean realized) {
-        return new RoadEdge(
+            boolean realized, List<RoadPrimitive> primitives) {
+        RoadEdge e = new RoadEdge(
                 edgeId, nodeAId, nodeBId,
                 new ArrayList<>(cellPath), new ArrayList<>(blockPath),
                 tier, meanderProfile,
                 maintenance, trafficCounter,
                 new ArrayList<>(maintainerVillageIds), new HashSet<>(staleList),
                 realized);
+        e.primitives = primitives.isEmpty() ? null : new ArrayList<>(primitives);
+        return e;
     }
 
     // ── Fields ───────────────────────────────────────────────────────────────
@@ -124,6 +130,7 @@ public class RoadEdge {
     List<UUID> maintainerVillageIds;
     Set<Long> staleCells;
     boolean realized;
+    List<RoadPrimitive> primitives;
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
@@ -171,6 +178,14 @@ public class RoadEdge {
 
     public void incrementTraffic() { this.trafficCounter++; }
 
+    public void addTraffic(long amount) { this.trafficCounter += amount; }
+
+    public void unrealize() {
+        blockPath.clear();
+        realized = false;
+        primitives = null;
+    }
+
     public void markCellStale(long cellKey) { staleCells.add(cellKey); }
 
     public void clearStaleness() { staleCells.clear(); }
@@ -184,6 +199,13 @@ public class RoadEdge {
     public void setTier(EdgeTier tier) { this.tier = tier; }
 
     public void setMeanderProfile(MeanderProfile profile) { this.meanderProfile = profile; }
+
+    public void setPrimitives(List<RoadPrimitive> primitives) {
+        this.primitives = primitives != null && !primitives.isEmpty()
+                ? new ArrayList<>(primitives) : null;
+    }
+
+    public void clearPrimitives() { this.primitives = null; }
 
     // ── Getters ──────────────────────────────────────────────────────────────
 
@@ -199,4 +221,6 @@ public class RoadEdge {
     public List<UUID> getMaintainerVillageIds()  { return maintainerVillageIds; }
     public Set<Long> getStaleCells()             { return staleCells; }
     public boolean isRealized()                  { return realized; }
+    public List<RoadPrimitive> getPrimitives()   { return primitives != null ? primitives : List.of(); }
+    public boolean hasPrimitives()               { return primitives != null && !primitives.isEmpty(); }
 }

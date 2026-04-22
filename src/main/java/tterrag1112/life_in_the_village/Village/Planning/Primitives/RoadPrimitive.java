@@ -1,12 +1,16 @@
 package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.RoutePathSmoother;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * A composable road centerline primitive.
@@ -36,13 +40,21 @@ import java.util.List;
  * a reference to the parent primitive. The recipe that constructs the
  * spur already has the parent's centerline in hand, so there's no reason
  * to thread a "computed so far" map through the API.
+ *
+ * <h3>Codec</h3>
+ * {@link #CODEC} is a dispatch codec keyed on {@link #typeKey()}.
+ * Each record sub-type carries its own CODEC constant. The dispatch lambda
+ * is evaluated lazily (only at encode/decode time), so subtype CODEC
+ * initialization order is not constrained.
  */
 public sealed interface RoadPrimitive
         permits RoadPrimitive.StraightRoad,
         RoadPrimitive.CurvedRoad,
         RoadPrimitive.Ring,
         RoadPrimitive.Arc,
-        RoadPrimitive.Spur {
+        RoadPrimitive.Spur,
+        RoadPrimitive.SmoothedPath,
+        RoadPrimitive.ArmApproach {
 
     /**
      * Computes the centerline of this road, snapped to the surface Y at
@@ -56,6 +68,34 @@ public sealed interface RoadPrimitive
 
     /** Tier this road should be painted at. */
     RoadShape.RoadTier tier();
+
+    /**
+     * Stable string key used as the discriminator in {@link #CODEC}.
+     * Must be unique across all permitted subtypes and must not change
+     * once edges have been serialized to disk.
+     */
+    String typeKey();
+
+    /**
+     * Dispatch codec for all permitted subtypes. The lambda is evaluated
+     * lazily so subtype CODEC initialization order is unconstrained.
+     */
+    @SuppressWarnings("unchecked")
+    Codec<RoadPrimitive> CODEC = Codec.STRING.<RoadPrimitive>dispatch(
+            "type",
+            RoadPrimitive::typeKey,
+            type -> switch (type) {
+                case "StraightRoad"  -> (Codec<RoadPrimitive>) (Codec<?>) StraightRoad.CODEC;
+                case "CurvedRoad"    -> (Codec<RoadPrimitive>) (Codec<?>) CurvedRoad.CODEC;
+                case "Ring"          -> (Codec<RoadPrimitive>) (Codec<?>) Ring.CODEC;
+                case "Arc"           -> (Codec<RoadPrimitive>) (Codec<?>) Arc.CODEC;
+                case "Spur"          -> (Codec<RoadPrimitive>) (Codec<?>) Spur.CODEC;
+                case "SmoothedPath"  -> (Codec<RoadPrimitive>) (Codec<?>) SmoothedPath.CODEC;
+                case "ArmApproach"   -> (Codec<RoadPrimitive>) (Codec<?>) ArmApproach.CODEC;
+                default -> throw new IllegalArgumentException(
+                        "Unknown RoadPrimitive type: '" + type + "'");
+            }
+    ).codec();
 
     // =========================================================================
     // StraightRoad
@@ -78,6 +118,16 @@ public sealed interface RoadPrimitive
             double driftAmplitude,
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
+
+        static final Codec<StraightRoad> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.fieldOf("from").forGetter(StraightRoad::from),
+                BlockPos.CODEC.fieldOf("to").forGetter(StraightRoad::to),
+                Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(StraightRoad::driftAmplitude),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(StraightRoad::tier)
+        ).apply(i, StraightRoad::new));
+
+        @Override public String typeKey() { return "StraightRoad"; }
 
         @Override
         public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
@@ -108,6 +158,17 @@ public sealed interface RoadPrimitive
             double driftAmplitude,
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
+
+        static final Codec<CurvedRoad> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.fieldOf("from").forGetter(CurvedRoad::from),
+                BlockPos.CODEC.fieldOf("to").forGetter(CurvedRoad::to),
+                Codec.DOUBLE.fieldOf("curvature").forGetter(CurvedRoad::curvature),
+                Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(CurvedRoad::driftAmplitude),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(CurvedRoad::tier)
+        ).apply(i, CurvedRoad::new));
+
+        @Override public String typeKey() { return "CurvedRoad"; }
 
         @Override
         public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
@@ -171,6 +232,16 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
+        static final Codec<Ring> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.fieldOf("centre").forGetter(Ring::centre),
+                Codec.INT.fieldOf("radius").forGetter(Ring::radius),
+                Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(Ring::driftAmplitude),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(Ring::tier)
+        ).apply(i, Ring::new));
+
+        @Override public String typeKey() { return "Ring"; }
+
         @Override
         public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
             long localSeed = DriftNoise.localSeed(worldSeed, centre, centre)
@@ -222,6 +293,18 @@ public sealed interface RoadPrimitive
             double driftAmplitude,
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
+
+        static final Codec<Arc> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.fieldOf("centre").forGetter(Arc::centre),
+                Codec.INT.fieldOf("radius").forGetter(Arc::radius),
+                Codec.DOUBLE.fieldOf("startAngle").forGetter(Arc::startAngle),
+                Codec.DOUBLE.fieldOf("arcSpan").forGetter(Arc::arcSpan),
+                Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(Arc::driftAmplitude),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(Arc::tier)
+        ).apply(i, Arc::new));
+
+        @Override public String typeKey() { return "Arc"; }
 
         @Override
         public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
@@ -283,6 +366,19 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
+        static final Codec<Spur> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.listOf().fieldOf("parentCenterline")
+                        .forGetter(Spur::parentCenterline),
+                BlockPos.CODEC.fieldOf("branchPointHint").forGetter(Spur::branchPointHint),
+                Codec.DOUBLE.fieldOf("directionRad").forGetter(Spur::directionRad),
+                Codec.INT.fieldOf("length").forGetter(Spur::length),
+                Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(Spur::driftAmplitude),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(Spur::tier)
+        ).apply(i, Spur::new));
+
+        @Override public String typeKey() { return "Spur"; }
+
         @Override
         public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
             BlockPos snappedStart = nearestOnCenterline(parentCenterline, branchPointHint);
@@ -302,6 +398,101 @@ public sealed interface RoadPrimitive
                 if (d < bestDistSq) { bestDistSq = d; best = p; }
             }
             return best;
+        }
+    }
+
+    // =========================================================================
+    // SmoothedPath  (Phase 5a)
+    // =========================================================================
+
+    /**
+     * A road primitive that wraps an ordered list of waypoints and produces
+     * a Catmull-Rom smoothed centerline. Used for trade roads and long
+     * connectors where the cell path provides routing but Catmull-Rom
+     * removes the angular joins at cell boundaries.
+     *
+     * <p>Waypoints are typically: [hub A, cell-center 1 … cell-center N-1, hub B].
+     * The smoothing inserts {@link RoutePathSmoother#SUBDIVISIONS_PER_SEGMENT}
+     * interpolated points between each consecutive pair, surface-snapped.
+     *
+     * <p>{@code driftAmplitude} is stored for future use but not applied in
+     * Phase 5a — the cell-path A* routing already produces inherent waviness,
+     * and Catmull-Rom smoothing amplifies natural variation.
+     */
+    record SmoothedPath(
+            List<BlockPos> waypoints,
+            float tension,
+            double driftAmplitude,
+            RoadShape.RoadTier tier
+    ) implements RoadPrimitive {
+
+        static final Codec<SmoothedPath> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.listOf().fieldOf("waypoints").forGetter(SmoothedPath::waypoints),
+                Codec.FLOAT.fieldOf("tension").forGetter(SmoothedPath::tension),
+                Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(SmoothedPath::driftAmplitude),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(SmoothedPath::tier)
+        ).apply(i, SmoothedPath::new));
+
+        @Override public String typeKey() { return "SmoothedPath"; }
+
+        @Override
+        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
+            if (waypoints.size() < 2) return new ArrayList<>(waypoints);
+            return RoutePathSmoother.smooth(level, waypoints);
+        }
+    }
+
+    // =========================================================================
+    // ArmApproach  (Phase 5a)
+    // =========================================================================
+
+    /**
+     * The village-arm approach segment: a nearly-straight connection from the
+     * trade road's docking anchor to the village's arm endpoint (gate).
+     *
+     * <p>This primitive exists as a distinct type because its PLACEMENT rules
+     * differ from {@link StraightRoad}:
+     * <ul>
+     *   <li>Material is the village's own internal road material, not the
+     *       trade-road cobblestone — creating a seamless visual join.</li>
+     *   <li>After block placement, {@code ConnectorAllee.place} is called for
+     *       roadside saplings (culturally themed per the village type).</li>
+     * </ul>
+     *
+     * <p>Centerline direction: dockingAnchor → armEndpoint. The placer reverses
+     * this when assembling the blockPath for an edge where this is the leading
+     * approach (nodeA side).
+     *
+     * @param villageId identifies the village whose material and culture apply
+     */
+    record ArmApproach(
+            BlockPos dockingAnchor,
+            BlockPos armEndpoint,
+            UUID villageId,
+            RoadShape.RoadTier tier
+    ) implements RoadPrimitive {
+
+        private static final Codec<UUID> UUID_CODEC =
+                Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
+        static final Codec<ArmApproach> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.fieldOf("dockingAnchor").forGetter(ArmApproach::dockingAnchor),
+                BlockPos.CODEC.fieldOf("armEndpoint").forGetter(ArmApproach::armEndpoint),
+                UUID_CODEC.fieldOf("villageId").forGetter(ArmApproach::villageId),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(ArmApproach::tier)
+        ).apply(i, ArmApproach::new));
+
+        @Override public String typeKey() { return "ArmApproach"; }
+
+        /** Low drift (2.0 blocks) keeps the approach visually straight. */
+        private static final double DRIFT = 2.0;
+
+        @Override
+        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
+            long seed = DriftNoise.localSeed(worldSeed, dockingAnchor, armEndpoint);
+            return driftedLine(level, dockingAnchor, armEndpoint, DRIFT, seed);
         }
     }
 

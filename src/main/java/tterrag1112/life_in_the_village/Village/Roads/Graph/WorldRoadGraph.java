@@ -184,6 +184,7 @@ public class WorldRoadGraph {
             if (halfASet.contains(stale)) halfA.markCellStale(stale);
         }
         if (!blockA.isEmpty()) halfA.markRealized(blockA);
+        halfA.clearPrimitives();
 
         RoadEdge halfB = RoadEdge.create(
                 junctionNode.nodeId(), edge.getNodeBId(),
@@ -194,6 +195,7 @@ public class WorldRoadGraph {
             if (halfBSet.contains(stale)) halfB.markCellStale(stale);
         }
         if (!blockB.isEmpty()) halfB.markRealized(blockB);
+        halfB.clearPrimitives();
 
         removeEdge(edgeId);
         addNode(junctionNode);
