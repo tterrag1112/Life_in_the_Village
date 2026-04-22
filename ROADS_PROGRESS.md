@@ -4,11 +4,11 @@ Append-only. Most recent entry at the bottom. Each session ends with an entry su
 
 ## Current phase
 
-**Phase 5b** — Multi-edge caravan pathing + overridePath retirement. Complete.
+**Phase 5c** — Terrain-change invalidation + tiered realize-radius. Complete. Phase 5 fully done.
 
 ## Current slice
 
-Phase 5b complete. Next: Phase 6 per ROADS_PLAN.md (upkeep/traffic propagation through graph edges).
+Phase 5 complete. Next: Phase 6 per ROADS_PLAN.md (upkeep/traffic propagation through graph edges).
 
 ## Acceptance criteria for current slice
 
@@ -457,3 +457,72 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - `caravan_status` uses `level` which is in scope (declared line 1040) ✓
 
 **Current phase:** Phase 5b complete. Next: Phase 6.
+
+---
+
+### 2026-04-22 — Phase 5c implemented: terrain-change invalidation + tiered realize-radius
+
+**Phase 5c complete.** Phase 5 (Graph Realization) is now fully done.
+
+**Deliverable 1 — `RoadTerrainChangeListener.java` created** (`Events/RoadTerrainChangeListener.java`)
+- `@EventBusSubscriber(modid = Life_in_the_village.MODID)` class.
+- `onBlockBreak(BlockEvent.BreakEvent)`: converts block pos → cell key, queries `graph.edgesInCell`,
+  marks stale on all realized edges that cover that cell, calls `roadData.markDirty()` if anything changed.
+- `onBlockPlace(BlockEvent.EntityPlaceEvent)`: identical logic for player-placed blocks.
+- `onExplosion(ExplosionEvent.Detonate)`: collects all unique cell keys from `event.getAffectedBlocks()`,
+  delegates to `invalidateCells(graph, cellKeys)`, marks dirty if any edges changed.
+- Package-private `markCellStale(ServerLevel, BlockPos)` and `invalidateCells(WorldRoadGraph, Set<Long>)`
+  helpers reused by the `invalidate_cell` debug command.
+- Only realized edges are marked stale; unrealized edges are ignored (will be realized fresh on approach).
+
+**Deliverable 2 — `WorldRoadGraph.cellToEdges` reverse map** (already committed in Phase 5b session)
+- `Map<Long, Set<UUID>> cellToEdges` field; kept in sync by `addEdge`, `removeEdge`, `rebuildSpatialIndex`.
+- `edgesInCell(long cellKey)` → O(1) unmodifiable set of edge IDs through that cell.
+- `getCellToEdges()` → unmodifiable map view for validator.
+
+**Deliverable 3 — `EdgeRealizer.java` stale-cell handling** (already committed in Phase 5b session)
+- Fast path: `if (edge.isRealized() && edge.getStaleCells().isEmpty()) return;` (was `if (edge.isRealized()) return;`).
+- Stale fallback: if realized but stale, log it, call `edge.unrealize()` + `edge.clearStaleness()`,
+  then fall through to full re-realization pipeline. Selective cell-span patching deferred to later phase.
+
+**Deliverable 4 — `GraphEdgeRealizationSystem` tiered radius + priority ordering** (`Events/TickSystems.java`)
+- Replaced single `REALISE_RADIUS = 384` with four constants: GREAT_ROAD=768, TRUNK=384, CONNECTOR=256, LOCAL=192.
+- `tick()` now collects all eligible edges (unrealized OR stale) within their tier's radius into a
+  `List<Candidate>` (local record: edge, tierOrdinal, closestDistSq).
+- Sorts by tier ordinal ascending (GREAT_ROAD first) then by closestDistSq ascending (closest first).
+- Processes the top-priority edge only (one per tick), same cadence as before.
+- Added `closestCellDistSq(players, edge)` helper: scans all cells in edge's cellPath, returns minimum
+  squared distance to any player. Used for both eligibility check and priority ordering.
+- Added `tierRadius(EdgeTier)` helper: returns per-tier integer radius.
+- Added `ArrayList` and `Comparator` to imports.
+
+**Deliverable 5 — `invalidate_cell` debug command** (`Commands/RoadGraphDebugCommand.java`)
+- `invalidate_cell <x> <z>` (block coords): converts to cell, calls `RoadTerrainChangeListener.invalidateCells`.
+- Reports how many edges were marked stale. "No edges cover cell" if no edge covers that cell.
+- Added import: `RoadTerrainChangeListener`.
+
+**Deliverable 6 — `GraphInvariantValidator` cellToEdges check** (already committed in Phase 5b session)
+- Check 6: for each edge's cellPath cell, verifies `cellToEdges` contains that edge ID. Warns on mismatch.
+
+**Architecture notes:**
+- `RoadTerrainChangeListener` is passive and fire-and-forget: it never blocks block events, never throws,
+  and only marks edges dirty when a cell is actually covered by a road edge. The listener is effectively
+  a no-op in vanilla terrain with no roads nearby.
+- The full re-realization fallback in `EdgeRealizer` is simpler and correct: stale cells invalidate the
+  whole edge's geometry so a fresh realization is needed. The comment documents that selective cell-span
+  patching (replacing only the affected segment) is deferred.
+- Priority ordering ensures GREAT_ROAD edges are kept current even when many lower-tier edges are stale —
+  important for caravan throughput which primarily uses trunk/great-road paths.
+
+**Compilation status:** Manual static review:
+- `RoadTerrainChangeListener`: event type imports match NeoForge 1.21 API (`BlockEvent.BreakEvent`,
+  `BlockEvent.EntityPlaceEvent`, `ExplosionEvent.Detonate`). `AtlasCell.CELL_SHIFT` and `AtlasCell.packKey`
+  exist. `WorldRoadSavedData.get(level)`, `graph.edgesInCell`, `graph.getEdge`, `edge.markCellStale` all exist ✓
+- `TickSystems.java`: local `record Candidate(...)` inside method is Java 16+ feature, compatible with NeoForge 1.21 target.
+  `RoadEdge.EdgeTier.ordinal()` used for sorting (GREAT_ROAD=0, TRUNK=1, CONNECTOR=2, LOCAL=3). `Comparator.comparingInt`
+  + `thenComparingLong` valid. `ArrayList`, `Comparator` added to imports ✓
+- `RoadGraphDebugCommand.java`: `invalidateCell` uses `IntegerArgumentType.getInteger` (already imported).
+  `Set.of(cellKey)` valid. `RoadTerrainChangeListener.invalidateCells` made `public static` so it is
+  accessible from `Commands` package ✓
+
+**Current phase:** Phase 5c complete. Phase 5 (Graph Realization) fully done. Next: Phase 6 (upkeep / traffic propagation).

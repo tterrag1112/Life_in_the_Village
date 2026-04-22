@@ -33,6 +33,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
+import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
@@ -120,6 +121,10 @@ public class RoadGraphDebugCommand {
                                         .then(Commands.argument("edgeAId", StringArgumentType.word())
                                         .then(Commands.argument("edgeBId", StringArgumentType.word())
                                                 .executes(RoadGraphDebugCommand::cleanupMerge))))
+                                .then(Commands.literal("invalidate_cell")
+                                        .then(Commands.argument("x", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                .executes(RoadGraphDebugCommand::invalidateCell))))
                         )
                 )
         );
@@ -1341,6 +1346,46 @@ public class RoadGraphDebugCommand {
             return null;
         }
         return matches.get(0);
+    }
+
+    // =========================================================================
+    // invalidate_cell
+    // =========================================================================
+
+    private static int invalidateCell(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        int blockX = IntegerArgumentType.getInteger(ctx, "x");
+        int blockZ = IntegerArgumentType.getInteger(ctx, "z");
+
+        int cellX = blockX >> AtlasCell.CELL_SHIFT;
+        int cellZ = blockZ >> AtlasCell.CELL_SHIFT;
+        long cellKey = AtlasCell.packKey(cellX, cellZ);
+
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = roadData.getGraph();
+
+        Set<UUID> edgeIds = graph.edgesInCell(cellKey);
+        if (edgeIds.isEmpty()) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[invalidate_cell] No edges cover cell ("
+                            + cellX + "," + cellZ + ")"), false);
+            return 0;
+        }
+
+        boolean anyDirty = RoadTerrainChangeListener.invalidateCells(
+                graph, Set.of(cellKey));
+        if (anyDirty) roadData.markDirty();
+
+        int count = (int) edgeIds.stream()
+                .map(graph::getEdge)
+                .filter(e -> e != null && e.getStaleCells().contains(cellKey))
+                .count();
+
+        ctx.getSource().sendSuccess(
+                () -> Component.literal("[invalidate_cell] Marked cell ("
+                        + cellX + "," + cellZ + ") stale on " + count + " edge(s)"), false);
+        return count;
     }
 
     // =========================================================================
