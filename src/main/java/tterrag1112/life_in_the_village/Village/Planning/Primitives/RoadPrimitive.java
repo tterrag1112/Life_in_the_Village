@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -77,25 +78,26 @@ public sealed interface RoadPrimitive
     String typeKey();
 
     /**
-     * Dispatch codec for all permitted subtypes. The lambda is evaluated
-     * lazily so subtype CODEC initialization order is unconstrained.
+     * Dispatch codec for all permitted subtypes. Each subtype's CODEC is
+     * a {@link MapCodec} so its fields sit as siblings of the "type"
+     * discriminator rather than nested in a sub-object. The lambda is
+     * evaluated lazily so subtype CODEC initialization order is unconstrained.
      */
-    @SuppressWarnings("unchecked")
-    Codec<RoadPrimitive> CODEC = Codec.STRING.<RoadPrimitive>dispatch(
+    Codec<RoadPrimitive> CODEC = Codec.STRING.dispatch(
             "type",
             RoadPrimitive::typeKey,
             type -> switch (type) {
-                case "StraightRoad"  -> (Codec<RoadPrimitive>) (Codec<?>) StraightRoad.CODEC;
-                case "CurvedRoad"    -> (Codec<RoadPrimitive>) (Codec<?>) CurvedRoad.CODEC;
-                case "Ring"          -> (Codec<RoadPrimitive>) (Codec<?>) Ring.CODEC;
-                case "Arc"           -> (Codec<RoadPrimitive>) (Codec<?>) Arc.CODEC;
-                case "Spur"          -> (Codec<RoadPrimitive>) (Codec<?>) Spur.CODEC;
-                case "SmoothedPath"  -> (Codec<RoadPrimitive>) (Codec<?>) SmoothedPath.CODEC;
-                case "ArmApproach"   -> (Codec<RoadPrimitive>) (Codec<?>) ArmApproach.CODEC;
+                case "StraightRoad"  -> StraightRoad.CODEC;
+                case "CurvedRoad"    -> CurvedRoad.CODEC;
+                case "Ring"          -> Ring.CODEC;
+                case "Arc"           -> Arc.CODEC;
+                case "Spur"          -> Spur.CODEC;
+                case "SmoothedPath"  -> SmoothedPath.CODEC;
+                case "ArmApproach"   -> ArmApproach.CODEC;
                 default -> throw new IllegalArgumentException(
                         "Unknown RoadPrimitive type: '" + type + "'");
             }
-    ).codec();
+    );
 
     // =========================================================================
     // StraightRoad
@@ -119,7 +121,7 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
-        static final Codec<StraightRoad> CODEC = RecordCodecBuilder.create(i -> i.group(
+        static final MapCodec<StraightRoad> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 BlockPos.CODEC.fieldOf("from").forGetter(StraightRoad::from),
                 BlockPos.CODEC.fieldOf("to").forGetter(StraightRoad::to),
                 Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(StraightRoad::driftAmplitude),
@@ -159,7 +161,7 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
-        static final Codec<CurvedRoad> CODEC = RecordCodecBuilder.create(i -> i.group(
+        static final MapCodec<CurvedRoad> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 BlockPos.CODEC.fieldOf("from").forGetter(CurvedRoad::from),
                 BlockPos.CODEC.fieldOf("to").forGetter(CurvedRoad::to),
                 Codec.DOUBLE.fieldOf("curvature").forGetter(CurvedRoad::curvature),
@@ -232,7 +234,7 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
-        static final Codec<Ring> CODEC = RecordCodecBuilder.create(i -> i.group(
+        static final MapCodec<Ring> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 BlockPos.CODEC.fieldOf("centre").forGetter(Ring::centre),
                 Codec.INT.fieldOf("radius").forGetter(Ring::radius),
                 Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(Ring::driftAmplitude),
@@ -294,7 +296,7 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
-        static final Codec<Arc> CODEC = RecordCodecBuilder.create(i -> i.group(
+        static final MapCodec<Arc> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 BlockPos.CODEC.fieldOf("centre").forGetter(Arc::centre),
                 Codec.INT.fieldOf("radius").forGetter(Arc::radius),
                 Codec.DOUBLE.fieldOf("startAngle").forGetter(Arc::startAngle),
@@ -366,7 +368,7 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
-        static final Codec<Spur> CODEC = RecordCodecBuilder.create(i -> i.group(
+        static final MapCodec<Spur> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 BlockPos.CODEC.listOf().fieldOf("parentCenterline")
                         .forGetter(Spur::parentCenterline),
                 BlockPos.CODEC.fieldOf("branchPointHint").forGetter(Spur::branchPointHint),
@@ -426,7 +428,7 @@ public sealed interface RoadPrimitive
             RoadShape.RoadTier tier
     ) implements RoadPrimitive {
 
-        static final Codec<SmoothedPath> CODEC = RecordCodecBuilder.create(i -> i.group(
+        static final MapCodec<SmoothedPath> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 BlockPos.CODEC.listOf().fieldOf("waypoints").forGetter(SmoothedPath::waypoints),
                 Codec.FLOAT.fieldOf("tension").forGetter(SmoothedPath::tension),
                 Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(SmoothedPath::driftAmplitude),
@@ -476,7 +478,7 @@ public sealed interface RoadPrimitive
         private static final Codec<UUID> UUID_CODEC =
                 Codec.STRING.xmap(UUID::fromString, UUID::toString);
 
-        static final Codec<ArmApproach> CODEC = RecordCodecBuilder.create(i -> i.group(
+        static final MapCodec<ArmApproach> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 BlockPos.CODEC.fieldOf("dockingAnchor").forGetter(ArmApproach::dockingAnchor),
                 BlockPos.CODEC.fieldOf("armEndpoint").forGetter(ArmApproach::armEndpoint),
                 UUID_CODEC.fieldOf("villageId").forGetter(ArmApproach::villageId),
