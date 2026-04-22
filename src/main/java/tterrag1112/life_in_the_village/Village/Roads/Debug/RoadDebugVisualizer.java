@@ -110,7 +110,7 @@ public class RoadDebugVisualizer implements TickSubsystem {
     static <T extends ParticleOptions> void sendParticle(
             ServerLevel level, ServerPlayer player, ParticleOptions particle,
             double x, double y, double z) {
-        level.sendParticles(player, (T) particle, true, x, y, z, 1, 0.0, 0.0, 0.0, 0.1);
+        level.sendParticles(player, (T) particle, false,true, x, y, z, 1, 0.0, 0.0, 0.0, 0.1);
     }
 
     // ── Data records ─────────────────────────────────────────────────────────

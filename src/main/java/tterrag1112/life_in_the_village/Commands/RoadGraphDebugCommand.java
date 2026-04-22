@@ -68,7 +68,6 @@ public class RoadGraphDebugCommand {
         dispatcher.register(Commands.literal("liv")
                 .then(Commands.literal("road")
                         .then(Commands.literal("debug")
-                                .requires(src -> src.hasPermission(2))
                                 .then(Commands.literal("show_graph")
                                         .executes(RoadGraphDebugCommand::showGraph))
                                 .then(Commands.literal("highlight_edge")
@@ -125,7 +124,7 @@ public class RoadGraphDebugCommand {
         List<ParticleEmission> emissions = new ArrayList<>();
 
         // Edge trails
-        List<RoadEdge> edges = graph.edgesNear(player.blockX(), player.blockZ(), RADIUS_STANDARD);
+        List<RoadEdge> edges = graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_STANDARD);
         for (RoadEdge edge : edges) {
             emissions.addAll(buildEdgeEmissions(edge, particleForTier(edge.getTier()), level,
                     RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
@@ -242,7 +241,7 @@ public class RoadGraphDebugCommand {
         ServerLevel level   = ctx.getSource().getLevel();
         WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
 
-        List<RoadEdge> edges = graph.edgesNear(player.blockX(), player.blockZ(), RADIUS_PARALLEL);
+        List<RoadEdge> edges = graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_PARALLEL);
 
         // Pre-compute sample point lists once per edge
         List<List<BlockPos>> samples = new ArrayList<>(edges.size());
@@ -350,7 +349,7 @@ public class RoadGraphDebugCommand {
         List<ParticleEmission> emissions = new ArrayList<>();
         int staleCount = 0, edgesWithStale = 0;
 
-        for (RoadEdge edge : graph.edgesNear(player.blockX(), player.blockZ(), RADIUS_STANDARD)) {
+        for (RoadEdge edge : graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_STANDARD)) {
             if (edge.getStaleCells().isEmpty()) continue;
             edgesWithStale++;
             for (long cellKey : edge.getStaleCells()) {
@@ -390,7 +389,7 @@ public class RoadGraphDebugCommand {
         ServerLevel level   = ctx.getSource().getLevel();
         WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
 
-        List<RoadEdge> edges = graph.edgesNear(player.blockX(), player.blockZ(), RADIUS_STANDARD);
+        List<RoadEdge> edges = graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_STANDARD);
         List<ParticleEmission> emissions = new ArrayList<>();
         for (RoadEdge edge : edges) {
             emissions.addAll(buildEdgeEmissions(edge, trafficParticle(edge.getTrafficCounter()),
@@ -417,7 +416,7 @@ public class RoadGraphDebugCommand {
         ServerLevel level   = ctx.getSource().getLevel();
         WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
 
-        List<RoadEdge> edges = graph.edgesNear(player.blockX(), player.blockZ(), RADIUS_STANDARD);
+        List<RoadEdge> edges = graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_STANDARD);
         List<ParticleEmission> emissions = new ArrayList<>();
         int green = 0, orange = 0, red = 0;
 
@@ -451,7 +450,7 @@ public class RoadGraphDebugCommand {
         ServerLevel level   = ctx.getSource().getLevel();
         WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
 
-        List<RoadEdge> edges = graph.edgesNear(player.blockX(), player.blockZ(), RADIUS_STANDARD);
+        List<RoadEdge> edges = graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_STANDARD);
         List<ParticleEmission> emissions = new ArrayList<>();
 
         for (RoadEdge edge : edges) {
