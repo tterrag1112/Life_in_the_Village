@@ -805,10 +805,11 @@ public class RoadGraphDebugCommand {
         final String vb = villageB.getName();
         final int edgeCnt = edgeIds.size();
         final int blkCnt  = resolvedPath.size();
+        int finalRealizedNow = realizedNow;
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "Dispatched test caravan from '" + va + "' to '" + vb + "': "
                 + edgeCnt + " edges, " + blkCnt + " blocks resolved."
-                + (realizedNow > 0 ? " (realized " + realizedNow + " edges)" : "")), false);
+                + (finalRealizedNow > 0 ? " (realized " + finalRealizedNow + " edges)" : "")), false);
         return 1;
     }
 
