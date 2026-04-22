@@ -271,7 +271,11 @@ public final class ConnectorPlanner {
             // Mid-edge attachment: split the target edge
             UUID targetEdgeId = candidate.edge.getEdgeId();
             long splitCellKey = candidate.attachCellKey;
-            BlockPos junctionPos = surfaceSnap(level, AtlasRouteRouter.cellKeyToBlockCenter(splitCellKey));
+            // If the edge is already realized, snap the junction to the nearest actual
+            // block in its blockPath rather than the cell center — this eliminates the
+            // ~10–20 block gap that the cell-center approximation produces.
+            BlockPos cellCenter = surfaceSnap(level, AtlasRouteRouter.cellKeyToBlockCenter(splitCellKey));
+            BlockPos junctionPos = junctionPosFor(candidate.edge, cellCenter);
 
             Optional<WorldRoadGraph.SplitResult> splitOpt =
                     graph.splitEdgeAtCell(targetEdgeId, splitCellKey, junctionPos);
@@ -386,6 +390,31 @@ public final class ConnectorPlanner {
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /**
+     * Determines the junction node position for a mid-edge split.
+     *
+     * <p>If the target edge has already been realized (non-empty blockPath), the
+     * junction is placed at the block in the blockPath geometrically closest to
+     * {@code cellBlockCenter}. This keeps incident-edge block paths topologically
+     * consistent: the connector's blockPath will terminate at an exact block that
+     * is already part of the existing road, so {@code inspect_junction} distance ≈ 0.
+     *
+     * <p>If the edge is not yet realized, the cell block center is used — it will be
+     * corrected when the edge realizes and the blockPath split re-anchors to this pos.
+     */
+    private static BlockPos junctionPosFor(RoadEdge edge, BlockPos cellBlockCenter) {
+        if (!edge.isRealized() || edge.getBlockPath().isEmpty()) {
+            return cellBlockCenter;
+        }
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (BlockPos p : edge.getBlockPath()) {
+            double d = p.distSqr(cellBlockCenter);
+            if (d < bestDist) { bestDist = d; best = p; }
+        }
+        return best != null ? best : cellBlockCenter;
+    }
 
     private static BlockPos surfaceSnap(ServerLevel level, BlockPos raw) {
         if (!level.isLoaded(raw)) return new BlockPos(raw.getX(), 64, raw.getZ());
