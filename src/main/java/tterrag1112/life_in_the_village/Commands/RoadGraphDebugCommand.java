@@ -28,6 +28,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
@@ -106,6 +108,14 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("inspect_junction")
                                         .then(Commands.argument("nodeId", StringArgumentType.word())
                                                 .executes(RoadGraphDebugCommand::inspectJunction)))
+                                .then(Commands.literal("cleanup_scan")
+                                        .executes(RoadGraphDebugCommand::cleanupScan)
+                                        .then(Commands.argument("radius", IntegerArgumentType.integer(64, 4096))
+                                                .executes(RoadGraphDebugCommand::cleanupScanWithRadius)))
+                                .then(Commands.literal("cleanup_merge")
+                                        .then(Commands.argument("edgeAId", StringArgumentType.word())
+                                        .then(Commands.argument("edgeBId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::cleanupMerge))))
                         )
                 )
         );
@@ -1222,6 +1232,148 @@ public class RoadGraphDebugCommand {
         if (traffic <= 10) return ParticleTypes.COMPOSTER;
         if (traffic <= 50) return ParticleTypes.FLAME;
         return ParticleTypes.LAVA;
+    }
+
+    // =========================================================================
+    // cleanup_scan
+    // =========================================================================
+
+    private static final int DEFAULT_CLEANUP_RADIUS = 1024;
+
+    private static int cleanupScan(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        return runCleanupScan(ctx, DEFAULT_CLEANUP_RADIUS);
+    }
+
+    private static int cleanupScanWithRadius(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        return runCleanupScan(ctx, IntegerArgumentType.getInteger(ctx, "radius"));
+    }
+
+    private static int runCleanupScan(CommandContext<CommandSourceStack> ctx, int radius)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level   = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        List<ParallelismDetector.ParallelPair> pairs =
+                ParallelismDetector.findParallelPairs(graph, radius, player.blockPosition());
+
+        if (pairs.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[cleanup_scan] No parallel pairs within " + radius + " blocks."), false);
+            return 0;
+        }
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[cleanup_scan] Found " + pairs.size() + " parallel pair(s) within "
+                        + radius + " blocks (longest overlap first):"), false);
+
+        List<ParticleEmission> emissions = new ArrayList<>();
+
+        for (int i = 0; i < Math.min(pairs.size(), 10); i++) {
+            ParallelismDetector.ParallelPair pair = pairs.get(i);
+            RoadEdge ea = graph.getEdge(pair.edgeAId());
+            RoadEdge eb = graph.getEdge(pair.edgeBId());
+            final String line = "  #" + (i + 1) + ": A=" + pair.edgeAId().toString().substring(0, 8)
+                    + " (" + (ea != null ? ea.getTier() : "?") + ")"
+                    + " B=" + pair.edgeBId().toString().substring(0, 8)
+                    + " (" + (eb != null ? eb.getTier() : "?") + ")"
+                    + " overlap=" + pair.sustainedLengthBlocks() + " blocks"
+                    + " [" + pair.overlapStartIndexA() + ".." + pair.overlapEndIndexA() + "]";
+            ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+
+            // Highlight both edges and draw a line between midpoints
+            if (ea != null) emissions.addAll(buildEdgeEmissions(ea, ParticleTypes.WITCH, level,
+                    RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL * 2));
+            if (eb != null) emissions.addAll(buildEdgeEmissions(eb, ParticleTypes.COMPOSTER, level,
+                    RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL * 2));
+        }
+
+        if (!emissions.isEmpty()) {
+            RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
+        }
+        return pairs.size();
+    }
+
+    // =========================================================================
+    // cleanup_merge
+    // =========================================================================
+
+    private static int cleanupMerge(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = roadData.getGraph();
+
+        String prefixA = StringArgumentType.getString(ctx, "edgeAId").toLowerCase(Locale.ROOT);
+        String prefixB = StringArgumentType.getString(ctx, "edgeBId").toLowerCase(Locale.ROOT);
+
+        RoadEdge edgeA = resolveEdgeByPrefix(ctx, graph, prefixA, "edgeAId");
+        if (edgeA == null) return 0;
+        RoadEdge edgeB = resolveEdgeByPrefix(ctx, graph, prefixB, "edgeBId");
+        if (edgeB == null) return 0;
+
+        if (edgeA.getEdgeId().equals(edgeB.getEdgeId())) {
+            ctx.getSource().sendFailure(Component.literal("edgeAId and edgeBId must be different edges."));
+            return 0;
+        }
+
+        Optional<ParallelismDetector.ParallelPair> pairOpt =
+                ParallelismDetector.findPairBetween(graph, edgeA.getEdgeId(), edgeB.getEdgeId());
+
+        if (pairOpt.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[cleanup_merge] Edges " + edgeA.getEdgeId().toString().substring(0, 8)
+                            + " and " + edgeB.getEdgeId().toString().substring(0, 8)
+                            + " are not detected as parallel — no merge performed."));
+            return 0;
+        }
+
+        ParallelismResolver.ResolveResult result =
+                ParallelismResolver.resolvePair(level, graph, pairOpt.get());
+
+        if (!result.success()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[cleanup_merge] Merge failed: " + result.failureReason()));
+            return 0;
+        }
+
+        roadData.markDirty();
+
+        final String survivorStr = result.survivorEdgeId().toString().substring(0, 8);
+        final String removedStr  = result.removedEdgeId().toString().substring(0, 8);
+        final int    stubCount   = result.leftoverEdgeIds().size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[cleanup_merge] Merged: removed=" + removedStr
+                        + " survivor=" + survivorStr
+                        + " stubs=" + stubCount), false);
+        return 1;
+    }
+
+    private static RoadEdge resolveEdgeByPrefix(CommandContext<CommandSourceStack> ctx,
+                                                WorldRoadGraph graph,
+                                                String prefix,
+                                                String argName) {
+        List<RoadEdge> matches = new ArrayList<>();
+        for (RoadEdge e : graph.allEdges()) {
+            if (e.getEdgeId().toString().startsWith(prefix)) matches.add(e);
+        }
+        if (matches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No edge matches prefix '" + prefix + "' for " + argName + "."));
+            return null;
+        }
+        if (matches.size() > 1) {
+            String list = matches.stream().limit(5)
+                    .map(e -> e.getEdgeId().toString().substring(0, 8))
+                    .reduce((a, b) -> a + ", " + b).orElse("");
+            ctx.getSource().sendFailure(Component.literal(
+                    "Ambiguous prefix '" + prefix + "' for " + argName
+                            + ": " + list + (matches.size() > 5 ? "…" : "")));
+            return null;
+        }
+        return matches.get(0);
     }
 
     // =========================================================================

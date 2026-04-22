@@ -171,6 +171,13 @@ public class RoadEdge {
 
     public void incrementTraffic() { this.trafficCounter++; }
 
+    public void addTraffic(long amount) { this.trafficCounter += amount; }
+
+    public void unrealize() {
+        blockPath.clear();
+        realized = false;
+    }
+
     public void markCellStale(long cellKey) { staleCells.add(cellKey); }
 
     public void clearStaleness() { staleCells.clear(); }

@@ -4,11 +4,11 @@ Append-only. Most recent entry at the bottom. Each session ends with an entry su
 
 ## Current phase
 
-**Phase 3b** — Full connector routing with corridor-aware attractor injection. Complete.
+**Phase 4** — Parallelism cleanup safety net. Complete.
 
 ## Current slice
 
-Phase 3b complete. Next: Phase 4 per ROADS_PLAN.md.
+Phase 4 complete. Next: Phase 5 per ROADS_PLAN.md.
 
 ## Acceptance criteria for current slice
 
@@ -233,3 +233,66 @@ where N = number of TradeRoads with non-empty cellPath, M = number of distinct v
 - All new imports added; no unused imports ✓
 
 **Next:** Phase 4 — parallelism cleanup safety net. "Phase 3b bugs resolved. Next: Phase 4 — parallelism cleanup safety net."
+---
+
+### 2026-04-22 — Phase 4 implemented: parallelism cleanup safety net
+
+**Phase:** 4 — Periodic cleanup pass for parallel road edges that escaped Phase 3b's corridor-aware routing prevention.
+
+**Deliverables:**
+
+**`ParallelismDetector`** (`Village/Roads/Planning/ParallelismDetector.java`)
+- Pure function — no graph mutations.
+- `findParallelPairs(WorldRoadGraph, int scanRadiusBlocks, BlockPos scanCenter)` → `List<ParallelPair>` sorted descending by `sustainedLengthBlocks`.
+- `findPairBetween(WorldRoadGraph, UUID, UUID)` → `Optional<ParallelPair>` — checks one specific pair; used by `cleanup_merge` command.
+- `ParallelPair` record: `edgeAId`, `edgeBId`, `overlapStartIndexA`, `overlapEndIndexA`, `overlapStartIndexB`, `overlapEndIndexB`, `sustainedLengthBlocks`.
+- Algorithm: sample every 4 cells (`SAMPLE_STRIDE=4`); for each A sample, find nearest B sample; contiguous run ≥ 6 close-sample pairs (dist < 120 blocks) = parallel. Longest run wins. GREAT_ROAD edges excluded.
+- `overlapStartIndexA = runStart * SAMPLE_STRIDE`, `overlapEndIndexA = runEnd * SAMPLE_STRIDE`. `sustainedLengthBlocks = (endCellA - startCellA) * 64`.
+- Deduplication: each unordered pair (A, B) detected exactly once via `processedA` set.
+
+**`ParallelismResolver`** (`Village/Roads/Planning/ParallelismResolver.java`)
+- `resolvePair(ServerLevel, WorldRoadGraph, ParallelPair)` → `ResolveResult`.
+- `ResolveResult` record: `success`, `failureReason`, `removedEdgeId`, `survivorEdgeId`, `leftoverEdgeIds`.
+- Pre-validate: both edges present; overlap indices in bounds; start < end; start key ≠ end key. Aborts before any mutation if invalid.
+- Survivor selection: TRUNK > CONNECTOR > LOCAL; more maintainers; longer cellPath; lower UUID (deterministic tie-break).
+- Split victim at `overlapStart` and `overlapEnd` via `WorldRoadGraph.splitEdgeAtCell` with surface-snapped junction positions.
+- Transfers victim_middle's maintainerVillageIds (dedup), max maintenance, and cumulative traffic to survivor.
+- Removes victim_middle. Unrealizes victim_head and victim_tail stubs so `GraphEdgeRealizationSystem` re-places them cleanly.
+
+**`RoadEdge` additions** (`Village/Roads/Graph/RoadEdge.java`)
+- `addTraffic(long amount)` — adds to `trafficCounter` directly (needed for merger traffic consolidation; `incrementTraffic()` was insufficient).
+- `unrealize()` — clears `blockPath` and sets `realized = false`; lets the realizer re-place stub edges.
+
+**`ParallelismCleanupSystem`** (appended to `Events/TickSystems.java`, registered in `TickSubsystemRegistry.java`)
+- `interval=2400` (≈2 min at 20 TPS), `priority=160` (runs after `GraphEdgeRealizationSystem` at 150).
+- Per invocation: picks a random online player as scan center; calls `ParallelismDetector.findParallelPairs(radius=1536)`; takes the first (longest) pair; calls `ParallelismResolver.resolvePair`; marks data dirty on success.
+- Session cap: tracks `mergesThisSession`; resets every 24 000 ticks (1 game day); if cap (20) reached, skips until reset. Prevents runaway cleanup if many pairs accumulate.
+
+**Debug commands** (added to `RoadGraphDebugCommand.java`)
+- `/liv road debug cleanup_scan [radius]` — inspection only. Calls `findParallelPairs`, reports up to 10 pairs with edge IDs, tiers, and overlap lengths. Highlights both edges with WITCH/COMPOSTER particles for 30 s. Default radius 1024 blocks; optional integer argument 64–4096.
+- `/liv road debug cleanup_merge <edgeAId> <edgeBId>` — manual merge. Resolves edge ID prefixes (same pattern as `highlight_edge`); verifies they are actually parallel via `findPairBetween`; calls `resolvePair`; reports survivor/removed/stub count. Marks data dirty on success.
+
+**Imports added to `TickSystems.java`:**
+- `tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector`
+- `tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver`
+- `java.util.Random`
+
+**Imports added to `RoadGraphDebugCommand.java`:**
+- `tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector`
+- `tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver`
+
+**Architecture notes:**
+- `ParallelismDetector` is a pure function by design — the cleanup system calls detection and resolution as separate steps, enabling `cleanup_scan` to report without mutating and `cleanup_merge` to detect-then-merge on demand.
+- Resolver pre-validates before any mutation to honor the "abort-on-failure" invariant. Second-split failure (after first split succeeded) leaves the graph in a partially-split state; this is safe — the next detection pass sees the updated graph and may or may not re-detect a pair.
+- `unrealize()` on stubs preserves the stub edges' structural role in the graph (they still connect their endpoints) while allowing the realizer to re-place them without the now-removed victim_middle blockPath segment.
+
+**Compilation status:** Gradle artifact download unavailable. Full manual static review completed:
+- `ParallelismDetector`: `java.util.*` covers `UUID`, `Optional`, `List`, `ArrayList`, `Collection`, `Set`, `HashSet`, `Comparator`; `buildSamples` uses `Math.min` boundary guard; `detectParallel` correctly flushes final open run; `nearestSample` O(n) scan; `distSq` uses `long` to avoid int overflow ✓
+- `ParallelismResolver`: `WorldRoadGraph.splitEdgeAtCell` returns `Optional<SplitResult>`; `.isEmpty()` checks present; `tierRank` switch is exhaustive (all 4 `EdgeTier` values) ✓
+- `RoadEdge.addTraffic`, `unrealize`: package-private fields accessible from same package ✓
+- `ParallelismCleanupSystem`: `level.getGameTime()` returns `long`; `Long.MIN_VALUE` initialization for `sessionStartTick` forces reset on first tick ✓
+- `cleanup_scan`: `buildEdgeEmissions` and `RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL` verified in existing `showGraph` pattern ✓
+- `cleanup_merge`: `resolveEdgeByPrefix` helper follows same pattern as `highlightEdge`; `Optional<ParallelPair>` usage correct ✓
+- `TickSubsystemRegistry`: `register(new ParallelismCleanupSystem())` added after `GraphEdgeRealizationSystem` ✓
+
+**Current phase:** Phase 4 complete. Next: Phase 5 per ROADS_PLAN.md.

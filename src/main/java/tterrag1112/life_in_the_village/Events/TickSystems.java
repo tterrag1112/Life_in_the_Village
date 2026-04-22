@@ -49,8 +49,12 @@ import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 
+import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
+
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 
 // =============================================================================
@@ -625,5 +629,76 @@ class GraphEdgeRealizationSystem implements TickSubsystem {
             }
         }
         return false;
+    }
+}
+
+// =============================================================================
+// PARALLELISM CLEANUP (interval = 2400 ≈ 2 min, priority = 160)
+// =============================================================================
+
+class ParallelismCleanupSystem implements TickSubsystem {
+
+    /** Scan radius around the chosen player. */
+    private static final int SCAN_RADIUS = 1536;
+
+    /** Maximum merges per game day (24 000 ticks) — safety cap. */
+    private static final int SESSION_CAP = 20;
+
+    /** Game-day length in ticks. */
+    private static final long DAY_TICKS = 24_000L;
+
+    private int  mergesThisSession = 0;
+    private long sessionStartTick  = Long.MIN_VALUE;
+
+    private final Random rng = new Random();
+
+    @Override public String name()     { return "parallelism_cleanup"; }
+    @Override public int    interval() { return 2400; }
+    @Override public int    priority() { return 160; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        ServerLevel level = ctx.level();
+        List<? extends ServerPlayer> players = level.players();
+        if (players.isEmpty()) return;
+
+        // Reset session counter once per game day
+        long gameTick = level.getGameTime();
+        if (sessionStartTick == Long.MIN_VALUE
+                || gameTick - sessionStartTick >= DAY_TICKS) {
+            mergesThisSession = 0;
+            sessionStartTick  = gameTick;
+        }
+
+        if (mergesThisSession >= SESSION_CAP) return;
+
+        // Pick a random online player as the scan center
+        ServerPlayer center = players.get(rng.nextInt(players.size()));
+        BlockPos scanCenter = center.blockPosition();
+
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = roadData.getGraph();
+
+        List<ParallelismDetector.ParallelPair> pairs =
+                ParallelismDetector.findParallelPairs(graph, SCAN_RADIUS, scanCenter);
+
+        if (pairs.isEmpty()) return;
+
+        ParallelismDetector.ParallelPair pair = pairs.get(0); // longest overlap first
+        ParallelismResolver.ResolveResult result =
+                ParallelismResolver.resolvePair(level, graph, pair);
+
+        if (result.success()) {
+            mergesThisSession++;
+            roadData.markDirty();
+            System.out.println("[ParallelismCleanupSystem] Merged parallel pair"
+                    + " survivor=" + result.survivorEdgeId().toString().substring(0, 8)
+                    + " removed=" + result.removedEdgeId().toString().substring(0, 8)
+                    + " stubs=" + result.leftoverEdgeIds().size()
+                    + " (session merges=" + mergesThisSession + "/" + SESSION_CAP + ")");
+        } else {
+            System.out.println("[ParallelismCleanupSystem] Resolve failed: "
+                    + result.failureReason());
+        }
     }
 }
