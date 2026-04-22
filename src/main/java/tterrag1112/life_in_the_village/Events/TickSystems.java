@@ -52,6 +52,8 @@ import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -585,7 +587,12 @@ class RoadEventTickSystem implements TickSubsystem {
 }
 
 class GraphEdgeRealizationSystem implements TickSubsystem {
-    private static final int REALISE_RADIUS = 384;
+
+    // Realize-radius per tier (blocks). Higher-tier roads are loaded earlier.
+    private static final int RADIUS_GREAT_ROAD = 768;
+    private static final int RADIUS_TRUNK      = 384;
+    private static final int RADIUS_CONNECTOR  = 256;
+    private static final int RADIUS_LOCAL      = 192;
 
     @Override public String name()     { return "graph_edge_realization"; }
     @Override public int    interval() { return 40; }
@@ -600,35 +607,62 @@ class GraphEdgeRealizationSystem implements TickSubsystem {
         List<? extends ServerPlayer> players = level.players();
         if (players.isEmpty()) return;
 
+        // Collect all edges that need work (unrealized OR stale) and are within range.
+        // Record: (edge, tierOrdinal, closestDistSq) for priority sorting.
+        record Candidate(RoadEdge edge, int tierOrdinal, long closestDistSq) {}
+        List<Candidate> candidates = new ArrayList<>();
+
         for (RoadEdge edge : graph.allEdges()) {
-            if (edge.isRealized()) continue;
+            boolean needsWork = !edge.isRealized() || !edge.getStaleCells().isEmpty();
+            if (!needsWork) continue;
             if (edge.getCellPath().isEmpty()) continue;
-            if (!isPlayerNearEdge(players, edge)) continue;
 
-            EdgeRealizer.realizeEdge(level, edge, graph, ctx.villageData());
+            int radius = tierRadius(edge.getTier());
+            long distSq = closestCellDistSq(players, edge);
+            if (distSq > (long) radius * radius) continue;
 
-            if (!edge.getBlockPath().isEmpty()) {
-                roadData.markDirty();
-                System.out.println("[GraphEdgeRealizationSystem] Realized edge "
-                        + edge.getEdgeId().toString().substring(0, 8) + "… ("
-                        + edge.getBlockPath().size() + " blocks)");
-            }
-            break; // one per scan
+            candidates.add(new Candidate(edge, edge.getTier().ordinal(), distSq));
+        }
+
+        if (candidates.isEmpty()) return;
+
+        // Priority: lowest tier ordinal first (GREAT_ROAD=0), then closest-first within tier.
+        candidates.sort(Comparator.comparingInt(Candidate::tierOrdinal)
+                .thenComparingLong(Candidate::closestDistSq));
+
+        RoadEdge chosen = candidates.get(0).edge();
+        EdgeRealizer.realizeEdge(level, chosen, graph, ctx.villageData());
+
+        if (!chosen.getBlockPath().isEmpty()) {
+            roadData.markDirty();
+            System.out.println("[GraphEdgeRealizationSystem] Realized edge "
+                    + chosen.getEdgeId().toString().substring(0, 8) + "… ("
+                    + chosen.getBlockPath().size() + " blocks, tier=" + chosen.getTier() + ")");
         }
     }
 
-    private static boolean isPlayerNearEdge(List<? extends ServerPlayer> players,
-                                             RoadEdge edge) {
-        long radiusSq = (long) REALISE_RADIUS * REALISE_RADIUS;
+    private static int tierRadius(RoadEdge.EdgeTier tier) {
+        return switch (tier) {
+            case GREAT_ROAD -> RADIUS_GREAT_ROAD;
+            case TRUNK      -> RADIUS_TRUNK;
+            case CONNECTOR  -> RADIUS_CONNECTOR;
+            case LOCAL      -> RADIUS_LOCAL;
+        };
+    }
+
+    /** Returns the squared distance from the closest player to the closest cell in this edge. */
+    private static long closestCellDistSq(List<? extends ServerPlayer> players, RoadEdge edge) {
+        long best = Long.MAX_VALUE;
         for (long cellKey : edge.getCellPath()) {
             BlockPos center = AtlasRouteRouter.cellKeyToBlockCenter(cellKey);
             for (ServerPlayer p : players) {
                 long dx = (long)(p.getX() - center.getX());
                 long dz = (long)(p.getZ() - center.getZ());
-                if (dx * dx + dz * dz <= radiusSq) return true;
+                long d = dx * dx + dz * dz;
+                if (d < best) best = d;
             }
         }
-        return false;
+        return best;
     }
 }
 

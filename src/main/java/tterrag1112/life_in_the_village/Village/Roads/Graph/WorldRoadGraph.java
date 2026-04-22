@@ -50,16 +50,27 @@ public class WorldRoadGraph {
     /** Transient — rebuilt from edge list on load. Not serialized. */
     private final EdgeGridIndex spatialIndex = new EdgeGridIndex();
 
+    /**
+     * Reverse map: atlas cell key → set of edge IDs whose cellPath contains that cell.
+     * Transient — rebuilt alongside the spatial index on every load.
+     * Kept in sync with every addEdge / removeEdge mutation so
+     * {@link #edgesInCell} is always O(1).
+     */
+    private final Map<Long, Set<UUID>> cellToEdges = new HashMap<>();
+
     // ── Graph mutation ───────────────────────────────────────────────────────
 
     public void addNode(RoadNode node) {
         nodes.put(node.nodeId(), node);
     }
 
-    /** Adds an edge and registers it in the spatial index. */
+    /** Adds an edge and registers it in the spatial index and cellToEdges map. */
     public void addEdge(RoadEdge edge) {
         edges.put(edge.getEdgeId(), edge);
         spatialIndex.addEdge(edge);
+        for (long cellKey : edge.getCellPath()) {
+            cellToEdges.computeIfAbsent(cellKey, k -> new HashSet<>()).add(edge.getEdgeId());
+        }
     }
 
     /** Removes a node by id. Does NOT remove its incident edges — caller's responsibility. */
@@ -67,10 +78,18 @@ public class WorldRoadGraph {
         nodes.remove(id);
     }
 
-    /** Removes an edge and unregisters it from the spatial index. */
+    /** Removes an edge and unregisters it from the spatial index and cellToEdges map. */
     public void removeEdge(UUID id) {
-        if (edges.remove(id) != null) {
+        RoadEdge edge = edges.remove(id);
+        if (edge != null) {
             spatialIndex.removeEdge(id);
+            for (long cellKey : edge.getCellPath()) {
+                Set<UUID> set = cellToEdges.get(cellKey);
+                if (set != null) {
+                    set.remove(id);
+                    if (set.isEmpty()) cellToEdges.remove(cellKey);
+                }
+            }
         }
     }
 
@@ -106,6 +125,19 @@ public class WorldRoadGraph {
 
     /** Exposes the spatial index for validator sanity checks. */
     public EdgeGridIndex getSpatialIndex() { return spatialIndex; }
+
+    /**
+     * Returns the IDs of all edges whose cellPath contains {@code cellKey}.
+     * O(1) via the {@link #cellToEdges} reverse map.
+     * Returns an empty set if no edge covers the cell.
+     */
+    public Set<UUID> edgesInCell(long cellKey) {
+        Set<UUID> set = cellToEdges.get(cellKey);
+        return set != null ? Collections.unmodifiableSet(set) : Set.of();
+    }
+
+    /** Exposes the cellToEdges map for validator sanity checks. */
+    public Map<Long, Set<UUID>> getCellToEdges() { return Collections.unmodifiableMap(cellToEdges); }
 
     /**
      * Returns all nodes whose stored position is within {@code radiusBlocks}
@@ -207,11 +239,15 @@ public class WorldRoadGraph {
 
     // ── Internal ─────────────────────────────────────────────────────────────
 
-    /** Clears and repopulates the spatial index from current edge state. */
+    /** Clears and repopulates the spatial index and cellToEdges map from current edge state. */
     void rebuildSpatialIndex() {
         spatialIndex.clear();
+        cellToEdges.clear();
         for (RoadEdge edge : edges.values()) {
             spatialIndex.addEdge(edge);
+            for (long cellKey : edge.getCellPath()) {
+                cellToEdges.computeIfAbsent(cellKey, k -> new HashSet<>()).add(edge.getEdgeId());
+            }
         }
     }
 }

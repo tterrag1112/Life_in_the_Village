@@ -7,6 +7,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.Ingredient;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Travel.Roster;
 import tterrag1112.life_in_the_village.Village.Travel.TravellingGroup;
 
@@ -70,8 +71,6 @@ public class Caravan implements TravellingGroup {
 
     // Transient — never persisted directly; rebuilt at spawn
     private transient boolean isSpawned = false;
-    // Transient — overrides road block lookup when set by debug dispatch command
-    @org.jetbrains.annotations.Nullable private transient List<BlockPos> overridePath;
 
     public Caravan(UUID caravanId, UUID routeId,
                    UUID originVillageId, UUID destVillageId,
@@ -220,11 +219,6 @@ public class Caravan implements TravellingGroup {
         this.isSpawned = spawned;
     }
 
-    @org.jetbrains.annotations.Nullable
-    public List<BlockPos> getOverridePath() { return overridePath; }
-    public void setOverridePath(List<BlockPos> path) { this.overridePath = path; }
-
-
     // =========================================================================
     // TravellingGroup implementation
     // =========================================================================
@@ -234,10 +228,19 @@ public class Caravan implements TravellingGroup {
 
     @Override
     public List<BlockPos> getPath(ServerLevel level, VillageSavedData data) {
-        return data.getRouteById(routeId)
-                .flatMap(r -> data.getRoadById(r.getConnectionId()))
+        TradeRoute route = data.getRouteById(routeId).orElse(null);
+        if (route == null) return List.of();
+
+        if (route.hasGraphPath()) {
+            return GraphTradeRouteEstablisher.resolveGraphBlocks(
+                    WorldRoadSavedData.get(level).getGraph(),
+                    route.getEdgeIds(),
+                    route.getRouteStartNodeId());
+        }
+
+        return data.getRoadById(route.getConnectionId())
                 .map(TradeRoad::getBlocks)
-                .orElse(java.util.List.of());
+                .orElse(List.of());
     }
 
     @Override

@@ -4,11 +4,11 @@ Append-only. Most recent entry at the bottom. Each session ends with an entry su
 
 ## Current phase
 
-**Phase 5a** — RoadEdge primitive chains + unified realization pipeline. Complete.
+**Phase 5c** — Terrain-change invalidation + tiered realize-radius. Complete. Phase 5 fully done.
 
 ## Current slice
 
-Phase 5a complete. Next: Phase 5b per ROADS_PLAN.md.
+Phase 5 complete. Next: Phase 6 per ROADS_PLAN.md (upkeep/traffic propagation through graph edges).
 
 ## Acceptance criteria for current slice
 
@@ -369,3 +369,160 @@ where N = number of TradeRoads with non-empty cellPath, M = number of distinct v
 - `WorldRoadGraph.clearPrimitives` placement: after `markRealized` calls on halves, before `removeEdge`/`addEdge` mutations ✓
 
 **Current phase:** Phase 5a complete. Next: Phase 5b per ROADS_PLAN.md.
+
+---
+
+### 2026-04-22 — Phase 5b: multi-edge caravan pathing + overridePath retirement
+
+**Root cause of Phase 3a caravan diagnostic (documented here)**
+
+`TravellingGroupEngine.tick()` calls `group.getPath(level, data)` first (line 82). For a synthetic test
+caravan whose `routeId` was a random UUID not registered in `VillageSavedData`, `getRouteById` returned
+empty → `getPath()` returned `List.of()` → the engine's `if (path.isEmpty()) return false` guard fired
+immediately. The caravan never moved or spawned. `overridePath` was only consulted inside
+`CaravanMerchantGoal.tick()`, which only runs for a spawned entity — but entities were never spawned
+because the engine skipped the caravan before proximity checks. Fix: the new `dispatch_test_caravan_between`
+command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` succeeds.
+
+**Deliverable 1 — `TradeRoute.java` restructured** (`Village/Economy/Trade/TradeRoute.java`)
+- `connectionId` field made nullable (was required in codec; now `optionalFieldOf`). Backward compatible:
+  old save data with `"connectionId"` deserializes to `Optional.of(value)`, old routes still work.
+- New field `List<UUID> edgeIds` (optional, default `List.of()`): ordered edge IDs for graph routes.
+- New field `UUID routeStartNodeId` (optional, nullable): graph node at village-A's end of first edge.
+- Private full-state constructor; existing 9-arg public constructor delegates to it with defaults.
+- New `fromCodec(...)` factory (11 args) used by codec.
+- New `createGraph(villageA, villageB, type, tick, edgeIds, routeStartNodeId)` factory for graph routes.
+- New getters: `getEdgeIds()`, `getRouteStartNodeId()`, `hasGraphPath()`.
+
+**Deliverable 2 — `GraphTradeRouteEstablisher.java` created** (`Village/Economy/Trade/GraphTradeRouteEstablisher.java`)
+- `findEdgePath(WorldRoadGraph, fromNodeId, toNodeId)` → `Optional<List<UUID>>`: Dijkstra on adjacency
+  built from all graph edges. Weights: GREAT_ROAD×0.6, TRUNK×0.8, CONNECTOR×1.0, LOCAL×1.5, each ×
+  `cellPath.size()`. Edge IDs returned in A→B traversal order.
+- `resolveGraphBlocks(WorldRoadGraph, edgeIds, startNodeId)` → `List<BlockPos>`: walks edgeIds in order,
+  determines forward/reverse per edge by comparing `currentNode` to `edge.nodeAId`, skips first 3 blocks
+  of non-first edges (junction overlap trim), concatenates. Returns forward (A→B) path; reversal for
+  returning caravans handled by consumers (`TravellingGroupEngine.computePosition` and `CaravanMerchantGoal`
+  index direction).
+
+**Deliverable 3 — `Caravan.java` updated** (`Village/Economy/Trade/Caravan.java`)
+- Removed: `@Nullable transient List<BlockPos> overridePath` field, `getOverridePath()`, `setOverridePath()`.
+- Updated `getPath(ServerLevel, VillageSavedData)`: if `route.hasGraphPath()`, calls
+  `GraphTradeRouteEstablisher.resolveGraphBlocks(WorldRoadSavedData.get(level).getGraph(), ...)`.
+  Legacy fallback: `getRoadById(route.getConnectionId()).map(TradeRoad::getBlocks).orElse(List.of())`.
+- Added import: `WorldRoadSavedData`.
+
+**Deliverable 4 — `CaravanMerchantGoal.java` updated** (`Entities/Goals/Profession/Merchant/CaravanMerchantGoal.java`)
+- Removed: `overridePath` check block (was lines 83–107). Replaced with `resolveBlocks(caravan, level)`
+  call and single-line log.
+- Added `resolveBlocks(Caravan, ServerLevel)`: same resolution order as `Caravan.getPath` — graph first,
+  legacy fallback. Returns `List.of()` if route missing.
+- Added `isGraphRoute(Caravan, ServerLevel)`: helper for log line.
+- Removed dead `setNextWaypoint` internal road-quality speed block (was dead code after the override
+  removal; kept method shape, removed the `getRoadById(getConnectionId())` chain inside it).
+- Added imports: `WorldRoadSavedData`, `GraphTradeRouteEstablisher`, `TradeRoute`.
+
+**Deliverable 5 — `RoadGraphDebugCommand.java` updated** (`Commands/RoadGraphDebugCommand.java`)
+- `dispatch_caravan <villageName>` removed. Replaced with `dispatch_test_caravan_between <villageA> <villageB>`:
+  - Resolves dock nodes for both villages (requires `connect_village` to have been run).
+  - Runs `GraphTradeRouteEstablisher.findEdgePath` between the two dock nodes.
+  - Logs the edge path (id, tier, realized status, block count per edge).
+  - Force-realizes any unrealized edges on the path via `EdgeRealizer.realizeEdge`.
+  - Calls `resolveGraphBlocks` to verify the path produces blocks; aborts if empty.
+  - Creates a real `TradeRoute.createGraph(...)` and stores it in `VillageSavedData`.
+  - Creates a `Caravan` pointing to that `routeId`; adds to `CaravanSavedData`.
+  - `TravellingGroupEngine` can now find the route via `caravan.getPath()` → `getRouteById` → graph resolution.
+- `caravan_status`: removed `overridePath` display; replaced with `routeInfo` string showing
+  `"graph(N edges)"` or `"legacy(road=XXXXXXXX)"` or `"route=missing"`.
+- Added imports: `GraphTradeRouteEstablisher`, `TradeRoute`.
+
+**Architecture notes:**
+- `overridePath` is gone. No transient scaffolding remains from Phase 3a.
+- Legacy `TradeRoute` objects (with `connectionId`, no `edgeIds`) continue to work unchanged — all callers
+  that do `getConnectionId()` still compile and operate correctly. `getConnectionId()` returns null for
+  graph routes; callers using `Optional` chaining get `Optional.empty()` and fall through gracefully.
+- The `TravellingGroupEngine` path-skip guard is now only triggered for truly missing routes, not for
+  test caravans. The synthetic-but-real route pattern (TradeRoute in VillageSavedData, edges in graph)
+  is the correct architecture for all future graph-based dispatching.
+- `resolveGraphBlocks` is shared between `Caravan.getPath()` and `CaravanMerchantGoal.resolveBlocks()` by
+  calling the same static method in `GraphTradeRouteEstablisher`. Both consumers see the same block sequence.
+- Auto-dispatch in `CaravanSavedData.dispatchNewCaravans` still uses legacy `getConnectionId()` path
+  (graph-based routes have null connectionId → `getConnectionById(null)` → empty → skipped). Graph-based
+  auto-dispatch is a Phase 6+ concern.
+
+**Compilation status:** Manual static review:
+- `TradeRoute.fromCodec` 11-arg signature matches `RecordCodecBuilder.create` group declarations ✓
+- `Dijkstra` adjacency built from `graph.allEdges()`; bidirectional (both nodeA→nodeB and nodeB→nodeA) ✓
+- `resolveGraphBlocks` node-pointer advances correctly even for unrealized edges ✓
+- `dispatch_test_caravan_between` uses `StringArgumentType.word()` for both args; 2-arg registration ✓
+- `caravan_status` uses `level` which is in scope (declared line 1040) ✓
+
+**Current phase:** Phase 5b complete. Next: Phase 6.
+
+---
+
+### 2026-04-22 — Phase 5c implemented: terrain-change invalidation + tiered realize-radius
+
+**Phase 5c complete.** Phase 5 (Graph Realization) is now fully done.
+
+**Deliverable 1 — `RoadTerrainChangeListener.java` created** (`Events/RoadTerrainChangeListener.java`)
+- `@EventBusSubscriber(modid = Life_in_the_village.MODID)` class.
+- `onBlockBreak(BlockEvent.BreakEvent)`: converts block pos → cell key, queries `graph.edgesInCell`,
+  marks stale on all realized edges that cover that cell, calls `roadData.markDirty()` if anything changed.
+- `onBlockPlace(BlockEvent.EntityPlaceEvent)`: identical logic for player-placed blocks.
+- `onExplosion(ExplosionEvent.Detonate)`: collects all unique cell keys from `event.getAffectedBlocks()`,
+  delegates to `invalidateCells(graph, cellKeys)`, marks dirty if any edges changed.
+- Package-private `markCellStale(ServerLevel, BlockPos)` and `invalidateCells(WorldRoadGraph, Set<Long>)`
+  helpers reused by the `invalidate_cell` debug command.
+- Only realized edges are marked stale; unrealized edges are ignored (will be realized fresh on approach).
+
+**Deliverable 2 — `WorldRoadGraph.cellToEdges` reverse map** (already committed in Phase 5b session)
+- `Map<Long, Set<UUID>> cellToEdges` field; kept in sync by `addEdge`, `removeEdge`, `rebuildSpatialIndex`.
+- `edgesInCell(long cellKey)` → O(1) unmodifiable set of edge IDs through that cell.
+- `getCellToEdges()` → unmodifiable map view for validator.
+
+**Deliverable 3 — `EdgeRealizer.java` stale-cell handling** (already committed in Phase 5b session)
+- Fast path: `if (edge.isRealized() && edge.getStaleCells().isEmpty()) return;` (was `if (edge.isRealized()) return;`).
+- Stale fallback: if realized but stale, log it, call `edge.unrealize()` + `edge.clearStaleness()`,
+  then fall through to full re-realization pipeline. Selective cell-span patching deferred to later phase.
+
+**Deliverable 4 — `GraphEdgeRealizationSystem` tiered radius + priority ordering** (`Events/TickSystems.java`)
+- Replaced single `REALISE_RADIUS = 384` with four constants: GREAT_ROAD=768, TRUNK=384, CONNECTOR=256, LOCAL=192.
+- `tick()` now collects all eligible edges (unrealized OR stale) within their tier's radius into a
+  `List<Candidate>` (local record: edge, tierOrdinal, closestDistSq).
+- Sorts by tier ordinal ascending (GREAT_ROAD first) then by closestDistSq ascending (closest first).
+- Processes the top-priority edge only (one per tick), same cadence as before.
+- Added `closestCellDistSq(players, edge)` helper: scans all cells in edge's cellPath, returns minimum
+  squared distance to any player. Used for both eligibility check and priority ordering.
+- Added `tierRadius(EdgeTier)` helper: returns per-tier integer radius.
+- Added `ArrayList` and `Comparator` to imports.
+
+**Deliverable 5 — `invalidate_cell` debug command** (`Commands/RoadGraphDebugCommand.java`)
+- `invalidate_cell <x> <z>` (block coords): converts to cell, calls `RoadTerrainChangeListener.invalidateCells`.
+- Reports how many edges were marked stale. "No edges cover cell" if no edge covers that cell.
+- Added import: `RoadTerrainChangeListener`.
+
+**Deliverable 6 — `GraphInvariantValidator` cellToEdges check** (already committed in Phase 5b session)
+- Check 6: for each edge's cellPath cell, verifies `cellToEdges` contains that edge ID. Warns on mismatch.
+
+**Architecture notes:**
+- `RoadTerrainChangeListener` is passive and fire-and-forget: it never blocks block events, never throws,
+  and only marks edges dirty when a cell is actually covered by a road edge. The listener is effectively
+  a no-op in vanilla terrain with no roads nearby.
+- The full re-realization fallback in `EdgeRealizer` is simpler and correct: stale cells invalidate the
+  whole edge's geometry so a fresh realization is needed. The comment documents that selective cell-span
+  patching (replacing only the affected segment) is deferred.
+- Priority ordering ensures GREAT_ROAD edges are kept current even when many lower-tier edges are stale —
+  important for caravan throughput which primarily uses trunk/great-road paths.
+
+**Compilation status:** Manual static review:
+- `RoadTerrainChangeListener`: event type imports match NeoForge 1.21 API (`BlockEvent.BreakEvent`,
+  `BlockEvent.EntityPlaceEvent`, `ExplosionEvent.Detonate`). `AtlasCell.CELL_SHIFT` and `AtlasCell.packKey`
+  exist. `WorldRoadSavedData.get(level)`, `graph.edgesInCell`, `graph.getEdge`, `edge.markCellStale` all exist ✓
+- `TickSystems.java`: local `record Candidate(...)` inside method is Java 16+ feature, compatible with NeoForge 1.21 target.
+  `RoadEdge.EdgeTier.ordinal()` used for sorting (GREAT_ROAD=0, TRUNK=1, CONNECTOR=2, LOCAL=3). `Comparator.comparingInt`
+  + `thenComparingLong` valid. `ArrayList`, `Comparator` added to imports ✓
+- `RoadGraphDebugCommand.java`: `invalidateCell` uses `IntegerArgumentType.getInteger` (already imported).
+  `Set.of(cellKey)` valid. `RoadTerrainChangeListener.invalidateCells` made `public static` so it is
+  accessible from `Commands` package ✓
+
+**Current phase:** Phase 5c complete. Phase 5 (Graph Realization) fully done. Next: Phase 6 (upkeep / traffic propagation).

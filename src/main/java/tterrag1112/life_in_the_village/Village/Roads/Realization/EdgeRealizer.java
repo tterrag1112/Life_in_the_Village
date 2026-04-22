@@ -43,7 +43,18 @@ public final class EdgeRealizer {
                                    RoadEdge edge,
                                    WorldRoadGraph graph,
                                    VillageSavedData data) {
-        if (edge.isRealized()) return;
+        // Fast path: fully realized with no terrain changes since last realization.
+        if (edge.isRealized() && edge.getStaleCells().isEmpty()) return;
+
+        // Stale-cell fallback: one or more cells were modified by terrain events.
+        // Full re-realization is simpler and correct; selective cell patching is deferred.
+        if (edge.isRealized() && !edge.getStaleCells().isEmpty()) {
+            System.out.println("[EdgeRealizer] Edge " + edge.getEdgeId().toString().substring(0, 8)
+                    + " has " + edge.getStaleCells().size() + " stale cell(s); full re-realization");
+            edge.unrealize();
+            edge.clearStaleness();
+        }
+
         if (edge.getCellPath().isEmpty()) return;
 
         String shortId = edge.getEdgeId().toString().substring(0, 8);

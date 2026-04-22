@@ -118,6 +118,22 @@ public final class GraphInvariantValidator {
             }
         }
 
+        // 6. cellToEdges reverse map covers every edge's cell path.
+        //    For each cell in each edge's cellPath, edgesInCell must return that edge.
+        //    Warn on mismatch — reverse map corruption causes silent staleness misses.
+        Map<Long, Set<UUID>> cellToEdges = graph.getCellToEdges();
+        for (RoadEdge edge : edges) {
+            for (long cellKey : edge.getCellPath()) {
+                Set<UUID> mappedEdges = cellToEdges.get(cellKey);
+                if (mappedEdges == null || !mappedEdges.contains(edge.getEdgeId())) {
+                    int cx = AtlasCell.unpackX(cellKey);
+                    int cz = AtlasCell.unpackZ(cellKey);
+                    warnings.add("cellToEdges missing edge " + edge.getEdgeId()
+                            + " at cell (" + cx + "," + cz + ")");
+                }
+            }
+        }
+
         return warnings;
     }
 }
