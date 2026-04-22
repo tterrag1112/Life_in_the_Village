@@ -138,6 +138,9 @@ public final class ParallelismResolver {
             survivor.addTraffic(victimMiddle.getTrafficCounter());
         }
 
+        // Survivor's primitive chain is now stale (endpoints may differ after merge)
+        survivor.clearPrimitives();
+
         UUID removedId = split2.newEdgeAId();
 
         // ── 6. Remove victim_middle ───────────────────────────────────────────

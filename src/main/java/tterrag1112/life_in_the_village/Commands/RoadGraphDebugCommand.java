@@ -27,6 +27,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidat
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
@@ -227,6 +228,15 @@ public class RoadGraphDebugCommand {
         String nodeBStr = "  nodeB: " + edge.getNodeBId().toString().substring(0, 8) + "/"
                 + (nB != null ? nB.type() + " @" + nB.position().toShortString() : "MISSING");
 
+        String primitiveInfo = "  primitives=" + edge.getPrimitives().size();
+        if (edge.hasPrimitives()) {
+            primitiveInfo += " [" + edge.getPrimitives().stream()
+                    .map(p -> p.typeKey())
+                    .reduce((a, b) -> a + ", " + b).orElse("") + "]";
+        } else {
+            primitiveInfo += " (not yet derived)";
+        }
+
         final String hLine0 = "Edge " + shortId + ": tier=" + edge.getTier()
                 + " realized=" + edge.isRealized()
                 + " maintenance=" + edge.getMaintenance()
@@ -234,10 +244,12 @@ public class RoadGraphDebugCommand {
         final String hLine1 = blockInfo;
         final String hLine2 = nodeAStr;
         final String hLine3 = nodeBStr;
+        final String hLine4 = primitiveInfo;
         ctx.getSource().sendSuccess(() -> Component.literal(hLine0), false);
         ctx.getSource().sendSuccess(() -> Component.literal(hLine1), false);
         ctx.getSource().sendSuccess(() -> Component.literal(hLine2), false);
         ctx.getSource().sendSuccess(() -> Component.literal(hLine3), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(hLine4), false);
         return 1;
     }
 
