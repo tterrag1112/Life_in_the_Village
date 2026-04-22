@@ -6,6 +6,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public class TradeRoute {
@@ -43,8 +44,8 @@ public class TradeRoute {
                             .forGetter(TradeRoute::getVillageB),
                     Codec.STRING.xmap(UUID::fromString,
                                     UUID::toString)
-                            .fieldOf("connectionId")
-                            .forGetter(TradeRoute::getConnectionId),
+                            .optionalFieldOf("connectionId")
+                            .forGetter(r -> Optional.ofNullable(r.connectionId)),
                     RouteStatus.CODEC.fieldOf("status")
                             .forGetter(TradeRoute::getStatus),
                     RouteType.CODEC.fieldOf("routeType")
@@ -54,8 +55,14 @@ public class TradeRoute {
                     Codec.LONG.fieldOf("lastCaravanTick")
                             .forGetter(TradeRoute::getLastCaravanTick),
                     Codec.DOUBLE.fieldOf("tradePenalty")
-                            .forGetter(TradeRoute::getTradePenalty)
-            ).apply(instance, TradeRoute::new));
+                            .forGetter(TradeRoute::getTradePenalty),
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString).listOf()
+                            .optionalFieldOf("edgeIds", List.of())
+                            .forGetter(r -> new ArrayList<>(r.edgeIds)),
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                            .optionalFieldOf("routeStartNodeId")
+                            .forGetter(r -> Optional.ofNullable(r.routeStartNodeId))
+            ).apply(instance, TradeRoute::fromCodec));
 
     // Codecs for enums
     static {
@@ -65,6 +72,7 @@ public class TradeRoute {
     private final UUID routeId;
     private final UUID villageA;
     private final UUID villageB;
+    /** Nullable — null for graph-based routes that have no legacy TradeRoad. */
     private final UUID connectionId;
     private RouteStatus status;
     private final RouteType routeType;
@@ -72,19 +80,57 @@ public class TradeRoute {
     private long lastCaravanTick;
     private double tradePenalty; // 0.0 = no penalty, 1.0 = blocked
 
+    /** Ordered edge IDs for graph-based routes. Empty for legacy routes. */
+    private final List<UUID> edgeIds;
+    /** Node ID at village-A's end of the first edge; null for legacy routes. */
+    private final UUID routeStartNodeId;
+
+    private TradeRoute(UUID routeId, UUID villageA, UUID villageB,
+                       UUID connectionId, RouteStatus status,
+                       RouteType routeType, long establishedTick,
+                       long lastCaravanTick, double tradePenalty,
+                       List<UUID> edgeIds, UUID routeStartNodeId) {
+        this.routeId          = routeId;
+        this.villageA         = villageA;
+        this.villageB         = villageB;
+        this.connectionId     = connectionId;
+        this.status           = status;
+        this.routeType        = routeType;
+        this.establishedTick  = establishedTick;
+        this.lastCaravanTick  = lastCaravanTick;
+        this.tradePenalty     = tradePenalty;
+        this.edgeIds          = new ArrayList<>(edgeIds);
+        this.routeStartNodeId = routeStartNodeId;
+    }
+
+    /** Legacy constructor — for code that creates TradeRoutes with a TradeRoad connectionId. */
     public TradeRoute(UUID routeId, UUID villageA, UUID villageB,
                       UUID roadId, RouteStatus status,
                       RouteType routeType, long establishedTick,
                       long lastCaravanTick, double tradePenalty) {
-        this.routeId        = routeId;
-        this.villageA       = villageA;
-        this.villageB       = villageB;
-        this.connectionId         = roadId;
-        this.status         = status;
-        this.routeType      = routeType;
-        this.establishedTick = establishedTick;
-        this.lastCaravanTick = lastCaravanTick;
-        this.tradePenalty   = tradePenalty;
+        this(routeId, villageA, villageB, roadId, status, routeType,
+                establishedTick, lastCaravanTick, tradePenalty, List.of(), null);
+    }
+
+    static TradeRoute fromCodec(UUID routeId, UUID villageA, UUID villageB,
+                                Optional<UUID> connectionId, RouteStatus status, RouteType routeType,
+                                long establishedTick, long lastCaravanTick, double tradePenalty,
+                                List<UUID> edgeIds, Optional<UUID> routeStartNodeId) {
+        return new TradeRoute(routeId, villageA, villageB, connectionId.orElse(null), status, routeType,
+                establishedTick, lastCaravanTick, tradePenalty, edgeIds, routeStartNodeId.orElse(null));
+    }
+
+    /** Creates a graph-based route with a known edge path and no legacy connectionId. */
+    public static TradeRoute createGraph(UUID villageA, UUID villageB,
+                                         RouteType type, long currentTick,
+                                         List<UUID> edgeIds, UUID routeStartNodeId) {
+        double penalty = switch (type) {
+            case KINGDOM_INTERNAL -> 0.0;
+            case NEUTRAL          -> 0.1;
+            case CROSS_KINGDOM    -> 0.25;
+        };
+        return new TradeRoute(UUID.randomUUID(), villageA, villageB, null, RouteStatus.ACTIVE, type,
+                currentTick, 0L, penalty, edgeIds, routeStartNodeId);
     }
 
     public static TradeRoute create(UUID villageA, UUID villageB,
@@ -170,7 +216,14 @@ public class TradeRoute {
     public UUID getRouteId()               { return routeId; }
     public UUID getVillageA()              { return villageA; }
     public UUID getVillageB()              { return villageB; }
-    public UUID getConnectionId()                { return connectionId; }
+    /** Returns the legacy TradeRoad ID, or null for graph-based routes. */
+    public UUID getConnectionId()          { return connectionId; }
+    /** Returns the ordered edge IDs for graph-based routes. Empty for legacy routes. */
+    public List<UUID> getEdgeIds()         { return Collections.unmodifiableList(edgeIds); }
+    /** Returns the graph node ID at village-A's end. Null for legacy routes. */
+    public UUID getRouteStartNodeId()      { return routeStartNodeId; }
+    /** True when this route is backed by WorldRoadGraph edges rather than a legacy TradeRoad. */
+    public boolean hasGraphPath()          { return !edgeIds.isEmpty(); }
     public RouteStatus getStatus()         { return status; }
     public RouteType getRouteType()        { return routeType; }
     public long getEstablishedTick()       { return establishedTick; }

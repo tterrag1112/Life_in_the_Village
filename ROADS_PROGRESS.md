@@ -4,11 +4,11 @@ Append-only. Most recent entry at the bottom. Each session ends with an entry su
 
 ## Current phase
 
-**Phase 5a** — RoadEdge primitive chains + unified realization pipeline. Complete.
+**Phase 5b** — Multi-edge caravan pathing + overridePath retirement. Complete.
 
 ## Current slice
 
-Phase 5a complete. Next: Phase 5b per ROADS_PLAN.md.
+Phase 5b complete. Next: Phase 6 per ROADS_PLAN.md (upkeep/traffic propagation through graph edges).
 
 ## Acceptance criteria for current slice
 
@@ -369,3 +369,91 @@ where N = number of TradeRoads with non-empty cellPath, M = number of distinct v
 - `WorldRoadGraph.clearPrimitives` placement: after `markRealized` calls on halves, before `removeEdge`/`addEdge` mutations ✓
 
 **Current phase:** Phase 5a complete. Next: Phase 5b per ROADS_PLAN.md.
+
+---
+
+### 2026-04-22 — Phase 5b: multi-edge caravan pathing + overridePath retirement
+
+**Root cause of Phase 3a caravan diagnostic (documented here)**
+
+`TravellingGroupEngine.tick()` calls `group.getPath(level, data)` first (line 82). For a synthetic test
+caravan whose `routeId` was a random UUID not registered in `VillageSavedData`, `getRouteById` returned
+empty → `getPath()` returned `List.of()` → the engine's `if (path.isEmpty()) return false` guard fired
+immediately. The caravan never moved or spawned. `overridePath` was only consulted inside
+`CaravanMerchantGoal.tick()`, which only runs for a spawned entity — but entities were never spawned
+because the engine skipped the caravan before proximity checks. Fix: the new `dispatch_test_caravan_between`
+command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` succeeds.
+
+**Deliverable 1 — `TradeRoute.java` restructured** (`Village/Economy/Trade/TradeRoute.java`)
+- `connectionId` field made nullable (was required in codec; now `optionalFieldOf`). Backward compatible:
+  old save data with `"connectionId"` deserializes to `Optional.of(value)`, old routes still work.
+- New field `List<UUID> edgeIds` (optional, default `List.of()`): ordered edge IDs for graph routes.
+- New field `UUID routeStartNodeId` (optional, nullable): graph node at village-A's end of first edge.
+- Private full-state constructor; existing 9-arg public constructor delegates to it with defaults.
+- New `fromCodec(...)` factory (11 args) used by codec.
+- New `createGraph(villageA, villageB, type, tick, edgeIds, routeStartNodeId)` factory for graph routes.
+- New getters: `getEdgeIds()`, `getRouteStartNodeId()`, `hasGraphPath()`.
+
+**Deliverable 2 — `GraphTradeRouteEstablisher.java` created** (`Village/Economy/Trade/GraphTradeRouteEstablisher.java`)
+- `findEdgePath(WorldRoadGraph, fromNodeId, toNodeId)` → `Optional<List<UUID>>`: Dijkstra on adjacency
+  built from all graph edges. Weights: GREAT_ROAD×0.6, TRUNK×0.8, CONNECTOR×1.0, LOCAL×1.5, each ×
+  `cellPath.size()`. Edge IDs returned in A→B traversal order.
+- `resolveGraphBlocks(WorldRoadGraph, edgeIds, startNodeId)` → `List<BlockPos>`: walks edgeIds in order,
+  determines forward/reverse per edge by comparing `currentNode` to `edge.nodeAId`, skips first 3 blocks
+  of non-first edges (junction overlap trim), concatenates. Returns forward (A→B) path; reversal for
+  returning caravans handled by consumers (`TravellingGroupEngine.computePosition` and `CaravanMerchantGoal`
+  index direction).
+
+**Deliverable 3 — `Caravan.java` updated** (`Village/Economy/Trade/Caravan.java`)
+- Removed: `@Nullable transient List<BlockPos> overridePath` field, `getOverridePath()`, `setOverridePath()`.
+- Updated `getPath(ServerLevel, VillageSavedData)`: if `route.hasGraphPath()`, calls
+  `GraphTradeRouteEstablisher.resolveGraphBlocks(WorldRoadSavedData.get(level).getGraph(), ...)`.
+  Legacy fallback: `getRoadById(route.getConnectionId()).map(TradeRoad::getBlocks).orElse(List.of())`.
+- Added import: `WorldRoadSavedData`.
+
+**Deliverable 4 — `CaravanMerchantGoal.java` updated** (`Entities/Goals/Profession/Merchant/CaravanMerchantGoal.java`)
+- Removed: `overridePath` check block (was lines 83–107). Replaced with `resolveBlocks(caravan, level)`
+  call and single-line log.
+- Added `resolveBlocks(Caravan, ServerLevel)`: same resolution order as `Caravan.getPath` — graph first,
+  legacy fallback. Returns `List.of()` if route missing.
+- Added `isGraphRoute(Caravan, ServerLevel)`: helper for log line.
+- Removed dead `setNextWaypoint` internal road-quality speed block (was dead code after the override
+  removal; kept method shape, removed the `getRoadById(getConnectionId())` chain inside it).
+- Added imports: `WorldRoadSavedData`, `GraphTradeRouteEstablisher`, `TradeRoute`.
+
+**Deliverable 5 — `RoadGraphDebugCommand.java` updated** (`Commands/RoadGraphDebugCommand.java`)
+- `dispatch_caravan <villageName>` removed. Replaced with `dispatch_test_caravan_between <villageA> <villageB>`:
+  - Resolves dock nodes for both villages (requires `connect_village` to have been run).
+  - Runs `GraphTradeRouteEstablisher.findEdgePath` between the two dock nodes.
+  - Logs the edge path (id, tier, realized status, block count per edge).
+  - Force-realizes any unrealized edges on the path via `EdgeRealizer.realizeEdge`.
+  - Calls `resolveGraphBlocks` to verify the path produces blocks; aborts if empty.
+  - Creates a real `TradeRoute.createGraph(...)` and stores it in `VillageSavedData`.
+  - Creates a `Caravan` pointing to that `routeId`; adds to `CaravanSavedData`.
+  - `TravellingGroupEngine` can now find the route via `caravan.getPath()` → `getRouteById` → graph resolution.
+- `caravan_status`: removed `overridePath` display; replaced with `routeInfo` string showing
+  `"graph(N edges)"` or `"legacy(road=XXXXXXXX)"` or `"route=missing"`.
+- Added imports: `GraphTradeRouteEstablisher`, `TradeRoute`.
+
+**Architecture notes:**
+- `overridePath` is gone. No transient scaffolding remains from Phase 3a.
+- Legacy `TradeRoute` objects (with `connectionId`, no `edgeIds`) continue to work unchanged — all callers
+  that do `getConnectionId()` still compile and operate correctly. `getConnectionId()` returns null for
+  graph routes; callers using `Optional` chaining get `Optional.empty()` and fall through gracefully.
+- The `TravellingGroupEngine` path-skip guard is now only triggered for truly missing routes, not for
+  test caravans. The synthetic-but-real route pattern (TradeRoute in VillageSavedData, edges in graph)
+  is the correct architecture for all future graph-based dispatching.
+- `resolveGraphBlocks` is shared between `Caravan.getPath()` and `CaravanMerchantGoal.resolveBlocks()` by
+  calling the same static method in `GraphTradeRouteEstablisher`. Both consumers see the same block sequence.
+- Auto-dispatch in `CaravanSavedData.dispatchNewCaravans` still uses legacy `getConnectionId()` path
+  (graph-based routes have null connectionId → `getConnectionById(null)` → empty → skipped). Graph-based
+  auto-dispatch is a Phase 6+ concern.
+
+**Compilation status:** Manual static review:
+- `TradeRoute.fromCodec` 11-arg signature matches `RecordCodecBuilder.create` group declarations ✓
+- `Dijkstra` adjacency built from `graph.allEdges()`; bidirectional (both nodeA→nodeB and nodeB→nodeA) ✓
+- `resolveGraphBlocks` node-pointer advances correctly even for unrealized edges ✓
+- `dispatch_test_caravan_between` uses `StringArgumentType.word()` for both args; 2-arg registration ✓
+- `caravan_status` uses `level` which is in scope (declared line 1040) ✓
+
+**Current phase:** Phase 5b complete. Next: Phase 6.

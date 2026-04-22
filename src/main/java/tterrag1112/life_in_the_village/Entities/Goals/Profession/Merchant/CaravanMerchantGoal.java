@@ -5,9 +5,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.GraphTradeRouteEstablisher;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -79,31 +82,13 @@ public class CaravanMerchantGoal extends Goal {
             return;
         }
 
-        List<BlockPos> blocks;
-        List<BlockPos> overridePath = caravan.getOverridePath();
-        if (overridePath != null && !overridePath.isEmpty()) {
-            blocks = overridePath;
-            if (!hasLoggedPath) {
-                TradeRoad logRoad = VillageSavedData.get(level)
-                        .getRouteById(caravan.getRouteId())
-                        .flatMap(r -> VillageSavedData.get(level).getRoadById(r.getConnectionId()))
-                        .orElse(null);
-                int tradeCnt = (logRoad != null && !logRoad.getBlocks().isEmpty())
-                        ? logRoad.getBlocks().size() : -1;
-                System.out.println("[CaravanGoal] Caravan " + caravanId.toString().substring(0, 8)
-                        + ": overridePath=" + overridePath.size() + " blocks"
-                        + ", tradeRoutePath=" + (tradeCnt < 0 ? "null" : tradeCnt + " blocks")
-                        + ", selected=overridePath");
-                hasLoggedPath = true;
-            }
-        } else {
-            TradeRoad road = VillageSavedData.get(level)
-                    .getRouteById(caravan.getRouteId())
-                    .flatMap(r -> VillageSavedData.get(level)
-                            .getRoadById(r.getConnectionId()))
-                    .orElse(null);
-            if (road == null || road.getBlocks().isEmpty()) return;
-            blocks = road.getBlocks();
+        List<BlockPos> blocks = resolveBlocks(caravan, level);
+        if (blocks.isEmpty()) return;
+        if (!hasLoggedPath) {
+            System.out.println("[CaravanGoal] Caravan " + caravanId.toString().substring(0, 8)
+                    + ": path=" + blocks.size() + " blocks"
+                    + " (graphRoute=" + isGraphRoute(caravan, level) + ")");
+            hasLoggedPath = true;
         }
         boolean returning = caravan.getState()
                 == Caravan.CaravanState.RETURNING;
@@ -204,21 +189,41 @@ public class CaravanMerchantGoal extends Goal {
         currentWaypoint = blocks.get(currentRoadIndex);
 
         double moveSpeed = MOVE_SPEED;
-        VillageSavedData.get(
-                        (ServerLevel) entity.level())
-                .getRouteById(caravan.getRouteId())
-                .flatMap(r -> VillageSavedData.get(
-                                (ServerLevel) entity.level())
-                        .getRoadById(r.getConnectionId()))
-                .ifPresent(road -> {
-                    // Speed scales with road quality
-                });
 
         entity.getNavigation().moveTo(
                 currentWaypoint.getX() + 0.5,
                 currentWaypoint.getY(),
                 currentWaypoint.getZ() + 0.5,
                 moveSpeed);
+    }
+
+    /**
+     * Resolves the block path for the caravan's current route.
+     * Graph-based routes use {@link GraphTradeRouteEstablisher#resolveGraphBlocks};
+     * legacy routes fall back to the TradeRoad block list.
+     */
+    private List<BlockPos> resolveBlocks(Caravan caravan, ServerLevel level) {
+        VillageSavedData vdata = VillageSavedData.get(level);
+        TradeRoute route = vdata.getRouteById(caravan.getRouteId()).orElse(null);
+        if (route == null) return List.of();
+
+        if (route.hasGraphPath()) {
+            return GraphTradeRouteEstablisher.resolveGraphBlocks(
+                    WorldRoadSavedData.get(level).getGraph(),
+                    route.getEdgeIds(),
+                    route.getRouteStartNodeId());
+        }
+
+        return vdata.getRoadById(route.getConnectionId())
+                .map(TradeRoad::getBlocks)
+                .orElse(List.of());
+    }
+
+    private boolean isGraphRoute(Caravan caravan, ServerLevel level) {
+        return VillageSavedData.get(level)
+                .getRouteById(caravan.getRouteId())
+                .map(TradeRoute::hasGraphPath)
+                .orElse(false);
     }
 
     private String getDestName(Caravan caravan,
