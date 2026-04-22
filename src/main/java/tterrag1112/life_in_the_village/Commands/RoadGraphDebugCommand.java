@@ -104,6 +104,9 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("replan_connector")
                                         .then(Commands.argument("villageName", StringArgumentType.word())
                                                 .executes(RoadGraphDebugCommand::replanConnector)))
+                                .then(Commands.literal("inspect_junction")
+                                        .then(Commands.argument("nodeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::inspectJunction)))
                         )
                 )
         );
@@ -191,10 +194,41 @@ public class RoadGraphDebugCommand {
         RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
 
         String shortId = edge.getEdgeId().toString().substring(0, 8);
-        ctx.getSource().sendSuccess(() -> Component.literal(
-                "Highlighting edge " + shortId + ": tier=" + edge.getTier()
-                        + ", maintenance=" + edge.getMaintenance()
-                        + ", length=" + edge.getCellPath().size() + " cells."), false);
+        List<Long> hCellPath  = edge.getCellPath();
+        List<BlockPos> hBlockPath = edge.getBlockPath();
+
+        String cellEnds = "";
+        if (!hCellPath.isEmpty()) {
+            BlockPos fc = AtlasRouteRouter.cellKeyToBlockCenter(hCellPath.get(0));
+            BlockPos lc = AtlasRouteRouter.cellKeyToBlockCenter(hCellPath.get(hCellPath.size() - 1));
+            cellEnds = " firstCell=(" + fc.getX() + ",0," + fc.getZ() + ")"
+                     + " lastCell=(" + lc.getX() + ",0," + lc.getZ() + ")";
+        }
+
+        String blockInfo = "  blockPath=" + hBlockPath.size() + " blocks";
+        if (!hBlockPath.isEmpty()) {
+            blockInfo += " first=" + hBlockPath.get(0).toShortString()
+                       + " last="  + hBlockPath.get(hBlockPath.size() - 1).toShortString();
+        }
+
+        RoadNode nA = graph.getNode(edge.getNodeAId());
+        RoadNode nB = graph.getNode(edge.getNodeBId());
+        String nodeAStr = "  nodeA: " + edge.getNodeAId().toString().substring(0, 8) + "/"
+                + (nA != null ? nA.type() + " @" + nA.position().toShortString() : "MISSING");
+        String nodeBStr = "  nodeB: " + edge.getNodeBId().toString().substring(0, 8) + "/"
+                + (nB != null ? nB.type() + " @" + nB.position().toShortString() : "MISSING");
+
+        final String hLine0 = "Edge " + shortId + ": tier=" + edge.getTier()
+                + " realized=" + edge.isRealized()
+                + " maintenance=" + edge.getMaintenance()
+                + " cells=" + hCellPath.size() + cellEnds;
+        final String hLine1 = blockInfo;
+        final String hLine2 = nodeAStr;
+        final String hLine3 = nodeBStr;
+        ctx.getSource().sendSuccess(() -> Component.literal(hLine0), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(hLine1), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(hLine2), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(hLine3), false);
         return 1;
     }
 
@@ -902,6 +936,112 @@ public class RoadGraphDebugCommand {
         graph.addEdge(mergedEdge);
         System.out.println("[replanConnector] Merged stranded junction "
                 + nodeId.toString().substring(0, 8));
+    }
+
+    // =========================================================================
+    // inspect_junction
+    // =========================================================================
+
+    private static int inspectJunction(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        String input = StringArgumentType.getString(ctx, "nodeId").toLowerCase(Locale.ROOT);
+
+        List<RoadNode> matches = new ArrayList<>();
+        for (RoadNode n : graph.allNodes()) {
+            if (n.nodeId().toString().startsWith(input)) matches.add(n);
+        }
+
+        if (matches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No node matches prefix '" + input + "'."));
+            return 0;
+        }
+        if (matches.size() > 1) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Ambiguous node prefix '" + input + "' (" + matches.size() + " matches)."));
+            return 0;
+        }
+
+        RoadNode node = matches.get(0);
+        String nodeShortId = node.nodeId().toString().substring(0, 8);
+        BlockPos nodePos = node.position();
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "--- inspect_junction " + nodeShortId + " [" + node.type() + "] ---"), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  pos=" + nodePos.toShortString()), false);
+
+        // Collect incident edges
+        List<RoadEdge> incident = new ArrayList<>();
+        for (RoadEdge e : graph.allEdges()) {
+            if (e.getNodeAId().equals(node.nodeId()) || e.getNodeBId().equals(node.nodeId())) {
+                incident.add(e);
+            }
+        }
+
+        final String incHeader = "  Incident edges: " + incident.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(incHeader), false);
+
+        for (RoadEdge e : incident) {
+            String eid = e.getEdgeId().toString().substring(0, 8);
+            boolean isNodeA = e.getNodeAId().equals(node.nodeId());
+            String role = isNodeA ? "nodeA" : "nodeB";
+            List<BlockPos> bp = e.getBlockPath();
+
+            String bpSummary;
+            if (bp.isEmpty()) {
+                bpSummary = "blocks=0";
+            } else {
+                bpSummary = "blocks=" + bp.size()
+                        + " first=" + bp.get(0).toShortString()
+                        + " last="  + bp.get(bp.size() - 1).toShortString();
+            }
+
+            final String edgeLine = "  [" + eid + "] tier=" + e.getTier()
+                    + " endpoint=" + role
+                    + " realized=" + e.isRealized()
+                    + " cells=" + e.getCellPath().size()
+                    + " " + bpSummary;
+            ctx.getSource().sendSuccess(() -> Component.literal(edgeLine), false);
+
+            // Connectivity check: nearest block to this node
+            if (!bp.isEmpty()) {
+                double minDist = Double.MAX_VALUE;
+                BlockPos nearestBlock = bp.get(0);
+
+                // Sample densely enough to catch the true nearest
+                int step = Math.max(1, bp.size() / 500);
+                for (int i = 0; i < bp.size(); i += step) {
+                    double d = Math.sqrt(bp.get(i).distSqr(nodePos));
+                    if (d < minDist) { minDist = d; nearestBlock = bp.get(i); }
+                }
+                // Always check endpoints regardless of step size
+                for (BlockPos check : List.of(bp.get(0), bp.get(bp.size() - 1))) {
+                    double d = Math.sqrt(check.distSqr(nodePos));
+                    if (d < minDist) { minDist = d; nearestBlock = check; }
+                }
+
+                final double finalDist = minDist;
+                final BlockPos finalNearest = nearestBlock;
+                final String distLine = "    nearestBlock=" + finalNearest.toShortString()
+                        + " dist=" + String.format("%.1f", finalDist);
+                ctx.getSource().sendSuccess(() -> Component.literal(distLine), false);
+
+                if (minDist > 8.0) {
+                    final String warn = "    DISCONNECTED: edge " + eid
+                            + " does not reach node " + nodeShortId
+                            + ". Nearest block at distance "
+                            + String.format("%.1f", finalDist) + ".";
+                    ctx.getSource().sendSuccess(() -> Component.literal(warn), false);
+                }
+            }
+        }
+
+        return incident.size();
     }
 
     // =========================================================================
