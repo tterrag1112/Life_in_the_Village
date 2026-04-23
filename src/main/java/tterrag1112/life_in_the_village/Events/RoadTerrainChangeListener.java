@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Realization.RoadPlacementContext;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 
 import java.util.HashSet;
@@ -34,6 +35,7 @@ public class RoadTerrainChangeListener {
 
     @SubscribeEvent
     public static void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
+        if (RoadPlacementContext.isSuppressed()) return;
         if (!(event.getLevel() instanceof ServerLevel level)) return;
         markCellStale(level, event.getPos());
     }

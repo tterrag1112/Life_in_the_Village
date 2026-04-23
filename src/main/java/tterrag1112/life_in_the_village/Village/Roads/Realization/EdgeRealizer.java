@@ -59,6 +59,14 @@ public final class EdgeRealizer {
                                    WorldRoadGraph graph,
                                    VillageSavedData data,
                                    WorldRoadSavedData roadData) {
+        RoadPlacementContext.withSuppression(() -> realizeEdgeImpl(level, edge, graph, data, roadData));
+    }
+
+    private static void realizeEdgeImpl(ServerLevel level,
+                                        RoadEdge edge,
+                                        WorldRoadGraph graph,
+                                        VillageSavedData data,
+                                        WorldRoadSavedData roadData) {
         // Fast path: fully realized with no terrain changes since last realization.
         if (edge.isRealized() && edge.getStaleCells().isEmpty()) return;
 
@@ -140,7 +148,7 @@ public final class EdgeRealizer {
         RoadOvergrowthDecorator.decorate(level, edge, graph);  // all tiers
 
         // Shelter planning — only for long GREAT_ROAD and TRUNK edges, only on first realization
-        placeSheltersIfAbsent(level, edge, roadData, culture);
+        placeSheltersIfAbsent(level, edge, graph, roadData, culture);
     }
 
     // =========================================================================
@@ -149,6 +157,7 @@ public final class EdgeRealizer {
 
     private static void placeSheltersIfAbsent(ServerLevel level,
                                                RoadEdge edge,
+                                               WorldRoadGraph graph,
                                                WorldRoadSavedData roadData,
                                                String culture) {
         if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD
@@ -162,7 +171,7 @@ public final class EdgeRealizer {
 
         List<ShelterInstance> instances = new ArrayList<>();
         for (ShelterPlanner.ShelterPlan plan : plans) {
-            ShelterInstance inst = ShelterBuilder.place(level, plan, culture, level.getGameTime());
+            ShelterInstance inst = ShelterBuilder.place(level, plan, culture, graph, level.getGameTime());
             if (inst != null) instances.add(inst);
         }
 

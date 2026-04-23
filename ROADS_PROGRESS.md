@@ -1316,3 +1316,68 @@ Used the anchor-zone approach. The full `VillageCellDensity` implementation with
 - None.
 
 **Next:** Session B3 — tree and feature clearing improvements.
+
+---
+
+## Session B3 — 2026-04-23
+
+**Goal:** Three targeted bug fixes: re-realization feedback loop, shelter over-density, shelters placed on road surface.
+
+### Defect 1 — Re-realization feedback loop (RoadTerrainChangeListener self-triggering)
+
+**Root cause:** `RoadTerrainChangeListener.onBlockPlace(BlockEvent.EntityPlaceEvent)` called `markCellStale` for every block placed on the server level, including blocks placed by road realization itself. This caused: road realization → `EntityPlaceEvent` fires → cells marked stale → re-realization triggered → more blocks placed → infinite loop.
+
+**Fix:**
+
+`Village/Roads/Realization/RoadPlacementContext.java` (new file):
+- `ThreadLocal<Boolean> SUPPRESS` initialized to `false`.
+- `withSuppression(Runnable r)`: sets flag to `true`, runs `r`, restores previous value in `finally` block. Nested calls are safe (inner inherits outer flag, restored properly).
+- `isSuppressed()`: returns current flag value.
+
+`Events/RoadTerrainChangeListener.java`:
+- Added `import RoadPlacementContext`.
+- Added `if (RoadPlacementContext.isSuppressed()) return;` as the first line of `onBlockPlace`. Does NOT affect `onBlockBreak` or `onExplosion` — those are player-triggered and must still mark cells stale.
+
+`Village/Roads/Realization/EdgeRealizer.java`:
+- The 5-arg `realizeEdge(...)` public method now delegates entirely to new private `realizeEdgeImpl(...)`.
+- `realizeEdge(...)` wraps the call with `RoadPlacementContext.withSuppression(() -> realizeEdgeImpl(...))`.
+- All block placements (road surface, decorators, shelter builder) now execute under suppression.
+
+### Defect 2 — Shelter over-density (~1 shelter per 30 blocks instead of ~1 per 500–1500)
+
+**Root cause:** `ShelterPlanner` used `MIN_SPACING = 400`, `MAX_SPACING = 600` accumulated block-path distance. For block-dense paths (1 block per entry), this gave a shelter every 400–600 blocks — which is already fine at face value, but did not account for long great-road edges needing much sparser coverage to feel like rare waypoints rather than a continuous settlement.
+
+**Fix (`Village/Roads/Decoration/ShelterPlanner.java`):**
+- Removed `MIN_SPACING = 400`, `MAX_SPACING = 600`. Replaced with tier-specific constants:
+  - `GR_MIN_SPACING = 1500`, `GR_MAX_SPACING = 2500` (GREAT_ROAD)
+  - `TR_MIN_SPACING = 1200`, `TR_MAX_SPACING = 1800` (TRUNK)
+- `plan()` pre-computes a `prefix[]` cumulative-distance array over the block path. Each iteration checks `prefix[i]` (from-start) and `totalDist - prefix[i]` (from-end) against `ENDPOINT_BUFFER = 200` in O(1) — no nested loops.
+- `accLen` accumulates block distance from the previous shelter (or start of active zone). Shelter fires when `accLen >= nextTarget`, then `accLen = 0`, `nextTarget = minSpacing + rng.nextInt(maxSpacing - minSpacing)`.
+- Guard: `if (totalDist - 2 * ENDPOINT_BUFFER < minSpacing) return List.of()` — short edges get no shelters without wasted iteration.
+
+### Defect 3 — Shelters placed on road surface despite B2 clearance fix
+
+**Root cause:** `ShelterPlanner.PERP_OFFSET = 5` places the shelter's *origin* 5 blocks from the road centerline, which clears the road body for most tiers. However, shelter footprints are up to 9 blocks deep (CARAVANSERAI 9×11), so the far end of the footprint could still overlap the road if the road happens to curve back toward the shelter site. No bounding-box check existed at placement time.
+
+**Fix (`Village/Roads/Decoration/ShelterBuilder.java`):**
+- Added `import WorldRoadGraph`.
+- Added `graph` parameter to `place(...)` (signature: `ServerLevel, ShelterPlan, String, WorldRoadGraph, long`).
+- After `isSuitable()` check and before any block placement: `if (!RoadClearanceValidator.isClearOfRoads(origin, graph, 2)) { log + return null; }`.
+- The clearance check uses radius 2 (rejects sites within 2 blocks of any realized road block). This is a point-check at the shelter origin; combined with `PERP_OFFSET = 5` it effectively guards the near face of the shelter.
+
+`Village/Roads/Realization/EdgeRealizer.java`:
+- `placeSheltersIfAbsent` signature updated to accept `WorldRoadGraph graph`.
+- Call site updated: `ShelterBuilder.place(level, plan, culture, graph, level.getGameTime())`.
+- `placeSheltersIfAbsent` call in `realizeEdgeImpl` updated to pass `graph`.
+
+**Files modified:**
+- `Village/Roads/Realization/RoadPlacementContext.java` — new file
+- `Events/RoadTerrainChangeListener.java` — suppression guard in `onBlockPlace`
+- `Village/Roads/Realization/EdgeRealizer.java` — suppression wrapper, graph threading
+- `Village/Roads/Decoration/ShelterPlanner.java` — tier-specific spacing, prefix-sum endpoint check
+- `Village/Roads/Decoration/ShelterBuilder.java` — `graph` param, road-clearance pre-check
+
+**Deviations from spec:**
+- None.
+
+**Next:** Session B4 or as directed.

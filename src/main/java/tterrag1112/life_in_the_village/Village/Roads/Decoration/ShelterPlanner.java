@@ -18,9 +18,10 @@ import java.util.Random;
  *   <li>The edge's block path must be at least 800 blocks long.</li>
  *   <li>The first 200 and last 200 blocks of path are excluded (endpoint buffer —
  *       avoids placing shelters inside village docking zones).</li>
- *   <li>Spacing between successive shelters is 400–600 blocks, seeded from the
- *       edge's meander seed so re-planning always produces the same layout.</li>
- *   <li>Each shelter is placed 4 blocks perpendicular to the road (alternating sides)
+ *   <li>Spacing between successive shelters is 1500–2500 blocks (GREAT_ROAD) or
+ *       1200–1800 blocks (TRUNK), seeded from the edge's meander seed so
+ *       re-planning always produces the same layout.</li>
+ *   <li>Each shelter is placed 5 blocks perpendicular to the road (alternating sides)
  *       so it sits beside the road surface, not on it.</li>
  * </ul>
  *
@@ -36,10 +37,14 @@ public final class ShelterPlanner {
     public static final int MIN_PATH_LENGTH = 800;
     /** Blocks from each endpoint excluded from shelter placement. */
     public static final int ENDPOINT_BUFFER = 200;
-    /** Minimum spacing between two successive shelters. */
-    public static final int MIN_SPACING = 400;
-    /** Maximum spacing between two successive shelters. */
-    public static final int MAX_SPACING = 600;
+    /** Minimum accumulated block-distance between shelters on GREAT_ROAD edges. */
+    public static final int GR_MIN_SPACING = 1500;
+    /** Maximum accumulated block-distance between shelters on GREAT_ROAD edges. */
+    public static final int GR_MAX_SPACING = 2500;
+    /** Minimum accumulated block-distance between shelters on TRUNK edges. */
+    public static final int TR_MIN_SPACING = 1200;
+    /** Maximum accumulated block-distance between shelters on TRUNK edges. */
+    public static final int TR_MAX_SPACING = 1800;
     /** Perpendicular offset from road centerline (blocks). Must exceed CAPITAL_ROAD half-width (4). */
     private static final int PERP_OFFSET = 5;
 
@@ -101,21 +106,37 @@ public final class ShelterPlanner {
         List<BlockPos> path = edge.getBlockPath();
         if (path.size() < MIN_PATH_LENGTH) return List.of();
 
+        boolean isGreatRoad = edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD;
+        int minSpacing = isGreatRoad ? GR_MIN_SPACING : TR_MIN_SPACING;
+        int maxSpacing = isGreatRoad ? GR_MAX_SPACING : TR_MAX_SPACING;
+
+        // Pre-compute prefix distances so we can check both endpoint buffers in O(1).
+        int[] prefix = new int[path.size()];
+        for (int i = 1; i < path.size(); i++) {
+            prefix[i] = prefix[i - 1] + blockDist(path.get(i - 1), path.get(i));
+        }
+        int totalDist = prefix[path.size() - 1];
+        if (totalDist - 2 * ENDPOINT_BUFFER < minSpacing) return List.of();
+
         Random rng = new Random(edge.getMeanderProfile().seed() ^ 0xCAFEF00DL);
         List<ShelterPlan> plans = new ArrayList<>();
 
-        int accLen     = 0;
-        int nextTarget = ENDPOINT_BUFFER + MIN_SPACING + rng.nextInt(MAX_SPACING - MIN_SPACING);
-        int sideSign   = 1; // alternates ±1 for perpendicular offset
+        int accLen   = 0;
+        int nextTarget = minSpacing + rng.nextInt(maxSpacing - minSpacing);
+        int sideSign = 1;
 
-        for (int i = 1; i < path.size() - ENDPOINT_BUFFER; i++) {
-            if (i < ENDPOINT_BUFFER) continue;
+        for (int i = 1; i < path.size(); i++) {
+            int fromStart = prefix[i];
+            int fromEnd   = totalDist - prefix[i];
+
+            if (fromStart < ENDPOINT_BUFFER) continue;
+            if (fromEnd   < ENDPOINT_BUFFER) continue;
+
+            accLen += blockDist(path.get(i - 1), path.get(i));
+            if (accLen < nextTarget) continue;
 
             BlockPos a = path.get(i - 1);
             BlockPos b = path.get(i);
-            accLen += blockDist(a, b);
-
-            if (accLen < nextTarget) continue;
 
             // Road direction at this point
             int rdx = b.getX() - a.getX();
@@ -136,7 +157,7 @@ public final class ShelterPlanner {
 
             sideSign   = -sideSign;
             accLen     = 0;
-            nextTarget = MIN_SPACING + rng.nextInt(MAX_SPACING - MIN_SPACING);
+            nextTarget = minSpacing + rng.nextInt(maxSpacing - minSpacing);
         }
 
         return plans;

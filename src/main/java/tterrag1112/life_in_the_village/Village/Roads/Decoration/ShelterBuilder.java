@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,13 +57,15 @@ public final class ShelterBuilder {
      * @param level     server level for block placement
      * @param plan      planned position + type from {@link ShelterPlanner}
      * @param culture   village culture hint ("imperial", "nordic", "highland", or null)
+     * @param graph     road graph used to verify the site does not overlap any road surface
      * @param tick      current game tick (stored in the returned instance)
      * @return a {@link ShelterInstance} if placement succeeded, or {@code null} if
-     *         the site was rejected (terrain too uneven or chunk unloaded)
+     *         the site was rejected (terrain too uneven, road overlap, or chunk unloaded)
      */
     public static ShelterInstance place(ServerLevel level,
                                         ShelterPlanner.ShelterPlan plan,
                                         String culture,
+                                        WorldRoadGraph graph,
                                         long tick) {
         BlockPos origin = plan.position();
 
@@ -76,6 +79,13 @@ public final class ShelterBuilder {
 
         // Terrain suitability check
         if (!isSuitable(level, origin)) return null;
+
+        // Road-clearance check: reject any site whose footprint overlaps a realized road
+        if (!RoadClearanceValidator.isClearOfRoads(origin, graph, 2)) {
+            System.out.println("[ShelterBuilder] Skipping " + plan.type()
+                    + " at " + origin.toShortString() + ": overlaps road surface");
+            return null;
+        }
 
         List<BlockPos> placed = new ArrayList<>();
         Random rng = new Random(origin.asLong() ^ 0xABCD1234L);
