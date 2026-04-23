@@ -883,3 +883,41 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 **Phase 7 complete.** Phases 7a + 7b + 7c all done. The Old Realm road system is fully built.
 
 **Next: Phase 8a — travel incentives. The player-facing gameplay phase begins.**
+
+---
+
+### 2026-04-23 — Phase 8a implemented: travel incentives
+
+**Phase:** 8a — Player movement-speed bonus on maintained roads
+
+**Files created:**
+- `Village/Roads/Travel/RoadUnderfootDetector.java` — Detects whether a `ServerPlayer` is standing on a realized road edge. Foot block = `player.blockPosition().below()`. Uses `WorldRoadGraph.edgesNear(x, z, 128)` as spatial pre-filter, then iterates each candidate edge's `getBlockPath()` for exact XZ match with Y tolerance ±1. Returns the edge or `null`. The ±1 Y tolerance handles slab-height roads and slight surface variation.
+- `Village/Roads/Travel/RoadSpeedModifier.java` — Pure function: `speedBonus(EdgeTier, maintenance)` → double. Speed bonus table (ADD_MULTIPLIED_BASE semantics — 0.30 means 30% faster):
+  - GREAT_ROAD: maint ≥ 80 → +0.30, maint 40–79 → linear from +0.20→+0.30, maint 20–39 → linear from 0→+0.20, maint < 20 → 0.0
+  - TRUNK: ≥ 80 → +0.20, 40–79 → linear, 20–39 → linear, < 20 → 0.0
+  - CONNECTOR: ≥ 80 → +0.15, 40–79 → linear, 20–39 → linear, < 20 → 0.0
+  - LOCAL: ≥ 80 → +0.08, 40–79 → linear, 20–39 → linear, < 20 → 0.0
+  - `speedMultiplier(EdgeTier, maintenance)` convenience wrapper: returns `1.0 + speedBonus(...)`.
+- `Events/PlayerRoadSpeedSystem.java` — `TickSubsystem` (interval=10, priority=120). Each tick: iterates online players, calls `RoadUnderfootDetector.detectEdge`, calls `RoadSpeedModifier.speedBonus`. If bonus > 0 → `attr.addOrUpdateTransientModifier(new AttributeModifier(MODIFIER_ID, bonus, ADD_MULTIPLIED_BASE))`. If bonus == 0 → `attr.removeModifier(MODIFIER_ID)`. Modifier ID: `life_in_the_village:road_speed_bonus` (stable ResourceLocation). NeoForge 1.21 API: `ResourceLocation.fromNamespaceAndPath`, `addOrUpdateTransientModifier`, `removeModifier(ResourceLocation)`.
+
+**Files modified:**
+- `Events/TickSubsystemRegistry.java` — Added `register(new PlayerRoadSpeedSystem())` after `NpcMemoryDecayTickSystem` in `registerDefaults()`.
+- `Commands/RoadGraphDebugCommand.java` — Added 3 Phase 8a debug commands under `/liv road debug`:
+  - `underfoot` — Reports edge underfoot (id, tier, maintenance) and computed speed bonus. Returns 0 if not on road.
+  - `simulate_walk <edgeId>` — Reports speed bonus/multiplier at 7 maintenance checkpoints (100, 80, 60, 40, 20, 10, 0) for the given edge's tier. Useful for verifying the bonus table without a live road.
+  - `speed_report` — Reports player name, edge underfoot (or "none"), computed bonus, attribute base value, and current effective value (includes all modifiers).
+
+**Test world observations:** Manual static review only — no live test world run in this session.
+- `RoadUnderfootDetector`: exact XZ match is correct since `blockPath` contains all surface blocks including road width from `UnifiedRoadPlacer`. Y tolerance ±1 handles surface variation.
+- `RoadSpeedModifier` edge cases verified mentally: maintenance=0 → 0.0, maintenance=40 → midBonus exactly, maintenance=80 → highBonus exactly, maintenance=60 → linear midpoint.
+- `PlayerRoadSpeedSystem`: `addOrUpdateTransientModifier` is idempotent — repeated calls with same ID replace the previous modifier. No orphan modifier risk.
+
+**Deviations from spec:**
+- Linear interpolation within maintenance bands (20–40 and 40–80) rather than flat values. This gives smoother player experience with no hard steps. The flat values from the spec (e.g. GREAT_ROAD 40–79 → +0.20) become the band floor/ceiling of the interpolation.
+
+**Carryovers:**
+- Performance concern noted: `RoadUnderfootDetector` linearly scans full `blockPath` for long edges (great roads). For Phase 8a this is acceptable (interval=10, few nearby edges). Phase 8b could add a per-edge `HashSet<Long>` of packed positions for O(1) lookup.
+- History event for kingdom-near-road not in-game yet (console log only).
+- All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
+
+**Phase 8a complete.**

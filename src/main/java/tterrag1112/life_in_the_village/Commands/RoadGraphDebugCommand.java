@@ -40,6 +40,8 @@ import tterrag1112.life_in_the_village.Events.GreatRoadGenerationQueue;
 import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter.CharacterTag;
+import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadSpeedModifier;
+import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadUnderfootDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder.AnchorCandidate;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.NamedRoadSelector;
@@ -210,6 +212,14 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("highlight_character")
                                         .then(Commands.argument("tag", StringArgumentType.word())
                                                 .executes(RoadGraphDebugCommand::highlightCharacter)))
+                                // ── Phase 8a: travel incentives ───────────────────────────
+                                .then(Commands.literal("underfoot")
+                                        .executes(RoadGraphDebugCommand::underfoot))
+                                .then(Commands.literal("simulate_walk")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::simulateWalk)))
+                                .then(Commands.literal("speed_report")
+                                        .executes(RoadGraphDebugCommand::speedReport))
                         )
                 )
         );
@@ -2447,5 +2457,115 @@ public class RoadGraphDebugCommand {
             case UPLAND_PASS       -> ParticleTypes.FLAME;
             default                -> ParticleTypes.SMOKE;
         };
+    }
+
+    // =========================================================================
+    // underfoot  (Phase 8a)
+    // =========================================================================
+
+    private static int underfoot(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        RoadEdge edge = RoadUnderfootDetector.detectEdge(player, graph);
+        if (edge == null) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[underfoot] Not on any road."), false);
+            return 0;
+        }
+
+        double bonus = RoadSpeedModifier.speedBonus(edge.getTier(), edge.getMaintenance());
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        String msg = "[underfoot] On edge " + shortId
+                + " tier=" + edge.getTier()
+                + " maint=" + edge.getMaintenance()
+                + " → speed bonus +" + String.format("%.2f", bonus)
+                + " (" + String.format("%.0f", bonus * 100) + "%)";
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // simulate_walk  (Phase 8a)
+    // =========================================================================
+
+    private static int simulateWalk(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel  level  = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        String input = StringArgumentType.getString(ctx, "edgeId").toLowerCase(java.util.Locale.ROOT);
+        List<RoadEdge> matches = new ArrayList<>();
+        for (RoadEdge e : graph.allEdges()) {
+            if (e.getEdgeId().toString().startsWith(input)) matches.add(e);
+        }
+
+        if (matches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[simulate_walk] No edge matches prefix '" + input + "'."));
+            return 0;
+        }
+        if (matches.size() > 1) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[simulate_walk] Ambiguous edge prefix — " + matches.size() + " matches."));
+            return 0;
+        }
+
+        RoadEdge edge = matches.get(0);
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+
+        StringBuilder sb = new StringBuilder("[simulate_walk] Edge ").append(shortId)
+                .append(" tier=").append(edge.getTier()).append('\n');
+        int[] checkpoints = {100, 80, 60, 40, 20, 10, 0};
+        for (int maint : checkpoints) {
+            double bonus = RoadSpeedModifier.speedBonus(edge.getTier(), maint);
+            double mult  = RoadSpeedModifier.speedMultiplier(edge.getTier(), maint);
+            sb.append("  maint=").append(String.format("%3d", maint))
+              .append(" → +").append(String.format("%.2f", bonus))
+              .append(" (").append(String.format("%.2f", mult)).append("x)\n");
+        }
+        String msg = sb.toString().stripTrailing();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // speed_report  (Phase 8a)
+    // =========================================================================
+
+    private static int speedReport(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        RoadEdge edge  = RoadUnderfootDetector.detectEdge(player, graph);
+        double bonus   = edge != null
+                ? RoadSpeedModifier.speedBonus(edge.getTier(), edge.getMaintenance())
+                : 0.0;
+
+        var attr = player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MOVEMENT_SPEED);
+        double base  = attr != null ? attr.getBaseValue()  : 0.0;
+        double final_ = attr != null ? attr.getValue()      : 0.0;
+
+        StringBuilder sb = new StringBuilder("[speed_report] ")
+                .append(player.getName().getString()).append('\n')
+                .append("  road: ");
+        if (edge != null) {
+            sb.append("on ").append(edge.getTier())
+              .append(" (maint=").append(edge.getMaintenance()).append(')');
+        } else {
+            sb.append("none");
+        }
+        sb.append('\n')
+          .append("  road speed bonus: +").append(String.format("%.3f", bonus))
+          .append(" (").append(String.format("%.0f", bonus * 100)).append("%)\n")
+          .append("  attribute base=").append(String.format("%.4f", base))
+          .append("  effective=").append(String.format("%.4f", final_));
+
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
     }
 }

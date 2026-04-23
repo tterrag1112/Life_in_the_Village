@@ -108,6 +108,9 @@ public final class TickSubsystemRegistry {
         register(new TierReconciliationTickSystem());
         register(new NpcMemoryDecayTickSystem());
 
+        // ── Travel incentives ─────────────────────────────────────────────────
+        register(new PlayerRoadSpeedSystem());
+
         // ── Debug visualization (every-tick, low priority) ────────────────────
         register(RoadDebugVisualizer.INSTANCE);
 
