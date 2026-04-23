@@ -127,10 +127,10 @@ public final class MilestoneDecorator {
         // Pillar: chiseled_stone_bricks
         BlockPos pillar = base.above();
         set(level, pillar, Blocks.CHISELED_STONE_BRICKS.defaultBlockState(), placed);
-        // Cap: stone_brick_slab (top half)
+        // Cap: stone_brick_slab (bottom half, resting on pillar)
         set(level, pillar.above(),
                 Blocks.STONE_BRICK_SLAB.defaultBlockState()
-                        .setValue(BlockStateProperties.SLAB_TYPE, SlabType.TOP),
+                        .setValue(BlockStateProperties.SLAB_TYPE, SlabType.BOTTOM),
                 placed);
         // Optional mossy_cobblestone_wall beside it (20% chance, east side)
         if (rng.nextFloat() < 0.20f) {

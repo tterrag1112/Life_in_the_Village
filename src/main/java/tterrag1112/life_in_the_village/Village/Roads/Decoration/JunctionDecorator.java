@@ -423,7 +423,7 @@ public final class JunctionDecorator {
 
             // Standing sign on top
             BlockPos signPos = signBase.above();
-            int rotation = directionToRotation(dx, dz);
+            int rotation = (directionToRotation(dx, dz) + 8) % 16;
             set(level, signPos,
                     signBlock.defaultBlockState()
                             .setValue(BlockStateProperties.ROTATION_16, rotation),

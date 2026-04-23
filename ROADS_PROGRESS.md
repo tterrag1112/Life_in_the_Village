@@ -1216,3 +1216,39 @@ Target: 5–15 minutes. Falls within target range. Reduction via cell-overlap ac
 - If total worldgen is still over 15 minutes, the next optimization is Path A (reducing `AtlasSampler.sampleCell()` cost itself).
 
 **Carryovers:** Same as Phase 7d.
+
+
+---
+
+### Session B1 — Road placement bugfix pass (2026-04-23)
+
+**Phase:** Bugfix (post-Phase 7d) — no new features
+
+**Three visible defects fixed:**
+
+**Defect 1 — Diagonal road gaps** (`OrganicRoadPlacer.java`)
+- Root cause: `computePerpendicular()` alternated between `{0,1}` and `{1,0}` on odd/even index for diagonal headings. Each cross-section sweep covered only one cardinal axis, leaving checkerboard-pattern gaps between consecutive diagonal steps.
+- Fix: Added `isDiagonalAt(centerline, index)` private helper (detects when both dx and dz are non-zero for the local heading). In `place()`, for diagonal points `perps` is set to both cardinal-axis perpendiculars `{perp, {perp[1], perp[0]}}`, so both are stamped. Non-diagonal points unchanged (single perpendicular, no stamp cost).
+
+**Defect 2 — Double road blocks at junctions** (`WorldRoadGraph.java`)
+- Root cause: `splitEdgeAtCell` built `blockB` with `subList(splitBlockIdx, ...)`, including the junction block in both halfA and halfB. Same bug in `insertTollGateNode`.
+- Fix: Changed both to `subList(Math.min(splitBlockIdx + 1, bp.size()), ...)`. The junction block now belongs exclusively to halfA; halfB starts at the next block. `Math.min` guard prevents an empty-list edge case when the junction is the last block.
+
+**Defect 3a — Signposts facing wrong direction** (`JunctionDecorator.java`)
+- Root cause: `directionToRotation(dx, dz)` computes the heading from post toward destination — sign faces toward destination, not toward approaching traveler.
+- Fix: `rotation = (directionToRotation(dx, dz) + 8) % 16` — 180° flip, sign now faces approaching travelers.
+
+**Defect 3b — Milestone slab floating** (`MilestoneDecorator.java`)
+- Root cause: `placeIntact` used `SlabType.TOP`, which places the slab in the upper half of the block space (visually floating above the pillar).
+- Fix: Changed to `SlabType.BOTTOM` — slab rests on top of the chiseled stone brick pillar.
+
+**Files modified:**
+- `Village/Decoration/Roads/OrganicRoadPlacer.java` — added `isDiagonalAt` helper; modified `place()` to stamp both perps for diagonal points
+- `Village/Roads/Graph/WorldRoadGraph.java` — fixed off-by-one in `splitEdgeAtCell` and `insertTollGateNode` block path split
+- `Village/Roads/Decoration/JunctionDecorator.java` — flipped sign rotation 180°
+- `Village/Roads/Decoration/MilestoneDecorator.java` — changed milestone cap from `SlabType.TOP` to `SlabType.BOTTOM`
+
+**Deviations from spec:**
+- None.
+
+**Next:** Session B2 — router/connector/decoration corrections.

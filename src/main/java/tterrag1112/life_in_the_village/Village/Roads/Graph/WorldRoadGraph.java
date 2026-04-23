@@ -246,7 +246,7 @@ public class WorldRoadGraph {
                 if (d < bestDist) { bestDist = d; splitBlockIdx = i; }
             }
             blockA = new ArrayList<>(bp.subList(0, splitBlockIdx + 1));
-            blockB = new ArrayList<>(bp.subList(splitBlockIdx, bp.size()));
+            blockB = new ArrayList<>(bp.subList(Math.min(splitBlockIdx + 1, bp.size()), bp.size()));
         }
 
         // Distribute stale cells to the half that covers them
@@ -319,7 +319,7 @@ public class WorldRoadGraph {
                 if (d < bestDist) { bestDist = d; splitBlockIdx = i; }
             }
             blockA = new ArrayList<>(bp.subList(0, splitBlockIdx + 1));
-            blockB = new ArrayList<>(bp.subList(splitBlockIdx, bp.size()));
+            blockB = new ArrayList<>(bp.subList(Math.min(splitBlockIdx + 1, bp.size()), bp.size()));
         }
 
         Set<Long> halfASet = new HashSet<>(halfPathA);

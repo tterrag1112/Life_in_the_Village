@@ -92,13 +92,18 @@ public class OrganicRoadPlacer {
         for (int i = 0; i < centerline.size(); i++) {
             BlockPos center = centerline.get(i);
 
-            // Determine perpendicular direction from road heading
+            // Determine perpendicular direction from road heading.
+            // For diagonal headings, stamp BOTH cardinal-axis perpendiculars to fill
+            // the corner gaps that arise between consecutive diagonal steps.
             int[] perp = computePerpendicular(centerline, i);
+            boolean diagonal = isDiagonalAt(centerline, i);
+            int[][] perps = diagonal ? new int[][]{perp, {perp[1], perp[0]}} : new int[][]{perp};
 
-            // Place blocks across the road width
+            // Place blocks across the road width (one sweep per perpendicular)
+            for (int[] p : perps) {
             for (int d = -halfWidth; d <= halfWidth; d++) {
-                int wx = center.getX() + perp[0] * d;
-                int wz = center.getZ() + perp[1] * d;
+                int wx = center.getX() + p[0] * d;
+                int wz = center.getZ() + p[1] * d;
 
                 // Skip if inside a building
                 if (footprint != null && footprint.isBuildingAt(wx, wz)) {
@@ -149,6 +154,7 @@ public class OrganicRoadPlacer {
 
                 placed.add(new BlockPos(wx, surfY, wz));
             }
+            } // end perps loop
         }
 
         return new PlacementResult(placed, centerline, skipped);
@@ -243,6 +249,19 @@ public class OrganicRoadPlacer {
         }
 
         return new int[]{-headZ, headX};
+    }
+
+    // =========================================================================
+    // Diagonal detection
+    // =========================================================================
+
+    /** Returns true when the local road heading at {@code index} is diagonal (both X and Z non-zero). */
+    private static boolean isDiagonalAt(List<BlockPos> centerline, int index) {
+        BlockPos prev = index > 0 ? centerline.get(index - 1) : centerline.get(index);
+        BlockPos next = index < centerline.size() - 1 ? centerline.get(index + 1) : centerline.get(index);
+        int dx = Integer.signum(next.getX() - prev.getX());
+        int dz = Integer.signum(next.getZ() - prev.getZ());
+        return dx != 0 && dz != 0;
     }
 
     // =========================================================================
