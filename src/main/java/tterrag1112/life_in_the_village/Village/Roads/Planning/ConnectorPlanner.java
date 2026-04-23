@@ -7,6 +7,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
@@ -207,6 +208,10 @@ public final class ConnectorPlanner {
         // ── Step 3: Route each top candidate ─────────────────────────────────
         WorldAtlas atlas = WorldAtlas.get(level);
 
+        // Compute anchor-zone penalty cells for all other villages (3×3 cells around each anchor).
+        // Connector routing should avoid routing THROUGH unrelated villages.
+        Map<Long, Float> interVillagePenalties = buildInterVillagePenalties(data, village);
+
         record RouteCandidate(Candidate candidate, VillageDockingPoint dock, List<Long> cellPath) {}
         List<RouteCandidate> routed = new ArrayList<>();
 
@@ -225,9 +230,15 @@ public final class ConnectorPlanner {
             AtlasRouteRouter.CellCostModifier costModifier =
                     AtlasRouteRouter.modifierForCulture(village.getVillageType());
 
+            // Merge corridor discounts with inter-village penalties.
+            // putIfAbsent: existing-road corridor discounts take priority; penalties apply
+            // only to non-road cells in other villages' anchor zones.
+            Map<Long, Float> mergedDiscounts = new HashMap<>(attractors.discounts());
+            interVillagePenalties.forEach(mergedDiscounts::putIfAbsent);
+
             List<Long> cellPath = AtlasRouteRouter.findRoute(
                     atlas, dockingAnchor, c.targetPos,
-                    attractors.cellKeys(), attractors.discounts(), costModifier);
+                    attractors.cellKeys(), mergedDiscounts, costModifier);
 
             if (!cellPath.isEmpty()) {
                 routed.add(new RouteCandidate(c, dock, cellPath));
@@ -430,6 +441,29 @@ public final class ConnectorPlanner {
         int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
                 raw.getX(), raw.getZ());
         return new BlockPos(raw.getX(), y, raw.getZ());
+    }
+
+    /**
+     * Builds a map of cell-key → cost multiplier (3.0) for the 3×3 anchor-zone cells
+     * of every village other than {@code excludeVillage}. Applied during routing so
+     * connectors avoid passing through other villages' building zones.
+     */
+    private static Map<Long, Float> buildInterVillagePenalties(VillageSavedData data,
+                                                                Village excludeVillage) {
+        Map<Long, Float> penalties = new HashMap<>();
+        for (Village v : data.getAllVillages()) {
+            if (v.getId().equals(excludeVillage.getId())) continue;
+            BlockPos anchor = v.getAnchorPos();
+            if (anchor == null) continue;
+            int cx = WorldAtlas.blockToCell(anchor.getX());
+            int cz = WorldAtlas.blockToCell(anchor.getZ());
+            for (int ddx = -1; ddx <= 1; ddx++) {
+                for (int ddz = -1; ddz <= 1; ddz++) {
+                    penalties.put(AtlasCell.packKey(cx + ddx, cz + ddz), 3.0f);
+                }
+            }
+        }
+        return penalties;
     }
 
     private static String buildSummary(

@@ -1252,3 +1252,67 @@ Target: 5–15 minutes. Falls within target range. Reduction via cell-overlap ac
 - None.
 
 **Next:** Session B2 — router/connector/decoration corrections.
+
+---
+
+### Session B2 — Router and decoration obstacle-respect fixes (2026-04-23)
+
+**Phase:** Bugfix (post-Session B1) — no new features
+
+**Defect 1 — Rivers not treated as serious obstacles** (`AtlasRouteRouter.java`)
+- Root cause: `cellCost()` and `greatRoadCellCost()` had a complex conditional (`FLAG_HAS_RIVER && !isRiverAdj()`) that only made river cells impassable when they were isolated (no adjacent river cells). Multi-cell wide rivers had both flags set and were treated like ordinary cells with just the `COST_RIVER_ADJ` additive (+1.3). Result: roads crossed rivers freely at any point.
+- Fix: Added `COST_RIVER_CROSSING = 50.0f` and `GR_COST_RIVER_CROSSING = 80.0f`. Any cell with `FLAG_HAS_RIVER` now returns the crossing cost — not impassable, but A* will strongly prefer paths that cross at the narrowest point and avoid crossing entirely when a reasonable detour exists. River-adjacent cells (banks) keep the modest additive cost (1.3 / 0.9) since riverbanks are good terrain.
+- Comment updated on `GR_COST_RIVER_ADJ` to reflect that great roads no longer eagerly cross rivers (bridges are rare, not landmarks).
+
+**Defect 2 — Connector routing through other villages** (`ConnectorPlanner.java`)
+- Approach chosen: simpler anchor-zone approach (spec explicitly offered this as acceptable)
+- Added `buildInterVillagePenalties(data, excludeVillage)` helper that computes the 3×3 cell grid around each other village's anchor position and assigns a 3.0× cost multiplier.
+- The penalty map is merged with corridor attractor discounts using `putIfAbsent`: if a cell is already a corridor attractor (existing road → discount < 1.0f), the road discount wins, so the connector still uses existing roads even if they pass near another village. Non-road cells in other villages' anchor zones get the 3.0× penalty.
+- Imported `AtlasCell` into `ConnectorPlanner`.
+
+**Defect 3 — Decorations placed on road surface** (multiple files)
+
+New file `RoadClearanceValidator.java`:
+- `minimumDecorationOffset(EdgeTier)`: returns GREAT_ROAD=5, TRUNK=4, CONNECTOR=3, LOCAL=3
+- `isClearOfRoads(BlockPos, WorldRoadGraph, int)`: checks all nearby realized edges' blockPaths for XZ overlap within the specified radius (XZ-only comparison to handle terrain height variation)
+
+`MilestoneDecorator.java`:
+- Replaced hardcoded `PERP_OFFSET = 2` with `RoadClearanceValidator.minimumDecorationOffset(edge.getTier())` (returns 5 for GREAT_ROAD). Previous offset of 2 placed milestones inside the CAPITAL_ROAD body (halfWidth 4).
+- Added `RoadClearanceValidator.isClearOfRoads(base, graph, 2)` pre-placement check alongside the existing `nearExistingDecoration` check.
+
+`JunctionDecorator.java`:
+- Updated `bestCorner()` to accept `WorldRoadGraph graph` parameter.
+- Now scores all 4 diagonal corners, sorts them by angular separation (highest first), then tries each in order. Returns the first corner where `isClearOfRoads(..., 2)` passes.
+- Fallback: if all corners have road overlap (e.g., 4-way junction with narrow offsets), returns the highest-score corner anyway (existing behavior, avoids null placement).
+- Imported `Comparator`.
+
+`RoadOvergrowthDecorator.java`:
+- Added explicit XZ set (`roadXzSet`) built from all `edge.getBlockPath()` entries at the start of `decorate()`.
+- Lateral overgrowth now skips positions whose XZ is in `roadXzSet` before any other check. This prevents SNOW, SAND, and MOSS_BLOCK variants from being placed on top of road surface blocks (the `isPlantable` check already blocked grass/saplings but not solid blocks).
+- Imported `Set`, `HashSet`.
+
+`TollGateBuilder.java`:
+- Guardhouse `sideDir` offset changed from 2 to 5. Previous offset of 2 placed the 3×3 guardhouse footprint (blocks at offsets 1–3) inside the TRUNK road body (halfWidth 3). New offset 5 puts the near wall at offset 4 (1 block outside road edge).
+
+`ShelterPlanner.java`:
+- `PERP_OFFSET` increased from 4 to 5. Previous value placed the shelter's road-facing origin at offset 4, coinciding with CAPITAL_ROAD halfWidth 4 (the road edge). New value gives 1 block clearance.
+
+**Files modified:**
+- `Village/Economy/Trade/AtlasRouteRouter.java` — river crossing costs
+- `Village/Roads/Planning/ConnectorPlanner.java` — inter-village anchor-zone penalty
+- `Village/Roads/Decoration/RoadClearanceValidator.java` — new helper class
+- `Village/Roads/Decoration/MilestoneDecorator.java` — dynamic offset, clearance check
+- `Village/Roads/Decoration/JunctionDecorator.java` — road-clear corner selection
+- `Village/Roads/Decoration/RoadOvergrowthDecorator.java` — explicit road XZ skip
+- `Village/Roads/Decoration/TollGateBuilder.java` — guardhouse offset 2→5
+- `Village/Roads/Decoration/ShelterPlanner.java` — PERP_OFFSET 4→5
+
+**Simpler-vs-full choice for Defect 2:**
+Used the anchor-zone approach. The full `VillageCellDensity` implementation with footprint-level overlap was judged too complex relative to the benefit at cell granularity — the real precision for building-avoidance comes at block-level from Phase 2's arm approach. The anchor-zone approach is sufficient to prevent connectors from routing THROUGH another village's center.
+
+**Historical decorations:** Pre-B2 milestone/junction/overgrowth placements that violated clearance remain in the world. The fixes prevent new defects. A historical cleanup command (`/litv road debug cleanup_historical_decorations`) is NOT added in B2; deferred per spec.
+
+**Deviations from spec:**
+- None.
+
+**Next:** Session B3 — tree and feature clearing improvements.

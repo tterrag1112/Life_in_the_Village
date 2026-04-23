@@ -37,7 +37,6 @@ public final class MilestoneDecorator {
 
     private static final int MIN_SPACING = 500;
     private static final int MAX_SPACING = 1000;
-    private static final int PERP_OFFSET = 2;
 
     private static final int VARIANT_INTACT  = 0;
     private static final int VARIANT_BROKEN  = 1;
@@ -78,15 +77,17 @@ public final class MilestoneDecorator {
             double pdx  = -dz / len;   // perpendicular unit vector
             double pdz  =  dx / len;
             double side = (milestoneIdx % 2 == 0) ? 1.0 : -1.0;
+            int perpOffset = RoadClearanceValidator.minimumDecorationOffset(edge.getTier());
 
-            int mx = b.getX() + (int) Math.round(pdx * PERP_OFFSET * side);
-            int mz = b.getZ() + (int) Math.round(pdz * PERP_OFFSET * side);
+            int mx = b.getX() + (int) Math.round(pdx * perpOffset * side);
+            int mz = b.getZ() + (int) Math.round(pdz * perpOffset * side);
 
             if (level.isLoaded(new BlockPos(mx, 0, mz))) {
                 int my = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, mx, mz);
                 BlockPos base = new BlockPos(mx, my, mz);
 
-                if (!nearExistingDecoration(edge, base, 8)) {
+                if (!nearExistingDecoration(edge, base, 8)
+                        && RoadClearanceValidator.isClearOfRoads(base, graph, 2)) {
                     int variant = pickVariant(base);
                     List<BlockPos> placed = switch (variant) {
                         case VARIANT_INTACT -> placeIntact(level, base, rng);

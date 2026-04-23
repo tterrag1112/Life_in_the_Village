@@ -20,6 +20,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -102,8 +103,8 @@ public final class JunctionDecorator {
         List<RoadEdge> incident = incidentEdges(graph, node.nodeId());
         String culture = resolveCulture(incident, villageData);
 
-        // Choose corner furthest from any incident edge direction
-        BlockPos corner = bestCorner(level, node.position(), incident);
+        // Choose corner furthest from any incident edge direction (clear of road blocks)
+        BlockPos corner = bestCorner(level, node.position(), incident, graph);
         if (corner == null) return;
 
         int variant = (int) ((Math.abs(node.nodeId().getLeastSignificantBits()) % 4));
@@ -586,14 +587,13 @@ public final class JunctionDecorator {
 
     /**
      * Returns the diagonal corner of the node position that is furthest
-     * (largest angular separation) from any incident edge direction. Falls
-     * back to the NE corner if no incident edges exist.
+     * (largest angular separation) from any incident edge direction and is
+     * clear of road blocks. Tries corners in score order; falls back to the
+     * highest-score corner if none is fully clear.
      */
     @Nullable
-    private static BlockPos bestCorner(ServerLevel level, BlockPos nodePos, List<RoadEdge> incident) {
-        // Gather edge directions from this node (using first vs last cell center)
-        // Use worldgraph node positions instead — compute direction to each neighbor
-        // We only have the edge objects; use first/last of blockPath if available
+    private static BlockPos bestCorner(ServerLevel level, BlockPos nodePos,
+                                        List<RoadEdge> incident, WorldRoadGraph graph) {
         double[][] incidentDirs = new double[incident.size()][2];
         for (int i = 0; i < incident.size(); i++) {
             RoadEdge e = incident.get(i);
@@ -601,7 +601,6 @@ public final class JunctionDecorator {
             if (bp.size() >= 2) {
                 BlockPos fa = bp.get(0);
                 BlockPos fb = bp.get(bp.size() - 1);
-                // direction from node toward the road
                 int dx = (fa.distSqr(nodePos) < fb.distSqr(nodePos))
                         ? fb.getX() - fa.getX() : fa.getX() - fb.getX();
                 int dz = (fa.distSqr(nodePos) < fb.distSqr(nodePos))
@@ -612,32 +611,37 @@ public final class JunctionDecorator {
             }
         }
 
-        // 4 diagonal offsets
         int[][] diagonals = {{1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
-        double bestScore = -1;
-        int[] bestDir = diagonals[0];
 
+        // Score each corner by minimum angular separation from incident edges
+        record ScoredDir(int[] dir, double score) {}
+        List<ScoredDir> scored = new ArrayList<>();
         for (int[] d : diagonals) {
-            double cx = d[0], cz = d[1];
-            double len = Math.sqrt(2.0);
-            double ux = cx / len, uz = cz / len;
-            // Minimum dot product to any incident edge direction
+            double ux = d[0] / Math.sqrt(2.0);
+            double uz = d[1] / Math.sqrt(2.0);
             double minDot = 1.0;
             for (double[] dir : incidentDirs) {
                 double dot = ux * dir[0] + uz * dir[1];
                 if (dot < minDot) minDot = dot;
             }
-            if (minDot > bestScore) {
-                bestScore = minDot;
-                bestDir = d;
-            }
+            scored.add(new ScoredDir(d, minDot));
         }
+        scored.sort(Comparator.comparingDouble(ScoredDir::score).reversed());
 
-        int bx = nodePos.getX() + bestDir[0] * 3;
-        int bz = nodePos.getZ() + bestDir[1] * 3;
-        if (!level.isLoaded(new BlockPos(bx, 0, bz))) return null;
-        int by = surfaceY(level, bx, bz);
-        return new BlockPos(bx, by, bz);
+        // Try corners from best to worst; prefer one that is clear of road blocks
+        BlockPos fallback = null;
+        for (ScoredDir sd : scored) {
+            int bx = nodePos.getX() + sd.dir()[0] * 3;
+            int bz = nodePos.getZ() + sd.dir()[1] * 3;
+            if (!level.isLoaded(new BlockPos(bx, 0, bz))) continue;
+            int by = surfaceY(level, bx, bz);
+            BlockPos candidate = new BlockPos(bx, by, bz);
+            if (RoadClearanceValidator.isClearOfRoads(candidate, graph, 2)) {
+                return candidate;
+            }
+            if (fallback == null) fallback = candidate;
+        }
+        return fallback; // all corners blocked — use highest-score one anyway
     }
 
     // =========================================================================

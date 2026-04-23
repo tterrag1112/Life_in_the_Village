@@ -12,7 +12,9 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Places atmospheric overgrowth on and around road edges based on maintenance level.
@@ -67,6 +69,12 @@ public final class RoadOvergrowthDecorator {
 
         VillageBiomeStyle biome = VillageBiomeStyle.detect(level, path.get(path.size() / 2));
 
+        // Build XZ set of all road block positions to prevent overgrowth on road surfaces
+        Set<Long> roadXzSet = new HashSet<>(path.size());
+        for (BlockPos p : path) {
+            roadXzSet.add(xzKey(p.getX(), p.getZ()));
+        }
+
         int accLen     = 0;
         int nextLog    = LOG_SPACING;
 
@@ -90,6 +98,8 @@ public final class RoadOvergrowthDecorator {
                     int oz = perpZ(dx, dz, off * side);
                     int nx = b.getX() + ox;
                     int nz = b.getZ() + oz;
+                    // Skip if this XZ position is part of the road itself
+                    if (roadXzSet.contains(xzKey(nx, nz))) continue;
                     if (!level.isLoaded(new BlockPos(nx, 0, nz))) continue;
                     int ny = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, nx, nz);
                     BlockPos target = new BlockPos(nx, ny, nz);
@@ -247,6 +257,10 @@ public final class RoadOvergrowthDecorator {
 
     private static long posHash(int x, int z) {
         return (long) x * 374761393L ^ (long) z * 668265263L;
+    }
+
+    private static long xzKey(int x, int z) {
+        return ((long) x & 0xFFFFFFFFL) | (((long) z & 0xFFFFFFFFL) << 32);
     }
 
     private static int blockDist(BlockPos a, BlockPos b) {

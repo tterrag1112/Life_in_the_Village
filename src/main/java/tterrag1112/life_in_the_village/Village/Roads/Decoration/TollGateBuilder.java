@@ -155,8 +155,8 @@ public final class TollGateBuilder {
         BlockState lantern = Blocks.LANTERN.defaultBlockState()
                 .setValue(net.minecraft.world.level.block.LanternBlock.HANGING, false);
 
-        // Offset 2 blocks to the side so it doesn't block the arch opening
-        BlockPos ghOrigin = origin.relative(sideDir, 2);
+        // Offset 5 blocks to the side: clears TRUNK road half-width (3) + 1 clearance + 1 guardhouse radius
+        BlockPos ghOrigin = origin.relative(sideDir, 5);
 
         // Floor (3×3)
         for (int dx = -1; dx <= 1; dx++) {

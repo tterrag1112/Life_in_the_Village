@@ -49,7 +49,9 @@ public class AtlasRouteRouter {
     private static final float COST_SWAMP     = 6.0f;
     private static final float COST_FOREST    = 1.5f;
     private static final float COST_BEACH     = 1.2f;
-    private static final float COST_RIVER_ADJ = 1.3f; // crossings cost more
+    private static final float COST_RIVER_ADJ = 1.3f; // land adjacent to river — additive
+    /** Crossing a river cell: expensive but not impassable — A* finds the narrowest crossing. */
+    private static final float COST_RIVER_CROSSING = 50.0f;
     private static final float COST_UNFILLED  = 4.0f; // unknown terrain
 
     /** Multiplier applied to cells that already carry a road. <1 = cheaper. */
@@ -70,8 +72,10 @@ public class AtlasRouteRouter {
     private static final float GR_COST_SWAMP     = 8.0f;
     /** Slightly lower forest cost — great roads through forests look great. */
     private static final float GR_COST_FOREST    = 1.3f;
-    /** Lower river-adjacent additive — crossings are desirable landmarks. */
+    /** River-adjacent additive — riverbanks are fine terrain for great roads. */
     private static final float GR_COST_RIVER_ADJ = 0.9f;
+    /** Crossing a river on a great road: even higher than connector roads — bridges are rare. */
+    private static final float GR_COST_RIVER_CROSSING = 80.0f;
     /** Weak road discount — great roads are trunks, not feeder routes. */
     private static final float GR_ROAD_DISCOUNT  = 0.8f;
     /** Higher node budget — great roads span large distances. */
@@ -310,9 +314,9 @@ public class AtlasRouteRouter {
                 && !cell.isCoast()) {
             return Float.MAX_VALUE;
         }
-        if (cell.has(AtlasCell.FLAG_HAS_RIVER) && !cell.isRiverAdj()) {
-            // A pure river cell with no land neighbours is impassable
-            return Float.MAX_VALUE;
+        // River cells: high cost (not impassable — A* finds narrowest crossing point)
+        if (cell.has(AtlasCell.FLAG_HAS_RIVER)) {
+            return COST_RIVER_CROSSING;
         }
 
         float base;
@@ -470,8 +474,9 @@ public class AtlasRouteRouter {
         if (cell.category() == BiomeCategory.OCEAN && !cell.isCoast()) {
             return Float.MAX_VALUE;
         }
-        if (cell.has(AtlasCell.FLAG_HAS_RIVER) && !cell.isRiverAdj()) {
-            return Float.MAX_VALUE;
+        // River cells: very high cost for great roads — bridges are rare landmarks
+        if (cell.has(AtlasCell.FLAG_HAS_RIVER)) {
+            return GR_COST_RIVER_CROSSING;
         }
 
         float base;

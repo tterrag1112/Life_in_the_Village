@@ -40,8 +40,8 @@ public final class ShelterPlanner {
     public static final int MIN_SPACING = 400;
     /** Maximum spacing between two successive shelters. */
     public static final int MAX_SPACING = 600;
-    /** Perpendicular offset from road centerline (blocks). */
-    private static final int PERP_OFFSET = 4;
+    /** Perpendicular offset from road centerline (blocks). Must exceed CAPITAL_ROAD half-width (4). */
+    private static final int PERP_OFFSET = 5;
 
     // =========================================================================
     // Types
