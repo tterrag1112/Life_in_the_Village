@@ -40,7 +40,8 @@ public class WorldRoadSavedData extends SavedData {
             Codec.STRING.xmap(UUID::fromString, UUID::toString);
 
     private record Snapshot(WorldRoadGraph graph, boolean migrated,
-                             Map<UUID, VillageUpkeepLedger> ledgers) {
+                             Map<UUID, VillageUpkeepLedger> ledgers,
+                             boolean greatRoadGenerationComplete) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
@@ -48,14 +49,17 @@ public class WorldRoadSavedData extends SavedData {
                         .forGetter(Snapshot::migrated),
                 Codec.unboundedMap(UUID_CODEC, VillageUpkeepLedger.CODEC)
                         .optionalFieldOf("upkeepLedgers", new HashMap<>())
-                        .forGetter(Snapshot::ledgers)
+                        .forGetter(Snapshot::ledgers),
+                Codec.BOOL.optionalFieldOf("greatRoadGenerationComplete", false)
+                        .forGetter(Snapshot::greatRoadGenerationComplete)
         ).apply(i, Snapshot::new));
     }
 
     public static final Codec<WorldRoadSavedData> CODEC = Snapshot.CODEC.xmap(
             snap -> {
                 WorldRoadSavedData data = new WorldRoadSavedData(
-                        snap.graph(), snap.migrated(), new HashMap<>(snap.ledgers()));
+                        snap.graph(), snap.migrated(), new HashMap<>(snap.ledgers()),
+                        snap.greatRoadGenerationComplete());
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -67,7 +71,8 @@ public class WorldRoadSavedData extends SavedData {
                 }
                 return data;
             },
-            data -> new Snapshot(data.graph, data.migrated, new HashMap<>(data.ledgers))
+            data -> new Snapshot(data.graph, data.migrated, new HashMap<>(data.ledgers),
+                    data.greatRoadGenerationComplete)
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -82,21 +87,25 @@ public class WorldRoadSavedData extends SavedData {
     private boolean migrated;
     /** Village UUID → upkeep ledger. Populated lazily on first upkeep cycle. */
     private final Map<UUID, VillageUpkeepLedger> ledgers;
+    private boolean greatRoadGenerationComplete;
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
     /** Default constructor — creates an empty graph for a fresh world. */
     public WorldRoadSavedData() {
-        this.graph    = new WorldRoadGraph();
-        this.migrated = false;
-        this.ledgers  = new HashMap<>();
+        this.graph                       = new WorldRoadGraph();
+        this.migrated                    = false;
+        this.ledgers                     = new HashMap<>();
+        this.greatRoadGenerationComplete = false;
     }
 
     private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated,
-                                Map<UUID, VillageUpkeepLedger> ledgers) {
-        this.graph    = graph;
-        this.migrated = migrated;
-        this.ledgers  = ledgers;
+                                Map<UUID, VillageUpkeepLedger> ledgers,
+                                boolean greatRoadGenerationComplete) {
+        this.graph                       = graph;
+        this.migrated                    = migrated;
+        this.ledgers                     = ledgers;
+        this.greatRoadGenerationComplete = greatRoadGenerationComplete;
     }
 
     // ── Accessor ─────────────────────────────────────────────────────────────
@@ -126,6 +135,12 @@ public class WorldRoadSavedData extends SavedData {
     /** Unmodifiable view of all ledgers. */
     public Map<UUID, VillageUpkeepLedger> getLedgers() {
         return java.util.Collections.unmodifiableMap(ledgers);
+    }
+
+    public boolean isGreatRoadGenerationComplete() { return greatRoadGenerationComplete; }
+
+    public void setGreatRoadGenerationComplete(boolean complete) {
+        this.greatRoadGenerationComplete = complete;
     }
 
     /** Exposes {@link SavedData#setDirty()} to external callers. */
