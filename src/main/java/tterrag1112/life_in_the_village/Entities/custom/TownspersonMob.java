@@ -43,6 +43,7 @@ import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -118,6 +119,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final AppearanceComponent appearance = new AppearanceComponent();
     private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
     private final TraitVector traits = new TraitVector();
+    private final NpcMemoryLog memory = new NpcMemoryLog();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -425,6 +427,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      */
     public TraitVector getTraitVector() {
         return traits;
+    }
+
+    /** Situational memory log; see {@code docs/npc_redesign/02-memory-system.md}. */
+    public NpcMemoryLog getMemory() {
+        return memory;
     }
 
     public void clearTraits() {
@@ -1091,6 +1098,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Traits (new 8-axis system; legacy list above is kept readable) ──
         traits.save(output);
+
+        // ── Memory log ───────────────────────────────────────────────────────
+        memory.save(output);
     }
 
     // =========================================================================
@@ -1204,6 +1214,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         if (!traitsLoaded && !appearance.getTraits().isEmpty()) {
             traits.migrateFromLegacy(appearance.getTraits());
         }
+
+        // ── Memory log ───────────────────────────────────────────────────────
+        memory.load(input);
 
         // ── Sync entity data from loaded state ───────────────────────────────
         entityData.set(LIFE_STAGE, getLifeStage().name());

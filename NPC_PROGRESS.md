@@ -33,12 +33,12 @@ save/load. No behavior change yet.
     - [x] Field on `TownspersonMob`, save/load, debug command
     - [x] Migration from legacy `PersonalityTrait` enum
     - [x] `/npc traits <uuid>` prints full vector
-- [ ] **02** Implement `NpcMemoryLog`
-    - [ ] `MemoryEntry`, `MemoryType`, codec
-    - [ ] 32-entry cap, value-weighted decay, pin logic
-    - [ ] Daily tick hook for decay/eviction (no events producing
+- [x] **02** Implement `NpcMemoryLog`
+    - [x] `NpcMemory` record, `MemoryType` enum (with polarity), codec
+    - [x] 32-entry cap, value-weighted decay, pin logic
+    - [x] Daily tick hook for decay/eviction (no events producing
       memories yet — that's Phase 1)
-    - [ ] `/npc memory <uuid>` debug command
+    - [x] `/npc memory <uuid>` debug command (list / add / decay)
 - [ ] **03** Implement `NpcKnowledgeLedger`
     - [ ] `KnowledgeEntry`, 4 categories, fidelity field
     - [ ] Add/upgrade/remove API
@@ -323,11 +323,17 @@ Things that don't fit the phase model and run continuously:
 
 (current blockers and observations tracked here)
 
-**Current status**: Phase 0 task 01 (TraitVector) implemented. The
-`tterrag1112.life_in_the_village.Npc.Traits` package exists; save/load,
-generation, legacy migration, and `/npc traits <uuid>` are wired. Legacy
-`PersonalityTrait` list kept intact as a readable field on
-`AppearanceComponent` for the one-release migration window.
+**Current status**: Phase 0 tasks 01 (TraitVector) and 02 (NpcMemoryLog)
+implemented. Packages `Npc.Traits` and `Npc.Memory` exist; save/load
+wired additively on `TownspersonMob`. Legacy `PersonalityTrait` list
+kept readable for the one-release migration window. No existing
+reputation/witness tracker to migrate memory data from — new feature
+starts empty per spec.
+
+`NpcMemoryDecayTickSystem` (interval 24000, priority 190) walks every
+loaded TownspersonMob once per in-game day and calls
+`decayAll(1) + removeExpired()`. Runs over empty logs until Phase 1
+producers ship — confirmed harmless.
 
 **Template pattern established for the remaining Phase 0 components**:
 - New subsystem package under `Npc.<Subsystem>` (e.g. `Npc.Memory`).
