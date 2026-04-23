@@ -3339,12 +3339,12 @@ public class RoadGraphDebugCommand {
 
     private static int worldgenTiming(CommandContext<CommandSourceStack> ctx)
             throws CommandSyntaxException {
-        long anchorMs   = GreatRoadGenerationQueue.getAnchorSeedMs();
-        long routeMs    = GreatRoadGenerationQueue.getTotalRouteMs();
-        int  attempts   = GreatRoadGenerationQueue.getRoutingAttempts();
-        int  lazyFills  = tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter.getTotalLazyFills();
-        long wallMs     = GreatRoadGenerationQueue.getWallTimeMs();
-        long avgMs      = attempts > 0 ? routeMs / attempts : 0;
+        long anchorMs    = GreatRoadGenerationQueue.getAnchorSeedMs();
+        long routeMs     = GreatRoadGenerationQueue.getTotalRouteMs();
+        int  attempts    = GreatRoadGenerationQueue.getRoutingAttempts();
+        int  prefillCells = GreatRoadGenerationQueue.getTotalPrefillCells();
+        long wallMs      = GreatRoadGenerationQueue.getWallTimeMs();
+        long avgMs       = attempts > 0 ? routeMs / attempts : 0;
 
         StringBuilder sb = new StringBuilder();
         sb.append("[worldgen_timing] Last great-road generation run:\n");
@@ -3353,7 +3353,7 @@ public class RoadGraphDebugCommand {
           .append(attempts).append(" attempts");
         if (attempts > 0) sb.append(", avg ").append(avgMs).append("ms");
         sb.append(")\n");
-        sb.append("  Atlas cells sampled during routing: ").append(lazyFills).append("\n");
+        sb.append("  Atlas cells prefilled: ").append(prefillCells).append("\n");
         sb.append("  Total wall time: ").append(wallMs / 1000).append("s (").append(wallMs).append("ms)");
 
         String report = sb.toString();

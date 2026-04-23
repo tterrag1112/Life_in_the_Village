@@ -1116,3 +1116,49 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - Player currency deduction at toll gates (Phase 10).
 - Linear blockPath scan in `RoadUnderfootDetector` / `RoadProximityChecker` (noted since Phase 8a). Still deferred.
 - All Phase 6 carryovers remain.
+
+---
+
+### 2026-04-23 — Phase 7d.1: corrective fix — move atlas fill out of A* inner loop
+
+**Note:** Corrective follow-up to Phase 7d. Phase 7d's lazy-fill approach caused single ROUTE_TRUNK ticks to take 82 seconds, which is worse than the original 25-minute worldgen it was trying to fix.
+
+**Phase:** 7d.1 — PREFILL_CORRIDOR step (remove lazy fill from A*)
+
+**Root cause of 82-second ticks:** `AtlasSampler.sampleCell()` takes 50–150µs per cell. A* with 12,000 node budget × 8 neighbours = potentially thousands of `ensureCell()` calls during a single tick. At 100µs per call, just 1,000 fills = 100ms of blocking inside one tick. Observed: 82 seconds on a single ROUTE_TRUNK step — consistent with ~820,000 samples or an extremely slow atlas segment.
+
+**Fix:** Remove all lazy fill from A* entirely. Restore atlas prefill as a dedicated `PREFILL_CORRIDOR` step that runs before each ROUTE_TRUNK, distributing work across ticks at 400ms/tick budget.
+
+**Files modified:**
+
+- `Village/Economy/Trade/AtlasRouteRouter.java` — Removed all lazy fill. The 4-arg `findGreatRoadRoute(atlas, from, to, worldSeed)` is now the sole real implementation: pure read-only A* that treats unfilled cells as high-cost (`COST_UNFILLED = 4.0f`) but never samples them. The 5-arg overload `findGreatRoadRoute(atlas, from, to, worldSeed, level)` delegates to 4-arg (level ignored). `resetLazyFillCounter()` and `getTotalLazyFills()` retained as no-op stubs (return 0) so existing call sites compile without changes.
+
+- `Events/GreatRoadGenerationQueue.java` — Added `PREFILL_CORRIDOR` step type and `PrefillCorridorTask`. `SeedAnchorsTask.process` now queues one `PrefillCorridorTask` per anchor pair (not `RouteTrunkTask`). `PrefillCorridorTask` calls `atlas.ensureRegionFilled()` with 400ms budget/tick, corridor = midpoint of pair + radius (halfDist + 256 blocks), retries across ticks until done or 10,000-cell safety cap reached. On completion it queues the `RouteTrunkTask`. `RouteTrunkTask.process` uses 4-arg `routePair(a, b, atlas, worldSeed)` (no level). Timing log uses `totalPrefillCells` counter. `StepType.FILL_ATLAS_CORRIDOR` kept as `@Deprecated`; `StepType.PREFILL_CORRIDOR` is the active replacement. Added `getTotalPrefillCells()` accessor.
+
+- `Commands/RoadGraphDebugCommand.java` — Updated `worldgenTiming` to display "Atlas cells prefilled" (from `GreatRoadGenerationQueue.getTotalPrefillCells()`) instead of "Atlas cells sampled during routing" (the removed lazy fill metric).
+
+**Timing observations:**
+
+| Metric | Before fix (Phase 7d lazy fill) | After fix (Phase 7d.1 prefill) |
+|---|---|---|
+| Worst-case ROUTE_TRUNK tick | 82 seconds | Expected: <500ms (pure A* over pre-filled atlas) |
+| PREFILL_CORRIDOR tick | N/A | Expected: ~400ms/tick (budget-limited) |
+| Total atlas cells touched | ~20,000 (lazy, only visited cells) | ~50,000–150,000 (corridor prefill, partial reuse across pairs) |
+| Total worldgen wall time | Unknown — single tick hung | Expected: under 5 minutes |
+
+**Architecture decisions:**
+- Prefill-then-route is more predictable than lazy fill despite touching more cells total. The key invariant: atlas sampling must not occur in the A* hot path. Any call to `AtlasSampler.sampleCell()` during A* expansion creates unbounded per-tick latency.
+- 400ms budget per `PREFILL_CORRIDOR` tick chosen to match the raised worldgen budget (500ms) with a small safety margin. If `ensureRegionFilled` is called with 400ms, the tick still has ~100ms for other queue overhead.
+- `PREFILL_CELL_CAP = 10_000` is a safety valve: if prefill stalls (e.g., atlas region is slow to compute or corridor is unusually large), route with partial coverage rather than blocking indefinitely. Logs a warning when cap is hit. At 64-block cells, 10,000 cells covers a 200×200 cell region (12,800×12,800 blocks), far larger than any realistic trunk corridor.
+- Corridor radius = `halfDist + 256 blocks` rather than the original Phase 7d `halfDist + 500`. Tighter radius reduces prefill cell count while still covering the typical A* search band for a trunk route.
+- `RouteTrunkTask` now has a per-route timing log: `[GreatRoadGen] ROUTE_TRUNK ...: P cells, Xms` to confirm that routing itself is fast post-prefill.
+
+**Deviations from spec:**
+- None.
+
+**Further tuning needed:**
+- Confirm ROUTE_TRUNK timing is actually under 500ms once prefill is in place (requires a test world run — cannot measure statically).
+- If prefill over-covers (too many ticks per pair), reduce corridor radius from `halfDist + 256` toward `halfDist + 128`.
+- If atlas is still slow in practice, profile `AtlasSampler.sampleCell()` itself — the 50–150µs estimate is from prior sessions and may shift with biome complexity.
+
+**Carryovers:** Same as Phase 7d.
