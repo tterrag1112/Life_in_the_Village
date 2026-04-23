@@ -43,6 +43,7 @@ import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
@@ -116,6 +117,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final EconomyComponent economy = new EconomyComponent();
     private final AppearanceComponent appearance = new AppearanceComponent();
     private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
+    private final TraitVector traits = new TraitVector();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -413,6 +415,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     public void addTrait(AppearanceComponent.PersonalityTrait trait) {
         appearance.addTrait(trait);
+    }
+
+    /**
+     * Returns the 8-axis trait vector. Named {@code getTraitVector} rather
+     * than {@code getTraits} because the legacy {@link #getTraits()} method
+     * still returns the old {@code PersonalityTrait} list during the one-
+     * release migration window.
+     */
+    public TraitVector getTraitVector() {
+        return traits;
     }
 
     public void clearTraits() {
@@ -1002,6 +1014,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         }
 
         randomizeAppearance(random);
+        traits.randomize(random);
         updateScale();
         return super.finalizeSpawn(level, difficulty, spawnType, spawnGroupData);
     }
@@ -1075,6 +1088,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Relationships ────────────────────────────────────────────────────
         String rel = relationships.encode();
         if (!rel.isEmpty()) output.putString("npcRelationships", rel);
+
+        // ── Traits (new 8-axis system; legacy list above is kept readable) ──
+        traits.save(output);
     }
 
     // =========================================================================
@@ -1182,6 +1198,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Relationships ────────────────────────────────────────────────────
         input.read("npcRelationships", Codec.STRING).ifPresent(relationships::decode);
+
+        // ── Traits (new 8-axis system; migrate from legacy if not yet stored)
+        boolean traitsLoaded = traits.load(input);
+        if (!traitsLoaded && !appearance.getTraits().isEmpty()) {
+            traits.migrateFromLegacy(appearance.getTraits());
+        }
 
         // ── Sync entity data from loaded state ───────────────────────────────
         entityData.set(LIFE_STAGE, getLifeStage().name());
