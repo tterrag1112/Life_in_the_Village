@@ -106,6 +106,7 @@ public final class TickSubsystemRegistry {
         register(new NodeDecorationTickSystem());
         register(new RoadUpkeepTickSystem());
         register(new TierReconciliationTickSystem());
+        register(new NpcMemoryDecayTickSystem());
 
         // ── Debug visualization (every-tick, low priority) ────────────────────
         register(RoadDebugVisualizer.INSTANCE);

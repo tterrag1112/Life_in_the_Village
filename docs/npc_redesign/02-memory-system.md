@@ -328,4 +328,93 @@ for routing polarity to mood changes.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 0 implementation (task 02)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Memory`
+(`MemoryType`, `NpcMemory`, `NpcMemoryLog`). Parallel structure to the
+`Npc.Traits` package from task 01; a new `NpcMemoryDecayTickSystem`
+subclass of `TickSubsystem` advances decay daily.
+
+**Persistence API.** Same deviation as `TraitVector`: the spec sketch
+uses `save(CompoundTag)` / `load(CompoundTag)`, but `TownspersonMob`
+on NeoForge 1.21 uses `ValueOutput` / `ValueInput`. `NpcMemoryLog`
+matches the entity API and serialises via its own
+`Codec<NpcMemoryLog>` under a single `npcMemory` key, preserving the
+spec's `{ entries: [...] }` shape.
+
+**MemoryType polarity.** The spec states "+1/−1/0" with three
+examples; the full assignment lives in the enum constructor. Positive
+polarity: `RECEIVED_GIFT`, `GAVE_GIFT`, `SAVED_BY`, `SAVED`,
+`COMPLIMENTED_BY`, `DEFENDED_BY`, `RECEIVED_LETTER`, `FAVOR_DONE_FOR`,
+`FAVOR_RECEIVED_FROM`, `TAUGHT_BY`, `TAUGHT`, `OFFICIATED_BY`,
+`OFFICIATED_FOR`, `SHARED_HARDSHIP`. Negative: `INSULTED_BY`,
+`WITNESSED_CRIME_BY`, `VICTIM_OF_CRIME_BY`, `WITNESSED_DEATH_OF`.
+Neutral: `TRADED_WITH`, `COMMISSIONED_WORK`, `PROMISED_BY`,
+`SHARED_FESTIVAL`. `SHARED_HARDSHIP` is the only non-obvious call
+(survived hardship *together* reads as bonding, hence positive) —
+easy to retarget if dialogue tests disagree. `PROMISED_BY` stays
+neutral; breach detection in a later phase will produce a separate
+negative event.
+
+**Decay on pinned entries.** The spec explicitly says pinned memories
+"still decay cosmetically" — `decayAll` applies to all entries;
+eviction (`removeExpired`) alone skips pinned. This contradicts the
+wording in the task prompt that said "skipping pinned entries"; spec
+was treated as source of truth per the prompt's own instruction.
+
+**Refresh split.** Spec has one `refresh(id, boost)` method plus a
+formula description. Implementation exposes both: `refresh(id, boost)`
+applies a flat boost and clamps to `initialValue`;
+`NpcMemoryLog.standardReminderBoost(memory)` is a static helper that
+returns the spec formula `10 + 0.2 * (initialValue - currentValue)`.
+Producers compute a boost (standard formula, flat +3 for weak
+reminders, etc.) and pass it. Keeps Phase 0 free of producer-specific
+logic.
+
+**Daily tick hook.** Implemented as a standalone
+`NpcMemoryDecayTickSystem` with `interval = 24000` (once per in-game
+day) rather than piggybacking on `VillageDailyTickSystem`. Reason:
+`VillageDailyTickSystem` iterates NPCs per-village via AABB bounds,
+which can miss NPCs temporarily outside bounds (caravans, explorers).
+A global pass over `level.getEntities().getAll()` guarantees coverage
+and the work is cheap over empty Phase 0 logs.
+
+**Accessor name on `TownspersonMob`.** `getMemory()` is free (no
+pre-existing method); unlike `getTraitVector()` this matches the spec
+exactly.
+
+**Debug command.** `/npc memory <uuid>` lists entries sorted by
+currentValue descending, marking pinned with `[PIN]` and polarity as
++/−/·. `/npc memory add <uuid> <type> <subject> <initialValue>
+<summary>` constructs via `NpcMemory.create(...)`. `/npc memory decay
+<uuid> <days>` calls `decayAll` + `removeExpired`. All three are
+permission-level 2.
+
+**No legacy migration.** No existing per-NPC reputation/witness
+tracker exists (only the coarser `AdventurerReputationManager` and
+village-wide reputation, neither situational-memory-shaped). New
+state starts empty.
+
+**Prompt↔spec naming mismatches (kept for the prompt-template
+maintainer):**
+- Prompt calls the record `MemoryEntry`; spec says `NpcMemory` — used
+  spec name.
+- Prompt lists type names `RESCUED_BY`, `GIFTED_BY_FAVORITE`,
+  `FAMILY_DEATH` that don't exist in the spec; used spec's
+  `SAVED_BY`, `RECEIVED_GIFT`, `WITNESSED_DEATH_OF`.
+- Prompt proposes fields `subjectId: UUID`, `acquiredTick`,
+  `lastRefreshedTick`; spec's record is `participantIds: List<UUID>`,
+  `tick`, no last-refreshed field. Used spec layout.
+- Prompt says decay "skipping pinned entries"; spec says pinned
+  decay cosmetically and are only immune from eviction. Trusted spec.
+- Prompt asks for `findAnyOf(UUID)` and `allMatching(Predicate)`;
+  spec's query surface is `involving(UUID)`, `ofType`, `findById`,
+  `hasMemoryOf`. Shipped the spec's set plus `matching(Predicate)` as
+  the generic filter (named to avoid clashing with any future `all`).
+
+**Not implemented in this session (deferred per Phase 0 scope):**
+`NpcProfileSnapshot` memory field and the "Memories" profile-GUI
+panel that the spec's Phase 0 integration section lists (parallel to
+the TraitVector session's deferral of IdentityPanel updates — UI is
+Phase 1+). Memory producers, mood/relationship consumers, and the
+life-event bus are all explicitly Phase 1+.
