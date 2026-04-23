@@ -1590,8 +1590,9 @@ public class RoadGraphDebugCommand {
 
         String shortId = edge.getEdgeId().toString().substring(0, 8);
         int newCount = edge.getDecorationPositions().size();
+        int finalRemoved = removed;
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "[redecorate_edge] Edge " + shortId + ": removed " + removed
+                "[redecorate_edge] Edge " + shortId + ": removed " + finalRemoved
                         + " old blocks, placed " + newCount + " new decoration blocks."), false);
         return 1;
     }
@@ -1641,9 +1642,10 @@ public class RoadGraphDebugCommand {
 
         String shortId = node.nodeId().toString().substring(0, 8);
         int newCount = node.getDecorationPositions().size();
+        int finalRemoved = removed;
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "[redecorate_node] Node " + shortId + " [" + node.type() + "]: removed "
-                        + removed + " old blocks, placed " + newCount + " new blocks."), false);
+                        + finalRemoved + " old blocks, placed " + newCount + " new blocks."), false);
         return 1;
     }
 
