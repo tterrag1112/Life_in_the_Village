@@ -95,5 +95,5 @@ public class VillageUpkeepLedger {
     public int getTotalCyclesPaidThisYear()           { return totalCyclesPaidThisYear; }
     public int getTotalCyclesFailedThisYear()         { return totalCyclesFailedThisYear; }
 
-    void setLastCycleTick(long tick) { this.lastUpkeepCycleTick = tick; }
+    public void setLastCycleTick(long tick) { this.lastUpkeepCycleTick = tick; }
 }

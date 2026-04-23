@@ -779,3 +779,18 @@ class TierReconciliationTickSystem implements TickSubsystem {
         TierReconciliationSystem.runReconciliation(ctx.level(), ctx.villageData());
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Great Road Generation
+// ─────────────────────────────────────────────────────────────────────────────
+
+class GreatRoadGenerationTickSystem implements TickSubsystem {
+    @Override public String name()     { return "great_road_generation"; }
+    @Override public int    interval() { return 1; }
+    @Override public int    priority() { return 155; } // after edge realization (150), before parallelism cleanup (160)
+
+    @Override
+    public void tick(TickContext ctx) {
+        GreatRoadGenerationQueue.tick(ctx.level());
+    }
+}

@@ -1841,7 +1841,7 @@ public class RoadGraphDebugCommand {
         WorldRoadSavedData rData = WorldRoadSavedData.get(level);
         WorldRoadGraph graph = rData.getGraph();
 
-        RoadEdge edge = resolveEdgeByPrefix(graph, prefix);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "");
         if (edge == null) {
             ctx.getSource().sendFailure(Component.literal("No edge matching prefix: " + prefix));
             return 0;
