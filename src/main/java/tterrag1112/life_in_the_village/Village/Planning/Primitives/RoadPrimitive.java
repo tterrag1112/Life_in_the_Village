@@ -425,7 +425,8 @@ public sealed interface RoadPrimitive
             List<BlockPos> waypoints,
             float tension,
             double driftAmplitude,
-            RoadShape.RoadTier tier
+            RoadShape.RoadTier tier,
+            long seed
     ) implements RoadPrimitive {
 
         static final MapCodec<SmoothedPath> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
@@ -433,7 +434,8 @@ public sealed interface RoadPrimitive
                 Codec.FLOAT.fieldOf("tension").forGetter(SmoothedPath::tension),
                 Codec.DOUBLE.fieldOf("driftAmplitude").forGetter(SmoothedPath::driftAmplitude),
                 Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
-                        .fieldOf("tier").forGetter(SmoothedPath::tier)
+                        .fieldOf("tier").forGetter(SmoothedPath::tier),
+                Codec.LONG.optionalFieldOf("seed", 0L).forGetter(SmoothedPath::seed)
         ).apply(i, SmoothedPath::new));
 
         @Override public String typeKey() { return "SmoothedPath"; }
@@ -441,7 +443,57 @@ public sealed interface RoadPrimitive
         @Override
         public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
             if (waypoints.size() < 2) return new ArrayList<>(waypoints);
-            return RoutePathSmoother.smooth(level, waypoints);
+            List<BlockPos> smoothed = RoutePathSmoother.smooth(level, waypoints);
+            if (driftAmplitude > 0) {
+                long effectiveSeed = seed != 0 ? seed
+                        : DriftNoise.localSeed(worldSeed,
+                                waypoints.get(0), waypoints.get(waypoints.size() - 1));
+                smoothed = applyLateralDrift(level, smoothed, driftAmplitude, effectiveSeed);
+            }
+            return smoothed;
+        }
+
+        private static List<BlockPos> applyLateralDrift(
+                ServerLevel level,
+                List<BlockPos> centerline,
+                double amplitude,
+                long localSeed) {
+            int n = centerline.size();
+            if (n < 2) return centerline;
+
+            // Compute cumulative arc length for t-parameterization
+            double[] cumLen = new double[n];
+            for (int i = 1; i < n; i++) {
+                BlockPos a = centerline.get(i - 1), b = centerline.get(i);
+                int dx = b.getX() - a.getX(), dz = b.getZ() - a.getZ();
+                cumLen[i] = cumLen[i - 1] + Math.sqrt((double)(dx * dx + dz * dz));
+            }
+            double totalLen = cumLen[n - 1];
+            if (totalLen < 1) return centerline;
+
+            double ampScale = Math.min(1.0, totalLen / 64.0);
+            List<BlockPos> out = new ArrayList<>(n);
+
+            for (int i = 0; i < n; i++) {
+                double t = cumLen[i] / totalLen;
+
+                // Local heading: use neighbours for perpendicular direction
+                int prevI = Math.max(0, i - 1);
+                int nextI = Math.min(n - 1, i + 1);
+                int hdx = centerline.get(nextI).getX() - centerline.get(prevI).getX();
+                int hdz = centerline.get(nextI).getZ() - centerline.get(prevI).getZ();
+                double hlen = Math.sqrt((double)(hdx * hdx + hdz * hdz));
+                if (hlen < 0.001) { out.add(centerline.get(i)); continue; }
+
+                double perpX = -hdz / hlen;
+                double perpZ =  hdx / hlen;
+                double drift = DriftNoise.sample(t, localSeed) * amplitude * ampScale;
+
+                int x = centerline.get(i).getX() + (int) Math.round(perpX * drift);
+                int z = centerline.get(i).getZ() + (int) Math.round(perpZ * drift);
+                out.add(surfaceAt(level, x, z));
+            }
+            return dedupe(out);
         }
     }
 

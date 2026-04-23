@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnc
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTrunkRouter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTrunkRouter.AnchorPair;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTrunkRouter.PlannedTrunk;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.NamedRoadSelector;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 import net.minecraft.core.BlockPos;
@@ -355,12 +356,12 @@ public final class GreatRoadGenerationQueue {
                 }
             }
 
-            // Seeded meander profile — stable visual character across re-realizations
-            long meanderSeed = hashTrunk(trunk.anchorA().position(),
-                                         trunk.anchorB().position(),
-                                         level.getSeed());
+            // Character-driven meander profile — amplitude and seed from terrain analysis
+            GreatRoadCharacter character = trunk.character();
             RoadEdge.MeanderProfile meander = new RoadEdge.MeanderProfile(
-                    12.0f, 0.08f, meanderSeed);
+                    character.meanderAmplitude(),
+                    character.meanderFrequency(),
+                    character.characterSeed());
 
             RoadEdge edge = RoadEdge.create(
                     nodeA.nodeId(), nodeB.nodeId(),
@@ -369,6 +370,7 @@ public final class GreatRoadGenerationQueue {
             // Invariant 3 — great roads never decay; start at 100 and stay there
             edge.setMaintenance(100);
             // Invariant 4 — no maintainer; maintainerVillageIds is empty by default
+            edge.setCharacter(Optional.of(character));
 
             graph.addEdge(edge);
             roadData.markDirty();
@@ -492,13 +494,4 @@ public final class GreatRoadGenerationQueue {
     // Helpers
     // =========================================================================
 
-    /**
-     * Stable hash for a trunk's meander seed — order-independent so the same
-     * road always gets the same seed regardless of which endpoint is A vs B.
-     */
-    private static long hashTrunk(BlockPos posA, BlockPos posB, long worldSeed) {
-        long ha = (long) posA.getX() * 73856093L ^ (long) posA.getZ() * 19349663L;
-        long hb = (long) posB.getX() * 73856093L ^ (long) posB.getZ() * 19349663L;
-        return (ha ^ hb) * 6364136223846793005L + worldSeed;
-    }
 }

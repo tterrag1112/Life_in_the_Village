@@ -38,6 +38,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetecto
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
 import tterrag1112.life_in_the_village.Events.GreatRoadGenerationQueue;
 import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter.CharacterTag;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder.AnchorCandidate;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.NamedRoadSelector;
@@ -199,6 +201,15 @@ public class RoadGraphDebugCommand {
                                                 .executes(RoadGraphDebugCommand::highlightNamed)))
                                 .then(Commands.literal("reselect_names")
                                         .executes(RoadGraphDebugCommand::reselectNames))
+                                // ── Phase 7c: great road character ────────────────────────
+                                .then(Commands.literal("character")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::roadCharacter)))
+                                .then(Commands.literal("characters")
+                                        .executes(RoadGraphDebugCommand::roadCharacters))
+                                .then(Commands.literal("highlight_character")
+                                        .then(Commands.argument("tag", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::highlightCharacter)))
                         )
                 )
         );
@@ -2292,5 +2303,149 @@ public class RoadGraphDebugCommand {
                 "[reselect_names] Cleared " + cleared + " old name(s). Named "
                         + named + " great road(s)."), false);
         return named;
+    }
+
+    // =========================================================================
+    // character  (Phase 7c)
+    // =========================================================================
+
+    private static int roadCharacter(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        String idPrefix = StringArgumentType.getString(ctx, "edgeId");
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        RoadEdge edge = resolveEdgeByPrefix(graph, idPrefix, ctx.getSource());
+        if (edge == null) return 0;
+
+        if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[character] Edge is not a GREAT_ROAD (tier=" + edge.getTier() + ")."));
+            return 0;
+        }
+
+        Optional<GreatRoadCharacter> charOpt = edge.getCharacter();
+        if (charOpt.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[character] Edge " + edge.getEdgeId().toString().substring(0, 8)
+                            + " has no character assigned (pre-Phase-7c edge).\n"
+                            + "  meander=" + edge.getMeanderProfile().amplitude()
+                            + "/" + edge.getMeanderProfile().frequency()
+                            + " seed=0x" + Long.toHexString(edge.getMeanderProfile().seed())),
+                    false);
+            return 0;
+        }
+
+        GreatRoadCharacter ch = charOpt.get();
+        StringBuilder sb = new StringBuilder("[character] Edge ")
+                .append(edge.getEdgeId().toString().substring(0, 8)).append('\n')
+                .append("  tag=").append(ch.tag()).append('\n')
+                .append("  meander amplitude=").append(ch.meanderAmplitude())
+                .append("  frequency=").append(ch.meanderFrequency()).append('\n')
+                .append("  characterSeed=0x").append(Long.toHexString(ch.characterSeed())).append('\n')
+                .append("  biasHints: steep=").append(ch.hints().steepCostBias())
+                .append(" river=").append(ch.hints().riverCostBias())
+                .append(" forest=").append(ch.hints().forestCostBias());
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // characters  (Phase 7c)
+    // =========================================================================
+
+    private static int roadCharacters(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        Map<CharacterTag, Integer> counts = new EnumMap<>(CharacterTag.class);
+        int noCharacter = 0;
+        for (RoadEdge edge : graph.allEdges()) {
+            if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) continue;
+            Optional<CharacterTag> tag = edge.getCharacterTag();
+            if (tag.isEmpty()) { noCharacter++; continue; }
+            counts.merge(tag.get(), 1, Integer::sum);
+        }
+
+        if (counts.isEmpty() && noCharacter == 0) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[characters] No GREAT_ROAD edges in graph."), false);
+            return 0;
+        }
+
+        StringBuilder sb = new StringBuilder("[characters] Great road character distribution:\n");
+        for (CharacterTag tag : CharacterTag.values()) {
+            int n = counts.getOrDefault(tag, 0);
+            if (n > 0) {
+                sb.append("  ").append(tag.name()).append(": ").append(n).append('\n');
+            }
+        }
+        if (noCharacter > 0) {
+            sb.append("  (no character — pre-7c edges): ").append(noCharacter).append('\n');
+        }
+        String msg = sb.toString().stripTrailing();
+        int total = counts.values().stream().mapToInt(Integer::intValue).sum() + noCharacter;
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return total;
+    }
+
+    // =========================================================================
+    // highlight_character  (Phase 7c)
+    // =========================================================================
+
+    private static int highlightCharacter(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+        String tagStr = StringArgumentType.getString(ctx, "tag").toUpperCase(java.util.Locale.ROOT);
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        CharacterTag tag;
+        try {
+            tag = CharacterTag.valueOf(tagStr);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[highlight_character] Unknown tag '" + tagStr + "'. Valid: "
+                            + java.util.Arrays.toString(CharacterTag.values())));
+            return 0;
+        }
+
+        List<RoadEdge> matching = graph.greatRoadsByCharacter(tag);
+        if (matching.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[highlight_character] No GREAT_ROAD edges with tag " + tag + "."), false);
+            return 0;
+        }
+
+        ParticleOptions particle = particleForCharacterTag(tag);
+        List<ParticleEmission> emissions = new ArrayList<>();
+        for (RoadEdge edge : matching) {
+            emissions.addAll(buildEdgeEmissions(edge, particle, level,
+                    RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+            RoadNode nodeA = graph.getNode(edge.getNodeAId());
+            RoadNode nodeB = graph.getNode(edge.getNodeBId());
+            if (nodeA != null) emissions.addAll(buildNodeBeam(nodeA, 12, particle));
+            if (nodeB != null) emissions.addAll(buildNodeBeam(nodeB, 12, particle));
+        }
+        RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
+
+        final int count = matching.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[highlight_character] Highlighting " + count + " edge(s) with tag " + tag + "."),
+                false);
+        return count;
+    }
+
+    private static ParticleOptions particleForCharacterTag(CharacterTag tag) {
+        return switch (tag) {
+            case MOUNTAIN_HUGGING  -> ParticleTypes.CLOUD;
+            case PLAINS_STRAIGHT   -> ParticleTypes.COMPOSTER;
+            case RIVER_FOLLOWING   -> ParticleTypes.WITCH;
+            case FOREST_WANDERING  -> ParticleTypes.HAPPY_VILLAGER;
+            case COASTAL           -> ParticleTypes.SOUL_FIRE_FLAME;
+            case UPLAND_PASS       -> ParticleTypes.FLAME;
+            default                -> ParticleTypes.SMOKE;
+        };
     }
 }

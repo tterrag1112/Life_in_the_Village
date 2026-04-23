@@ -844,3 +844,42 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
 
 **Next: Phase 7c — great road character parameters.**
+
+---
+
+### 2026-04-23 — Phase 7c implemented: great road character parameters
+
+**Phase:** 7c — Per-road seeded character: meander amplitude, character tag, bias hints, deterministic drift
+
+**Files created:**
+- `Village/Roads/Graph/GreatRoadCharacter.java` — data record. Fields: `CharacterTag tag`, `float meanderAmplitude`, `float meanderFrequency`, `long characterSeed`, `BiasHints hints`. `CharacterTag` enum: MOUNTAIN_HUGGING, PLAINS_STRAIGHT, RIVER_FOLLOWING, FOREST_WANDERING, COASTAL, UPLAND_PASS, DEFAULT. `BiasHints` nested record with steep/river/forest cost biases and meanderAmplitudeBias. Both carry DFU codecs.
+- `Village/Roads/Graph/Worldgen/GreatRoadCharacterAnalyzer.java` — `analyze(cellPath, atlas, worldSeed)`. Walks cell path, tallies steep/riverAdj/coast/forest/mountain/plains counts. First-match classification with thresholds: COASTAL (coast>0.4), MOUNTAIN_HUGGING (mountain>0.5), UPLAND_PASS (steep>0.3), RIVER_FOLLOWING (river>0.4), FOREST_WANDERING (forest>0.7), PLAINS_STRAIGHT (plain>0.7 && steep<0.1), DEFAULT (else). `computeCharacterSeed`: `worldSeed XOR (first*prime) XOR (last*prime)` → stable, direction-independent. Called by `GreatRoadTrunkRouter.routePair`.
+
+**Files modified:**
+- `Village/Roads/Graph/RoadEdge.java` — Added `Optional<GreatRoadCharacter> character` as 16th codec field (`optionalFieldOf`, backward-compatible). Added `fromCodec` 16th parameter. Added `getCharacter()`, `setCharacter(Optional<GreatRoadCharacter>)`, `getCharacterTag()` accessors.
+- `Village/Roads/Graph/Worldgen/GreatRoadTrunkRouter.java` — Added `GreatRoadCharacter character` as 6th field of `PlannedTrunk` record. `routePair()` now calls `GreatRoadCharacterAnalyzer.analyze` after routing and includes character in returned trunk.
+- `Events/GreatRoadGenerationQueue.java` — `CommitEdgeTask.process` now reads `trunk.character()` instead of computing a hardcoded meander seed. MeanderProfile amplitude/frequency/seed all derived from character. `edge.setCharacter(Optional.of(character))` called after edge creation. Removed `hashTrunk` helper (superseded).
+- `Village/Roads/Graph/WorldRoadGraph.java` — Added `greatRoadsByCharacter(CharacterTag)` query: filters GREAT_ROAD edges by character tag using `getCharacterTag().filter(tag::equals).isPresent()`.
+- `Village/Planning/Primitives/RoadPrimitive.java` — `SmoothedPath` record: added `long seed` as 5th field (`optionalFieldOf("seed", 0L)` for backward compat). `computeCenterline` now calls `applyLateralDrift` when `driftAmplitude > 0`. `applyLateralDrift`: arc-length parameterizes the Catmull-Rom result, applies perpendicular drift via `DriftNoise.sample` at each point using `effectiveSeed = seed != 0 ? seed : DriftNoise.localSeed(worldSeed, first, last)`. Endpoints naturally fade to zero drift (DriftNoise.sample returns 0 at t=0 and t=1).
+- `Village/Roads/Realization/PrimitiveChainBuilder.java` — For GREAT_ROAD edges, reads `edge.getMeanderProfile().amplitude()` as `driftAmp` and `edge.getMeanderProfile().seed()` as `primSeed` before building SmoothedPath. Non-great-road edges retain `driftAmp=0.0, primSeed=0L` (unchanged behavior, no drift).
+- `Commands/RoadGraphDebugCommand.java` — Added 3 Phase 7c debug commands:
+  - `character <edgeId>` — reports tag, amplitude/frequency, seed (hex), bias hints
+  - `characters` — counts GREAT_ROAD edges by character tag; reports pre-7c (no-character) edges separately
+  - `highlight_character <tag>` — highlights all edges of given character with tag-specific particle: MOUNTAIN_HUGGING→CLOUD, PLAINS_STRAIGHT→COMPOSTER, RIVER_FOLLOWING→WITCH, FOREST_WANDERING→HAPPY_VILLAGER, COASTAL→SOUL_FIRE_FLAME, UPLAND_PASS→FLAME, DEFAULT→SMOKE
+
+**Test world observations:** Manual static review only — no live test world run in this session.
+- Expected distribution: most great roads in a typical world (forests, plains, mixed terrain) will be DEFAULT or FOREST_WANDERING. PLAINS_STRAIGHT and RIVER_FOLLOWING likely to appear in flat/riverine worlds. MOUNTAIN_HUGGING and COASTAL require specific terrain and will be rare.
+- Visual expectation: MOUNTAIN_HUGGING (amplitude=18) vs PLAINS_STRAIGHT (amplitude=4) should be visibly distinct — 18-block perpendicular drift produces sweeping curves; 4-block drift is nearly straight.
+- Determinism: character assignment is fully deterministic — `computeCharacterSeed` is XOR-based (direction-independent), analyzer thresholds are deterministic given the same atlas.
+
+**Deviations from spec:**
+- None. All 7 deliverables implemented as specified. Character tag thresholds match the spec exactly.
+- `hashTrunk` method removed from `GreatRoadGenerationQueue` (was superseded by character-derived seed; no callers remained).
+
+**Carryovers:**
+- History event for kingdom-near-road not in-game yet (console log only).
+- All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
+
+**Phase 7 complete.** Phases 7a + 7b + 7c all done. The Old Realm road system is fully built.
+
+**Next: Phase 8a — travel incentives. The player-facing gameplay phase begins.**

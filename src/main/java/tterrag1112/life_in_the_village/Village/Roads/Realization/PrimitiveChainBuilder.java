@@ -70,12 +70,21 @@ public final class PrimitiveChainBuilder {
         // Build SmoothedPath waypoints: outerA → cell centres → outerB
         List<BlockPos> waypoints = buildWaypoints(edge, outerA, outerB);
 
+        // Character-driven drift for great roads; zero drift for all other tiers
+        double driftAmp = 0.0;
+        long primSeed   = 0L;
+        if (edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD) {
+            RoadEdge.MeanderProfile mp = edge.getMeanderProfile();
+            driftAmp = mp.amplitude();
+            primSeed = mp.seed();
+        }
+
         List<RoadPrimitive> chain = new ArrayList<>();
 
         dockA.ifPresent(dock -> chain.add(new RoadPrimitive.ArmApproach(
                 dock.dockingAnchor(), dock.armEndpoint(), dock.villageId(), roadTier)));
 
-        chain.add(new RoadPrimitive.SmoothedPath(waypoints, 0.5f, 0.0, roadTier));
+        chain.add(new RoadPrimitive.SmoothedPath(waypoints, 0.5f, driftAmp, roadTier, primSeed));
 
         dockB.ifPresent(dock -> chain.add(new RoadPrimitive.ArmApproach(
                 dock.dockingAnchor(), dock.armEndpoint(), dock.villageId(), roadTier)));

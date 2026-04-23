@@ -296,6 +296,14 @@ public class WorldRoadGraph {
                 .collect(Collectors.toList());
     }
 
+    /** Returns all GREAT_ROAD edges with the given character tag. */
+    public List<RoadEdge> greatRoadsByCharacter(GreatRoadCharacter.CharacterTag tag) {
+        return edges.values().stream()
+                .filter(e -> e.getTier() == RoadEdge.EdgeTier.GREAT_ROAD
+                        && e.getCharacterTag().filter(tag::equals).isPresent())
+                .collect(Collectors.toList());
+    }
+
     /**
      * Returns the first GREAT_ROAD edge whose name starts with {@code namePrefix}
      * (case-insensitive). Returns empty if no match.

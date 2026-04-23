@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder.AnchorCandidate;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
@@ -52,7 +53,8 @@ public final class GreatRoadTrunkRouter {
             AnchorCandidate anchorB,
             List<Long> cellPath,
             float pathCost,
-            boolean onDominantAxis
+            boolean onDominantAxis,
+            GreatRoadCharacter character
     ) {}
 
     // =========================================================================
@@ -163,10 +165,10 @@ public final class GreatRoadTrunkRouter {
         }
 
         boolean onAxis = a.onDominantAxis() && b.onDominantAxis();
-        // Path cost is approximated as cell count (each cell ≈ 1.5 units on average)
         float pathCost = cellPath.size() * 1.5f;
 
-        return new PlannedTrunk(a, b, cellPath, pathCost, onAxis);
+        GreatRoadCharacter character = GreatRoadCharacterAnalyzer.analyze(cellPath, atlas, worldSeed);
+        return new PlannedTrunk(a, b, cellPath, pathCost, onAxis, character);
     }
 
     // =========================================================================

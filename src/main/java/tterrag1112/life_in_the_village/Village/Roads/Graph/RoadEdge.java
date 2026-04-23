@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 
 import java.util.*;
 
@@ -99,7 +100,9 @@ public class RoadEdge {
                     .optionalFieldOf("decorationPositions", new ArrayList<>())
                     .forGetter(e -> e.decorationPositions),
             Codec.STRING.optionalFieldOf("roadName")
-                    .forGetter(e -> e.roadName)
+                    .forGetter(e -> e.roadName),
+            GreatRoadCharacter.CODEC.optionalFieldOf("character")
+                    .forGetter(e -> e.character)
     ).apply(i, RoadEdge::fromCodec));
 
     private static RoadEdge fromCodec(
@@ -110,7 +113,8 @@ public class RoadEdge {
             List<UUID> maintainerVillageIds, List<Long> staleList,
             boolean realized, List<RoadPrimitive> primitives,
             List<BlockPos> decorationPositions,
-            Optional<String> roadName) {
+            Optional<String> roadName,
+            Optional<GreatRoadCharacter> character) {
         RoadEdge e = new RoadEdge(
                 edgeId, nodeAId, nodeBId,
                 new ArrayList<>(cellPath), new ArrayList<>(blockPath),
@@ -121,6 +125,7 @@ public class RoadEdge {
         e.primitives = primitives.isEmpty() ? null : new ArrayList<>(primitives);
         e.decorationPositions = new ArrayList<>(decorationPositions);
         e.roadName = roadName;
+        e.character = character;
         return e;
     }
 
@@ -145,6 +150,9 @@ public class RoadEdge {
 
     /** Optional name for named great roads. Empty for all non-named edges. */
     Optional<String> roadName = Optional.empty();
+
+    /** Character record for GREAT_ROAD edges. Empty for all other tiers. */
+    Optional<GreatRoadCharacter> character = Optional.empty();
 
     /**
      * Transient flag: maintenance crossed a Phase 6b band boundary this upkeep
@@ -257,4 +265,10 @@ public class RoadEdge {
     public Optional<String> getRoadName()     { return roadName; }
     public void setRoadName(String name)      { this.roadName = Optional.of(name); }
     public void clearRoadName()               { this.roadName = Optional.empty(); }
+
+    public Optional<GreatRoadCharacter> getCharacter()             { return character; }
+    public void setCharacter(Optional<GreatRoadCharacter> c)       { this.character = c; }
+    public Optional<GreatRoadCharacter.CharacterTag> getCharacterTag() {
+        return character.map(GreatRoadCharacter::tag);
+    }
 }
