@@ -1060,9 +1060,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         output.putInt("hairColor", appearance.getHairColor());
 
         // ── Personality ──────────────────────────────────────────────────────
-        List<AppearanceComponent.PersonalityTrait> traits = appearance.getTraits();
-        if (!traits.isEmpty()) {
-            output.putString("traits", traits.stream()
+        List<AppearanceComponent.PersonalityTrait> legacyTraits = appearance.getTraits();
+        if (!legacyTraits.isEmpty()) {
+            output.putString("traits", legacyTraits.stream()
                     .map(AppearanceComponent.PersonalityTrait::name).collect(Collectors.joining(",")));
         }
 
