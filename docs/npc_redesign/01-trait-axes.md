@@ -231,4 +231,63 @@ None at spec time. All open design questions resolved in prior chat.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 0 implementation (task 01)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Traits`
+(`TraitAxis`, `TraitIntensity`, `DisplayedTrait`, `TraitVector`). The
+following choices resolve gaps the spec intentionally left to the
+implementation; all can be revisited without touching callers.
+
+**Persistence API.** The spec sketch uses `save(CompoundTag)` /
+`load(CompoundTag)`, but `TownspersonMob` in NeoForge 1.21 drives save/
+load through `ValueOutput` / `ValueInput`. `TraitVector` matches the
+entity API: `save(ValueOutput)` + `load(ValueInput)` writing flat
+`npcTraits.<axis>` float keys via `output.store(key, Codec.FLOAT, v)`.
+The spec's `Codec<TraitVector>` is still exposed for saved-data
+contexts that serialise compounds (`RecordCodecBuilder` of 8
+`optionalFieldOf(name, 0f)`). `load(...)` returns a presence flag so
+the caller can trigger legacy migration only on pre-vector saves.
+
+**Legacy conversion table.** The 10 legacy `PersonalityTrait` values
+are mapped to pole-based ±0.5 adjustments, summed and clamped (handles
+GENEROUS + GREEDY cancelling per the Edge-cases section):
+
+| Legacy         | Axis        | Delta |
+|----------------|-------------|-------|
+| DILIGENT       | INDUSTRY    | +0.5  |
+| LAZY           | INDUSTRY    | −0.5  |
+| GENEROUS       | GENEROSITY  | +0.5  |
+| GREEDY         | GENEROSITY  | −0.5  |
+| BRAVE          | COURAGE     | +0.5  |
+| TIMID          | COURAGE     | −0.5  |
+| FRIENDLY       | SOCIABILITY | +0.5  |
+| SUSPICIOUS     | SOCIABILITY | −0.5  |
+| CHEERFUL       | COMPASSION  | +0.5  |
+| GRUMPY         | COMPASSION  | −0.5  |
+
+CHEERFUL/GRUMPY is the only non-obvious mapping: those two legacy
+values read as warmth/coldness toward others more than as moderation,
+so they route to COMPASSION rather than TEMPERANCE. Easy to retarget
+if playtesting disagrees.
+
+**Accessor name on `TownspersonMob`.** The new accessor is
+`getTraitVector()`, not `getTraits()`, because the legacy
+`getTraits(): List<PersonalityTrait>` method still has call sites
+(NpcDialogue, NpcProfileSnapshotBuilder) during the migration window.
+The planned rewrite in this doc's "Existing PersonalityTrait enum"
+section can then rename it to `getTraits()` once the legacy list is
+removed.
+
+**Debug command.** Registered at `/npc traits <uuid>` under a new
+`NpcDebugCommand` class that owns the `/npc` root. Future Phase 0
+subsystems (memory, knowledge, mood, skills, offices) add subcommands
+in the same class — this matches the testing-strategy section of
+`00-conventions.md` which enumerates `/npc memory`, `/npc mood`, etc.
+under a single root.
+
+**Not implemented in this session (deferred per spec/Phase 0 scope):**
+NpcProfileSnapshot / IdentityPanel display (UI is Phase 1+), life-
+event drift (Phase 1), culture pull (Phase 5 — current randomize uses
+the all-zeros placeholder the spec calls out), child inheritance
+(Phase 2), and the rewrite of `PersonalityTrait` consumers onto the
+new vector.

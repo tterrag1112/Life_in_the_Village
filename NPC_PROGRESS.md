@@ -29,10 +29,10 @@ save/load. No behavior change yet.
 - [ ] Read all Phase 0 specs (00–06) end-to-end before coding
 - [ ] Create package `tterrag1112.life_in_the_village.Npc` structure
   per `00-conventions.md`
-- [ ] **01** Implement `TraitVector`, 8 axes with codec
-    - [ ] Field on `TownspersonMob`, save/load, debug command
-    - [ ] Migration from legacy `PersonalityTrait` enum
-    - [ ] `/npc traits <uuid>` prints full vector
+- [x] **01** Implement `TraitVector`, 8 axes with codec
+    - [x] Field on `TownspersonMob`, save/load, debug command
+    - [x] Migration from legacy `PersonalityTrait` enum
+    - [x] `/npc traits <uuid>` prints full vector
 - [ ] **02** Implement `NpcMemoryLog`
     - [ ] `MemoryEntry`, `MemoryType`, codec
     - [ ] 32-entry cap, value-weighted decay, pin logic
@@ -323,13 +323,28 @@ Things that don't fit the phase model and run continuously:
 
 (current blockers and observations tracked here)
 
-**Current status**: design phase complete. Next up is Phase 0
-implementation — start by reading `docs/npc-redesign/00-conventions.md`
-and `01-trait-axes.md` to establish the package layout and first
-component.
+**Current status**: Phase 0 task 01 (TraitVector) implemented. The
+`tterrag1112.life_in_the_village.Npc.Traits` package exists; save/load,
+generation, legacy migration, and `/npc traits <uuid>` are wired. Legacy
+`PersonalityTrait` list kept intact as a readable field on
+`AppearanceComponent` for the one-release migration window.
 
-**Suggested first session**: implement `TraitVector` end-to-end
-(data + codec + save/load + debug command + migration from legacy
-`PersonalityTrait`) as a template for how other Phase 0 components
-will land. Once trait vector is persisting cleanly, the pattern
-repeats for memory, knowledge, mood, skills, offices.
+**Template pattern established for the remaining Phase 0 components**:
+- New subsystem package under `Npc.<Subsystem>` (e.g. `Npc.Memory`).
+- Component class exposes `save(ValueOutput)` / `load(ValueInput)` and
+  a `Codec<T>`. Returns a presence boolean from `load(...)` so the
+  caller can drive legacy migration.
+- `TownspersonMob` holds a `private final` field, calls `randomize` or
+  equivalent fresh-spawn init in `finalizeSpawn`, persists at the end
+  of `addAdditionalSaveData`, and loads at the end of
+  `readAdditionalSaveData` (legacy fields already populated by then).
+- Public accessor named `get<Subsystem>()` returning the raw component
+  (no defensive copy), matching `getFamily()` / `getEconomy()` style.
+  Exception: `getTraitVector()` because `getTraits()` is still held by
+  the legacy list during the migration window.
+- Debug subcommand registers onto the shared `/npc` root in
+  `NpcDebugCommand.java` (not a new root command).
+
+**Suggested next session**: task 02 (NpcMemoryLog). The 32-entry cap and
+decay math are new territory vs. the straightforward TraitVector — read
+`docs/npc_redesign/02-memory-system.md` fully before coding.

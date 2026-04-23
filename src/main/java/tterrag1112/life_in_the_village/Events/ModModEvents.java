@@ -225,6 +225,7 @@ public class ModModEvents {
         PlacementFailuresDebugCommand.register(event.getDispatcher());
         RoadDebugCommand.register(event.getDispatcher());
         RoadGraphDebugCommand.register(event.getDispatcher());
+        NpcDebugCommand.register(event.getDispatcher());
 
     }
 
