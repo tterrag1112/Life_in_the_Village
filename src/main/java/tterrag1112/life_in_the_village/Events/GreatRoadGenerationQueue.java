@@ -284,19 +284,19 @@ public final class GreatRoadGenerationQueue {
 
     private static final class PrefillCorridorTask implements GenTask {
         /** Safety cap: abort prefill after this many cells across all ticks for this pair. */
-        private static final int  PREFILL_CELL_CAP  = 10_000;
+        private static final int  PREFILL_CELL_CAP = 10_000;
         /** Per-tick time budget for atlas fill. */
-        private static final long PREFILL_BUDGET_NS  = 400_000_000L; // 400 ms
+        private static final long PREFILL_BUDGET_NS = 400_000_000L; // 400 ms
+        /** Perpendicular corridor half-width in blocks (3 cells = 192 blocks). */
+        private static final int  CORRIDOR_RADIUS  = 192;
 
         private final AnchorCandidate a;
         private final AnchorCandidate b;
         private final long worldSeed;
 
         // State preserved across ticks
-        private int  totalCellsSampled = 0;
-        private int  tickCount         = 0;
-        private int  centerX, centerZ, radius;
-        private boolean geometryReady  = false;
+        private int totalCellsSampled = 0;
+        private int tickCount         = 0;
 
         PrefillCorridorTask(AnchorCandidate a, AnchorCandidate b, long worldSeed) {
             this.a         = a;
@@ -308,27 +308,23 @@ public final class GreatRoadGenerationQueue {
 
         @Override
         public boolean process(ServerLevel level) {
-            if (!geometryReady) {
-                BlockPos posA = a.position();
-                BlockPos posB = b.position();
-                centerX = (posA.getX() + posB.getX()) / 2;
-                centerZ = (posA.getZ() + posB.getZ()) / 2;
-                long dx = (long)(posB.getX() - posA.getX());
-                long dz = (long)(posB.getZ() - posA.getZ());
-                int halfDist = (int)(Math.sqrt((double)(dx * dx + dz * dz)) / 2.0);
-                radius = halfDist + 256; // 256-block padding on each side
-                geometryReady = true;
-            }
+            BlockPos posA = a.position();
+            BlockPos posB = b.position();
 
             WorldAtlas atlas = WorldAtlas.get(level);
             int sizeBefore = atlas.size();
-            boolean done = atlas.ensureRegionFilled(level, centerX, centerZ, radius, PREFILL_BUDGET_NS);
+            boolean done = atlas.ensureCorridorFilled(
+                    level,
+                    posA.getX(), posA.getZ(),
+                    posB.getX(), posB.getZ(),
+                    CORRIDOR_RADIUS,
+                    PREFILL_BUDGET_NS);
             int sampledThisTick = atlas.size() - sizeBefore;
             totalCellsSampled += sampledThisTick;
             tickCount++;
 
             System.out.println("[GreatRoadGen] PREFILL_CORRIDOR "
-                    + a.position().toShortString() + "↔" + b.position().toShortString()
+                    + posA.toShortString() + "↔" + posB.toShortString()
                     + ": " + sampledThisTick + " cells this tick, "
                     + totalCellsSampled + " total, tick " + tickCount
                     + (done ? " — complete" : ""));
@@ -337,7 +333,7 @@ public final class GreatRoadGenerationQueue {
                 if (!done) {
                     System.out.println("[GreatRoadGen] PREFILL_CORRIDOR cap reached ("
                             + PREFILL_CELL_CAP + " cells) for "
-                            + a.position().toShortString() + "↔" + b.position().toShortString()
+                            + posA.toShortString() + "↔" + posB.toShortString()
                             + "; routing with partial coverage");
                 }
                 totalPrefillCells += totalCellsSampled;

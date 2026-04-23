@@ -306,6 +306,99 @@ public class WorldAtlas extends SavedData {
         }
         return true;
     }
+    /**
+     * Fills every atlas cell whose centre lies within {@code radiusBlocks} of
+     * the straight line segment from (x1,z1) to (x2,z2), subject to a time
+     * budget. Uses the same two-pass approach as {@link #ensureRegionFilled}:
+     * the first pass collects unfilled candidates via fast HashMap lookups,
+     * sorted centre-outward so the most-traversed cells are sampled first if
+     * the budget runs out.
+     *
+     * @param level           the server level to sample from
+     * @param x1              segment start X in block coordinates
+     * @param z1              segment start Z in block coordinates
+     * @param x2              segment end X in block coordinates
+     * @param z2              segment end Z in block coordinates
+     * @param radiusBlocks    perpendicular radius of the corridor in blocks
+     * @param timeBudgetNanos max nanoseconds to spend before yielding
+     * @return true if all corridor cells are sampled, false if budget ran out
+     */
+    public boolean ensureCorridorFilled(ServerLevel level,
+                                        int x1, int z1, int x2, int z2,
+                                        int radiusBlocks,
+                                        long timeBudgetNanos) {
+        long segDx   = x2 - x1;
+        long segDz   = z2 - z1;
+        long segLenSq = segDx * segDx + segDz * segDz;
+        long radSq   = (long) radiusBlocks * radiusBlocks;
+        int  midX    = (x1 + x2) / 2;
+        int  midZ    = (z1 + z2) / 2;
+
+        // Bounding box in cell coordinates (add 1-cell margin each side)
+        int minCx = blockToCell(Math.min(x1, x2) - radiusBlocks) - 1;
+        int maxCx = blockToCell(Math.max(x1, x2) + radiusBlocks) + 1;
+        int minCz = blockToCell(Math.min(z1, z2) - radiusBlocks) - 1;
+        int maxCz = blockToCell(Math.max(z1, z2) + radiusBlocks) + 1;
+
+        // First pass: collect unfilled cells (HashMap lookups only, no sampling)
+        List<int[]> unfilled = new ArrayList<>();
+        for (int cx = minCx; cx <= maxCx; cx++) {
+            for (int cz = minCz; cz <= maxCz; cz++) {
+                if (isFilled(cx, cz)) continue;
+                int bx = (cx << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+                int bz = (cz << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+                if (ptSegDistSq(bx, bz, x1, z1, x2, z2, segDx, segDz, segLenSq) > radSq) continue;
+                unfilled.add(new int[]{cx, cz});
+            }
+        }
+
+        if (unfilled.isEmpty()) return true;
+
+        // Sort by distance to corridor midpoint — inner cells sampled first
+        unfilled.sort((a, b) -> {
+            long adx = (long)(a[0] << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF - midX;
+            long adz = (long)(a[1] << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF - midZ;
+            long bdx = (long)(b[0] << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF - midX;
+            long bdz = (long)(b[1] << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF - midZ;
+            return Long.compare(adx * adx + adz * adz, bdx * bdx + bdz * bdz);
+        });
+
+        long deadline = System.nanoTime() + timeBudgetNanos;
+        for (int[] pos : unfilled) {
+            if (System.nanoTime() > deadline) return false;
+            try {
+                AtlasCell sampled = AtlasSampler.sampleCell(level, pos[0], pos[1]);
+                addCell(sampled);
+            } catch (Exception e) {
+                // Skip cells that fail to sample (dimension unloading, etc.)
+            }
+        }
+        return true;
+    }
+
+    /** Squared perpendicular distance from point (px,pz) to segment (x1,z1)→(x2,z2). */
+    private static long ptSegDistSq(int px, int pz,
+                                    int x1, int z1, int x2, int z2,
+                                    long segDx, long segDz, long segLenSq) {
+        if (segLenSq == 0L) {
+            long dx = px - x1, dz = pz - z1;
+            return dx * dx + dz * dz;
+        }
+        long vx  = px - x1, vz = pz - z1;
+        long dot = vx * segDx + vz * segDz;
+        long nearX, nearZ;
+        if (dot <= 0L) {
+            nearX = x1; nearZ = z1;
+        } else if (dot >= segLenSq) {
+            nearX = x2; nearZ = z2;
+        } else {
+            nearX = x1 + dot * segDx / segLenSq;
+            nearZ = z1 + dot * segDz / segLenSq;
+        }
+        long dx = px - nearX, dz = pz - nearZ;
+        return dx * dx + dz * dz;
+    }
+
     // =========================================================================
     // Road tracking
     // =========================================================================

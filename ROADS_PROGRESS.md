@@ -1162,3 +1162,57 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - If atlas is still slow in practice, profile `AtlasSampler.sampleCell()` itself — the 50–150µs estimate is from prior sessions and may shift with biome complexity.
 
 **Carryovers:** Same as Phase 7d.
+
+---
+
+### 2026-04-23 — Phase 7d.2: narrow prefill from bounding-rectangle to corridor shape
+
+**Note:** Corrective follow-up to Phase 7d.1. Phase 7d.1's `PREFILL_CORRIDOR` step still prefilled a full circular region (midpoint + halfDist+256 radius), which sampled ~7,700 cells per corridor at ~15 ms/cell = ~2 minutes per corridor × 40 corridors = 80+ minutes.
+
+**Phase:** 7d.2 — corridor-shaped prefill (line-and-distance filter)
+
+**Root cause of 7,700-cell prefill:** The circular radius was `halfDist + 256`, where `halfDist` is half the straight-line distance between endpoints. For an 8,000-block trunk this gives `radius = 4,256 blocks`, producing a circle of ~7,700 cells. A* only traverses a narrow band (~6 cells wide) along the corridor, so the vast majority of sampled cells were never visited.
+
+**Fix:** Replace `ensureRegionFilled` (circular fill) with a new `ensureCorridorFilled` method that uses a perpendicular-distance filter against the straight-line segment. Cells beyond 192 blocks perpendicular to the segment are excluded. The bounding box is still iterated but the circle test is replaced by a point-to-segment distance test.
+
+**Files modified:**
+
+- `World/Atlas/WorldAtlas.java` — Added `ensureCorridorFilled(level, x1, z1, x2, z2, radiusBlocks, timeBudgetNanos)`. Two-pass design matching `ensureRegionFilled`: first pass collects unfilled candidates via HashMap lookups only (point-to-segment filter, `ptSegDistSq` helper), then sorts by distance to corridor midpoint so innermost cells sample first if budget runs out. Returns `true` when all corridor cells are sampled. `ensureRegionFilled` unchanged — still used by kingdom seeder and other systems.
+
+- `Events/GreatRoadGenerationQueue.java` — `PrefillCorridorTask` now calls `atlas.ensureCorridorFilled(level, posA.getX(), posA.getZ(), posB.getX(), posB.getZ(), 192, 400_000_000L)`. Removed the stale `centerX`, `centerZ`, `radius`, `geometryReady` instance fields (geometry is computed fresh each tick call, which is cheap). `CORRIDOR_RADIUS = 192` (3 cells) constant added.
+
+**Cell count estimate (before vs after):**
+
+| Corridor type | Before (circular) | After (line-shaped, r=192) |
+|---|---|---|
+| Typical trunk (~8,000 blocks) | ~7,700 cells | ~780 cells (capsule: 8000×384÷4096 + π×192²÷4096) |
+| Long trunk (~20,000 blocks) | ~7,700 cells | ~1,870 cells |
+| Short trunk (~2,000 blocks) | ~3,100 cells | ~290 cells |
+| Max trunk (~56,000 blocks, world diagonal) | ~7,700 cells | ~5,330 cells |
+
+**Total worldgen time estimate:**
+
+| Metric | Before (7d.1 circular) | After (7d.2 corridor) |
+|---|---|---|
+| Cells per typical corridor | ~7,700 | ~780 |
+| Time per corridor at 15 ms/cell | ~115 s | ~11.7 s |
+| Ticks per corridor at 400 ms/tick | ~288 | ~29 |
+| Total for 40 corridors (est.) | ~80 min | ~7.8 min |
+
+Target: 5–15 minutes. Falls within target range. Reduction via cell-overlap across corridors (cells sampled for one corridor are available for adjacent corridors) means actual total will be lower than 40× per-corridor estimate.
+
+**Architecture decisions:**
+- `CORRIDOR_RADIUS = 192` blocks (3 cells at 64-block cell size). Wide enough to give A* several cells of deviation room when routing around difficult terrain, but narrow enough to exclude the majority of the bounding circle. The minimum allowed per spec is 128 blocks (2 cells).
+- `ptSegDistSq` is a private static helper that avoids allocations. Integer arithmetic throughout; overflow-safe for the ±20,000-block world (max `segLenSq` ≈ 3.2×10⁹, fits in long; intermediate products `dot * segDx` up to ~1.28×10¹⁴, also fits in long).
+- Sorting by distance to segment midpoint rather than to nearest point on segment: midpoint is fast (precomputed once) and produces a reasonable inside-out order. Nearest-point would be slightly more accurate but requires per-cell projection computation during the sort, which would dominate for large corridors.
+- `geometryReady` / `centerX` / `centerZ` / `radius` fields removed from `PrefillCorridorTask` — the new `ensureCorridorFilled` takes the raw endpoint coordinates, and computing them is free (just `a.position()` and `b.position()` reads). Re-deriving them each tick is simpler than caching.
+
+**Deviations from spec:**
+- None.
+
+**Further tuning needed:**
+- Observe actual per-corridor cell counts and ROUTE_TRUNK timing in a live world run. Log output will show "N cells this tick, M total, tick K" per PREFILL_CORRIDOR tick.
+- If A* frequently hits unfilled cells at corridor edges and produces poor paths, widen `CORRIDOR_RADIUS` from 192 to 256.
+- If total worldgen is still over 15 minutes, the next optimization is Path A (reducing `AtlasSampler.sampleCell()` cost itself).
+
+**Carryovers:** Same as Phase 7d.
