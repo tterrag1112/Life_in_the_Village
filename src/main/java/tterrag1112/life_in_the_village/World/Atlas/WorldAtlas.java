@@ -268,43 +268,40 @@ public class WorldAtlas extends SavedData {
     public boolean ensureRegionFilled(net.minecraft.server.level.ServerLevel level,
                                       int blockX, int blockZ, int blockRadius,
                                       long timeBudgetNanos) {
-        long deadline = System.nanoTime() + timeBudgetNanos;
-
         int rCells = (blockRadius >> AtlasCell.CELL_SHIFT) + 1;
         int cx = blockToCell(blockX);
         int cz = blockToCell(blockZ);
         long radiusSq = (long) blockRadius * blockRadius;
 
-        // Spiral outward from the centre so the most important cells
-        // (closest to the requested point) get filled first if we run
-        // out of budget.
+        // First pass: collect unfilled cells using fast HashMap lookups only.
+        // Spiral order preserved so inner cells are sampled first when budget runs out.
+        List<int[]> unfilled = new ArrayList<>();
         for (int r = 0; r <= rCells; r++) {
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
-                    // Only the ring at radius r
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
-
                     int tcx = cx + dx;
                     int tcz = cz + dz;
-
-                    // Block-space distance check (atlas cell centre vs target)
                     int bx = (tcx << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
                     int bz = (tcz << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
                     long ddx = bx - blockX;
                     long ddz = bz - blockZ;
                     if (ddx * ddx + ddz * ddz > radiusSq) continue;
-
-                    if (isFilled(tcx, tcz)) continue;
-
-                    if (System.nanoTime() > deadline) return false;
-
-                    try {
-                        AtlasCell sampled = AtlasSampler.sampleCell(level, tcx, tcz);
-                        addCell(sampled);
-                    } catch (Exception e) {
-                        // Skip cells that fail to sample (dimension unloading)
-                    }
+                    if (!isFilled(tcx, tcz)) unfilled.add(new int[]{tcx, tcz});
                 }
+            }
+        }
+
+        if (unfilled.isEmpty()) return true; // already complete — fast-path exit
+
+        long deadline = System.nanoTime() + timeBudgetNanos;
+        for (int[] pos : unfilled) {
+            if (System.nanoTime() > deadline) return false;
+            try {
+                AtlasCell sampled = AtlasSampler.sampleCell(level, pos[0], pos[1]);
+                addCell(sampled);
+            } catch (Exception e) {
+                // Skip cells that fail to sample (dimension unloading)
             }
         }
         return true;

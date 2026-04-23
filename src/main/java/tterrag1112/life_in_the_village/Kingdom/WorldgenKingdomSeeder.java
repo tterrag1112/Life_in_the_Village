@@ -46,22 +46,48 @@ public class WorldgenKingdomSeeder {
             { "imperial", "imperial_capital" },
     };
 
-    private static boolean seederRan  = false;
+    private static boolean kingdomsPlanned  = false;
+    private static boolean waitingLogged    = false;
+    private static long    seederStartMs    = 0;
+    private static int     kingdomsPlaced   = 0;
     private static final List<ScheduledKingdom> scheduled = new ArrayList<>();
     private static int scheduledDelay = 0;
     private static int deferralCount  = 0;
+
+    /** Returns a human-readable status string for debug commands. */
+    public static String getStatusString() {
+        if (!kingdomsPlanned && waitingLogged) return "WAITING_FOR_ROADS";
+        if (!kingdomsPlanned) return "NOT_STARTED";
+        if (!scheduled.isEmpty()) return "IN_PROGRESS (" + kingdomsPlaced
+                + " placed, " + scheduled.size() + " queued)";
+        return "COMPLETE (" + kingdomsPlaced + " kingdoms placed)";
+    }
+
+    public static int getKingdomsPlaced() { return kingdomsPlaced; }
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         ServerLevel overworld = event.getServer().overworld();
         long tick = overworld.getGameTime();
 
-        if (!seederRan) {
-            seederRan = true;
+        if (!kingdomsPlanned) {
             VillageSavedData data = VillageSavedData.get(overworld);
             if (data.getAllKingdoms().isEmpty()
                     && !VillageTypeRegistry.INSTANCE.getAvailableTypes().isEmpty()) {
-                planKingdoms(overworld, tick);
+                if (!WorldRoadSavedData.get(overworld).isGreatRoadGenerationComplete()) {
+                    if (!waitingLogged) {
+                        waitingLogged = true;
+                        System.out.println("[Worldgen] Waiting for great-road generation to complete...");
+                    }
+                } else {
+                    if (waitingLogged) {
+                        System.out.println("[Worldgen] Great-road generation complete. Beginning kingdom seeding.");
+                    }
+                    kingdomsPlanned = true;
+                    planKingdoms(overworld, tick);
+                }
+            } else {
+                kingdomsPlanned = true; // kingdoms already exist or types not ready
             }
         }
 
@@ -82,7 +108,16 @@ public class WorldgenKingdomSeeder {
         scheduledDelay = completed ? SPAWN_INTERVAL : 5;
     }
 
+    /** Returns atlas fill budget: 500ms during worldgen (no players / roads pending), 50ms otherwise. */
+    private static long worldgenBudgetNanos(ServerLevel level) {
+        boolean roadsComplete = WorldRoadSavedData.get(level).isGreatRoadGenerationComplete();
+        if (!roadsComplete || level.players().isEmpty()) return 500_000_000L;
+        return 50_000_000L;
+    }
+
     private static void planKingdoms(ServerLevel level, long tick) {
+        seederStartMs = System.currentTimeMillis();
+        kingdomsPlaced = 0;
         Random rng = new Random(level.getSeed() * 6364136223846793005L + 1442695040888963407L);
         int count = MIN_KINGDOMS + rng.nextInt(MAX_KINGDOMS - MIN_KINGDOMS + 1);
         System.out.println("[WorldGenKingdomSeeder] Planning " + count
@@ -109,7 +144,7 @@ public class WorldgenKingdomSeeder {
         WorldAtlas atlas = WorldAtlas.get(level);
 
         // ── Step 1: ensure atlas is filled around the planned centre ─────────
-        boolean done = atlas.ensureRegionFilled(level, sk.cx, sk.cz, 800, 30_000_000L);
+        boolean done = atlas.ensureRegionFilled(level, sk.cx, sk.cz, 800, worldgenBudgetNanos(level));
         if (!done) {
             scheduled.add(0, sk);
             if (++deferralCount % 20 == 0) {
@@ -155,6 +190,12 @@ public class WorldgenKingdomSeeder {
                 sk.composition,
                 msg -> System.out.println("  " + msg));
         logNearAncientRoad(level, sk.name, chosenOrigin);
+        kingdomsPlaced++;
+        if (scheduled.isEmpty()) {
+            long elapsed = System.currentTimeMillis() - seederStartMs;
+            System.out.println("[WorldGenKingdomSeeder] All " + kingdomsPlaced
+                    + " kingdoms placed. Total seeder time: " + elapsed + "ms");
+        }
         return true;
     }
 
@@ -199,7 +240,7 @@ public class WorldgenKingdomSeeder {
                 int tz = preferred.getZ() + (int)(Math.sin(angle) * offset);
 
                 // Re-fill atlas around the candidate so the site selector has data
-                atlas.ensureRegionFilled(level, tx, tz, 600, 30_000_000L);
+                atlas.ensureRegionFilled(level, tx, tz, 600, worldgenBudgetNanos(level));
                 var altOpt = AtlasSiteSelector.findBest(atlas, tx, tz, 500,
                         c -> c.isBuildable() && c.centerY() > level.getMinY() + 8);
                 if (altOpt.isEmpty()) continue;

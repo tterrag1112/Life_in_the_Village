@@ -285,6 +285,22 @@ Reduced scope because Phase 3b handles the common case. Periodic scan merges sus
 
 **Exit criteria:** Each great road has distinct, stable visual character.
 
+### Phase 7d — Worldgen ordering and atlas generation speed
+
+**Inserted after Phase 8d** to address testing pain (~25-minute worldgen). No changes to road graph output; all changes are performance and ordering.
+
+**Deliverables:**
+1. **Lazy atlas fill during routing** — A* in `AtlasRouteRouter.findGreatRoadRoute` fills atlas cells on-demand (cap 5000/call) instead of pre-filling full corridors. `FillAtlasCorridorTask` removed.
+2. **Serialize worldgen** — `WorldgenKingdomSeeder` waits for `greatRoadGenerationComplete` before planning kingdoms. Logs waiting/unblocked transitions.
+3. **Raise worldgen-time tick budget** — 500ms atlas fill budget when no players online OR roads not complete; 50ms otherwise.
+4. **Eliminate unnecessary iteration** — `WorldAtlas.ensureRegionFilled` collects unfilled cells first; returns `true` immediately if none found.
+5. **Timing instrumentation** — `GreatRoadGenerationQueue` logs wall-time, anchor seed time, per-trunk routing time, total lazy fills. `WorldgenKingdomSeeder` logs seeder wall time.
+6. **Debug commands** — `/liv road debug worldgen_status` and `/liv road debug worldgen_timing`.
+
+**Expected improvement:** ~25-minute worldgen → under 5 minutes. Atlas fill ~600k cells → ~20k (lazy), budget 50ms → 500ms during worldgen, kingdom seeder no longer competing for atlas budget during road generation.
+
+**Exit criteria:** World creation completes in under 5 minutes on a standard seed. `worldgen_timing` reports lazy fill count < 30,000 for a full generation.
+
 ### Phase 8 — Player-facing road gameplay
 
 **The missing "roads that matter to players" layer.**

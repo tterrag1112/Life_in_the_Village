@@ -26,14 +26,13 @@ import java.util.*;
  * One task is processed per server tick. Tasks are:
  * <ol>
  *   <li>{@link StepType#SEED_ANCHORS} — run once, populates anchor list and
- *       queues fill+route tasks for every pair.</li>
- *   <li>{@link StepType#FILL_ATLAS_CORRIDOR} — fills the atlas region along
- *       one anchor-pair corridor; retries on subsequent ticks until complete,
- *       then queues a {@link StepType#ROUTE_TRUNK} task.</li>
- *   <li>{@link StepType#ROUTE_TRUNK} — A* routes one pair; queues
- *       {@link StepType#COMMIT_EDGE} on success.</li>
+ *       queues one {@link StepType#ROUTE_TRUNK} per pair (no pre-fill).</li>
+ *   <li>{@link StepType#ROUTE_TRUNK} — A* routes one pair with lazy atlas fill
+ *       on-demand; queues {@link StepType#COMMIT_EDGE} on success.</li>
  *   <li>{@link StepType#COMMIT_EDGE} — commits nodes and edge to
  *       {@link WorldRoadGraph}; marks the saved data dirty.</li>
+ *   <li>{@link StepType#NAME_SELECTION} — selects and names great roads, sets
+ *       the generation-complete flag.</li>
  * </ol>
  *
  * <h3>Idempotence</h3>
@@ -75,6 +74,13 @@ public final class GreatRoadGenerationQueue {
     private static int totalPairs           = 0;
     private static int completedTrunks      = 0;
 
+    // Timing
+    private static long wallStartMs    = 0;
+    private static long wallEndMs      = 0;
+    private static long anchorSeedMs   = 0;
+    private static long totalRouteMs   = 0;
+    private static int  routingAttempts = 0;
+
     // =========================================================================
     // Public API
     // =========================================================================
@@ -92,6 +98,13 @@ public final class GreatRoadGenerationQueue {
         completedTrunks      = 0;
         generationStarted    = true;
         namingScheduled      = false;
+        wallStartMs          = System.currentTimeMillis();
+        wallEndMs            = 0;
+        anchorSeedMs         = 0;
+        totalRouteMs         = 0;
+        routingAttempts      = 0;
+
+        tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter.resetLazyFillCounter();
 
         taskQueue.add(new SeedAnchorsTask(worldSeed, GENERATION_REGION_HALF));
         System.out.println("[GreatRoadGen] Scheduled generation for seed " + worldSeed
@@ -165,11 +178,19 @@ public final class GreatRoadGenerationQueue {
     /** Returns the last set of seeded anchors, or null if not yet seeded. */
     public static List<AnchorCandidate> getSeededAnchors() { return seededAnchors; }
 
-    public static int getRemainingTaskCount()  { return taskQueue.size(); }
-    public static int getCompletedTrunks()     { return completedTrunks; }
-    public static int getTotalPairs()          { return totalPairs; }
-    public static int getTotalExpectedAnchors() { return totalExpectedAnchors; }
-    public static int getCommittedAnchors()    { return committedAnchors; }
+    public static int  getRemainingTaskCount()   { return taskQueue.size(); }
+    public static int  getCompletedTrunks()      { return completedTrunks; }
+    public static int  getTotalPairs()           { return totalPairs; }
+    public static int  getTotalExpectedAnchors() { return totalExpectedAnchors; }
+    public static int  getCommittedAnchors()     { return committedAnchors; }
+    public static long getAnchorSeedMs()         { return anchorSeedMs; }
+    public static long getTotalRouteMs()         { return totalRouteMs; }
+    public static int  getRoutingAttempts()      { return routingAttempts; }
+    public static long getWallTimeMs() {
+        if (wallStartMs == 0) return 0;
+        if (wallEndMs > 0)    return wallEndMs - wallStartMs;
+        return System.currentTimeMillis() - wallStartMs;
+    }
 
     /** Snapshot of step-type counts in the remaining queue, for status reporting. */
     public static Map<StepType, Integer> getQueueSnapshot() {
@@ -186,7 +207,8 @@ public final class GreatRoadGenerationQueue {
 
     public enum StepType {
         SEED_ANCHORS,
-        FILL_ATLAS_CORRIDOR,
+        /** @deprecated No longer used — atlas is filled lazily during routing (Phase 7d). */
+        @Deprecated FILL_ATLAS_CORRIDOR,
         ROUTE_TRUNK,
         COMMIT_EDGE,
         NAME_SELECTION
@@ -230,61 +252,23 @@ public final class GreatRoadGenerationQueue {
                     level, atlas);
 
             totalExpectedAnchors = seededAnchors.size();
+            anchorSeedMs = System.currentTimeMillis() - wallStartMs;
             System.out.println("[GreatRoadGen] Seeded " + totalExpectedAnchors
-                    + " anchors (axis="
+                    + " anchors in " + anchorSeedMs + "ms (axis="
                     + GreatRoadAnchorSeeder.getDominantAxisName(
                             GreatRoadAnchorSeeder.getDominantAxisIndex(worldSeed))
                     + ").");
 
-            // Determine pairs and queue FILL tasks for each
+            // Determine pairs and queue ROUTE tasks directly (atlas filled lazily during routing)
             List<AnchorPair> pairs = GreatRoadTrunkRouter.determinePairs(seededAnchors, worldSeed);
             totalPairs = pairs.size();
             System.out.println("[GreatRoadGen] Determined " + totalPairs + " pairs to route.");
 
             for (AnchorPair pair : pairs) {
-                taskQueue.add(new FillAtlasCorridorTask(pair.a(), pair.b(), worldSeed));
+                taskQueue.add(new RouteTrunkTask(pair.a(), pair.b(), worldSeed));
             }
 
             return true; // single-tick step
-        }
-    }
-
-    // =========================================================================
-    // FILL_ATLAS_CORRIDOR task
-    // =========================================================================
-
-    private static final class FillAtlasCorridorTask implements GenTask {
-        private final AnchorCandidate a;
-        private final AnchorCandidate b;
-        private final long worldSeed;
-
-        FillAtlasCorridorTask(AnchorCandidate a, AnchorCandidate b, long worldSeed) {
-            this.a         = a;
-            this.b         = b;
-            this.worldSeed = worldSeed;
-        }
-
-        @Override public StepType stepType() { return StepType.FILL_ATLAS_CORRIDOR; }
-
-        @Override
-        public boolean process(ServerLevel level) {
-            WorldAtlas atlas = WorldAtlas.get(level);
-            BlockPos posA = a.position();
-            BlockPos posB = b.position();
-
-            int mx = (posA.getX() + posB.getX()) / 2;
-            int mz = (posA.getZ() + posB.getZ()) / 2;
-            long dx = (long)(posB.getX() - posA.getX());
-            long dz = (long)(posB.getZ() - posA.getZ());
-            int halfDist = (int)(Math.sqrt((double)(dx * dx + dz * dz)) / 2.0);
-            int radius   = Math.min(halfDist + 500, 8_000);
-
-            boolean filled = atlas.ensureRegionFilled(level, mx, mz, radius, 50_000_000L);
-            if (filled) {
-                // Atlas is ready — queue the routing step at the end of the queue
-                taskQueue.add(new RouteTrunkTask(a, b, worldSeed));
-            }
-            return filled;
         }
     }
 
@@ -309,7 +293,11 @@ public final class GreatRoadGenerationQueue {
         public boolean process(ServerLevel level) {
             WorldAtlas atlas = WorldAtlas.get(level);
 
-            PlannedTrunk trunk = GreatRoadTrunkRouter.routePair(a, b, atlas, worldSeed);
+            long routeStart = System.currentTimeMillis();
+            // Pass the level so the router can fill atlas cells lazily during A*
+            PlannedTrunk trunk = GreatRoadTrunkRouter.routePair(a, b, atlas, worldSeed, level);
+            totalRouteMs += System.currentTimeMillis() - routeStart;
+            routingAttempts++;
 
             if (trunk != null) {
                 taskQueue.add(new CommitEdgeTask(trunk));
@@ -424,10 +412,17 @@ public final class GreatRoadGenerationQueue {
             roadData.setGreatRoadGenerationComplete(true);
             roadData.markDirty();
 
-            System.out.println("[GreatRoadGen] Generation complete: "
-                    + committedAnchors + " anchors, "
-                    + completedTrunks + " trunks committed"
-                    + " (" + (totalPairs - completedTrunks) + " pairs failed or skipped).");
+            wallEndMs = System.currentTimeMillis();
+            long wallMs  = wallEndMs - wallStartMs;
+            long avgRoute = routingAttempts > 0 ? totalRouteMs / routingAttempts : 0;
+            int lazyFills = tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter.getTotalLazyFills();
+
+            System.out.println("[GreatRoadGen] Generation complete:");
+            System.out.println("  Anchors: " + committedAnchors + " (seeded in " + anchorSeedMs + "ms)");
+            System.out.println("  Trunks planned: " + completedTrunks + " of " + totalPairs
+                    + " (" + totalRouteMs + "ms total; avg " + avgRoute + "ms/trunk)");
+            System.out.println("  Atlas cells sampled during routing: " + lazyFills);
+            System.out.println("  Total wall time: " + (wallMs / 1000) + "s (" + wallMs + "ms)");
             return true;
         }
     }

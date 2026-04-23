@@ -2,12 +2,12 @@ package tterrag1112.life_in_the_village.Events;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.MobSpawnType;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.level.ChunkPos;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.entity.living.MobSpawnEvent;
+import net.neoforged.neoforge.event.entity.living.FinalizeSpawnEvent;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <ol>
  *   <li>Only {@link Monster} entities are affected. Passive mobs are never
  *       suppressed — animals and villagers near roads enhance the world-feel.</li>
- *   <li>Only {@link MobSpawnType#NATURAL} spawns are checked. Spawner blocks,
+ *   <li>Only {@link EntitySpawnReason#NATURAL} spawns are checked. Spawner blocks,
  *       structure spawns, and future programmatic road events all bypass this
  *       handler entirely.</li>
  *   <li>Suppression fires only when {@code level.isDay()} returns {@code true}.
@@ -76,12 +76,12 @@ public final class RoadSafetySystem {
     // =========================================================================
 
     @SubscribeEvent
-    public static void onFinalizeSpawn(MobSpawnEvent.FinalizeSpawn event) {
+    public static void onFinalizeSpawn(FinalizeSpawnEvent event) {
         // ── Guard: hostile mob only ────────────────────────────────────────────
         if (!(event.getEntity() instanceof Monster)) return;
 
         // ── Guard: natural spawning only (not spawners, structures, events) ───
-        if (event.getSpawnType() != MobSpawnType.NATURAL) return;
+        if (event.getSpawnReason() != EntitySpawnReason.NATURAL) return;
 
         // ── Guard: server side only ────────────────────────────────────────────
         if (!(event.getLevel() instanceof ServerLevel level)) return;

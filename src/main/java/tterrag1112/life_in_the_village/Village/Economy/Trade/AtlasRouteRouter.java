@@ -347,24 +347,43 @@ public class AtlasRouteRouter {
     }
 
     // =========================================================================
+    // Lazy-fill counter (reset per generation run, read by debug commands)
+    // =========================================================================
+
+    private static final int MAX_LAZY_FILLS = 5_000;
+    private static int totalLazyFills = 0;
+
+    public static void resetLazyFillCounter() { totalLazyFills = 0; }
+    public static int getTotalLazyFills()      { return totalLazyFills; }
+
+    // =========================================================================
     // Great-road route (modified cost profile)
     // =========================================================================
 
     /**
-     * Finds a cell-level path optimised for great roads. Uses a different cost
-     * profile than the standard connector router: higher steep/swamp penalties
-     * (great roads avoided ridges and bogs), lower river-adjacent cost (crossings
-     * become natural landmarks), weak road-present discount (great roads are the
-     * trunks, not feeders), and a higher node budget for long distances.
-     *
-     * <p>No attractor support — at worldgen time there are no trade hubs yet.
-     *
-     * @param worldSeed provided for future per-route seeding; not currently used
-     *                  in the cost function itself
+     * Finds a cell-level path optimised for great roads. Convenience overload —
+     * no atlas filling (caller must pre-fill or use the level-aware overload).
      */
     public static List<Long> findGreatRoadRoute(WorldAtlas atlas,
                                                 BlockPos from, BlockPos to,
                                                 long worldSeed) {
+        return findGreatRoadRoute(atlas, from, to, worldSeed, null);
+    }
+
+    /**
+     * Finds a cell-level path optimised for great roads. When {@code level} is
+     * non-null, unfilled cells encountered during A* expansion are sampled
+     * on-demand (lazy fill), up to {@link #MAX_LAZY_FILLS} fills per call.
+     * This replaces the old pre-fill corridor strategy and makes routing
+     * 10–50× faster during worldgen.
+     *
+     * @param worldSeed provided for future per-route seeding
+     * @param level     server level for on-demand atlas fill; null = no filling
+     */
+    public static List<Long> findGreatRoadRoute(WorldAtlas atlas,
+                                                BlockPos from, BlockPos to,
+                                                long worldSeed,
+                                                @Nullable ServerLevel level) {
         int startCx = WorldAtlas.blockToCell(from.getX());
         int startCz = WorldAtlas.blockToCell(from.getZ());
         int endCx   = WorldAtlas.blockToCell(to.getX());
@@ -387,7 +406,8 @@ public class AtlasRouteRouter {
         open.add(start);
         all.put(startKey, start);
 
-        int iterations = 0;
+        int iterations   = 0;
+        int lazyFillCount = 0;
         Node best = start;
 
         while (!open.isEmpty() && iterations < GR_MAX_NODES) {
@@ -413,6 +433,16 @@ public class AtlasRouteRouter {
                     if (closed.contains(nKey)) continue;
 
                     AtlasCell cell = atlas.getCellByCoord(nx, nz);
+
+                    // On-demand fill for unfilled cells when a level is available
+                    if (cell == null && level != null && lazyFillCount < MAX_LAZY_FILLS) {
+                        int bx = (nx << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+                        int bz = (nz << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+                        cell = atlas.ensureCell(level, bx, bz);
+                        lazyFillCount++;
+                        totalLazyFills++;
+                    }
+
                     float cost = greatRoadCellCost(cell);
                     if (cost >= Float.MAX_VALUE / 2) continue; // impassable
 
@@ -436,11 +466,15 @@ public class AtlasRouteRouter {
             }
         }
 
-        if (best.parent != null) {
+        if (lazyFillCount >= MAX_LAZY_FILLS) {
+            System.out.println("[GreatRoad Router] lazy fill cap reached (" + MAX_LAZY_FILLS
+                    + ") for " + from.toShortString() + " → " + to.toShortString()
+                    + "; using partial path");
+        } else if (best.parent != null) {
             System.out.println("[GreatRoad Router] budget exhausted ("
                     + iterations + " nodes), using partial path");
-            return reconstruct(best);
         }
+        if (best.parent != null) return reconstruct(best);
         return Collections.emptyList();
     }
 

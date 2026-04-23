@@ -37,6 +37,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
 import tterrag1112.life_in_the_village.Events.GreatRoadGenerationQueue;
+import tterrag1112.life_in_the_village.Kingdom.WorldgenKingdomSeeder;
 import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter.CharacterTag;
@@ -272,6 +273,11 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("replace_toll")
                                         .then(Commands.argument("nodeId", StringArgumentType.word())
                                                 .executes(RoadGraphDebugCommand::replaceToll)))
+                                // ── Phase 7d: worldgen timing ─────────────────────────────────
+                                .then(Commands.literal("worldgen_status")
+                                        .executes(RoadGraphDebugCommand::worldgenStatus))
+                                .then(Commands.literal("worldgen_timing")
+                                        .executes(RoadGraphDebugCommand::worldgenTiming))
                         )
                 )
         );
@@ -3291,6 +3297,67 @@ public class RoadGraphDebugCommand {
         player.sendSystemMessage(Component.literal(
                 "You pay " + fee.amountBronze() + " bronze toll to "
                         + kName + ". Safe travels."));
+        return 1;
+    }
+
+    // =========================================================================
+    // Phase 7d — worldgen_status
+    // =========================================================================
+
+    private static int worldgenStatus(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level   = ctx.getSource().getLevel();
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        WorldAtlas atlas    = WorldAtlas.get(level);
+
+        boolean grComplete   = roadData.isGreatRoadGenerationComplete();
+        int completedTrunks  = GreatRoadGenerationQueue.getCompletedTrunks();
+        int totalPairs       = GreatRoadGenerationQueue.getTotalPairs();
+        int remaining        = GreatRoadGenerationQueue.getRemainingTaskCount();
+        long budgetMs        = (level.players().isEmpty() || !grComplete) ? 500L : 50L;
+        int atlasCells       = atlas.size();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("[worldgen_status]\n");
+        sb.append("  Great roads: ").append(grComplete ? "COMPLETE" : "IN_PROGRESS");
+        if (!grComplete) {
+            sb.append(" (").append(completedTrunks).append("/").append(totalPairs)
+              .append(" trunks, ").append(remaining).append(" tasks queued)");
+        }
+        sb.append("\n  Kingdom seeding: ").append(WorldgenKingdomSeeder.getStatusString())
+          .append("\n  Atlas fill budget: ").append(budgetMs).append("ms/tick")
+          .append("\n  Atlas cells filled: ").append(atlasCells);
+
+        String report = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(report), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Phase 7d — worldgen_timing
+    // =========================================================================
+
+    private static int worldgenTiming(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        long anchorMs   = GreatRoadGenerationQueue.getAnchorSeedMs();
+        long routeMs    = GreatRoadGenerationQueue.getTotalRouteMs();
+        int  attempts   = GreatRoadGenerationQueue.getRoutingAttempts();
+        int  lazyFills  = tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter.getTotalLazyFills();
+        long wallMs     = GreatRoadGenerationQueue.getWallTimeMs();
+        long avgMs      = attempts > 0 ? routeMs / attempts : 0;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("[worldgen_timing] Last great-road generation run:\n");
+        sb.append("  Anchor seeding: ").append(anchorMs).append("ms\n");
+        sb.append("  Trunk routing: ").append(routeMs).append("ms total (")
+          .append(attempts).append(" attempts");
+        if (attempts > 0) sb.append(", avg ").append(avgMs).append("ms");
+        sb.append(")\n");
+        sb.append("  Atlas cells sampled during routing: ").append(lazyFills).append("\n");
+        sb.append("  Total wall time: ").append(wallMs / 1000).append("s (").append(wallMs).append("ms)");
+
+        String report = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(report), false);
         return 1;
     }
 }

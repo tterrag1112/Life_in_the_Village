@@ -140,18 +140,20 @@ public final class GreatRoadTrunkRouter {
     // =========================================================================
 
     /**
-     * Routes a single anchor pair. The atlas must already be sufficiently
-     * filled along the A→B corridor before this is called.
+     * Routes a single anchor pair with lazy atlas fill. Cells are sampled
+     * on-demand during A* if {@code level} is provided.
      *
+     * @param level server level for on-demand atlas fill; null = no filling
      * @return a planned trunk, or {@code null} if routing failed or the
      *         resulting path is degenerate
      */
     public static PlannedTrunk routePair(AnchorCandidate a, AnchorCandidate b,
-                                         WorldAtlas atlas, long worldSeed) {
+                                         WorldAtlas atlas, long worldSeed,
+                                         net.minecraft.server.level.ServerLevel level) {
         BlockPos posA = a.position();
         BlockPos posB = b.position();
 
-        List<Long> cellPath = AtlasRouteRouter.findGreatRoadRoute(atlas, posA, posB, worldSeed);
+        List<Long> cellPath = AtlasRouteRouter.findGreatRoadRoute(atlas, posA, posB, worldSeed, level);
 
         if (cellPath.isEmpty()) {
             System.out.println("[GreatRoadRouter] No route found: "
@@ -169,6 +171,14 @@ public final class GreatRoadTrunkRouter {
 
         GreatRoadCharacter character = GreatRoadCharacterAnalyzer.analyze(cellPath, atlas, worldSeed);
         return new PlannedTrunk(a, b, cellPath, pathCost, onAxis, character);
+    }
+
+    /**
+     * Convenience overload with no atlas fill (caller must pre-fill corridor).
+     */
+    public static PlannedTrunk routePair(AnchorCandidate a, AnchorCandidate b,
+                                         WorldAtlas atlas, long worldSeed) {
+        return routePair(a, b, atlas, worldSeed, null);
     }
 
     // =========================================================================

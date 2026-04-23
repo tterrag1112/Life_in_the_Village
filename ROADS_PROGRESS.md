@@ -4,11 +4,11 @@ Append-only. Most recent entry at the bottom. Each session ends with an entry su
 
 ## Current phase
 
-**Phase 8d** — Tolls and checkpoints. Complete. Phase 8 fully done.
+**Phase 7d** (inserted after 8d) — Worldgen ordering and atlas generation speed. Complete.
 
 ## Current slice
 
-Phase 8 complete. Next: Phase 9 per ROADS_PLAN.md.
+Phase 7d complete. Phase 8 complete. Next: Phase 9 per ROADS_PLAN.md.
 
 ## Acceptance criteria for current slice
 
@@ -1066,3 +1066,53 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 **Phase 8 complete.** Phase 8a (terrain safety system), 8b (road events + TravellingGroup engine), 8c (shelter expectation), and 8d (tolls and checkpoints) all implemented.
 
 **Next: Phase 8d — tolls and checkpoints (kingdom border toll gates).**
+
+---
+
+### 2026-04-23 — Phase 7d implemented: worldgen ordering and atlas generation speed
+
+**Note:** Inserted out of order after Phase 8d to address testing pain (worldgen taking ~25 minutes in practice).
+
+**Phase:** 7d — Worldgen ordering and atlas generation speed
+
+**Files modified:**
+
+- `Village/Economy/Trade/AtlasRouteRouter.java` — Added `findGreatRoadRoute(atlas, from, to, worldSeed, level)` overload. When `level` is non-null, A* expansion samples unfilled cells on-demand via `atlas.ensureCell()` (lazy fill), up to `MAX_LAZY_FILLS = 5000` per routing call. Added `totalLazyFills` counter with `resetLazyFillCounter()` and `getTotalLazyFills()` accessors for debug commands and timing. Old 4-arg overload delegates to new 5-arg with `null` level.
+
+- `Village/Roads/Graph/Worldgen/GreatRoadTrunkRouter.java` — Added `routePair(a, b, atlas, worldSeed, level)` overload that passes `level` to `findGreatRoadRoute`. Old 4-arg `routePair` retained as convenience delegate. `planTrunks` (synchronous debug wrapper) unchanged.
+
+- `Events/GreatRoadGenerationQueue.java` — **Removed `FillAtlasCorridorTask`** class entirely. `SeedAnchorsTask.process` now queues `RouteTrunkTask` directly per pair (no intermediate fill). `RouteTrunkTask.process` calls `routePair(a, b, atlas, worldSeed, level)` with the level so A* fills lazily. Added timing fields: `wallStartMs`, `wallEndMs`, `anchorSeedMs`, `totalRouteMs`, `routingAttempts`. `scheduleGeneration` resets all timing and calls `AtlasRouteRouter.resetLazyFillCounter()`. `NameSelectionTask.process` emits completion log with anchors/trunks/lazy-fill-count/wall-time. `StepType.FILL_ATLAS_CORRIDOR` kept in enum (marked `@Deprecated`) for any serialized queue states in flight. Added accessors: `getAnchorSeedMs()`, `getTotalRouteMs()`, `getRoutingAttempts()`, `getWallTimeMs()`.
+
+- `Kingdom/WorldgenKingdomSeeder.java` — **Replaced `seederRan` with road-generation gate.** Kingdom planning now waits for `WorldRoadSavedData.isGreatRoadGenerationComplete() == true`. Added `waitingLogged` flag to print `[Worldgen] Waiting for great-road generation to complete...` once. Logs `[Worldgen] Great-road generation complete. Beginning kingdom seeding.` when unblocked. Added `worldgenBudgetNanos(level)`: returns 500ms when no players online OR roads not complete, 50ms otherwise (10× budget during worldgen). Applied to both `processSpawn` and `trySpacedOrigin` `ensureRegionFilled` calls. Added `kingdomsPlaced` counter. Logs total seeder wall time when last kingdom is placed. Added `getStatusString()` and `getKingdomsPlaced()` accessors.
+
+- `World/Atlas/WorldAtlas.java` — Optimized `ensureRegionFilled`: two-pass approach — first pass collects unfilled cells via fast HashMap lookups only (no sampling, no nanoTime calls), then returns `true` immediately if `unfilled.isEmpty()` (fast-path exit for already-filled regions). Second pass applies the time budget only to the unfilled cells, preserving spiral ordering for budget-aware incremental fill.
+
+- `Events/RoadSafetySystem.java` — **Fixed compilation bug.** Changed `MobSpawnEvent.FinalizeSpawn` → `FinalizeSpawnEvent` (top-level class), `MobSpawnType.NATURAL` → `EntitySpawnReason.NATURAL`, `event.getSpawnType()` → `event.getSpawnReason()`. Updated Javadoc reference accordingly.
+
+- `Commands/RoadGraphDebugCommand.java` — Added 2 debug commands:
+  - `worldgen_status` — shows great-road complete/in-progress (N/M trunks, tasks queued), kingdom seeding status (waiting/in-progress/complete with counts), atlas fill budget (ms/tick), total atlas cells filled.
+  - `worldgen_timing` — shows last generation run: anchor seed time, trunk routing total/average, atlas cells lazily sampled, total wall time.
+
+**Expected performance improvement:**
+- Atlas fill per trunk: ~15,800 cells pre-fill (8000-block radius per pair) → ~300–1000 lazy fills during A* (only cells actually visited). For ~38 pairs: 600,000 cells → ~20,000 cells total.
+- At 50–150µs per cell: ~90 seconds → ~3 seconds for atlas fill during road generation.
+- Kingdom seeder no longer competes with road generation for atlas budget.
+- Worldgen budget raised to 500ms/tick while no players online; normal gameplay budget unchanged at 50ms.
+- Target: world startup under 5 minutes (down from ~25 minutes).
+
+**Architecture decisions:**
+- Lazy fill in the A* inner loop rather than as a pre-pass: fills only cells the pathfinder actually visits, which is typically a narrow corridor. Pre-filling a full circular region of radius `halfDist + 500` was the dominant bottleneck.
+- `MAX_LAZY_FILLS = 5000` cap: safety valve for pathological cases. At 12,000 A* node budget and 8-connected neighbourhood, 5,000 fills is generous for any real trunk route (~300–1000 fills expected). If cap is hit, partial path is used (same as node-budget exhaustion).
+- `totalLazyFills` is session-total (not per-route), reset at `scheduleGeneration`. Gives overall atlas efficiency across the full generation run.
+- `FILL_ATLAS_CORRIDOR` kept in `StepType` enum for any existing in-flight serialized queues. Marked `@Deprecated`. Not instantiable (class removed) but enum value won't cause deserialization crashes.
+- `worldgenBudgetNanos` uses `level.players().isEmpty()` as worldgen proxy: simple, no additional state needed.
+- `ensureRegionFilled` two-pass preserves spiral ordering — first-to-fill cells remain the innermost ones. Budget-aware incremental fill behavior is unchanged; only the fully-filled fast-path is new.
+
+**Deviations from spec:**
+- None.
+
+**Carryovers:**
+- Guard NPC spawning at toll gates (Phase 10a).
+- Player currency deduction at toll gates (Phase 10).
+- Linear blockPath scan in `RoadUnderfootDetector` / `RoadProximityChecker` (noted since Phase 8a). Still deferred.
+- All Phase 6 carryovers remain.
