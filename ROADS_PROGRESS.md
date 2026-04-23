@@ -526,3 +526,41 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
   accessible from `Commands` package ✓
 
 **Current phase:** Phase 5c complete. Phase 5 (Graph Realization) fully done. Next: Phase 6 (upkeep / traffic propagation).
+
+---
+
+## Phase 7a — Great-Road Anchor Graph at Worldgen (2026-04-23)
+
+**Goal:** Generate the Old Realm great-road skeleton deterministically at world creation so that Phase 9 village placement can query it. Block realization remains lazy (Phase 5c).
+
+**Files created:**
+- `Village/Roads/Graph/Worldgen/GreatRoadAnchorSeeder.java` — Poisson-disk anchor seeder (2000-block grid cells, 4000-block min separation). Quality scoring via atlas cells (base 60, steep −30, coast +10, river_adj +15, mountain_pass +20). Dominant-axis marking via perpendicular-distance line test (threshold 1000→3000→closest-2 fallback, cap 3 axis anchors, +25 quality bonus).
+- `Village/Roads/Graph/Worldgen/GreatRoadTrunkRouter.java` — Determines anchor pairs (axis: nearest-1 within 12 000 blocks; off-axis: nearest-2 within 8 000 blocks) and routes trunks via `AtlasRouteRouter.findGreatRoadRoute`. Separation: `determinePairs` (no atlas), `routePair` (atlas pre-filled), `planTrunks` (synchronous convenience wrapper).
+- `Events/GreatRoadGenerationQueue.java` — Cross-tick task queue. One task per tick: SEED_ANCHORS → FILL_ATLAS_CORRIDOR (retries until `ensureRegionFilled`) → ROUTE_TRUNK → COMMIT_EDGE. Idempotence via proximity check (100 blocks) for anchor nodes and edge-pair dedup. Post-generation: verifies invariants 3 & 4, runs `GraphInvariantValidator`, sets `greatRoadGenerationComplete` flag.
+
+**Files modified:**
+- `Networking/WorldRoadSavedData.java` — Added `greatRoadGenerationComplete` field (bool, default false). 3-field `Snapshot` record with `Codec.BOOL.optionalFieldOf("greatRoadGenerationComplete", false)`. Added getter/setter.
+- `Village/Economy/Trade/AtlasRouteRouter.java` — Added `findGreatRoadRoute(WorldAtlas, BlockPos, BlockPos, long)` with GR-tuned cost profile (steep=15, swamp=8, forest=1.3, river_adj additive=0.9, road_discount=0.8, MAX_NODES=12 000) and `greatRoadCellCost(AtlasCell)`.
+- `Events/TickSystems.java` — Added `GreatRoadGenerationTickSystem` (interval=1, priority=155).
+- `Events/TickSubsystemRegistry.java` — Registered `GreatRoadGenerationTickSystem` between `GraphEdgeRealizationSystem` and `ParallelismCleanupSystem`.
+- `Commands/RoadGraphDebugCommand.java` — Added 5 Phase 7a debug commands: `show_great_roads`, `show_anchors`, `generation_status`, `force_complete_generation`, `dominant_axis`. Added imports for `GreatRoadGenerationQueue` and `GreatRoadAnchorSeeder`.
+
+**Invariants upheld:**
+- Invariant 3: `edge.setMaintenance(100)` on every committed great-road edge.
+- Invariant 4: `maintainerVillageIds` empty; anchor nodes have `Optional.empty()` kingdom affinity.
+- Invariant 10: Logical graph committed at worldgen (COMMIT_EDGE task); block realization deferred to Phase 5c lazy system.
+
+**Design deviations from spec:**
+- `seedAnchors` gained a `ServerLevel level` parameter (required by `atlas.ensureCell(level, x, z)`).
+- `planTrunks` similarly gained `level` (needed by `fillCorridor` → `atlas.ensureRegionFilled`).
+- `GreatRoadTrunkRouter.determinePairs` introduced as atlas-free pairing step so FILL and ROUTE can be separated across ticks.
+
+**Compilation status:** Manual static review only (no build toolchain available in this environment).
+- All imports verified against existing codebase references.
+- `AtlasRouteRouter.findGreatRoadRoute`: mirrors existing `findRoute` structure; uses `AtlasCell` flag constants confirmed from `AtlasCell.java`.
+- `RoadEdge.MeanderProfile`, `RoadEdge.create`, `edge.setMaintenance`, `RoadNode.NodeType.GREAT_ROAD_ANCHOR` — all confirmed present in existing code.
+- `WorldRoadSavedData` codec uses `optionalFieldOf` pattern matching existing `migrated` field.
+
+**Test observations:** Not yet tested in-game (requires full mod build).
+
+**Next:** Phase 7b — named roads (or Phase 6 upkeep/traffic if that was deferred).

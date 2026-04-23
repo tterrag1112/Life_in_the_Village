@@ -32,18 +32,22 @@ public class WorldRoadSavedData extends SavedData {
 
     // ── Codec ────────────────────────────────────────────────────────────────
 
-    private record Snapshot(WorldRoadGraph graph, boolean migrated) {
+    private record Snapshot(WorldRoadGraph graph, boolean migrated,
+                            boolean greatRoadGenerationComplete) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
                 Codec.BOOL.optionalFieldOf("migrated", false)
-                        .forGetter(Snapshot::migrated)
+                        .forGetter(Snapshot::migrated),
+                Codec.BOOL.optionalFieldOf("greatRoadGenerationComplete", false)
+                        .forGetter(Snapshot::greatRoadGenerationComplete)
         ).apply(i, Snapshot::new));
     }
 
     public static final Codec<WorldRoadSavedData> CODEC = Snapshot.CODEC.xmap(
             snap -> {
-                WorldRoadSavedData data = new WorldRoadSavedData(snap.graph(), snap.migrated());
+                WorldRoadSavedData data = new WorldRoadSavedData(
+                        snap.graph(), snap.migrated(), snap.greatRoadGenerationComplete());
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -55,7 +59,7 @@ public class WorldRoadSavedData extends SavedData {
                 }
                 return data;
             },
-            data -> new Snapshot(data.graph, data.migrated)
+            data -> new Snapshot(data.graph, data.migrated, data.greatRoadGenerationComplete)
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -68,18 +72,22 @@ public class WorldRoadSavedData extends SavedData {
 
     private final WorldRoadGraph graph;
     private boolean migrated;
+    private boolean greatRoadGenerationComplete;
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
     /** Default constructor — creates an empty graph for a fresh world. */
     public WorldRoadSavedData() {
-        this.graph    = new WorldRoadGraph();
-        this.migrated = false;
+        this.graph                       = new WorldRoadGraph();
+        this.migrated                    = false;
+        this.greatRoadGenerationComplete = false;
     }
 
-    private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated) {
-        this.graph    = graph;
-        this.migrated = migrated;
+    private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated,
+                               boolean greatRoadGenerationComplete) {
+        this.graph                       = graph;
+        this.migrated                    = migrated;
+        this.greatRoadGenerationComplete = greatRoadGenerationComplete;
     }
 
     // ── Accessor ─────────────────────────────────────────────────────────────
@@ -95,6 +103,12 @@ public class WorldRoadSavedData extends SavedData {
     public boolean isMigrated() { return migrated; }
 
     public void setMigrated(boolean migrated) { this.migrated = migrated; }
+
+    public boolean isGreatRoadGenerationComplete() { return greatRoadGenerationComplete; }
+
+    public void setGreatRoadGenerationComplete(boolean complete) {
+        this.greatRoadGenerationComplete = complete;
+    }
 
     /** Exposes {@link SavedData#setDirty()} to external callers. */
     public void markDirty() { setDirty(); }
