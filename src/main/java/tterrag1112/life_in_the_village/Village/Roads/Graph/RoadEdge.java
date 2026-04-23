@@ -97,7 +97,9 @@ public class RoadEdge {
                     .forGetter(e -> e.primitives != null ? e.primitives : new ArrayList<>()),
             BlockPos.CODEC.listOf()
                     .optionalFieldOf("decorationPositions", new ArrayList<>())
-                    .forGetter(e -> e.decorationPositions)
+                    .forGetter(e -> e.decorationPositions),
+            Codec.STRING.optionalFieldOf("roadName")
+                    .forGetter(e -> e.roadName)
     ).apply(i, RoadEdge::fromCodec));
 
     private static RoadEdge fromCodec(
@@ -107,7 +109,8 @@ public class RoadEdge {
             int maintenance, long trafficCounter,
             List<UUID> maintainerVillageIds, List<Long> staleList,
             boolean realized, List<RoadPrimitive> primitives,
-            List<BlockPos> decorationPositions) {
+            List<BlockPos> decorationPositions,
+            Optional<String> roadName) {
         RoadEdge e = new RoadEdge(
                 edgeId, nodeAId, nodeBId,
                 new ArrayList<>(cellPath), new ArrayList<>(blockPath),
@@ -117,6 +120,7 @@ public class RoadEdge {
                 realized);
         e.primitives = primitives.isEmpty() ? null : new ArrayList<>(primitives);
         e.decorationPositions = new ArrayList<>(decorationPositions);
+        e.roadName = roadName;
         return e;
     }
 
@@ -138,6 +142,9 @@ public class RoadEdge {
     List<RoadPrimitive> primitives;
     /** Block positions of all placed decoration blocks along this edge (persistent). */
     List<BlockPos> decorationPositions;
+
+    /** Optional name for named great roads. Empty for all non-named edges. */
+    Optional<String> roadName = Optional.empty();
 
     /**
      * Transient flag: maintenance crossed a Phase 6b band boundary this upkeep
@@ -246,4 +253,8 @@ public class RoadEdge {
 
     public boolean isNeedsDecorationRefresh()              { return needsDecorationRefresh; }
     public void setNeedsDecorationRefresh(boolean refresh) { this.needsDecorationRefresh = refresh; }
+
+    public Optional<String> getRoadName()     { return roadName; }
+    public void setRoadName(String name)      { this.roadName = Optional.of(name); }
+    public void clearRoadName()               { this.roadName = Optional.empty(); }
 }

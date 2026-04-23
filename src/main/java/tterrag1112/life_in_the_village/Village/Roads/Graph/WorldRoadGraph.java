@@ -5,6 +5,8 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 
 import java.util.*;
+import java.util.Locale;
+import java.util.stream.Collectors;
 
 /**
  * The canonical world road graph. Holds all {@link RoadNode}s and
@@ -282,6 +284,28 @@ public class WorldRoadGraph {
         addEdge(halfB);
 
         return Optional.of(new SplitResult(junctionNode.nodeId(), halfA.getEdgeId(), halfB.getEdgeId()));
+    }
+
+    // ── Named great-road queries ─────────────────────────────────────────────
+
+    /** Returns all GREAT_ROAD edges that have been assigned a name. */
+    public List<RoadEdge> namedGreatRoads() {
+        return edges.values().stream()
+                .filter(e -> e.getTier() == RoadEdge.EdgeTier.GREAT_ROAD
+                        && e.getRoadName().isPresent())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Returns the first GREAT_ROAD edge whose name starts with {@code namePrefix}
+     * (case-insensitive). Returns empty if no match.
+     */
+    public Optional<RoadEdge> findByName(String namePrefix) {
+        String lower = namePrefix.toLowerCase(Locale.ROOT);
+        return edges.values().stream()
+                .filter(e -> e.getRoadName().isPresent()
+                        && e.getRoadName().get().toLowerCase(Locale.ROOT).startsWith(lower))
+                .findFirst();
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────

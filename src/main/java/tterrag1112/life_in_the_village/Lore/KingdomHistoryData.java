@@ -280,7 +280,10 @@ public class KingdomHistoryData {
         // Player
         PLAYER_BECAME_RULER,
         PLAYER_ABDICATED,
-        HERO_AROSE          // player reached LEGEND adventurer tier
+        HERO_AROSE,         // player reached LEGEND adventurer tier
+
+        // Old Realm / worldgen
+        ANCIENT_ROAD_FOUNDED_NEAR  // kingdom founding near a named great road
     }
 
 

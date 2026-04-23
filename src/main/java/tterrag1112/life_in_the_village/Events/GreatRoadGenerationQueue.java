@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnc
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTrunkRouter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTrunkRouter.AnchorPair;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTrunkRouter.PlannedTrunk;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.NamedRoadSelector;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 import net.minecraft.core.BlockPos;
 
@@ -58,6 +59,8 @@ public final class GreatRoadGenerationQueue {
     private static boolean initialized = false;
     /** Whether scheduleGeneration has been called (i.e., generation is in flight). */
     private static boolean generationStarted = false;
+    /** Whether the NAME_SELECTION task has been queued (prevents double-queuing). */
+    private static boolean namingScheduled = false;
 
     /** The main task queue. Processed one task per tick. */
     private static final Deque<GenTask> taskQueue = new ArrayDeque<>();
@@ -81,12 +84,13 @@ public final class GreatRoadGenerationQueue {
      */
     public static void scheduleGeneration(ServerLevel level, long worldSeed) {
         taskQueue.clear();
-        seededAnchors       = null;
+        seededAnchors        = null;
         totalExpectedAnchors = 0;
-        committedAnchors    = 0;
-        totalPairs          = 0;
-        completedTrunks     = 0;
-        generationStarted   = true;
+        committedAnchors     = 0;
+        totalPairs           = 0;
+        completedTrunks      = 0;
+        generationStarted    = true;
+        namingScheduled      = false;
 
         taskQueue.add(new SeedAnchorsTask(worldSeed, GENERATION_REGION_HALF));
         System.out.println("[GreatRoadGen] Scheduled generation for seed " + worldSeed
@@ -142,14 +146,15 @@ public final class GreatRoadGenerationQueue {
             }
         }
         int steps = 0;
-        while (!taskQueue.isEmpty() && !isComplete(level) && steps < 100_000) {
+        while (!isComplete(level) && steps < 100_000) {
+            if (taskQueue.isEmpty()) {
+                onGenerationComplete(level); // queues NAME_SELECTION if not yet scheduled
+                if (taskQueue.isEmpty()) break;
+            }
             GenTask task = taskQueue.peek();
             boolean done = task.process(level);
             if (done) taskQueue.poll();
             steps++;
-        }
-        if (taskQueue.isEmpty() && !isComplete(level)) {
-            onGenerationComplete(level);
         }
         return steps;
     }
@@ -182,7 +187,8 @@ public final class GreatRoadGenerationQueue {
         SEED_ANCHORS,
         FILL_ATLAS_CORRIDOR,
         ROUTE_TRUNK,
-        COMMIT_EDGE
+        COMMIT_EDGE,
+        NAME_SELECTION
     }
 
     // =========================================================================
@@ -396,28 +402,58 @@ public final class GreatRoadGenerationQueue {
     }
 
     // =========================================================================
+    // NAME_SELECTION task
+    // =========================================================================
+
+    private static final class NameSelectionTask implements GenTask {
+        @Override public StepType stepType() { return StepType.NAME_SELECTION; }
+
+        @Override
+        public boolean process(ServerLevel level) {
+            WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+            WorldRoadGraph     graph    = roadData.getGraph();
+            long worldSeed = level.getSeed();
+
+            List<UUID> toName = NamedRoadSelector.selectEdgesToName(graph);
+            NamedRoadSelector.nameSelectedEdges(graph, toName, worldSeed);
+
+            System.out.println("[GreatRoadGen] Named " + toName.size() + " great road(s).");
+
+            roadData.setGreatRoadGenerationComplete(true);
+            roadData.markDirty();
+
+            System.out.println("[GreatRoadGen] Generation complete: "
+                    + committedAnchors + " anchors, "
+                    + completedTrunks + " trunks committed"
+                    + " (" + (totalPairs - completedTrunks) + " pairs failed or skipped).");
+            return true;
+        }
+    }
+
+    // =========================================================================
     // Post-generation
     // =========================================================================
 
     private static void onGenerationComplete(ServerLevel level) {
+        if (namingScheduled) return;
+        namingScheduled = true;
+
         WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
         WorldRoadGraph     graph    = roadData.getGraph();
 
         verifyGreatRoads(graph);
 
-        // Run general invariant validator
+        // Run general invariant validator before naming
         List<String> warnings = GraphInvariantValidator.validate(graph);
         for (String w : warnings) {
             System.out.println("[GreatRoadGen] Invariant: " + w);
         }
 
-        roadData.setGreatRoadGenerationComplete(true);
-        roadData.markDirty();
-
-        System.out.println("[GreatRoadGen] Generation complete: "
+        System.out.println("[GreatRoadGen] All trunks committed ("
                 + committedAnchors + " anchors, "
-                + completedTrunks + " trunks committed"
-                + " (" + (totalPairs - completedTrunks) + " pairs failed or skipped).");
+                + completedTrunks + " trunks). Scheduling name selection.");
+
+        taskQueue.add(new NameSelectionTask());
     }
 
     /** Spot-checks great-road invariants (3 and 4) after generation. */

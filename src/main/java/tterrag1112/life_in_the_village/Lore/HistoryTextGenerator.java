@@ -255,6 +255,11 @@ public class HistoryTextGenerator {
                 "A new {party} was completed in {kingdom} on day {day}, adding to the realm's growing collection of institutions.",
                 "On day {day}, construction finished on a {party} in {kingdom}. The builders were paid, the doors were opened, and life went on.",
                 "Day {day} saw another building rise in {kingdom} — a {party} that would serve the realm for years to come.");
+
+        put(KingdomHistoryData.HistoryEventType.ANCIENT_ROAD_FOUNDED_NEAR,
+                "The kingdom of {kingdom} was founded beside {party}, an ancient road from the age before the present realm. The road was old when the first stone was laid.",
+                "Those who first settled what would become {kingdom} chose their ground well — near {party}, one of the great roads of the Old Realm whose builders are long forgotten.",
+                "The chronicles note that {kingdom} traces its origins to the land beside {party}. The road predates the kingdom by ages uncounted.");
     }
 
     // -------------------------------------------------------------------------
@@ -700,6 +705,16 @@ public class HistoryTextGenerator {
                         + "lined the road to watch "
                         + "it go.",
                 tick, destVillage);
+    }
+
+    public static KingdomHistoryData.KingdomHistoryEvent
+    nearAncientRoad(String kingdomName, String roadName, long tick) {
+        return KingdomHistoryData.KingdomHistoryEvent.create(
+                KingdomHistoryData.HistoryEventType.ANCIENT_ROAD_FOUNDED_NEAR,
+                "Founded near " + roadName,
+                "The kingdom arose beside " + roadName
+                        + ", an ancient road of the Old Realm.",
+                tick, roadName);
     }
 
     public static KingdomHistoryData.KingdomHistoryEvent

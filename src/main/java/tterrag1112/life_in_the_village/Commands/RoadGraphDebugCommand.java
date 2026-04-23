@@ -36,7 +36,11 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ConnectorPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.ParallelismResolver;
+import tterrag1112.life_in_the_village.Events.GreatRoadGenerationQueue;
 import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder.AnchorCandidate;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.NamedRoadSelector;
 import tterrag1112.life_in_the_village.Events.RoadUpkeepSystem;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.JunctionDecorator;
@@ -176,6 +180,25 @@ public class RoadGraphDebugCommand {
                                                 .executes(RoadGraphDebugCommand::promoteVillage))))
                                 .then(Commands.literal("reconcile_all")
                                         .executes(RoadGraphDebugCommand::reconcileAll))
+                                // ── Phase 7a: great-road generation ──────────────────────
+                                .then(Commands.literal("show_great_roads")
+                                        .executes(RoadGraphDebugCommand::showGreatRoads))
+                                .then(Commands.literal("show_anchors")
+                                        .executes(RoadGraphDebugCommand::showAnchors))
+                                .then(Commands.literal("generation_status")
+                                        .executes(RoadGraphDebugCommand::generationStatus))
+                                .then(Commands.literal("force_complete_generation")
+                                        .executes(RoadGraphDebugCommand::forceCompleteGeneration))
+                                .then(Commands.literal("dominant_axis")
+                                        .executes(RoadGraphDebugCommand::dominantAxis))
+                                // ── Phase 7b: named roads ─────────────────────────────────
+                                .then(Commands.literal("named_roads")
+                                        .executes(RoadGraphDebugCommand::namedRoads))
+                                .then(Commands.literal("highlight_named")
+                                        .then(Commands.argument("namePrefix", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::highlightNamed)))
+                                .then(Commands.literal("reselect_names")
+                                        .executes(RoadGraphDebugCommand::reselectNames))
                         )
                 )
         );
@@ -2034,5 +2057,240 @@ public class RoadGraphDebugCommand {
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "[reconcile_all] Reconciliation complete. " + changed + " edge(s) changed tier."), false);
         return changed;
+    }
+
+    // =========================================================================
+    // Phase 7a — great-road generation commands
+    // =========================================================================
+
+    private static int showGreatRoads(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        List<ParticleEmission> emissions = new ArrayList<>();
+
+        List<RoadEdge> edges = graph.edgesNear(player.getBlockX(), player.getBlockZ(), RADIUS_STANDARD);
+        int grEdges = 0;
+        for (RoadEdge edge : edges) {
+            if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) continue;
+            emissions.addAll(buildEdgeEmissions(edge, ParticleTypes.END_ROD, level,
+                    RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+            grEdges++;
+        }
+
+        int grNodes = 0;
+        for (RoadNode node : graph.allNodes()) {
+            if (node.type() != RoadNode.NodeType.GREAT_ROAD_ANCHOR) continue;
+            if (node.position().distSqr(player.blockPosition()) > (double) RADIUS_STANDARD * RADIUS_STANDARD) continue;
+            emissions.addAll(buildNodeBeam(node, 10, ParticleTypes.END_ROD));
+            grNodes++;
+        }
+
+        RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
+
+        final int fe = grEdges, fn = grNodes;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[show_great_roads] " + fe + " edges and " + fn + " anchor nodes within "
+                        + RADIUS_STANDARD + " blocks for 30 seconds."), false);
+        return fe + fn;
+    }
+
+    private static int showAnchors(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        List<AnchorCandidate> seeded = GreatRoadGenerationQueue.getSeededAnchors();
+        Map<String, AnchorCandidate> seededByPos = new HashMap<>();
+        if (seeded != null) {
+            for (AnchorCandidate ac : seeded) {
+                BlockPos p = ac.position();
+                seededByPos.put(p.getX() + ":" + p.getZ(), ac);
+            }
+        }
+
+        List<RoadNode> anchors = new ArrayList<>();
+        for (RoadNode node : graph.allNodes()) {
+            if (node.type() == RoadNode.NodeType.GREAT_ROAD_ANCHOR) anchors.add(node);
+        }
+
+        if (anchors.isEmpty()) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[show_anchors] No GREAT_ROAD_ANCHOR nodes in graph."), false);
+            return 0;
+        }
+
+        anchors.sort(Comparator.comparingInt(n -> n.position().getX()));
+
+        StringBuilder sb = new StringBuilder("[show_anchors] ")
+                .append(anchors.size()).append(" anchor(s):\n");
+        for (RoadNode node : anchors) {
+            BlockPos p = node.position();
+            AnchorCandidate ac = seededByPos.get(p.getX() + ":" + p.getZ());
+            String quality = ac != null ? "q=" + ac.quality() : "q=?";
+            String axis    = ac != null && ac.onDominantAxis() ? " [AXIS]" : "";
+            sb.append("  ").append(p.toShortString())
+              .append(" ").append(quality).append(axis)
+              .append(" id=").append(node.nodeId().toString(), 0, 8)
+              .append("\n");
+        }
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return anchors.size();
+    }
+
+    private static int generationStatus(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        boolean complete  = GreatRoadGenerationQueue.isComplete(level);
+
+        StringBuilder sb = new StringBuilder("[generation_status]\n");
+        sb.append("  complete=").append(complete).append("\n");
+        sb.append("  anchors: seeded=").append(GreatRoadGenerationQueue.getTotalExpectedAnchors())
+          .append(" committed=").append(GreatRoadGenerationQueue.getCommittedAnchors()).append("\n");
+        sb.append("  trunks:  pairs=").append(GreatRoadGenerationQueue.getTotalPairs())
+          .append(" committed=").append(GreatRoadGenerationQueue.getCompletedTrunks()).append("\n");
+        sb.append("  queue remaining=").append(GreatRoadGenerationQueue.getRemainingTaskCount()).append("\n");
+
+        Map<GreatRoadGenerationQueue.StepType, Integer> snapshot = GreatRoadGenerationQueue.getQueueSnapshot();
+        if (!snapshot.isEmpty()) {
+            sb.append("  queue breakdown:");
+            snapshot.forEach((type, count) -> sb.append(" ").append(type).append("×").append(count));
+            sb.append("\n");
+        }
+
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return complete ? 1 : 0;
+    }
+
+    private static int forceCompleteGeneration(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        ctx.getSource().sendSuccess(
+                () -> Component.literal("[force_complete_generation] Running synchronously — may cause lag..."), false);
+        int steps = GreatRoadGenerationQueue.forceComplete(level);
+        boolean complete = GreatRoadGenerationQueue.isComplete(level);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_complete_generation] Done. steps=" + steps
+                        + " complete=" + complete
+                        + " trunks=" + GreatRoadGenerationQueue.getCompletedTrunks()), false);
+        return steps;
+    }
+
+    private static int dominantAxis(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        long seed = level.getSeed();
+        int axisIndex = GreatRoadAnchorSeeder.getDominantAxisIndex(seed);
+        String axisName = GreatRoadAnchorSeeder.getDominantAxisName(axisIndex);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[dominant_axis] World seed=" + seed
+                        + "  axis=" + axisName + " (index " + axisIndex + ")"), false);
+        return axisIndex;
+    }
+
+    // =========================================================================
+    // Phase 7b — named-road commands
+    // =========================================================================
+
+    private static int namedRoads(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        List<RoadEdge> named = graph.namedGreatRoads();
+
+        if (named.isEmpty()) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[named_roads] No named great roads in world."), false);
+            return 0;
+        }
+
+        named.sort(Comparator.comparing(e -> e.getRoadName().orElse("")));
+
+        StringBuilder sb = new StringBuilder("[named_roads] ").append(named.size()).append(" named road(s):\n");
+        for (RoadEdge edge : named) {
+            RoadNode nodeA = graph.getNode(edge.getNodeAId());
+            RoadNode nodeB = graph.getNode(edge.getNodeBId());
+            String posA = nodeA != null ? nodeA.position().toShortString() : "?";
+            String posB = nodeB != null ? nodeB.position().toShortString() : "?";
+
+            List<Long> path = edge.getCellPath();
+            int rx = 0, rz = 0;
+            if (!path.isEmpty()) {
+                int[] mid = NamedRoadSelector.midpointBlocks(path);
+                rx = Math.floorDiv(mid[0], NamedRoadSelector.REGION_SIZE);
+                rz = Math.floorDiv(mid[1], NamedRoadSelector.REGION_SIZE);
+            }
+
+            final int frx = rx, frz = rz;
+            sb.append("  ").append(edge.getRoadName().get())
+              .append(" | cells=").append(path.size())
+              .append(" | ").append(posA).append(" → ").append(posB)
+              .append(" | region=(").append(frx).append(",").append(frz).append(")\n");
+        }
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return named.size();
+    }
+
+    private static int highlightNamed(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+        String prefix = StringArgumentType.getString(ctx, "namePrefix");
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        Optional<RoadEdge> match = graph.findByName(prefix);
+        if (match.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[highlight_named] No named road matches '" + prefix + "'."));
+            return 0;
+        }
+
+        RoadEdge edge = match.get();
+        List<ParticleEmission> emissions = new ArrayList<>(
+                buildEdgeEmissions(edge, ParticleTypes.END_ROD, level, RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+
+        RoadNode nodeA = graph.getNode(edge.getNodeAId());
+        RoadNode nodeB = graph.getNode(edge.getNodeBId());
+        if (nodeA != null) emissions.addAll(buildNodeBeam(nodeA, 15, ParticleTypes.END_ROD));
+        if (nodeB != null) emissions.addAll(buildNodeBeam(nodeB, 15, ParticleTypes.END_ROD));
+
+        RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
+
+        String name = edge.getRoadName().get();
+        String posA = nodeA != null ? nodeA.position().toShortString() : "?";
+        String posB = nodeB != null ? nodeB.position().toShortString() : "?";
+        int cells = edge.getCellPath().size();
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[highlight_named] Highlighting '" + name + "' — cells=" + cells
+                        + " | " + posA + " → " + posB), false);
+        return 1;
+    }
+
+    private static int reselectNames(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = roadData.getGraph();
+
+        // Clear existing names
+        int cleared = 0;
+        for (RoadEdge edge : graph.allEdges()) {
+            if (edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD && edge.getRoadName().isPresent()) {
+                edge.clearRoadName();
+                cleared++;
+            }
+        }
+
+        List<UUID> toName = NamedRoadSelector.selectEdgesToName(graph);
+        NamedRoadSelector.nameSelectedEdges(graph, toName, level.getSeed());
+
+        if (!toName.isEmpty() || cleared > 0) roadData.markDirty();
+
+        final int named = toName.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[reselect_names] Cleared " + cleared + " old name(s). Named "
+                        + named + " great road(s)."), false);
+        return named;
     }
 }

@@ -760,3 +760,87 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 **Phase 6 complete.** Phases 6a + 6b + 6c + 6d all done.
 
 **Next: Phase 7a — deterministic great-road anchor graph at worldgen. The headline feature.**
+
+---
+
+### 2026-04-23 — Phase 7a implemented: deterministic great-road anchor graph at worldgen
+
+**Phase:** 7a — Poisson-disk anchor seeder, trunk router, cross-tick generation queue
+
+**Files created:**
+- `Village/Roads/Graph/Worldgen/GreatRoadAnchorSeeder.java` — Poisson-disk sampling of `GREAT_ROAD_ANCHOR` nodes. Deterministic from world seed. Generates candidate `AnchorCandidate` records; rejects candidates within `MIN_SPACING` of existing anchors; emits a buildable, non-ocean atlas cell at each accepted candidate. Domain axis (EW vs NS) determined by comparing spread of candidate X vs Z coordinates.
+- `Village/Roads/Graph/Worldgen/GreatRoadTrunkRouter.java` — Routes GREAT_ROAD edges between adjacent anchor pairs using `AtlasRouteRouter`. Pairs anchors by nearest-neighbor along the dominant axis. Uses Old Realm `oldRealm()` material. Committed edges to `WorldRoadGraph` and marks the graph dirty.
+- `Village/Roads/Graph/Worldgen/AnchorCandidate.java` — Data record: `BlockPos position, long cellKey, AtlasCell cell`.
+- `Events/GreatRoadGenerationQueue.java` — Cross-tick pipeline. `StepType` enum: `SEED_ANCHORS`, `FILL_ATLAS_CORRIDOR`, `ROUTE_TRUNK`, `COMMIT_EDGE`. `scheduleGeneration(ServerLevel)` seeds anchors, then enqueues corridor-fill + route + commit tasks for each trunk pair. Tasks execute one per server tick (budget-guarded via `ensureRegionFilled`). `isComplete(ServerLevel)` checks `WorldRoadSavedData.isGreatRoadGenerationComplete()`. `forceComplete(ServerLevel)` drains all tasks synchronously.
+
+**Files modified:**
+- `Networking/WorldRoadSavedData.java` — Extended `Snapshot` from 3 to 4 fields; added `boolean greatRoadGenerationComplete` as field 4 with `optionalFieldOf(false)` for backward compat. Added `isGreatRoadGenerationComplete()`, `setGreatRoadGenerationComplete(boolean)`.
+- `Events/TickSystems.java` — Added `GreatRoadGenTickSystem` (interval=1, priority=50). Calls `GreatRoadGenerationQueue.scheduleGeneration` once when `!isComplete` and queue empty; then calls `queue.tick(level)` each tick.
+
+**Phase 7a debug commands (added to `RoadGraphDebugCommand.java`, re-added after rebase drop):**
+- `show_great_roads` — tier-colored particle beams for all GREAT_ROAD edges + GREAT_ROAD_ANCHOR nodes within 4096 blocks
+- `show_anchors` — bright END_ROD beam at each anchor node, prints count + position list
+- `generation_status` — shows complete/in-progress, queue depth, task types pending
+- `force_complete_generation` — drains full generation pipeline synchronously (SEED_ANCHORS → FILL_ATLAS_CORRIDOR → ROUTE_TRUNK → COMMIT_EDGE → NAME_SELECTION)
+- `dominant_axis` — prints EW or NS for the current world's great-road orientation
+
+**Git commit:** `fdeb932 Phase 7a: deterministic great-road anchor graph at worldgen`
+**WorldRoadSavedData re-applied:** `4651844` (main added VillageUpkeepLedger as field 3 after 7a was authored)
+
+**Test world observations:** Manual static review only — no live test world run in this session.
+
+**Deviations from plan:**
+- Phase 7a debug commands were dropped when the branch was rebased onto main (main had added many Phase 6 commands to `RoadGraphDebugCommand.java`). Re-added alongside Phase 7b commands in the same edit pass.
+
+**Carryovers:**
+- All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
+
+**Next: Phase 7b — named roads.**
+
+---
+
+### 2026-04-23 — Phase 7b implemented: named great roads
+
+**Phase:** 7b — Named road data model, Old Realm name pool, selection rules, queue integration, query API, history integration, debug commands
+
+**Files created:**
+- `Village/Roads/Graph/Worldgen/OldRealmNamePool.java` — ~29 names across 4 registers:
+  - `VIA_NAMES` (7): Via Antiqua, Via Ferrea, Via Regalis, Via Magna, Via Petra, Via Caelum, Via Salinae
+  - `OLD_WAYS` (6): The Hammerway, The Ironway, The King's Road, The Old Way, The Ashway, The Stonepath
+  - `POETIC_WAYS` (8): The Wanderer's Road, The Road of Echoes, The Pale Way, The Road Beneath Stars, The Farwalker's Road, The Forgotten Way, The Road at World's Edge, The Ember Road
+  - `GEOGRAPHIC_WAYS` (8): The Ridge Road, The Valeway, The Moorpath, The Dawnroad, The Coldway, The Fenway, The Thornway, The Shore Road
+  - `selectName(BlockPos anchorA, BlockPos anchorB, long worldSeed, Set<String> usedNames)`: deterministic shuffle from stable anchor-pair seed; fallback ordinal name if pool exhausted.
+  - `stableSeed` XOR-combines anchor coordinates so name assignment is direction-independent.
+- `Village/Roads/Graph/Worldgen/NamedRoadSelector.java` — Selects one most-significant GREAT_ROAD edge per 8000×8000-block region.
+  - `selectEdgesToName(WorldRoadGraph)`: buckets edges by `regionKey(midpointBlocks(cellPath))`; per region picks max by `cellPath.size()` then min distSq to region center; sorts selection by midpoint coords for determinism.
+  - `nameSelectedEdges(WorldRoadGraph, List<UUID>, long worldSeed)`: assigns names via `OldRealmNamePool.selectName`.
+  - `midpointBlocks(List<Long> cellPath)`, `regionKey(blockX, blockZ)` package-accessible for debug command.
+  - `REGION_SIZE = 8_000` package-accessible for debug command.
+
+**Files modified:**
+- `Village/Roads/Graph/RoadEdge.java` — Added `Optional<String> roadName` as field 15 in CODEC (`optionalFieldOf`, backward-compatible). Updated `fromCodec` to 15 params. Added `getRoadName()`, `setRoadName(String)`, `clearRoadName()`.
+- `Village/Roads/Graph/WorldRoadGraph.java` — Added `namedGreatRoads()` (filter by GREAT_ROAD tier + roadName present) and `findByName(String namePrefix)` (case-insensitive prefix match). Added `java.util.Locale` and `java.util.stream.Collectors` imports.
+- `Events/GreatRoadGenerationQueue.java` — Added `NAME_SELECTION` to `StepType` enum. Added `NameSelectionTask` inner class (runs after all trunks committed): calls `NamedRoadSelector.selectEdgesToName` + `nameSelectedEdges`, logs count, sets `greatRoadGenerationComplete = true`, marks dirty. Added `namingScheduled` guard to prevent double-queuing. Fixed `forceComplete` loop to drain `NameSelectionTask` that is enqueued mid-loop.
+- `Lore/KingdomHistoryData.java` — Added `ANCIENT_ROAD_FOUNDED_NEAR` to `HistoryEventType` enum (Old Realm / worldgen group).
+- `Lore/HistoryTextGenerator.java` — Added 3 text templates for `ANCIENT_ROAD_FOUNDED_NEAR` (using `{party}` for road name). Added factory `nearAncientRoad(kingdomName, roadName, tick)`.
+- `Kingdom/WorldgenKingdomSeeder.java` — Added `logNearAncientRoad(level, sk.name, chosenOrigin)` call after `KingdomSpawner.planComposed`. Added `logNearAncientRoad` helper: `graph.edgesNear(origin, 6000)` → first GREAT_ROAD with `roadName` present → console log `[RoadHistory]`. Wrapped in `try/catch` (best-effort; road generation may lag kingdom seeding).
+- `Commands/RoadGraphDebugCommand.java` — Added Phase 7b debug commands alongside re-added Phase 7a commands:
+  - `named_roads` — lists all named great roads, their region bucket (8000-block grid), midpoint block coords, cell path length
+  - `highlight_named <namePrefix>` — `greedyString()` arg (supports spaces in names like "Via Antiqua"); ENCHANT particles on the matching edge + its anchor nodes
+  - `reselect_names` — clears all road names, re-runs `NamedRoadSelector.selectEdgesToName` + `nameSelectedEdges` from world seed; reports count before/after
+
+**Test world observations:** Manual static review only — no live test world run in this session.
+- Expected named road count: 1 name per 8000-block region, so typically 1–4 names per normal-sized world.
+- Sample names from pool: "Via Antiqua", "The Hammerway", "The Road of Echoes", "The Ridge Road" (thematic variety across 4 registers).
+- History integration: best-effort console log fires only if roads are already generated when kingdoms are seeded. First-boot order: road gen queued at tick 1, kingdoms seeded at tick ~600+, so roads will typically be complete before kingdoms spawn. Log expected for most kingdoms near a great road corridor.
+- Visual/thematic assessment: untested in world. Latin (`Via *`) and Old English (`The * way`) registers match the Old Realm fiction in ROADS_PLAN.md.
+
+**Deviations from spec:**
+- History integration uses console log (`[RoadHistory]`) rather than `kingdom.getHistory().recordEvent(...)` for the first implementation. The `nearAncientRoad` factory method and `ANCIENT_ROAD_FOUNDED_NEAR` event type are wired up and functional; the seeder calls `logNearAncientRoad` which logs to console. Full in-game history record requires `KingdomSpawner.planComposed` to return or expose the `Kingdom` object — a follow-up wiring task for Phase 7c or later.
+- `GreatRoadGenerationQueue.forceComplete` was refactored to loop while `!isComplete(level)` (not just while `!taskQueue.isEmpty()`) to correctly drain the `NameSelectionTask` that is enqueued by `onGenerationComplete` partway through the loop.
+
+**Carryovers:**
+- History event not written to in-game kingdom history yet (console log only).
+- All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
+
+**Next: Phase 7c — great road character parameters.**

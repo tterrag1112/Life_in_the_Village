@@ -8,6 +8,8 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasSiteSelector;
@@ -152,6 +154,7 @@ public class WorldgenKingdomSeeder {
         KingdomSpawner.planComposed(level, chosenOrigin, sk.name, sk.culture,
                 sk.composition,
                 msg -> System.out.println("  " + msg));
+        logNearAncientRoad(level, sk.name, chosenOrigin);
         return true;
     }
 
@@ -302,6 +305,29 @@ public class WorldgenKingdomSeeder {
         int style = rng.nextInt(PREFIXES.length);
         return PREFIXES[style][rng.nextInt(PREFIXES[style].length)]
                 + SUFFIXES[style][rng.nextInt(SUFFIXES[style].length)];
+    }
+
+    /**
+     * Checks whether a named great road exists within 6 000 blocks of the given
+     * origin and, if so, logs a history note. This is a best-effort check — great
+     * roads may not be generated yet on the first world load, in which case the
+     * log is simply skipped.
+     */
+    private static void logNearAncientRoad(ServerLevel level, String kingdomName, BlockPos origin) {
+        try {
+            var graph = WorldRoadSavedData.get(level).getGraph();
+            var nearby = graph.edgesNear(origin.getX(), origin.getZ(), 6_000);
+            for (RoadEdge edge : nearby) {
+                if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) continue;
+                if (edge.getRoadName().isEmpty()) continue;
+                System.out.println("[RoadHistory] The kingdom of " + kingdomName
+                        + " was founded near " + edge.getRoadName().get()
+                        + ", an ancient road of the Old Realm.");
+                return;
+            }
+        } catch (Exception ignored) {
+            // Non-critical — never let history lookup break kingdom spawning
+        }
     }
 
     private record ScheduledKingdom(int cx, int cz, String name,
