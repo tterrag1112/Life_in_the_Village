@@ -40,7 +40,7 @@ import java.util.*;
  */
 public class AtlasRouteRouter {
 
-    // ── Cost constants ───────────────────────────────────────────────────────
+    // ── Cost constants (standard connector routing) ──────────────────────────
 
     /** Base cost per cell traversed. */
     private static final float COST_FLAT      = 1.0f;
@@ -59,6 +59,23 @@ public class AtlasRouteRouter {
     private static final int MAX_NODES = 4_000;
 
     private static final float ATTRACTOR_DISCOUNT = 0.3f;
+
+    // ── Great-road cost constants ────────────────────────────────────────────
+    // Great roads followed terrain pragmatically — steep mountain passes only
+    // when necessary, but rivers are crossed eagerly (bridges = landmarks).
+
+    /** Higher steep penalty — great roads followed passes, not ridges. */
+    private static final float GR_COST_STEEP     = 15.0f;
+    /** Higher swamp penalty — ancient roads avoided bogs. */
+    private static final float GR_COST_SWAMP     = 8.0f;
+    /** Slightly lower forest cost — great roads through forests look great. */
+    private static final float GR_COST_FOREST    = 1.3f;
+    /** Lower river-adjacent additive — crossings are desirable landmarks. */
+    private static final float GR_COST_RIVER_ADJ = 0.9f;
+    /** Weak road discount — great roads are trunks, not feeder routes. */
+    private static final float GR_ROAD_DISCOUNT  = 0.8f;
+    /** Higher node budget — great roads span large distances. */
+    private static final int   GR_MAX_NODES      = 12_000;
 
     // =========================================================================
     // Public API
@@ -327,6 +344,134 @@ public class AtlasRouteRouter {
             cur = cur.parent;
         }
         return new ArrayList<>(path);
+    }
+
+    // =========================================================================
+    // Great-road route (modified cost profile)
+    // =========================================================================
+
+    /**
+     * Finds a cell-level path optimised for great roads. Uses a different cost
+     * profile than the standard connector router: higher steep/swamp penalties
+     * (great roads avoided ridges and bogs), lower river-adjacent cost (crossings
+     * become natural landmarks), weak road-present discount (great roads are the
+     * trunks, not feeders), and a higher node budget for long distances.
+     *
+     * <p>No attractor support — at worldgen time there are no trade hubs yet.
+     *
+     * @param worldSeed provided for future per-route seeding; not currently used
+     *                  in the cost function itself
+     */
+    public static List<Long> findGreatRoadRoute(WorldAtlas atlas,
+                                                BlockPos from, BlockPos to,
+                                                long worldSeed) {
+        int startCx = WorldAtlas.blockToCell(from.getX());
+        int startCz = WorldAtlas.blockToCell(from.getZ());
+        int endCx   = WorldAtlas.blockToCell(to.getX());
+        int endCz   = WorldAtlas.blockToCell(to.getZ());
+
+        if (startCx == endCx && startCz == endCz) {
+            return List.of(AtlasCell.packKey(startCx, startCz));
+        }
+
+        long startKey = AtlasCell.packKey(startCx, startCz);
+        long endKey   = AtlasCell.packKey(endCx,   endCz);
+
+        PriorityQueue<Node> open = new PriorityQueue<>(
+                Comparator.comparing(n -> n.f));
+        Map<Long, Node> all  = new HashMap<>();
+        Set<Long> closed     = new HashSet<>();
+
+        Node start = new Node(startKey, null, 0f,
+                heuristic(startCx, startCz, endCx, endCz));
+        open.add(start);
+        all.put(startKey, start);
+
+        int iterations = 0;
+        Node best = start;
+
+        while (!open.isEmpty() && iterations < GR_MAX_NODES) {
+            iterations++;
+            Node current = open.poll();
+
+            if (current.h < best.h) best = current;
+            if (current.key == endKey) {
+                return reconstruct(current);
+            }
+
+            closed.add(current.key);
+
+            int cx = AtlasCell.unpackX(current.key);
+            int cz = AtlasCell.unpackZ(current.key);
+
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (dx == 0 && dz == 0) continue;
+                    int nx = cx + dx;
+                    int nz = cz + dz;
+                    long nKey = AtlasCell.packKey(nx, nz);
+                    if (closed.contains(nKey)) continue;
+
+                    AtlasCell cell = atlas.getCellByCoord(nx, nz);
+                    float cost = greatRoadCellCost(cell);
+                    if (cost >= Float.MAX_VALUE / 2) continue; // impassable
+
+                    // Weak road discount — great roads are the trunks, not feeders
+                    if (!atlas.getRoadsForCellKey(nKey).isEmpty()) {
+                        cost *= GR_ROAD_DISCOUNT;
+                    }
+
+                    boolean diagonal = dx != 0 && dz != 0;
+                    if (diagonal) cost *= 1.414f;
+
+                    float g = current.g + cost;
+                    float h = heuristic(nx, nz, endCx, endCz);
+                    Node existing = all.get(nKey);
+                    if (existing == null || g < existing.g) {
+                        Node node = new Node(nKey, current, g, h);
+                        all.put(nKey, node);
+                        open.add(node);
+                    }
+                }
+            }
+        }
+
+        if (best.parent != null) {
+            System.out.println("[GreatRoad Router] budget exhausted ("
+                    + iterations + " nodes), using partial path");
+            return reconstruct(best);
+        }
+        return Collections.emptyList();
+    }
+
+    /**
+     * Great-road cell cost. Mirrors {@link #cellCost} but with tuned constants
+     * for ancient road character: penalises steep terrain heavily, rewards
+     * river crossings, accepts forest corridors.
+     */
+    private static float greatRoadCellCost(AtlasCell cell) {
+        if (cell == null) return COST_UNFILLED;
+
+        // Hard barriers (same as standard)
+        if (cell.category() == BiomeCategory.OCEAN && !cell.isCoast()) {
+            return Float.MAX_VALUE;
+        }
+        if (cell.has(AtlasCell.FLAG_HAS_RIVER) && !cell.isRiverAdj()) {
+            return Float.MAX_VALUE;
+        }
+
+        float base;
+        if (cell.isSteep()) base = GR_COST_STEEP;
+        else if (cell.has(AtlasCell.FLAG_HAS_SWAMP)) base = GR_COST_SWAMP;
+        else if (cell.category() == BiomeCategory.FOREST) base = GR_COST_FOREST;
+        else if (cell.has(AtlasCell.FLAG_HAS_BEACH)) base = COST_BEACH;
+        else if (cell.slope() > 4) base = COST_GENTLE;
+        else base = COST_FLAT;
+
+        // River-adjacent: cheaper for great roads (bridge = landmark)
+        if (cell.isRiverAdj()) base += GR_COST_RIVER_ADJ;
+
+        return base;
     }
 
     // =========================================================================

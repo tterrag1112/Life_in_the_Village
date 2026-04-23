@@ -101,6 +101,7 @@ public final class TickSubsystemRegistry {
         register(new RoadEventTickSystem());
         register(new BoatCaravanTickSystem());
         register(new GraphEdgeRealizationSystem());
+        register(new GreatRoadGenerationTickSystem());
         register(new ParallelismCleanupSystem());
         register(new NodeDecorationTickSystem());
         register(new RoadUpkeepTickSystem());
