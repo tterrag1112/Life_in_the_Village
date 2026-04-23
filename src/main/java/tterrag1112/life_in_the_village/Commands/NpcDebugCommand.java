@@ -36,7 +36,6 @@ public final class NpcDebugCommand {
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("npc")
-                .requires(src -> src.hasPermission(2))
 
                 // ── /npc traits <uuid> ───────────────────────────────────────
                 .then(Commands.literal("traits")

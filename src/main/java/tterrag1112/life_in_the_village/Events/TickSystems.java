@@ -794,3 +794,29 @@ class GreatRoadGenerationTickSystem implements TickSubsystem {
         GreatRoadGenerationQueue.tick(ctx.level());
     }
 }
+// =============================================================================
+// NPC MEMORY DECAY (once per in-game day, interval = 24000, priority = 190)
+// =============================================================================
+
+/**
+ * Advances {@link tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog}
+ * decay by one day for every loaded {@link TownspersonMob} and evicts
+ * entries that have decayed below the eviction threshold. Phase 0 has no
+ * memory producers, so this runs over empty logs until Phase 1 ships.
+ */
+class NpcMemoryDecayTickSystem implements TickSubsystem {
+    @Override public String name()     { return "npc_memory_decay"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 190; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        for (var entity : ctx.level().getEntities().getAll()) {
+            if (!(entity instanceof TownspersonMob npc)) continue;
+            var log = npc.getMemory();
+            if (log.isEmpty()) continue;
+            log.decayAll(1f);
+            log.removeExpired();
+        }
+    }
+}
