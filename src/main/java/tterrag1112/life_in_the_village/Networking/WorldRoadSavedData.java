@@ -5,10 +5,13 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterInstance;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +44,8 @@ public class WorldRoadSavedData extends SavedData {
 
     private record Snapshot(WorldRoadGraph graph, boolean migrated,
                              Map<UUID, VillageUpkeepLedger> ledgers,
-                             boolean greatRoadGenerationComplete) {
+                             boolean greatRoadGenerationComplete,
+                             Map<UUID, List<ShelterInstance>> edgeShelters) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
@@ -51,7 +55,10 @@ public class WorldRoadSavedData extends SavedData {
                         .optionalFieldOf("upkeepLedgers", new HashMap<>())
                         .forGetter(Snapshot::ledgers),
                 Codec.BOOL.optionalFieldOf("greatRoadGenerationComplete", false)
-                        .forGetter(Snapshot::greatRoadGenerationComplete)
+                        .forGetter(Snapshot::greatRoadGenerationComplete),
+                Codec.unboundedMap(UUID_CODEC, ShelterInstance.CODEC.listOf())
+                        .optionalFieldOf("edgeShelters", new HashMap<>())
+                        .forGetter(Snapshot::edgeShelters)
         ).apply(i, Snapshot::new));
     }
 
@@ -59,7 +66,7 @@ public class WorldRoadSavedData extends SavedData {
             snap -> {
                 WorldRoadSavedData data = new WorldRoadSavedData(
                         snap.graph(), snap.migrated(), new HashMap<>(snap.ledgers()),
-                        snap.greatRoadGenerationComplete());
+                        snap.greatRoadGenerationComplete(), new HashMap<>(snap.edgeShelters()));
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -72,7 +79,7 @@ public class WorldRoadSavedData extends SavedData {
                 return data;
             },
             data -> new Snapshot(data.graph, data.migrated, new HashMap<>(data.ledgers),
-                    data.greatRoadGenerationComplete)
+                    data.greatRoadGenerationComplete, new HashMap<>(data.edgeShelters))
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -88,6 +95,8 @@ public class WorldRoadSavedData extends SavedData {
     /** Village UUID → upkeep ledger. Populated lazily on first upkeep cycle. */
     private final Map<UUID, VillageUpkeepLedger> ledgers;
     private boolean greatRoadGenerationComplete;
+    /** Edge UUID → list of placed shelters along that edge. */
+    private final Map<UUID, List<ShelterInstance>> edgeShelters;
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
@@ -97,15 +106,18 @@ public class WorldRoadSavedData extends SavedData {
         this.migrated                    = false;
         this.ledgers                     = new HashMap<>();
         this.greatRoadGenerationComplete = false;
+        this.edgeShelters                = new HashMap<>();
     }
 
     private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated,
                                 Map<UUID, VillageUpkeepLedger> ledgers,
-                                boolean greatRoadGenerationComplete) {
+                                boolean greatRoadGenerationComplete,
+                                Map<UUID, List<ShelterInstance>> edgeShelters) {
         this.graph                       = graph;
         this.migrated                    = migrated;
         this.ledgers                     = ledgers;
         this.greatRoadGenerationComplete = greatRoadGenerationComplete;
+        this.edgeShelters                = edgeShelters;
     }
 
     // ── Accessor ─────────────────────────────────────────────────────────────
@@ -141,6 +153,35 @@ public class WorldRoadSavedData extends SavedData {
 
     public void setGreatRoadGenerationComplete(boolean complete) {
         this.greatRoadGenerationComplete = complete;
+    }
+
+    /** Returns the shelter list for {@code edgeId}, or an empty list if none placed yet. */
+    public List<ShelterInstance> getShelters(UUID edgeId) {
+        return edgeShelters.getOrDefault(edgeId, List.of());
+    }
+
+    /** Returns the shelter list for {@code edgeId}, creating a mutable list if absent. */
+    public List<ShelterInstance> getOrCreateShelters(UUID edgeId) {
+        return edgeShelters.computeIfAbsent(edgeId, k -> new ArrayList<>());
+    }
+
+    /** Replaces the shelter list for {@code edgeId}. */
+    public void setShelters(UUID edgeId, List<ShelterInstance> shelters) {
+        if (shelters == null || shelters.isEmpty()) {
+            edgeShelters.remove(edgeId);
+        } else {
+            edgeShelters.put(edgeId, new ArrayList<>(shelters));
+        }
+    }
+
+    /** Removes all shelters recorded for {@code edgeId}. */
+    public void clearShelters(UUID edgeId) {
+        edgeShelters.remove(edgeId);
+    }
+
+    /** Unmodifiable view of all edge shelter entries. */
+    public Map<UUID, List<ShelterInstance>> getAllEdgeShelters() {
+        return Collections.unmodifiableMap(edgeShelters);
     }
 
     /** Exposes {@link SavedData#setDirty()} to external callers. */

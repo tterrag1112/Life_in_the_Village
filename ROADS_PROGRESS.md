@@ -963,3 +963,54 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
 
 **Next: Phase 8c — shelter expectation (waystations and inns along long road stretches).**
+
+---
+
+### 2026-04-23 — Phase 8c implemented: shelter expectation along long roads
+
+**Phase:** 8c — Shelter placement on long GREAT_ROAD and TRUNK stretches
+
+**Files created:**
+- `Village/Roads/Decoration/ShelterPlanner.java` — pure planning logic. `ShelterType` enum (INN, CARAVANSERAI, ROADSIDE_SHRINE, RUINED_WATCHTOWER, RUINED_WAYSTATION). `ShelterPlan` record (`pathIndex`, `position`, `type`, `facingDx`, `facingDz`). `plan(RoadEdge)`: GREAT_ROAD/TRUNK only; minimum 800-block path; skip first/last 200 blocks (endpoint buffer); spacing 400–600 blocks (seeded RNG from `edge.getMeanderProfile().seed() ^ 0xCAFEF00DL`); 4-block perpendicular offset alternating sides. Type distribution: GREAT_ROAD favours INN(35%)/CARAVANSERAI(30%), TRUNK favours SHRINE(25%)/TOWER(20%)/WAYSTATION(20%).
+- `Village/Roads/Decoration/ShelterInstance.java` — persistent record. Fields: `UUID instanceId`, `ShelterType type`, `BlockPos position`, `List<BlockPos> placedBlocks`, `long placedTick`. 5-field codec with `optionalFieldOf` for backward-compatible fields.
+- `Village/Roads/Decoration/ShelterBuilder.java` — procedural block placement. `place(level, plan, culture, tick)` → `ShelterInstance` or `null`. Terrain suitability: 3×3 grid of height samples, rejects if variance > 4 blocks. Ground-snaps origin via `Heightmap.Types.MOTION_BLOCKING_NO_LEAVES`. Five placement methods:
+  - `placeInn`: 7×9 two-story building; walls+floor+roof by culture (nordic=spruce, imperial=smooth_stone, highland=stone_bricks, default=cobble+oak); 4 beds per floor (foot+head pairs, colored by culture: nordic=white, imperial=purple, highland=brown, default=red); campfire+iron_bars hearth on back wall; door opening carved in road-facing wall; oak_wall_sign post by entrance.
+  - `placeCaravanserai`: 9×11 U-shape courtyard (open on road side); roofed wings on left/right arms; cobblestone courtyard; central well (water+4 cobblestone walls); stone-brick gate posts; 4 beds in back wing.
+  - `placeShrine`: 3×3 polished_andesite base; central chiseled_stone_bricks pillar × 2; stone_brick_slab cap; corner stone_brick_wall posts; slab roof at corners; 70% lantern on top; 25%-per-tile candle offerings around base.
+  - `placeRuinedWatchtower`: 5×5 perimeter (intact lower 2 rows, 60% intact upper rows); scattered cobblestone debris around exterior; vine overgrowth on north wall (25% blocks); entrance opening carved; unlit campfire inside.
+  - `placeRuinedWaystation`: 7×7 with 80%-probability collapsed wall segments (height 1–3); cobblestone floor with 65% density; surviving 3×3 stone-brick roof over back corner; single bed under roof; broken well/cistern in center; scattered debris around exterior.
+
+**Files modified:**
+- `Networking/WorldRoadSavedData.java` — added `Map<UUID, List<ShelterInstance>> edgeShelters` field; added to `Snapshot` record as 5th field with `Codec.unboundedMap(UUID_CODEC, ShelterInstance.CODEC.listOf()).optionalFieldOf("edgeShelters", ...)` for backward compatibility. Added API: `getShelters(edgeId)`, `getOrCreateShelters(edgeId)`, `setShelters(edgeId, list)`, `clearShelters(edgeId)`, `getAllEdgeShelters()`.
+- `Village/Roads/Realization/EdgeRealizer.java` — overloaded `realizeEdge` to accept `WorldRoadSavedData` directly (avoids double `get()` call when caller already holds it). After `edge.markRealized(fullPath)`: calls `placeSheltersIfAbsent(level, edge, roadData, culture)` — only acts on GREAT_ROAD/TRUNK with no existing shelters; plans via `ShelterPlanner.plan(edge)` then places each plan via `ShelterBuilder.place`. Added imports: `WorldRoadSavedData`, `ShelterBuilder`, `ShelterInstance`, `ShelterPlanner`.
+- `Commands/RoadGraphDebugCommand.java` — added 5 Phase 8c debug commands:
+  - `shelters_on_edge <edgeId>` — lists all shelters on the edge with type, position, block count.
+  - `nearest_shelter` — finds the nearest shelter to the player across all edges; reports type, position, edge, distance.
+  - `force_place_shelters <edgeId>` — clears existing shelters and re-plans+places them; reports planned vs. placed count (some may be rejected by terrain).
+  - `force_place_shelter_type <type>` — places a single specified shelter type at the player's position; associates with nearest edge if within 256 blocks.
+  - `replace_shelter <edgeId>` — removes all placed blocks for existing shelters on an edge, then re-plans and re-places.
+
+**Architecture decisions:**
+- Shelters stored in `WorldRoadSavedData` (not in `RoadEdge`) because `RoadEdge.CODEC` is already at the DFU RecordCodecBuilder 16-field limit. The separation also mirrors the `VillageUpkeepLedger` pattern (logically associated with edges but stored in the SavedData wrapper). This is cleaner: shelter data is a decoration layer, not core edge identity.
+- `ShelterBuilder.place` returns `null` on unsuitable terrain rather than throwing — callers skip gracefully and log the planned-vs-placed gap at the end.
+- Re-realization guard: `placeSheltersIfAbsent` checks `!roadData.getShelters(edgeId).isEmpty()` before planning. This means shelters survive edge re-realization (e.g., after terrain invalidation) without being duplicated. `force_place_shelters` and `replace_shelter` can override this for debug/admin purposes.
+- `EdgeRealizer.realizeEdge(4-arg)` now delegates to the 5-arg overload — all existing call sites continue to work unchanged; only the new shelter code uses the 5-arg form directly.
+- Culture is passed from the material context to `ShelterBuilder.place` so inns and caravanserais match the road's regional style (nordic spruce on Viking-culture roads, imperial stone on Trade Empire stretches).
+
+**Test world observations:** Manual static review only — no live test world run.
+- Expected: on a 3000-block GREAT_ROAD segment: 5–6 shelters spaced ~500 blocks apart, alternating road sides, mix of INN and CARAVANSERAI with occasional SHRINE.
+- Terrain rejection expected in hilly areas: `force_place_shelters` will show `planned=N placed=M` with `M < N` for mountain-hugging roads.
+- `nearest_shelter` is the fastest way to confirm placement worked after realization.
+- Culture check: on a Nordic great road, inn walls should be spruce planks; beds should be white.
+
+**Deviations from spec:**
+- Shelter instances are NOT stored on `RoadEdge` (codec limit). Stored in `WorldRoadSavedData.edgeShelters` instead — functionally equivalent and cleaner.
+- No innkeeper NPCs in Phase 8c (spec marked as optional; deferred to Phase 10a which defines the full `TownspersonMob` roadside structure system).
+- No discovery messages (also optional; deferred — requires player proximity tick scan and message framework not yet present).
+- `force_place_shelter_type <type>` takes type as only argument; associates with nearest edge automatically rather than requiring `<edgeId>` as separate arg. Simpler for testing.
+
+**Carryovers:**
+- Linear blockPath scan in `RoadUnderfootDetector` / `RoadProximityChecker` (noted since Phase 8a). Still deferred.
+- All Phase 6 carryovers remain.
+
+**Next: Phase 8d — tolls and checkpoints (kingdom border toll gates).**

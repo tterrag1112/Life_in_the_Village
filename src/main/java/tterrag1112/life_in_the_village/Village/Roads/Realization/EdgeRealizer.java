@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Village.Roads.Realization;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
@@ -10,6 +11,9 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ConnectorAllee;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.MilestoneDecorator;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.RoadOvergrowthDecorator;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterBuilder;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterInstance;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
@@ -46,6 +50,15 @@ public final class EdgeRealizer {
                                    RoadEdge edge,
                                    WorldRoadGraph graph,
                                    VillageSavedData data) {
+        WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
+        realizeEdge(level, edge, graph, data, roadData);
+    }
+
+    public static void realizeEdge(ServerLevel level,
+                                   RoadEdge edge,
+                                   WorldRoadGraph graph,
+                                   VillageSavedData data,
+                                   WorldRoadSavedData roadData) {
         // Fast path: fully realized with no terrain changes since last realization.
         if (edge.isRealized() && edge.getStaleCells().isEmpty()) return;
 
@@ -125,6 +138,39 @@ public final class EdgeRealizer {
         // Decoration passes (run even on re-realization; decorators skip already-placed positions)
         MilestoneDecorator.decorate(level, edge, graph);       // GREAT_ROAD only
         RoadOvergrowthDecorator.decorate(level, edge, graph);  // all tiers
+
+        // Shelter planning — only for long GREAT_ROAD and TRUNK edges, only on first realization
+        placeSheltersIfAbsent(level, edge, roadData, culture);
+    }
+
+    // =========================================================================
+    // Shelter placement (Phase 8c)
+    // =========================================================================
+
+    private static void placeSheltersIfAbsent(ServerLevel level,
+                                               RoadEdge edge,
+                                               WorldRoadSavedData roadData,
+                                               String culture) {
+        if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD
+                && edge.getTier() != RoadEdge.EdgeTier.TRUNK) return;
+
+        // Skip if shelters were already placed for this edge
+        if (!roadData.getShelters(edge.getEdgeId()).isEmpty()) return;
+
+        List<ShelterPlanner.ShelterPlan> plans = ShelterPlanner.plan(edge);
+        if (plans.isEmpty()) return;
+
+        List<ShelterInstance> instances = new ArrayList<>();
+        for (ShelterPlanner.ShelterPlan plan : plans) {
+            ShelterInstance inst = ShelterBuilder.place(level, plan, culture, level.getGameTime());
+            if (inst != null) instances.add(inst);
+        }
+
+        if (!instances.isEmpty()) {
+            roadData.setShelters(edge.getEdgeId(), instances);
+            System.out.println("[EdgeRealizer] Placed " + instances.size()
+                    + " shelter(s) on edge " + edge.getEdgeId().toString().substring(0, 8));
+        }
     }
 
     // =========================================================================

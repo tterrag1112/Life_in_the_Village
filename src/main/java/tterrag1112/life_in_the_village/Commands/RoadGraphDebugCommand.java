@@ -45,6 +45,9 @@ import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadProximityChecker
 import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadSpeedModifier;
 import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadUnderfootDetector;
 import tterrag1112.life_in_the_village.Events.RoadSafetySystem;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterBuilder;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterInstance;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterPlanner;
 import net.minecraft.world.level.ChunkPos;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder.AnchorCandidate;
@@ -235,6 +238,21 @@ public class RoadGraphDebugCommand {
                                                 .executes(RoadGraphDebugCommand::simulateSpawn)))
                                 .then(Commands.literal("safety_stats")
                                         .executes(RoadGraphDebugCommand::safetyStats))
+                                // ── Phase 8c: shelter expectation ─────────────────────────
+                                .then(Commands.literal("shelters_on_edge")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::sheltersOnEdge)))
+                                .then(Commands.literal("nearest_shelter")
+                                        .executes(RoadGraphDebugCommand::nearestShelter))
+                                .then(Commands.literal("force_place_shelters")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forcePlaceShelters)))
+                                .then(Commands.literal("force_place_shelter_type")
+                                        .then(Commands.argument("type", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forcePlaceShelterType)))
+                                .then(Commands.literal("replace_shelter")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::replaceShelter)))
                         )
                 )
         );
@@ -2702,5 +2720,249 @@ public class RoadGraphDebugCommand {
         String msg = sb.toString();
         ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
         return (int) Math.min(total, Integer.MAX_VALUE);
+    }
+
+    // =========================================================================
+    // shelters_on_edge  (Phase 8c)
+    // =========================================================================
+
+    private static int sheltersOnEdge(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+
+        String prefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(java.util.Locale.ROOT);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "edgeId");
+        if (edge == null) return 0;
+
+        List<ShelterInstance> shelters = rData.getShelters(edge.getEdgeId());
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+
+        if (shelters.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[shelters_on_edge] Edge " + shortId + ": no shelters placed yet."), false);
+            return 0;
+        }
+
+        StringBuilder sb = new StringBuilder("[shelters_on_edge] Edge ")
+                .append(shortId).append(" — ").append(shelters.size()).append(" shelter(s):\n");
+        for (ShelterInstance si : shelters) {
+            sb.append("  ").append(si.type())
+              .append(" at ").append(si.position().toShortString())
+              .append(" id=").append(si.instanceId().toString(), 0, 8)
+              .append(" blocks=").append(si.placedBlocks().size())
+              .append('\n');
+        }
+        String out = sb.toString().stripTrailing();
+        ctx.getSource().sendSuccess(() -> Component.literal(out), false);
+        return shelters.size();
+    }
+
+    // =========================================================================
+    // nearest_shelter  (Phase 8c)
+    // =========================================================================
+
+    private static int nearestShelter(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player      = ctx.getSource().getPlayerOrException();
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+
+        BlockPos playerPos = player.blockPosition();
+
+        ShelterInstance nearest  = null;
+        double nearestDist       = Double.MAX_VALUE;
+        UUID nearestEdgeId       = null;
+
+        for (Map.Entry<UUID, List<ShelterInstance>> entry : rData.getAllEdgeShelters().entrySet()) {
+            for (ShelterInstance si : entry.getValue()) {
+                double dist = si.position().distSqr(playerPos);
+                if (dist < nearestDist) {
+                    nearestDist   = dist;
+                    nearest       = si;
+                    nearestEdgeId = entry.getKey();
+                }
+            }
+        }
+
+        if (nearest == null) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[nearest_shelter] No shelters placed in this world yet."), false);
+            return 0;
+        }
+
+        ShelterInstance si  = nearest;
+        UUID eid            = nearestEdgeId;
+        double distBlocks   = Math.sqrt(nearestDist);
+
+        String msg = "[nearest_shelter] " + si.type()
+                + " at " + si.position().toShortString()
+                + " (edge=" + eid.toString().substring(0, 8) + ")"
+                + " dist=" + String.format("%.1f", distBlocks) + " blocks"
+                + " id=" + si.instanceId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // force_place_shelters  (Phase 8c)
+    // =========================================================================
+
+    private static int forcePlaceShelters(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+        String culture           = "default";
+
+        String prefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(java.util.Locale.ROOT);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "edgeId");
+        if (edge == null) return 0;
+
+        if (!edge.isRealized() || edge.getBlockPath().isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_place_shelters] Edge not realized — realize it first."));
+            return 0;
+        }
+
+        // Clear existing shelters
+        rData.clearShelters(edge.getEdgeId());
+
+        List<ShelterPlanner.ShelterPlan> plans = ShelterPlanner.plan(edge);
+        if (plans.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[force_place_shelters] Edge " + edge.getEdgeId().toString().substring(0, 8)
+                            + " too short or wrong tier for shelters (need GREAT_ROAD/TRUNK ≥ "
+                            + ShelterPlanner.MIN_PATH_LENGTH + " blocks)."), false);
+            return 0;
+        }
+
+        List<ShelterInstance> placed = new ArrayList<>();
+        for (ShelterPlanner.ShelterPlan plan : plans) {
+            ShelterInstance inst = ShelterBuilder.place(level, plan, culture, level.getGameTime());
+            if (inst != null) placed.add(inst);
+        }
+
+        rData.setShelters(edge.getEdgeId(), placed);
+        rData.markDirty();
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        int planned = plans.size(), built = placed.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_place_shelters] Edge " + shortId + ": planned=" + planned
+                        + " placed=" + built + " (rejected by terrain: " + (planned - built) + ")."),
+                false);
+        return built;
+    }
+
+    // =========================================================================
+    // force_place_shelter_type  (Phase 8c)
+    // =========================================================================
+
+    private static int forcePlaceShelterType(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player      = ctx.getSource().getPlayerOrException();
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+
+        String typeName = StringArgumentType.getString(ctx, "type").toUpperCase(java.util.Locale.ROOT);
+        ShelterPlanner.ShelterType shelterType;
+        try {
+            shelterType = ShelterPlanner.ShelterType.valueOf(typeName);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_place_shelter_type] Unknown type '" + typeName + "'. Valid: "
+                            + java.util.Arrays.toString(ShelterPlanner.ShelterType.values())));
+            return 0;
+        }
+
+        BlockPos pos    = player.blockPosition();
+        // Use road direction as south (for testing purposes)
+        ShelterPlanner.ShelterPlan plan = new ShelterPlanner.ShelterPlan(
+                0, pos, shelterType, 0, 1);
+
+        ShelterInstance inst = ShelterBuilder.place(level, plan, "default", level.getGameTime());
+        if (inst == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_place_shelter_type] Placement rejected — terrain too uneven or chunk unloaded at "
+                            + pos.toShortString()));
+            return 0;
+        }
+
+        // Associate with nearest edge if possible
+        UUID edgeId = null;
+        double best = Double.MAX_VALUE;
+        for (RoadEdge e : graph.edgesNear(pos.getX(), pos.getZ(), 256)) {
+            for (BlockPos bp : e.getBlockPath()) {
+                double d = bp.distSqr(pos);
+                if (d < best) { best = d; edgeId = e.getEdgeId(); }
+            }
+        }
+
+        if (edgeId != null) {
+            rData.getOrCreateShelters(edgeId).add(inst);
+            rData.markDirty();
+        }
+
+        ShelterInstance finalInst = inst;
+        String edgeStr = edgeId != null ? edgeId.toString().substring(0, 8) : "none";
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_place_shelter_type] Placed " + finalInst.type()
+                        + " at " + finalInst.position().toShortString()
+                        + " (" + finalInst.placedBlocks().size() + " blocks)"
+                        + " → edge=" + edgeStr), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // replace_shelter  (Phase 8c)
+    // =========================================================================
+
+    private static int replaceShelter(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+
+        String prefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(java.util.Locale.ROOT);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "edgeId");
+        if (edge == null) return 0;
+
+        List<ShelterInstance> existing = new ArrayList<>(rData.getShelters(edge.getEdgeId()));
+        if (existing.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[replace_shelter] Edge " + edge.getEdgeId().toString().substring(0, 8)
+                            + " has no shelters. Use force_place_shelters to add them."));
+            return 0;
+        }
+
+        // Remove all existing shelter blocks
+        int blocksRemoved = 0;
+        for (ShelterInstance si : existing) {
+            for (BlockPos bp : si.placedBlocks()) {
+                if (level.isLoaded(bp)) {
+                    level.removeBlock(bp, false);
+                    blocksRemoved++;
+                }
+            }
+        }
+
+        // Clear and re-plan
+        rData.clearShelters(edge.getEdgeId());
+        List<ShelterPlanner.ShelterPlan> plans = ShelterPlanner.plan(edge);
+        List<ShelterInstance> placed = new ArrayList<>();
+        for (ShelterPlanner.ShelterPlan plan : plans) {
+            ShelterInstance inst = ShelterBuilder.place(level, plan, "default", level.getGameTime());
+            if (inst != null) placed.add(inst);
+        }
+
+        rData.setShelters(edge.getEdgeId(), placed);
+        rData.markDirty();
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        int removed = blocksRemoved, built = placed.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[replace_shelter] Edge " + shortId + ": removed " + removed
+                        + " old blocks, re-placed " + built + " shelter(s)."), false);
+        return built;
     }
 }
