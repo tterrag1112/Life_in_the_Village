@@ -286,6 +286,79 @@ public class WorldRoadGraph {
         return Optional.of(new SplitResult(junctionNode.nodeId(), halfA.getEdgeId(), halfB.getEdgeId()));
     }
 
+    // ── Toll gate insertion ──────────────────────────────────────────────────
+
+    /**
+     * Splits the edge at {@code splitCellKey} and replaces the junction node
+     * with a {@link RoadNode.NodeType#TOLL_GATE} node carrying the given
+     * {@code kingdomId} as affinity. Semantics are otherwise identical to
+     * {@link #splitEdgeAtCell}.
+     *
+     * @return the split result, or empty if the edge or cell is not found
+     */
+    public Optional<SplitResult> insertTollGateNode(UUID edgeId, long splitCellKey,
+                                                     BlockPos gatePos, UUID kingdomId) {
+        RoadEdge edge = edges.get(edgeId);
+        if (edge == null) return Optional.empty();
+
+        List<Long> cellPath = edge.getCellPath();
+        int splitIdx = cellPath.indexOf(splitCellKey);
+        if (splitIdx < 0) return Optional.empty();
+
+        List<Long> halfPathA = new ArrayList<>(cellPath.subList(0, splitIdx + 1));
+        List<Long> halfPathB = new ArrayList<>(cellPath.subList(splitIdx, cellPath.size()));
+
+        List<BlockPos> blockA = new ArrayList<>();
+        List<BlockPos> blockB = new ArrayList<>();
+        if (edge.isRealized() && !edge.getBlockPath().isEmpty()) {
+            List<BlockPos> bp = edge.getBlockPath();
+            int splitBlockIdx = 0;
+            double bestDist = Double.MAX_VALUE;
+            for (int i = 0; i < bp.size(); i++) {
+                double d = bp.get(i).distSqr(gatePos);
+                if (d < bestDist) { bestDist = d; splitBlockIdx = i; }
+            }
+            blockA = new ArrayList<>(bp.subList(0, splitBlockIdx + 1));
+            blockB = new ArrayList<>(bp.subList(splitBlockIdx, bp.size()));
+        }
+
+        Set<Long> halfASet = new HashSet<>(halfPathA);
+        Set<Long> halfBSet = new HashSet<>(halfPathB);
+
+        // TOLL_GATE node — carries kingdom affinity
+        RoadNode tollGateNode = new RoadNode(UUID.randomUUID(), gatePos,
+                RoadNode.NodeType.TOLL_GATE, Optional.of(kingdomId));
+
+        RoadEdge halfA = RoadEdge.create(
+                edge.getNodeAId(), tollGateNode.nodeId(),
+                halfPathA, edge.getTier(), edge.getMeanderProfile());
+        halfA.setMaintenance(edge.getMaintenance());
+        halfA.getMaintainerVillageIds().addAll(edge.getMaintainerVillageIds());
+        for (long stale : edge.getStaleCells()) {
+            if (halfASet.contains(stale)) halfA.markCellStale(stale);
+        }
+        if (!blockA.isEmpty()) halfA.markRealized(blockA);
+        halfA.clearPrimitives();
+
+        RoadEdge halfB = RoadEdge.create(
+                tollGateNode.nodeId(), edge.getNodeBId(),
+                halfPathB, edge.getTier(), edge.getMeanderProfile());
+        halfB.setMaintenance(edge.getMaintenance());
+        halfB.getMaintainerVillageIds().addAll(edge.getMaintainerVillageIds());
+        for (long stale : edge.getStaleCells()) {
+            if (halfBSet.contains(stale)) halfB.markCellStale(stale);
+        }
+        if (!blockB.isEmpty()) halfB.markRealized(blockB);
+        halfB.clearPrimitives();
+
+        removeEdge(edgeId);
+        addNode(tollGateNode);
+        addEdge(halfA);
+        addEdge(halfB);
+
+        return Optional.of(new SplitResult(tollGateNode.nodeId(), halfA.getEdgeId(), halfB.getEdgeId()));
+    }
+
     // ── Named great-road queries ─────────────────────────────────────────────
 
     /** Returns all GREAT_ROAD edges that have been assigned a name. */

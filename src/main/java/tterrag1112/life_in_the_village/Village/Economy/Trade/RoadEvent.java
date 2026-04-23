@@ -43,7 +43,11 @@ public class RoadEvent implements TravellingGroup {
     public enum EventType {
         BANDIT_AMBUSH,
         WANDERING_TRADER,
-        PILGRIM_GROUP;
+        PILGRIM_GROUP,
+        /** Phase 10b stub: toll gate raided by bandits; gate unguarded, no tolls collected. */
+        TOLL_GATE_RAIDED,
+        /** Phase 10b stub: toll keeper extorts extra fees for personal gain. */
+        CORRUPT_TOLL_COLLECTOR;
 
         public static final Codec<EventType> CODEC = Codec.STRING.xmap(
                 EventType::valueOf, EventType::name);

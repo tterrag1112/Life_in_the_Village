@@ -820,3 +820,18 @@ class NpcMemoryDecayTickSystem implements TickSubsystem {
         }
     }
 }
+
+// =============================================================================
+// TOLL GATE (interval = 20, priority = 119)
+// =============================================================================
+
+class TollGateTickSystem implements TickSubsystem {
+    @Override public String name()     { return "toll_gates"; }
+    @Override public int    interval() { return 20; }
+    @Override public int    priority() { return 119; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        TollGateSystem.tick(ctx.level(), ctx.villageData());
+    }
+}

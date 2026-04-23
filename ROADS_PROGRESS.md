@@ -4,11 +4,11 @@ Append-only. Most recent entry at the bottom. Each session ends with an entry su
 
 ## Current phase
 
-**Phase 5c** — Terrain-change invalidation + tiered realize-radius. Complete. Phase 5 fully done.
+**Phase 8d** — Tolls and checkpoints. Complete. Phase 8 fully done.
 
 ## Current slice
 
-Phase 5 complete. Next: Phase 6 per ROADS_PLAN.md (upkeep/traffic propagation through graph edges).
+Phase 8 complete. Next: Phase 9 per ROADS_PLAN.md.
 
 ## Acceptance criteria for current slice
 
@@ -1012,5 +1012,57 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 **Carryovers:**
 - Linear blockPath scan in `RoadUnderfootDetector` / `RoadProximityChecker` (noted since Phase 8a). Still deferred.
 - All Phase 6 carryovers remain.
+
+---
+
+### 2026-04-23 — Phase 8d implemented: tolls and checkpoints
+
+**Files created:**
+- `Village/Roads/Economy/TollFeeCalculator.java` — pure fee computation. Base fees: GREAT_ROAD=20 bronze, TRUNK=10 bronze. Goods surcharge: `goodsValue / 50`. Reputation tiers: 80+=free, 60-79=50%, 20-59=100%, <20=150%. `TollFee` record with `amountBronze`, `reason`, `isFree()`. Constants for all thresholds. `computeFeeDefault` convenience overload.
+- `Village/Roads/Decoration/TollGatePlanner.java` — detects kingdom border crossings on TRUNK and GREAT_ROAD edges. `TollGatePlan` record (8 fields: edgeId, splitCellKey, gatePosition, collectingKingdomId, entrySideNodeId, exitSideNodeId, tierAtGate, structureSeed). `planForGraph(graph, vData, worldSeed)` builds `Map<Long,UUID>` cell→kingdom index from `KingdomClaim.claimedCellKeys()`, walks each qualifying edge's cell path, detects ownership transitions, places gate 2 cells inside the incoming kingdom. TRUNK=100% probability, GREAT_ROAD=80%. Deduplication via `Set<Long> usedCells`. `buildCellKingdomIndex(VillageSavedData)` is public for debug use.
+- `Village/Roads/Decoration/TollGateBuilder.java` — places gate structure (3-wide arch + pillar lanterns + 3×3 guardhouse with floor, walls, roof, door, corner lanterns). Cultural material variants: imperial=stone_bricks/polished_andesite/dark_oak, highland=mossy_cobblestone, nordic=stone/spruce, default=cobblestone/oak. Calls `WorldRoadGraph.insertTollGateNode` then `WorldRoadSavedData.registerTollGate`. Returns `PlacementResult(gatePosition, nodeId, placedBlocks)`.
+- `Events/TollGateSystem.java` — toll tick logic (interval=20). Caravan charging: finds spawned caravans within 5 blocks of any TOLL_GATE node, charges origin village treasury, credits kingdom treasury, records revenue. Session dedup via `Set<String> "caravanId:nodeId"`. Player notification: one-time chat message on approach within 12 blocks with upcoming fee; crossing log within 3 blocks (no currency deduction — Phase 10 dependency). `playerKingdomReputation` aggregates village-level scores across kingdom's villages using max.
+
+**Files modified:**
+- `Village/Economy/Trade/RoadEvent.java` — `EventType` enum extended with `TOLL_GATE_RAIDED` and `CORRUPT_TOLL_COLLECTOR` dormant stubs (Phase 10b).
+- `Village/Roads/Graph/WorldRoadGraph.java` — added `insertTollGateNode(UUID edgeId, long splitCellKey, BlockPos gatePos, UUID kingdomId)` → `Optional<SplitResult>`. Same split logic as `splitEdgeAtCell` but creates `NodeType.TOLL_GATE` node with `Optional.of(kingdomId)` affinity.
+- `Networking/WorldRoadSavedData.java` — added `TollGateRecord` nested record (nodeId, kingdomId, tier, revenueBronze) with 4-field codec. Added 6th Snapshot field `tollGates: Map<UUID, TollGateRecord>`. New API: `getTollGate(nodeId)`, `registerTollGate(nodeId, kingdomId, tier)`, `addTollRevenue(nodeId, bronze)`, `removeTollGate(nodeId)`, `getAllTollGates()`. Added `import RoadEdge`.
+- `Events/TickSystems.java` — added `TollGateTickSystem` (interval=20, priority=119).
+- `Events/TickSubsystemRegistry.java` — registered `new TollGateTickSystem()` after `RoadEventTickSystem`.
+- `Commands/RoadGraphDebugCommand.java` — added imports for `Kingdom`, `TollGateBuilder`, `TollGatePlanner`, `TollFeeCalculator`. Added 5 debug commands under `/liv road debug`:
+  - `list_tolls` — lists all registered gates with kingdom, tier, revenue.
+  - `simulate_toll <kingdomName>` — finds nearest gate for kingdom and shows fee at default reputation.
+  - `toll_revenue <kingdomName>` — totals cumulative revenue across all gates for a kingdom.
+  - `force_place_toll <edgeId>` — runs `TollGatePlanner.planForGraph` then `TollGateBuilder.build` on the first detected crossing for the edge.
+  - `replace_toll <nodeId>` — resets the toll gate record (revenue zeroed) without removing the structure.
+  - Added `/litv toll pay` player command — finds nearest gate within 20 blocks, computes fee at player's actual reputation, logs payment (no currency deduction), sends confirmation message.
+
+**Architecture decisions:**
+- `TollGateRecord` is a nested record in `WorldRoadSavedData` (like `TollGatePlan` is in `TollGatePlanner`) — keeps related codec and data in one place.
+- `insertTollGateNode` is a new method on `WorldRoadGraph` rather than a modified `splitEdgeAtCell` — avoids any risk of breaking the split logic used by the connector planner and elsewhere. The two methods are structurally identical except for node type and kingdom affinity.
+- No `paidTollGates` set on `Caravan` — the toll system maintains its own session-scoped `Set<String>` keyed by "caravanId:nodeId". This keeps `Caravan` codec unchanged and avoids modifying a heavily-used class for transient state.
+- Reputation is aggregated per-kingdom by taking the max score across all villages in the kingdom. This prevents players from being penalized by a single low-rep village while having high rep elsewhere in the kingdom.
+- No player currency deduction — no currency system exists yet. Logged as "[TollGate] … [no currency system yet]" for Phase 10. Revenue counter in `TollGateRecord` still increments so kingdom debt can be reconciled later.
+
+**Deviations from spec:**
+- Guard NPC not spawned — TownspersonMob guard spawning deferred (no guard profession/behaviour available yet). The guardhouse structure is placed; guard spawn is Phase 10a.
+- `/litv toll pay` doesn't deduct items from inventory (no currency system). It logs the payment and increments revenue only.
+- `force_place_toll` requires a kingdom to exist (at least one). In a fresh world with no kingdoms it fails gracefully with a message.
+
+**Test world observations:** Manual static review only.
+- Expected: on GREAT_ROAD edges crossing two kingdoms, `planForGraph` detects transitions and `force_place_toll <edgeId>` places an arch+guardhouse visible in-world.
+- `list_tolls` should show gates after `force_place_toll` runs; `toll_revenue` should show 0 until caravans cross.
+- `simulate_toll <kingdom>` provides a quick sanity check that fees are tier-correct.
+
+**Carryovers:**
+- Guard NPC spawning at toll gates (Phase 10a).
+- Player currency deduction at toll gates (Phase 10).
+- TOLL_GATE_RAIDED and CORRUPT_TOLL_COLLECTOR event logic (Phase 10b — stubs present).
+- Linear blockPath scan in `RoadUnderfootDetector` / `RoadProximityChecker` (noted since Phase 8a). Still deferred.
+- All Phase 6 carryovers remain.
+
+---
+
+**Phase 8 complete.** Phase 8a (terrain safety system), 8b (road events + TravellingGroup engine), 8c (shelter expectation), and 8d (tolls and checkpoints) all implemented.
 
 **Next: Phase 8d — tolls and checkpoints (kingdom border toll gates).**

@@ -48,6 +48,10 @@ import tterrag1112.life_in_the_village.Events.RoadSafetySystem;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterBuilder;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterInstance;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterPlanner;
+import tterrag1112.life_in_the_village.Kingdom.Kingdom;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.TollGateBuilder;
+import tterrag1112.life_in_the_village.Village.Roads.Decoration.TollGatePlanner;
+import tterrag1112.life_in_the_village.Village.Roads.Economy.TollFeeCalculator;
 import net.minecraft.world.level.ChunkPos;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder.AnchorCandidate;
@@ -253,6 +257,21 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("replace_shelter")
                                         .then(Commands.argument("edgeId", StringArgumentType.word())
                                                 .executes(RoadGraphDebugCommand::replaceShelter)))
+                                // ── Phase 8d: toll gates ──────────────────────────────────────
+                                .then(Commands.literal("list_tolls")
+                                        .executes(RoadGraphDebugCommand::listTolls))
+                                .then(Commands.literal("simulate_toll")
+                                        .then(Commands.argument("kingdomName", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::simulateToll)))
+                                .then(Commands.literal("toll_revenue")
+                                        .then(Commands.argument("kingdomName", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::tollRevenue)))
+                                .then(Commands.literal("force_place_toll")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forcePlaceToll)))
+                                .then(Commands.literal("replace_toll")
+                                        .then(Commands.argument("nodeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::replaceToll)))
                         )
                 )
         );
@@ -267,6 +286,14 @@ public class RoadGraphDebugCommand {
                         .then(Commands.literal("repair")
                                 .then(Commands.argument("edgeId", StringArgumentType.word())
                                         .executes(RoadGraphDebugCommand::repairEdge)))
+                )
+        );
+
+        // ── /litv toll pay (player-facing toll payment, Phase 8d) ────────────
+        dispatcher.register(Commands.literal("litv")
+                .then(Commands.literal("toll")
+                        .then(Commands.literal("pay")
+                                .executes(RoadGraphDebugCommand::playerTollPay))
                 )
         );
     }
@@ -2964,5 +2991,306 @@ public class RoadGraphDebugCommand {
                 "[replace_shelter] Edge " + shortId + ": removed " + removed
                         + " old blocks, re-placed " + built + " shelter(s)."), false);
         return built;
+    }
+
+    // =========================================================================
+    // list_tolls  (Phase 8d)
+    // =========================================================================
+
+    private static int listTolls(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        var tollGates = rData.getAllTollGates();
+        if (tollGates.isEmpty()) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[list_tolls] No toll gates registered."), false);
+            return 0;
+        }
+
+        StringBuilder sb = new StringBuilder("[list_tolls] ")
+                .append(tollGates.size()).append(" gate(s):\n");
+        for (WorldRoadSavedData.TollGateRecord rec : tollGates.values()) {
+            String kName = vData.getKingdomById(rec.kingdomId())
+                    .map(Kingdom::getName).orElse("unknown");
+            sb.append("  node=").append(rec.nodeId().toString().substring(0, 8))
+              .append(" kingdom=").append(kName)
+              .append(" tier=").append(rec.tier())
+              .append(" revenue=").append(rec.revenueBronze()).append(" bronze\n");
+        }
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return tollGates.size();
+    }
+
+    // =========================================================================
+    // simulate_toll  (Phase 8d)
+    // =========================================================================
+
+    private static int simulateToll(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        String kingdomName = StringArgumentType.getString(ctx, "kingdomName");
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        Kingdom kingdom = vData.getAllKingdoms().stream()
+                .filter(k -> k.getName().equalsIgnoreCase(kingdomName))
+                .findFirst().orElse(null);
+        if (kingdom == null) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[simulate_toll] Kingdom not found: " + kingdomName));
+            return 0;
+        }
+
+        // Find the nearest toll gate belonging to this kingdom
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadSavedData.TollGateRecord nearest = null;
+        long bestDist = Long.MAX_VALUE;
+        BlockPos pPos = player.blockPosition();
+
+        for (WorldRoadSavedData.TollGateRecord rec : rData.getAllTollGates().values()) {
+            if (!rec.kingdomId().equals(kingdom.getId())) continue;
+            var node = rData.getGraph().getNode(rec.nodeId());
+            if (node == null) continue;
+            BlockPos gPos = node.position();
+            long d = (long)(pPos.getX()-gPos.getX())*(pPos.getX()-gPos.getX())
+                    + (long)(pPos.getZ()-gPos.getZ())*(pPos.getZ()-gPos.getZ());
+            if (d < bestDist) { bestDist = d; nearest = rec; }
+        }
+
+        if (nearest == null) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[simulate_toll] No toll gates found for " + kingdomName));
+            return 0;
+        }
+
+        TollFeeCalculator.TollFee fee = TollFeeCalculator.computeFee(
+                nearest.tier(), 0, TollFeeCalculator.DEFAULT_REPUTATION);
+        WorldRoadSavedData.TollGateRecord finalNearest = nearest;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[simulate_toll] Gate " + finalNearest.nodeId().toString().substring(0, 8)
+                        + " (" + kingdom.getName() + ")"
+                        + " fee=" + fee.amountBronze() + " bronze"
+                        + " reason=" + fee.reason()), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // toll_revenue  (Phase 8d)
+    // =========================================================================
+
+    private static int tollRevenue(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        String kingdomName = StringArgumentType.getString(ctx, "kingdomName");
+        VillageSavedData vData = VillageSavedData.get(level);
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+
+        Kingdom kingdom = vData.getAllKingdoms().stream()
+                .filter(k -> k.getName().equalsIgnoreCase(kingdomName))
+                .findFirst().orElse(null);
+        if (kingdom == null) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[toll_revenue] Kingdom not found: " + kingdomName));
+            return 0;
+        }
+
+        long total = rData.getAllTollGates().values().stream()
+                .filter(r -> r.kingdomId().equals(kingdom.getId()))
+                .mapToLong(WorldRoadSavedData.TollGateRecord::revenueBronze)
+                .sum();
+        long gateCount = rData.getAllTollGates().values().stream()
+                .filter(r -> r.kingdomId().equals(kingdom.getId())).count();
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[toll_revenue] " + kingdom.getName()
+                        + " — " + gateCount + " gate(s), total revenue: "
+                        + total + " bronze"), false);
+        return (int) Math.min(gateCount, Integer.MAX_VALUE);
+    }
+
+    // =========================================================================
+    // force_place_toll  (Phase 8d)
+    // =========================================================================
+
+    private static int forcePlaceToll(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        String edgeIdStr = StringArgumentType.getString(ctx, "edgeId");
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        UUID edgeId;
+        try { edgeId = UUID.fromString(edgeIdStr); }
+        catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[force_place_toll] Invalid UUID: " + edgeIdStr));
+            return 0;
+        }
+
+        RoadEdge edge = rData.getGraph().getEdge(edgeId);
+        if (edge == null) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[force_place_toll] Edge not found: " + edgeIdStr));
+            return 0;
+        }
+
+        // Use player position as the gate position and pick the first kingdom
+        Kingdom kingdom = vData.getAllKingdoms().stream().findFirst().orElse(null);
+        if (kingdom == null) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[force_place_toll] No kingdoms exist yet."));
+            return 0;
+        }
+
+        long worldSeed = level.getSeed();
+        List<TollGatePlanner.TollGatePlan> plans =
+                TollGatePlanner.planForGraph(rData.getGraph(), vData, worldSeed);
+
+        TollGatePlanner.TollGatePlan plan = plans.stream()
+                .filter(p -> p.edgeId().equals(edgeId))
+                .findFirst().orElse(null);
+
+        if (plan == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_place_toll] No border crossing detected on edge "
+                            + edgeIdStr.substring(0, 8) + ". Check kingdom territory."));
+            return 0;
+        }
+
+        TollGateBuilder.PlacementResult result =
+                TollGateBuilder.build(level, plan, kingdom, rData);
+        if (result == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_place_toll] Placement failed (terrain unsuitable or chunk unloaded)."));
+            return 0;
+        }
+
+        rData.markDirty();
+        String nodeStr = result.nodeId() != null
+                ? result.nodeId().toString().substring(0, 8) : "null";
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_place_toll] Placed gate at " + result.gatePosition().toShortString()
+                        + " node=" + nodeStr
+                        + " blocks=" + result.placedBlocks().size()), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // replace_toll  (Phase 8d)
+    // =========================================================================
+
+    private static int replaceToll(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        String nodeIdStr = StringArgumentType.getString(ctx, "nodeId");
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        UUID nodeId;
+        try { nodeId = UUID.fromString(nodeIdStr); }
+        catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[replace_toll] Invalid UUID: " + nodeIdStr));
+            return 0;
+        }
+
+        WorldRoadSavedData.TollGateRecord rec = rData.getTollGate(nodeId).orElse(null);
+        if (rec == null) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[replace_toll] No toll gate record for node: " + nodeIdStr));
+            return 0;
+        }
+
+        var node = rData.getGraph().getNode(nodeId);
+        if (node == null) {
+            ctx.getSource().sendFailure(
+                    Component.literal("[replace_toll] Node not in graph: " + nodeIdStr));
+            return 0;
+        }
+
+        Kingdom kingdom = vData.getKingdomById(rec.kingdomId()).orElse(null);
+        // Re-register with zero revenue reset
+        rData.registerTollGate(nodeId, rec.kingdomId(), rec.tier());
+        rData.markDirty();
+
+        String kName = kingdom != null ? kingdom.getName() : rec.kingdomId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[replace_toll] Toll gate record for node "
+                        + nodeId.toString().substring(0, 8)
+                        + " reset (kingdom=" + kName + " tier=" + rec.tier() + ")."), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // /litv toll pay  (Phase 8d — player-facing)
+    // =========================================================================
+
+    private static int playerTollPay(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        VillageSavedData vData = VillageSavedData.get(level);
+        BlockPos pPos = player.blockPosition();
+
+        // Find the nearest toll gate within 20 blocks
+        WorldRoadSavedData.TollGateRecord nearest = null;
+        long bestDistSq = 20L * 20;
+
+        for (WorldRoadSavedData.TollGateRecord rec : rData.getAllTollGates().values()) {
+            var node = rData.getGraph().getNode(rec.nodeId());
+            if (node == null) continue;
+            BlockPos gPos = node.position();
+            long dsq = (long)(pPos.getX()-gPos.getX())*(pPos.getX()-gPos.getX())
+                    + (long)(pPos.getZ()-gPos.getZ())*(pPos.getZ()-gPos.getZ());
+            if (dsq <= bestDistSq) { bestDistSq = dsq; nearest = rec; }
+        }
+
+        if (nearest == null) {
+            player.sendSystemMessage(
+                    Component.literal("There is no toll gate nearby to pay."));
+            return 0;
+        }
+
+        WorldRoadSavedData.TollGateRecord rec = nearest;
+        Kingdom kingdom = vData.getKingdomById(rec.kingdomId()).orElse(null);
+
+        int reputation = vData.getAllKingdoms().stream()
+                .filter(k -> k.getId().equals(rec.kingdomId()))
+                .findFirst()
+                .map(k -> k.getVillageIds().stream()
+                        .mapToInt(vid ->
+                                vData.getReputation(player.getUUID(), vid)
+                                        .map(tterrag1112.life_in_the_village.Village.Reputation.VillageReputation::getScore)
+                                        .orElse(TollFeeCalculator.DEFAULT_REPUTATION))
+                        .max()
+                        .orElse(TollFeeCalculator.DEFAULT_REPUTATION))
+                .orElse(TollFeeCalculator.DEFAULT_REPUTATION);
+
+        TollFeeCalculator.TollFee fee = TollFeeCalculator.computeFee(rec.tier(), 0, reputation);
+        String kName = kingdom != null ? kingdom.getName() : "Unknown Kingdom";
+
+        if (fee.isFree()) {
+            player.sendSystemMessage(
+                    Component.literal("Your reputation with " + kName + " earns you free passage."));
+            return 1;
+        }
+
+        // No currency system yet — log and succeed
+        rData.addTollRevenue(rec.nodeId(), fee.amountBronze());
+        rData.markDirty();
+        System.out.println("[TollGate] Player " + player.getName().getString()
+                + " paid " + fee.amountBronze() + " bronze to " + kName
+                + " [no currency system — payment recorded only]");
+
+        player.sendSystemMessage(Component.literal(
+                "You pay " + fee.amountBronze() + " bronze toll to "
+                        + kName + ". Safe travels."));
+        return 1;
     }
 }

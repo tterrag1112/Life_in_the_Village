@@ -8,6 +8,7 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterInstance;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 
 import java.util.ArrayList;
@@ -15,6 +16,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -37,7 +39,44 @@ import java.util.UUID;
  */
 public class WorldRoadSavedData extends SavedData {
 
-    // ── Codec ────────────────────────────────────────────────────────────────
+    // =========================================================================
+    // TollGateRecord — toll gate node metadata + revenue tracking
+    // =========================================================================
+
+    /**
+     * Persisted record for a single toll gate node.
+     *
+     * @param nodeId        graph node UUID
+     * @param kingdomId     the kingdom that collects this toll
+     * @param tier          edge tier at the gate (for fee calculation)
+     * @param revenueBronze cumulative bronze collected at this gate
+     */
+    public record TollGateRecord(UUID nodeId, UUID kingdomId,
+                                  RoadEdge.EdgeTier tier, long revenueBronze) {
+
+        private static final Codec<UUID> UUID_CODEC_LOCAL =
+                Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
+        public static final Codec<TollGateRecord> CODEC = RecordCodecBuilder.create(i -> i.group(
+                UUID_CODEC_LOCAL.fieldOf("nodeId")
+                        .forGetter(TollGateRecord::nodeId),
+                UUID_CODEC_LOCAL.fieldOf("kingdomId")
+                        .forGetter(TollGateRecord::kingdomId),
+                RoadEdge.EdgeTier.CODEC.optionalFieldOf("tier", RoadEdge.EdgeTier.TRUNK)
+                        .forGetter(TollGateRecord::tier),
+                Codec.LONG.optionalFieldOf("revenueBronze", 0L)
+                        .forGetter(TollGateRecord::revenueBronze)
+        ).apply(i, TollGateRecord::new));
+
+        /** Returns a new record with the given amount added to the revenue total. */
+        public TollGateRecord withAddedRevenue(long bronze) {
+            return new TollGateRecord(nodeId, kingdomId, tier, revenueBronze + bronze);
+        }
+    }
+
+    // =========================================================================
+    // Codec
+    // =========================================================================
 
     private static final Codec<UUID> UUID_CODEC =
             Codec.STRING.xmap(UUID::fromString, UUID::toString);
@@ -45,7 +84,8 @@ public class WorldRoadSavedData extends SavedData {
     private record Snapshot(WorldRoadGraph graph, boolean migrated,
                              Map<UUID, VillageUpkeepLedger> ledgers,
                              boolean greatRoadGenerationComplete,
-                             Map<UUID, List<ShelterInstance>> edgeShelters) {
+                             Map<UUID, List<ShelterInstance>> edgeShelters,
+                             Map<UUID, TollGateRecord> tollGates) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
@@ -58,7 +98,10 @@ public class WorldRoadSavedData extends SavedData {
                         .forGetter(Snapshot::greatRoadGenerationComplete),
                 Codec.unboundedMap(UUID_CODEC, ShelterInstance.CODEC.listOf())
                         .optionalFieldOf("edgeShelters", new HashMap<>())
-                        .forGetter(Snapshot::edgeShelters)
+                        .forGetter(Snapshot::edgeShelters),
+                Codec.unboundedMap(UUID_CODEC, TollGateRecord.CODEC)
+                        .optionalFieldOf("tollGates", new HashMap<>())
+                        .forGetter(Snapshot::tollGates)
         ).apply(i, Snapshot::new));
     }
 
@@ -66,7 +109,8 @@ public class WorldRoadSavedData extends SavedData {
             snap -> {
                 WorldRoadSavedData data = new WorldRoadSavedData(
                         snap.graph(), snap.migrated(), new HashMap<>(snap.ledgers()),
-                        snap.greatRoadGenerationComplete(), new HashMap<>(snap.edgeShelters()));
+                        snap.greatRoadGenerationComplete(), new HashMap<>(snap.edgeShelters()),
+                        new HashMap<>(snap.tollGates()));
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -79,7 +123,8 @@ public class WorldRoadSavedData extends SavedData {
                 return data;
             },
             data -> new Snapshot(data.graph, data.migrated, new HashMap<>(data.ledgers),
-                    data.greatRoadGenerationComplete, new HashMap<>(data.edgeShelters))
+                    data.greatRoadGenerationComplete, new HashMap<>(data.edgeShelters),
+                    new HashMap<>(data.tollGates))
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -88,7 +133,9 @@ public class WorldRoadSavedData extends SavedData {
             CODEC
     );
 
-    // ── State ────────────────────────────────────────────────────────────────
+    // =========================================================================
+    // State
+    // =========================================================================
 
     private final WorldRoadGraph graph;
     private boolean migrated;
@@ -97,8 +144,12 @@ public class WorldRoadSavedData extends SavedData {
     private boolean greatRoadGenerationComplete;
     /** Edge UUID → list of placed shelters along that edge. */
     private final Map<UUID, List<ShelterInstance>> edgeShelters;
+    /** Node UUID → toll gate record (kingdom + cumulative revenue). */
+    private final Map<UUID, TollGateRecord> tollGates;
 
-    // ── Constructors ─────────────────────────────────────────────────────────
+    // =========================================================================
+    // Constructors
+    // =========================================================================
 
     /** Default constructor — creates an empty graph for a fresh world. */
     public WorldRoadSavedData() {
@@ -107,32 +158,43 @@ public class WorldRoadSavedData extends SavedData {
         this.ledgers                     = new HashMap<>();
         this.greatRoadGenerationComplete = false;
         this.edgeShelters                = new HashMap<>();
+        this.tollGates                   = new HashMap<>();
     }
 
     private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated,
                                 Map<UUID, VillageUpkeepLedger> ledgers,
                                 boolean greatRoadGenerationComplete,
-                                Map<UUID, List<ShelterInstance>> edgeShelters) {
+                                Map<UUID, List<ShelterInstance>> edgeShelters,
+                                Map<UUID, TollGateRecord> tollGates) {
         this.graph                       = graph;
         this.migrated                    = migrated;
         this.ledgers                     = ledgers;
         this.greatRoadGenerationComplete = greatRoadGenerationComplete;
         this.edgeShelters                = edgeShelters;
+        this.tollGates                   = tollGates;
     }
 
-    // ── Accessor ─────────────────────────────────────────────────────────────
+    // =========================================================================
+    // Accessor
+    // =========================================================================
 
     public static WorldRoadSavedData get(ServerLevel level) {
         return level.getDataStorage().computeIfAbsent(TYPE);
     }
 
-    // ── Getters / setters ────────────────────────────────────────────────────
+    // =========================================================================
+    // Getters / setters — graph, migration
+    // =========================================================================
 
     public WorldRoadGraph getGraph() { return graph; }
 
     public boolean isMigrated() { return migrated; }
 
     public void setMigrated(boolean migrated) { this.migrated = migrated; }
+
+    // =========================================================================
+    // Upkeep ledgers
+    // =========================================================================
 
     /** Returns the ledger for {@code villageId}, creating it if absent. */
     public VillageUpkeepLedger getOrCreateLedger(UUID villageId) {
@@ -149,11 +211,19 @@ public class WorldRoadSavedData extends SavedData {
         return java.util.Collections.unmodifiableMap(ledgers);
     }
 
+    // =========================================================================
+    // Great road generation flag
+    // =========================================================================
+
     public boolean isGreatRoadGenerationComplete() { return greatRoadGenerationComplete; }
 
     public void setGreatRoadGenerationComplete(boolean complete) {
         this.greatRoadGenerationComplete = complete;
     }
+
+    // =========================================================================
+    // Shelter instances (Phase 8c)
+    // =========================================================================
 
     /** Returns the shelter list for {@code edgeId}, or an empty list if none placed yet. */
     public List<ShelterInstance> getShelters(UUID edgeId) {
@@ -183,6 +253,51 @@ public class WorldRoadSavedData extends SavedData {
     public Map<UUID, List<ShelterInstance>> getAllEdgeShelters() {
         return Collections.unmodifiableMap(edgeShelters);
     }
+
+    // =========================================================================
+    // Toll gate records (Phase 8d)
+    // =========================================================================
+
+    /** Returns the toll gate record for {@code nodeId}, if one was registered. */
+    public Optional<TollGateRecord> getTollGate(UUID nodeId) {
+        return Optional.ofNullable(tollGates.get(nodeId));
+    }
+
+    /**
+     * Registers a toll gate node. Overwrites any previous record for this node.
+     *
+     * @param nodeId    graph node UUID
+     * @param kingdomId collecting kingdom
+     * @param tier      edge tier at the gate (used for fee calculation)
+     */
+    public void registerTollGate(UUID nodeId, UUID kingdomId, RoadEdge.EdgeTier tier) {
+        tollGates.put(nodeId, new TollGateRecord(nodeId, kingdomId, tier, 0L));
+    }
+
+    /**
+     * Adds {@code bronze} to the cumulative revenue for {@code nodeId}.
+     * No-op if the node is not registered.
+     */
+    public void addTollRevenue(UUID nodeId, long bronze) {
+        TollGateRecord rec = tollGates.get(nodeId);
+        if (rec != null) {
+            tollGates.put(nodeId, rec.withAddedRevenue(bronze));
+        }
+    }
+
+    /** Removes the toll gate record for {@code nodeId}. */
+    public void removeTollGate(UUID nodeId) {
+        tollGates.remove(nodeId);
+    }
+
+    /** Unmodifiable view of all toll gate records, keyed by node UUID. */
+    public Map<UUID, TollGateRecord> getAllTollGates() {
+        return Collections.unmodifiableMap(tollGates);
+    }
+
+    // =========================================================================
+    // Dirty flag
+    // =========================================================================
 
     /** Exposes {@link SavedData#setDirty()} to external callers. */
     public void markDirty() { setDirty(); }
