@@ -40,8 +40,12 @@ import tterrag1112.life_in_the_village.Events.GreatRoadGenerationQueue;
 import tterrag1112.life_in_the_village.Events.RoadTerrainChangeListener;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter.CharacterTag;
+import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadProximityCache;
+import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadProximityChecker;
 import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadSpeedModifier;
 import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadUnderfootDetector;
+import tterrag1112.life_in_the_village.Events.RoadSafetySystem;
+import net.minecraft.world.level.ChunkPos;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadAnchorSeeder.AnchorCandidate;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.NamedRoadSelector;
@@ -220,6 +224,17 @@ public class RoadGraphDebugCommand {
                                                 .executes(RoadGraphDebugCommand::simulateWalk)))
                                 .then(Commands.literal("speed_report")
                                         .executes(RoadGraphDebugCommand::speedReport))
+                                // ── Phase 8b: safety gradient ─────────────────────────────
+                                .then(Commands.literal("safety_check")
+                                        .then(Commands.argument("x", IntegerArgumentType.integer())
+                                        .then(Commands.argument("y", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                .executes(RoadGraphDebugCommand::safetyCheck)))))
+                                .then(Commands.literal("simulate_spawn")
+                                        .then(Commands.argument("mob_type", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::simulateSpawn)))
+                                .then(Commands.literal("safety_stats")
+                                        .executes(RoadGraphDebugCommand::safetyStats))
                         )
                 )
         );
@@ -2567,5 +2582,125 @@ public class RoadGraphDebugCommand {
         String msg = sb.toString();
         ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
         return 1;
+    }
+
+    // =========================================================================
+    // safety_check  (Phase 8b)
+    // =========================================================================
+
+    private static int safetyCheck(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        int x = IntegerArgumentType.getInteger(ctx, "x");
+        int y = IntegerArgumentType.getInteger(ctx, "y");
+        int z = IntegerArgumentType.getInteger(ctx, "z");
+        net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(x, y, z);
+
+        boolean isDay       = level.isDay();
+        ChunkPos chunk      = new ChunkPos(pos);
+        boolean chunkInCache = RoadProximityCache.isBuilt()
+                && RoadProximityCache.couldChunkBeNearRoad(chunk);
+
+        java.util.Optional<RoadEdge.EdgeTier> nearbyTier =
+                RoadProximityChecker.nearestMaintainedRoadTier(graph, pos, 16);
+
+        StringBuilder sb = new StringBuilder("[safety_check] Pos (")
+                .append(x).append(", ").append(y).append(", ").append(z).append(")\n")
+                .append("  isDay=").append(isDay).append('\n')
+                .append("  chunk=(").append(chunk.x).append(", ").append(chunk.z)
+                .append(") in cache=").append(chunkInCache)
+                .append(" (cache built=").append(RoadProximityCache.isBuilt())
+                .append(", size=").append(RoadProximityCache.size()).append(")\n");
+
+        if (nearbyTier.isEmpty()) {
+            sb.append("  nearest maintained road: none within corridor\n")
+              .append("  suppression: N/A");
+        } else {
+            RoadEdge.EdgeTier tier = nearbyTier.get();
+            float chance = RoadSafetySystem.suppressionChanceForTier(tier);
+            sb.append("  nearest maintained road tier: ").append(tier)
+              .append(" (corridor=±").append(RoadProximityChecker.corridorWidth(tier)).append(" blocks)\n")
+              .append("  suppression chance: ")
+              .append(String.format("%.0f%%", chance * 100))
+              .append(isDay ? " (active — daytime)" : " (inactive — night)");
+        }
+
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return nearbyTier.isPresent() ? 1 : 0;
+    }
+
+    // =========================================================================
+    // simulate_spawn  (Phase 8b)
+    // =========================================================================
+
+    private static int simulateSpawn(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+        String mobType = StringArgumentType.getString(ctx, "mob_type");
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+
+        net.minecraft.core.BlockPos pos = player.blockPosition();
+        boolean isDay = level.isDay();
+
+        java.util.Optional<RoadEdge.EdgeTier> nearbyTier =
+                RoadProximityChecker.nearestMaintainedRoadTier(graph, pos, 16);
+
+        StringBuilder sb = new StringBuilder("[simulate_spawn] Simulating '")
+                .append(mobType).append("' at ").append(pos.toShortString()).append('\n')
+                .append("  isDay=").append(isDay).append('\n');
+
+        if (!isDay) {
+            sb.append("  Night: no suppression — spawn ALLOWED");
+        } else if (nearbyTier.isEmpty()) {
+            sb.append("  No maintained road within corridor — spawn ALLOWED");
+        } else {
+            RoadEdge.EdgeTier tier = nearbyTier.get();
+            float chance = RoadSafetySystem.suppressionChanceForTier(tier);
+            boolean suppressed = level.getRandom().nextFloat() < chance;
+            sb.append("  Road tier: ").append(tier)
+              .append(" suppression=").append(String.format("%.0f%%", chance * 100)).append('\n')
+              .append("  Simulated outcome: ")
+              .append(suppressed ? "SUPPRESSED (would not spawn)" : "ALLOWED (slipped through)");
+        }
+
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // safety_stats  (Phase 8b)
+    // =========================================================================
+
+    private static int safetyStats(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+
+        long total      = RoadSafetySystem.getTotalEvents();
+        long sup        = RoadSafetySystem.getSuppressedCount();
+        long windowStart = RoadSafetySystem.getWindowStartTick();
+        long elapsed    = level.getGameTime() - windowStart;
+        float rate      = total > 0 ? (float) sup / total : 0f;
+
+        String elapsedStr = elapsed < 20
+                ? elapsed + " ticks"
+                : String.format("%.1f sec", elapsed / 20.0);
+
+        StringBuilder sb = new StringBuilder("[safety_stats] Road spawn-suppression stats\n")
+                .append("  Window: ").append(elapsedStr)
+                .append(" (since tick ").append(windowStart).append(")\n")
+                .append("  Total daytime hostile spawn events: ").append(total).append('\n')
+                .append("  Suppressed by road safety:          ").append(sup).append('\n')
+                .append("  Suppression rate: ")
+                .append(String.format("%.1f%%", rate * 100)).append('\n')
+                .append("  Cache: built=").append(RoadProximityCache.isBuilt())
+                .append("  chunks marked=").append(RoadProximityCache.size()).append('\n')
+                .append("  (use 'safety_stats reset' argument to clear counters)");
+
+        String msg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return (int) Math.min(total, Integer.MAX_VALUE);
     }
 }

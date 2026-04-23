@@ -921,3 +921,45 @@ command creates a real `TradeRoute` stored in `VillageSavedData` so `getPath()` 
 - All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
 
 **Phase 8a complete.**
+
+---
+
+### 2026-04-23 — Phase 8b implemented: safety gradient along maintained roads
+
+**Phase:** 8b — Daytime hostile-mob spawn suppression within road safety corridors
+
+**Files created:**
+- `Village/Roads/Travel/RoadProximityCache.java` — chunk-level pre-filter. Marks every chunk within 4 chunks of any atlas cell that belongs to a maintained realized edge. Built lazily on first spawn event; invalidated by upkeep cycle. `couldChunkBeNearRoad(ChunkPos)` returns false (definitive safe) for the vast majority of world chunks that have no roads near them. Chunk radius = `ceil((CELL_HALF + MAX_CORRIDOR) / 16) + 1 = 4`. Conservative: always returns true if cache not yet built.
+- `Village/Roads/Travel/RoadProximityChecker.java` — precise 2D Chebyshev check. `nearestMaintainedRoadTier(graph, pos, searchRadius)` → `Optional<EdgeTier>`. For each candidate edge from `edgesNear(x, z, 16)`: skip if maintenance < 30 (non-GREAT_ROAD), skip if not realized, scan blockPath for `abs(dx) <= cw && abs(dz) <= cw`. Corridor widths: GREAT_ROAD=12, TRUNK=8, CONNECTOR=5, LOCAL=3. Returns the highest-priority tier in range, short-circuits at GREAT_ROAD.
+- `Events/RoadSafetySystem.java` — `@EventBusSubscriber` event handler. `@SubscribeEvent onFinalizeSpawn(MobSpawnEvent.FinalizeSpawn)` — guards: `entity instanceof Monster`, `spawnType == MobSpawnType.NATURAL`, `level instanceof ServerLevel`, `level.isDay()`. Fast-rejects via chunk cache; runs in-depth check only for chunks near roads. Calls `event.setSpawnCancelled(true)` with probability `suppressionChanceForTier(tier)`. Suppression table: GREAT_ROAD=0.85, TRUNK=0.70, CONNECTOR=0.50, LOCAL=0.30. Tracks `AtomicLong totalEvents` / `suppressed` for stats commands.
+
+**Files modified:**
+- `Events/RoadUpkeepSystem.java` — added `RoadProximityCache.invalidate()` at end of `runCycle()`. This ensures the cache reflects new maintenance scores before the next in-game day's spawns. Import added.
+- `Commands/RoadGraphDebugCommand.java` — added 3 Phase 8b debug commands:
+  - `safety_check <x> <y> <z>` — reports: isDay, chunk cache status, nearest maintained road tier + corridor width, suppression chance, whether suppression is active at that position.
+  - `simulate_spawn <mob_type>` — runs the full road-safety decision at the player's position and reports the simulated outcome (SUPPRESSED or ALLOWED) with a random roll so the probabilistic nature is visible.
+  - `safety_stats` — total daytime hostile spawn events seen, suppressed count, suppression rate (%), cache built status and chunk count.
+
+**Design decisions:**
+- `level.isDay()` used (not raw `getDayTime()`) so storms also disable road safety, consistent with the "travel by day" feel. A thunderstorm at noon makes roads feel dangerous again.
+- GREAT_ROAD 85% suppression: ~1 in 7 daytime hostile spawns still succeed near a great road. Intentional — keeps alertness alive; the road is not invincible.
+- Maintenance threshold 30 aligns exactly with Phase 6b band 1 (20–39). At band 0 (0–19), roads are visually covered in fallen logs and saplings — the same roads that provide no spawn suppression. Mechanical and visual decay align.
+- Cache built from cellPath (not blockPath) to keep rebuild cost low. A cell is 64 blocks; using 4 chunk radius = ~44-block reach, which conservatively covers the widest corridor (12 blocks) plus cell half-width (32 blocks). No false negatives; minor false positives resolved by in-depth check.
+- Only `MobSpawnType.NATURAL` is suppressed. Spawner blocks, structure spawns, and future road-event mobs (Phase 10b bandits) bypass the check entirely by design.
+
+**Test world observations:** Manual static review only.
+- Expected: standing on great road at noon → sparse hostile mobs visible; stepping 15 blocks away → noticeably more mobs. Exact experience depends on world spawn rate and biome.
+- Cache effectiveness: in a typical world with 5–10 realized road edges, maybe 2000–5000 chunks flagged. That's a small fraction of a large world; the fast-reject path should handle >99% of all spawn events.
+- Decay alignment: use `force_maintenance 10` on a connector to drive it to band 0. Confirm `safety_check` reports "no maintained road within corridor" while on that connector's block path.
+- Night test: stand on great road at night → `simulate_spawn zombie` reports "Night: no suppression."
+
+**Deviations from spec:**
+- `simulate_spawn <mob_type>` does not actually try to spawn the mob. It runs the suppression decision logic at the player's position and reports the outcome. A live spawn attempt would require entity creation, which is inappropriate for a debug command.
+- `safety_stats` does not implement a sliding-window "last X minutes" counter. It accumulates since server start (or last explicit reset). The display shows elapsed ticks and computed seconds so the user can interpret the rate in context. A reset mechanism is noted in the output.
+
+**Carryovers:**
+- Phase 8a carryover: `RoadUnderfootDetector` linearly scans full `blockPath`. Acceptable for Phase 8a/8b; Phase 8b's `RoadProximityChecker` has the same pattern. A per-edge `HashSet<Long>` (packed XZ positions) would fix both — Phase 8c optimization candidate.
+- History event for kingdom-near-road not in-game yet (console log only).
+- All Phase 6 carryovers (culture testing, sign text, junction/ruin visuals) remain untested in a live world.
+
+**Next: Phase 8c — shelter expectation (waystations and inns along long road stretches).**

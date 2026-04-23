@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.Village;
+import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadProximityCache;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -200,6 +201,10 @@ public final class RoadUpkeepSystem {
                 }
             }
         }
+
+        // Invalidate the road proximity cache so Phase 8b spawn suppression
+        // reflects the new maintenance scores immediately in the next in-game day.
+        RoadProximityCache.invalidate();
 
         roadData.markDirty();
         villageData.setDirty();
