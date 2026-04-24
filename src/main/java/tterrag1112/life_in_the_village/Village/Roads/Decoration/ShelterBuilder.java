@@ -87,6 +87,16 @@ public final class ShelterBuilder {
             return null;
         }
 
+        // Clear trees/vegetation from the shelter's footprint before placing
+        int[] hw = shelterHalfWidths(plan.type());
+        tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer.clear(
+                level,
+                tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer
+                        .buildFootprintCorridor(origin, hw[0], hw[1]),
+                10,
+                tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer.MushroomPolicy.PRESERVE
+        );
+
         List<BlockPos> placed = new ArrayList<>();
         Random rng = new Random(origin.asLong() ^ 0xABCD1234L);
 
@@ -457,6 +467,21 @@ public final class ShelterBuilder {
                 }
             }
         }
+    }
+
+    // =========================================================================
+    // Footprint helpers
+    // =========================================================================
+
+    /** Returns [halfWidth, halfDepth] for the clearance footprint of each shelter type. */
+    private static int[] shelterHalfWidths(ShelterPlanner.ShelterType type) {
+        return switch (type) {
+            case INN              -> new int[]{4, 5};   // 7×9 → +1 margin each side
+            case CARAVANSERAI     -> new int[]{5, 6};   // 9×11 → +1 margin each side
+            case ROADSIDE_SHRINE  -> new int[]{2, 2};   // 3×3 + 1 margin
+            case RUINED_WATCHTOWER -> new int[]{4, 4};  // 5×5 + 2 debris margin
+            case RUINED_WAYSTATION -> new int[]{5, 5};  // 7×7 + 1 debris margin
+        };
     }
 
     // =========================================================================

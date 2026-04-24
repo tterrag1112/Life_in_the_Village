@@ -12,11 +12,13 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Places road blocks for a single primitive's centerline.
@@ -75,10 +77,12 @@ public final class UnifiedRoadPlacer {
             bridgeSpans.addAll(detectWaterSpans(level, centerline.get(i), centerline.get(i + 1)));
         }
 
-        // ── Step 2: clear trees along dense path ───────────────────────────────
-        for (BlockPos p : dense) {
-            RoadRouter.clearTreesAt(level, p.getX(), p.getZ(), p.getY());
-        }
+        // ── Step 2: clear vegetation along dense path ─────────────────────────
+        // Use connected-component detection so full trees are cleared when their
+        // trunk is in the corridor, and only overhanging leaves are cleared when
+        // the trunk is outside it.
+        Set<Long> corridor = TerrainClearer.buildRoadCorridor(dense, tier.placedHalfWidth());
+        TerrainClearer.clear(level, corridor, 6, TerrainClearer.MushroomPolicy.CLEAR_IF_TRUNK);
 
         // ── Step 3: paint surface using dense path ─────────────────────────────
         long seed = edge.getEdgeId().getLeastSignificantBits()

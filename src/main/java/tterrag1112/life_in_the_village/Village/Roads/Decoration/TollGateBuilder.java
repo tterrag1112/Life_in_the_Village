@@ -14,10 +14,12 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -90,6 +92,11 @@ public final class TollGateBuilder {
 
         BlockPos origin = new BlockPos(centre.getX(), groundY, centre.getZ());
         if (!isSuitable(level, origin)) return null;
+
+        // Clear trees/vegetation from the gate footprint before placing.
+        // The gate spans ~7 blocks across the road (arch width) + 8 blocks to side for guardhouse.
+        Set<Long> footprint = TerrainClearer.buildFootprintCorridor(origin, 7, 4);
+        TerrainClearer.clear(level, footprint, 8, TerrainClearer.MushroomPolicy.CLEAR_IF_TRUNK);
 
         String culture = kingdom != null ? kingdom.getCulture() : "default";
         Direction roadDir = roadDirection(plan);

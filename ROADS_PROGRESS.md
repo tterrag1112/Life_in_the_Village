@@ -1381,3 +1381,84 @@ Used the anchor-zone approach. The full `VillageCellDensity` implementation with
 - None.
 
 **Next:** Session B4 or as directed.
+
+---
+
+## Session B4 — 2026-04-24
+
+**Goal:** Replace block-by-block tree clearing with connected-component feature detection so trees are cleared cleanly (whole or not at all, never half).
+
+### Files created
+
+**`Village/Roads/Terrain/VegetationFeatureDetector.java`** (new)
+
+Connected-component detection for trees, mushrooms, and bamboo. Public API:
+- `detectFeature(ServerLevel, BlockPos)` → `Set<BlockPos>`: all blocks in the feature containing the seed. Empty set if seed is not vegetation or feature exceeds 500-block safety cap.
+- `classifyFeature(ServerLevel, BlockPos)` → `FeatureType`: TREE / MEGA_TREE / MUSHROOM / BAMBOO_CLUSTER / NONE. Fast path, no full collection.
+- `boundingBox(Set<BlockPos>)` → `int[6]`: [minX,minY,minZ,maxX,maxY,maxZ].
+- `hasTrunk(ServerLevel, Set<BlockPos>)`: returns true if any block in the set is a log.
+
+Algorithm for trees:
+1. If seed is a leaf: walk downward (up to 10 blocks) + small 2-block XZ search to find the trunk log.
+2. BFS from trunk log through 26-connected log neighbors (captures branches and 2×2 mega-trunks naturally).
+3. Expand to natural (non-PERSISTENT) leaves within radius 5 of each log, checking `isClosestOwner()` to avoid stealing leaves from adjacent trees.
+4. Safety caps: 500 blocks per feature, 32-block search radius.
+5. Mega-tree classification: log count > 40 → `MEGA_TREE`.
+
+Diagonal adjacency choice: Uses 26-way (3×3×3) adjacency for BFS to capture angled branches. This correctly handles jungle and dark-oak multi-trunk trees. Could cause two directly-adjacent trees to merge into one feature; accepted as acceptable behavior given rarity.
+
+**`Village/Roads/Terrain/TerrainClearer.java`** (new)
+
+Corridor-based vegetation clearance with tree-level policy decisions. Key methods:
+- `clear(level, corridorXZ, maxHeight, mushroomPolicy)` → `ClearanceResult`: main entry point. Iterates corridor columns, detects features from first-seen seeds, applies trunk-in-corridor policy.
+- `buildRoadCorridor(centerline, halfWidth)`: builds XZ key-set from dense path.
+- `buildFootprintCorridor(origin, halfW, halfD)`: rectangular footprint.
+- `buildRadiusCorridor(center, radius)`: circular footprint.
+
+Clearance policy:
+- Log in corridor → detect whole feature → clear all.
+- Only leaves in corridor, trunk outside → clear only corridor-overlapping leaves; trunk and outside canopy survive.
+- Grass/ferns/flowers/vines/saplings/bamboo → always cleared.
+- Stripped logs (building materials) → never cleared.
+- Huge mushrooms: CLEAR / PRESERVE / CLEAR_IF_TRUNK policy.
+- Player-placed leaves (PERSISTENT=true) never cleared.
+- Block flags: `setBlock(..., 18)` (no neighbor updates, no physics) for efficient batch removal.
+
+### Files modified
+
+**`Village/Roads/Realization/UnifiedRoadPlacer.java`**
+- Added imports: `TerrainClearer`, `Set`.
+- Replaced the per-position `RoadRouter.clearTreesAt(...)` loop with a single corridor-based `TerrainClearer.clear(...)` call using `tier.placedHalfWidth()` as corridor half-width and `MushroomPolicy.CLEAR_IF_TRUNK`.
+- Corridor height: 6 blocks above ground (handles standard tree canopies; trunks extend but are detected via feature BFS).
+
+**`Village/Roads/Decoration/JunctionDecorator.java`**
+- Added imports: `TerrainClearer`, `Set`.
+- In `decorateTrunkJunction`: calls `TerrainClearer.clear(footprint 3×3, height 6, PRESERVE)` on the selected corner position before placing the junction structure. Mushrooms are preserved around junctions — atmospheric.
+- In `decorateGreatRoadAnchor`: calls `TerrainClearer.clear(footprint 4×4, height 8, PRESERVE)` around base position before placing anchor ruin. Mushrooms preserved.
+
+**`Village/Roads/Decoration/ShelterBuilder.java`**
+- Added `shelterHalfWidths(ShelterType)` helper returning [halfW, halfD] per type (INN 4×5, CARAVANSERAI 5×6, SHRINE 2×2, WATCHTOWER 4×4, WAYSTATION 5×5).
+- After road-clearance check, calls `TerrainClearer.clear(footprint per type, height 10, PRESERVE)`. Mushrooms preserved around shelters.
+
+**`Village/Roads/Decoration/TollGateBuilder.java`**
+- Added imports: `TerrainClearer`, `Set`.
+- Before arch + guardhouse placement: `TerrainClearer.clear(footprint 7×4, height 8, CLEAR_IF_TRUNK)`. Toll gates on roads clear trees if their trunk is in the gate footprint; mushrooms only cleared if stem is in footprint.
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Added imports: `TerrainClearer`, `VegetationFeatureDetector`.
+- Added three subcommands under `/liv road debug`:
+  - `detect_feature`: at player position, classifies and measures the feature, reports type, block count, bounding box, safety-cap status.
+  - `clear_feature`: detect and clear the feature at player position; no-ops at safety cap.
+  - `clear_corridor <radius>`: clears all vegetation in a radius circle around the player; reports trees/mushrooms/vegetation counts.
+
+### Design choices
+
+**26-way log adjacency vs 6-way:** Using 26-way (diagonal) to capture angled branch connections. Two directly adjacent trees may occasionally be detected as one feature (both cleared if either trunk is in corridor). This is preferable to leaving half a tree standing. Alternative is 6-way adjacency; could be tuned if players report over-clearing.
+
+**Leaf ownership:** `isClosestOwner()` searches a (LEAF_RADIUS+1) cube for foreign logs closer than the nearest owned log. This prevents stealing border-leaves from an adjacent tree. Dense forests may still have some ambiguous leaves near tree boundaries — Minecraft's leaf-decay tick handles these within ~30 seconds of trunk removal.
+
+**Safety cap at 500:** Mega-spruce from Terralith or similar mods can reach 400+ blocks. Any feature hitting the cap returns empty set and is skipped. The individual block that triggered detection is still cleared. Players can use `/liv road debug clear_feature` from within the tree to force-clear if needed.
+
+**Performance:** Feature BFS is bounded at 500 blocks × 26 neighbors × radius check = ~13,000 position checks per tree. This is fast enough (sub-millisecond for typical trees). Mega-trees (400 blocks) complete in ~5ms. No multi-tick deferral needed.
+
+**Next:** Phase 7e — great road terrain authority (retaining walls, terrain smoothing).

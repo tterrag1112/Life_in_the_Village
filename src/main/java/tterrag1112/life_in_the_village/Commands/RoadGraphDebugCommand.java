@@ -68,6 +68,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Economy.TierPromotionRules;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Events.TierReconciliationSystem;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.VegetationFeatureDetector;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
@@ -278,6 +280,14 @@ public class RoadGraphDebugCommand {
                                         .executes(RoadGraphDebugCommand::worldgenStatus))
                                 .then(Commands.literal("worldgen_timing")
                                         .executes(RoadGraphDebugCommand::worldgenTiming))
+                                // ── B4: vegetation feature debug ──────────────────────────────
+                                .then(Commands.literal("detect_feature")
+                                        .executes(RoadGraphDebugCommand::detectFeature))
+                                .then(Commands.literal("clear_feature")
+                                        .executes(RoadGraphDebugCommand::clearFeature))
+                                .then(Commands.literal("clear_corridor")
+                                        .then(Commands.argument("radius", IntegerArgumentType.integer(1, 64))
+                                                .executes(RoadGraphDebugCommand::clearCorridor)))
                         )
                 )
         );
@@ -3359,5 +3369,120 @@ public class RoadGraphDebugCommand {
         String report = sb.toString();
         ctx.getSource().sendSuccess(() -> Component.literal(report), false);
         return 1;
+    }
+
+    // =========================================================================
+    // B4: detect_feature
+    // =========================================================================
+
+    private static int detectFeature(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+
+        BlockPos seed = player.blockPosition();
+
+        VegetationFeatureDetector.FeatureType type =
+                VegetationFeatureDetector.classifyFeature(level, seed);
+
+        if (type == VegetationFeatureDetector.FeatureType.NONE) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[detect_feature] No vegetation feature at "
+                            + seed.toShortString()), false);
+            return 0;
+        }
+
+        java.util.Set<BlockPos> feature = VegetationFeatureDetector.detectFeature(level, seed);
+        boolean hitCap = feature.isEmpty();
+
+        if (hitCap) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[detect_feature] Feature at " + seed.toShortString()
+                    + " type=" + type + " EXCEEDED safety cap ("
+                    + VegetationFeatureDetector.MAX_FEATURE_BLOCKS_PUBLIC + " blocks) — not cleared"), false);
+            return 1;
+        }
+
+        int[] bb = VegetationFeatureDetector.boundingBox(feature);
+        boolean hasTrunk = VegetationFeatureDetector.hasTrunk(level, feature);
+        String msg = "[detect_feature] " + seed.toShortString()
+                + "\n  type=" + type
+                + " blocks=" + feature.size()
+                + " hasTrunk=" + hasTrunk
+                + "\n  bbox=[" + bb[0] + "," + bb[1] + "," + bb[2]
+                + "] → [" + bb[3] + "," + bb[4] + "," + bb[5] + "]";
+
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // B4: clear_feature
+    // =========================================================================
+
+    private static int clearFeature(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+
+        BlockPos seed = player.blockPosition();
+
+        VegetationFeatureDetector.FeatureType type =
+                VegetationFeatureDetector.classifyFeature(level, seed);
+
+        if (type == VegetationFeatureDetector.FeatureType.NONE) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("[clear_feature] No vegetation feature at "
+                            + seed.toShortString()), false);
+            return 0;
+        }
+
+        java.util.Set<BlockPos> feature = VegetationFeatureDetector.detectFeature(level, seed);
+        if (feature.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[clear_feature] Feature exceeds safety cap — no action taken"), false);
+            return 0;
+        }
+
+        int cleared = 0;
+        for (BlockPos pos : feature) {
+            if (!level.isLoaded(pos)) continue;
+            level.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 18);
+            cleared++;
+        }
+
+        int finalCleared = cleared;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[clear_feature] Cleared " + finalCleared + " blocks of " + type
+                + " at " + seed.toShortString()), false);
+        return finalCleared;
+    }
+
+    // =========================================================================
+    // B4: clear_corridor
+    // =========================================================================
+
+    private static int clearCorridor(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel  level  = ctx.getSource().getLevel();
+
+        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        BlockPos center = player.blockPosition();
+
+        java.util.Set<Long> corridor = TerrainClearer.buildRadiusCorridor(center, radius);
+        TerrainClearer.ClearanceResult result = TerrainClearer.clear(
+                level, corridor, 10, TerrainClearer.MushroomPolicy.CLEAR_IF_TRUNK);
+
+        String msg = "[clear_corridor] radius=" + radius
+                + " at " + center.toShortString()
+                + "\n  trees_cleared=" + result.treesCleared()
+                + " trees_partial=" + result.treesPartial()
+                + " mushrooms=" + result.mushroomsCleared()
+                + " vegetation=" + result.vegetationCleared()
+                + " failed=" + result.failedPositions().size();
+
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return result.treesCleared() + result.vegetationCleared();
     }
 }

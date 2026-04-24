@@ -16,6 +16,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import javax.annotation.Nullable;
@@ -25,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -106,6 +108,10 @@ public final class JunctionDecorator {
         // Choose corner furthest from any incident edge direction (clear of road blocks)
         BlockPos corner = bestCorner(level, node.position(), incident, graph);
         if (corner == null) return;
+
+        // Clear trees/vegetation in the junction corner footprint before placing
+        Set<Long> footprint = TerrainClearer.buildFootprintCorridor(corner, 3, 3);
+        TerrainClearer.clear(level, footprint, 6, TerrainClearer.MushroomPolicy.PRESERVE);
 
         int variant = (int) ((Math.abs(node.nodeId().getLeastSignificantBits()) % 4));
 
@@ -252,6 +258,11 @@ public final class JunctionDecorator {
                                                  RoadNode node,
                                                  WorldRoadGraph graph) {
         BlockPos base = surfacePos(level, node.position());
+
+        // Clear trees/vegetation in the anchor ruin footprint (5×5 max) before placing
+        Set<Long> footprint = TerrainClearer.buildFootprintCorridor(base, 4, 4);
+        TerrainClearer.clear(level, footprint, 8, TerrainClearer.MushroomPolicy.PRESERVE);
+
         int variant = (int) ((Math.abs(node.nodeId().getLeastSignificantBits()) % 3));
 
         List<BlockPos> placed = switch (variant) {
