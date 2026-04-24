@@ -22,8 +22,13 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.GraphTradeRouteEstablisher;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePaletteResolver;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingPlacer;
+import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer.ParticleEmission;
@@ -319,6 +324,19 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("show_village_graph")
                                         .then(Commands.argument("villageName", StringArgumentType.greedyString())
                                                 .executes(RoadGraphDebugCommand::showVillageGraph)))
+                                // ── 7g: palette + lighting debug ──────────────────────────────
+                                .then(Commands.literal("palette")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::paletteForEdge)))
+                                .then(Commands.literal("force_lighting")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                        .then(Commands.argument("frequency", StringArgumentType.word())
+                                        .then(Commands.argument("strategy", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forceLighting)))))
+                                .then(Commands.literal("lighting_summary")
+                                        .executes(RoadGraphDebugCommand::lightingSummary))
+                                .then(Commands.literal("list_palettes")
+                                        .executes(RoadGraphDebugCommand::listPalettes))
                                 // ── 7f Slice 2: gateway debug ─────────────────────────────────
                                 .then(Commands.literal("village_gateways")
                                         .then(Commands.argument("villageName", StringArgumentType.greedyString())
@@ -4099,5 +4117,211 @@ public class RoadGraphDebugCommand {
                 + " gateway(s) across all villages. FLAME=PRIMARY, SOUL_FIRE=SIDE, SMOKE=REAR."),
                 false);
         return totalGateways;
+    }
+
+    // =========================================================================
+    // Phase 7g — palette + lighting debug
+    // =========================================================================
+
+    private static int paletteForEdge(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        RoadEdge edge = resolveEdgeOrFail(ctx, graph,
+                StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT));
+        if (edge == null) return 0;
+
+        CulturePaletteResolver.Resolved resolved =
+                CulturePaletteResolver.resolve(edge, graph, vData);
+        CulturePalette palette = resolved.palette();
+        RoadLightingProfile lighting = resolved.lighting();
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        String maintainer = edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD
+                ? "great road / old realm"
+                : resolved.cultureId();
+        String overrideSuffix = edge.getLightingOverride().isPresent() ? " (override)" : "";
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[palette] edge=" + shortId + " tier=" + edge.getTier()
+                + " culture=" + maintainer
+                + " paletteId=" + palette.cultureId()),
+                false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  surface: primary=" + blockNames(palette.surfacePrimary())
+                + " accent=" + blockNames(palette.surfaceAccent())
+                + " rare=" + blockNames(palette.surfaceRare())),
+                false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  supports: primary=" + blockNames(palette.supportPrimary())
+                + " accent=" + blockNames(palette.supportAccent())
+                + " rare=" + blockNames(palette.supportRare())),
+                false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  lighting: " + lighting.frequency() + " / " + lighting.strategy() + overrideSuffix
+                + "   base=" + blockName(palette.lightBaseBlock())
+                + " light=" + blockName(palette.lightBlock())
+                + palette.lightCapBlock().map(b -> " cap=" + blockName(b)).orElse("")),
+                false);
+        return 1;
+    }
+
+    private static int forceLighting(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        RoadEdge edge = resolveEdgeOrFail(ctx, graph,
+                StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT));
+        if (edge == null) return 0;
+
+        String freqArg = StringArgumentType.getString(ctx, "frequency").toUpperCase(Locale.ROOT);
+        String stratArg = StringArgumentType.getString(ctx, "strategy").toUpperCase(Locale.ROOT);
+        RoadLightingProfile.Frequency freq;
+        RoadLightingProfile.Strategy strat;
+        try {
+            freq = RoadLightingProfile.Frequency.valueOf(freqArg);
+            strat = RoadLightingProfile.Strategy.valueOf(stratArg);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_lighting] Invalid frequency or strategy. Frequency: "
+                    + java.util.Arrays.toString(RoadLightingProfile.Frequency.values())
+                    + " Strategy: "
+                    + java.util.Arrays.toString(RoadLightingProfile.Strategy.values())));
+            return 0;
+        }
+
+        RoadLightingProfile profile = new RoadLightingProfile(freq, strat);
+        edge.setLightingOverride(profile);
+
+        CulturePaletteResolver.Resolved resolved =
+                CulturePaletteResolver.resolve(edge, graph, vData);
+
+        // Re-place lights immediately using the new profile.
+        RoadLightingPlacer.PlacementResult result = RoadLightingPlacer.placeLighting(
+                level, edge, resolved.palette(), profile, graph);
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_lighting] edge=" + shortId
+                + " override=" + freq + "/" + strat
+                + " placed=" + result.lightsPlaced()),
+                false);
+        WorldRoadSavedData.get(level).markDirty();
+        return result.lightsPlaced();
+    }
+
+    private static int lightingSummary(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        int[] freqCounts = new int[RoadLightingProfile.Frequency.values().length];
+        int[] stratCounts = new int[RoadLightingProfile.Strategy.values().length];
+        int realisedEdges = 0;
+        int totalLightsPlaced = 0;
+
+        for (RoadEdge edge : graph.allEdges()) {
+            if (!edge.isRealized()) continue;
+            realisedEdges++;
+            CulturePaletteResolver.Resolved resolved =
+                    CulturePaletteResolver.resolve(edge, graph, vData);
+            RoadLightingProfile p = resolved.lighting();
+            freqCounts[p.frequency().ordinal()]++;
+            stratCounts[p.strategy().ordinal()]++;
+
+            // Count persisted light decoration positions along the edge — approximate
+            // "total lights" from the per-edge decorationPositions list.
+            totalLightsPlaced += edge.getDecorationPositions().size();
+        }
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[lighting_summary] realisedEdges=" + realisedEdges
+                + " approxLightPositions=" + totalLightsPlaced),
+                false);
+
+        StringBuilder sb = new StringBuilder("  frequencies:");
+        for (RoadLightingProfile.Frequency f : RoadLightingProfile.Frequency.values()) {
+            sb.append(' ').append(f).append('=').append(freqCounts[f.ordinal()]);
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
+
+        StringBuilder sb2 = new StringBuilder("  strategies:");
+        for (RoadLightingProfile.Strategy s : RoadLightingProfile.Strategy.values()) {
+            sb2.append(' ').append(s).append('=').append(stratCounts[s.ordinal()]);
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(sb2.toString()), false);
+        return realisedEdges;
+    }
+
+    private static int listPalettes(CommandContext<CommandSourceStack> ctx) {
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[list_palettes] Registered palettes (plus always-available Old Realm)."),
+                false);
+        for (CulturePalette p : PaletteRegistry.all().values()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + p.cultureId()
+                    + " lighting=" + p.defaultLighting().frequency() + "/"
+                    + p.defaultLighting().strategy()
+                    + " light=" + blockName(p.lightBlock())
+                    + " base=" + blockName(p.lightBaseBlock())
+                    + (p.isGreatRoadAlternate() ? " [greatRoadAlternate]" : "")),
+                    false);
+        }
+        CulturePalette or = PaletteRegistry.oldRealm();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  " + or.cultureId()
+                + " lighting=" + or.defaultLighting().frequency() + "/"
+                + or.defaultLighting().strategy()
+                + " light=" + blockName(or.lightBlock())
+                + " base=" + blockName(or.lightBaseBlock())
+                + " [great-road default]"),
+                false);
+        return PaletteRegistry.all().size() + 1;
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    @Nullable
+    private static RoadEdge resolveEdgeOrFail(CommandContext<CommandSourceStack> ctx,
+                                               WorldRoadGraph graph,
+                                               String prefix) {
+        List<RoadEdge> matches = new ArrayList<>();
+        for (RoadEdge edge : graph.allEdges()) {
+            if (edge.getEdgeId().toString().startsWith(prefix)) matches.add(edge);
+        }
+        if (matches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No edge matches prefix '" + prefix + "'."));
+            return null;
+        }
+        if (matches.size() > 1) {
+            String list = matches.stream()
+                    .limit(5)
+                    .map(e -> e.getEdgeId().toString().substring(0, 8))
+                    .reduce((a, b) -> a + ", " + b).orElse("");
+            ctx.getSource().sendFailure(Component.literal(
+                    "Ambiguous edge prefix '" + prefix + "'. Matches: " + list));
+            return null;
+        }
+        return matches.get(0);
+    }
+
+    private static String blockName(net.minecraft.world.level.block.Block b) {
+        return net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(b).getPath();
+    }
+
+    private static String blockNames(List<net.minecraft.world.level.block.Block> blocks) {
+        if (blocks.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < blocks.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(blockName(blocks.get(i)));
+        }
+        sb.append(']');
+        return sb.toString();
     }
 }

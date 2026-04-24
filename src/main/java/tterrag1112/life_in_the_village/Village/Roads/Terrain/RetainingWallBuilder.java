@@ -2,9 +2,12 @@ package tterrag1112.life_in_the_village.Village.Roads.Terrain;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile.PositionClassification;
 
 import java.util.List;
@@ -42,19 +45,35 @@ public final class RetainingWallBuilder {
     // =========================================================================
 
     /**
-     * Places retaining walls for all SLOPED_LEFT / SLOPED_RIGHT positions.
-     *
-     * @param level        server level
-     * @param dense        block-dense centerline
-     * @param profileY     smoothed profile from {@link GreatRoadProfile#computeProfile}
-     * @param classes      per-position classification from {@link GreatRoadProfile#classify}
-     * @param roadHalfWidth half-width of the road surface (blocks from centre)
+     * Places retaining walls for all SLOPED_LEFT / SLOPED_RIGHT positions using
+     * the Old Realm palette. Convenience overload retained for callers that do
+     * not yet thread a {@link CulturePalette} — delegates to the palette-aware
+     * overload with {@link PaletteRegistry#oldRealm()}.
      */
     public static void build(ServerLevel level,
                               List<BlockPos> dense,
                               int[] profileY,
                               List<PositionClassification> classes,
                               int roadHalfWidth) {
+        build(level, dense, profileY, classes, roadHalfWidth, PaletteRegistry.oldRealm());
+    }
+
+    /**
+     * Palette-aware retaining wall placer (Phase 7g).
+     *
+     * @param level        server level
+     * @param dense        block-dense centerline
+     * @param profileY     smoothed profile from {@link GreatRoadProfile#computeProfile}
+     * @param classes      per-position classification from {@link GreatRoadProfile#classify}
+     * @param roadHalfWidth half-width of the road surface (blocks from centre)
+     * @param palette      culture palette driving wall material selection
+     */
+    public static void build(ServerLevel level,
+                              List<BlockPos> dense,
+                              int[] profileY,
+                              List<PositionClassification> classes,
+                              int roadHalfWidth,
+                              CulturePalette palette) {
         for (int i = 0; i < dense.size(); i++) {
             PositionClassification cls = classes.get(i);
             if (cls != PositionClassification.SLOPED_LEFT
@@ -87,23 +106,73 @@ public final class RetainingWallBuilder {
                 boolean isTop = (h == wallH - 1);
                 BlockState block = isTop && capstone
                         ? Blocks.STONE_BRICK_SLAB.defaultBlockState()
-                        : oldRealmBlock(wallX, roadY + h, wallZ);
+                        : retainingWallBlock(wallX, roadY + h, wallZ, palette);
                 level.setBlock(wp, block, 3);
             }
         }
     }
 
     // =========================================================================
-    // Old Realm palette
+    // Palette sampling (Phase 7g)
     // =========================================================================
 
-    static BlockState oldRealmBlock(int x, int y, int z) {
+    /**
+     * Samples a retaining-wall block from the palette's effective retaining
+     * wall lists, using a stable position hash so re-realisation produces the
+     * same pattern. Weights: primary 60 %, accent 30 %, rare 10 %.
+     */
+    public static BlockState retainingWallBlock(int x, int y, int z, CulturePalette palette) {
+        List<Block> primary = palette.effectiveRetainingWallPrimary();
+        List<Block> accent  = palette.effectiveRetainingWallAccent();
+        List<Block> rare    = palette.supportRare();
+        return sampleBlockState(x, y, z, primary, accent, rare);
+    }
+
+    /**
+     * Samples a support block from the palette's support lists. Used by
+     * {@link RoadSupportBuilder} for solid-fill positions under RAISED road.
+     */
+    public static BlockState supportBlock(int x, int y, int z, CulturePalette palette) {
+        return sampleBlockState(x, y, z,
+                palette.supportPrimary(), palette.supportAccent(), palette.supportRare());
+    }
+
+    /**
+     * Legacy Old Realm sampler retained for fallback callers. Equivalent to
+     * {@link #retainingWallBlock} with {@link PaletteRegistry#oldRealm()}.
+     */
+    public static BlockState oldRealmBlock(int x, int y, int z) {
+        return retainingWallBlock(x, y, z, PaletteRegistry.oldRealm());
+    }
+
+    private static BlockState sampleBlockState(int x, int y, int z,
+                                                List<Block> primary,
+                                                List<Block> accent,
+                                                List<Block> rare) {
         int hash = Math.abs(posHash(x, y, z) % 100);
-        if (hash < 50) return Blocks.STONE_BRICKS.defaultBlockState();
-        if (hash < 75) return Blocks.MOSSY_STONE_BRICKS.defaultBlockState();
-        if (hash < 90) return Blocks.COBBLESTONE.defaultBlockState();
-        if (hash < 98) return Blocks.MOSSY_COBBLESTONE.defaultBlockState();
-        return Blocks.CRACKED_STONE_BRICKS.defaultBlockState();
+        // Distribute 60/30/10 across non-empty lists, collapsing bands when lists are empty.
+        boolean hasPrimary = !primary.isEmpty();
+        boolean hasAccent  = !accent.isEmpty();
+        boolean hasRare    = !rare.isEmpty();
+        if (!hasPrimary && !hasAccent && !hasRare) return Blocks.STONE_BRICKS.defaultBlockState();
+
+        int primaryCut = hasPrimary ? 60 : 0;
+        int accentCut  = primaryCut + (hasAccent ? 30 : 0);
+        int rareCut    = accentCut  + (hasRare   ? 10 : 0);
+
+        if (hash < primaryCut) {
+            return primary.get(Math.abs(posHash(x, y, z + 1)) % primary.size()).defaultBlockState();
+        }
+        if (hash < accentCut) {
+            return accent.get(Math.abs(posHash(x + 1, y, z)) % accent.size()).defaultBlockState();
+        }
+        if (hash < rareCut) {
+            return rare.get(Math.abs(posHash(x, y + 1, z)) % rare.size()).defaultBlockState();
+        }
+        // Fallback: pick from whichever list is non-empty, in priority order
+        if (hasPrimary) return primary.get(0).defaultBlockState();
+        if (hasAccent)  return accent.get(0).defaultBlockState();
+        return rare.get(0).defaultBlockState();
     }
 
     static int posHash(int x, int y, int z) {

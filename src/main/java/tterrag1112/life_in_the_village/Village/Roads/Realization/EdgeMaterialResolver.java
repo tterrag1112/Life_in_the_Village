@@ -1,11 +1,11 @@
 package tterrag1112.life_in_the_village.Village.Roads.Realization;
 
-import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePaletteResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
-import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
@@ -45,7 +45,9 @@ public final class EdgeMaterialResolver {
      * Result record carrying both the resolved material and the culture string
      * (for passing to {@link UnifiedRoadPlacer} architectural detail passes).
      */
-    public record MaterialContext(PathMaterial material, @Nullable String culture) {}
+    public record MaterialContext(PathMaterial material,
+                                   @Nullable String culture,
+                                   CulturePalette palette) {}
 
     // =========================================================================
     // Public API
@@ -53,6 +55,11 @@ public final class EdgeMaterialResolver {
 
     /**
      * Resolves the full material context for the given edge.
+     *
+     * <p>Phase 7g: the {@link CulturePalette} is now the primary source for
+     * surface blocks. Maintenance-decay and seasonal overlays are applied on
+     * top for non-great-road edges. Great roads use the Old Realm (or
+     * imperial alternate) palette and skip maintenance decay per invariant 3.
      */
     public static MaterialContext resolveForEdge(ServerLevel level,
                                                   RoadEdge edge,
@@ -60,28 +67,28 @@ public final class EdgeMaterialResolver {
                                                   VillageSavedData data) {
         RoadEdge.EdgeTier tier = edge.getTier();
 
-        // Great roads always use the Old Realm palette — no other overlays (invariant 3)
-        if (tier == RoadEdge.EdgeTier.GREAT_ROAD) {
-            return new MaterialContext(PathMaterial.oldRealm(), null);
-        }
+        CulturePaletteResolver.Resolved resolved = CulturePaletteResolver.resolve(edge, graph, data);
+        CulturePalette palette = resolved.palette();
 
-        // Determine biome from the edge's nodeA position (or midpoint for long edges)
-        VillageBiomeStyle biome = detectBiome(level, edge, graph);
-
-        // Determine culture
-        String culture = cultureForEdge(edge, tier, graph, data);
-
-        // Maintenance score
-        int maintenance = edge.getMaintenance();
-
-        // Current season
-        SeasonTracker.Season season = SeasonTracker.currentSeason(level);
-
-        // Road tier for material resolution
         RoadShape.RoadTier roadTier = PrimitiveChainBuilder.edgeTierToRoadTier(tier);
 
-        PathMaterial material = PathMaterial.resolve(biome, culture, maintenance, roadTier, season);
-        return new MaterialContext(material, culture);
+        PathMaterial base = PathMaterial.fromCulturePalette(palette);
+        PathMaterial material;
+        if (tier == RoadEdge.EdgeTier.GREAT_ROAD) {
+            // Great roads never decay (invariant 3). Apply only seasonal overlay.
+            SeasonTracker.Season season = SeasonTracker.currentSeason(level);
+            material = PathMaterial.applyOverlays(base, 100, roadTier, season);
+        } else {
+            SeasonTracker.Season season = SeasonTracker.currentSeason(level);
+            material = PathMaterial.applyOverlays(base, edge.getMaintenance(), roadTier, season);
+        }
+
+        // Preserve existing semantics: GREAT_ROAD edges report null culture so that
+        // UnifiedRoadPlacer's architectural detail passes are skipped on them.
+        String cultureStr = (tier == RoadEdge.EdgeTier.GREAT_ROAD)
+                ? null
+                : resolved.cultureId();
+        return new MaterialContext(material, cultureStr, palette);
     }
 
     // =========================================================================
@@ -145,32 +152,5 @@ public final class EdgeMaterialResolver {
                 .filter(v -> v.getDockNodeId()
                         .filter(dockNodeId::equals).isPresent())
                 .findFirst().orElse(null);
-    }
-
-    // =========================================================================
-    // Biome detection
-    // =========================================================================
-
-    private static VillageBiomeStyle detectBiome(ServerLevel level,
-                                                   RoadEdge edge,
-                                                   WorldRoadGraph graph) {
-        // Use nodeA position as the biome reference point
-        RoadNode nodeA = graph.getNode(edge.getNodeAId());
-        if (nodeA != null) {
-            return VillageBiomeStyle.detect(level, nodeA.position());
-        }
-        // Fallback: use first cell centre
-        if (!edge.getCellPath().isEmpty()) {
-            long cellKey = edge.getCellPath().get(0);
-            int bx = tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter
-                    .cellKeyToBlockCenter(cellKey).getX();
-            int bz = tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter
-                    .cellKeyToBlockCenter(cellKey).getZ();
-            int by = level.getHeight(
-                    net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                    bx, bz);
-            return VillageBiomeStyle.detect(level, new BlockPos(bx, by, bz));
-        }
-        return VillageBiomeStyle.PLAINS;
     }
 }

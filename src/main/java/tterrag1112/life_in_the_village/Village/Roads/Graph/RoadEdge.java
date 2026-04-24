@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
+import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 
 import java.util.*;
 
@@ -102,7 +103,9 @@ public class RoadEdge {
             Codec.STRING.optionalFieldOf("roadName")
                     .forGetter(e -> e.roadName),
             GreatRoadCharacter.CODEC.optionalFieldOf("character")
-                    .forGetter(e -> e.character)
+                    .forGetter(e -> e.character),
+            RoadLightingProfile.CODEC.optionalFieldOf("lightingOverride")
+                    .forGetter(e -> e.lightingOverride)
     ).apply(i, RoadEdge::fromCodec));
 
     private static RoadEdge fromCodec(
@@ -114,7 +117,8 @@ public class RoadEdge {
             boolean realized, List<RoadPrimitive> primitives,
             List<BlockPos> decorationPositions,
             Optional<String> roadName,
-            Optional<GreatRoadCharacter> character) {
+            Optional<GreatRoadCharacter> character,
+            Optional<RoadLightingProfile> lightingOverride) {
         RoadEdge e = new RoadEdge(
                 edgeId, nodeAId, nodeBId,
                 new ArrayList<>(cellPath), new ArrayList<>(blockPath),
@@ -126,6 +130,7 @@ public class RoadEdge {
         e.decorationPositions = new ArrayList<>(decorationPositions);
         e.roadName = roadName;
         e.character = character;
+        e.lightingOverride = lightingOverride;
         return e;
     }
 
@@ -153,6 +158,14 @@ public class RoadEdge {
 
     /** Character record for GREAT_ROAD edges. Empty for all other tiers. */
     Optional<GreatRoadCharacter> character = Optional.empty();
+
+    /**
+     * Per-edge lighting override, set via {@code /liv road debug force_lighting}.
+     * When empty (default), lighting is derived from tier + culture at realisation
+     * time; palette resolution stays non-persistent. When present, this profile is
+     * used verbatim instead.
+     */
+    Optional<RoadLightingProfile> lightingOverride = Optional.empty();
 
     /**
      * Transient flag: maintenance crossed a Phase 6b band boundary this upkeep
@@ -271,4 +284,8 @@ public class RoadEdge {
     public Optional<GreatRoadCharacter.CharacterTag> getCharacterTag() {
         return character.map(GreatRoadCharacter::tag);
     }
+
+    public Optional<RoadLightingProfile> getLightingOverride()       { return lightingOverride; }
+    public void setLightingOverride(RoadLightingProfile p)           { this.lightingOverride = Optional.of(p); }
+    public void clearLightingOverride()                              { this.lightingOverride = Optional.empty(); }
 }
