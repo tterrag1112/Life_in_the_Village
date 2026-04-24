@@ -12,6 +12,11 @@ import net.minecraft.commands.arguments.UuidArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeCategory;
+import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeEntry;
+import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeSource;
+import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
+import tterrag1112.life_in_the_village.Npc.Knowledge.RumorMutator;
 import tterrag1112.life_in_the_village.Npc.Memory.MemoryType;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemory;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
@@ -21,6 +26,7 @@ import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -65,6 +71,33 @@ public final class NpcDebugCommand {
                                 .then(Commands.argument("uuid", UuidArgument.uuid())
                                         .then(Commands.argument("days", FloatArgumentType.floatArg(0f, 3650f))
                                                 .executes(NpcDebugCommand::handleMemoryDecay)))))
+
+                // ── /npc knowledge <uuid> ────────────────────────────────────
+                // ── /npc knowledge add <uuid> <topic> <category> <fidelity> <source> <content...>
+                // ── /npc knowledge mutate <text> <mutatorUuid> ───────────────
+                .then(Commands.literal("knowledge")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleKnowledgeList))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("topic", StringArgumentType.word())
+                                                .then(Commands.argument("category", StringArgumentType.word())
+                                                        .suggests((c, b) -> {
+                                                            for (KnowledgeCategory k : KnowledgeCategory.values()) b.suggest(k.name());
+                                                            return b.buildFuture();
+                                                        })
+                                                        .then(Commands.argument("fidelity", FloatArgumentType.floatArg(0f, 1f))
+                                                                .then(Commands.argument("source", StringArgumentType.word())
+                                                                        .suggests((c, b) -> {
+                                                                            for (KnowledgeSource s : KnowledgeSource.values()) b.suggest(s.name());
+                                                                            return b.buildFuture();
+                                                                        })
+                                                                        .then(Commands.argument("content", StringArgumentType.greedyString())
+                                                                                .executes(NpcDebugCommand::handleKnowledgeAdd))))))))
+                        .then(Commands.literal("mutate")
+                                .then(Commands.argument("text", StringArgumentType.string())
+                                        .then(Commands.argument("mutatorUuid", UuidArgument.uuid())
+                                                .executes(NpcDebugCommand::handleKnowledgeMutate)))))
         );
     }
 
@@ -240,5 +273,123 @@ public final class NpcDebugCommand {
         return npc.getCustomName() != null
                 ? npc.getCustomName().getString()
                 : npc.getName().getString();
+    }
+
+    // =========================================================================
+    // Knowledge
+    // =========================================================================
+
+    private static int handleKnowledgeList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        NpcKnowledgeLedger ledger = npc.getKnowledge();
+        long now = src.getLevel().getGameTime();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Knowledge: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e  [")
+                .append(ledger.size()).append("/").append(NpcKnowledgeLedger.MAX_ENTRIES).append("] ===");
+
+        if (ledger.isEmpty()) {
+            sb.append("\n§7(ledger is empty)");
+            src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+            return 1;
+        }
+
+        Map<KnowledgeCategory, List<KnowledgeEntry>> grouped = ledger.groupedByCategory();
+        for (Map.Entry<KnowledgeCategory, List<KnowledgeEntry>> group : grouped.entrySet()) {
+            List<KnowledgeEntry> list = group.getValue();
+            if (list.isEmpty()) continue;
+            sb.append("\n§6").append(group.getKey().name()).append(" §7(").append(list.size()).append(")");
+            for (KnowledgeEntry e : list) {
+                long daysSince = (now - e.acquiredTick()) / TICKS_PER_DAY;
+                String contentSnippet = e.content().length() > 60
+                        ? e.content().substring(0, 57) + "..."
+                        : e.content();
+                sb.append(String.format(Locale.ROOT,
+                        "%n  %s §fφ=%.2f§7 %-14s  %4dd ago  §f%s §7[%s]",
+                        fidelityTag(e.fidelity()),
+                        e.fidelity(),
+                        e.source().name(),
+                        daysSince,
+                        e.topic(),
+                        contentSnippet));
+                if (e.sensitive()) sb.append(" §c[sensitive]");
+            }
+        }
+
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static String fidelityTag(float f) {
+        if (f >= KnowledgeEntry.RELIABLE_THRESHOLD) return "§a[RELIABLE]";
+        if (f <  KnowledgeEntry.VAGUE_THRESHOLD)    return "§8[vague]    ";
+        return                                             "§e[middling] ";
+    }
+
+    private static int handleKnowledgeAdd(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        String topic = StringArgumentType.getString(ctx, "topic");
+        String categoryName = StringArgumentType.getString(ctx, "category").toUpperCase(Locale.ROOT);
+        float fidelity = FloatArgumentType.getFloat(ctx, "fidelity");
+        String sourceName = StringArgumentType.getString(ctx, "source").toUpperCase(Locale.ROOT);
+        String content = StringArgumentType.getString(ctx, "content");
+
+        KnowledgeCategory category;
+        KnowledgeSource source;
+        try {
+            category = KnowledgeCategory.valueOf(categoryName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown KnowledgeCategory: " + categoryName));
+            return 0;
+        }
+        try {
+            source = KnowledgeSource.valueOf(sourceName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown KnowledgeSource: " + sourceName));
+            return 0;
+        }
+
+        KnowledgeEntry entry = KnowledgeEntry.create(
+                topic, category, fidelity, source,
+                src.getLevel().getGameTime(), content, null);
+        boolean stored = npc.getKnowledge().add(entry);
+        src.sendSuccess(() -> Component.literal(stored
+                        ? "Added/upgraded knowledge of '" + entry.topic() + "' (φ=" + entry.fidelity() + ")"
+                        : "Existing knowledge had equal-or-higher fidelity — new entry dropped."),
+                false);
+        return stored ? 1 : 0;
+    }
+
+    /**
+     * Test harness for {@link RumorMutator}. Uses stable test defaults for
+     * the other seed inputs (topic="debug", acquiredTick=0) so that the
+     * output depends only on the supplied text and mutator UUID — running
+     * the same command twice must produce identical output.
+     */
+    private static int handleKnowledgeMutate(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String text = StringArgumentType.getString(ctx, "text");
+        UUID mutatorUuid = UuidArgument.getUuid(ctx, "mutatorUuid");
+
+        // Mutation probability maxes out when fidelity is low; use a fixed
+        // low value in the test harness so operations actually fire.
+        float testFidelity = 0.30f;
+        String mutated = RumorMutator.mutate(text, testFidelity, "debug", 0L, mutatorUuid);
+        long seed = RumorMutator.deriveSeed("debug", 0L, mutatorUuid);
+
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "§eseed=§f%016x §7(topic=debug, acquiredTick=0, mutator=%s)%n§eIn: §f%s%n§eOut:§f%s",
+                seed, mutatorUuid, text, mutated)),
+                false);
+        return 1;
     }
 }

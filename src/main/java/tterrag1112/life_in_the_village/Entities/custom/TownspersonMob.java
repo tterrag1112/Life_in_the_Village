@@ -43,6 +43,7 @@ import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -120,6 +121,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
     private final TraitVector traits = new TraitVector();
     private final NpcMemoryLog memory = new NpcMemoryLog();
+    private final NpcKnowledgeLedger knowledge = new NpcKnowledgeLedger();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -432,6 +434,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Situational memory log; see {@code docs/npc_redesign/02-memory-system.md}. */
     public NpcMemoryLog getMemory() {
         return memory;
+    }
+
+    /** Knowledge ledger; see {@code docs/npc_redesign/03-knowledge-system.md}. */
+    public NpcKnowledgeLedger getKnowledge() {
+        return knowledge;
     }
 
     public void clearTraits() {
@@ -1101,6 +1108,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Memory log ───────────────────────────────────────────────────────
         memory.save(output);
+
+        // ── Knowledge ledger ────────────────────────────────────────────────
+        knowledge.save(output);
     }
 
     // =========================================================================
@@ -1217,6 +1227,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Memory log ───────────────────────────────────────────────────────
         memory.load(input);
+
+        // ── Knowledge ledger ────────────────────────────────────────────────
+        knowledge.load(input);
 
         // ── Sync entity data from loaded state ───────────────────────────────
         entityData.set(LIFE_STAGE, getLifeStage().name());

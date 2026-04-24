@@ -317,4 +317,115 @@ Phase 2+ consumers depend on ledger being stable.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 0 implementation (task 03)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Knowledge`
+(`KnowledgeCategory`, `KnowledgeSource`, `KnowledgeEntry`,
+`NpcKnowledgeLedger`, `RumorMutator`). Parallel structure to
+`Npc.Traits` and `Npc.Memory` from tasks 01–02.
+
+**Mutation seed formula — LOCKED.** The spec says mutation is
+"deterministic given (topic, acquiredTick, mutator UUID)" but does
+not prescribe a combination method. Phase 0 locks this as:
+
+```
+seed = splitmix64((long) topic.hashCode())
+     ^ splitmix64(acquiredTick)
+     ^ splitmix64(mutatorUuid.getMostSignificantBits())
+     ^ splitmix64(mutatorUuid.getLeastSignificantBits())
+```
+
+All four inputs are JDK-spec-stable (`String.hashCode`, `UUID.*Bits`,
+primitive longs). The seed feeds `RandomSource.create(seed)`. The
+`splitmix64` finaliser is a well-known mixer (Steele/Lea/Flood) and
+is reproduced inline in `RumorMutator` with the canonical constants
+`0xff51afd7ed558ccdL` and `0xc4ceb9fe1a85ec53L`. **Changing this
+formula will re-roll every existing rumor chain** — Phase 2 gossip
+will depend on it being stable, so any revisit must come with a save
+migration.
+
+**Persistence API.** Same deviation as tasks 01–02: spec says
+`save(CompoundTag)`/`load(CompoundTag)`; NeoForge 1.21 drives entity
+save/load through `ValueOutput`/`ValueInput`. Implementation uses the
+entity API and a single `output.store("npcKnowledge", CODEC, this)`
+call, preserving the spec's nested `{ entries: [...] }` shape.
+
+**Record shape: no `entryId`.** The spec keys entries by `topic` (the
+ledger is a `Map<String, KnowledgeEntry>`) — one entry per topic with
+the upgrade rule deciding which wins. The prompt template mentioned
+an `entryId: UUID` field (carryover from the memory record shape);
+trusted the spec and omitted it, so all lookups / removes go by
+topic string. All callers in spec-described Phase 2+ consumer code
+are by topic so there is no API loss.
+
+**`sensitive` flag.** Persisted now per the prompt instruction even
+though no consumer reads it. Default `false`, `Codec.BOOL.optionalFieldOf`
+with default so pre-flag saves load cleanly.
+
+**Query set.** Shipped the spec's named queries (`get`, `knows`,
+`knowsReliably`, `byCategory`, `bySource`, `recentlyAcquired`) plus
+`all()` for debug surfaces. The prompt mentioned `findByTopic(String)`;
+that is just a synonym for `get`, so only `get` is exposed to avoid
+a second name for the same thing.
+
+**`update` vs `add`.** `add` handles the full upgrade + eviction
+path. `update` is the narrower spec-described method: replace the
+topic's entry only if it already exists AND the new fidelity is
+strictly higher. `update` never creates new entries, never evicts,
+never fires on equal fidelity. Callers pick based on whether they
+want "learn it if you didn't already" (add) vs. "strengthen what
+they already have" (update).
+
+**Eviction order.** Spec rule: non-pinned first, lowest fidelity,
+oldest on tie; fall back to oldest overall if every entry is
+fidelity 1.0. Implemented in `NpcKnowledgeLedger.evictOne()` via
+`min(Comparator.comparingDouble(fidelity).thenComparingLong(acquiredTick))`
+over the non-pinned subset with a fallback to the full set.
+
+**No spawn-time population.** The spec's "Phase 0 integration"
+section calls for seeding every new NPC with `village:V:*` BIRTH_LOCAL
+facts, adjacent-village name/location facts at 0.7, and kingdom
+top-level facts at 1.0/0.6 by life stage. The task prompt's exit
+criteria says "new NPC shows empty ledger" and its DO NOT includes
+"any knowledge producers" — the ledger therefore ships empty,
+mirroring how `NpcMemoryLog` ships empty with no producers in Phase
+0. If the spawn-time pass is wanted for Phase 1 it should pull from
+`Village` / `Kingdom` data at `finalizeSpawn`-time; no architectural
+blocker.
+
+**Daily tick: none.** Knowledge does not decay with time per the
+spec's "Does not" section. No `TickSubsystem` was registered for
+knowledge — fidelity only drops on retelling (Phase 2 concern).
+
+**Debug command.** `/npc knowledge <uuid>` prints entries grouped by
+category, each group sorted by fidelity descending, with topic,
+fidelity tag, source, age, and content snippet (sensitive entries
+tagged). `/npc knowledge add <uuid> <topic> <category> <fidelity>
+<source> <content…>` takes a greedy-string content and constructs
+via `KnowledgeEntry.create(...)` (which clamps fidelity and
+truncates topic to 100 chars). `/npc knowledge mutate <text>
+<mutatorUuid>` is a determinism test harness — stable defaults for
+`topic` and `acquiredTick` (`"debug"` / `0L`) so the output depends
+only on `(text, mutatorUuid)` for easy repeat-run verification. The
+command also prints the derived 64-bit seed so callers can verify
+determinism across runs.
+
+**Prompt↔spec naming mismatches (for the prompt-template maintainer):**
+- Prompt's `KnowledgeSource` enum set (DIRECT_WITNESS, RUMOR_HEARD,
+  BOOK, LETTER, TAUGHT, FABRICATED) differs from the spec's
+  (WITNESS, EDUCATION, BOOK, RUMOR_HEARD, RUMOR_RETOLD, LETTER,
+  BIRTH_LOCAL, FABRICATED). Used spec.
+- Prompt proposes `entryId (UUID)` as an entry field; spec's record
+  has no such field (topic is the key). Used spec.
+- Prompt proposes `findByTopic(String)` query; the spec's `get(topic)`
+  already does this. Used spec.
+- Prompt's mutation-seed formula ("content.hashCode() +
+  mutatorUuid.hashCode() + topic.hashCode()") differs from the
+  spec's "(topic, acquiredTick, mutator UUID)". Used spec's inputs;
+  combined via splitmix64-XOR (see above).
+- Prompt's mutation ops include "subject swap" (not in spec) and
+  "addition (low-Honesty teller)" (not in spec). Subject swap is
+  ambiguous without more context and was omitted; addition was
+  implemented as `appendFlavor` since the user was explicit.
+- Prompt's exit criterion ("empty ledger on spawn") overrides the
+  spec's Phase 0 spawn-population section — documented above.

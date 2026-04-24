@@ -39,10 +39,10 @@ save/load. No behavior change yet.
     - [x] Daily tick hook for decay/eviction (no events producing
       memories yet — that's Phase 1)
     - [x] `/npc memory <uuid>` debug command (list / add / decay)
-- [ ] **03** Implement `NpcKnowledgeLedger`
-    - [ ] `KnowledgeEntry`, 4 categories, fidelity field
-    - [ ] Add/upgrade/remove API
-    - [ ] `/npc knowledge <uuid>` debug command
+- [x] **03** Implement `NpcKnowledgeLedger`
+    - [x] `KnowledgeEntry`, 4 categories, fidelity field
+    - [x] Add/upgrade/remove API
+    - [x] `/npc knowledge <uuid>` debug command (list / add / mutate)
 - [ ] **04** Implement `MoodState` storage
     - [ ] Single −100..+100 scalar, trigger registry (no triggers fire
       yet)
@@ -323,17 +323,24 @@ Things that don't fit the phase model and run continuously:
 
 (current blockers and observations tracked here)
 
-**Current status**: Phase 0 tasks 01 (TraitVector) and 02 (NpcMemoryLog)
-implemented. Packages `Npc.Traits` and `Npc.Memory` exist; save/load
-wired additively on `TownspersonMob`. Legacy `PersonalityTrait` list
-kept readable for the one-release migration window. No existing
-reputation/witness tracker to migrate memory data from — new feature
-starts empty per spec.
+**Current status**: Phase 0 tasks 01 (TraitVector), 02 (NpcMemoryLog),
+and 03 (NpcKnowledgeLedger) implemented. Packages `Npc.Traits`,
+`Npc.Memory`, `Npc.Knowledge` exist; save/load wired additively on
+`TownspersonMob`. Legacy `PersonalityTrait` list kept readable for
+the one-release migration window. No existing reputation/witness
+tracker to migrate memory data from; knowledge is a new feature with
+no legacy source either.
 
 `NpcMemoryDecayTickSystem` (interval 24000, priority 190) walks every
 loaded TownspersonMob once per in-game day and calls
-`decayAll(1) + removeExpired()`. Runs over empty logs until Phase 1
-producers ship — confirmed harmless.
+`decayAll(1) + removeExpired()`. Knowledge does not decay and has no
+tick — the ledger only changes on producer events (Phase 1+).
+
+`RumorMutator` (Phase 2 gossip utility) is implemented and debug-
+testable via `/npc knowledge mutate` but has no production callers
+yet. Its seed formula (splitmix64 finaliser of each of
+`topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
+locked for stability — future Phase 2 work depends on it.
 
 **Template pattern established for the remaining Phase 0 components**:
 - New subsystem package under `Npc.<Subsystem>` (e.g. `Npc.Memory`).
