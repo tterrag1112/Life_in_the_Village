@@ -675,10 +675,18 @@ public class KingdomSpawner {
                 .filter(java.util.Objects::nonNull)
                 .collect(java.util.stream.Collectors.toList());
 
+        // Phase 9 — pass the world road graph so non-capital villages get a
+        // network-alignment bonus (preference for cells near GREAT_ROAD / TRUNK).
+        // Capitals are placed before any culture-owned roads exist, so the
+        // scorer skips the bonus for them; great roads from Phase 7a are the
+        // only network present at initial seeding.
+        tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph roadGraph =
+                tterrag1112.life_in_the_village.Networking.WorldRoadSavedData.get(level).getGraph();
+
         java.util.List<tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.PlacementResult>
                 placements = tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.plan(
                 atlas, territorialClaim, origin, composition,
-                existingVillagePositions);
+                existingVillagePositions, roadGraph);
 
 
         for (int i = 0; i < placements.size(); i++) {

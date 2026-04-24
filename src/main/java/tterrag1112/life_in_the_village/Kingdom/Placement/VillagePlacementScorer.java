@@ -2,12 +2,15 @@
 package tterrag1112.life_in_the_village.Kingdom.Placement;
 
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.NetworkAlignmentScorer;
 import tterrag1112.life_in_the_village.Village.VillageTag;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.BiomeCategory;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
+import javax.annotation.Nullable;
 import java.util.List;
 
 /**
@@ -52,6 +55,13 @@ public final class VillagePlacementScorer {
     /** Minimum fraction of cells in the footprint that must be buildable. */
     private static final float MIN_BUILDABLE_FRACTION = 0.55f;
 
+    /**
+     * Phase 9 — weight applied to {@link NetworkAlignmentScorer#networkAlignmentScore}.
+     * Cap = 50 × 0.4 = +20 to the final score. Tunable: drop to 0.2 if
+     * non-capital villages cluster too tightly along great roads in playtest.
+     */
+    public static final double NETWORK_SCORE_WEIGHT = 0.4 / 50.0; // normalise 0-50 → 0-0.4
+
     // =========================================================================
     // Public API
     // =========================================================================
@@ -60,6 +70,21 @@ public final class VillagePlacementScorer {
                                VillageTypeData type,
                                BlockPos capitalOrigin,
                                List<BlockPos> placedPositions) {
+        return score(atlas, cell, type, capitalOrigin, placedPositions, null, false);
+    }
+
+    /**
+     * Phase 9 — overload that adds a network-alignment bonus when {@code graph}
+     * is non-null and {@code isCapital} is {@code false}. Capitals are placed
+     * by the kingdom seeder before any cultural connectors exist, and per the
+     * Phase 9 spec the network bonus only applies to subsequent villages.
+     */
+    public static double score(WorldAtlas atlas, AtlasCell cell,
+                               VillageTypeData type,
+                               BlockPos capitalOrigin,
+                               List<BlockPos> placedPositions,
+                               @Nullable WorldRoadGraph graph,
+                               boolean isCapital) {
 
         // Buildable-area hard gate — reject before scoring
         float waterFrac = waterFraction(atlas, cell);
@@ -128,6 +153,14 @@ public final class VillagePlacementScorer {
             double dist = Math.sqrt(dx * dx + dz * dz);
             // Peak bonus at ~400 blocks, decays on either side
             score += 0.3 * Math.exp(-Math.pow((dist - 400) / 400, 2));
+        }
+
+        // Phase 9 — network alignment bonus (subsequent villages only).
+        if (graph != null && !isCapital) {
+            BlockPos candidate = new BlockPos(
+                    cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
+            float networkScore = NetworkAlignmentScorer.networkAlignmentScore(candidate, graph);
+            score += networkScore * NETWORK_SCORE_WEIGHT;
         }
 
         return score;

@@ -1,6 +1,6 @@
 # Roads System — Canonical Plan
 
-**Status:** Phase 7-series complete (7a/7b/7c/7d/7e/7f Slice 1+2/7g). Next in plan: Phase 9 — network evolution.
+**Status:** Phase 9 complete. Next in plan: Phase 10 — events (travelers, lone structures, landmarks).
 **Owner:** Human-managed. Claude Code reads; does not edit without explicit permission.
 **Last updated:** 2026-04-24
 
@@ -381,13 +381,25 @@ Adds lighting placement and culture-scoped material palettes on top of the Phase
 
 **Exit criteria:** Roads are useful to walk on, safer than wilderness, usable for day-planning. Border crossings feel different.
 
-### Phase 9 — Network evolution
+### Phase 9 — Network evolution ✓ COMPLETE
 
-**Deliverables:**
-- Dead edge handling: village loss → `VILLAGE_DOCK` becomes `TERMINUS`; connector weathers out via existing weathering system; exhausted connectors eventually reclaim their junction back to mid-edge
-- Road-attracted village placement: natural-spawn scoring gets strong bonus adjacent to `TRUNK`/`GREAT_ROAD` cells (only works because Phase 7a committed logical graph at worldgen)
+Two simulation mechanics that wire population change to the road network: dead edges (roads decay when their maintainers die) and network-attracted village placement (new villages prefer cells near live great roads / trunks).
 
-**Exit criteria:** Villages placed after great roads exist preferentially spawn along them. Abandoned villages leave visibly decaying roads.
+**Deliverables (implemented):**
+1. `Village/Roads/Lifecycle/DeadEdgeState` — record `(firstMarkedTick, lastMaintainerDiedTick, Optional<Long> reclaimedAt)` with Codec; `DeathPhase` enum RECENT (0–7d) → DECAYING (7–30d) → OVERGROWN (30–90d) → TRACE (90–180d) → RECLAIMED (180+d). Phase computation is a pure function of elapsed ticks. ✓
+2. `Village/Roads/Lifecycle/DeadEdgeDetector` — once-per-day scheduled scan invoked from `KingdomTaxEvent`. Marks any non-GREAT_ROAD edge dead when every maintainer UUID is missing from `VillageSavedData`. Detects phase transitions on already-dead edges and fires `EdgeDeathEvent`. ✓
+3. `RoadEdge` — `Optional<DeadEdgeState> deadState` field (codec is now 18 fields). `markDead`, `isDead`, `deathPhase(tick)`, `setDeadState` accessors. GREAT_ROAD edges never receive deadState (invariant 3). ✓
+4. `Village/Roads/Lifecycle/ReclaimedEdgeCleanup` — once-per-month sweep that removes RECLAIMED edges past their 30-day grace period. Despawns surface road blocks (replacing with grass), removes orphan TERMINUS / TRUNK_JUNCTION nodes (preserves VILLAGE_DOCK and gateway-linked nodes). ✓
+5. `RoadOvergrowthDecorator` — branches on `edge.isDead()`. Phase-driven density (RECENT 0.30 → RECLAIMED 0.99) replaces the maintenance-based curve for dead edges. New `traceReplaceSurface` swaps road blocks for grass / coarse_dirt at TRACE / RECLAIMED phases, keeping every Nth block as "stones from the old road". ✓
+6. `Village/Roads/Lifecycle/NetworkAlignmentScorer` — 0–50 score based on banded distance to live GREAT_ROAD / TRUNK edges (GREAT_ROAD ≤500=+30, ≤1500=+15; TRUNK ≤300=+20, ≤800=+10). Dead edges don't count. ✓
+7. `VillagePlacementScorer.score(...)` — new 7-arg overload accepting `WorldRoadGraph` + `isCapital`. Adds `NETWORK_SCORE_WEIGHT * networkAlignmentScore` to the score for non-capital villages. 5-arg overload preserved. ✓
+8. `ClaimVillagePlacer.plan(...)` + `KingdomSpawner` — graph plumbed through the placer; non-capital villages within an existing kingdom claim now favour cells near the road network. Capitals are exempt. ✓
+9. `Village/Roads/Lifecycle/EdgeDeathEvent` and `VillagePlacementEvent` — fire-and-forget static hook lists. Fired from `DeadEdgeDetector`, `ReclaimedEdgeCleanup`, `VillageSpawner`. No existing logic subscribes; available for Phase 10 lore / event subscribers. ✓
+10. Debug commands under `/liv road debug`: `dead_edges`, `force_dead`, `force_death_phase`, `reclaim_edge`, `network_score`, `village_death`. ✓
+
+**Persistence:** `deadState` round-trips via Codec — old saves with no field load with `deadState = empty`. No migration needed.
+
+**Exit criteria:** ✓ A village removed via `village_death` causes its connectors to be marked dead within one in-game day. Forcing a phase via `force_death_phase` makes the visual progression observable end-to-end. New villages within an existing kingdom score higher when placed near great roads (+0.4 max contribution). Great roads remain unchanged (invariant 3 preserved).
 
 ### Phase 10 — Event system expansion
 
@@ -446,7 +458,7 @@ Adds lighting placement and culture-scoped material palettes on top of the Phase
 16. Phase 7f — village road graph (Slice 1+2 complete; Slice 3 pending)
 17. Phase 7g — lighting + culture palettes
 18. Phase 8a–d — player-facing gameplay
-19. Phase 9 — network evolution
+19. Phase 9 — network evolution (✓ complete)
 20. Phase 10a–c — events, travelers, landmarks
 21. Phase 11 — player construction
 22. Phase 12 — POI subroads (deferred)

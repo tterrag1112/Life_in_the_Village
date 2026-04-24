@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeState;
 import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 
 import java.util.*;
@@ -105,7 +106,9 @@ public class RoadEdge {
             GreatRoadCharacter.CODEC.optionalFieldOf("character")
                     .forGetter(e -> e.character),
             RoadLightingProfile.CODEC.optionalFieldOf("lightingOverride")
-                    .forGetter(e -> e.lightingOverride)
+                    .forGetter(e -> e.lightingOverride),
+            DeadEdgeState.CODEC.optionalFieldOf("deadState")
+                    .forGetter(e -> e.deadState)
     ).apply(i, RoadEdge::fromCodec));
 
     private static RoadEdge fromCodec(
@@ -118,7 +121,8 @@ public class RoadEdge {
             List<BlockPos> decorationPositions,
             Optional<String> roadName,
             Optional<GreatRoadCharacter> character,
-            Optional<RoadLightingProfile> lightingOverride) {
+            Optional<RoadLightingProfile> lightingOverride,
+            Optional<DeadEdgeState> deadState) {
         RoadEdge e = new RoadEdge(
                 edgeId, nodeAId, nodeBId,
                 new ArrayList<>(cellPath), new ArrayList<>(blockPath),
@@ -131,6 +135,7 @@ public class RoadEdge {
         e.roadName = roadName;
         e.character = character;
         e.lightingOverride = lightingOverride;
+        e.deadState = deadState;
         return e;
     }
 
@@ -166,6 +171,13 @@ public class RoadEdge {
      * used verbatim instead.
      */
     Optional<RoadLightingProfile> lightingOverride = Optional.empty();
+
+    /**
+     * Phase 9 dead-edge state. Empty for living edges. Set when the last
+     * maintainer village dies; never cleared (death is permanent).
+     * GREAT_ROAD edges never have this set (invariant 3).
+     */
+    Optional<DeadEdgeState> deadState = Optional.empty();
 
     /**
      * Transient flag: maintenance crossed a Phase 6b band boundary this upkeep
@@ -288,4 +300,34 @@ public class RoadEdge {
     public Optional<RoadLightingProfile> getLightingOverride()       { return lightingOverride; }
     public void setLightingOverride(RoadLightingProfile p)           { this.lightingOverride = Optional.of(p); }
     public void clearLightingOverride()                              { this.lightingOverride = Optional.empty(); }
+
+    // ── Dead-edge state (Phase 9) ────────────────────────────────────────────
+
+    public Optional<DeadEdgeState> getDeadState()                    { return deadState; }
+    public boolean isDead()                                          { return deadState.isPresent(); }
+
+    /**
+     * Computes the current death phase. Returns {@code null} if the edge is
+     * not dead. Callers that just need the phase should null-check or use
+     * {@link #isDead()} first.
+     */
+    public DeadEdgeState.DeathPhase deathPhase(long currentTick) {
+        return deadState.map(s -> s.phaseAtTick(currentTick)).orElse(null);
+    }
+
+    /**
+     * Marks this edge dead at the given tick. No-op for GREAT_ROAD edges
+     * (invariant 3) and idempotent — already-dead edges keep their original
+     * markings.
+     */
+    public void markDead(long tick) {
+        if (tier == EdgeTier.GREAT_ROAD) return;
+        if (deadState.isPresent()) return;
+        this.deadState = Optional.of(DeadEdgeState.markedAt(tick));
+    }
+
+    /** Replace the dead state (used by the {@code force_death_phase} debug command). */
+    public void setDeadState(DeadEdgeState state) {
+        this.deadState = Optional.ofNullable(state);
+    }
 }

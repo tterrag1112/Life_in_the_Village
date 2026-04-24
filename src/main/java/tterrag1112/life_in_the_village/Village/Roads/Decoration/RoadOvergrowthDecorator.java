@@ -11,6 +11,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeState;
 
 import java.util.HashSet;
 import java.util.List;
@@ -57,12 +58,22 @@ public final class RoadOvergrowthDecorator {
         List<BlockPos> path = edge.getBlockPath();
         if (path.size() < 2) return;
 
-        int maintenance = edge.getMaintenance();
-        if (maintenance >= 80) return; // pristine roads get no overgrowth
+        // Phase 9: dead edges progress through phase-driven overgrowth that ignores
+        // maintenance score (the road is dying, not just untended). TRACE phase
+        // additionally swaps surface blocks for natural ones via traceReplaceSurface.
+        boolean dead = edge.isDead();
+        DeadEdgeState.DeathPhase phase = dead
+                ? edge.getDeadState().get().phaseAtTick(level.getGameTime())
+                : null;
 
-        float density     = densityForMaintenance(maintenance);
+        int maintenance = dead ? maintenanceForPhase(phase) : edge.getMaintenance();
+        if (!dead && maintenance >= 80) return; // pristine living roads get no overgrowth
+
+        float density     = dead ? densityForPhase(phase) : densityForMaintenance(maintenance);
         boolean degradeSurface = maintenance < 20;
         boolean placeLogs      = maintenance < 40;
+        boolean traceStyle     = phase == DeadEdgeState.DeathPhase.TRACE
+                              || phase == DeadEdgeState.DeathPhase.RECLAIMED;
 
         // Deterministic "random" seed from edge id + maintenance
         long seed = edge.getEdgeId().getLeastSignificantBits() ^ (long) maintenance;
@@ -138,6 +149,68 @@ public final class RoadOvergrowthDecorator {
                 nextLog = LOG_SPACING;
             }
         }
+
+        // Phase 9 — TRACE / RECLAIMED visuals: replace most surface blocks with
+        // natural ground; keep ~1 in 4 (TRACE) or ~1 in 8 (RECLAIMED) original
+        // road blocks as "stones from the old road".
+        if (traceStyle) {
+            traceReplaceSurface(level, edge, phase);
+        }
+    }
+
+    // =========================================================================
+    // Phase 9 — TRACE / RECLAIMED surface replacement
+    // =========================================================================
+
+    private static void traceReplaceSurface(ServerLevel level, RoadEdge edge,
+                                             DeadEdgeState.DeathPhase phase) {
+        long seed = edge.getEdgeId().getMostSignificantBits()
+                  ^ edge.getEdgeId().getLeastSignificantBits()
+                  ^ 0xDEADL;
+        // Higher = more frequent original blocks peeking through.
+        // TRACE keeps 25%; RECLAIMED keeps 12.5%.
+        int keepEveryN = phase == DeadEdgeState.DeathPhase.RECLAIMED ? 8 : 4;
+
+        for (int i = 0; i < edge.getBlockPath().size(); i++) {
+            BlockPos surfacePos = edge.getBlockPath().get(i);
+            BlockPos roadBlock = surfacePos.below();
+            if (!level.isLoaded(roadBlock)) continue;
+            BlockState existing = level.getBlockState(roadBlock);
+            if (!isRoadSurface(existing)) continue;
+
+            long h = (posHash(surfacePos.getX(), surfacePos.getZ()) ^ seed);
+            int roll = (int) ((h & 0xFFL) % keepEveryN);
+            if (roll == 0) continue; // keep this block — old stone peeks through
+
+            // Replace with natural ground; alternate grass/dirt by hash.
+            BlockState replacement = ((h >> 8) & 1L) == 0L
+                    ? Blocks.GRASS_BLOCK.defaultBlockState()
+                    : Blocks.COARSE_DIRT.defaultBlockState();
+            level.setBlock(roadBlock, replacement, 3);
+            edge.addDecorationPosition(roadBlock.immutable());
+        }
+    }
+
+    private static int maintenanceForPhase(DeadEdgeState.DeathPhase phase) {
+        // Drives the existing maintenance-based code paths (degradeSurface,
+        // placeLogs) — we map each phase to a representative maintenance level.
+        return switch (phase) {
+            case RECENT     -> 70;
+            case DECAYING   -> 45;
+            case OVERGROWN  -> 20;
+            case TRACE      -> 5;
+            case RECLAIMED  -> 0;
+        };
+    }
+
+    private static float densityForPhase(DeadEdgeState.DeathPhase phase) {
+        return switch (phase) {
+            case RECENT     -> 0.30f;
+            case DECAYING   -> 0.60f;
+            case OVERGROWN  -> 0.85f;
+            case TRACE      -> 0.95f;
+            case RECLAIMED  -> 0.99f;
+        };
     }
 
     // =========================================================================

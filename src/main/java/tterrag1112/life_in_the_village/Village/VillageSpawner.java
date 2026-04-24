@@ -117,6 +117,31 @@ public class VillageSpawner {
         tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator
                 .populate(level, village, layout);
 
+        // Phase 9 — fire VillagePlacementEvent with the network-alignment score
+        // contribution that informed (or would have informed) the placement
+        // decision. isCapital is approximated by "kingdom has only this village"
+        // since the spawner doesn't know its caller's intent here.
+        try {
+            tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph roadGraph =
+                    tterrag1112.life_in_the_village.Networking.WorldRoadSavedData.get(level).getGraph();
+            net.minecraft.core.BlockPos anchor = village.getAnchorPos();
+            float netScore = anchor != null
+                    ? tterrag1112.life_in_the_village.Village.Roads.Lifecycle
+                            .NetworkAlignmentScorer.networkAlignmentScore(anchor, roadGraph)
+                    : 0f;
+            boolean firstInKingdom = data.getKingdomForVillage(village.getId())
+                    .map(k -> k.getVillageIds().size() <= 1).orElse(true);
+            tterrag1112.life_in_the_village.Village.Roads.Lifecycle.VillagePlacementEvent.fire(
+                    new tterrag1112.life_in_the_village.Village.Roads.Lifecycle
+                            .VillagePlacementEvent.Event(
+                                    village.getId(),
+                                    village.getVillageType(),
+                                    anchor != null ? anchor : net.minecraft.core.BlockPos.ZERO,
+                                    firstInKingdom,
+                                    netScore,
+                                    level.getGameTime()));
+        } catch (Exception ignore) { /* event hook must never block placement */ }
+
         if (layout.buildings().isEmpty()) {
             System.out.println("VillageSpawner: no buildings planned — aborting");
             return Optional.empty();
