@@ -1551,3 +1551,124 @@ the road adapts (follows terrain rather than fighting it).
 (stone_bricks → mossy → cobblestone → mossy_cobblestone → cracked) for
 archaeological visual consistency. Palette weights are position-hashed so patterns
 are stable across re-realizations.
+
+---
+
+## Phase 7f Slice 1 — Village road graph data model and persistence
+
+**Date:** 2026-04-24
+
+### Summary
+
+Introduces a separate graph structure for village-internal road networks. Ships the
+data model, persistence layer, and invariant validation. No layout recipes generate
+gateways yet; no caravans use the graph; no connectors reference it. Slice 1 is
+purely additive — no existing road behavior is changed.
+
+### Files created
+
+**`Village/Roads/Graph/VillageRoadNode.java`**
+- Record: `nodeId`, `position`, `type` (INTERIOR / GATEWAY / LANDMARK), `gatewayInfo`.
+- `GatewayInfo` sub-record: `worldNodeId` (empty in Slice 1), `outwardDirection`
+  (8-point compass enum), `armEndpoint`, `role` (PRIMARY / SIDE / REAR).
+- `OutwardDirection` enum: `toRadians()` and `fromAngle(double)` conversions.
+- Static factories: `VillageRoadNode.interior(pos)`, `VillageRoadNode.gateway(pos, info)`.
+- Full `Codec<VillageRoadNode>` via `RecordCodecBuilder`.
+
+**`Village/Roads/Graph/VillageRoadEdge.java`**
+- Record: `edgeId`, `fromNodeId`, `toNodeId`, `cellPath`, `character`
+  (MAIN_STREET / SIDE_PATH / THROUGH_VILLAGE), `isTraversable`.
+- `length()` returns `cellPath.size()`.
+- `isIncidentTo(UUID nodeId)` helper.
+- `VillageRoadEdge.create(from, to, path, character)` factory with auto-generated UUID.
+- Full `Codec<VillageRoadEdge>`.
+
+**`Village/Roads/Graph/VillageRoadGraph.java`**
+- `Wire` inner record `(List<VillageRoadNode> nodes, List<VillageRoadEdge> edges)` — codec target.
+- `toWire()` / `fromWire(UUID villageId, Wire wire)` round-trip.
+- Transient incidence index `Map<UUID, Set<UUID>>` kept in sync by `addEdge` / `removeEdge`,
+  rebuilt by `fromWire`.
+- Node/edge CRUD: `addNode`, `removeNode`, `addEdge`, `removeEdge`, `getNode`, `getEdge`.
+- `nodesNear(BlockPos center, int radius)` — O(n) linear scan (sufficient for 5–20 nodes).
+- `findPath(UUID from, UUID to)` — BFS over incidence index; returns `Optional<List<UUID>>`.
+- `validateInvariants()` — returns `List<String>` of violations:
+  1. All edge endpoints reference existing nodes.
+  2. GATEWAY nodes must have `gatewayInfo` present.
+  3. Non-GATEWAY nodes must not have `gatewayInfo`.
+  4. If any edges exist, at least one GATEWAY node must exist.
+  5. Incidence index consistent with edge list.
+  6. `villageId` non-null.
+
+**`Networking/VillageRoadsSavedData.java`**
+- `SavedDataType` key: `litv_village_roads`.
+- Map codec: `Codec.unboundedMap(UUID → VillageRoadGraph.Wire)`.
+- `get(ServerLevel)`, `getOrCreate(UUID)`, `removeGraph(UUID)`, `allGraphs()`, `graphCount()`.
+- `bootstrapFromVillageSavedData(VillageSavedData)` → int: creates empty graphs for
+  every village that doesn't already have one; used for migration of pre-Slice-1 worlds.
+- `validateAll()` → `Map<UUID, List<String>>`: delegates to each graph's `validateInvariants()`.
+
+### Files modified
+
+**`Village/Roads/Graph/RoadNode.java`**
+- Added `GatewayLink` inner record `(UUID villageId, UUID villageNodeId)` with codec.
+- Added `Optional<GatewayLink> gatewayLink` field (always empty in Slice 1).
+- Codec updated from 5-field to 6-field; `fromCodec` factory updated accordingly.
+- Added `gatewayLink()` accessor and `setGatewayLink()` mutator.
+
+**`Village/VillageSpawner.java`**
+- After `data.addVillage(village)`: calls `VillageRoadsSavedData.get(level).getOrCreate(village.getId())`.
+- Ensures every newly-spawned village immediately has an (empty) road graph.
+
+**`Events/VillageRealisationSystem.java`**
+- On village abandonment (after `MAX_RETRY_ATTEMPTS` failures): calls
+  `VillageRoadsSavedData.get(level).removeGraph(newId)` to clean up the graph.
+
+**`Events/KingdomTaxEvent.java`**
+- Added static `roadsBootstrapped` flag and one-shot bootstrap at tick ≥ 1.
+- Calls `roads.bootstrapFromVillageSavedData(vData)` to create empty graphs for all
+  villages that existed before Slice 1 was deployed.
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Three new subcommands under `/liv road debug`:
+  - `village_graph <villageId>`: dumps node count, edge count, gateway nodes, and
+    whether the graph has any violations.
+  - `validate_village_graphs`: runs `validateAll()` across all village graphs, prints
+    per-village results; reports overall pass/fail.
+  - `show_village_graph <villageId>`: lists every node (type, position) and every edge
+    (character, length, traversable) in the named village's graph.
+
+**`ROADS_PLAN.md`**
+- Added Phase 7f section with Slice 1 (complete), Slice 2 (planned gateway generation),
+  and Slice 3 (planned world graph integration).
+- Updated completed phases list to include Phase 7f Slice 1.
+
+### Size of new data types
+
+- `VillageRoadNode.java`: ~150 lines; codec footprint ~25 lines.
+- `VillageRoadEdge.java`: ~100 lines; codec footprint ~20 lines.
+- `VillageRoadGraph.java`: ~250 lines including Wire codec and BFS.
+- `VillageRoadsSavedData.java`: ~130 lines including bootstrap and validation.
+
+### Persistence test
+
+Created a world, confirmed `litv_village_roads.dat` appears in the level `data/`
+directory after first tick. Reloaded the world; `VillageRoadsSavedData.graphCount()`
+returns the same count. Empty graphs round-trip correctly through the Wire codec with
+no data loss.
+
+### Coupling concerns
+
+- `VillageRoadsSavedData` depends on `VillageSavedData` only via the bootstrap helper;
+  no circular dependency.
+- `RoadNode.GatewayLink` holds `VillageRoadNode` UUIDs but does not import
+  `VillageRoadNode` directly — coupling is by UUID only, remaining loose.
+- `VillageRealisationSystem` now removes road graphs on village abandonment. If the
+  realisation refactoring ever moves the abandonment path, the `removeGraph` call must
+  move with it.
+
+### Next
+
+Phase 7f Slice 2 — gateway generation from LINEAR / ROADSIDE / CHAIN layouts +
+connector planning picks the best gateway. Layout recipes emit GATEWAY nodes at village
+arm endpoints; `VillageInternalLayoutPlanner` (or equivalent) populates the graph with
+INTERIOR and GATEWAY nodes after realisation.

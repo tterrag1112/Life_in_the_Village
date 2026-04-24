@@ -44,6 +44,25 @@ public class RoadNode {
                 Codec.STRING.xmap(NodeType::valueOf, NodeType::name);
     }
 
+    // ── GatewayLink — bidirectional link to VillageRoadGraph (Slice 3) ───────
+
+    /**
+     * Links a world-graph TERMINUS node to the matching VillageRoadNode gateway.
+     * Populated by Slice 3 of Phase 7f when connectors are wired up.
+     * Always {@link Optional#empty()} in this slice (Slice 1).
+     */
+    public record GatewayLink(UUID villageId, UUID villageNodeId) {
+        private static final Codec<UUID> UUID_CODEC_INNER =
+                Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
+        public static final Codec<GatewayLink> CODEC = RecordCodecBuilder.create(i -> i.group(
+                UUID_CODEC_INNER.fieldOf("villageId")
+                        .forGetter(GatewayLink::villageId),
+                UUID_CODEC_INNER.fieldOf("villageNodeId")
+                        .forGetter(GatewayLink::villageNodeId)
+        ).apply(i, GatewayLink::new));
+    }
+
     // ── Codec ────────────────────────────────────────────────────────────────
 
     private static final Codec<UUID> UUID_CODEC =
@@ -60,14 +79,18 @@ public class RoadNode {
                     .forGetter(RoadNode::kingdomAffinity),
             BlockPos.CODEC.listOf()
                     .optionalFieldOf("decorationPositions", new ArrayList<>())
-                    .forGetter(n -> n.decorationPositions)
+                    .forGetter(n -> n.decorationPositions),
+            GatewayLink.CODEC.optionalFieldOf("gatewayLink")
+                    .forGetter(n -> n.gatewayLink)
     ).apply(i, RoadNode::fromCodec));
 
     private static RoadNode fromCodec(UUID nodeId, BlockPos position, NodeType type,
                                       Optional<UUID> kingdomAffinity,
-                                      List<BlockPos> decorationPositions) {
+                                      List<BlockPos> decorationPositions,
+                                      Optional<GatewayLink> gatewayLink) {
         RoadNode n = new RoadNode(nodeId, position, type, kingdomAffinity);
         n.decorationPositions = new ArrayList<>(decorationPositions);
+        n.gatewayLink = gatewayLink;
         return n;
     }
 
@@ -81,6 +104,12 @@ public class RoadNode {
     /** Block positions of all decoration blocks placed at this node (persistent). */
     private List<BlockPos> decorationPositions;
 
+    /**
+     * Bidirectional link to the matching VillageRoadNode gateway.
+     * Always {@link Optional#empty()} until Phase 7f Slice 3.
+     */
+    private Optional<GatewayLink> gatewayLink = Optional.empty();
+
     // ── Constructor ──────────────────────────────────────────────────────────
 
     /** Canonical constructor — matches the old record constructor signature exactly. */
@@ -90,6 +119,7 @@ public class RoadNode {
         this.type             = type;
         this.kingdomAffinity  = kingdomAffinity;
         this.decorationPositions = new ArrayList<>();
+        this.gatewayLink      = Optional.empty();
     }
 
     // ── Accessors (same names as the old record) ─────────────────────────────
@@ -98,6 +128,10 @@ public class RoadNode {
     public BlockPos       position()         { return position; }
     public NodeType       type()             { return type; }
     public Optional<UUID> kingdomAffinity()  { return kingdomAffinity; }
+
+    /** Always empty in Slice 1; populated by Slice 3 gateway integration. */
+    public Optional<GatewayLink> gatewayLink() { return gatewayLink; }
+    public void setGatewayLink(GatewayLink link) { this.gatewayLink = Optional.ofNullable(link); }
 
     // ── Decoration tracking ──────────────────────────────────────────────────
 

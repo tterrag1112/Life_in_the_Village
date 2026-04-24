@@ -68,6 +68,10 @@ import tterrag1112.life_in_the_village.Village.Roads.Economy.TierPromotionRules;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Events.TierReconciliationSystem;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
+import tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile.PositionClassification;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RetainingWallBuilder;
@@ -305,6 +309,15 @@ public class RoadGraphDebugCommand {
                                                 .executes(RoadGraphDebugCommand::forceRebuildProfile)))
                                 .then(Commands.literal("supports_report")
                                         .executes(RoadGraphDebugCommand::supportsReport))
+                                // ── 7f Slice 1: village road graph debug ──────────────────────
+                                .then(Commands.literal("village_graph")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::villageGraph)))
+                                .then(Commands.literal("validate_village_graphs")
+                                        .executes(RoadGraphDebugCommand::validateVillageGraphs))
+                                .then(Commands.literal("show_village_graph")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::showVillageGraph)))
                         )
                 )
         );
@@ -3704,5 +3717,169 @@ public class RoadGraphDebugCommand {
                 + " sloped_positions=" + totalSloped;
         ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
         return greatRoadEdges;
+    }
+
+    // =========================================================================
+    // 7f Slice 1: village_graph — print village internal graph summary
+    // =========================================================================
+
+    private static int villageGraph(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        VillageSavedData vData   = VillageSavedData.get(level);
+        VillageRoadsSavedData rData = VillageRoadsSavedData.get(level);
+
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        tterrag1112.life_in_the_village.Village.Village village = vData.getAllVillages()
+                .stream()
+                .filter(v -> v.getName().toLowerCase(Locale.ROOT)
+                        .contains(namePart.toLowerCase(Locale.ROOT)))
+                .findFirst().orElse(null);
+
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[village_graph] No village matching '" + namePart + "'."));
+            return 0;
+        }
+
+        VillageRoadGraph graph = rData.getOrCreate(village.getId());
+
+        List<VillageRoadNode> gateways = graph.gateways();
+        StringBuilder sb = new StringBuilder("[village_graph] ")
+                .append(village.getName())
+                .append(" (").append(village.getId().toString().substring(0, 8)).append(")")
+                .append("\n  nodes=").append(graph.nodeCount())
+                .append(" edges=").append(graph.edgeCount())
+                .append(" gateways=").append(gateways.size());
+
+        if (graph.isEmpty()) {
+            sb.append("\n  (empty graph — no internal roads generated yet)");
+        } else {
+            for (VillageRoadNode gw : gateways) {
+                sb.append("\n  GW ").append(gw.nodeId().toString().substring(0, 8))
+                  .append(" pos=").append(gw.position().toShortString());
+                gw.gatewayInfo().ifPresent(info ->
+                    sb.append(" dir=").append(info.outwardDirection())
+                      .append(" role=").append(info.role())
+                );
+            }
+            for (VillageRoadEdge e : graph.allEdges()) {
+                sb.append("\n  Edge ").append(e.edgeId().toString().substring(0, 8))
+                  .append(" [").append(e.fromNodeId().toString().substring(0, 8))
+                  .append("→").append(e.toNodeId().toString().substring(0, 8))
+                  .append("] char=").append(e.character())
+                  .append(" len=").append(e.length()).append("b");
+            }
+        }
+
+        String finalMsg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(finalMsg), false);
+        return graph.nodeCount();
+    }
+
+    // =========================================================================
+    // 7f Slice 1: validate_village_graphs — run invariant validation on all graphs
+    // =========================================================================
+
+    private static int validateVillageGraphs(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        VillageRoadsSavedData rData = VillageRoadsSavedData.get(level);
+
+        Map<UUID, List<String>> violations = rData.validateAll();
+
+        if (violations.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[validate_village_graphs] All " + rData.graphCount()
+                    + " graphs are valid — no violations."), false);
+            return rData.graphCount();
+        }
+
+        StringBuilder sb = new StringBuilder("[validate_village_graphs] ")
+                .append(violations.size()).append(" graph(s) with violations:");
+        for (Map.Entry<UUID, List<String>> entry : violations.entrySet()) {
+            sb.append("\n  ").append(entry.getKey().toString().substring(0, 8)).append(":");
+            for (String v : entry.getValue()) {
+                sb.append("\n    - ").append(v);
+            }
+        }
+        String finalMsg = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(finalMsg), false);
+        return violations.size();
+    }
+
+    // =========================================================================
+    // 7f Slice 1: show_village_graph — render as particles
+    // =========================================================================
+
+    private static int showVillageGraph(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player      = ctx.getSource().getPlayerOrException();
+        ServerLevel level        = ctx.getSource().getLevel();
+        VillageSavedData vData   = VillageSavedData.get(level);
+        VillageRoadsSavedData rData = VillageRoadsSavedData.get(level);
+
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        tterrag1112.life_in_the_village.Village.Village village = vData.getAllVillages()
+                .stream()
+                .filter(v -> v.getName().toLowerCase(Locale.ROOT)
+                        .contains(namePart.toLowerCase(Locale.ROOT)))
+                .findFirst().orElse(null);
+
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[show_village_graph] No village matching '" + namePart + "'."));
+            return 0;
+        }
+
+        VillageRoadGraph graph = rData.getOrCreate(village.getId());
+        if (graph.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[show_village_graph] '" + village.getName()
+                    + "' has no internal road graph yet."), false);
+            return 0;
+        }
+
+        List<ParticleEmission> emissions = new ArrayList<>();
+
+        // GATEWAY nodes — gold beacon beam
+        for (VillageRoadNode node : graph.gateways()) {
+            for (int dy = 0; dy < 10; dy++) {
+                emissions.add(new ParticleEmission(
+                        node.position().above(dy),
+                        ParticleTypes.FLAME,
+                        RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+            }
+        }
+
+        // INTERIOR/LANDMARK nodes — enchanted glow beam
+        for (VillageRoadNode node : graph.allNodes()) {
+            if (node.isGateway()) continue;
+            for (int dy = 0; dy < 6; dy++) {
+                emissions.add(new ParticleEmission(
+                        node.position().above(dy),
+                        ParticleTypes.ENCHANT,
+                        RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+            }
+        }
+
+        // Edges — composter particles along cellPath
+        for (VillageRoadEdge edge : graph.allEdges()) {
+            List<BlockPos> path = edge.cellPath();
+            for (int i = 0; i < path.size(); i += 2) {
+                emissions.add(new ParticleEmission(
+                        path.get(i).above(1),
+                        ParticleTypes.COMPOSTER,
+                        RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+            }
+        }
+
+        RoadDebugVisualizer.INSTANCE.addSession(
+                player.getUUID(), level.getGameTime(), emissions);
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[show_village_graph] '" + village.getName()
+                + "' — " + graph.nodeCount() + " nodes, " + graph.edgeCount()
+                + " edges. Visualizing for "
+                + (RoadDebugVisualizer.DURATION_TICKS / 20) + "s."), false);
+        return graph.nodeCount() + graph.edgeCount();
     }
 }

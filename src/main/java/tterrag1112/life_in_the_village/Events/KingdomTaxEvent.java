@@ -8,6 +8,7 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -21,11 +22,27 @@ public class KingdomTaxEvent {
 
     private static final long TAX_INTERVAL = 24000L;
 
+    /** Set to true once the first-tick village-road bootstrap has run for this session. */
+    private static boolean roadsBootstrapped = false;
+
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
         ServerLevel level = server.overworld();
         long tick = level.getGameTime();
+
+        // One-shot bootstrap: ensure every existing village has an empty road graph.
+        // Handles worlds created before VillageRoadsSavedData existed.
+        if (!roadsBootstrapped && tick >= 1) {
+            VillageSavedData vData = VillageSavedData.get(level);
+            VillageRoadsSavedData roads = VillageRoadsSavedData.get(level);
+            int created = roads.bootstrapFromVillageSavedData(vData);
+            if (created > 0) {
+                System.out.println("[VillageRoads] Bootstrapped " + created
+                        + " empty road graph(s) for existing villages.");
+            }
+            roadsBootstrapped = true;
+        }
 
         VillageSavedData data = VillageSavedData.get(level);
 

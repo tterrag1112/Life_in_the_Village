@@ -297,6 +297,30 @@ Reduced scope because Phase 3b handles the common case. Periodic scan merges sus
 
 **Exit criteria:** ✓ Great roads follow a smoothed grade; raised sections have stone-brick fill or viaducts; lateral slopes have Old Realm retaining walls; all four debug commands functional.
 
+### Phase 7f — Village internal road graph
+
+Village road networks are separate from the world trade graph. Each village owns one
+`VillageRoadGraph` (empty until Slice 2 generates it from the layout).
+
+#### Phase 7f Slice 1 — Data model and persistence ✓ COMPLETE
+
+**Deliverables:**
+1. `VillageRoadNode` — record with NodeType (INTERIOR, GATEWAY, LANDMARK), `GatewayInfo` (outward direction, arm endpoint, role), `OutwardDirection` enum (8 compass points), `GatewayRole` enum (PRIMARY, SIDE, REAR). ✓
+2. `VillageRoadEdge` — record with `EdgeCharacter` (MAIN_STREET, SIDE_PATH, THROUGH_VILLAGE), `cellPath`, `isTraversable`. ✓
+3. `VillageRoadGraph` — graph class per village: node/edge CRUD, incidence index, O(n) spatial queries, BFS `findPath`, 6-invariant `validateInvariants`. ✓
+4. `VillageRoadsSavedData` — `litv_village_roads` saved data; `getOrCreate(UUID)`, `removeGraph(UUID)`, `validateAll()`, `bootstrapFromVillageSavedData()`. ✓
+5. `RoadNode.GatewayLink` — bidirectional link placeholder; always empty until Slice 3. ✓
+6. Lifecycle hooks: `VillageSpawner.spawnVillage` creates empty graph; `VillageRealisationSystem` removes graph on village abandonment; `KingdomTaxEvent` bootstraps existing-world graphs on first tick. ✓
+7. Debug commands: `village_graph <name>`, `validate_village_graphs`, `show_village_graph <name>`. ✓
+
+**Exit criteria:** ✓ New and existing worlds load without error. Every village has an empty graph. Codec round-trips. `validateAll()` returns empty on a fresh world.
+
+#### Phase 7f Slice 2 — Gateway generation (PLANNED)
+Generate gateways from village layouts. LINEAR/ROADSIDE/CHAIN layouts produce 1–2 gateways. Connector planning picks best gateway.
+
+#### Phase 7f Slice 3 — Gateway integration with world graph (PLANNED)
+Wire `RoadNode.GatewayLink` bidirectionally. Connectors route from world-graph TERMINUS to VillageRoadGraph gateway.
+
 ### Phase 7d — Worldgen ordering and atlas generation speed
 
 **Inserted after Phase 8d** to address testing pain (~25-minute worldgen). No changes to road graph output; all changes are performance and ordering.

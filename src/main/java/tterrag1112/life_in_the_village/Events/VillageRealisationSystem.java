@@ -122,6 +122,8 @@ public class VillageRealisationSystem implements TickSubsystem {
                 // in-memory failureHistory doesn't survive restarts).
                 data.removeVillage(newId);
                 data.getAllKingdoms().forEach(k -> k.removeVillage(newId));
+                tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData
+                        .get(level).removeGraph(newId);
                 data.setDirty();
                 System.out.println("VillageRealisationSystem: abandoned '" + name
                         + "' after " + attempts + " failures — removed from kingdom");
