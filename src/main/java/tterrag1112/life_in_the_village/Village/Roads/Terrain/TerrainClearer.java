@@ -278,7 +278,7 @@ public final class TerrainClearer {
 
     private static boolean isStripped(BlockState state) {
         // Stripped logs are building materials (used in NPC housing, arches, etc.)
-        net.minecraft.resources.ResourceLocation id =
+        net.minecraft.resources.Identifier id =
                 net.minecraft.core.registries.BuiltInRegistries.BLOCK
                         .getKey(state.getBlock());
         return id != null && id.getPath().contains("stripped");

@@ -2471,8 +2471,9 @@ public class RoadGraphDebugCommand {
         if (!toName.isEmpty() || cleared > 0) roadData.markDirty();
 
         final int named = toName.size();
+        int finalCleared = cleared;
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "[reselect_names] Cleared " + cleared + " old name(s). Named "
+                "[reselect_names] Cleared " + finalCleared + " old name(s). Named "
                         + named + " great road(s)."), false);
         return named;
     }
@@ -2487,7 +2488,7 @@ public class RoadGraphDebugCommand {
         String idPrefix = StringArgumentType.getString(ctx, "edgeId");
         WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
 
-        RoadEdge edge = resolveEdgeByPrefix(graph, idPrefix, ctx.getSource());
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, idPrefix, "");
         if (edge == null) return 0;
 
         if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) {
@@ -2744,7 +2745,7 @@ public class RoadGraphDebugCommand {
         int z = IntegerArgumentType.getInteger(ctx, "z");
         net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(x, y, z);
 
-        boolean isDay       = level.isDay();
+        boolean isDay       = !level.isDarkOutside();
         ChunkPos chunk      = new ChunkPos(pos);
         boolean chunkInCache = RoadProximityCache.isBuilt()
                 && RoadProximityCache.couldChunkBeNearRoad(chunk);
@@ -2790,7 +2791,7 @@ public class RoadGraphDebugCommand {
         WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
 
         net.minecraft.core.BlockPos pos = player.blockPosition();
-        boolean isDay = level.isDay();
+        boolean isDay = !level.isDarkOutside();
 
         java.util.Optional<RoadEdge.EdgeTier> nearbyTier =
                 RoadProximityChecker.nearestMaintainedRoadTier(graph, pos, 16);
@@ -2967,7 +2968,7 @@ public class RoadGraphDebugCommand {
 
         List<ShelterInstance> placed = new ArrayList<>();
         for (ShelterPlanner.ShelterPlan plan : plans) {
-            ShelterInstance inst = ShelterBuilder.place(level, plan, culture, level.getGameTime());
+            ShelterInstance inst = ShelterBuilder.place(level, plan, culture, graph, level.getGameTime());
             if (inst != null) placed.add(inst);
         }
 
@@ -3010,7 +3011,7 @@ public class RoadGraphDebugCommand {
         ShelterPlanner.ShelterPlan plan = new ShelterPlanner.ShelterPlan(
                 0, pos, shelterType, 0, 1);
 
-        ShelterInstance inst = ShelterBuilder.place(level, plan, "default", level.getGameTime());
+        ShelterInstance inst = ShelterBuilder.place(level, plan, "default", graph, level.getGameTime());
         if (inst == null) {
             ctx.getSource().sendFailure(Component.literal(
                     "[force_place_shelter_type] Placement rejected — terrain too uneven or chunk unloaded at "
@@ -3080,7 +3081,7 @@ public class RoadGraphDebugCommand {
         List<ShelterPlanner.ShelterPlan> plans = ShelterPlanner.plan(edge);
         List<ShelterInstance> placed = new ArrayList<>();
         for (ShelterPlanner.ShelterPlan plan : plans) {
-            ShelterInstance inst = ShelterBuilder.place(level, plan, "default", level.getGameTime());
+            ShelterInstance inst = ShelterBuilder.place(level, plan, "default", graph, level.getGameTime());
             if (inst != null) placed.add(inst);
         }
 

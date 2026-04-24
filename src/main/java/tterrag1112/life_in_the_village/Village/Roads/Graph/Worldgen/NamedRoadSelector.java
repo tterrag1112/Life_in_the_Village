@@ -30,7 +30,7 @@ public final class NamedRoadSelector {
 
     private NamedRoadSelector() {}
 
-    static final int REGION_SIZE = 8_000;
+    public static final int REGION_SIZE = 8_000;
 
     // =========================================================================
     // Public API
@@ -115,7 +115,7 @@ public final class NamedRoadSelector {
     // =========================================================================
 
     /** Returns [blockX, blockZ] of the midpoint cell of the given cell path. */
-    static int[] midpointBlocks(List<Long> cellPath) {
+    public static int[] midpointBlocks(List<Long> cellPath) {
         long midCell = cellPath.get(cellPath.size() / 2);
         int bx = (AtlasCell.unpackX(midCell) << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
         int bz = (AtlasCell.unpackZ(midCell) << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;

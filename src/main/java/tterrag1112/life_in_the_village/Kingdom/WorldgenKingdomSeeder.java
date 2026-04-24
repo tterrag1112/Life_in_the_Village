@@ -24,7 +24,7 @@ public class WorldgenKingdomSeeder {
     private static final int MIN_KINGDOM_DIST  = 2_000;
     private static final int MAX_KINGDOM_DIST  = 4_000;
     private static final int MIN_KINGDOMS      = 2;
-    private static final int MAX_KINGDOMS      = 4;
+    private static final int MAX_KINGDOMS      = 2;
     private static final int SPAWN_INTERVAL    = 600;
 
     /** Radius (blocks) used for the regional viability scan. */
@@ -171,8 +171,8 @@ public class WorldgenKingdomSeeder {
                 cell.blockCenterX(), cell.centerY(), cell.blockCenterZ());
 
         // ── Step 3: kingdom-to-kingdom spacing check ─────────────────────────
-        tterrag1112.life_in_the_village.Networking.VillageSavedData data =
-                tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+        VillageSavedData data =
+                VillageSavedData.get(level);
 
         BlockPos chosenOrigin = trySpacedOrigin(atlas, level, data, sk, origin);
         if (chosenOrigin == null) {
@@ -213,17 +213,16 @@ public class WorldgenKingdomSeeder {
             ScheduledKingdom sk, BlockPos preferred) {
 
         float[] budgetTrials = {
-                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET,
-                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET * 0.6f,
-                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET * 0.35f
+                KingdomClaimComputer.DEFAULT_BUDGET,
+                KingdomClaimComputer.DEFAULT_BUDGET * 0.6f,
+                KingdomClaimComputer.DEFAULT_BUDGET * 0.35f
         };
 
-        java.util.Random rng = new java.util.Random(
+        Random rng = new java.util.Random(
                 (long) sk.name.hashCode() * 2654435761L ^ level.getSeed());
 
         for (float budget : budgetTrials) {
-            int projected = tterrag1112.life_in_the_village.Kingdom
-                    .KingdomSpacingChecker.estimateProjectedRadius(budget);
+            int projected = KingdomSpacingChecker.estimateProjectedRadius(budget);
 
             // Try the preferred point first
             if (tterrag1112.life_in_the_village.Kingdom.KingdomSpacingChecker

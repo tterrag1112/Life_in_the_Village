@@ -1,6 +1,6 @@
 package tterrag1112.life_in_the_village.Events;
 
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -25,14 +25,13 @@ import java.util.List;
  *   <li>If the player stepped off the road (bonus == 0), the modifier is removed.</li>
  * </ol>
  *
- * <p>The modifier uses a stable {@link ResourceLocation} ID so it can be safely updated
  * and removed between ticks without leaving orphaned modifiers.
  */
 public final class PlayerRoadSpeedSystem implements TickSubsystem {
 
     /** Stable modifier ID — must not clash with any other modifier in the game. */
-    public static final ResourceLocation MODIFIER_ID =
-            ResourceLocation.fromNamespaceAndPath("life_in_the_village", "road_speed_bonus");
+    public static final Identifier MODIFIER_ID =
+            Identifier.fromNamespaceAndPath("life_in_the_village", "road_speed_bonus");
 
     @Override
     public String name() { return "road_speed"; }

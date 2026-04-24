@@ -81,13 +81,13 @@ public final class RoadSafetySystem {
         if (!(event.getEntity() instanceof Monster)) return;
 
         // ── Guard: natural spawning only (not spawners, structures, events) ───
-        if (event.getSpawnReason() != EntitySpawnReason.NATURAL) return;
+        if (event.getSpawnType() != EntitySpawnReason.NATURAL) return;
 
         // ── Guard: server side only ────────────────────────────────────────────
         if (!(event.getLevel() instanceof ServerLevel level)) return;
 
         // ── Guard: daytime only (isDay() == false during night AND storms) ────
-        if (!level.isDay()) return;
+        if (level.isDarkOutside()) return;
 
         BlockPos spawnPos = event.getEntity().blockPosition();
 
