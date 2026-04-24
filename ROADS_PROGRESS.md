@@ -1462,3 +1462,92 @@ Clearance policy:
 **Performance:** Feature BFS is bounded at 500 blocks × 26 neighbors × radius check = ~13,000 position checks per tree. This is fast enough (sub-millisecond for typical trees). Mega-trees (400 blocks) complete in ~5ms. No multi-tick deferral needed.
 
 **Next:** Phase 7e — great road terrain authority (retaining walls, terrain smoothing).
+
+---
+
+## Phase 7e — Great Road Terrain Authority (2026-04-24)
+
+### Summary
+
+Implements smoothed elevation profiles, retaining walls on lateral slopes, support
+structures beneath raised sections, and minor terrain smoothing for `GREAT_ROAD`
+edges. GREAT_ROAD only; all other tiers are unaffected.
+
+### New files
+
+**`Village/Roads/Terrain/GreatRoadProfile.java`**
+- `computeProfile(List<BlockPos>, GreatRoadCharacter)` → `int[]`: Gaussian-weighted
+  moving-average over dense-path Y values. Window half-width by CharacterTag:
+  MOUNTAIN_HUGGING=±8, PLAINS_STRAIGHT=±25, all others=±15.
+- `classify(List<BlockPos>, int[], ServerLevel)` → `List<PositionClassification>`:
+  delta = profileY − terrainY. >1 → RAISED, <−1 → LOWERED, |delta|≤1 → lateral
+  slope check at ±3 blocks perpendicular (>2 block difference → SLOPED_LEFT/SLOPED_RIGHT,
+  otherwise NORMAL).
+- `PositionClassification` enum: NORMAL, RAISED, LOWERED, SLOPED_LEFT, SLOPED_RIGHT.
+- `windowFor(CharacterTag)` public for debug inspection.
+- `computePerp()` shared with sibling builders.
+
+**`Village/Roads/Terrain/RetainingWallBuilder.java`**
+- Handles SLOPED_LEFT / SLOPED_RIGHT: wall placed 1 block outside road edge on the
+  uphill side. Height = terrainY_uphill − profileY, clamped [2, 12].
+- Capstone slab at top of every 8th wall column.
+- Old Realm palette (deterministic per-position hash): 50% stone_bricks,
+  25% mossy_stone_bricks, 15% cobblestone, 8% mossy_cobblestone, 2% cracked_stone_bricks.
+
+**`Village/Roads/Terrain/RoadSupportBuilder.java`**
+- Handles RAISED positions (profileY > terrainY, depth 2–12).
+- Solid fill (fill Old Realm blocks from terrainY to profileY−1) when RAISED run < 20.
+- Pillared viaduct when RAISED run ≥ 20: full stone_brick pillar columns every 5
+  positions, stone_brick_slab deck spans between pillars at profileY−1.
+- Depth > 12 skipped.
+- `computeRaisedRunLengths()` public for debug inspection.
+
+**`Village/Roads/Terrain/RoadSmoother.java`**
+- Handles NORMAL (±1 delta): clears 1 surface block when terrain is 1 too high;
+  fills 1 Old Realm block when terrain is 1 too low.
+- Handles LOWERED (terrain above profile): excavates from profileY to terrainY−1,
+  capped at 8 blocks, skipping protected blocks (stripped logs, crafted stone).
+
+### Files modified
+
+**`Village/Roads/Realization/UnifiedRoadPlacer.java`**
+- Added imports: `GreatRoadCharacter`, `GreatRoadProfile`, `RetainingWallBuilder`,
+  `RoadSmoother`, `RoadSupportBuilder`.
+- New Step 1.5 (GREAT_ROAD only): compute profile → classify → smooth → build
+  supports → build walls → re-densify. Re-densification after terrain manipulation
+  ensures `OrganicRoadPlacer` places the road surface at the updated heightmap Y.
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Added imports for all four new Terrain classes.
+- Added four subcommands under `/liv road debug`:
+  - `profile <edgeId>`: report profile delta stats (min/max/avgAbs), CharacterTag, window.
+  - `show_supports <edgeId>`: classification breakdown — NORMAL/RAISED/LOWERED/SLOPED_LEFT/
+    SLOPED_RIGHT counts; RAISED count split by solid-fill vs viaduct threshold.
+  - `force_rebuild_profile <edgeId>`: re-runs the full terrain authority pipeline
+    (smooth + supports + walls) on a realized GREAT_ROAD edge in-world.
+  - `supports_report`: scans all GREAT_ROAD edges within r=256 of the player,
+    reports total raised positions and viaduct-eligible positions.
+
+### Key design decisions
+
+**Supports before surface:** `RoadSmoother`, `RoadSupportBuilder`, and `RetainingWallBuilder`
+run before `OrganicRoadPlacer`. After fills/excavations the heightmap returns profileY,
+so the road painter places the surface at the correct elevation without any explicit Y
+override.
+
+**Re-densify after terrain authority:** After terrain manipulation the dense path is
+regenerated from the original sparse centerline so road Y values reflect the updated
+world state.
+
+**Gaussian window controls curvature:** Wide window (PLAINS_STRAIGHT ±25) produces
+very smooth, gentle grades ideal for flat terrain. Tight window (MOUNTAIN_HUGGING ±8)
+follows ridgelines closely and is used for roads that hug cliff edges.
+
+**Depth cap at 12:** Fills beyond 12 blocks deep would consume enormous resources
+for very little road length. Skipped positions simply keep their natural terrain Y;
+the road adapts (follows terrain rather than fighting it).
+
+**Old Realm palette:** All wall/fill blocks use the same deterministic palette
+(stone_bricks → mossy → cobblestone → mossy_cobblestone → cracked) for
+archaeological visual consistency. Palette weights are position-hashed so patterns
+are stable across re-realizations.

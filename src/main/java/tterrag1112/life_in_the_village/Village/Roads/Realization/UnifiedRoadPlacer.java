@@ -11,7 +11,12 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.OrganicRoadPlace
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.RetainingWallBuilder;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSmoother;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSupportBuilder;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
 
@@ -75,6 +80,24 @@ public final class UnifiedRoadPlacer {
         List<WaterSpan> bridgeSpans = new ArrayList<>();
         for (int i = 0; i < centerline.size() - 1; i++) {
             bridgeSpans.addAll(detectWaterSpans(level, centerline.get(i), centerline.get(i + 1)));
+        }
+
+        // ── Step 1.5: terrain authority for GREAT_ROAD ────────────────────────
+        // Support structures are built BEFORE OrganicRoadPlacer so the
+        // MOTION_BLOCKING_NO_LEAVES heightmap already returns profileY when
+        // road surface blocks are queried.
+        if (edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD) {
+            GreatRoadCharacter character = edge.getCharacter().orElse(null);
+            int[] profileY = GreatRoadProfile.computeProfile(dense, character);
+            List<GreatRoadProfile.PositionClassification> classes =
+                    GreatRoadProfile.classify(dense, profileY, level);
+
+            RoadSmoother.smooth(level, dense, profileY, classes);
+            RoadSupportBuilder.build(level, dense, profileY, classes);
+            RetainingWallBuilder.build(level, dense, profileY, classes, tier.placedHalfWidth());
+
+            // Re-densify so road surface is placed at the updated terrain heights
+            dense = densify(centerline, level);
         }
 
         // ── Step 2: clear vegetation along dense path ─────────────────────────

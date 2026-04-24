@@ -68,6 +68,11 @@ import tterrag1112.life_in_the_village.Village.Roads.Economy.TierPromotionRules;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Events.TierReconciliationSystem;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.EdgeRealizer;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile.PositionClassification;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.RetainingWallBuilder;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSmoother;
+import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSupportBuilder;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.VegetationFeatureDetector;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -288,6 +293,18 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("clear_corridor")
                                         .then(Commands.argument("radius", IntegerArgumentType.integer(1, 64))
                                                 .executes(RoadGraphDebugCommand::clearCorridor)))
+                                // ── 7e: terrain authority debug ───────────────────────────────
+                                .then(Commands.literal("profile")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::showProfile)))
+                                .then(Commands.literal("show_supports")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::showSupports)))
+                                .then(Commands.literal("force_rebuild_profile")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forceRebuildProfile)))
+                                .then(Commands.literal("supports_report")
+                                        .executes(RoadGraphDebugCommand::supportsReport))
                         )
                 )
         );
@@ -3484,5 +3501,208 @@ public class RoadGraphDebugCommand {
 
         ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
         return result.treesCleared() + result.vegetationCleared();
+    }
+
+    // =========================================================================
+    // 7e: profile — show smoothed elevation profile stats for a GREAT_ROAD edge
+    // =========================================================================
+
+    private static int showProfile(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+
+        String prefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(java.util.Locale.ROOT);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "edgeId");
+        if (edge == null) return 0;
+
+        if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[profile] Edge " + prefix + " is not a GREAT_ROAD (tier=" + edge.getTier() + ")."));
+            return 0;
+        }
+
+        List<BlockPos> blockPath = edge.getBlockPath();
+        if (blockPath.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[profile] Edge " + prefix + " has no block path — realize it first."));
+            return 0;
+        }
+
+        GreatRoadCharacter character = edge.getCharacter().orElse(null);
+        int[] profileY = GreatRoadProfile.computeProfile(blockPath, character);
+
+        int minDelta = Integer.MAX_VALUE, maxDelta = Integer.MIN_VALUE;
+        long sumDelta = 0;
+        for (int i = 0; i < blockPath.size(); i++) {
+            int delta = profileY[i] - blockPath.get(i).getY();
+            if (delta < minDelta) minDelta = delta;
+            if (delta > maxDelta) maxDelta = delta;
+            sumDelta += Math.abs(delta);
+        }
+        int avgAbsDelta = blockPath.isEmpty() ? 0 : (int)(sumDelta / blockPath.size());
+        int window = GreatRoadProfile.windowFor(character != null ? character.tag() : null);
+        String tag  = character != null ? character.tag().name() : "DEFAULT";
+
+        String msg = "[profile] Edge " + edge.getEdgeId().toString().substring(0, 8)
+                + " len=" + blockPath.size()
+                + " tag=" + tag + " window=±" + window
+                + "\n  profile delta: min=" + minDelta + " max=" + maxDelta
+                + " avgAbs=" + avgAbsDelta;
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // 7e: show_supports — classification breakdown for a GREAT_ROAD edge
+    // =========================================================================
+
+    private static int showSupports(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+
+        String prefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(java.util.Locale.ROOT);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "edgeId");
+        if (edge == null) return 0;
+
+        if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[show_supports] Edge " + prefix + " is not a GREAT_ROAD."));
+            return 0;
+        }
+
+        List<BlockPos> blockPath = edge.getBlockPath();
+        if (blockPath.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[show_supports] Edge " + prefix + " has no block path."));
+            return 0;
+        }
+
+        GreatRoadCharacter character = edge.getCharacter().orElse(null);
+        int[] profileY = GreatRoadProfile.computeProfile(blockPath, character);
+        List<PositionClassification> classes = GreatRoadProfile.classify(blockPath, profileY, level);
+
+        int normal = 0, raised = 0, lowered = 0, slopedL = 0, slopedR = 0;
+        int raisedLong = 0;
+        int[] runLens = RoadSupportBuilder.computeRaisedRunLengths(classes, classes.size());
+        for (int i = 0; i < classes.size(); i++) {
+            switch (classes.get(i)) {
+                case NORMAL    -> normal++;
+                case RAISED    -> { raised++; if (runLens[i] >= RoadSupportBuilder.VIADUCT_MIN_GAP) raisedLong++; }
+                case LOWERED   -> lowered++;
+                case SLOPED_LEFT  -> slopedL++;
+                case SLOPED_RIGHT -> slopedR++;
+            }
+        }
+
+        String msg = "[show_supports] Edge " + edge.getEdgeId().toString().substring(0, 8)
+                + " len=" + blockPath.size()
+                + "\n  NORMAL=" + normal
+                + " RAISED=" + raised + " (viaduct≥" + RoadSupportBuilder.VIADUCT_MIN_GAP + ":" + raisedLong + ")"
+                + " LOWERED=" + lowered
+                + " SLOPED_LEFT=" + slopedL + " SLOPED_RIGHT=" + slopedR;
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return raised + slopedL + slopedR;
+    }
+
+    // =========================================================================
+    // 7e: force_rebuild_profile — run terrain authority pipeline on an edge
+    // =========================================================================
+
+    private static int forceRebuildProfile(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+
+        String prefix = StringArgumentType.getString(ctx, "edgeId").toLowerCase(java.util.Locale.ROOT);
+        RoadEdge edge = resolveEdgeByPrefix(ctx, graph, prefix, "edgeId");
+        if (edge == null) return 0;
+
+        if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_rebuild_profile] Edge " + prefix + " is not a GREAT_ROAD."));
+            return 0;
+        }
+
+        List<BlockPos> blockPath = edge.getBlockPath();
+        if (blockPath.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_rebuild_profile] Edge " + prefix + " has no block path — realize it first."));
+            return 0;
+        }
+
+        GreatRoadCharacter character = edge.getCharacter().orElse(null);
+        int[] profileY = GreatRoadProfile.computeProfile(blockPath, character);
+        List<PositionClassification> classes = GreatRoadProfile.classify(blockPath, profileY, level);
+
+        RoadSmoother.smooth(level, blockPath, profileY, classes);
+        RoadSupportBuilder.build(level, blockPath, profileY, classes);
+        RetainingWallBuilder.build(level, blockPath, profileY, classes,
+                tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape.RoadTier.CAPITAL_ROAD.placedHalfWidth());
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_rebuild_profile] Terrain authority applied to edge " + shortId
+                + " (" + blockPath.size() + " positions)."), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // 7e: supports_report — summary of RAISED/SLOPED positions near the player
+    // =========================================================================
+
+    private static int supportsReport(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player      = ctx.getSource().getPlayerOrException();
+        ServerLevel level        = ctx.getSource().getLevel();
+        WorldRoadSavedData rData = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph     = rData.getGraph();
+
+        BlockPos playerPos = player.blockPosition();
+        int searchRadius = 256;
+
+        int totalEdges = 0, greatRoadEdges = 0, totalRaised = 0, totalViaduct = 0, totalSloped = 0;
+
+        for (RoadEdge edge : graph.getEdges().values()) {
+            if (edge.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) continue;
+            List<BlockPos> bp = edge.getBlockPath();
+            if (bp.isEmpty()) continue;
+
+            // Quick bounding-box reject
+            BlockPos first = bp.get(0);
+            if (Math.abs(first.getX() - playerPos.getX()) > searchRadius + 500
+                    || Math.abs(first.getZ() - playerPos.getZ()) > searchRadius + 500) continue;
+
+            totalEdges++;
+            greatRoadEdges++;
+
+            GreatRoadCharacter character = edge.getCharacter().orElse(null);
+            int[] profileY = GreatRoadProfile.computeProfile(bp, character);
+            List<PositionClassification> classes = GreatRoadProfile.classify(bp, profileY, level);
+            int[] runLens = RoadSupportBuilder.computeRaisedRunLengths(classes, classes.size());
+
+            for (int i = 0; i < classes.size(); i++) {
+                BlockPos p = bp.get(i);
+                if (Math.abs(p.getX() - playerPos.getX()) > searchRadius
+                        || Math.abs(p.getZ() - playerPos.getZ()) > searchRadius) continue;
+                switch (classes.get(i)) {
+                    case RAISED -> {
+                        totalRaised++;
+                        if (runLens[i] >= RoadSupportBuilder.VIADUCT_MIN_GAP) totalViaduct++;
+                    }
+                    case SLOPED_LEFT, SLOPED_RIGHT -> totalSloped++;
+                    default -> {}
+                }
+            }
+        }
+
+        String msg = "[supports_report] within r=" + searchRadius + " of " + playerPos.toShortString()
+                + "\n  great_road_edges=" + greatRoadEdges
+                + " raised_positions=" + totalRaised
+                + " (viaduct: " + totalViaduct + ")"
+                + " sloped_positions=" + totalSloped;
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return greatRoadEdges;
     }
 }

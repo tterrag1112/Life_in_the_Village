@@ -285,6 +285,18 @@ Reduced scope because Phase 3b handles the common case. Periodic scan merges sus
 
 **Exit criteria:** Each great road has distinct, stable visual character.
 
+### Phase 7e — Great road terrain authority ✓ COMPLETE
+
+**Deliverables:**
+1. `GreatRoadProfile` — Gaussian-smoothed elevation profile + NORMAL/RAISED/LOWERED/SLOPED_LEFT/SLOPED_RIGHT classification. ✓
+2. `RetainingWallBuilder` — Old Realm retaining walls on lateral slopes (height 2–12, capstone every 8). ✓
+3. `RoadSupportBuilder` — Solid fill (depth 2–12, gap < 20) + pillared viaduct (gap ≥ 20). ✓
+4. `RoadSmoother` — Conservative ±1 nudge for NORMAL; excavation capped at 8 blocks for LOWERED. ✓
+5. `UnifiedRoadPlacer` integration — terrain authority pipeline runs before `OrganicRoadPlacer` so heightmap returns profileY at paint time. GREAT_ROAD only. ✓
+6. Debug commands: `profile`, `show_supports`, `force_rebuild_profile`, `supports_report`. ✓
+
+**Exit criteria:** ✓ Great roads follow a smoothed grade; raised sections have stone-brick fill or viaducts; lateral slopes have Old Realm retaining walls; all four debug commands functional.
+
 ### Phase 7d — Worldgen ordering and atlas generation speed
 
 **Inserted after Phase 8d** to address testing pain (~25-minute worldgen). No changes to road graph output; all changes are performance and ordering.
@@ -388,7 +400,8 @@ Reduced scope because Phase 3b handles the common case. Periodic scan merges sus
 12. Phase 7a — deterministic anchor graph
 13. Phase 7b — named roads
 14. Phase 7c — great road character
-15. Phase 8a–d — player-facing gameplay
+15. Phase 7e — great road terrain authority
+16. Phase 8a–d — player-facing gameplay
 16. Phase 9 — network evolution
 17. Phase 10a–c — events, travelers, landmarks
 18. Phase 11 — player construction
