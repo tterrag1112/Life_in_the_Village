@@ -2017,3 +2017,222 @@ Next in the main plan: **Phase 9 — network evolution** (dead edges,
 road-attracted village placement) — now unblocked because all great-road,
 cultural, and terrain-authority subsystems ship visible, legible output at
 ground level.
+
+---
+
+## Phase 9 — Network evolution: dead edges + road-attracted placement
+
+**Date:** 2026-04-24
+
+### Summary
+
+Two simulation mechanics that wire population change to the road network:
+
+1. **Dead edges.** When the last maintainer village of a CONNECTOR / TRUNK
+   edge dies, the edge transitions through five death phases over 180 in-game
+   days (RECENT → DECAYING → OVERGROWN → TRACE → RECLAIMED) and is eventually
+   removed from the graph after a 30-day grace period. GREAT_ROAD edges are
+   exempt per invariant 3.
+2. **Network-attracted village placement.** New villages within an existing
+   kingdom claim now receive a 0–50 point network alignment bonus based on
+   proximity to live GREAT_ROAD / TRUNK edges, weighted at 0.4 in the final
+   score. Capitals are exempt — they are placed first and seed their own
+   network.
+
+Two fire-and-forget event hooks (`EdgeDeathEvent`, `VillagePlacementEvent`)
+are added for future systems to subscribe to. No existing logic subscribes.
+
+### Files created (new package: `Village/Roads/Lifecycle/`)
+
+**`DeadEdgeState.java`**
+- Record `(firstMarkedTick, lastMaintainerDiedTick, Optional<Long> reclaimedAt)`
+  with Codec.
+- `DeathPhase` enum: RECENT (0–7d), DECAYING (7–30d), OVERGROWN (30–90d),
+  TRACE (90–180d), RECLAIMED (180+d) with String codec.
+- Phase computation methods: `phaseAtTick`, `ticksUntilNextPhase`,
+  `withReclaimedAt`, `atPhase` (used by `force_death_phase` debug command).
+- Constants: TICKS_PER_DAY=24000, RECLAIM_GRACE_DAYS=30.
+
+**`DeadEdgeDetector.java`**
+- `maybeScan(level)` — once-per-day scheduled scan; self-throttles via
+  `lastScanTick` static.
+- `scanForDeadEdges(level)` — iterates all edges, skips GREAT_ROAD, marks
+  dead any edge whose every maintainer UUID is missing from
+  `VillageSavedData`. Fires `EdgeDeathEvent.MARKED_DEAD` per marking. Also
+  detects phase transitions on already-dead edges via a static
+  `LAST_PHASE` map (fires `PHASE_CHANGED` when crossing a boundary). Stamps
+  `reclaimedAt` the first time an edge is observed at RECLAIMED.
+
+**`ReclaimedEdgeCleanup.java`**
+- `maybeCleanup(level)` — once-per-month grace-period sweep.
+- Removes edges where `currentTick − reclaimedAt ≥ 30 days`. Fires
+  `EdgeDeathEvent.REMOVED`. Also removes orphan TERMINUS / POI_STUB /
+  TRUNK_JUNCTION nodes after the edge removal; preserves VILLAGE_DOCK and
+  any node still carrying a `gatewayLink` (those belong to live villages).
+- `despawnEdgeBlocks` replaces each surface-Y road block with grass; gentle,
+  best-effort, skips unloaded chunks.
+
+**`NetworkAlignmentScorer.java`**
+- `networkAlignmentScore(BlockPos, WorldRoadGraph) -> float` (0–50).
+- Uses `WorldRoadGraph.edgesNear(...)` with a 1500-block radius, then walks
+  block-path or cell-path to find squared distance to nearest GREAT_ROAD /
+  TRUNK. Banded scoring per spec: GREAT_ROAD ≤500 = +30, ≤1500 = +15;
+  TRUNK ≤300 = +20, ≤800 = +10. Dead edges don't count.
+
+**`EdgeDeathEvent.java`**
+- Static listener-list hook with `Kind` (MARKED_DEAD / PHASE_CHANGED /
+  REMOVED), `subscribe`/`unsubscribe`/`fire`. Listener exceptions logged to
+  stderr; never propagated.
+
+**`VillagePlacementEvent.java`**
+- Static listener-list hook fired from `VillageSpawner` after `addVillage`,
+  carrying `(villageId, type, position, isCapital, networkScore, tick)`.
+
+### Files modified
+
+**`Village/Roads/Graph/RoadEdge.java`**
+- Added `Optional<DeadEdgeState> deadState` field (codec is now 18 fields;
+  Village.java's codec already exercises 25). `optionalFieldOf("deadState")`
+  in the codec group.
+- Accessors: `getDeadState`, `isDead`, `deathPhase(currentTick)`,
+  `markDead(tick)` (no-op for GREAT_ROAD per invariant 3 + idempotent), and
+  `setDeadState(state)` for the `force_death_phase` debug command.
+
+**`Village/Roads/Decoration/RoadOvergrowthDecorator.java`**
+- Branches on `edge.isDead()`: dead edges use `densityForPhase(phase)` and
+  `maintenanceForPhase(phase)` instead of the maintenance-driven logic, so
+  decay is permanent and progresses through phases on each re-realisation.
+- Added `traceReplaceSurface` for TRACE / RECLAIMED phases: replaces road
+  surface blocks with grass / coarse_dirt, keeping every Nth block as a
+  "stone from the old road" (TRACE keeps 25%, RECLAIMED keeps 12.5%).
+  Replaced positions are appended to `decorationPositions` so re-realisation
+  doesn't double-decorate.
+
+**`Events/KingdomTaxEvent.java`**
+- Added two calls inside the existing `onServerTick`:
+  `DeadEdgeDetector.maybeScan(level)` and
+  `ReclaimedEdgeCleanup.maybeCleanup(level)`. Both self-throttle.
+
+**`Kingdom/Placement/VillagePlacementScorer.java`**
+- New 7-arg `score(...)` overload accepting `@Nullable WorldRoadGraph graph`
+  and `boolean isCapital`. Adds `NETWORK_SCORE_WEIGHT * networkAlignmentScore`
+  to the final score when graph is non-null and `!isCapital`.
+- 5-arg overload preserved for backward compatibility (delegates with
+  `graph=null, isCapital=false`).
+
+**`Kingdom/Placement/ClaimVillagePlacer.java`**
+- New 6-arg `plan(...)` overload accepting `@Nullable WorldRoadGraph graph`.
+- `selectCell(...)` plumbs the graph into both score-loop call sites; both
+  paths now pass `graph, isCapital` to the scorer.
+
+**`Kingdom/KingdomSpawner.java`**
+- After computing the territorial claim, fetches the graph from
+  `WorldRoadSavedData.get(level).getGraph()` and passes it to
+  `ClaimVillagePlacer.plan(...)` so non-capital villages receive the
+  network-alignment bonus. Capital placement is unaffected.
+
+**`Village/VillageSpawner.java`**
+- After `data.addVillage(village)` and gateway population, fires
+  `VillagePlacementEvent` with the per-village network score (computed via
+  `NetworkAlignmentScorer.networkAlignmentScore(anchor, graph)`).
+  `isCapital` is approximated by "kingdom has only this village" since the
+  spawner doesn't know its caller's intent. Wrapped in `try/catch` so a
+  faulty subscriber can never block placement.
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Six new subcommands under `/liv road debug`:
+  - `dead_edges` — lists every dead edge with phase, marked tick, and
+    "until next phase" countdown.
+  - `force_dead <edgeId>` — marks an edge dead at the current tick.
+    Refuses GREAT_ROAD (invariant 3).
+  - `force_death_phase <edgeId> <phase>` — backdates the edge's
+    `firstMarkedTick` so it computes to the requested phase, useful for
+    inspecting decoration changes.
+  - `reclaim_edge <edgeId>` — manual graph removal for already-RECLAIMED
+    edges; runs the same cleanup that the periodic sweep does.
+  - `network_score <x> <y> <z>` — reports the score a candidate would
+    receive at that position (helpful for understanding why one cell is
+    favoured over another).
+  - `village_death <villageName>` — removes a village from saved data,
+    detaches it from kingdoms, and immediately runs the dead-edge scan so
+    the cascade is visible in the same tick.
+
+### Design decisions
+
+**Dead state is permanent.** Once an edge is marked dead, the `deadState`
+optional is never cleared. The spec explicitly forbids edge "revival". The
+`firstMarkedTick` is the canonical clock; phase computation is pure given
+that tick, so phases recompute deterministically on every load.
+
+**Detector is single-shot per UUID.** `LAST_PHASE` is a static
+HashMap<UUID, DeathPhase>. It's not persisted because phases are derivable
+from `firstMarkedTick` — the map only exists to avoid firing PHASE_CHANGED
+twice for the same boundary within a session. On reload it's empty, so the
+first scan after reload won't fire phase events for already-known edges.
+Acceptable: subscribers should reconcile state from `EdgeDeathEvent.MARKED_DEAD
++ initial scan output` if they need exhaustive tracking.
+
+**Phase-driven overgrowth ignores maintenance.** For dead edges,
+`maintenanceForPhase` produces a synthetic maintenance value that drives the
+existing `degradeSurface` / `placeLogs` paths, but the density curve and the
+TRACE-surface replacement run only on dead edges. Living edges with low
+maintenance still get the original Phase 6b overgrowth, unchanged.
+
+**Network score is gated on isCapital, not on village count.** Capitals
+(index 0 in the kingdom's composition list) skip the bonus regardless of
+how many roads exist — this matches the spec's "first village of a kingdom"
+rule. For natural-spawn paths that don't know their kingdom, the
+`VillageSpawner.isCapital` heuristic falls back to "kingdom has only this
+village".
+
+**Orphan-node cleanup spares VILLAGE_DOCK and gateway links.** A removed
+TERMINUS for a now-vanished arm endpoint is fine to delete, but a node that
+still carries `gatewayLink.isPresent()` belongs to a live village and might
+be the destination of a future re-connection.
+
+### Known tuning candidates
+
+- **180 days to RECLAIMED** is a long real-time window. If players never
+  see TRACE phase in normal play, shorten the thresholds. The constants are
+  in `DeadEdgeState` and only need a recompile.
+- **NetworkAlignmentScorer search radius** is 1500 blocks. Worlds with
+  sparse great-road graphs may want this raised; performance is currently
+  bounded by the spatial index returning at most ~10 edges per query.
+- **VillagePlacementScorer.NETWORK_SCORE_WEIGHT** is 0.4/50 (max +0.4 to a
+  raw score that typically lives in the 1.0–3.0 range — this is a meaningful
+  but not dominant nudge). If villages cluster too tightly along great
+  roads in playtest, drop to 0.2/50.
+- **Village.isAlive()** was deliberately not added — the codebase models
+  village lifecycle via presence in `VillageSavedData` rather than an
+  explicit alive flag, so the detector reads `getVillageById(...).isPresent()`.
+
+### Observations
+
+The build can't be verified in this sandbox because the NeoForge maven
+returns 403. Static inspection confirms:
+
+- All new files use the same idioms already exercised by the codebase
+  (RecordCodecBuilder, optionalFieldOf, the WorldRoadGraph API, the
+  ServerTickEvent.Post wiring through `KingdomTaxEvent`).
+- RoadEdge codec is now 18 fields. `Village.java`'s 25-field codec proves
+  the project's DFU/Mojang stack handles this arity.
+- Public API additions are additive — original `score(...)` and `plan(...)`
+  signatures are preserved, so callers in `VillageRealisationSystem` and
+  other places need no changes.
+
+### Carryovers
+
+- Caravan re-routing on dead edges is deferred per spec ("if a caravan was
+  on a dead edge when it was marked dead, it keeps using that edge").
+- Persistent phase-event tracking (across reloads) is not implemented;
+  PHASE_CHANGED events fire only within a session.
+- Network-alignment scoring runs on the realised block path when present,
+  cell path otherwise. For long unrealised great roads at worldgen time
+  this is potentially expensive (cell-path iteration). Acceptable for now;
+  optimisation would push a per-edge bounding box pre-check.
+
+### Next
+
+**Phase 10 — events (travelers, lone structures, junctions, landmarks)**.
+Phase 9's `EdgeDeathEvent` and `VillagePlacementEvent` hooks are available
+for Phase 10 lore generators / event spawners to subscribe to.

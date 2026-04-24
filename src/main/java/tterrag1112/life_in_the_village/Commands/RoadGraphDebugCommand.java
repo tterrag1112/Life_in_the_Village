@@ -27,6 +27,10 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePaletteRe
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeDetector;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeState;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.NetworkAlignmentScorer;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.ReclaimedEdgeCleanup;
 import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingPlacer;
 import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
@@ -324,6 +328,27 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("show_village_graph")
                                         .then(Commands.argument("villageName", StringArgumentType.greedyString())
                                                 .executes(RoadGraphDebugCommand::showVillageGraph)))
+                                // ── 9: dead edges + network alignment debug ───────────────────
+                                .then(Commands.literal("dead_edges")
+                                        .executes(RoadGraphDebugCommand::deadEdges))
+                                .then(Commands.literal("force_dead")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forceDead)))
+                                .then(Commands.literal("force_death_phase")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                        .then(Commands.argument("phase", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forceDeathPhase))))
+                                .then(Commands.literal("reclaim_edge")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::reclaimEdge)))
+                                .then(Commands.literal("network_score")
+                                        .then(Commands.argument("x", IntegerArgumentType.integer())
+                                        .then(Commands.argument("y", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                .executes(RoadGraphDebugCommand::networkScore)))))
+                                .then(Commands.literal("village_death")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::villageDeath)))
                                 // ── 7g: palette + lighting debug ──────────────────────────────
                                 .then(Commands.literal("palette")
                                         .then(Commands.argument("edgeId", StringArgumentType.word())
@@ -4323,5 +4348,162 @@ public class RoadGraphDebugCommand {
         }
         sb.append(']');
         return sb.toString();
+    }
+
+    // =========================================================================
+    // Phase 9 — dead edges + network alignment debug
+    // =========================================================================
+
+    private static int deadEdges(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        long currentTick = level.getGameTime();
+
+        int total = 0;
+        for (RoadEdge edge : graph.allEdges()) {
+            if (!edge.isDead()) continue;
+            DeadEdgeState state = edge.getDeadState().get();
+            DeadEdgeState.DeathPhase phase = state.phaseAtTick(currentTick);
+            long ticksToNext = state.ticksUntilNextPhase(currentTick);
+            String shortId = edge.getEdgeId().toString().substring(0, 8);
+            String nextLabel = ticksToNext < 0
+                    ? "(none — RECLAIMED)"
+                    : (ticksToNext / DeadEdgeState.TICKS_PER_DAY) + " day(s)";
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + shortId + " tier=" + edge.getTier()
+                    + " phase=" + phase
+                    + " markedTick=" + state.firstMarkedTick()
+                    + " untilNext=" + nextLabel),
+                    false);
+            total++;
+        }
+        final int finalTotal = total;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[dead_edges] " + finalTotal + " edge(s) currently dead."),
+                false);
+        return total;
+    }
+
+    private static int forceDead(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        RoadEdge edge = resolveEdgeOrFail(ctx, graph,
+                StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT));
+        if (edge == null) return 0;
+        if (edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_dead] GREAT_ROAD edges never die (invariant 3)."));
+            return 0;
+        }
+        edge.markDead(level.getGameTime());
+        WorldRoadSavedData.get(level).markDirty();
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_dead] edge=" + shortId + " marked dead at tick "
+                + level.getGameTime()),
+                false);
+        return 1;
+    }
+
+    private static int forceDeathPhase(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        RoadEdge edge = resolveEdgeOrFail(ctx, graph,
+                StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT));
+        if (edge == null) return 0;
+        if (edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_death_phase] GREAT_ROAD edges never die (invariant 3)."));
+            return 0;
+        }
+        String phaseArg = StringArgumentType.getString(ctx, "phase").toUpperCase(Locale.ROOT);
+        DeadEdgeState.DeathPhase phase;
+        try {
+            phase = DeadEdgeState.DeathPhase.valueOf(phaseArg);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_death_phase] Unknown phase. Valid: "
+                    + java.util.Arrays.toString(DeadEdgeState.DeathPhase.values())));
+            return 0;
+        }
+
+        DeadEdgeState current = edge.getDeadState().orElse(
+                DeadEdgeState.markedAt(level.getGameTime()));
+        edge.setDeadState(current.atPhase(phase, level.getGameTime()));
+        WorldRoadSavedData.get(level).markDirty();
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_death_phase] edge=" + shortId + " phase=" + phase),
+                false);
+        return 1;
+    }
+
+    private static int reclaimEdge(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        RoadEdge edge = resolveEdgeOrFail(ctx, graph,
+                StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT));
+        if (edge == null) return 0;
+        if (!edge.isDead()
+                || edge.getDeadState().get().phaseAtTick(level.getGameTime())
+                        != DeadEdgeState.DeathPhase.RECLAIMED) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[reclaim_edge] edge is not RECLAIMED. Use force_death_phase RECLAIMED first."));
+            return 0;
+        }
+        ReclaimedEdgeCleanup.despawnEdgeBlocks(level, edge);
+        UUID edgeId = edge.getEdgeId();
+        graph.removeEdge(edgeId);
+        DeadEdgeDetector.forget(edgeId);
+        WorldRoadSavedData.get(level).markDirty();
+        String shortId = edgeId.toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[reclaim_edge] removed edge " + shortId + " from graph"),
+                false);
+        return 1;
+    }
+
+    private static int networkScore(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        int x = IntegerArgumentType.getInteger(ctx, "x");
+        int y = IntegerArgumentType.getInteger(ctx, "y");
+        int z = IntegerArgumentType.getInteger(ctx, "z");
+        BlockPos pos = new BlockPos(x, y, z);
+        float score = NetworkAlignmentScorer.networkAlignmentScore(pos, graph);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[network_score] (" + x + "," + y + "," + z + ") = "
+                + String.format(Locale.ROOT, "%.1f", score)
+                + " / " + NetworkAlignmentScorer.MAX_SCORE),
+                false);
+        return Math.round(score);
+    }
+
+    private static int villageDeath(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vData = VillageSavedData.get(level);
+        String name = StringArgumentType.getString(ctx, "villageName");
+        Village village = vData.getVillageByName(name).orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[village_death] no village named '" + name + "'."));
+            return 0;
+        }
+        UUID villageId = village.getId();
+        // Remove from kingdoms first so any village->kingdom mapping cleans up.
+        vData.getAllKingdoms().forEach(k -> k.removeVillage(villageId));
+        vData.removeVillage(villageId);
+        // Trigger an immediate scan so dead-edge marking is visible right away.
+        int newlyDead = DeadEdgeDetector.scanForDeadEdges(level);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[village_death] removed village '" + name + "' ("
+                + villageId.toString().substring(0, 8)
+                + "); scan flagged " + newlyDead + " new dead edge(s)."),
+                false);
+        return newlyDead;
     }
 }

@@ -3,11 +3,13 @@ package tterrag1112.life_in_the_village.Kingdom.Placement;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Kingdom.KingdomClaim;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
+import javax.annotation.Nullable;
 import java.util.*;
 
 /**
@@ -88,6 +90,21 @@ public final class ClaimVillagePlacer {
                                              BlockPos capitalOrigin,
                                              List<String> compositionTypes,
                                              List<BlockPos> existingVillagePositions) {
+        return plan(atlas, claim, capitalOrigin, compositionTypes,
+                existingVillagePositions, null);
+    }
+
+    /**
+     * Phase 9 — overload that threads a {@link WorldRoadGraph} through to the
+     * scorer so subsequent (non-capital) villages within the kingdom receive
+     * a network-alignment bonus. Pass {@code null} to disable the bonus.
+     */
+    public static List<PlacementResult> plan(WorldAtlas atlas,
+                                             KingdomClaim claim,
+                                             BlockPos capitalOrigin,
+                                             List<String> compositionTypes,
+                                             List<BlockPos> existingVillagePositions,
+                                             @Nullable WorldRoadGraph graph) {
         List<PlacementResult> results = new ArrayList<>();
         // Seed with cross-kingdom positions so the proximity penalty prevents overlap.
         List<BlockPos> placedPositions = new ArrayList<>(existingVillagePositions);
@@ -112,7 +129,7 @@ public final class ClaimVillagePlacer {
             boolean isCapital = (i == 0);
             PlacementResult best = selectCell(
                     atlas, type, claimedCells, capitalOrigin,
-                    placedPositions, isCapital, typeId, reservedCells);
+                    placedPositions, isCapital, typeId, reservedCells, graph);
 
             results.add(best);
             if (best.placed()) {
@@ -131,7 +148,8 @@ public final class ClaimVillagePlacer {
             WorldAtlas atlas, VillageTypeData type,
             List<AtlasCell> claimedCells, BlockPos capitalOrigin,
             List<BlockPos> placedPositions, boolean isCapital, String typeId,
-            Set<Long> reservedCells) {
+            Set<Long> reservedCells,
+            @Nullable WorldRoadGraph graph) {
 
         // ── Pass 1: loose atlas filter — collect top-N candidates ─────────────
         List<Map.Entry<AtlasCell, Double>> pass1 = new ArrayList<>();
@@ -163,7 +181,7 @@ public final class ClaimVillagePlacer {
         for (var e : pass1) {
             AtlasCell cell = e.getKey();
             double s = VillagePlacementScorer.score(
-                    atlas, cell, type, capitalOrigin, placedPositions);
+                    atlas, cell, type, capitalOrigin, placedPositions, graph, isCapital);
             if (s == Double.NEGATIVE_INFINITY) continue;
 
             if (isCapital) {
@@ -204,7 +222,7 @@ public final class ClaimVillagePlacer {
         for (var e : relaxedPass1) {
             AtlasCell cell = e.getKey();
             double s = VillagePlacementScorer.score(
-                    atlas, cell, type, capitalOrigin, placedPositions);
+                    atlas, cell, type, capitalOrigin, placedPositions, graph, isCapital);
             if (s == Double.NEGATIVE_INFINITY) continue;
 
             if (isCapital) {

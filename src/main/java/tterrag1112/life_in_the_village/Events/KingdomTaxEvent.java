@@ -11,6 +11,8 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeDetector;
+import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.ReclaimedEdgeCleanup;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 
@@ -43,6 +45,11 @@ public class KingdomTaxEvent {
             }
             roadsBootstrapped = true;
         }
+
+        // Phase 9 — once-per-day dead-edge scan and once-per-month reclaim cleanup.
+        // Both operations self-throttle and no-op on intermediate ticks.
+        DeadEdgeDetector.maybeScan(level);
+        ReclaimedEdgeCleanup.maybeCleanup(level);
 
         VillageSavedData data = VillageSavedData.get(level);
 
