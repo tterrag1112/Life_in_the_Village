@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.*;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
@@ -313,6 +314,12 @@ public final class ChainRecipe implements ShapeRecipe {
             }
         }
         return null;
+    }
+
+    /** Two gateways at the curve's two chord endpoints (PRIMARY = chordA, SIDE = chordB). */
+    @Override
+    public List<GatewayDescriptor> describeGateways(PlanContext pctx) {
+        return GatewayDescriptor.deriveFromLayout(pctx);
     }
 
     private void placeFarmCluster(PlanContext pctx, BlockPos endPoint,

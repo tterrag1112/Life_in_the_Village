@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
@@ -208,6 +209,12 @@ public final class LinearRecipe implements ShapeRecipe {
                 farms,
                 snapRoads.get(0) // main road for facing
         ).place(pctx);
+    }
+
+    /** Two gateways: PRIMARY at mainEnd (main gate), SIDE at mainStart (tail end). */
+    @Override
+    public List<GatewayDescriptor> describeGateways(PlanContext pctx) {
+        return GatewayDescriptor.deriveFromLayout(pctx);
     }
 
     private static double directionRadOf(TerrainAnalyzer.FlatDirection dir) {

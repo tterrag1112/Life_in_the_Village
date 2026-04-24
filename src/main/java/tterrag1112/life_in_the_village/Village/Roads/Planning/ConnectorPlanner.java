@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
@@ -12,6 +13,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadNode;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.TierPromotionRules;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
@@ -123,6 +126,86 @@ public final class ConnectorPlanner {
     }
 
     // =========================================================================
+    // Gateway selection
+    // =========================================================================
+
+    /**
+     * Selects the best gateway of the given village for a connector coming from
+     * {@code externalEndpoint}.
+     *
+     * <p>Selection criteria (in priority order):
+     * <ol>
+     *   <li>Alignment: gateways whose outward direction points toward the external
+     *       endpoint score higher (reduces snaking).</li>
+     *   <li>Among acceptable gateways, prefer the closest (small bonus).</li>
+     *   <li>Tiebreaker: PRIMARY over SIDE over REAR.</li>
+     * </ol>
+     * Gateways with alignment score below {@code -0.3} (more than ~107° off) are
+     * rejected.  If all gateways fail the alignment filter, the PRIMARY gateway is
+     * returned as a fallback.
+     *
+     * @return the selected gateway, or empty if the village has no gateways
+     */
+    public static Optional<VillageRoadNode> selectGateway(
+            VillageRoadGraph villageGraph,
+            BlockPos externalEndpoint) {
+
+        List<VillageRoadNode> gateways = villageGraph.gateways();
+        if (gateways.isEmpty()) return Optional.empty();
+
+        VillageRoadNode best = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+
+        for (VillageRoadNode gateway : gateways) {
+            VillageRoadNode.GatewayInfo info = gateway.gatewayInfo().orElse(null);
+            if (info == null) continue;
+
+            double dx = externalEndpoint.getX() - gateway.position().getX();
+            double dz = externalEndpoint.getZ() - gateway.position().getZ();
+            double len = Math.sqrt(dx * dx + dz * dz);
+
+            double alignment;
+            if (len < 0.001) {
+                // Degenerate: external point is at the gateway — prefer PRIMARY
+                alignment = info.role() == VillageRoadNode.GatewayRole.PRIMARY ? 1.0 : 0.0;
+            } else {
+                double nx = dx / len, nz = dz / len;
+                double rad = info.outwardDirection().toRadians();
+                double ux = Math.cos(rad), uz = Math.sin(rad);
+                alignment = nx * ux + nz * uz;
+            }
+
+            if (alignment < -0.3) continue; // more than ~107° off — reject
+
+            // Small closeness bonus + role priority
+            double distBonus = 100.0 / (len + 1.0) * 0.01;
+            double rolePriority = switch (info.role()) {
+                case PRIMARY -> 0.02;
+                case SIDE    -> 0.01;
+                case REAR    -> 0.00;
+            };
+            double score = alignment + distBonus + rolePriority;
+
+            if (score > bestScore) {
+                bestScore = score;
+                best = gateway;
+            }
+        }
+
+        if (best == null) {
+            // All gateways failed alignment — fall back to PRIMARY
+            best = gateways.stream()
+                    .filter(g -> g.gatewayInfo()
+                            .map(i -> i.role() == VillageRoadNode.GatewayRole.PRIMARY)
+                            .orElse(false))
+                    .findFirst()
+                    .orElse(gateways.get(0));
+        }
+
+        return Optional.of(best);
+    }
+
+    // =========================================================================
     // Main entry point
     // =========================================================================
 
@@ -212,12 +295,35 @@ public final class ConnectorPlanner {
         // Connector routing should avoid routing THROUGH unrelated villages.
         Map<Long, Float> interVillagePenalties = buildInterVillagePenalties(data, village);
 
+        // Look up this village's gateway graph once (used for all candidates)
+        VillageRoadGraph villageGraph =
+                VillageRoadsSavedData.get(level).getOrCreate(village.getId());
+
         record RouteCandidate(Candidate candidate, VillageDockingPoint dock, List<Long> cellPath) {}
         List<RouteCandidate> routed = new ArrayList<>();
 
         for (Candidate c : topK) {
-            VillageDockingPoint dock = VillageDockingPoint.compute(
-                    village, c.targetPos, level, data);
+            // Gateway-aware docking: if the village has gateways, route from the
+            // best gateway's armEndpoint instead of VillageDockingPoint's anchor.
+            // This prevents the connector from approaching the "wrong" side of the village.
+            Optional<VillageRoadNode> selectedGateway = selectGateway(villageGraph, c.targetPos);
+
+            VillageDockingPoint dock;
+            if (selectedGateway.isPresent()) {
+                VillageRoadNode.GatewayInfo gwInfo = selectedGateway.get().gatewayInfo().get();
+                BlockPos armEndpoint = gwInfo.armEndpoint();
+                double dirRad = gwInfo.outwardDirection().toRadians();
+                // armEndpoint IS the external docking anchor; approach length is 0
+                // because the gateway arm already covers the gap to the village boundary.
+                dock = new VillageDockingPoint(
+                        selectedGateway.get().position(),
+                        armEndpoint,
+                        dirRad,
+                        village.getId(),
+                        0);
+            } else {
+                dock = VillageDockingPoint.compute(village, c.targetPos, level, data);
+            }
             BlockPos dockingAnchor = dock.dockingAnchor();
 
             TradeRouteManager.prefillAtlasCorridor(level, atlas, dockingAnchor, c.targetPos);

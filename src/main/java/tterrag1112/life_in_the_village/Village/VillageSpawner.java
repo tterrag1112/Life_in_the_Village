@@ -110,9 +110,12 @@ public class VillageSpawner {
         // Copy the main gate endpoint onto the persistent Village
         village.setMainGateEndpoint(layout.getMainGateEndpoint());
         data.addVillage(village);
-        // Ensure a (initially empty) village road graph exists for this village
+        // Ensure a (initially empty) village road graph exists for this village,
+        // then populate it with gateway nodes derived from the layout.
         tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData
                 .get(level).getOrCreate(village.getId());
+        tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator
+                .populate(level, village, layout);
 
         if (layout.buildings().isEmpty()) {
             System.out.println("VillageSpawner: no buildings planned — aborting");

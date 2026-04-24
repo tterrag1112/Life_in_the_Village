@@ -77,6 +77,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile.Po
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RetainingWallBuilder;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSmoother;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSupportBuilder;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.VegetationFeatureDetector;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -318,6 +319,18 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("show_village_graph")
                                         .then(Commands.argument("villageName", StringArgumentType.greedyString())
                                                 .executes(RoadGraphDebugCommand::showVillageGraph)))
+                                // ── 7f Slice 2: gateway debug ─────────────────────────────────
+                                .then(Commands.literal("village_gateways")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::villageGateways)))
+                                .then(Commands.literal("test_gateway_selection")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .then(Commands.argument("x", IntegerArgumentType.integer())
+                                                        .then(Commands.argument("y", IntegerArgumentType.integer())
+                                                                .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                                        .executes(RoadGraphDebugCommand::testGatewaySelection))))))
+                                .then(Commands.literal("show_all_gateways")
+                                        .executes(RoadGraphDebugCommand::showAllGateways))
                         )
                 )
         );
@@ -3881,5 +3894,210 @@ public class RoadGraphDebugCommand {
                 + " edges. Visualizing for "
                 + (RoadDebugVisualizer.DURATION_TICKS / 20) + "s."), false);
         return graph.nodeCount() + graph.edgeCount();
+    }
+
+    // =========================================================================
+    // 7f Slice 2: village_gateways — list gateways for a named village
+    // =========================================================================
+
+    private static int villageGateways(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level       = ctx.getSource().getLevel();
+        VillageSavedData vData  = VillageSavedData.get(level);
+        VillageRoadsSavedData rData = VillageRoadsSavedData.get(level);
+
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        tterrag1112.life_in_the_village.Village.Village village = vData.getAllVillages()
+                .stream()
+                .filter(v -> v.getName().toLowerCase(Locale.ROOT)
+                        .contains(namePart.toLowerCase(Locale.ROOT)))
+                .findFirst().orElse(null);
+
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[village_gateways] No village matching '" + namePart + "'."));
+            return 0;
+        }
+
+        VillageRoadGraph graph = rData.getOrCreate(village.getId());
+        java.util.List<VillageRoadNode> gateways = graph.gateways();
+
+        if (gateways.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[village_gateways] '" + village.getName()
+                    + "' has no gateways (Slice 2 not yet run?)."), false);
+            return 0;
+        }
+
+        StringBuilder sb = new StringBuilder("[village_gateways] '")
+                .append(village.getName()).append("' — ")
+                .append(gateways.size()).append(" gateway(s):\n");
+
+        for (VillageRoadNode gw : gateways) {
+            VillageRoadNode.GatewayInfo info = gw.gatewayInfo().orElse(null);
+            sb.append("  ").append(gw.nodeId().toString().substring(0, 8))
+              .append(" pos=").append(gw.position().toShortString());
+            if (info != null) {
+                sb.append(" role=").append(info.role())
+                  .append(" dir=").append(info.outwardDirection())
+                  .append(" arm=").append(info.armEndpoint().toShortString());
+                String worldId = info.worldNodeId()
+                        .map(id -> id.toString().substring(0, 8))
+                        .orElse("<unlinked>");
+                sb.append(" worldNode=").append(worldId);
+            }
+            sb.append('\n');
+        }
+
+        String msg = sb.toString().trim();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return gateways.size();
+    }
+
+    // =========================================================================
+    // 7f Slice 2: test_gateway_selection — simulate gateway selection for a point
+    // =========================================================================
+
+    private static int testGatewaySelection(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level       = ctx.getSource().getLevel();
+        VillageSavedData vData  = VillageSavedData.get(level);
+        VillageRoadsSavedData rData = VillageRoadsSavedData.get(level);
+
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        int x = IntegerArgumentType.getInteger(ctx, "x");
+        int y = IntegerArgumentType.getInteger(ctx, "y");
+        int z = IntegerArgumentType.getInteger(ctx, "z");
+        BlockPos externalPoint = new BlockPos(x, y, z);
+
+        tterrag1112.life_in_the_village.Village.Village village = vData.getAllVillages()
+                .stream()
+                .filter(v -> v.getName().toLowerCase(Locale.ROOT)
+                        .contains(namePart.toLowerCase(Locale.ROOT)))
+                .findFirst().orElse(null);
+
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[test_gateway_selection] No village matching '" + namePart + "'."));
+            return 0;
+        }
+
+        VillageRoadGraph graph = rData.getOrCreate(village.getId());
+        java.util.List<VillageRoadNode> gateways = graph.gateways();
+
+        if (gateways.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[test_gateway_selection] '" + village.getName() + "' has no gateways."), false);
+            return 0;
+        }
+
+        // Compute alignment scores for all gateways
+        StringBuilder sb = new StringBuilder("[test_gateway_selection] '")
+                .append(village.getName()).append("' from ")
+                .append(externalPoint.toShortString()).append(":\n");
+
+        for (VillageRoadNode gw : gateways) {
+            VillageRoadNode.GatewayInfo info = gw.gatewayInfo().orElse(null);
+            if (info == null) continue;
+
+            double dx = externalPoint.getX() - gw.position().getX();
+            double dz = externalPoint.getZ() - gw.position().getZ();
+            double len = Math.sqrt(dx * dx + dz * dz);
+
+            double alignment;
+            if (len < 0.001) {
+                alignment = 1.0;
+            } else {
+                double rad = info.outwardDirection().toRadians();
+                alignment = (dx / len) * Math.cos(rad) + (dz / len) * Math.sin(rad);
+            }
+
+            boolean rejected = alignment < -0.3;
+            sb.append("  ").append(gw.nodeId().toString().substring(0, 8))
+              .append(" role=").append(info.role())
+              .append(" dir=").append(info.outwardDirection())
+              .append(String.format(" alignment=%.3f", alignment))
+              .append(rejected ? " [REJECTED]" : "")
+              .append('\n');
+        }
+
+        java.util.Optional<VillageRoadNode> selected =
+                ConnectorPlanner.selectGateway(graph, externalPoint);
+        selected.ifPresent(gw -> sb.append("  => SELECTED: ")
+                .append(gw.nodeId().toString().substring(0, 8))
+                .append(" role=").append(gw.gatewayInfo().map(i -> i.role().name()).orElse("?")));
+
+        String msg = sb.toString().trim();
+        ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+        return selected.isPresent() ? 1 : 0;
+    }
+
+    // =========================================================================
+    // 7f Slice 2: show_all_gateways — particle visualization of all gateways
+    // =========================================================================
+
+    private static int showAllGateways(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player     = ctx.getSource().getPlayerOrException();
+        ServerLevel level       = ctx.getSource().getLevel();
+        VillageSavedData vData  = VillageSavedData.get(level);
+        VillageRoadsSavedData rData = VillageRoadsSavedData.get(level);
+
+        java.util.List<RoadDebugVisualizer.ParticleEmission> emissions = new java.util.ArrayList<>();
+        int totalGateways = 0;
+
+        for (tterrag1112.life_in_the_village.Village.Village village : vData.getAllVillages()) {
+            VillageRoadGraph graph = rData.getOrCreate(village.getId());
+            for (VillageRoadNode gw : graph.gateways()) {
+                VillageRoadNode.GatewayInfo info = gw.gatewayInfo().orElse(null);
+
+                // Choose particle color by role
+                net.minecraft.core.particles.ParticleOptions particle;
+                if (info != null) {
+                    particle = switch (info.role()) {
+                        case PRIMARY -> ParticleTypes.FLAME;         // bright orange
+                        case SIDE    -> ParticleTypes.SOUL_FIRE_FLAME; // blue-green
+                        case REAR    -> ParticleTypes.SMOKE;          // grey
+                    };
+                } else {
+                    particle = ParticleTypes.ENCHANT;
+                }
+
+                // Vertical beacon at gateway position
+                for (int dy = 0; dy < 12; dy++) {
+                    emissions.add(new RoadDebugVisualizer.ParticleEmission(
+                            gw.position().above(dy),
+                            particle,
+                            RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+                }
+
+                // Mark arm endpoint too (smaller beacon)
+                if (info != null) {
+                    for (int dy = 0; dy < 6; dy++) {
+                        emissions.add(new RoadDebugVisualizer.ParticleEmission(
+                                info.armEndpoint().above(dy),
+                                ParticleTypes.END_ROD,
+                                RoadDebugVisualizer.DEFAULT_EMIT_INTERVAL));
+                    }
+                }
+                totalGateways++;
+            }
+        }
+
+        if (emissions.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[show_all_gateways] No gateways found across all villages."), false);
+            return 0;
+        }
+
+        RoadDebugVisualizer.INSTANCE.addSession(
+                player.getUUID(), level.getGameTime(), emissions);
+
+        final int total = totalGateways;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[show_all_gateways] Visualizing " + total
+                + " gateway(s) across all villages. FLAME=PRIMARY, SOUL_FIRE=SIDE, SMOKE=REAR."),
+                false);
+        return totalGateways;
     }
 }

@@ -75,6 +75,11 @@ public record VillageRoadNode(
                 GatewayRole.CODEC.fieldOf("role")
                         .forGetter(GatewayInfo::role)
         ).apply(i, GatewayInfo::new));
+
+        /** Returns a copy of this GatewayInfo with {@code worldNodeId} replaced. */
+        public GatewayInfo withWorldNodeId(Optional<UUID> newWorldNodeId) {
+            return new GatewayInfo(newWorldNodeId, outwardDirection, armEndpoint, role);
+        }
     }
 
     // =========================================================================
@@ -148,6 +153,11 @@ public record VillageRoadNode(
     // =========================================================================
 
     public boolean isGateway() { return type == NodeType.GATEWAY; }
+
+    /** Returns a copy of this node with {@code gatewayInfo} replaced. */
+    public VillageRoadNode withGatewayInfo(Optional<GatewayInfo> newGatewayInfo) {
+        return new VillageRoadNode(nodeId, position, type, newGatewayInfo);
+    }
 
     public static VillageRoadNode interior(BlockPos position) {
         return new VillageRoadNode(UUID.randomUUID(), position,

@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
@@ -101,5 +102,11 @@ public final class RoadsideRecipe implements ShapeRecipe {
         RecipeHelpers.placeAgriculturalRing(pctx, centre, 6, 24, allRoads);
         RecipeHelpers.placeDefensiveRing(pctx, centre, 0, 12, allRoads);
         RecipeHelpers.placeStragglersRingBand(pctx, centre, allRoads);
+    }
+
+    /** Two gateways at the road's two terminal ends (designed for through-road traffic). */
+    @Override
+    public List<GatewayDescriptor> describeGateways(PlanContext pctx) {
+        return GatewayDescriptor.deriveFromLayout(pctx);
     }
 }

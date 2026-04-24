@@ -93,6 +93,17 @@ public final class VillageRoadGraph {
         return node.nodeId();
     }
 
+    /**
+     * Replaces the node with the same UUID in-place (metadata update only).
+     * Does not modify edges or the incidence index — use only for node-metadata
+     * changes (e.g. updating {@code gatewayInfo.worldNodeId} after backlink creation).
+     */
+    public void replaceNode(VillageRoadNode node) {
+        if (nodes.containsKey(node.nodeId())) {
+            nodes.put(node.nodeId(), node);
+        }
+    }
+
     public Optional<VillageRoadNode> getNode(UUID nodeId) {
         return Optional.ofNullable(nodes.get(nodeId));
     }

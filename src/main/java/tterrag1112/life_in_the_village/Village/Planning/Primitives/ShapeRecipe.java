@@ -1,7 +1,10 @@
 package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes.*;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
+
+import java.util.List;
 
 /**
  * Composes primitives into a complete layout for a village shape.
@@ -17,6 +20,25 @@ public interface ShapeRecipe {
      * {@code layout.mainGateEndpoint} if the shape has a main road.
      */
     void compose(PlanContext pctx);
+
+    /**
+     * Returns gateway descriptors for this layout after {@link #compose} has run.
+     *
+     * <p>The default reads gate positions from the layout (set by the recipe via
+     * {@code layout.addGatePosition}).  The PRIMARY descriptor corresponds to
+     * {@code layout.getMainGateEndpoint()}; all other positions become SIDE.
+     *
+     * <p>Recipes that override this (LINEAR, ROADSIDE, CHAIN) provide explicit
+     * two-gateway behavior; all other recipes inherit the default, which returns
+     * a single PRIMARY from whatever gate positions the recipe recorded.
+     *
+     * <p>Called by {@link tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator}
+     * via {@link tterrag1112.life_in_the_village.Village.VillageSpawner} after
+     * compose completes. Must not throw.
+     */
+    default List<GatewayDescriptor> describeGateways(PlanContext pctx) {
+        return GatewayDescriptor.deriveFromLayout(pctx);
+    }
 
     static ShapeRecipe forShape(ShapeType shape) {
         return switch (shape) {

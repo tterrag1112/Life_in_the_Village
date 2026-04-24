@@ -1672,3 +1672,115 @@ Phase 7f Slice 2 — gateway generation from LINEAR / ROADSIDE / CHAIN layouts +
 connector planning picks the best gateway. Layout recipes emit GATEWAY nodes at village
 arm endpoints; `VillageInternalLayoutPlanner` (or equivalent) populates the graph with
 INTERIOR and GATEWAY nodes after realisation.
+
+---
+
+## Phase 7f Slice 2 — Gateway generation and connector alignment
+
+**Date:** 2026-04-24
+
+### Summary
+
+Populates every new village's `VillageRoadGraph` with GATEWAY nodes derived from its layout's
+gate positions, links each gateway to a corresponding `TERMINUS` node in the world road graph,
+and updates `ConnectorPlanner` to route connectors toward the best-facing gateway instead of
+always targeting the legacy dock position. LINEAR, ROADSIDE, and CHAIN villages now have two
+gateways (PRIMARY + SIDE); all other layouts retain one PRIMARY gateway.
+
+### Files created
+
+**`Village/Roads/Planning/GatewayDescriptor.java`**
+- Record: `position`, `outwardDirection` (8-way compass), `role` (PRIMARY / SIDE / REAR).
+- Codec included.
+- `deriveFromLayout(PlanContext)` static helper: reads `layout.getGatePositions()` and
+  `layout.getMainGateEndpoint()` to produce gateway descriptors. Main gate endpoint → PRIMARY,
+  remaining gate positions → SIDE. Falls back to village center if no gate positions recorded.
+
+**`Village/Roads/Planning/GatewayPopulator.java`**
+- `populate(ServerLevel, Village, VillageLayout)` — main entry point.
+  - Reads gate positions from the layout.
+  - Computes `OutwardDirection` via `atan2(dz, dx)` from village center toward each gate position.
+  - Computes `armEndpoint` = 32 blocks out in outward direction, pulled back in 8-block steps
+    if water or steep cliff (>12 block Y delta) is found; degenerate fallback to gateway position.
+  - Creates `VillageRoadNode.GATEWAY` with `GatewayInfo` (worldNodeId empty initially).
+  - Creates `RoadNode.TERMINUS` at the `armEndpoint`, sets `GatewayLink(villageId, gatewayNodeId)`.
+  - Backlinks the gateway by calling `graph.replaceNode` with an updated `GatewayInfo.worldNodeId`.
+  - No-op if the graph already has gateways (reload protection).
+  - `ARM_LENGTH = 32` blocks; `ARM_STEP_BACK = 8` blocks; `CLIFF_THRESHOLD = 12` blocks.
+- `computeArmEndpoint(ServerLevel, BlockPos, OutwardDirection)` — public for testing.
+
+### Files modified
+
+**`Village/Planning/Primitives/ShapeRecipe.java`**
+- Added `default List<GatewayDescriptor> describeGateways(PlanContext)`.
+- Default reads from layout gate positions via `GatewayDescriptor.deriveFromLayout`. No-op for
+  legacy recipes (they still set gate positions during `compose()`).
+
+**`Village/Planning/Primitives/Recipes/LinearRecipe.java`**
+- Explicit `describeGateways` override (delegates to `deriveFromLayout`). Documents that
+  mainEnd = PRIMARY, mainStart = SIDE.
+
+**`Village/Planning/Primitives/Recipes/RoadsideRecipe.java`**
+- Explicit `describeGateways` override. Documents through-road intent.
+
+**`Village/Planning/Primitives/Recipes/ChainRecipe.java`**
+- Explicit `describeGateways` override. Documents chordA = PRIMARY, chordB = SIDE.
+
+**`Village/Roads/Graph/VillageRoadNode.java`**
+- Added `GatewayInfo.withWorldNodeId(Optional<UUID>)` wither method.
+- Added `VillageRoadNode.withGatewayInfo(Optional<GatewayInfo>)` wither method.
+
+**`Village/Roads/Graph/VillageRoadGraph.java`**
+- Added `replaceNode(VillageRoadNode)` — metadata-only in-place replacement (does not modify
+  edges or incidence index).
+
+**`Village/VillageSpawner.java`**
+- Added `GatewayPopulator.populate(level, village, layout)` call immediately after `getOrCreate`.
+
+**`Village/Roads/Planning/ConnectorPlanner.java`**
+- Added `public static Optional<VillageRoadNode> selectGateway(VillageRoadGraph, BlockPos)`:
+  scores gateways by alignment (dot product of outward direction with connector vector),
+  applies closeness bonus and role priority, rejects gateways with alignment < -0.3,
+  falls back to PRIMARY if all fail the filter.
+- In `planConnector` routing loop: looks up the village gateway graph once before the loop;
+  for each candidate calls `selectGateway(villageGraph, c.targetPos)` and, if a gateway is
+  found, constructs a `VillageDockingPoint` using the gateway's `armEndpoint` as the docking
+  anchor (approach length = 0). Legacy docking (`VillageDockingPoint.compute`) used when no
+  gateways are present (existing villages, pre-Slice-2 spawns).
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Three new subcommands:
+  - `village_gateways <name>`: lists all gateways (role, dir, armEndpoint, worldNodeId).
+  - `test_gateway_selection <name> <x> <y> <z>`: shows alignment scores per gateway and
+    reports which one ConnectorPlanner would select for the given external point.
+  - `show_all_gateways`: particle visualization across all villages. FLAME = PRIMARY,
+    SOUL_FIRE_FLAME = SIDE, SMOKE = REAR. Arm endpoints shown as END_ROD beacons.
+
+### Design decisions
+
+**Arm endpoint at TERMINUS, not dock:** The gateway's `armEndpoint` (32 blocks outside the
+gate) is where the world-side `TERMINUS` node is placed and where the connector routing
+starts. The `VILLAGE_DOCK` node ends up at the same position for gateway villages. In a
+future slice these two could be merged or the TERMINUS could replace the VILLAGE_DOCK entirely.
+
+**describeGateways on ShapeRecipe vs. VillageLayout:** Gateway descriptors are derived from
+`layout.getGatePositions()` (set during `compose()`) rather than a separate recipe-level call,
+because all three target recipes already store both terminal positions as gate positions.
+The `describeGateways` override is present for documentation and extension-point clarity.
+
+**No VillageLayout changes:** `GatewayPopulator.populate` reads directly from the existing
+`layout.getGatePositions()` / `getMainGateEndpoint()` fields. No new fields added to VillageLayout.
+
+### Observations
+
+- LINEAR villages with 2+ gate positions will receive PRIMARY + SIDE gateways correctly.
+- Recipes that don't call `addGatePosition` at all receive a single PRIMARY at the
+  `mainGateEndpoint` (or village center as final fallback).
+- The CLIFF_THRESHOLD (12 blocks) might be too strict for mountain villages — can be relaxed
+  if too many arm endpoints fall back to gateway position in testing.
+
+### Next
+
+Phase 7f Slice 3 — internal village roads and caravan through-village traversal.
+VillageRoadEdge generation connecting INTERIOR nodes between gateways; caravans query
+`VillageRoadGraph.findPath` when entering/exiting a village.
