@@ -20,6 +20,12 @@ import tterrag1112.life_in_the_village.Npc.Knowledge.RumorMutator;
 import tterrag1112.life_in_the_village.Npc.Memory.MemoryType;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemory;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
+import tterrag1112.life_in_the_village.Npc.Mood.MoodEvent;
+import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
+import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
 import tterrag1112.life_in_the_village.Npc.Traits.DisplayedTrait;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitAxis;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
@@ -98,6 +104,50 @@ public final class NpcDebugCommand {
                                 .then(Commands.argument("text", StringArgumentType.string())
                                         .then(Commands.argument("mutatorUuid", UuidArgument.uuid())
                                                 .executes(NpcDebugCommand::handleKnowledgeMutate)))))
+
+                // ── /npc mood <uuid> ─────────────────────────────────────────
+                // ── /npc mood trigger <uuid> <triggerName> ───────────────────
+                // ── /npc mood decay <uuid> <days> ────────────────────────────
+                .then(Commands.literal("mood")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleMoodList))
+                        .then(Commands.literal("trigger")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("trigger", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (MoodTrigger t : MoodTrigger.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleMoodTrigger))))
+                        .then(Commands.literal("decay")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("days", FloatArgumentType.floatArg(0f, 3650f))
+                                                .executes(NpcDebugCommand::handleMoodDecay)))))
+
+                // ── /npc skills <uuid> ───────────────────────────────────────
+                // ── /npc skills add <uuid> <skill> <xp> ──────────────────────
+                // ── /npc skills set <uuid> <skill> <xp> ──────────────────────
+                .then(Commands.literal("skills")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleSkillsList))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("skill", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (Skill s : Skill.values()) b.suggest(s.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .then(Commands.argument("xp", FloatArgumentType.floatArg(0f, 40000f))
+                                                        .executes(NpcDebugCommand::handleSkillsAdd)))))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("skill", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (Skill s : Skill.values()) b.suggest(s.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .then(Commands.argument("xp", FloatArgumentType.floatArg(0f, 40000f))
+                                                        .executes(NpcDebugCommand::handleSkillsSet))))))
         );
     }
 
@@ -389,6 +439,190 @@ public final class NpcDebugCommand {
         src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
                 "§eseed=§f%016x §7(topic=debug, acquiredTick=0, mutator=%s)%n§eIn: §f%s%n§eOut:§f%s",
                 seed, mutatorUuid, text, mutated)),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Mood
+    // =========================================================================
+
+    private static int handleMoodList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        NpcMoodState mood = npc.getMood();
+        long now = src.getLevel().getGameTime();
+        long daysSinceUpdate = mood.lastUpdateTick() == 0L
+                ? -1L
+                : (now - mood.lastUpdateTick()) / TICKS_PER_DAY;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Mood: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===");
+        sb.append(String.format(Locale.ROOT,
+                "%n  Value:    §f%+6.2f §7%s",
+                mood.value(), categoryTag(mood.category())));
+        sb.append(String.format(Locale.ROOT,
+                "%n  Baseline: §f%+6.2f",
+                mood.baseline()));
+        sb.append(String.format(Locale.ROOT,
+                "%n  Last update: §f%s",
+                daysSinceUpdate < 0 ? "(never)" : daysSinceUpdate + "d ago"));
+        if (mood.isGrieving(now)) {
+            sb.append("\n  §c[GRIEVING — decay halved]");
+        }
+
+        List<MoodEvent> events = mood.recentEvents();
+        if (events.isEmpty()) {
+            sb.append("\n  §7(no recent events)");
+        } else {
+            sb.append("\n  §6Recent events:");
+            for (MoodEvent e : events) {
+                long days = (now - e.tick()) / TICKS_PER_DAY;
+                sb.append(String.format(Locale.ROOT,
+                        "%n    %s §f%-26s %+4d  §7%dd ago",
+                        e.magnitude() >= 0 ? "§a+" : "§c−",
+                        e.trigger().name(),
+                        e.magnitude(),
+                        days));
+            }
+        }
+
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static String categoryTag(tterrag1112.life_in_the_village.Npc.Mood.MoodCategory c) {
+        return switch (c) {
+            case ELATED     -> "§a[ELATED]";
+            case CONTENT    -> "§a[CONTENT]";
+            case NEUTRAL    -> "§7[NEUTRAL]";
+            case TROUBLED   -> "§e[TROUBLED]";
+            case DISTRESSED -> "§c[DISTRESSED]";
+        };
+    }
+
+    private static int handleMoodTrigger(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        String triggerName = StringArgumentType.getString(ctx, "trigger").toUpperCase(Locale.ROOT);
+        MoodTrigger trigger;
+        try {
+            trigger = MoodTrigger.valueOf(triggerName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown MoodTrigger: " + triggerName));
+            return 0;
+        }
+
+        NpcMoodState mood = npc.getMood();
+        float before = mood.value();
+        int applied = mood.apply(trigger, npc.getTraitVector(), src.getLevel().getGameTime());
+        float after = mood.value();
+
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "Applied §f%s§r to §f%s§r: §7before=§f%+.2f §7after=§f%+.2f §7Δ=§f%+d§7 (raw=%+d × multiplier)",
+                trigger.name(),
+                displayName(npc),
+                before, after, applied, trigger.defaultMagnitude())),
+                false);
+        return 1;
+    }
+
+    private static int handleMoodDecay(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        float days = FloatArgumentType.getFloat(ctx, "days");
+        NpcMoodState mood = npc.getMood();
+        float before = mood.value();
+        mood.decay(days, src.getLevel().getGameTime());
+        float after = mood.value();
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "Decayed §f%.2f§r day(s): §7before=§f%+.2f §7after=§f%+.2f §7baseline=§f%+.2f",
+                days, before, after, mood.baseline())),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Skills
+    // =========================================================================
+
+    private static int handleSkillsList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        SkillComponent sk = npc.getSkills();
+        var profSkills = ProfessionSkills.of(npc.getProfession()).orElse(null);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Skills: ").append(displayName(npc))
+                .append(" §7(").append(id).append(") §6profession=§f")
+                .append(npc.getProfession().name()).append("§e ===");
+        for (Skill s : Skill.values()) {
+            int level = sk.getLevel(s);
+            float xp = sk.getXp(s);
+            String tag;
+            if (profSkills != null && profSkills.primary() == s)        tag = "§a[PRIMARY]  ";
+            else if (profSkills != null && profSkills.secondary() == s) tag = "§e[SECONDARY]";
+            else                                                         tag = "§7           ";
+            sb.append(String.format(Locale.ROOT,
+                    "%n  %s §f%-9s §7lv=§f%3d §8(%s) §7xp=§f%7.1f§7 / %.0f",
+                    tag, s.name(), level, SkillComponent.tierFor(level),
+                    xp, SkillComponent.xpRequiredFor(SkillComponent.MAX_LEVEL)));
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleSkillsAdd(CommandContext<CommandSourceStack> ctx) {
+        return handleSkillsMutation(ctx, true);
+    }
+
+    private static int handleSkillsSet(CommandContext<CommandSourceStack> ctx) {
+        return handleSkillsMutation(ctx, false);
+    }
+
+    private static int handleSkillsMutation(CommandContext<CommandSourceStack> ctx, boolean add) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        String skillName = StringArgumentType.getString(ctx, "skill").toUpperCase(Locale.ROOT);
+        Skill skill;
+        try {
+            skill = Skill.valueOf(skillName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown Skill: " + skillName));
+            return 0;
+        }
+        float xp = FloatArgumentType.getFloat(ctx, "xp");
+        long now = src.getLevel().getGameTime();
+        SkillComponent sk = npc.getSkills();
+        float beforeXp = sk.getXp(skill);
+        int beforeLv  = sk.getLevel(skill);
+
+        if (add) sk.addXp(skill, xp, now);
+        else     sk.setXp(skill, xp, now);
+
+        float afterXp = sk.getXp(skill);
+        int afterLv   = sk.getLevel(skill);
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "%s §f%s§r: §7xp §f%.1f§7→§f%.1f §7(lv §f%d§7→§f%d§7, %s)",
+                add ? "Added XP to" : "Set XP for",
+                skill.name(), beforeXp, afterXp, beforeLv, afterLv,
+                SkillComponent.tierFor(afterLv))),
                 false);
         return 1;
     }

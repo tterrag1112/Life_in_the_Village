@@ -43,16 +43,16 @@ save/load. No behavior change yet.
     - [x] `KnowledgeEntry`, 4 categories, fidelity field
     - [x] Add/upgrade/remove API
     - [x] `/npc knowledge <uuid>` debug command (list / add / mutate)
-- [ ] **04** Implement `MoodState` storage
-    - [ ] Single −100..+100 scalar, trigger registry (no triggers fire
+- [x] **04** Implement `MoodState` storage
+    - [x] Single −100..+100 scalar, trigger registry (no triggers fire
       yet)
-    - [ ] `MoodCategory` derivation
-    - [ ] `/npc mood <uuid>` debug command
-- [ ] **05** Implement `SkillComponent`
-    - [ ] 8 skills, XP bookkeeping, level derivation
-    - [ ] Migration: existing per-profession progression maps to
+    - [x] `MoodCategory` derivation
+    - [x] `/npc mood <uuid>` debug command (list / trigger / decay)
+- [x] **05** Implement `SkillComponent`
+    - [x] 8 skills, XP bookkeeping, level derivation
+    - [x] Migration: existing per-profession progression maps to
       primary skill
-    - [ ] `/npc skills <uuid>` debug command
+    - [x] `/npc skills <uuid>` debug command (list / add / set)
 - [ ] **06** Implement office framework data structures
     - [ ] `OfficeId`, `OfficeHolder`, `OfficeState`, `OfficeSelectionMethod`
     - [ ] Office attachment points: village, guild, company, temple,
@@ -324,23 +324,32 @@ Things that don't fit the phase model and run continuously:
 (current blockers and observations tracked here)
 
 **Current status**: Phase 0 tasks 01 (TraitVector), 02 (NpcMemoryLog),
-and 03 (NpcKnowledgeLedger) implemented. Packages `Npc.Traits`,
-`Npc.Memory`, `Npc.Knowledge` exist; save/load wired additively on
-`TownspersonMob`. Legacy `PersonalityTrait` list kept readable for
-the one-release migration window. No existing reputation/witness
-tracker to migrate memory data from; knowledge is a new feature with
-no legacy source either.
+03 (NpcKnowledgeLedger), 04 (NpcMoodState), and 05 (SkillComponent)
+implemented. Packages `Npc.Traits`, `Npc.Memory`, `Npc.Knowledge`,
+`Npc.Mood`, `Npc.Skills` exist; save/load wired additively on
+`TownspersonMob`.
 
-`NpcMemoryDecayTickSystem` (interval 24000, priority 190) walks every
-loaded TownspersonMob once per in-game day and calls
-`decayAll(1) + removeExpired()`. Knowledge does not decay and has no
-tick — the ledger only changes on producer events (Phase 1+).
+The single daily-tick subsystem (now reporting as
+{@code "npc_daily_decay"}) iterates every loaded TownspersonMob once
+per in-game day and runs (a) memory decay + eviction, (b) mood drift
+toward baseline. Knowledge has no decay; skill decay is deferred to
+Phase 1 per spec. The class file is still
+`NpcMemoryDecayTickSystem.java` for now — internal-only name, can be
+renamed in a later refactor pass.
+
+Legacy migration paths in place:
+- `PersonalityTrait` list → `TraitVector` axes (see 01 Revision Notes).
+- `NpcProfessionXp` int → primary skill cumulative XP (direct 1:1 map;
+  see 05 Revision Notes for the rationale).
 
 `RumorMutator` (Phase 2 gossip utility) is implemented and debug-
 testable via `/npc knowledge mutate` but has no production callers
 yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
+
+**Phase 0 is 5 of 6 done.** Only the office framework (doc 06)
+remains before phase-exit testing.
 
 **Template pattern established for the remaining Phase 0 components**:
 - New subsystem package under `Npc.<Subsystem>` (e.g. `Npc.Memory`).

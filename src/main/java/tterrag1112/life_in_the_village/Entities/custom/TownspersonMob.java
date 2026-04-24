@@ -45,6 +45,8 @@ import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
+import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -122,6 +124,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final TraitVector traits = new TraitVector();
     private final NpcMemoryLog memory = new NpcMemoryLog();
     private final NpcKnowledgeLedger knowledge = new NpcKnowledgeLedger();
+    private final NpcMoodState mood = new NpcMoodState();
+    private final SkillComponent skills = new SkillComponent();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -439,6 +443,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Knowledge ledger; see {@code docs/npc_redesign/03-knowledge-system.md}. */
     public NpcKnowledgeLedger getKnowledge() {
         return knowledge;
+    }
+
+    /** Short-term emotional state; see {@code docs/npc_redesign/04-mood-system.md}. */
+    public NpcMoodState getMood() {
+        return mood;
+    }
+
+    /** 8-skill cross-profession proficiency; see {@code docs/npc_redesign/05-skill-system.md}. */
+    public SkillComponent getSkills() {
+        return skills;
     }
 
     public void clearTraits() {
@@ -1029,6 +1043,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         randomizeAppearance(random);
         traits.randomize(random);
+        // Mood baseline derives from traits; init after traits are set.
+        mood.initializeFromTraits(traits);
+        // Skills depend on profession (which is set elsewhere on assignment);
+        // at spawn the profession is typically NONE/CITIZEN, so this just
+        // randomizes the "others in [0..10]" tail per spec. When the NPC is
+        // later assigned a real profession, callers may re-init.
+        skills.initializeFromProfession(getProfession(), random, level.getLevel().getGameTime());
         updateScale();
         return super.finalizeSpawn(level, difficulty, spawnType, spawnGroupData);
     }
@@ -1111,6 +1132,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Knowledge ledger ────────────────────────────────────────────────
         knowledge.save(output);
+
+        // ── Mood ─────────────────────────────────────────────────────────────
+        mood.save(output);
+
+        // ── Skills ───────────────────────────────────────────────────────────
+        skills.save(output);
     }
 
     // =========================================================================
@@ -1230,6 +1257,19 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Knowledge ledger ────────────────────────────────────────────────
         knowledge.load(input);
+
+        // ── Mood (baseline derives from traits when not stored) ─────────────
+        if (!mood.load(input)) mood.initializeFromTraits(traits);
+
+        // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
+        if (!skills.load(input)) {
+            int legacyXp = tterrag1112.life_in_the_village.Profession.NpcProfessionXp.get(this);
+            // Legacy field stays readable for one release per the migration
+            // window; just consult it without clearing.
+            long now = level() instanceof net.minecraft.server.level.ServerLevel sl
+                    ? sl.getGameTime() : 0L;
+            skills.migrateLegacyProfessionXp(getProfession(), legacyXp, now);
+        }
 
         // ── Sync entity data from loaded state ───────────────────────────────
         entityData.set(LIFE_STAGE, getLifeStage().name());

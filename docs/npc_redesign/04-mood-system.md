@@ -260,4 +260,101 @@ traits, decay uses 0.0 baseline and 1.0× modulation.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 0 implementation (task 04)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Mood`
+(`MoodCategory`, `MoodTrigger`, `MoodEvent`, `NpcMoodState`). Pattern
+parallels prior Phase 0 components.
+
+**Persistence API.** Same deviation as 01–03: spec uses
+`save(CompoundTag)` / `load(CompoundTag)`; implementation uses
+`save(ValueOutput)` / `load(ValueInput)` to match the NeoForge 1.21
+entity API. Stored as a single `npcMood` subtree with the spec's
+nested shape (value, baseline, lastUpdateTick, griefStartTick,
+recent[]). The spec record has only `value` + `recent`; implementation
+adds `baseline` (cached so trait changes don't silently shift it) and
+`griefStartTick` (the spec calls for a grief flag — stored as a tick
+so the 30-day window is purely a derived check).
+
+**Class name.** `NpcMoodState`, matching the spec's section header
+"NpcMoodState". The task prompt template called it `MoodState`;
+followed the spec.
+
+**Daily-stack-cap unit (locked).** The spec field
+`MoodTrigger.dailyStackCap` is given as a float (e.g. `0.4f`) without
+units. Implementation interprets the cap as the **fraction of the
+mood scalar range**: effective cap in mood points is
+`100 * dailyStackCap`. So `GIFT_RECEIVED` at `0.4f` caps at 40
+cumulative mood/day (~5 stacks of the +8 default). `0.0f` disables
+the cap (rare/unique events). Documented on
+`MoodTrigger.cumulativeDailyCap`. If a future reading prefers the
+literal `mag * cap` formula (which yields tiny per-event caps), only
+that one method changes.
+
+**Today's-accumulated tracking.** No new state added — `apply` reads
+from the existing `recent` event list (already capped at 5 by spec)
+and sums same-trigger entries within the last 24000 ticks. Limitation:
+if more than 5 events of the same trigger fire in a single day, only
+the last 5 count toward the cap. Phase 0 has no producers, so this is
+academic; Phase 1 may revisit if real producers can spam past 5/day.
+
+**Trait modulation table.** Spec gives three illustrative rules
+(`INSULT_RECEIVED` × `TEMPERANCE`, `GIFT_RECEIVED` × `GENEROSITY`,
+`FAMILY_DEATH` × `COMPASSION`). Implementation extends naturally:
+
+| Trigger              | Multiplier                                 |
+|----------------------|--------------------------------------------|
+| INSULT_RECEIVED      | `1 - 0.5 * TEMPERANCE` (spec)              |
+| GIFT_RECEIVED        | `1 + 0.3 * GENEROSITY` (spec)              |
+| GIFT_FAVORITE        | `1 + 0.3 * GENEROSITY`                     |
+| FAMILY_DEATH         | `1 + 0.5 * COMPASSION` (spec)              |
+| CLOSE_FRIEND_DEATH   | `1 + 0.5 * COMPASSION`                     |
+| COMPLIMENT_RECEIVED  | `1 + 0.2 * SOCIABILITY`                    |
+| FESTIVAL_ATTENDED    | `1 + 0.3 * SOCIABILITY`                    |
+| GOAL_COMPLETED       | `1 + 0.3 * AMBITION`                       |
+| GOAL_FAILED          | `1 + 0.3 * AMBITION`                       |
+| (all others)         | `1.0` (no modulation)                      |
+
+These are tuning calls; the table lives in one place
+(`MoodTrigger.traitMultiplier`) for easy adjustment. Not all 28
+triggers have explicit rules — defaults to 1.0.
+
+**Daily-tick wiring.** The existing `NpcMemoryDecayTickSystem` was
+extended in place rather than creating a parallel system; per the
+task prompt's "Wire decay into the same daily-tick hook used by
+memory. Do NOT create a new tick path." The subsystem now reports its
+name as `npc_daily_decay` and decays both memory and mood on the same
+sweep over loaded TownspersonMob. Class file name unchanged for now
+(internal only).
+
+**Long-unload guard.** When `decay(daysElapsed)` is called with
+`daysElapsed > 30`, the value snaps to `baseline` directly per the
+spec's edge case "NPC wakes from long unload (30+ days)". Below that
+threshold, day-by-day geometric decay is applied so the integration
+matches a continuous 15%/day rate.
+
+**Spawn baseline.** New NPCs run `mood.initializeFromTraits(traits)`
+in `finalizeSpawn` immediately after `traits.randomize`. Baseline =
+`10 * (GENEROSITY + TEMPERANCE) / 2 + 5 * SOCIABILITY` (spec
+formula); current value is set to the baseline (no jitter at spawn,
+per task prompt).
+
+**Not implemented in this session (deferred per spec/Phase 0 scope):**
+- Production trigger firings (Phase 1 producers).
+- Mood UI surfaces beyond the debug command (NpcProfileSnapshot
+  mood label is in the spec's Phase 0 integration but UI changes
+  have been deferred consistently across 01–03 too).
+- Trait drift from sustained mood (Phase 1).
+- Cross-system effects (dialogue tone, trade prices, schedule) are
+  consumer concerns landing in their own phases.
+
+**Prompt↔spec naming mismatches (kept for the prompt-template
+maintainer):**
+- Prompt's category enum uses `EUPHORIC`; spec uses `ELATED`. Used
+  spec.
+- Prompt calls the component `MoodState`; spec uses `NpcMoodState`.
+  Used spec.
+- Prompt asks for `applyTrigger(MoodTrigger, TraitVector)`; spec's
+  signature is `apply(MoodTrigger, TraitVector, long tick)`. Used
+  spec — currentTick is needed for the daily-cap check and the grief
+  timer.
