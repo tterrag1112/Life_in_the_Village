@@ -116,6 +116,8 @@ public class VillageSpawner {
                 .get(level).getOrCreate(village.getId());
         tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator
                 .populate(level, village, layout);
+        tterrag1112.life_in_the_village.Village.Roads.Planning.InternalRoadCommitter
+                .commit(level, village, layout);
 
         if (layout.buildings().isEmpty()) {
             System.out.println("VillageSpawner: no buildings planned — aborting");

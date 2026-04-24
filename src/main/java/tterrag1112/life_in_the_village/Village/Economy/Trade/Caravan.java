@@ -231,6 +231,10 @@ public class Caravan implements TravellingGroup {
         TradeRoute route = data.getRouteById(routeId).orElse(null);
         if (route == null) return List.of();
 
+        if (route.hasSegments()) {
+            return resolveSegmentBlocks(level, route.getSegments());
+        }
+
         if (route.hasGraphPath()) {
             return GraphTradeRouteEstablisher.resolveGraphBlocks(
                     WorldRoadSavedData.get(level).getGraph(),
@@ -241,6 +245,18 @@ public class Caravan implements TravellingGroup {
         return data.getRoadById(route.getConnectionId())
                 .map(TradeRoad::getBlocks)
                 .orElse(List.of());
+    }
+
+    /** Concatenates block paths for each segment, skipping the first block of each non-first segment. */
+    static List<BlockPos> resolveSegmentBlocks(ServerLevel level, List<RouteSegment> segments) {
+        List<BlockPos> result = new ArrayList<>();
+        for (RouteSegment seg : segments) {
+            List<BlockPos> segBlocks = seg.resolveBlocks(level);
+            if (segBlocks.isEmpty()) continue;
+            int skip = result.isEmpty() ? 0 : 1;
+            if (segBlocks.size() > skip) result.addAll(segBlocks.subList(skip, segBlocks.size()));
+        }
+        return result;
     }
 
     @Override

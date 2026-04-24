@@ -11,6 +11,8 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.VillageEdgeDescriptor;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadEdge;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
@@ -215,6 +217,48 @@ public final class LinearRecipe implements ShapeRecipe {
     @Override
     public List<GatewayDescriptor> describeGateways(PlanContext pctx) {
         return GatewayDescriptor.deriveFromLayout(pctx);
+    }
+
+    /** Single THROUGH_VILLAGE edge along the main street, connecting the two gateways. */
+    @Override
+    public List<VillageEdgeDescriptor> describeInternalRoads(PlanContext pctx) {
+        return deriveThruRoad(pctx);
+    }
+
+    static List<VillageEdgeDescriptor> deriveThruRoad(PlanContext pctx) {
+        List<BlockPos> gates = pctx.layout.getGatePositions();
+        if (gates.size() < 2) return List.of();
+        java.util.Collection<List<BlockPos>> cls = pctx.layout.getAllCenterlines();
+        if (cls.isEmpty()) return List.of();
+
+        BlockPos a = gates.get(0), b = gates.get(1);
+        List<BlockPos> best = findBestCenterline(cls, a, b);
+        if (best == null || best.isEmpty()) return List.of();
+
+        // Orient: first point closest to a
+        boolean rev = best.get(0).distSqr(b) < best.get(0).distSqr(a);
+        List<BlockPos> oriented;
+        if (rev) { oriented = new ArrayList<>(best); java.util.Collections.reverse(oriented); }
+        else oriented = best;
+
+        return List.of(new VillageEdgeDescriptor(a, b, oriented,
+                VillageRoadEdge.EdgeCharacter.THROUGH_VILLAGE));
+    }
+
+    static List<BlockPos> findBestCenterline(
+            java.util.Collection<List<BlockPos>> cls, BlockPos a, BlockPos b) {
+        List<BlockPos> best = null;
+        double bestScore = Double.MAX_VALUE;
+        int bestLen = 0;
+        for (List<BlockPos> cl : cls) {
+            if (cl.size() < 2) continue;
+            BlockPos s = cl.get(0), e = cl.get(cl.size() - 1);
+            double score = Math.min(s.distSqr(a) + e.distSqr(b), s.distSqr(b) + e.distSqr(a));
+            if (score < bestScore || (score == bestScore && cl.size() > bestLen)) {
+                bestScore = score; best = cl; bestLen = cl.size();
+            }
+        }
+        return best;
     }
 
     private static double directionRadOf(TerrainAnalyzer.FlatDirection dir) {

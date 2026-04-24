@@ -315,11 +315,14 @@ Village road networks are separate from the world trade graph. Each village owns
 
 **Exit criteria:** ✓ New and existing worlds load without error. Every village has an empty graph. Codec round-trips. `validateAll()` returns empty on a fresh world.
 
-#### Phase 7f Slice 2 — Gateway generation (PLANNED)
-Generate gateways from village layouts. LINEAR/ROADSIDE/CHAIN layouts produce 1–2 gateways. Connector planning picks best gateway.
+#### Phase 7f Slice 2 — Gateway generation ✓ COMPLETE
+Generated gateways from village layouts. LINEAR/ROADSIDE/CHAIN layouts produce 1–2 gateways. `GatewayPopulator` places GATEWAY nodes + TERMINUS world nodes + bidirectional backlinks. `ConnectorPlanner.selectGateway` picks best gateway by alignment score.
 
-#### Phase 7f Slice 3 — Gateway integration with world graph (PLANNED)
-Wire `RoadNode.GatewayLink` bidirectionally. Connectors route from world-graph TERMINUS to VillageRoadGraph gateway.
+#### Phase 7f Slice 3 — Internal village roads and caravan traversal ✓ COMPLETE
+Internal road edges committed to `VillageRoadGraph` via `InternalRoadCommitter`. `findGatewayBlockPath` provides block-level traversal paths. `RouteSegment` sealed interface (`WorldEdge`, `VillageTraversal`) enables composite route paths. `TradeRoute` extended with `segments` field. Caravan block-path resolution handles segments natively.
+
+#### Phase 7f Slice 4 — Connector routing through villages (PLANNED)
+Route connectors that thread through a village to use `VillageTraversal` segments, so caravans follow internal roads when crossing a village rather than cutting through open terrain.
 
 ### Phase 7d — Worldgen ordering and atlas generation speed
 

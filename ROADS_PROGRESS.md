@@ -1784,3 +1784,129 @@ The `describeGateways` override is present for documentation and extension-point
 Phase 7f Slice 3 — internal village roads and caravan through-village traversal.
 VillageRoadEdge generation connecting INTERIOR nodes between gateways; caravans query
 `VillageRoadGraph.findPath` when entering/exiting a village.
+
+---
+
+## Phase 7f Slice 3 — Internal village roads and caravan traversal
+
+**Date:** 2026-04-24
+
+### Summary
+
+Connected the village road graph to the caravan system by: (1) committing internal road edges
+derived from layout centerlines, (2) adding block-path traversal through the village graph, and
+(3) introducing `RouteSegment` as the composite route primitive so future routes can thread
+through a village without the caravan leaving the road network.
+
+### Files created
+
+**`Village/Roads/Planning/VillageEdgeDescriptor.java`**
+- Lightweight record: `fromPos`, `toPos`, `path` (List<BlockPos>), `character` (EdgeCharacter).
+- No codec — never persisted; used only between recipe description and graph commit.
+
+**`Village/Roads/Planning/InternalRoadCommitter.java`**
+- `commit(ServerLevel, Village, VillageLayout)` — no-op if graph already has edges (reload safety).
+- `deriveEdgeDescriptors(VillageRoadGraph, VillageLayout)` — finds PRIMARY + SIDE gateway pair,
+  then calls `findConnectingCenterline` to identify the road centerline that best bridges them.
+- `findConnectingCenterline` — O(n) scan over all layout centerlines; picks by minimum
+  sum-of-squared-distances from centerline endpoints to gateway positions; ties broken by length.
+- `findOrCreateNode` — matches by exact BlockPos; creates INTERIOR node if no match found.
+- Calls `roadsSaved.setDirty()` at end.
+
+**`Village/Economy/Trade/RouteSegment.java`**
+- Sealed interface with two permitted implementations.
+- `WorldEdge(UUID edgeId, UUID startNodeId)` — resolves via world graph edge block path, reversed
+  when `startNodeId` matches nodeB.
+- `VillageTraversal(UUID villageId, UUID entryGatewayId, UUID exitGatewayId)` — resolves via
+  `VillageRoadGraph.findGatewayBlockPath`.
+- Dispatch codec on `"type"` field (`"world_edge"` / `"village_traversal"`).
+- Both records carry their own `MAP_CODEC`.
+
+### Files modified
+
+**`Village/Roads/Graph/VillageRoadGraph.java`**
+- Added `findGatewayEdgePath(UUID, UUID)` → `Optional<List<VillageRoadEdge>>`: uses existing BFS
+  `findPath`, then converts node-ID path to edge objects via `findEdgeBetween`.
+- Added `findGatewayBlockPath(UUID, UUID)` → `List<BlockPos>`: concatenates `cellPath` fields of
+  the edge path, orientating each edge correctly and skipping the first block of non-first edges
+  to avoid duplicates at junctions.
+- Added private `findEdgeBetween(UUID, UUID)` helper using `edgesIncidentTo`.
+
+**`Village/Planning/Primitives/ShapeRecipe.java`**
+- Added `default List<VillageEdgeDescriptor> describeInternalRoads(PlanContext)` returning
+  `List.of()`. Documented as the extension point for recipes with traversable through-roads.
+
+**`Village/Planning/Primitives/Recipes/LinearRecipe.java`**
+- Added `describeInternalRoads` override calling `deriveThruRoad(pctx)`.
+- Added package-visible helpers `deriveThruRoad` and `findBestCenterline` (reused by
+  Roadside and Chain).
+
+**`Village/Planning/Primitives/Recipes/RoadsideRecipe.java`**
+- Added `describeInternalRoads` override delegating to `LinearRecipe.deriveThruRoad`.
+
+**`Village/Planning/Primitives/Recipes/ChainRecipe.java`**
+- Added `describeInternalRoads` override delegating to `LinearRecipe.deriveThruRoad`.
+
+**`Village/VillageSpawner.java`**
+- Added `InternalRoadCommitter.commit(level, village, layout)` call after `GatewayPopulator.populate`.
+
+**`Village/Economy/Trade/TradeRoute.java`**
+- Added `List<RouteSegment> segments` field (codec: `optionalFieldOf("segments", List.of())`).
+- Private constructor gains `segments` parameter; all factory methods updated accordingly.
+- Added `createSegmented(UUID, UUID, RouteType, long, List<RouteSegment>)` factory.
+- Added `getSegments()` / `hasSegments()` accessors.
+- `fromCodec` updated to 12-parameter form (no auto-migration of legacy edgeIds — those still use
+  the existing `resolveGraphBlocks` path).
+
+**`Village/Economy/Trade/Caravan.java`**
+- `getPath` checks `route.hasSegments()` first, then falls back to graph/legacy paths.
+- Added static `resolveSegmentBlocks(ServerLevel, List<RouteSegment>)` helper: concatenates
+  per-segment block lists, skipping the first block of each non-first segment.
+
+**`Entities/Goals/Profession/Merchant/CaravanMerchantGoal.java`**
+- `resolveBlocks` checks `route.hasSegments()` first, then graph, then legacy.
+- `isGraphRoute` returns true for both `hasGraphPath()` and `hasSegments()`.
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Four new subcommands under `/litv road debug`:
+  - `village_roads <name>` — lists edges (character, length, from/to types).
+  - `show_village_roads <name>` — HAPPY_VILLAGER particles on through-village edges,
+    COMPOSTER on others; END_ROD beacon on gateway nodes.
+  - `test_village_traversal <name>` — runs `findGatewayBlockPath` between the first two gateways,
+    reports path length and start/end positions.
+  - `route_segments <routeId>` — shows segment-by-segment breakdown of any trade route.
+- Added `findVillageByName` private helper (deduplicates the common village-lookup pattern).
+- Added imports: `RouteSegment`, `Village`.
+
+### Design decisions
+
+**No VillageLayout modification for caching edge descriptors:** `InternalRoadCommitter` derives
+edges directly from `VillageRoadGraph.gateways()` + `VillageLayout.getAllCenterlines()`, matching
+the pattern used by `GatewayPopulator`. This avoids making VillageLayout a staging buffer.
+
+**`describeInternalRoads` on ShapeRecipe is an extension point, not the call path:** Only
+LINEAR/ROADSIDE/CHAIN override it. The `InternalRoadCommitter` uses the same derivation logic
+directly (via `LinearRecipe.deriveThruRoad`). The default method on the interface serves as
+documentation and allows future recipe types to override cleanly.
+
+**Segment resolution in Caravan, not TradeRoute:** `resolveSegmentBlocks` lives on `Caravan`
+(static) so it can take `ServerLevel` without coupling `TradeRoute` to the world.
+
+**Legacy edgeIds are not auto-migrated to segments:** Routes created before Slice 3 keep using the
+`resolveGraphBlocks` code path. Segment-based routes are produced by the new `createSegmented`
+factory and will be used when the connector planner learns to route through villages (Slice 4).
+
+### Observations
+
+- `VillageRoadEdge.cellPath` is already in block coordinates (not atlas cells), so
+  `findGatewayBlockPath` needs no realization step.
+- `findConnectingCenterline` picks by endpoint proximity; if two centerlines tie, it picks the
+  longer one (the main street, not a stub).
+- Recipes that fall back to LINEAR (ChainRecipe on flat terrain) still work because the layout's
+  gate positions and centerlines are set by LinearRecipe.compose which was already called.
+
+### Next
+
+Phase 7f Slice 4 — Connector routing through villages. When a connector is planned between two
+villages and one village is between them, the route segments should include a `VillageTraversal`
+for the intermediate village instead of routing around it.

@@ -9,6 +9,8 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.VillageEdgeDescriptor;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadEdge;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
@@ -108,5 +110,11 @@ public final class RoadsideRecipe implements ShapeRecipe {
     @Override
     public List<GatewayDescriptor> describeGateways(PlanContext pctx) {
         return GatewayDescriptor.deriveFromLayout(pctx);
+    }
+
+    /** Single THROUGH_VILLAGE edge along the main road, connecting the two gateways. */
+    @Override
+    public List<VillageEdgeDescriptor> describeInternalRoads(PlanContext pctx) {
+        return LinearRecipe.deriveThruRoad(pctx);
     }
 }

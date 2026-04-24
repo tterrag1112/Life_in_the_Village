@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes.*;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
+import tterrag1112.life_in_the_village.Village.Roads.Planning.VillageEdgeDescriptor;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
 import java.util.List;
@@ -38,6 +39,21 @@ public interface ShapeRecipe {
      */
     default List<GatewayDescriptor> describeGateways(PlanContext pctx) {
         return GatewayDescriptor.deriveFromLayout(pctx);
+    }
+
+    /**
+     * Returns internal road edge descriptors for this layout after {@link #compose} has run.
+     *
+     * <p>The default returns an empty list, meaning no internal road edges are committed.
+     * Recipes for layouts with a traversable through-road (LINEAR, ROADSIDE, CHAIN) override
+     * this to return descriptors so the village road graph gets its internal edges.
+     *
+     * <p>Called by {@link tterrag1112.life_in_the_village.Village.Roads.Planning.InternalRoadCommitter}
+     * after {@link tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator} has
+     * committed the gateway nodes.  Must not throw.
+     */
+    default List<VillageEdgeDescriptor> describeInternalRoads(PlanContext pctx) {
+        return List.of();
     }
 
     static ShapeRecipe forShape(ShapeType shape) {

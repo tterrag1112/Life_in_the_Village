@@ -78,9 +78,10 @@ import tterrag1112.life_in_the_village.Village.Roads.Terrain.RetainingWallBuilde
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSmoother;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSupportBuilder;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.RouteSegment;
+import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.VegetationFeatureDetector;
-import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
@@ -331,6 +332,19 @@ public class RoadGraphDebugCommand {
                                                                         .executes(RoadGraphDebugCommand::testGatewaySelection))))))
                                 .then(Commands.literal("show_all_gateways")
                                         .executes(RoadGraphDebugCommand::showAllGateways))
+                                // ── 7f Slice 3: internal road + traversal debug ────────────────
+                                .then(Commands.literal("village_roads")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::villageRoads)))
+                                .then(Commands.literal("show_village_roads")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::showVillageRoads)))
+                                .then(Commands.literal("test_village_traversal")
+                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
+                                                .executes(RoadGraphDebugCommand::testVillageTraversal)))
+                                .then(Commands.literal("route_segments")
+                                        .then(Commands.argument("routeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::routeSegments)))
                         )
                 )
         );
@@ -4099,5 +4113,198 @@ public class RoadGraphDebugCommand {
                 + " gateway(s) across all villages. FLAME=PRIMARY, SOUL_FIRE=SIDE, SMOKE=REAR."),
                 false);
         return totalGateways;
+    }
+
+    // =========================================================================
+    // 7f Slice 3 helpers
+    // =========================================================================
+
+    private static Village findVillageByName(VillageSavedData data, String namePart) {
+        return data.getAllVillages().stream()
+                .filter(v -> v.getName().toLowerCase(java.util.Locale.ROOT)
+                        .contains(namePart.toLowerCase(java.util.Locale.ROOT)))
+                .findFirst().orElse(null);
+    }
+
+    // =========================================================================
+    // 7f Slice 3: village_roads — list internal road edges for a named village
+    // =========================================================================
+
+    private static int villageRoads(CommandContext<CommandSourceStack> ctx) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) return 0;
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        Village village = findVillageByName(VillageSavedData.get(level), namePart);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[village_roads] No village matching '" + namePart + "'."));
+            return 0;
+        }
+        VillageRoadGraph graph = VillageRoadsSavedData.get(level).getOrCreate(village.getId());
+        java.util.List<VillageRoadEdge> edges = graph.allEdges();
+        if (edges.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[village_roads] '" + village.getName() + "' has no internal road edges."), false);
+            return 0;
+        }
+        StringBuilder sb = new StringBuilder("[village_roads] '")
+                .append(village.getName()).append("' — ")
+                .append(edges.size()).append(" edge(s), ")
+                .append(graph.nodeCount()).append(" node(s):\n");
+        for (VillageRoadEdge e : edges) {
+            VillageRoadNode from = graph.getNode(e.fromNodeId()).orElse(null);
+            VillageRoadNode to   = graph.getNode(e.toNodeId()).orElse(null);
+            sb.append("  ").append(e.edgeId().toString().substring(0, 8))
+              .append(" [").append(e.character()).append("] ")
+              .append(e.length()).append(" blocks, traversable=").append(e.isTraversable())
+              .append("\n    from: ").append(from != null ? from.position().toShortString() + " " + from.type() : "?")
+              .append("\n    to:   ").append(to   != null ? to.position().toShortString()   + " " + to.type()   : "?")
+              .append("\n");
+        }
+        String report = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(report), false);
+        return edges.size();
+    }
+
+    // =========================================================================
+    // 7f Slice 3: show_village_roads — particle visualization of internal edges
+    // =========================================================================
+
+    private static int showVillageRoads(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        if (!(player.level() instanceof ServerLevel level)) return 0;
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        Village village = findVillageByName(VillageSavedData.get(level), namePart);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[show_village_roads] No village matching '" + namePart + "'."));
+            return 0;
+        }
+        VillageRoadGraph graph = VillageRoadsSavedData.get(level).getOrCreate(village.getId());
+        java.util.List<VillageRoadEdge> edges = graph.allEdges();
+        if (edges.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[show_village_roads] '" + village.getName() + "' has no internal road edges."), false);
+            return 0;
+        }
+        java.util.List<ParticleEmission> emissions = new java.util.ArrayList<>();
+        for (VillageRoadEdge e : edges) {
+            ParticleOptions particle = e.character() == VillageRoadEdge.EdgeCharacter.THROUGH_VILLAGE
+                    ? ParticleTypes.HAPPY_VILLAGER : ParticleTypes.COMPOSTER;
+            for (int i = 0; i < e.cellPath().size(); i += 3) {
+                BlockPos pos = e.cellPath().get(i);
+                emissions.add(new ParticleEmission(pos.above(), particle, 1));
+            }
+        }
+        // Mark gateway nodes as beacons
+        for (VillageRoadNode n : graph.gateways()) {
+            for (int dy = 0; dy < 8; dy++) {
+                emissions.add(new ParticleEmission(n.position().above(dy), ParticleTypes.END_ROD, 1));
+            }
+        }
+        RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
+        final int count = edges.size();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[show_village_roads] Visualizing " + count + " edge(s) for '"
+                + village.getName() + "'. HAPPY_VILLAGER=THROUGH_VILLAGE, COMPOSTER=other."), false);
+        return count;
+    }
+
+    // =========================================================================
+    // 7f Slice 3: test_village_traversal — BFS through-village block path
+    // =========================================================================
+
+    private static int testVillageTraversal(CommandContext<CommandSourceStack> ctx) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) return 0;
+        String namePart = StringArgumentType.getString(ctx, "villageName");
+        Village village = findVillageByName(VillageSavedData.get(level), namePart);
+        if (village == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[test_village_traversal] No village matching '" + namePart + "'."));
+            return 0;
+        }
+        VillageRoadGraph graph = VillageRoadsSavedData.get(level).getOrCreate(village.getId());
+        java.util.List<VillageRoadNode> gateways = graph.gateways();
+        if (gateways.size() < 2) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[test_village_traversal] '" + village.getName()
+                    + "' has fewer than 2 gateways — no through traversal possible."), false);
+            return 0;
+        }
+        VillageRoadNode entry = gateways.get(0);
+        VillageRoadNode exit  = gateways.get(1);
+        java.util.List<BlockPos> path = graph.findGatewayBlockPath(
+                entry.nodeId(), exit.nodeId());
+        if (path.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[test_village_traversal] No path found between "
+                    + entry.nodeId().toString().substring(0, 8) + " ("
+                    + entry.gatewayInfo().map(i -> i.role().name()).orElse("?") + ") and "
+                    + exit.nodeId().toString().substring(0, 8) + " ("
+                    + exit.gatewayInfo().map(i -> i.role().name()).orElse("?") + ")."), false);
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[test_village_traversal] '" + village.getName() + "' traversal "
+                + entry.nodeId().toString().substring(0, 8) + " → "
+                + exit.nodeId().toString().substring(0, 8)
+                + ": " + path.size() + " blocks, "
+                + path.get(0).toShortString() + " → "
+                + path.get(path.size() - 1).toShortString()), false);
+        return path.size();
+    }
+
+    // =========================================================================
+    // 7f Slice 3: route_segments — show segment breakdown of a trade route
+    // =========================================================================
+
+    private static int routeSegments(CommandContext<CommandSourceStack> ctx) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) return 0;
+        String routeIdStr = StringArgumentType.getString(ctx, "routeId");
+        java.util.UUID routeId;
+        try { routeId = java.util.UUID.fromString(routeIdStr); }
+        catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[route_segments] Invalid UUID: " + routeIdStr));
+            return 0;
+        }
+        TradeRoute route = VillageSavedData.get(level).getRouteById(routeId).orElse(null);
+        if (route == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[route_segments] No route with ID " + routeIdStr));
+            return 0;
+        }
+        StringBuilder sb = new StringBuilder("[route_segments] Route ")
+                .append(routeIdStr, 0, Math.min(8, routeIdStr.length()))
+                .append(" (").append(route.getRouteType()).append(", ")
+                .append(route.getStatus()).append(")\n");
+        if (route.hasSegments()) {
+            sb.append("  Segments (").append(route.getSegments().size()).append("):\n");
+            for (int i = 0; i < route.getSegments().size(); i++) {
+                RouteSegment seg = route.getSegments().get(i);
+                sb.append("  [").append(i).append("] ");
+                if (seg instanceof RouteSegment.WorldEdge we) {
+                    sb.append("WorldEdge edge=").append(we.edgeId().toString().substring(0, 8))
+                      .append(" start=").append(we.startNodeId() != null
+                              ? we.startNodeId().toString().substring(0, 8) : "null");
+                } else if (seg instanceof RouteSegment.VillageTraversal vt) {
+                    sb.append("VillageTraversal village=").append(vt.villageId().toString().substring(0, 8))
+                      .append(" entry=").append(vt.entryGatewayId().toString().substring(0, 8))
+                      .append(" exit=").append(vt.exitGatewayId().toString().substring(0, 8));
+                }
+                sb.append("\n");
+            }
+        } else if (route.hasGraphPath()) {
+            sb.append("  Legacy edgeIds (").append(route.getEdgeIds().size())
+              .append(") — no segments\n");
+        } else {
+            sb.append("  Legacy TradeRoad connectionId=")
+              .append(route.getConnectionId() != null
+                      ? route.getConnectionId().toString().substring(0, 8) : "null")
+              .append("\n");
+        }
+        String report = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(report), false);
+        return 1;
     }
 }

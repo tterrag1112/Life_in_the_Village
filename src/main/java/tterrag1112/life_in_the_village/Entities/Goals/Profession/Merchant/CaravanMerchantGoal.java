@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.GraphTradeRouteEstablisher;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.RouteSegment;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -199,13 +200,17 @@ public class CaravanMerchantGoal extends Goal {
 
     /**
      * Resolves the block path for the caravan's current route.
-     * Graph-based routes use {@link GraphTradeRouteEstablisher#resolveGraphBlocks};
-     * legacy routes fall back to the TradeRoad block list.
+     * Segment-based routes are resolved first; graph-based routes fall back to
+     * {@link GraphTradeRouteEstablisher#resolveGraphBlocks}; legacy routes use the TradeRoad block list.
      */
     private List<BlockPos> resolveBlocks(Caravan caravan, ServerLevel level) {
         VillageSavedData vdata = VillageSavedData.get(level);
         TradeRoute route = vdata.getRouteById(caravan.getRouteId()).orElse(null);
         if (route == null) return List.of();
+
+        if (route.hasSegments()) {
+            return Caravan.resolveSegmentBlocks(level, route.getSegments());
+        }
 
         if (route.hasGraphPath()) {
             return GraphTradeRouteEstablisher.resolveGraphBlocks(
@@ -222,7 +227,7 @@ public class CaravanMerchantGoal extends Goal {
     private boolean isGraphRoute(Caravan caravan, ServerLevel level) {
         return VillageSavedData.get(level)
                 .getRouteById(caravan.getRouteId())
-                .map(TradeRoute::hasGraphPath)
+                .map(r -> r.hasGraphPath() || r.hasSegments())
                 .orElse(false);
     }
 

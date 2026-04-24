@@ -221,8 +221,63 @@ public final class VillageRoadGraph {
     }
 
     // =========================================================================
-    // Path query — BFS; used by future caravan pathing
+    // Path query — BFS; used by caravan pathing
     // =========================================================================
+
+    /**
+     * Returns the ordered list of {@link VillageRoadEdge}s from one GATEWAY node to another,
+     * following traversable edges via BFS, or empty if no path exists or either node is absent.
+     */
+    public Optional<List<VillageRoadEdge>> findGatewayEdgePath(UUID entryGatewayId,
+                                                                UUID exitGatewayId) {
+        Optional<List<UUID>> nodePath = findPath(entryGatewayId, exitGatewayId);
+        if (nodePath.isEmpty()) return Optional.empty();
+        List<UUID> nodeIds = nodePath.get();
+        List<VillageRoadEdge> edgePath = new ArrayList<>();
+        for (int i = 0; i < nodeIds.size() - 1; i++) {
+            VillageRoadEdge e = findEdgeBetween(nodeIds.get(i), nodeIds.get(i + 1));
+            if (e == null) return Optional.empty(); // graph inconsistency
+            edgePath.add(e);
+        }
+        return Optional.of(edgePath);
+    }
+
+    /**
+     * Returns a concatenated block-position path through the village from
+     * {@code entryGatewayId} to {@code exitGatewayId}.  Uses each edge's
+     * {@code cellPath} directly (no realization required for village roads).
+     * Returns an empty list if no path exists or the graph has no edges.
+     */
+    public List<BlockPos> findGatewayBlockPath(UUID entryGatewayId, UUID exitGatewayId) {
+        Optional<List<VillageRoadEdge>> edgePath = findGatewayEdgePath(entryGatewayId, exitGatewayId);
+        if (edgePath.isEmpty()) return List.of();
+
+        List<BlockPos> result = new ArrayList<>();
+        UUID currentNode = entryGatewayId;
+        for (VillageRoadEdge edge : edgePath.get()) {
+            boolean forward = edge.fromNodeId().equals(currentNode);
+            List<BlockPos> path = edge.cellPath();
+            List<BlockPos> oriented;
+            if (forward) {
+                oriented = path;
+            } else {
+                oriented = new ArrayList<>(path);
+                Collections.reverse(oriented);
+            }
+            int skip = result.isEmpty() ? 0 : 1; // avoid duplicate junction block
+            if (oriented.size() > skip) result.addAll(oriented.subList(skip, oriented.size()));
+            currentNode = forward ? edge.toNodeId() : edge.fromNodeId();
+        }
+        return result;
+    }
+
+    /** Returns the edge incident to both nodeA and nodeB, or null if none. */
+    private VillageRoadEdge findEdgeBetween(UUID nodeA, UUID nodeB) {
+        for (VillageRoadEdge e : edgesIncidentTo(nodeA)) {
+            if (e.isIncidentTo(nodeB)) return e;
+        }
+        return null;
+    }
 
     /**
      * Finds a path from {@code fromNodeId} to {@code toNodeId} using BFS.

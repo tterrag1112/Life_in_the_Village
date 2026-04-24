@@ -61,7 +61,10 @@ public class TradeRoute {
                             .forGetter(r -> new ArrayList<>(r.edgeIds)),
                     Codec.STRING.xmap(UUID::fromString, UUID::toString)
                             .optionalFieldOf("routeStartNodeId")
-                            .forGetter(r -> Optional.ofNullable(r.routeStartNodeId))
+                            .forGetter(r -> Optional.ofNullable(r.routeStartNodeId)),
+                    RouteSegment.CODEC.listOf()
+                            .optionalFieldOf("segments", List.of())
+                            .forGetter(r -> new ArrayList<>(r.segments))
             ).apply(instance, TradeRoute::fromCodec));
 
     // Codecs for enums
@@ -84,12 +87,15 @@ public class TradeRoute {
     private final List<UUID> edgeIds;
     /** Node ID at village-A's end of the first edge; null for legacy routes. */
     private final UUID routeStartNodeId;
+    /** Ordered route segments (world edges + village traversals). Supersedes edgeIds when non-empty. */
+    private final List<RouteSegment> segments;
 
     private TradeRoute(UUID routeId, UUID villageA, UUID villageB,
                        UUID connectionId, RouteStatus status,
                        RouteType routeType, long establishedTick,
                        long lastCaravanTick, double tradePenalty,
-                       List<UUID> edgeIds, UUID routeStartNodeId) {
+                       List<UUID> edgeIds, UUID routeStartNodeId,
+                       List<RouteSegment> segments) {
         this.routeId          = routeId;
         this.villageA         = villageA;
         this.villageB         = villageB;
@@ -101,6 +107,7 @@ public class TradeRoute {
         this.tradePenalty     = tradePenalty;
         this.edgeIds          = new ArrayList<>(edgeIds);
         this.routeStartNodeId = routeStartNodeId;
+        this.segments         = new ArrayList<>(segments);
     }
 
     /** Legacy constructor — for code that creates TradeRoutes with a TradeRoad connectionId. */
@@ -109,15 +116,17 @@ public class TradeRoute {
                       RouteType routeType, long establishedTick,
                       long lastCaravanTick, double tradePenalty) {
         this(routeId, villageA, villageB, roadId, status, routeType,
-                establishedTick, lastCaravanTick, tradePenalty, List.of(), null);
+                establishedTick, lastCaravanTick, tradePenalty, List.of(), null, List.of());
     }
 
     static TradeRoute fromCodec(UUID routeId, UUID villageA, UUID villageB,
                                 Optional<UUID> connectionId, RouteStatus status, RouteType routeType,
                                 long establishedTick, long lastCaravanTick, double tradePenalty,
-                                List<UUID> edgeIds, Optional<UUID> routeStartNodeId) {
+                                List<UUID> edgeIds, Optional<UUID> routeStartNodeId,
+                                List<RouteSegment> segments) {
         return new TradeRoute(routeId, villageA, villageB, connectionId.orElse(null), status, routeType,
-                establishedTick, lastCaravanTick, tradePenalty, edgeIds, routeStartNodeId.orElse(null));
+                establishedTick, lastCaravanTick, tradePenalty, edgeIds, routeStartNodeId.orElse(null),
+                segments);
     }
 
     /** Creates a graph-based route with a known edge path and no legacy connectionId. */
@@ -130,7 +139,20 @@ public class TradeRoute {
             case CROSS_KINGDOM    -> 0.25;
         };
         return new TradeRoute(UUID.randomUUID(), villageA, villageB, null, RouteStatus.ACTIVE, type,
-                currentTick, 0L, penalty, edgeIds, routeStartNodeId);
+                currentTick, 0L, penalty, edgeIds, routeStartNodeId, List.of());
+    }
+
+    /** Creates a segment-based route. The {@code segments} list encodes the full traversal. */
+    public static TradeRoute createSegmented(UUID villageA, UUID villageB,
+                                              RouteType type, long currentTick,
+                                              List<RouteSegment> segments) {
+        double penalty = switch (type) {
+            case KINGDOM_INTERNAL -> 0.0;
+            case NEUTRAL          -> 0.1;
+            case CROSS_KINGDOM    -> 0.25;
+        };
+        return new TradeRoute(UUID.randomUUID(), villageA, villageB, null, RouteStatus.ACTIVE, type,
+                currentTick, 0L, penalty, List.of(), null, segments);
     }
 
     public static TradeRoute create(UUID villageA, UUID villageB,
@@ -150,7 +172,8 @@ public class TradeRoute {
                 type,
                 currentTick,
                 0L,
-                penalty
+                penalty,
+                List.of(), null, List.of()
         );
     }
 
@@ -224,6 +247,10 @@ public class TradeRoute {
     public UUID getRouteStartNodeId()      { return routeStartNodeId; }
     /** True when this route is backed by WorldRoadGraph edges rather than a legacy TradeRoad. */
     public boolean hasGraphPath()          { return !edgeIds.isEmpty(); }
+    /** Returns the ordered route segments (world edges + village traversals). */
+    public List<RouteSegment> getSegments() { return Collections.unmodifiableList(segments); }
+    /** True when this route is backed by RouteSegments rather than (or in addition to) legacy edgeIds. */
+    public boolean hasSegments()           { return !segments.isEmpty(); }
     public RouteStatus getStatus()         { return status; }
     public RouteType getRouteType()        { return routeType; }
     public long getEstablishedTick()       { return establishedTick; }
