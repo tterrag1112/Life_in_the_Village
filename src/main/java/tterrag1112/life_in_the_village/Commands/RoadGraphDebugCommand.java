@@ -22,8 +22,13 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.GraphTradeRouteEstablisher;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePaletteResolver;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingPlacer;
+import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer.ParticleEmission;
@@ -78,10 +83,9 @@ import tterrag1112.life_in_the_village.Village.Roads.Terrain.RetainingWallBuilde
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSmoother;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.RoadSupportBuilder;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayPopulator;
-import tterrag1112.life_in_the_village.Village.Economy.Trade.RouteSegment;
-import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.TerrainClearer;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.VegetationFeatureDetector;
+import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
@@ -320,6 +324,19 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("show_village_graph")
                                         .then(Commands.argument("villageName", StringArgumentType.greedyString())
                                                 .executes(RoadGraphDebugCommand::showVillageGraph)))
+                                // ── 7g: palette + lighting debug ──────────────────────────────
+                                .then(Commands.literal("palette")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::paletteForEdge)))
+                                .then(Commands.literal("force_lighting")
+                                        .then(Commands.argument("edgeId", StringArgumentType.word())
+                                        .then(Commands.argument("frequency", StringArgumentType.word())
+                                        .then(Commands.argument("strategy", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::forceLighting)))))
+                                .then(Commands.literal("lighting_summary")
+                                        .executes(RoadGraphDebugCommand::lightingSummary))
+                                .then(Commands.literal("list_palettes")
+                                        .executes(RoadGraphDebugCommand::listPalettes))
                                 // ── 7f Slice 2: gateway debug ─────────────────────────────────
                                 .then(Commands.literal("village_gateways")
                                         .then(Commands.argument("villageName", StringArgumentType.greedyString())
@@ -332,19 +349,6 @@ public class RoadGraphDebugCommand {
                                                                         .executes(RoadGraphDebugCommand::testGatewaySelection))))))
                                 .then(Commands.literal("show_all_gateways")
                                         .executes(RoadGraphDebugCommand::showAllGateways))
-                                // ── 7f Slice 3: internal road + traversal debug ────────────────
-                                .then(Commands.literal("village_roads")
-                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
-                                                .executes(RoadGraphDebugCommand::villageRoads)))
-                                .then(Commands.literal("show_village_roads")
-                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
-                                                .executes(RoadGraphDebugCommand::showVillageRoads)))
-                                .then(Commands.literal("test_village_traversal")
-                                        .then(Commands.argument("villageName", StringArgumentType.greedyString())
-                                                .executes(RoadGraphDebugCommand::testVillageTraversal)))
-                                .then(Commands.literal("route_segments")
-                                        .then(Commands.argument("routeId", StringArgumentType.word())
-                                                .executes(RoadGraphDebugCommand::routeSegments)))
                         )
                 )
         );
@@ -4116,195 +4120,208 @@ public class RoadGraphDebugCommand {
     }
 
     // =========================================================================
-    // 7f Slice 3 helpers
+    // Phase 7g — palette + lighting debug
     // =========================================================================
 
-    private static Village findVillageByName(VillageSavedData data, String namePart) {
-        return data.getAllVillages().stream()
-                .filter(v -> v.getName().toLowerCase(java.util.Locale.ROOT)
-                        .contains(namePart.toLowerCase(java.util.Locale.ROOT)))
-                .findFirst().orElse(null);
-    }
-
-    // =========================================================================
-    // 7f Slice 3: village_roads — list internal road edges for a named village
-    // =========================================================================
-
-    private static int villageRoads(CommandContext<CommandSourceStack> ctx) {
-        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) return 0;
-        String namePart = StringArgumentType.getString(ctx, "villageName");
-        Village village = findVillageByName(VillageSavedData.get(level), namePart);
-        if (village == null) {
-            ctx.getSource().sendFailure(Component.literal(
-                    "[village_roads] No village matching '" + namePart + "'."));
-            return 0;
-        }
-        VillageRoadGraph graph = VillageRoadsSavedData.get(level).getOrCreate(village.getId());
-        java.util.List<VillageRoadEdge> edges = graph.allEdges();
-        if (edges.isEmpty()) {
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "[village_roads] '" + village.getName() + "' has no internal road edges."), false);
-            return 0;
-        }
-        StringBuilder sb = new StringBuilder("[village_roads] '")
-                .append(village.getName()).append("' — ")
-                .append(edges.size()).append(" edge(s), ")
-                .append(graph.nodeCount()).append(" node(s):\n");
-        for (VillageRoadEdge e : edges) {
-            VillageRoadNode from = graph.getNode(e.fromNodeId()).orElse(null);
-            VillageRoadNode to   = graph.getNode(e.toNodeId()).orElse(null);
-            sb.append("  ").append(e.edgeId().toString().substring(0, 8))
-              .append(" [").append(e.character()).append("] ")
-              .append(e.length()).append(" blocks, traversable=").append(e.isTraversable())
-              .append("\n    from: ").append(from != null ? from.position().toShortString() + " " + from.type() : "?")
-              .append("\n    to:   ").append(to   != null ? to.position().toShortString()   + " " + to.type()   : "?")
-              .append("\n");
-        }
-        String report = sb.toString();
-        ctx.getSource().sendSuccess(() -> Component.literal(report), false);
-        return edges.size();
-    }
-
-    // =========================================================================
-    // 7f Slice 3: show_village_roads — particle visualization of internal edges
-    // =========================================================================
-
-    private static int showVillageRoads(CommandContext<CommandSourceStack> ctx)
+    private static int paletteForEdge(CommandContext<CommandSourceStack> ctx)
             throws CommandSyntaxException {
-        ServerPlayer player = ctx.getSource().getPlayerOrException();
-        if (!(player.level() instanceof ServerLevel level)) return 0;
-        String namePart = StringArgumentType.getString(ctx, "villageName");
-        Village village = findVillageByName(VillageSavedData.get(level), namePart);
-        if (village == null) {
-            ctx.getSource().sendFailure(Component.literal(
-                    "[show_village_roads] No village matching '" + namePart + "'."));
-            return 0;
-        }
-        VillageRoadGraph graph = VillageRoadsSavedData.get(level).getOrCreate(village.getId());
-        java.util.List<VillageRoadEdge> edges = graph.allEdges();
-        if (edges.isEmpty()) {
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "[show_village_roads] '" + village.getName() + "' has no internal road edges."), false);
-            return 0;
-        }
-        java.util.List<ParticleEmission> emissions = new java.util.ArrayList<>();
-        for (VillageRoadEdge e : edges) {
-            ParticleOptions particle = e.character() == VillageRoadEdge.EdgeCharacter.THROUGH_VILLAGE
-                    ? ParticleTypes.HAPPY_VILLAGER : ParticleTypes.COMPOSTER;
-            for (int i = 0; i < e.cellPath().size(); i += 3) {
-                BlockPos pos = e.cellPath().get(i);
-                emissions.add(new ParticleEmission(pos.above(), particle, 1));
-            }
-        }
-        // Mark gateway nodes as beacons
-        for (VillageRoadNode n : graph.gateways()) {
-            for (int dy = 0; dy < 8; dy++) {
-                emissions.add(new ParticleEmission(n.position().above(dy), ParticleTypes.END_ROD, 1));
-            }
-        }
-        RoadDebugVisualizer.INSTANCE.addSession(player.getUUID(), level.getGameTime(), emissions);
-        final int count = edges.size();
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        RoadEdge edge = resolveEdgeOrFail(ctx, graph,
+                StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT));
+        if (edge == null) return 0;
+
+        CulturePaletteResolver.Resolved resolved =
+                CulturePaletteResolver.resolve(edge, graph, vData);
+        CulturePalette palette = resolved.palette();
+        RoadLightingProfile lighting = resolved.lighting();
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        String maintainer = edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD
+                ? "great road / old realm"
+                : resolved.cultureId();
+        String overrideSuffix = edge.getLightingOverride().isPresent() ? " (override)" : "";
+
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "[show_village_roads] Visualizing " + count + " edge(s) for '"
-                + village.getName() + "'. HAPPY_VILLAGER=THROUGH_VILLAGE, COMPOSTER=other."), false);
-        return count;
-    }
-
-    // =========================================================================
-    // 7f Slice 3: test_village_traversal — BFS through-village block path
-    // =========================================================================
-
-    private static int testVillageTraversal(CommandContext<CommandSourceStack> ctx) {
-        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) return 0;
-        String namePart = StringArgumentType.getString(ctx, "villageName");
-        Village village = findVillageByName(VillageSavedData.get(level), namePart);
-        if (village == null) {
-            ctx.getSource().sendFailure(Component.literal(
-                    "[test_village_traversal] No village matching '" + namePart + "'."));
-            return 0;
-        }
-        VillageRoadGraph graph = VillageRoadsSavedData.get(level).getOrCreate(village.getId());
-        java.util.List<VillageRoadNode> gateways = graph.gateways();
-        if (gateways.size() < 2) {
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "[test_village_traversal] '" + village.getName()
-                    + "' has fewer than 2 gateways — no through traversal possible."), false);
-            return 0;
-        }
-        VillageRoadNode entry = gateways.get(0);
-        VillageRoadNode exit  = gateways.get(1);
-        java.util.List<BlockPos> path = graph.findGatewayBlockPath(
-                entry.nodeId(), exit.nodeId());
-        if (path.isEmpty()) {
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "[test_village_traversal] No path found between "
-                    + entry.nodeId().toString().substring(0, 8) + " ("
-                    + entry.gatewayInfo().map(i -> i.role().name()).orElse("?") + ") and "
-                    + exit.nodeId().toString().substring(0, 8) + " ("
-                    + exit.gatewayInfo().map(i -> i.role().name()).orElse("?") + ")."), false);
-            return 0;
-        }
+                "[palette] edge=" + shortId + " tier=" + edge.getTier()
+                + " culture=" + maintainer
+                + " paletteId=" + palette.cultureId()),
+                false);
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "[test_village_traversal] '" + village.getName() + "' traversal "
-                + entry.nodeId().toString().substring(0, 8) + " → "
-                + exit.nodeId().toString().substring(0, 8)
-                + ": " + path.size() + " blocks, "
-                + path.get(0).toShortString() + " → "
-                + path.get(path.size() - 1).toShortString()), false);
-        return path.size();
-    }
-
-    // =========================================================================
-    // 7f Slice 3: route_segments — show segment breakdown of a trade route
-    // =========================================================================
-
-    private static int routeSegments(CommandContext<CommandSourceStack> ctx) {
-        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) return 0;
-        String routeIdStr = StringArgumentType.getString(ctx, "routeId");
-        java.util.UUID routeId;
-        try { routeId = java.util.UUID.fromString(routeIdStr); }
-        catch (IllegalArgumentException e) {
-            ctx.getSource().sendFailure(Component.literal(
-                    "[route_segments] Invalid UUID: " + routeIdStr));
-            return 0;
-        }
-        TradeRoute route = VillageSavedData.get(level).getRouteById(routeId).orElse(null);
-        if (route == null) {
-            ctx.getSource().sendFailure(Component.literal(
-                    "[route_segments] No route with ID " + routeIdStr));
-            return 0;
-        }
-        StringBuilder sb = new StringBuilder("[route_segments] Route ")
-                .append(routeIdStr, 0, Math.min(8, routeIdStr.length()))
-                .append(" (").append(route.getRouteType()).append(", ")
-                .append(route.getStatus()).append(")\n");
-        if (route.hasSegments()) {
-            sb.append("  Segments (").append(route.getSegments().size()).append("):\n");
-            for (int i = 0; i < route.getSegments().size(); i++) {
-                RouteSegment seg = route.getSegments().get(i);
-                sb.append("  [").append(i).append("] ");
-                if (seg instanceof RouteSegment.WorldEdge we) {
-                    sb.append("WorldEdge edge=").append(we.edgeId().toString().substring(0, 8))
-                      .append(" start=").append(we.startNodeId() != null
-                              ? we.startNodeId().toString().substring(0, 8) : "null");
-                } else if (seg instanceof RouteSegment.VillageTraversal vt) {
-                    sb.append("VillageTraversal village=").append(vt.villageId().toString().substring(0, 8))
-                      .append(" entry=").append(vt.entryGatewayId().toString().substring(0, 8))
-                      .append(" exit=").append(vt.exitGatewayId().toString().substring(0, 8));
-                }
-                sb.append("\n");
-            }
-        } else if (route.hasGraphPath()) {
-            sb.append("  Legacy edgeIds (").append(route.getEdgeIds().size())
-              .append(") — no segments\n");
-        } else {
-            sb.append("  Legacy TradeRoad connectionId=")
-              .append(route.getConnectionId() != null
-                      ? route.getConnectionId().toString().substring(0, 8) : "null")
-              .append("\n");
-        }
-        String report = sb.toString();
-        ctx.getSource().sendSuccess(() -> Component.literal(report), false);
+                "  surface: primary=" + blockNames(palette.surfacePrimary())
+                + " accent=" + blockNames(palette.surfaceAccent())
+                + " rare=" + blockNames(palette.surfaceRare())),
+                false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  supports: primary=" + blockNames(palette.supportPrimary())
+                + " accent=" + blockNames(palette.supportAccent())
+                + " rare=" + blockNames(palette.supportRare())),
+                false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  lighting: " + lighting.frequency() + " / " + lighting.strategy() + overrideSuffix
+                + "   base=" + blockName(palette.lightBaseBlock())
+                + " light=" + blockName(palette.lightBlock())
+                + palette.lightCapBlock().map(b -> " cap=" + blockName(b)).orElse("")),
+                false);
         return 1;
+    }
+
+    private static int forceLighting(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        RoadEdge edge = resolveEdgeOrFail(ctx, graph,
+                StringArgumentType.getString(ctx, "edgeId").toLowerCase(Locale.ROOT));
+        if (edge == null) return 0;
+
+        String freqArg = StringArgumentType.getString(ctx, "frequency").toUpperCase(Locale.ROOT);
+        String stratArg = StringArgumentType.getString(ctx, "strategy").toUpperCase(Locale.ROOT);
+        RoadLightingProfile.Frequency freq;
+        RoadLightingProfile.Strategy strat;
+        try {
+            freq = RoadLightingProfile.Frequency.valueOf(freqArg);
+            strat = RoadLightingProfile.Strategy.valueOf(stratArg);
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[force_lighting] Invalid frequency or strategy. Frequency: "
+                    + java.util.Arrays.toString(RoadLightingProfile.Frequency.values())
+                    + " Strategy: "
+                    + java.util.Arrays.toString(RoadLightingProfile.Strategy.values())));
+            return 0;
+        }
+
+        RoadLightingProfile profile = new RoadLightingProfile(freq, strat);
+        edge.setLightingOverride(profile);
+
+        CulturePaletteResolver.Resolved resolved =
+                CulturePaletteResolver.resolve(edge, graph, vData);
+
+        // Re-place lights immediately using the new profile.
+        RoadLightingPlacer.PlacementResult result = RoadLightingPlacer.placeLighting(
+                level, edge, resolved.palette(), profile, graph);
+
+        String shortId = edge.getEdgeId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[force_lighting] edge=" + shortId
+                + " override=" + freq + "/" + strat
+                + " placed=" + result.lightsPlaced()),
+                false);
+        WorldRoadSavedData.get(level).markDirty();
+        return result.lightsPlaced();
+    }
+
+    private static int lightingSummary(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        VillageSavedData vData = VillageSavedData.get(level);
+
+        int[] freqCounts = new int[RoadLightingProfile.Frequency.values().length];
+        int[] stratCounts = new int[RoadLightingProfile.Strategy.values().length];
+        int realisedEdges = 0;
+        int totalLightsPlaced = 0;
+
+        for (RoadEdge edge : graph.allEdges()) {
+            if (!edge.isRealized()) continue;
+            realisedEdges++;
+            CulturePaletteResolver.Resolved resolved =
+                    CulturePaletteResolver.resolve(edge, graph, vData);
+            RoadLightingProfile p = resolved.lighting();
+            freqCounts[p.frequency().ordinal()]++;
+            stratCounts[p.strategy().ordinal()]++;
+
+            // Count persisted light decoration positions along the edge — approximate
+            // "total lights" from the per-edge decorationPositions list.
+            totalLightsPlaced += edge.getDecorationPositions().size();
+        }
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[lighting_summary] realisedEdges=" + realisedEdges
+                + " approxLightPositions=" + totalLightsPlaced),
+                false);
+
+        StringBuilder sb = new StringBuilder("  frequencies:");
+        for (RoadLightingProfile.Frequency f : RoadLightingProfile.Frequency.values()) {
+            sb.append(' ').append(f).append('=').append(freqCounts[f.ordinal()]);
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
+
+        StringBuilder sb2 = new StringBuilder("  strategies:");
+        for (RoadLightingProfile.Strategy s : RoadLightingProfile.Strategy.values()) {
+            sb2.append(' ').append(s).append('=').append(stratCounts[s.ordinal()]);
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(sb2.toString()), false);
+        return realisedEdges;
+    }
+
+    private static int listPalettes(CommandContext<CommandSourceStack> ctx) {
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[list_palettes] Registered palettes (plus always-available Old Realm)."),
+                false);
+        for (CulturePalette p : PaletteRegistry.all().values()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + p.cultureId()
+                    + " lighting=" + p.defaultLighting().frequency() + "/"
+                    + p.defaultLighting().strategy()
+                    + " light=" + blockName(p.lightBlock())
+                    + " base=" + blockName(p.lightBaseBlock())
+                    + (p.isGreatRoadAlternate() ? " [greatRoadAlternate]" : "")),
+                    false);
+        }
+        CulturePalette or = PaletteRegistry.oldRealm();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  " + or.cultureId()
+                + " lighting=" + or.defaultLighting().frequency() + "/"
+                + or.defaultLighting().strategy()
+                + " light=" + blockName(or.lightBlock())
+                + " base=" + blockName(or.lightBaseBlock())
+                + " [great-road default]"),
+                false);
+        return PaletteRegistry.all().size() + 1;
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    @Nullable
+    private static RoadEdge resolveEdgeOrFail(CommandContext<CommandSourceStack> ctx,
+                                               WorldRoadGraph graph,
+                                               String prefix) {
+        List<RoadEdge> matches = new ArrayList<>();
+        for (RoadEdge edge : graph.allEdges()) {
+            if (edge.getEdgeId().toString().startsWith(prefix)) matches.add(edge);
+        }
+        if (matches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No edge matches prefix '" + prefix + "'."));
+            return null;
+        }
+        if (matches.size() > 1) {
+            String list = matches.stream()
+                    .limit(5)
+                    .map(e -> e.getEdgeId().toString().substring(0, 8))
+                    .reduce((a, b) -> a + ", " + b).orElse("");
+            ctx.getSource().sendFailure(Component.literal(
+                    "Ambiguous edge prefix '" + prefix + "'. Matches: " + list));
+            return null;
+        }
+        return matches.get(0);
+    }
+
+    private static String blockName(net.minecraft.world.level.block.Block b) {
+        return net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(b).getPath();
+    }
+
+    private static String blockNames(List<net.minecraft.world.level.block.Block> blocks) {
+        if (blocks.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < blocks.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(blockName(blocks.get(i)));
+        }
+        sb.append(']');
+        return sb.toString();
     }
 }

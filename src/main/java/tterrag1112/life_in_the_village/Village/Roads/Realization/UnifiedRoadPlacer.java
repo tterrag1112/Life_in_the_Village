@@ -7,7 +7,9 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.Fluids;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.OrganicRoadPlacer;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
@@ -69,7 +71,23 @@ public final class UnifiedRoadPlacer {
                                        RoadShape.RoadTier tier,
                                        RoadEdge edge,
                                        @Nullable String culture) {
+        return place(level, centerline, material, tier, edge, culture, null);
+    }
+
+    /**
+     * Palette-aware entry point (Phase 7g). If {@code palette} is non-null it
+     * is forwarded to the Phase 7e support/retaining-wall builders so great
+     * roads use their resolved palette instead of the hardcoded Old Realm set.
+     */
+    public static List<BlockPos> place(ServerLevel level,
+                                       List<BlockPos> centerline,
+                                       PathMaterial material,
+                                       RoadShape.RoadTier tier,
+                                       RoadEdge edge,
+                                       @Nullable String culture,
+                                       @Nullable CulturePalette palette) {
         if (centerline.size() < 2) return List.of();
+        CulturePalette effectivePalette = palette != null ? palette : PaletteRegistry.oldRealm();
 
         // Densify sparse waypoints to block-dense path before placement.
         // Bridge detection uses the original sparse list because detectWaterSpans
@@ -93,8 +111,9 @@ public final class UnifiedRoadPlacer {
                     GreatRoadProfile.classify(dense, profileY, level);
 
             RoadSmoother.smooth(level, dense, profileY, classes);
-            RoadSupportBuilder.build(level, dense, profileY, classes);
-            RetainingWallBuilder.build(level, dense, profileY, classes, tier.placedHalfWidth());
+            RoadSupportBuilder.build(level, dense, profileY, classes, effectivePalette);
+            RetainingWallBuilder.build(level, dense, profileY, classes,
+                    tier.placedHalfWidth(), effectivePalette);
 
             // Re-densify so road surface is placed at the updated terrain heights
             dense = densify(centerline, level);

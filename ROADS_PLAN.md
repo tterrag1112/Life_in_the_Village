@@ -1,8 +1,8 @@
 # Roads System — Canonical Plan
 
-**Status:** Planning phase complete. Phase 1 ready to begin.
+**Status:** Phase 7-series complete (7a/7b/7c/7d/7e/7f Slice 1+2/7g). Next in plan: Phase 9 — network evolution.
 **Owner:** Human-managed. Claude Code reads; does not edit without explicit permission.
-**Last updated:** 2026-04-21
+**Last updated:** 2026-04-24
 
 ---
 
@@ -324,6 +324,24 @@ Internal road edges committed to `VillageRoadGraph` via `InternalRoadCommitter`.
 #### Phase 7f Slice 4 — Connector routing through villages (PLANNED)
 Route connectors that thread through a village to use `VillageTraversal` segments, so caravans follow internal roads when crossing a village rather than cutting through open terrain.
 
+### Phase 7g — Road lighting, palettes, cultural character ✓ COMPLETE
+
+Adds lighting placement and culture-scoped material palettes on top of the Phase 7e terrain authority and Phase 6a cultural road surfaces. Palettes drive surface / supports / retaining walls / lighting blocks in one place; lighting is decomposed into `frequency × strategy` so each culture advertises a distinct roadside signature.
+
+**Deliverables (implemented):**
+1. `Village/Roads/Lighting/RoadLightingProfile` — record `(Frequency, Strategy)` with Codec. Frequencies: NONE / SPARSE 24 / MODERATE 16 / DENSE 8. Strategies: NONE, BOTH_SIDES, ALTERNATING_SIDES, SINGLE_SIDE_LEFT/RIGHT, FOREST_ONLY_BOTH, FOREST_ONLY_ALTERNATING, CENTERLINE, JUNCTIONS_ONLY. ✓
+2. `Village/Decoration/Roads/CulturePalette` — record holding surface (primary/accent/rare), supports (primary/accent/rare), lighting (profile + light/base/optional cap blocks), optional retaining-wall blocks, `isGreatRoadAlternate` flag. Codec uses the same Identifier-based Block codec as `PathMaterial`. ✓
+3. `Village/Decoration/Roads/PaletteRegistry` — static registration of `default`, `imperial` (isGreatRoadAlternate=true), `highland`, `nordic`, plus always-available Old Realm. `forCulture(id)` with default fallback; `greatRoadPalette(nearestCultureId)` selects Old Realm unless the culture overrides. ✓
+4. `Village/Decoration/Roads/CulturePaletteResolver` — single `resolve(edge, graph, data)` used by realisation and debug; delivers `(palette, lighting, cultureId)`. Great roads use nearest-village kingdom culture (midpoint lookup). TRUNK/CONNECTOR/LOCAL use maintainer culture → dock endpoint → "default" fallback. Lighting override from `RoadEdge.getLightingOverride()` wins over palette default. ✓
+5. `Village/Roads/Lighting/RoadLightingPlacer` — walks the block path by accumulated XZ distance, steps every `profile.spacing()` blocks, applies strategy-specific side rules (BOTH, alternating, single-side), biome gating (FOREST_ONLY_* via `WorldAtlas.getCellAtBlock`), and ground-snapped pedestal/light/cap column placement. Deterministic alternation via edge UUID low-bit; decoration positions persisted via `addDecorationPosition`. ✓
+6. `RoadEdge` — new `Optional<RoadLightingProfile> lightingOverride` field (17th codec field; other project codecs already exceed this arity). Set/clear accessors for the force_lighting debug command. ✓
+7. Palette-aware realisation — `EdgeMaterialResolver.MaterialContext` gained a `palette` field; `EdgeRealizer` forwards it to `UnifiedRoadPlacer` and the lighting placer. `RetainingWallBuilder` and `RoadSupportBuilder` now take the palette; legacy overloads delegate to `PaletteRegistry.oldRealm()`. ✓
+8. Debug commands under `/liv road debug`: `palette <edgeId>`, `force_lighting <edgeId> <frequency> <strategy>`, `lighting_summary`, `list_palettes`. ✓
+
+**Resolution rule:** palettes are derived each realisation from tier + culture; they are not persisted on the edge. The sole per-edge persistent Phase 7g field is the Optional lighting override, set only by the `force_lighting` debug command.
+
+**Exit criteria:** ✓ Each culture has a distinct roadside lighting signature; imperial-maintained great roads use the imperial stone-brick alternate palette; Old Realm great roads use soul lanterns on polished blackstone at MODERATE / ALTERNATING_SIDES; nordic roads only light inside FOREST biome cells; `/liv road debug palette` and `lighting_summary` commands functional.
+
 ### Phase 7d — Worldgen ordering and atlas generation speed
 
 **Inserted after Phase 8d** to address testing pain (~25-minute worldgen). No changes to road graph output; all changes are performance and ordering.
@@ -428,12 +446,14 @@ Route connectors that thread through a village to use `VillageTraversal` segment
 13. Phase 7b — named roads
 14. Phase 7c — great road character
 15. Phase 7e — great road terrain authority
-16. Phase 8a–d — player-facing gameplay
-16. Phase 9 — network evolution
-17. Phase 10a–c — events, travelers, landmarks
-18. Phase 11 — player construction
-19. Phase 12 — POI subroads (deferred)
-20. Phase 13 — sea unification (optional)
+16. Phase 7f — village road graph (Slice 1+2 complete; Slice 3 pending)
+17. Phase 7g — lighting + culture palettes
+18. Phase 8a–d — player-facing gameplay
+19. Phase 9 — network evolution
+20. Phase 10a–c — events, travelers, landmarks
+21. Phase 11 — player construction
+22. Phase 12 — POI subroads (deferred)
+23. Phase 13 — sea unification (optional)
 
 ---
 

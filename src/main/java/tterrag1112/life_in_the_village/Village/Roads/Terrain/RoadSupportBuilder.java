@@ -2,10 +2,13 @@ package tterrag1112.life_in_the_village.Village.Roads.Terrain;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.SlabType;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Roads.Terrain.GreatRoadProfile.PositionClassification;
 
 import java.util.List;
@@ -48,17 +51,29 @@ public final class RoadSupportBuilder {
     // =========================================================================
 
     /**
-     * Places support structures for all RAISED positions.
-     *
-     * @param level    server level
-     * @param dense    block-dense centerline
-     * @param profileY smoothed profile from {@link GreatRoadProfile#computeProfile}
-     * @param classes  per-position classification
+     * Legacy entry point — defaults to the Old Realm palette for backwards compat.
      */
     public static void build(ServerLevel level,
                               List<BlockPos> dense,
                               int[] profileY,
                               List<PositionClassification> classes) {
+        build(level, dense, profileY, classes, PaletteRegistry.oldRealm());
+    }
+
+    /**
+     * Places support structures for all RAISED positions using a culture palette.
+     *
+     * @param level    server level
+     * @param dense    block-dense centerline
+     * @param profileY smoothed profile from {@link GreatRoadProfile#computeProfile}
+     * @param classes  per-position classification
+     * @param palette  culture palette driving support block selection
+     */
+    public static void build(ServerLevel level,
+                              List<BlockPos> dense,
+                              int[] profileY,
+                              List<PositionClassification> classes,
+                              CulturePalette palette) {
         int n = dense.size();
 
         // Pre-compute run lengths for contiguous RAISED spans
@@ -79,13 +94,13 @@ public final class RoadSupportBuilder {
                 // Part of a long span — place pillar or span deck
                 boolean isPillarPos = (i % PILLAR_INTERVAL == 0);
                 if (isPillarPos) {
-                    placeViaductPillar(level, pos, terrainY, profile);
+                    placeViaductPillar(level, pos, terrainY, profile, palette);
                 } else {
                     placeViaductDeck(level, pos, profile);
                 }
             } else {
                 // Short span — solid fill
-                placeSolidFill(level, pos, terrainY, profile);
+                placeSolidFill(level, pos, terrainY, profile, palette);
             }
         }
     }
@@ -95,23 +110,26 @@ public final class RoadSupportBuilder {
     // =========================================================================
 
     private static void placeSolidFill(ServerLevel level, BlockPos base,
-                                        int terrainY, int profileY) {
+                                        int terrainY, int profileY,
+                                        CulturePalette palette) {
         for (int y = terrainY; y < profileY; y++) {
             BlockPos fp = new BlockPos(base.getX(), y, base.getZ());
             if (!level.isLoaded(fp)) return;
             if (!level.getBlockState(fp).isSolidRender()) {
-                level.setBlock(fp, RetainingWallBuilder.oldRealmBlock(
-                        base.getX(), y, base.getZ()), 3);
+                level.setBlock(fp, RetainingWallBuilder.supportBlock(
+                        base.getX(), y, base.getZ(), palette), 3);
             }
         }
     }
 
     private static void placeViaductPillar(ServerLevel level, BlockPos base,
-                                            int terrainY, int profileY) {
+                                            int terrainY, int profileY,
+                                            CulturePalette palette) {
+        Block pillar = pillarBlock(palette);
         for (int y = terrainY; y < profileY - 1; y++) {
             BlockPos pp = new BlockPos(base.getX(), y, base.getZ());
             if (!level.isLoaded(pp)) return;
-            level.setBlock(pp, Blocks.STONE_BRICKS.defaultBlockState(), 3);
+            level.setBlock(pp, pillar.defaultBlockState(), 3);
         }
         // Pillar cap at profileY - 1
         BlockPos cap = new BlockPos(base.getX(), profileY - 1, base.getZ());
@@ -135,6 +153,11 @@ public final class RoadSupportBuilder {
     // =========================================================================
     // Run-length pre-computation
     // =========================================================================
+
+    private static Block pillarBlock(CulturePalette palette) {
+        List<Block> primary = palette.supportPrimary();
+        return primary.isEmpty() ? Blocks.STONE_BRICKS : primary.get(0);
+    }
 
     /**
      * For each position, stores the length of the contiguous RAISED run that

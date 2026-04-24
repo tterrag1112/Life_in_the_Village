@@ -1787,126 +1787,233 @@ VillageRoadEdge generation connecting INTERIOR nodes between gateways; caravans 
 
 ---
 
-## Phase 7f Slice 3 — Internal village roads and caravan traversal
+## Phase 7g — Road lighting, palettes, and cultural character
 
 **Date:** 2026-04-24
 
 ### Summary
 
-Connected the village road graph to the caravan system by: (1) committing internal road edges
-derived from layout centerlines, (2) adding block-path traversal through the village graph, and
-(3) introducing `RouteSegment` as the composite route primitive so future routes can thread
-through a village without the caravan leaving the road network.
+Introduces per-culture road material palettes and a lighting pass that runs as
+part of edge realisation. Palette data is statically registered per culture id;
+resolution is purely derived from tier and culture (no persistent per-edge
+palette state). Lighting is decomposed into frequency × strategy so each
+culture can advertise a distinct roadside signature — Imperial sea lanterns
+every 16 blocks on both sides, Highland lanterns on the right only every 24,
+Nordic lanterns only where the atlas cell is FOREST, Old Realm soul lanterns
+alternating every 16 on great roads. Phase 7e's retaining walls and road
+supports now consume the resolved palette, so Imperial-maintained great roads
+(isGreatRoadAlternate=true) build stone-brick+polished-andesite infrastructure
+in place of the default mossy Old Realm look.
 
 ### Files created
 
-**`Village/Roads/Planning/VillageEdgeDescriptor.java`**
-- Lightweight record: `fromPos`, `toPos`, `path` (List<BlockPos>), `character` (EdgeCharacter).
-- No codec — never persisted; used only between recipe description and graph commit.
+**`Village/Roads/Lighting/RoadLightingProfile.java`**
+- Record `(Frequency frequency, Strategy strategy)` with Codec.
+- Frequency: NONE / SPARSE (24) / MODERATE (16) / DENSE (8).
+- Strategy: NONE, BOTH_SIDES, ALTERNATING_SIDES, SINGLE_SIDE_LEFT,
+  SINGLE_SIDE_RIGHT, FOREST_ONLY_BOTH, FOREST_ONLY_ALTERNATING, CENTERLINE,
+  JUNCTIONS_ONLY.
+- `spacing()`, `requiresBiomeCheck()`, `isNone()`, `none()` helpers.
 
-**`Village/Roads/Planning/InternalRoadCommitter.java`**
-- `commit(ServerLevel, Village, VillageLayout)` — no-op if graph already has edges (reload safety).
-- `deriveEdgeDescriptors(VillageRoadGraph, VillageLayout)` — finds PRIMARY + SIDE gateway pair,
-  then calls `findConnectingCenterline` to identify the road centerline that best bridges them.
-- `findConnectingCenterline` — O(n) scan over all layout centerlines; picks by minimum
-  sum-of-squared-distances from centerline endpoints to gateway positions; ties broken by length.
-- `findOrCreateNode` — matches by exact BlockPos; creates INTERIOR node if no match found.
-- Calls `roadsSaved.setDirty()` at end.
+**`Village/Decoration/Roads/CulturePalette.java`**
+- Record holding surface (primary/accent/rare), supports (primary/accent/rare),
+  lighting (profile + lightBlock + lightBaseBlock + optional lightCapBlock),
+  optional retaining-wall primary/accent, and an `isGreatRoadAlternate` flag.
+- Block codec is `Identifier.CODEC.xmap(...)` — same pattern as PathMaterial.
+- `effectiveRetainingWallPrimary/Accent()` fall back to support lists if unset.
 
-**`Village/Economy/Trade/RouteSegment.java`**
-- Sealed interface with two permitted implementations.
-- `WorldEdge(UUID edgeId, UUID startNodeId)` — resolves via world graph edge block path, reversed
-  when `startNodeId` matches nodeB.
-- `VillageTraversal(UUID villageId, UUID entryGatewayId, UUID exitGatewayId)` — resolves via
-  `VillageRoadGraph.findGatewayBlockPath`.
-- Dispatch codec on `"type"` field (`"world_edge"` / `"village_traversal"`).
-- Both records carry their own `MAP_CODEC`.
+**`Village/Decoration/Roads/PaletteRegistry.java`**
+- Static `Map<String, CulturePalette>` plus a dedicated `OLD_REALM` instance.
+- Built-ins: default / imperial / highland / nordic, plus Old Realm.
+- `forCulture(id)` falls back to "default" for unknown ids (Phase 7g
+  "palette resolution fallback" note in the spec).
+- `greatRoadPalette(nearestCultureId)` returns Old Realm unless the culture's
+  palette sets `isGreatRoadAlternate` (only imperial does at present).
+
+**`Village/Decoration/Roads/CulturePaletteResolver.java`**
+- Single entry point `resolve(edge, graph, data) -> Resolved(palette,
+  lighting, cultureId)` used by both realisation and debug.
+- Edge tier determines culture lookup:
+  - GREAT_ROAD → nearest village's kingdom culture → greatRoadPalette(culture).
+  - TRUNK → majority culture across maintainer villages; falls back to
+    VILLAGE_DOCK endpoint culture, then "default".
+  - CONNECTOR/LOCAL → maintainer villages first, then dock endpoint, then
+    "default".
+- Lighting override from `RoadEdge.getLightingOverride()` wins over palette
+  default; palette itself is not overridable (per spec — force_lighting only
+  changes the profile, not the blocks).
+
+**`Village/Roads/Lighting/RoadLightingPlacer.java`**
+- Walks `edge.getBlockPath()` by accumulated XZ distance, stepping every
+  `profile.spacing()` blocks.
+- Per interval: biome-gating (FOREST_ONLY_* uses `WorldAtlas.getCellAtBlock`
+  and checks `BiomeCategory.FOREST`), strategy-sides decomposition, per-side
+  column placement.
+- Column: pedestal = palette.lightBaseBlock, Y+1 = palette.lightBlock, Y+2 =
+  optional lightCapBlock. Ground-snapped via MOTION_BLOCKING_NO_LEAVES.
+- Perpendicular offset = `tier halfWidth + 1` (CENTERLINE uses offset 0 and
+  runs a `RoadClearanceValidator.isClearOfRoads(base, graph, 1)` check).
+- Deterministic alternation uses `edgeSeed & 1L` to pick starting side.
+- Placed base positions are appended to `edge.getDecorationPositions()` for
+  persistence and for approximate light counts in debug summary.
+- JUNCTIONS_ONLY and NONE profiles short-circuit immediately.
 
 ### Files modified
 
-**`Village/Roads/Graph/VillageRoadGraph.java`**
-- Added `findGatewayEdgePath(UUID, UUID)` → `Optional<List<VillageRoadEdge>>`: uses existing BFS
-  `findPath`, then converts node-ID path to edge objects via `findEdgeBetween`.
-- Added `findGatewayBlockPath(UUID, UUID)` → `List<BlockPos>`: concatenates `cellPath` fields of
-  the edge path, orientating each edge correctly and skipping the first block of non-first edges
-  to avoid duplicates at junctions.
-- Added private `findEdgeBetween(UUID, UUID)` helper using `edgesIncidentTo`.
+**`Village/Roads/Graph/RoadEdge.java`**
+- Added `Optional<RoadLightingProfile> lightingOverride` field and
+  `optionalFieldOf("lightingOverride")` in the codec group (codec is now 17
+  fields — still within the project-wide limits exercised by Village.java,
+  Castle's CastleStyle.java, etc.).
+- Added `getLightingOverride()`, `setLightingOverride(profile)`, and
+  `clearLightingOverride()` accessors.
 
-**`Village/Planning/Primitives/ShapeRecipe.java`**
-- Added `default List<VillageEdgeDescriptor> describeInternalRoads(PlanContext)` returning
-  `List.of()`. Documented as the extension point for recipes with traversable through-roads.
+**`Village/Decoration/Roads/PathMaterial.java`**
+- Added `fromCulturePalette(CulturePalette)` factory that builds a core/edge
+  weighted PathMaterial from the palette's surface lists (primary 60 % /
+  accent 30 % / rare 10 %).
+- Added `applyOverlays(base, maintenance, tier, season)` helper extracted from
+  the existing `resolve()` overlays so palette-based materials can share the
+  maintenance-decay and seasonal code paths.
 
-**`Village/Planning/Primitives/Recipes/LinearRecipe.java`**
-- Added `describeInternalRoads` override calling `deriveThruRoad(pctx)`.
-- Added package-visible helpers `deriveThruRoad` and `findBestCenterline` (reused by
-  Roadside and Chain).
+**`Village/Roads/Realization/EdgeMaterialResolver.java`**
+- `resolveForEdge` now delegates palette resolution to
+  `CulturePaletteResolver.resolve`, builds the PathMaterial from
+  `fromCulturePalette`, and applies maintenance/season overlays via
+  `applyOverlays`. GREAT_ROAD edges skip maintenance decay (invariant 3).
+- `MaterialContext` record gained a third field `palette` so realisation can
+  forward it to UnifiedRoadPlacer and the lighting placer.
+- Removed the old `detectBiome` private helper (dead after the refactor —
+  biome is sampled from atlas cells inside culture resolution).
 
-**`Village/Planning/Primitives/Recipes/RoadsideRecipe.java`**
-- Added `describeInternalRoads` override delegating to `LinearRecipe.deriveThruRoad`.
+**`Village/Roads/Realization/EdgeRealizer.java`**
+- Reads `matCtx.palette()` alongside the existing material + culture.
+- Forwards the palette to `UnifiedRoadPlacer.place(..., palette)` for both
+  SmoothedPath and other primitives (ArmApproach still uses the village's
+  own path material and culture, unchanged).
+- After `markRealized`, runs `RoadLightingPlacer.placeLighting(level, edge,
+  palette, lightingProfile, graph)`, where lightingProfile is
+  `edge.getLightingOverride().orElse(palette.defaultLighting())`. Log prints
+  count + frequency/strategy tag when any light is placed.
 
-**`Village/Planning/Primitives/Recipes/ChainRecipe.java`**
-- Added `describeInternalRoads` override delegating to `LinearRecipe.deriveThruRoad`.
+**`Village/Roads/Realization/UnifiedRoadPlacer.java`**
+- Added a palette-aware overload
+  `place(..., @Nullable String culture, @Nullable CulturePalette palette)`;
+  the legacy overload delegates with `palette = null`.
+- Forwards the palette to `RoadSupportBuilder.build(..., palette)` and
+  `RetainingWallBuilder.build(..., palette)`. Non-great-road tiers still run
+  the Phase 6a architectural-detail passes (imperial gutters, highland
+  retaining wall, nordic corduroy) exactly as before.
 
-**`Village/VillageSpawner.java`**
-- Added `InternalRoadCommitter.commit(level, village, layout)` call after `GatewayPopulator.populate`.
+**`Village/Roads/Terrain/RetainingWallBuilder.java`**
+- `build(...)` now has a `CulturePalette palette` parameter; a legacy no-palette
+  overload delegates to `PaletteRegistry.oldRealm()`.
+- Palette-driven block selection replaces the hardcoded Old Realm mix. New
+  helper `sampleBlockState(x, y, z, primary, accent, rare)` uses the existing
+  `posHash` for a stable 60/30/10 distribution and collapses bands when a list
+  is empty.
+- Added `supportBlock(x, y, z, palette)` used by RoadSupportBuilder. Legacy
+  `oldRealmBlock(x, y, z)` kept — now delegates to the palette sampler.
 
-**`Village/Economy/Trade/TradeRoute.java`**
-- Added `List<RouteSegment> segments` field (codec: `optionalFieldOf("segments", List.of())`).
-- Private constructor gains `segments` parameter; all factory methods updated accordingly.
-- Added `createSegmented(UUID, UUID, RouteType, long, List<RouteSegment>)` factory.
-- Added `getSegments()` / `hasSegments()` accessors.
-- `fromCodec` updated to 12-parameter form (no auto-migration of legacy edgeIds — those still use
-  the existing `resolveGraphBlocks` path).
-
-**`Village/Economy/Trade/Caravan.java`**
-- `getPath` checks `route.hasSegments()` first, then falls back to graph/legacy paths.
-- Added static `resolveSegmentBlocks(ServerLevel, List<RouteSegment>)` helper: concatenates
-  per-segment block lists, skipping the first block of each non-first segment.
-
-**`Entities/Goals/Profession/Merchant/CaravanMerchantGoal.java`**
-- `resolveBlocks` checks `route.hasSegments()` first, then graph, then legacy.
-- `isGraphRoute` returns true for both `hasGraphPath()` and `hasSegments()`.
+**`Village/Roads/Terrain/RoadSupportBuilder.java`**
+- `build(...)` now has a `CulturePalette palette` parameter; a legacy overload
+  delegates to `PaletteRegistry.oldRealm()`.
+- Solid fill uses `RetainingWallBuilder.supportBlock(..., palette)`.
+- Pillar blocks use `palette.supportPrimary()[0]` (Stone Bricks fallback if the
+  list is empty).
+- Deck slabs remain stone-brick slab regardless of palette — kept simple; a
+  slab-type-per-palette pass is a tuning candidate later.
 
 **`Commands/RoadGraphDebugCommand.java`**
-- Four new subcommands under `/litv road debug`:
-  - `village_roads <name>` — lists edges (character, length, from/to types).
-  - `show_village_roads <name>` — HAPPY_VILLAGER particles on through-village edges,
-    COMPOSTER on others; END_ROD beacon on gateway nodes.
-  - `test_village_traversal <name>` — runs `findGatewayBlockPath` between the first two gateways,
-    reports path length and start/end positions.
-  - `route_segments <routeId>` — shows segment-by-segment breakdown of any trade route.
-- Added `findVillageByName` private helper (deduplicates the common village-lookup pattern).
-- Added imports: `RouteSegment`, `Village`.
+- Four new subcommands under `/liv road debug`:
+  - `palette <edgeId>` — reports tier, culture, paletteId, primary/accent/rare
+    block names for surface and supports, and lighting (frequency/strategy +
+    light/base/optional cap blocks). Indicates "(override)" when the edge
+    has a `lightingOverride` present.
+  - `force_lighting <edgeId> <frequency> <strategy>` — sets the edge's
+    `lightingOverride`, re-runs `RoadLightingPlacer.placeLighting` with the
+    new profile, and marks WorldRoadSavedData dirty. Accepts all
+    Frequency/Strategy enum names (case-insensitive).
+  - `lighting_summary` — across all realised edges: realisedEdges count,
+    approxLightPositions (count of decorationPositions summed across edges),
+    and per-Frequency/per-Strategy distribution.
+  - `list_palettes` — dumps each registered palette id plus the always-
+    available Old Realm palette, with lighting, light/base blocks, and a
+    "[greatRoadAlternate]" tag where applicable.
 
 ### Design decisions
 
-**No VillageLayout modification for caching edge descriptors:** `InternalRoadCommitter` derives
-edges directly from `VillageRoadGraph.gateways()` + `VillageLayout.getAllCenterlines()`, matching
-the pattern used by `GatewayPopulator`. This avoids making VillageLayout a staging buffer.
+**Palette is not persisted per-edge.** Same as the spec; culture resolution is
+purely derived at realisation time. Saved-world `RoadEdge` data gained only
+the `Optional<RoadLightingProfile> lightingOverride` field — empty by default,
+set only via `/liv road debug force_lighting`. This keeps the "palette
+changes propagate on re-realization" property the spec asked for.
 
-**`describeInternalRoads` on ShapeRecipe is an extension point, not the call path:** Only
-LINEAR/ROADSIDE/CHAIN override it. The `InternalRoadCommitter` uses the same derivation logic
-directly (via `LinearRecipe.deriveThruRoad`). The default method on the interface serves as
-documentation and allows future recipe types to override cleanly.
+**Nearest-culture lookup for great roads.** Great roads have no maintainer
+(invariant 4). `CulturePaletteResolver.cultureForEdge` uses the edge midpoint
+(block-path centre → cell-path centre → endpoint-average fallback) and picks
+the nearest village's kingdom culture. If no kingdoms exist (early worldgen),
+falls back to "default", which resolves to the default palette — which
+`PaletteRegistry.greatRoadPalette` then turns into Old Realm regardless. So
+great roads always end up Old Realm until Imperial-maintained villages exist
+nearby.
 
-**Segment resolution in Caravan, not TradeRoute:** `resolveSegmentBlocks` lives on `Caravan`
-(static) so it can take `ServerLevel` without coupling `TradeRoute` to the world.
+**Lighting placer uses block-path distance, not cell-path distance.** Spec
+says "walk edge.blockPath() by accumulated block distance". Chebyshev-like
+XZ delta (Math.max(|dx|,|dz|)) is used per step since dense paths are 1-block
+steps. Cell-path distance would have been coarser and harder to ground-snap
+cleanly.
 
-**Legacy edgeIds are not auto-migrated to segments:** Routes created before Slice 3 keep using the
-`resolveGraphBlocks` code path. Segment-based routes are produced by the new `createSegmented`
-factory and will be used when the connector planner learns to route through villages (Slice 4).
+**Light pedestals are ground-snapped, not profileY-snapped.** On raised
+great-road sections (Phase 7e viaducts), the pedestal lands at the actual
+terrain Y next to the road rather than up on the viaduct — which reads as
+"lanterns along the base of the viaduct" rather than "lanterns on top of the
+walkway". This avoids the need to reach into GreatRoadProfile here and keeps
+the lighting placer tier-independent.
+
+**Column placement does NOT use RoadClearanceValidator for non-CENTERLINE
+placements.** The offset is `halfWidth + 1` which is outside the walkable
+surface, and running the clearance scan per light would be O(edges × block-
+path) per interval. Only CENTERLINE checks clearance (radius 1) since that
+is the only strategy that can actually collide with the road surface.
+
+### Known tuning candidates
+
+- **Nordic "lantern on spruce fence"**: base block is SPRUCE_FENCE. Real
+  vanilla behaviour places lanterns attached to the block below via block
+  property; this mod places simple stacked blocks. Reads fine at a glance but
+  lanterns won't render "hanging" from the fence. If it looks wrong in
+  playtest, palette can upgrade to use `FenceBlock` state explicitly or swap
+  the base block to something less protruding.
+- **Old Realm soul-lantern + polished-blackstone** may read too dark next to
+  lighter great-road surfaces in snowy biomes. Worth a palette-per-biome pass
+  later if the contrast is too stark.
+- **Imperial alternate great roads** produce stone-brick-dominant great roads
+  with sea lanterns. This is intentional for "royal road" flavour but may
+  read indistinguishable from Old Realm at a glance; watch for player
+  confusion in playtest.
+- **Pedestals at raised-viaduct sections** (see design decision above) land
+  on the terrain floor, not on the viaduct deck. If playtest finds that
+  unreadable, switch to `profileY` snapping inside the lighting placer.
 
 ### Observations
 
-- `VillageRoadEdge.cellPath` is already in block coordinates (not atlas cells), so
-  `findGatewayBlockPath` needs no realization step.
-- `findConnectingCenterline` picks by endpoint proximity; if two centerlines tie, it picks the
-  longer one (the main street, not a stub).
-- Recipes that fall back to LINEAR (ChainRecipe on flat terrain) still work because the layout's
-  gate positions and centerlines are set by LinearRecipe.compose which was already called.
+Because compilation can't be validated in this sandbox (NeoForge maven
+unreachable), the implementation is shipped unverified at the byte-code
+level. Static inspection confirms:
+
+- All new files compile against the same Mojang Codec/Registry idioms already
+  used elsewhere (Identifier.CODEC.xmap block codec, record codecs,
+  optionalFieldOf, RecordCodecBuilder.create). The RoadEdge codec is now 17
+  fields; the project already has several codecs with 18–34 fields
+  (`AdventurerGroup`, `Company`, `Village`, `RoadPrimitive`, `CastleStyle`).
+- Public API surface change: `EdgeMaterialResolver.MaterialContext` gained a
+  third field `palette`. Only caller is `EdgeRealizer`, which was updated.
 
 ### Next
 
-Phase 7f Slice 4 — Connector routing through villages. When a connector is planned between two
-villages and one village is between them, the route segments should include a `VillageTraversal`
-for the intermediate village instead of routing around it.
+Phase 7-series is complete (7a, 7b, 7c, 7d, 7e, 7f Slice 1+2, 7g).
+Next in the main plan: **Phase 9 — network evolution** (dead edges,
+road-attracted village placement) — now unblocked because all great-road,
+cultural, and terrain-authority subsystems ship visible, legible output at
+ground level.

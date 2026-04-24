@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
@@ -17,6 +18,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingPlacer;
+import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.ArrayList;
@@ -91,6 +94,7 @@ public final class EdgeRealizer {
                 EdgeMaterialResolver.resolveForEdge(level, edge, graph, data);
         PathMaterial edgeMaterial = matCtx.material();
         String culture = matCtx.culture();
+        CulturePalette edgePalette = matCtx.palette();
 
         // Build or reuse primitive chain
         List<RoadPrimitive> primitives = edge.hasPrimitives()
@@ -118,9 +122,9 @@ public final class EdgeRealizer {
                 case RoadPrimitive.ArmApproach arm ->
                         placeArm(level, arm, centerline, edge, data);
                 case RoadPrimitive.SmoothedPath sp ->
-                        UnifiedRoadPlacer.place(level, centerline, edgeMaterial, sp.tier(), edge, culture);
+                        UnifiedRoadPlacer.place(level, centerline, edgeMaterial, sp.tier(), edge, culture, edgePalette);
                 default ->
-                        UnifiedRoadPlacer.place(level, centerline, edgeMaterial, edgeTier, edge, culture);
+                        UnifiedRoadPlacer.place(level, centerline, edgeMaterial, edgeTier, edge, culture, edgePalette);
             };
 
             if (fullPath.isEmpty()) {
@@ -142,6 +146,21 @@ public final class EdgeRealizer {
                 + primitives.size() + " primitives, culture=" + culture);
 
         edge.markRealized(fullPath);
+
+        // Phase 7g lighting pass — place fixtures based on the edge's resolved
+        // profile (override first, else palette default). Runs before milestones
+        // so later decorators can read light positions from decorationPositions.
+        RoadLightingProfile lightingProfile = edge.getLightingOverride()
+                .orElse(edgePalette.defaultLighting());
+        RoadLightingPlacer.PlacementResult lightingResult =
+                RoadLightingPlacer.placeLighting(
+                        level, edge, edgePalette, lightingProfile, graph);
+        if (lightingResult.lightsPlaced() > 0) {
+            System.out.println("[EdgeRealizer] Placed " + lightingResult.lightsPlaced()
+                    + " light(s) on edge " + shortId
+                    + " [" + lightingProfile.frequency() + "/"
+                    + lightingProfile.strategy() + "]");
+        }
 
         // Decoration passes (run even on re-realization; decorators skip already-placed positions)
         MilestoneDecorator.decorate(level, edge, graph);       // GREAT_ROAD only

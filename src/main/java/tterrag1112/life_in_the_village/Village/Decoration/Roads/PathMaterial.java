@@ -443,6 +443,64 @@ public class PathMaterial {
                 ));
     }
 
+    // =========================================================================
+    // CulturePalette → PathMaterial conversion (Phase 7g)
+    // =========================================================================
+
+    /**
+     * Builds a PathMaterial from a {@link CulturePalette}'s surface block lists.
+     *
+     * <p>Weights: primary 60 % total, accent 30 %, rare 10 %, distributed evenly
+     * within each list. The edge ring reuses the accent list so the outer blend
+     * reads as a softer version of the primary. Empty lists are tolerated —
+     * they simply contribute no weight.
+     *
+     * <p>This returns a raw palette-based material; call
+     * {@link #applyOverlays} to layer maintenance decay and seasonal overlays
+     * on top, mirroring {@link #resolve}'s downstream passes.
+     */
+    public static PathMaterial fromCulturePalette(CulturePalette palette) {
+        List<WeightedBlock> core = new ArrayList<>();
+        addWeighted(core, palette.surfacePrimary(), 0.60f);
+        addWeighted(core, palette.surfaceAccent(),  0.30f);
+        addWeighted(core, palette.surfaceRare(),    0.10f);
+
+        List<WeightedBlock> edge = new ArrayList<>();
+        // Edge blend: accent blocks, plus a dash of primary to read as the same road.
+        addWeighted(edge, palette.surfaceAccent(),  0.70f);
+        addWeighted(edge, palette.surfacePrimary(), 0.30f);
+
+        if (core.isEmpty()) core.add(new WeightedBlock(Blocks.COBBLESTONE, 1.0f));
+        if (edge.isEmpty()) edge.add(new WeightedBlock(Blocks.GRAVEL, 1.0f));
+
+        return new PathMaterial("palette_" + palette.cultureId(), core, edge);
+    }
+
+    private static void addWeighted(List<WeightedBlock> out, List<Block> blocks, float totalWeight) {
+        if (blocks == null || blocks.isEmpty() || totalWeight <= 0) return;
+        float perBlock = totalWeight / blocks.size();
+        for (Block b : blocks) out.add(new WeightedBlock(b, perBlock));
+    }
+
+    /**
+     * Applies maintenance-decay and seasonal overlays to a base PathMaterial
+     * built from a palette. {@code tier} is used to decide whether winter snow
+     * applies (dirt tiers only).
+     */
+    public static PathMaterial applyOverlays(PathMaterial base,
+                                              int maintenance,
+                                              RoadShape.RoadTier tier,
+                                              @Nullable SeasonTracker.Season season) {
+        PathMaterial result = base;
+        if (maintenance < 40) result = applyMaintenanceDecay(result, maintenance);
+        if (season == SeasonTracker.Season.WINTER && isDirtTier(tier)) {
+            result = applyWinterDirtOverlay(result);
+        } else if (season == SeasonTracker.Season.AUTUMN) {
+            result = applyAutumnEdge(result);
+        }
+        return result;
+    }
+
     /**
      * Old Realm great-road palette: ancient, eternally weathered, durable.
      * This palette is applied to all GREAT_ROAD edges regardless of culture or
