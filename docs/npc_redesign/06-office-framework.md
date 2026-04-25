@@ -444,4 +444,148 @@ for elective voting weights.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 0 implementation (task 06)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Office`
+(`OrgType`, `SelectionMethod`, `OfficePower`, `Competence`,
+`OfficeDefinition`, `OfficeHolding`, `OfficeState`, `OfficeRegistry`).
+Pattern parallels prior Phase 0 components.
+
+**OfficeId shape — registry-backed strings.** Spec uses string IDs
+plus a static `OfficeRegistry` (line 196). Implementation matches:
+`OfficeRegistry` is a class with `Map<String, OfficeDefinition>` and
+public string constants for each known id (`VILLAGE_LEADER`,
+`GUILD_MASTER`, etc.) so call sites are still type-checked at compile
+time. Lazy-init on first access; idempotent.
+
+**Record name.** Spec calls the dynamic record `OfficeHolding`; the
+task prompt template called it `OfficeHolder`. Used spec name. Two
+factory methods on the record (`heldByNpc`, `heldByPlayer`, `vacant`)
+keep call sites readable since the holder UUIDs use
+`Optional<UUID>` to disambiguate vacant / NPC / player.
+
+**Multi-seat (LOCKED for v1).** Spec line 96–98 lists
+`kingdom_council_seat` as multi-seat (one seat per village leader)
+but flags it "stubbed in v1". `OfficeState` uses
+`Map<String, OfficeHolding>` (single-seat per id). Phase 3 extends
+multi-seat by either (a) mangling per-seat ids
+(`kingdom_council_seat:&lt;villageId&gt;`) or (b) promoting the
+value type to `List<OfficeHolding>`; either is non-breaking because
+nothing reads council seats in Phase 0. Documented on `OfficeState`
+class.
+
+**Attachment shape (per spec section "Persistence" line 308).**
+Each org instance owns its own `OfficeState`:
+- `Village` — instance field, codec extended with `optionalFieldOf("offices")`.
+- `GuildData` — record's 5th field; codec extended; immutable wrappers
+  (`withRefresh`, `withGuildmaster`) preserve the offices reference.
+  A 4-arg compatibility constructor delegates to the new 5-arg
+  canonical constructor so existing call sites compile unchanged.
+- `Company` — instance field, codec extended with optional offices.
+  Constructor pre-seeds `company_owner` with the player owner UUID.
+- `Kingdom` — instance field, codec extended.
+
+Village offices are NOT held in a `Map<UUID, OfficeState>` on
+`VillageSavedData` — the spec's wording suggests that shape, but
+since `Village` is itself an instance class with its own codec,
+attaching directly to `Village` is cleaner and avoids a parallel
+data structure. Functionally identical for queries by villageId.
+
+**Temple offices — registered but unattached.** Spec line 100
+"Temple (stubbed in v1)" — there is no per-temple data class in the
+codebase (only `BuildingType.TEMPLE` and plain `Building` records).
+`temple_high_priest` is registered in `OfficeRegistry` so the
+definition exists, but no entity hosts an `OfficeState` for it yet.
+The `findOfficesHeldBy` walker therefore never returns matches in
+the TEMPLE bucket. When Phase 3 lands a per-temple instance class
+(or chooses to attach to the host `Village`), point `OfficeState`
+there and the office becomes live. Docs/spec/Phase3 to decide.
+
+**Spawn-time pre-population.** Per task prompt (and consistent with
+prior sessions' empty-on-spawn pattern) — every org's
+`OfficeState` is pre-populated as vacant via `OfficeState.emptyFor(orgType, orgId)`
+when the org is constructed. The spec's "auto-fill via meritocratic"
+behaviour at construction is deferred to Phase 3 along with the
+selection-engine logic; this avoids needing to query candidate NPCs
+at construction time, which is awkward inside codec deserialisation.
+
+**Cross-entity walker (`findOfficesHeldBy`).** Iterates every
+Village (via `VillageSavedData.getAllVillages`), GuildData (via
+`getAllGuilds` — newly added accessor), Kingdom (via
+`getAllKingdoms`), and Company (via `CompanySavedData.getAllCompanies`).
+At v1 scale (low hundreds of orgs total) this is sub-millisecond
+work; documented on the method.
+
+**Profession eligibility substitutions.** Spec eligibility lists
+reference `SCRIBE` and `HEALER` professions that aren't in the
+current `Profession` enum (those land in Phase 2). Substitutions:
+- `village_treasurer` — spec `[MERCHANT, SCRIBE]` → impl
+  `[MERCHANT, SCHOLAR]`.
+- `village_bailiff` — spec `[GUARD, SCRIBE]` → impl `[GUARD]`.
+- `village_scribe` — spec `[SCRIBE]` → impl `[SCHOLAR]`.
+- `guild_treasurer` — spec `[MERCHANT, SCRIBE]` → impl `[MERCHANT]`.
+- `guild_registrar` — spec `[SCRIBE]` → impl `[SCHOLAR]`.
+- `company_bookkeeper` — spec `[MERCHANT, SCRIBE]` → impl `[MERCHANT]`.
+
+Offices with empty eligibility (e.g. `guild_master` —
+guild-type-specific, decided in Phase 3) just stay vacant in v1.
+
+**Migration on load.** Each entity's codec deserialiser checks for
+a stored `OfficeState`; if absent (legacy save), creates an empty
+state and seeds the appropriate office from the legacy field:
+- `Village.villageLeaderId` → `village_leader` NPC holding,
+  `actualSelection = ASCENSION`.
+- `GuildData.guildmasterId` (skipping the `00000000-...` sentinel) →
+  `guild_master` NPC holding, `actualSelection = MERITOCRATIC`.
+- `Kingdom.rulerPlayerId` (player) or `rulerEntityId` (NPC) →
+  `kingdom_king` holding, `actualSelection = HEREDITARY`.
+- `Company.ownerPlayerId` is seeded by the constructor (so it's
+  populated for both fresh and loaded companies). The codec's
+  `fromCodec` overrides with stored offices when present.
+
+Migration tick fields are zeroed (`termStartTick = 0L`, `termEndTick = 0L`)
+since the original tick of appointment is unknown. Phase 3 selection
+logic should treat `termStartTick == 0L` as a migration-marked
+holding if it cares.
+
+**Player vs NPC holder.** `OfficeHolding` carries
+`Optional<UUID> holderNpcId` AND `Optional<UUID> holderPlayerId` —
+exactly one set when held, both empty when vacant. The
+`/office set` debug command picks player vs NPC by checking whether
+the supplied UUID matches an online player at command time;
+documented on the handler. Phase 3 will likely add an explicit
+`/office set-player` / `/office set-npc` form once selection methods
+ship.
+
+**Debug command split.** `/npc offices <uuid>` lives on the
+shared `/npc` root (consistent with `/npc traits|memory|knowledge|mood|skills`).
+The org-side commands (`info / set / vacate / list-all`) live under
+a new `/office` root in `OfficeDebugCommand`, registered in
+`ModModEvents.onRegisterCommands` alongside the other commands.
+
+**Not implemented in this session (deferred per spec / Phase 0 scope):**
+- Selection-method logic for everything except a stubbed
+  `MERITOCRATIC` placeholder. Phase 3 implements all 7 methods.
+- Office-power consumption (no behaviour reads `OfficePower`).
+- Term-end firing / auto-vacate. Phase 3.
+- Vacancy-specific incidents (e.g. treasurer vacant → tax
+  losses). Phase 3.
+- Profile-GUI display of "Treasurer of Oakford"-style office tags.
+  UI deferred consistent with prior Phase 0 sessions.
+- Wiring existing leadership-driven code (pay flows, kingdom
+  mandates, etc.) to read from `OfficeState`. Legacy fields
+  stay readable; Phase 3 cuts over.
+
+**Prompt↔spec naming mismatches (for the prompt-template
+maintainer):**
+- Prompt's `OfficeId` enum vs spec's string IDs + registry.
+  Used spec.
+- Prompt's `OfficeHolder` vs spec's `OfficeHolding`. Used spec.
+- Prompt's `OfficeSelectionMethod` enum vs spec's
+  `SelectionMethod` enum. Used spec.
+- Prompt's `village_healer` office vs spec's slate (no
+  `village_healer`). Used spec slate.
+- Prompt's `OfficeState.emptyFor(entityType)` vs my
+  `OfficeState.emptyFor(orgType, orgId)`. The orgId is needed so
+  pre-populated holdings carry the correct `orgId` reference;
+  documented on the static factory.

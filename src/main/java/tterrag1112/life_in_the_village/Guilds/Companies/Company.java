@@ -169,14 +169,18 @@ public class Company {
                     Codec.LONG.optionalFieldOf("treasuryBronze", 0L)
                             .forGetter(Company::getTreasuryBronze),
                     Codec.BOOL.optionalFieldOf("isActive", true)
-                            .forGetter(Company::isActive)
+                            .forGetter(Company::isActive),
+                    tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
+                            .optionalFieldOf("offices")
+                            .forGetter(c -> java.util.Optional.ofNullable(c.offices))
             ).apply(i, Company::fromCodec));
 
     private static Company fromCodec(UUID companyId, String name,
                                      UUID ownerPlayerId, UUID homeVillageId,
                                      List<UUID> buildingIds, List<CompanyWorker> workers,
                                      WorkSchedule schedule, List<PriceOverride> prices,
-                                     long treasury, boolean active) {
+                                     long treasury, boolean active,
+                                     java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices) {
         Company c = new Company(companyId, name, ownerPlayerId,
                 homeVillageId, schedule);
         c.buildingIds.addAll(buildingIds);
@@ -184,6 +188,8 @@ public class Company {
         prices.forEach(p -> c.priceOverrides.put(p.itemId(), p));
         c.treasuryBronze = treasury;
         c.isActive = active;
+        // Stored offices win over the constructor-seeded migration state.
+        offices.ifPresent(s -> c.offices = s);
         return c;
     }
 
@@ -201,6 +207,12 @@ public class Company {
     private final Map<String, PriceOverride> priceOverrides = new LinkedHashMap<>();
     private long treasuryBronze = 0L;
     private boolean isActive = true;
+    /**
+     * Office state for this company. Phase 0 storage only — see
+     * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
+     * {@link #ownerPlayerId} during the migration window; Phase 3 cuts over.
+     */
+    private tterrag1112.life_in_the_village.Npc.Office.OfficeState offices;
     public static final UUID NO_BUILDING = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
 
@@ -215,6 +227,24 @@ public class Company {
         this.ownerPlayerId = ownerPlayerId;
         this.homeVillageId = homeVillageId;
         this.workSchedule  = schedule;
+        this.offices       = tterrag1112.life_in_the_village.Npc.Office.OfficeState
+                .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.COMPANY, this.companyId);
+        // Seed company_owner with the player owner (companies are
+        // owner-by-investment per spec).
+        if (ownerPlayerId != null
+                && !ownerPlayerId.equals(UUID.fromString("00000000-0000-0000-0000-000000000000"))) {
+            this.offices.set(
+                    tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByPlayer(
+                            tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
+                            this.companyId, ownerPlayerId, 0L, 0L,
+                            tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
+        }
+    }
+
+    /** Office state for this company; never {@code null} after construction. */
+    public tterrag1112.life_in_the_village.Npc.Office.OfficeState getOffices() {
+        return offices;
     }
 
     public static Company create(String name, UUID ownerPlayerId,

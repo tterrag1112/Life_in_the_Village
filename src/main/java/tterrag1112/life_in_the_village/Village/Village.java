@@ -47,6 +47,14 @@ public class Village {
     private long                       treasuryBronze = 0L;
     @Nullable private UUID             villageLeaderId = null;
 
+    /**
+     * Office state for this village. Phase 0 storage only — see
+     * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
+     * the legacy {@link #villageLeaderId} during the migration window;
+     * Phase 3 cuts over.
+     */
+    private tterrag1112.life_in_the_village.Npc.Office.OfficeState offices;
+
     /** Transient: last computed size tier. Null until first access; recomputed after building count changes. */
     @Nullable private transient VillageSizeTier storedSizeTier = null;
 
@@ -265,6 +273,8 @@ public class Village {
         this.needs             = new EnumMap<>(NeedCategory.class);
         this.lastNeedsUpdate   = -1L;
         this.villageType       = villageType;
+        this.offices           = tterrag1112.life_in_the_village.Npc.Office.OfficeState
+                .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.VILLAGE, this.id);
     }
 
     public Village(String name, String villageType) {
@@ -329,12 +339,15 @@ public class Village {
                             .forGetter(v -> Optional.ofNullable(v.dockNodeId)),
                     Codec.BOOL
                             .optionalFieldOf("useGraphConnector", false)
-                            .forGetter(Village::useGraphConnector)
+                            .forGetter(Village::useGraphConnector),
+                    tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
+                            .optionalFieldOf("offices")
+                            .forGetter(v -> Optional.ofNullable(v.offices))
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
                                layoutMeta, villageType, dockNodeId,
-                               useGraphConnector) -> {
+                               useGraphConnector, offices) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -346,9 +359,30 @@ public class Village {
                 layoutMeta.applyTo(v);
                 dockNodeId.ifPresent(v::setDockNodeId);
                 v.useGraphConnector = useGraphConnector;
+                // OfficeState load: stored value wins; otherwise migrate the
+                // legacy villageLeaderId into a vacant-by-default state.
+                if (offices.isPresent()) {
+                    v.offices = offices.get();
+                } else {
+                    v.offices = tterrag1112.life_in_the_village.Npc.Office.OfficeState
+                            .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.VILLAGE, v.id);
+                    if (v.villageLeaderId != null) {
+                        v.offices.set(
+                                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.VILLAGE_LEADER,
+                                tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByNpc(
+                                        tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.VILLAGE_LEADER,
+                                        v.id, v.villageLeaderId, 0L, 0L,
+                                        tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.ASCENSION));
+                    }
+                }
                 return v;
             })
     );
+
+    /** Office state for this village; never {@code null} after construction. */
+    public tterrag1112.life_in_the_village.Npc.Office.OfficeState getOffices() {
+        return offices;
+    }
 
     // =========================================================================
     // IDENTITY

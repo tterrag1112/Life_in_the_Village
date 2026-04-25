@@ -666,6 +666,23 @@ public class VillageSavedData extends SavedData implements
 
     public void addGuild(GuildData guild) { guilds.add(guild); setDirty(); }
 
+    public List<GuildData> getAllGuilds() { return List.copyOf(guilds); }
+
+    /**
+     * Replaces an existing guild record (matched by {@code guildId}) with
+     * the supplied one. Used after office mutations on the immutable
+     * GuildData record so the change actually persists.
+     */
+    public void replaceGuild(GuildData updated) {
+        for (int i = 0; i < guilds.size(); i++) {
+            if (guilds.get(i).guildId().equals(updated.guildId())) {
+                guilds.set(i, updated);
+                setDirty();
+                return;
+            }
+        }
+    }
+
     public Optional<GuildData> getGuildForVillage(UUID villageId) {
         return guilds.stream().filter(g -> g.villageId().equals(villageId)).findFirst();
     }

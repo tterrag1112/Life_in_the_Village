@@ -23,6 +23,7 @@ import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodEvent;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
 import tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
@@ -147,7 +148,12 @@ public final class NpcDebugCommand {
                                                     return b.buildFuture();
                                                 })
                                                 .then(Commands.argument("xp", FloatArgumentType.floatArg(0f, 40000f))
-                                                        .executes(NpcDebugCommand::handleSkillsSet))))))
+                                                        .executes(NpcDebugCommand::handleSkillsSet)))))
+
+                // ── /npc offices <uuid> ──────────────────────────────────────
+                .then(Commands.literal("offices")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleOfficesList)))
         );
     }
 
@@ -591,6 +597,38 @@ public final class NpcDebugCommand {
 
     private static int handleSkillsSet(CommandContext<CommandSourceStack> ctx) {
         return handleSkillsMutation(ctx, false);
+    }
+
+    // =========================================================================
+    // Offices (cross-entity walker)
+    // =========================================================================
+
+    private static int handleOfficesList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID uuid = UuidArgument.getUuid(ctx, "uuid");
+        long now = src.getLevel().getGameTime();
+
+        List<OfficeRegistry.Match> matches = OfficeRegistry.findOfficesHeldBy(uuid, src.getLevel());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Offices held by §f").append(uuid).append("§e ===");
+        if (matches.isEmpty()) {
+            sb.append("\n§7(none)");
+        } else {
+            for (OfficeRegistry.Match m : matches) {
+                long days = m.holding().daysRemaining(now);
+                String termDisplay = days < 0 ? "indefinite" : days + "d remaining";
+                sb.append(String.format(Locale.ROOT,
+                        "%n  §6%s §f%s §7(%s) §e%s§7 — %s",
+                        m.orgType().name().toLowerCase(Locale.ROOT),
+                        m.orgDisplayName(),
+                        m.orgId(),
+                        m.holding().officeId(),
+                        termDisplay));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
     }
 
     private static int handleSkillsMutation(CommandContext<CommandSourceStack> ctx, boolean add) {

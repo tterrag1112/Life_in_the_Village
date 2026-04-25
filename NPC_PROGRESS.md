@@ -53,12 +53,16 @@ save/load. No behavior change yet.
     - [x] Migration: existing per-profession progression maps to
       primary skill
     - [x] `/npc skills <uuid>` debug command (list / add / set)
-- [ ] **06** Implement office framework data structures
-    - [ ] `OfficeId`, `OfficeHolder`, `OfficeState`, `OfficeSelectionMethod`
-    - [ ] Office attachment points: village, guild, company, temple,
-      kingdom (storage only)
-    - [ ] No selection logic yet (that's Phase 3)
-    - [ ] `/npc offices <uuid>` debug command
+- [x] **06** Implement office framework data structures
+    - [x] `OfficeDefinition`, `OfficeHolding`, `OfficeState`,
+      `SelectionMethod`, `OfficePower`, `Competence`, `OrgType`
+    - [x] Office attachment points: village, guild, company, kingdom
+      (storage only). Temple offices have no per-instance host class
+      yet — `temple_high_priest` registered but unattached; documented
+      in 06 Revision Notes.
+    - [x] No selection logic yet (that's Phase 3)
+    - [x] `/npc offices <uuid>` and `/office {info,set,vacate,list-all}`
+      debug commands
 - [ ] **Exit criteria**: spawn a new NPC; all new components persist
   across save/load; existing behavior unchanged; debug commands
   show all new state
@@ -348,8 +352,31 @@ yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
 
-**Phase 0 is 5 of 6 done.** Only the office framework (doc 06)
-remains before phase-exit testing.
+**Phase 0 is COMPLETE.** All six components shipped:
+- 01 TraitVector
+- 02 NpcMemoryLog
+- 03 NpcKnowledgeLedger
+- 04 NpcMoodState
+- 05 SkillComponent
+- 06 Office framework (OfficeDefinition / OfficeHolding / OfficeState
+  attached to Village, GuildData, Company, Kingdom)
+
+Legacy field migrations on load (kept readable for one release each):
+- `AppearanceComponent.traits` (legacy `PersonalityTrait`) → `TraitVector`
+- `NpcProfessionXp.npcProfXp` int → `SkillComponent` primary skill XP
+- `Village.villageLeaderId` → `OfficeState` `village_leader` holding
+- `GuildData.guildmasterId` → `OfficeState` `guild_master` holding
+- `Kingdom.rulerEntityId / rulerPlayerId` → `OfficeState` `kingdom_king`
+- `Company.ownerPlayerId` → `OfficeState` `company_owner` (player)
+
+Daily-tick subsystem (`npc_daily_decay`, interval 24000) walks every
+loaded TownspersonMob and runs memory decay + mood drift toward
+baseline.
+
+**Phase 0 exit-criteria scenario** (from `NPC_PLAN.md`) — verification
+deferred until a successful local build run. Network-blocked sandbox
+prevents Gradle dependency resolution; every component reviewed
+manually + by Explore agent against the known-working pattern.
 
 **Template pattern established for the remaining Phase 0 components**:
 - New subsystem package under `Npc.<Subsystem>` (e.g. `Npc.Memory`).
