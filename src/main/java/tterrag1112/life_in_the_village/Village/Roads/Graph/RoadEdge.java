@@ -1,6 +1,8 @@
 package tterrag1112.life_in_the_village.Village.Roads.Graph;
 
+import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
@@ -66,77 +68,118 @@ public class RoadEdge {
     private static final Codec<UUID> UUID_CODEC =
             Codec.STRING.xmap(UUID::fromString, UUID::toString);
 
-    public static final Codec<RoadEdge> CODEC = RecordCodecBuilder.create(i -> i.group(
-            UUID_CODEC.fieldOf("edgeId")
-                    .forGetter(e -> e.edgeId),
-            UUID_CODEC.fieldOf("nodeAId")
-                    .forGetter(e -> e.nodeAId),
-            UUID_CODEC.fieldOf("nodeBId")
-                    .forGetter(e -> e.nodeBId),
-            Codec.LONG.listOf()
-                    .optionalFieldOf("cellPath", new ArrayList<>())
-                    .forGetter(e -> e.cellPath),
-            BlockPos.CODEC.listOf()
-                    .optionalFieldOf("blockPath", new ArrayList<>())
-                    .forGetter(e -> e.blockPath),
-            EdgeTier.CODEC.fieldOf("tier")
-                    .forGetter(e -> e.tier),
-            MeanderProfile.CODEC.fieldOf("meanderProfile")
-                    .forGetter(e -> e.meanderProfile),
-            Codec.INT.optionalFieldOf("maintenance", 100)
-                    .forGetter(e -> e.maintenance),
-            Codec.LONG.optionalFieldOf("trafficCounter", 0L)
-                    .forGetter(e -> e.trafficCounter),
-            UUID_CODEC.listOf()
-                    .optionalFieldOf("maintainerVillageIds", new ArrayList<>())
-                    .forGetter(e -> new ArrayList<>(e.maintainerVillageIds)),
-            Codec.LONG.listOf()
-                    .optionalFieldOf("staleCells", new ArrayList<>())
-                    .forGetter(e -> new ArrayList<>(e.staleCells)),
-            Codec.BOOL.optionalFieldOf("realized", false)
-                    .forGetter(e -> e.realized),
-            RoadPrimitive.CODEC.listOf()
-                    .optionalFieldOf("primitives", new ArrayList<>())
-                    .forGetter(e -> e.primitives != null ? e.primitives : new ArrayList<>()),
-            BlockPos.CODEC.listOf()
-                    .optionalFieldOf("decorationPositions", new ArrayList<>())
-                    .forGetter(e -> e.decorationPositions),
-            Codec.STRING.optionalFieldOf("roadName")
-                    .forGetter(e -> e.roadName),
-            GreatRoadCharacter.CODEC.optionalFieldOf("character")
-                    .forGetter(e -> e.character),
-            RoadLightingProfile.CODEC.optionalFieldOf("lightingOverride")
-                    .forGetter(e -> e.lightingOverride),
-            DeadEdgeState.CODEC.optionalFieldOf("deadState")
-                    .forGetter(e -> e.deadState)
-    ).apply(i, RoadEdge::fromCodec));
-
-    private static RoadEdge fromCodec(
+    /**
+     * Carrier record for the 16 base fields of {@link RoadEdge}.
+     * Used internally to keep each {@code MapCodec} group within DataFixerUpper's
+     * 16-field arity limit while preserving a single, flat JSON object on disk.
+     */
+    private record BaseTuple(
             UUID edgeId, UUID nodeAId, UUID nodeBId,
             List<Long> cellPath, List<BlockPos> blockPath,
             EdgeTier tier, MeanderProfile meanderProfile,
             int maintenance, long trafficCounter,
-            List<UUID> maintainerVillageIds, List<Long> staleList,
+            List<UUID> maintainerVillageIds, List<Long> staleCells,
             boolean realized, List<RoadPrimitive> primitives,
             List<BlockPos> decorationPositions,
             Optional<String> roadName,
-            Optional<GreatRoadCharacter> character,
+            Optional<GreatRoadCharacter> character) {}
+
+    /**
+     * Carrier record for the optional Phase 7g+ extension fields. Bundled into
+     * a separate {@code MapCodec} so the combined codec stays under the 16-field
+     * arity ceiling. Both fields are merged into the same top-level JSON object
+     * via {@link Codec#mapPair}, so the on-disk shape is unchanged from a flat
+     * 18-field codec.
+     */
+    private record ExtrasTuple(
             Optional<RoadLightingProfile> lightingOverride,
-            Optional<DeadEdgeState> deadState) {
+            Optional<DeadEdgeState> deadState) {}
+
+    private static final MapCodec<BaseTuple> BASE_MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUID_CODEC.fieldOf("edgeId")
+                    .forGetter(BaseTuple::edgeId),
+            UUID_CODEC.fieldOf("nodeAId")
+                    .forGetter(BaseTuple::nodeAId),
+            UUID_CODEC.fieldOf("nodeBId")
+                    .forGetter(BaseTuple::nodeBId),
+            Codec.LONG.listOf()
+                    .optionalFieldOf("cellPath", new ArrayList<>())
+                    .forGetter(BaseTuple::cellPath),
+            BlockPos.CODEC.listOf()
+                    .optionalFieldOf("blockPath", new ArrayList<>())
+                    .forGetter(BaseTuple::blockPath),
+            EdgeTier.CODEC.fieldOf("tier")
+                    .forGetter(BaseTuple::tier),
+            MeanderProfile.CODEC.fieldOf("meanderProfile")
+                    .forGetter(BaseTuple::meanderProfile),
+            Codec.INT.optionalFieldOf("maintenance", 100)
+                    .forGetter(BaseTuple::maintenance),
+            Codec.LONG.optionalFieldOf("trafficCounter", 0L)
+                    .forGetter(BaseTuple::trafficCounter),
+            UUID_CODEC.listOf()
+                    .optionalFieldOf("maintainerVillageIds", new ArrayList<>())
+                    .forGetter(BaseTuple::maintainerVillageIds),
+            Codec.LONG.listOf()
+                    .optionalFieldOf("staleCells", new ArrayList<>())
+                    .forGetter(BaseTuple::staleCells),
+            Codec.BOOL.optionalFieldOf("realized", false)
+                    .forGetter(BaseTuple::realized),
+            RoadPrimitive.CODEC.listOf()
+                    .optionalFieldOf("primitives", new ArrayList<>())
+                    .forGetter(BaseTuple::primitives),
+            BlockPos.CODEC.listOf()
+                    .optionalFieldOf("decorationPositions", new ArrayList<>())
+                    .forGetter(BaseTuple::decorationPositions),
+            Codec.STRING.optionalFieldOf("roadName")
+                    .forGetter(BaseTuple::roadName),
+            GreatRoadCharacter.CODEC.optionalFieldOf("character")
+                    .forGetter(BaseTuple::character)
+    ).apply(i, BaseTuple::new));
+
+    private static final MapCodec<ExtrasTuple> EXTRAS_MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+            RoadLightingProfile.CODEC.optionalFieldOf("lightingOverride")
+                    .forGetter(ExtrasTuple::lightingOverride),
+            DeadEdgeState.CODEC.optionalFieldOf("deadState")
+                    .forGetter(ExtrasTuple::deadState)
+    ).apply(i, ExtrasTuple::new));
+
+    public static final Codec<RoadEdge> CODEC =
+            Codec.mapPair(BASE_MAP_CODEC, EXTRAS_MAP_CODEC).codec().xmap(
+                    pair -> fromCodec(pair.getFirst(), pair.getSecond()),
+                    edge -> Pair.of(toBaseTuple(edge), toExtrasTuple(edge)));
+
+    private static RoadEdge fromCodec(BaseTuple base, ExtrasTuple extras) {
         RoadEdge e = new RoadEdge(
-                edgeId, nodeAId, nodeBId,
-                new ArrayList<>(cellPath), new ArrayList<>(blockPath),
-                tier, meanderProfile,
-                maintenance, trafficCounter,
-                new ArrayList<>(maintainerVillageIds), new HashSet<>(staleList),
-                realized);
-        e.primitives = primitives.isEmpty() ? null : new ArrayList<>(primitives);
-        e.decorationPositions = new ArrayList<>(decorationPositions);
-        e.roadName = roadName;
-        e.character = character;
-        e.lightingOverride = lightingOverride;
-        e.deadState = deadState;
+                base.edgeId(), base.nodeAId(), base.nodeBId(),
+                new ArrayList<>(base.cellPath()), new ArrayList<>(base.blockPath()),
+                base.tier(), base.meanderProfile(),
+                base.maintenance(), base.trafficCounter(),
+                new ArrayList<>(base.maintainerVillageIds()), new HashSet<>(base.staleCells()),
+                base.realized());
+        e.primitives = base.primitives().isEmpty() ? null : new ArrayList<>(base.primitives());
+        e.decorationPositions = new ArrayList<>(base.decorationPositions());
+        e.roadName = base.roadName();
+        e.character = base.character();
+        e.lightingOverride = extras.lightingOverride();
+        e.deadState = extras.deadState();
         return e;
+    }
+
+    private static BaseTuple toBaseTuple(RoadEdge e) {
+        return new BaseTuple(
+                e.edgeId, e.nodeAId, e.nodeBId,
+                e.cellPath, e.blockPath,
+                e.tier, e.meanderProfile,
+                e.maintenance, e.trafficCounter,
+                new ArrayList<>(e.maintainerVillageIds), new ArrayList<>(e.staleCells),
+                e.realized,
+                e.primitives != null ? e.primitives : new ArrayList<>(),
+                e.decorationPositions,
+                e.roadName, e.character);
+    }
+
+    private static ExtrasTuple toExtrasTuple(RoadEdge e) {
+        return new ExtrasTuple(e.lightingOverride, e.deadState);
     }
 
     // ── Fields ───────────────────────────────────────────────────────────────
