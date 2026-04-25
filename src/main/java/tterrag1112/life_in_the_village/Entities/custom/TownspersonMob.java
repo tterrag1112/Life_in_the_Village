@@ -50,6 +50,7 @@ import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitDriftLog;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
+import tterrag1112.life_in_the_village.Npc.Verbs.NpcVerbCooldowns;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
@@ -130,6 +131,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final NpcMoodState mood = new NpcMoodState();
     private final SkillComponent skills = new SkillComponent();
     private final LifeGoalSet lifeGoals = new LifeGoalSet();
+    private final NpcVerbCooldowns verbCooldowns = new NpcVerbCooldowns();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -467,6 +469,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Active + history life goals; see {@code docs/npc_redesign/07-life-goals.md}. */
     public LifeGoalSet getLifeGoals() {
         return lifeGoals;
+    }
+
+    /** Verb cooldown log; see {@code docs/npc_redesign/09-player-verbs.md}. */
+    public NpcVerbCooldowns getVerbCooldowns() {
+        return verbCooldowns;
     }
 
     public void clearTraits() {
@@ -1164,6 +1171,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Life goals (Phase 1 task 07) ─────────────────────────────────────
         lifeGoals.save(output);
+
+        // ── Verb cooldowns (Phase 1 task 09) ─────────────────────────────────
+        verbCooldowns.save(output);
     }
 
     // =========================================================================
@@ -1292,6 +1302,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Life goals (Phase 1 task 07) ─────────────────────────────────────
         lifeGoals.load(input);
+
+        // ── Verb cooldowns (Phase 1 task 09) ─────────────────────────────────
+        verbCooldowns.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

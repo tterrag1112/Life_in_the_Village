@@ -120,6 +120,17 @@ public final class NpcProfileSnapshotBuilder {
             goalLabels.add(label);
         }
 
+        // ── Player verbs (Phase 1 task 09) ───────────────────────────────────
+        java.util.List<String> verbIds = new java.util.ArrayList<>();
+        java.util.List<String> verbLabels = new java.util.ArrayList<>();
+        var verbCtx = tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerb
+                .context(player, npc, level);
+        for (var verb : tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry
+                .availableFor(verbCtx)) {
+            verbIds.add(verb.id());
+            verbLabels.add(verb.label().getString());
+        }
+
         // ── Assemble ─────────────────────────────────────────────────────────
         return new NpcProfileSnapshot(
                 npc.getUUID(),
@@ -164,6 +175,8 @@ public final class NpcProfileSnapshotBuilder {
                 canShowCraftingOrders,
                 canRentStall,
 
-                goalLabels);
+                goalLabels,
+                verbIds,
+                verbLabels);
     }
 }

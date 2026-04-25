@@ -100,15 +100,20 @@ Goal: NPCs feel like people with goals, dialogue, and verb responses.
       DialogueRunner.lineFor with profession→treeId mapping;
       legacy line pools fall back when the runner returns the
       "..." sentinel
-- [ ] **09** Player verbs
-    - [ ] 8 starter verbs: greet, compliment, insult, ask_life,
-      ask_about, give_gift, commission, challenge
-    - [ ] Verb UI integration
-    - [ ] Each verb fires appropriate life events
-- [ ] **Producer wiring**
-    - [ ] Memory producer consumes life events → memory entries
-    - [ ] Mood producer consumes life events → mood triggers
-    - [ ] Trait-drift producer (slow, long-term)
+- [x] **09** Player verbs
+    - [x] 8 starter verbs (greet, compliment, insult, ask_life,
+      ask_about, give_gift, commission, challenge) registered
+      via PlayerVerbRegistry
+    - [x] Verb UI integration (ActionBarPanel renders one button
+      per available verb, fires PlayerVerbInvokePacket)
+    - [x] Each verb fires appropriate life events
+      (Complimented / Insulted / GiftReceived); Greet / AskLife /
+      AskAbout / Commission / Challenge route to dialogue trees
+      without firing bus events
+- [x] **Producer wiring**
+    - [x] Memory producer consumes life events → memory entries
+    - [x] Mood producer consumes life events → mood triggers
+    - [x] Trait-drift producer (slow, long-term)
 - [ ] **Exit criteria**: right-click any NPC, hold a real
   conversation; give a gift, see mood and relationship update;
   insult, see memory formed, face them later with a different
@@ -363,9 +368,22 @@ yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
 
-**Phase 1 progress:** Tasks 10 (NpcLifeEventBus), 07 (life goals),
-and 08 (dialogue trees) complete; only task 09 (player verbs)
-remaining.
+**Phase 1 is COMPLETE.** All four tasks shipped:
+- 10 NpcLifeEventBus + 3 producer dispatchers + TraitDriftLog
+- 07 Life goals (LifeGoalSet on TownspersonMob, selector +
+  evaluator + progress dispatcher)
+- 08 Dialogue tree runtime (17-variant predicate set, 9-effect
+  type, walker, registry with fallback, 25 starter trees)
+- 09 Player verbs (8 verbs, NpcVerbCooldowns component,
+  PlayerVerbInvokePacket, ActionBarPanel verb buttons,
+  /verb debug commands)
+
+**Phase 1 exit-criteria scenario** (per NPC_PLAN.md line 116):
+spawn an NPC and run a real interaction loop — give a gift,
+insult and return to see remembered greeting, force LifeStageAdvanced
+to ADULT and verify life-goal selection, force a goal completion
+and verify the event chain fires memory + mood updates. Verification
+deferred until a successful local build run.
 
 Bus + producer wiring (memory / mood / trait-drift) from task 10 is
 in place; existing event surfaces hooked are

@@ -205,6 +205,10 @@ public class ModModEvents {
                 NpcProfileActionPacket.CODEC,
                 NpcProfileActionPacket::handle);
         registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.PlayerVerbInvokePacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.PlayerVerbInvokePacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.PlayerVerbInvokePacket::handle);
+        registrar.playToServer(
                 CloseNpcProfilePacket.TYPE,
                 CloseNpcProfilePacket.CODEC,
                 CloseNpcProfilePacket::handle);
@@ -232,6 +236,7 @@ public class ModModEvents {
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());
+        VerbDebugCommand.register(event.getDispatcher());
 
     }
 
