@@ -101,7 +101,10 @@ public class Kingdom {
                                             k.lastTaxTick,
                                             k.history != null
                                                     ? k.history
-                                                    : new KingdomHistoryData()))
+                                                    : new KingdomHistoryData())),
+                            tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
+                                    .optionalFieldOf("offices")
+                                    .forGetter(k -> Optional.ofNullable(k.offices))
                     ).apply(instance, Kingdom::fromCodec));
 
 
@@ -113,7 +116,8 @@ public class Kingdom {
             Map<UUID, DiplomaticRelation> relations,
             List<KingdomLaw> laws,
             Optional<KingdomClaim> claim,
-            KingdomGovernanceData governance) {
+            KingdomGovernanceData governance,
+            Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices) {
         Kingdom k = new Kingdom(id, name, culture);
         k.villageIds.addAll(villageIds);
         rulerEntity.ifPresent(rid -> k.rulerEntityId = rid);
@@ -126,6 +130,28 @@ public class Kingdom {
         k.flatUpkeepBronze = governance.flatUpkeepBronze();
         k.lastTaxTick      = governance.lastTaxTick();
         k.history          = governance.history() != null ? governance.history() : new KingdomHistoryData();
+        // Office state: stored value wins; otherwise migrate the legacy
+        // ruler fields into a kingdom_king holding.
+        if (offices.isPresent()) {
+            k.offices = offices.get();
+        } else {
+            // Constructor already seeded an empty state.
+            if (k.rulerPlayerId != null) {
+                k.offices.set(
+                        tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.KINGDOM_KING,
+                        tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByPlayer(
+                                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.KINGDOM_KING,
+                                k.id, k.rulerPlayerId, 0L, 0L,
+                                tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
+            } else if (k.rulerEntityId != null) {
+                k.offices.set(
+                        tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.KINGDOM_KING,
+                        tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByNpc(
+                                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.KINGDOM_KING,
+                                k.id, k.rulerEntityId, 0L, 0L,
+                                tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
+            }
+        }
         return k;
     }
 
@@ -142,6 +168,13 @@ public class Kingdom {
     private long treasuryBronze                 = 0L;
     private final Map<UUID, DiplomaticRelation> relations = new HashMap<>();
     private final Set<KingdomLaw> activeLaws    = new HashSet<>();
+    /**
+     * Office state for this kingdom. Phase 0 storage only — see
+     * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
+     * the legacy ruler fields during the migration window; Phase 3 cuts
+     * over.
+     */
+    private tterrag1112.life_in_the_village.Npc.Office.OfficeState offices;
     private double incomeTaxRate                = 0.1; // 10% default
     private long flatUpkeepBronze               = 32L; // 32 bronze per village per day
     private long lastTaxTick                    = -1L;
@@ -157,6 +190,13 @@ public class Kingdom {
         this.id      = id;
         this.name    = name;
         this.culture = culture;
+        this.offices = tterrag1112.life_in_the_village.Npc.Office.OfficeState
+                .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.KINGDOM, this.id);
+    }
+
+    /** Office state for this kingdom; never {@code null} after construction. */
+    public tterrag1112.life_in_the_village.Npc.Office.OfficeState getOffices() {
+        return offices;
     }
 
     public Kingdom(String name, String culture) {

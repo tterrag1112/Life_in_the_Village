@@ -208,6 +208,19 @@ public class ChildBirthGoal extends Goal {
 
         level.addFreshEntity(child);
 
+        // ── Phase 1: BirthInFamily fires for mother + spouse if known ──────
+        tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.BirthInFamily(
+                        entity, child.getUUID()));
+        entity.getSpouseId().ifPresent(spouseId ->
+                level.getEntitiesOfClass(TownspersonMob.class,
+                                entity.getBoundingBox().inflate(64),
+                                mob -> mob.getUUID().equals(spouseId))
+                        .forEach(spouse ->
+                                tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                                        new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.BirthInFamily(
+                                                spouse, child.getUUID()))));
+
         // ── HouseholdManager ──────────────────────────────────────────────────
         HouseholdManager.onNpcBorn(child.getUUID(), houseId, data, level.getGameTime());
 

@@ -396,4 +396,127 @@ must work; neither blocks the other.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 1 implementation (task 08)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Dialogue`:
+data types (`Target`, `DialogueContext`, `DialoguePredicate` sealed,
+`DialogueEffect`, `DialogueEffectType`, `DialogueLine`,
+`DialogueOption`, `DialogueNode` sealed, `DialogueTree`); runtime
+(`DialogueRegistry`, `DialogueWalker`, `DialogueRecencyCache`,
+`PlaceholderResolver`, `EffectDispatcher`, `DialogueRunner`); and
+content (`StarterTrees` registering 25 trees + a universal fallback).
+
+**Locked decisions:**
+
+- **Format**: code-defined trees (spec line 272). No JSON loader in
+  v1; predicate / effect codecs deferred to Phase 6 along with the
+  JSON migration.
+- **Fallback chain**: spec's dotted-suffix walk (line 138)
+  implemented in `DialogueRegistry.lookupWithFallback`. Always
+  resolves to `fallback.universal` if every prefix misses; the
+  universal tree's pool of three lines is registered at init.
+- **UI**: Phase 1 uses the existing chat / profile-screen surface
+  (spec line 280). `DialogueRunner.lineFor` returns text;
+  `DialogueRunner.runAndSendChat` is a convenience wrapper for
+  callers that want to chat-bubble directly. Multi-turn option
+  flows are reserved for later (`DialogueLine.options` lives on
+  the data model but isn't surfaced through chat in v1).
+- **Effect ordering on a single line**: declaration order, fail-
+  silent on per-effect errors. Spec didn't specify; documented here
+  as the contract.
+
+**Predicate set (17 variants, matching the spec's permits clause):**
+TraitGreater, TraitLess, MoodAtCategory, HasMemoryOf,
+RelationshipAtLeast, KnowsTopic, HasGoal, SkillAtLeast, IsDayPhase,
+IsSeason, IsWeather, HasProfession, IsFamilyRelated, EventActive,
+HasOffice, And, Or, Not.
+
+- **`MoodAtCategory`** name: spec wrote `MoodCategory` for the
+  predicate name, but that collides with the existing
+  `MoodCategory` enum in `Npc.Mood`. Renamed the predicate to
+  `MoodAtCategory` to avoid the import shadow. Trees reading the
+  spec verbatim need this trivial rename; documented.
+- **`IsSeason`** is a Phase 1 stub (Minecraft has no native
+  seasons; the mod doesn't ship one yet). Always `false`. Phase 5
+  culture/season pass replaces with real detection.
+- **`RelationshipAtLeast`** uses the existing per-player
+  `NpcRelationshipComponent.getDelta` for player targets; NPC-NPC
+  targets always return false in Phase 1. Phase 2's relationship
+  ledger doc 11 fills the NPC-NPC case.
+- **`EventActive`** matches by event-type name string against
+  `VillageSavedData.getActiveEventsForVillage`. Phase 5
+  events-expanded pass introduces typed event ids.
+
+**Effect set (9 entries, matching spec line 60):** MOOD_APPLY,
+MEMORY_REFRESH, MEMORY_CREATE, KNOWLEDGE_SHARE,
+RELATIONSHIP_DELTA, GOAL_PROGRESS, TRAIT_DRIFT, OPEN_SCREEN
+(stub — logs only; Phase 3 routes trade UI etc.),
+END_CONVERSATION.
+
+**Spec↔prompt naming mismatches (kept for the prompt-template
+maintainer):**
+- Prompt's predicate set (`HasTrait`, `MoodAtLeast`, `SkillAtLeast`,
+  `HoldsOffice`, `HasMemoryWith`) vs spec's (`TraitGreater /
+  TraitLess`, `MoodCategory`, `SkillAtLeast`, `HasOffice`,
+  `HasMemoryOf`). Used spec.
+- Prompt asks for `DialogueEffect` as a sealed interface; spec uses
+  `(DialogueEffectType type, Map<String,String> params)` as a
+  single record. Used spec — keeps Phase 6 JSON migration trivial
+  (no polymorphic codec needed for effects).
+- Prompt asks for `DialogueNode` with "list of branches"; spec's
+  sealed `Branch / Lines / Ref` is binary-split + line-pool +
+  tree-reference. Used spec.
+- Prompt mentions `PostLifeEvent` and `GiveItem` effect variants;
+  spec's effect-type enum doesn't include them. Skipped — Phase 1
+  producers post bus events directly through their own code paths;
+  trees use `MOOD_APPLY` / `MEMORY_CREATE` etc. for the same
+  practical outcomes.
+
+**Tree count.** 25 starter trees + 1 universal fallback = 26
+registered entries. Spec line 261 calls for "25 trees covering
+greeting / farewell / trade / gossip / goal / verb / event / job"
+(3+3+4+3+3+3+2+4 = 25). The fallback is implementation
+infrastructure not a starter tree.
+
+**`NpcDialogue` integration.** Per spec line 309 — "NpcDialogue
+(existing) becomes a simple shim over the registry."
+`getGreeting` now routes through `DialogueRunner.lineFor` first
+with a profession-derived tree id (`greeting.player.leader` for
+village/kingdom rulers, `greeting.player.shopkeeper` for trade
+professions, `greeting.player.default` otherwise). The legacy
+event / reputation / season / profession / trait line pools fall
+back when the runner returns the "..." sentinel — preserves the
+existing nuanced pre-redesign content while letting trait/mood/
+memory-driven branches take precedence. Phase 5 content pass can
+fold the legacy pools into the trees and remove the fallback.
+
+**Side-effects on profile-screen open.** The existing
+`NpcProfileSnapshotBuilder` calls `NpcDialogue.getGreeting` to
+populate the snapshot's `dialogueLine`. Effects on the picked
+line therefore fire each time the profile is opened. The starter
+trees use minimal effects (`OPEN_SCREEN` on trade.open lines,
+small `RELATIONSHIP_DELTA` on accept_help) so spam is bounded;
+memory and mood already daily-cap.
+
+**Recency cache.** Per-NPC last-N-spoken cache lives in
+`DialogueRecencyCache` (server-process scope, not persisted —
+spec line 293). `DialogueWalker` down-weights recently-spoken
+lines to 0.25× weight to avoid same-session repetition.
+
+**Debug surface.** Separate `/dialogue` root command (registered
+via `DialogueDebugCommand`) with subcommands `list / show / start
+/ test-predicate`. Tab-completes against the registry's known ids.
+
+**Not implemented in this session (deferred):**
+- Multi-turn option flows surfaced through chat (Phase 1 ships
+  as one-shot greetings; option fields exist on the data model
+  but aren't rendered).
+- NPC-to-NPC chat hooks in `SocialWalkGoal` / `EatMealGoal` (spec
+  line 312). Will land alongside Phase 2 gossip — the runtime
+  supports it, just no caller wired yet.
+- JSON loader for trees (Phase 6 / not v1).
+- Polymorphic codecs for predicates/effects (deferred with the
+  JSON loader).
+- Dialogue-driven trade and quest screen routing through
+  `OPEN_SCREEN` (Phase 3).
+- Culture-flavoured tree variants (Phase 5).

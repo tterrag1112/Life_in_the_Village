@@ -795,28 +795,54 @@ class GreatRoadGenerationTickSystem implements TickSubsystem {
     }
 }
 // =============================================================================
-// NPC MEMORY DECAY (once per in-game day, interval = 24000, priority = 190)
+// NPC DAILY DECAY (once per in-game day, interval = 24000, priority = 190)
 // =============================================================================
 
 /**
- * Advances {@link tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog}
- * decay by one day for every loaded {@link TownspersonMob} and evicts
- * entries that have decayed below the eviction threshold. Phase 0 has no
- * memory producers, so this runs over empty logs until Phase 1 ships.
+ * One-shot daily pass over every loaded {@link TownspersonMob}. Currently
+ * advances {@link tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog}
+ * decay + eviction, and pulls
+ * {@link tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState} toward its
+ * baseline. Future Phase 0+ subsystems (skill decay, etc.) hang off the
+ * same iteration — keeping a single sweep over loaded NPCs avoids paying
+ * the iteration cost multiple times per day.
  */
 class NpcMemoryDecayTickSystem implements TickSubsystem {
-    @Override public String name()     { return "npc_memory_decay"; }
+    @Override public String name()     { return "npc_daily_decay"; }
     @Override public int    interval() { return 24000; }
     @Override public int    priority() { return 190; }
 
     @Override
     public void tick(TickContext ctx) {
+        long currentTick = ctx.tick();
         for (var entity : ctx.level().getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
+
+            // Memory decay + eviction (Phase 0-02).
             var log = npc.getMemory();
-            if (log.isEmpty()) continue;
-            log.decayAll(1f);
-            log.removeExpired();
+            if (!log.isEmpty()) {
+                log.decayAll(1f);
+                log.removeExpired();
+            }
+
+            // Mood drift toward baseline (Phase 0-04).
+            npc.getMood().decay(1f, currentTick);
+
+            // Trait calm-period drift-back (Phase 1, 10-phase1-integration).
+            // After 180 idle days, traits drift back toward origin at
+            // 0.01/year. Cap-aware: only fires when there is drift to
+            // unwind.
+            var driftBack = npc.getTraitDrift().applyCalmDriftBack(currentTick);
+            if (!driftBack.isEmpty()) {
+                var vec = npc.getTraitVector();
+                driftBack.forEach((axis, delta) -> vec.adjust(axis, delta));
+            }
+
+            // Life-goal evaluator (Phase 1 task 07): poll progress, fire
+            // GoalCompleted / GoalFailed for finished goals, refill empty
+            // slates.
+            tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalEvaluator
+                    .runDaily(npc, currentTick);
         }
     }
 }

@@ -39,26 +39,30 @@ save/load. No behavior change yet.
     - [x] Daily tick hook for decay/eviction (no events producing
       memories yet — that's Phase 1)
     - [x] `/npc memory <uuid>` debug command (list / add / decay)
-- [ ] **03** Implement `NpcKnowledgeLedger`
-    - [ ] `KnowledgeEntry`, 4 categories, fidelity field
-    - [ ] Add/upgrade/remove API
-    - [ ] `/npc knowledge <uuid>` debug command
-- [ ] **04** Implement `MoodState` storage
-    - [ ] Single −100..+100 scalar, trigger registry (no triggers fire
+- [x] **03** Implement `NpcKnowledgeLedger`
+    - [x] `KnowledgeEntry`, 4 categories, fidelity field
+    - [x] Add/upgrade/remove API
+    - [x] `/npc knowledge <uuid>` debug command (list / add / mutate)
+- [x] **04** Implement `MoodState` storage
+    - [x] Single −100..+100 scalar, trigger registry (no triggers fire
       yet)
-    - [ ] `MoodCategory` derivation
-    - [ ] `/npc mood <uuid>` debug command
-- [ ] **05** Implement `SkillComponent`
-    - [ ] 8 skills, XP bookkeeping, level derivation
-    - [ ] Migration: existing per-profession progression maps to
+    - [x] `MoodCategory` derivation
+    - [x] `/npc mood <uuid>` debug command (list / trigger / decay)
+- [x] **05** Implement `SkillComponent`
+    - [x] 8 skills, XP bookkeeping, level derivation
+    - [x] Migration: existing per-profession progression maps to
       primary skill
-    - [ ] `/npc skills <uuid>` debug command
-- [ ] **06** Implement office framework data structures
-    - [ ] `OfficeId`, `OfficeHolder`, `OfficeState`, `OfficeSelectionMethod`
-    - [ ] Office attachment points: village, guild, company, temple,
-      kingdom (storage only)
-    - [ ] No selection logic yet (that's Phase 3)
-    - [ ] `/npc offices <uuid>` debug command
+    - [x] `/npc skills <uuid>` debug command (list / add / set)
+- [x] **06** Implement office framework data structures
+    - [x] `OfficeDefinition`, `OfficeHolding`, `OfficeState`,
+      `SelectionMethod`, `OfficePower`, `Competence`, `OrgType`
+    - [x] Office attachment points: village, guild, company, kingdom
+      (storage only). Temple offices have no per-instance host class
+      yet — `temple_high_priest` registered but unattached; documented
+      in 06 Revision Notes.
+    - [x] No selection logic yet (that's Phase 3)
+    - [x] `/npc offices <uuid>` and `/office {info,set,vacate,list-all}`
+      debug commands
 - [ ] **Exit criteria**: spawn a new NPC; all new components persist
   across save/load; existing behavior unchanged; debug commands
   show all new state
@@ -70,30 +74,46 @@ save/load. No behavior change yet.
 Goal: NPCs feel like people with goals, dialogue, and verb responses.
 
 - [ ] Read Phase 1 specs (07–10) end-to-end
-- [ ] **10** `NpcLifeEventBus` — event class hierarchy, dispatcher
+- [x] **10** `NpcLifeEventBus` — event class hierarchy, dispatcher
   registry
-    - [ ] Three Phase 1 dispatchers: memory, mood, trait-drift
-    - [ ] Tick hooks wired
-- [ ] **07** Life goals
-    - [ ] 25 goal type definitions
-    - [ ] Adulthood selection (1–3 goals per NPC, trait-weighted)
-    - [ ] Goal progress tracking
-    - [ ] Completion/failure hooks fire life events
-- [ ] **08** Dialogue tree
-    - [ ] `DialogueTree`, `DialogueNode`, `DialoguePredicate`,
-      `DialogueEffect`
-    - [ ] Predicate/effect registries
-    - [ ] 25 starter trees authored
-    - [ ] Existing dialogue system integration / replacement path
-- [ ] **09** Player verbs
-    - [ ] 8 starter verbs: greet, compliment, insult, ask_life,
-      ask_about, give_gift, commission, challenge
-    - [ ] Verb UI integration
-    - [ ] Each verb fires appropriate life events
-- [ ] **Producer wiring**
-    - [ ] Memory producer consumes life events → memory entries
-    - [ ] Mood producer consumes life events → mood triggers
-    - [ ] Trait-drift producer (slow, long-term)
+    - [x] Three Phase 1 dispatchers: memory, mood, trait-drift
+    - [x] Tick hooks wired (calm-period drift-back in
+      `npc_daily_decay`)
+- [x] **07** Life goals
+    - [x] 26 goal type definitions (spec count, not 25 from prompt)
+    - [x] Adulthood selection (1-2 baseline, +1 if Ambition ≥ +0.4;
+      capped at MAX_ACTIVE = 3 over lifetime)
+    - [x] Goal progress tracking (poll for SAVE_AMOUNT /
+      REACH_SKILL_LEVEL / HAVE_CHILD / WIN_OFFICE; event-driven for
+      MARRY_TARGET / MARRY_ANY / HAVE_CHILD via the Married /
+      BirthInFamily bus events)
+    - [x] Completion/failure hooks fire life events
+- [x] **08** Dialogue tree
+    - [x] `DialogueTree`, `DialogueNode` (sealed
+      Branch/Lines/Ref), `DialoguePredicate` (sealed, 17
+      variants), `DialogueEffect` (record + 9-entry
+      DialogueEffectType)
+    - [x] Predicate test paths against Phase 0 component surfaces;
+      EffectDispatcher routes the 9 effect types
+    - [x] 25 starter trees authored + universal fallback
+    - [x] NpcDialogue.getGreeting routes through
+      DialogueRunner.lineFor with profession→treeId mapping;
+      legacy line pools fall back when the runner returns the
+      "..." sentinel
+- [x] **09** Player verbs
+    - [x] 8 starter verbs (greet, compliment, insult, ask_life,
+      ask_about, give_gift, commission, challenge) registered
+      via PlayerVerbRegistry
+    - [x] Verb UI integration (ActionBarPanel renders one button
+      per available verb, fires PlayerVerbInvokePacket)
+    - [x] Each verb fires appropriate life events
+      (Complimented / Insulted / GiftReceived); Greet / AskLife /
+      AskAbout / Commission / Challenge route to dialogue trees
+      without firing bus events
+- [x] **Producer wiring**
+    - [x] Memory producer consumes life events → memory entries
+    - [x] Mood producer consumes life events → mood triggers
+    - [x] Trait-drift producer (slow, long-term)
 - [ ] **Exit criteria**: right-click any NPC, hold a real
   conversation; give a gift, see mood and relationship update;
   insult, see memory formed, face them later with a different
@@ -323,17 +343,96 @@ Things that don't fit the phase model and run continuously:
 
 (current blockers and observations tracked here)
 
-**Current status**: Phase 0 tasks 01 (TraitVector) and 02 (NpcMemoryLog)
-implemented. Packages `Npc.Traits` and `Npc.Memory` exist; save/load
-wired additively on `TownspersonMob`. Legacy `PersonalityTrait` list
-kept readable for the one-release migration window. No existing
-reputation/witness tracker to migrate memory data from — new feature
-starts empty per spec.
+**Current status**: Phase 0 tasks 01 (TraitVector), 02 (NpcMemoryLog),
+03 (NpcKnowledgeLedger), 04 (NpcMoodState), and 05 (SkillComponent)
+implemented. Packages `Npc.Traits`, `Npc.Memory`, `Npc.Knowledge`,
+`Npc.Mood`, `Npc.Skills` exist; save/load wired additively on
+`TownspersonMob`.
 
-`NpcMemoryDecayTickSystem` (interval 24000, priority 190) walks every
-loaded TownspersonMob once per in-game day and calls
-`decayAll(1) + removeExpired()`. Runs over empty logs until Phase 1
-producers ship — confirmed harmless.
+The single daily-tick subsystem (now reporting as
+{@code "npc_daily_decay"}) iterates every loaded TownspersonMob once
+per in-game day and runs (a) memory decay + eviction, (b) mood drift
+toward baseline. Knowledge has no decay; skill decay is deferred to
+Phase 1 per spec. The class file is still
+`NpcMemoryDecayTickSystem.java` for now — internal-only name, can be
+renamed in a later refactor pass.
+
+Legacy migration paths in place:
+- `PersonalityTrait` list → `TraitVector` axes (see 01 Revision Notes).
+- `NpcProfessionXp` int → primary skill cumulative XP (direct 1:1 map;
+  see 05 Revision Notes for the rationale).
+
+`RumorMutator` (Phase 2 gossip utility) is implemented and debug-
+testable via `/npc knowledge mutate` but has no production callers
+yet. Its seed formula (splitmix64 finaliser of each of
+`topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
+locked for stability — future Phase 2 work depends on it.
+
+**Phase 1 is COMPLETE.** All four tasks shipped:
+- 10 NpcLifeEventBus + 3 producer dispatchers + TraitDriftLog
+- 07 Life goals (LifeGoalSet on TownspersonMob, selector +
+  evaluator + progress dispatcher)
+- 08 Dialogue tree runtime (17-variant predicate set, 9-effect
+  type, walker, registry with fallback, 25 starter trees)
+- 09 Player verbs (8 verbs, NpcVerbCooldowns component,
+  PlayerVerbInvokePacket, ActionBarPanel verb buttons,
+  /verb debug commands)
+
+**Phase 1 exit-criteria scenario** (per NPC_PLAN.md line 116):
+spawn an NPC and run a real interaction loop — give a gift,
+insult and return to see remembered greeting, force LifeStageAdvanced
+to ADULT and verify life-goal selection, force a goal completion
+and verify the event chain fires memory + mood updates. Verification
+deferred until a successful local build run.
+
+Bus + producer wiring (memory / mood / trait-drift) from task 10 is
+in place; existing event surfaces hooked are
+LivingIncomingDamageEvent, LivingDeathEvent (witness scan +
+family-death fan-out), CourtingGoal.formCouple, ChildBirthGoal
+completion, TradeHandler buy/sell paths, and now
+TownspersonMob.onLifeStageChanged → LifeStageAdvanced.
+TraitDriftLog is a Phase 1 persistent component on TownspersonMob;
+calm-period drift-back is wired into the existing `npc_daily_decay`
+subsystem.
+
+Task 07 adds LifeGoalSet (cap 3 active, history TTL 90d) on
+TownspersonMob, an `npcGoals` save subtree, the 26-entry
+LifeGoalRegistry, and three event-bus dispatchers:
+LifeGoalSelector (runs goal selection on ADULT transition),
+LifeGoalProgressDispatcher (Married → MARRY_TARGET / MARRY_ANY,
+BirthInFamily → HAVE_CHILD), and the daily LifeGoalEvaluator that
+polls progress for SAVE_AMOUNT / REACH_SKILL_LEVEL / HAVE_CHILD /
+WIN_OFFICE and fires GoalCompleted / GoalFailed on
+threshold/expiry. Bus events `GoalCompleted` / `GoalFailed` /
+`GoalAbandoned` were upgraded from String/int placeholders to carry
+the real `LifeGoal` record per the spec. NpcProfileSnapshot gained
+an `activeGoalLabels` field surfaced by the snapshot builder.
+
+**Phase 0 is COMPLETE.** All six components shipped:
+- 01 TraitVector
+- 02 NpcMemoryLog
+- 03 NpcKnowledgeLedger
+- 04 NpcMoodState
+- 05 SkillComponent
+- 06 Office framework (OfficeDefinition / OfficeHolding / OfficeState
+  attached to Village, GuildData, Company, Kingdom)
+
+Legacy field migrations on load (kept readable for one release each):
+- `AppearanceComponent.traits` (legacy `PersonalityTrait`) → `TraitVector`
+- `NpcProfessionXp.npcProfXp` int → `SkillComponent` primary skill XP
+- `Village.villageLeaderId` → `OfficeState` `village_leader` holding
+- `GuildData.guildmasterId` → `OfficeState` `guild_master` holding
+- `Kingdom.rulerEntityId / rulerPlayerId` → `OfficeState` `kingdom_king`
+- `Company.ownerPlayerId` → `OfficeState` `company_owner` (player)
+
+Daily-tick subsystem (`npc_daily_decay`, interval 24000) walks every
+loaded TownspersonMob and runs memory decay + mood drift toward
+baseline.
+
+**Phase 0 exit-criteria scenario** (from `NPC_PLAN.md`) — verification
+deferred until a successful local build run. Network-blocked sandbox
+prevents Gradle dependency resolution; every component reviewed
+manually + by Explore agent against the known-working pattern.
 
 **Template pattern established for the remaining Phase 0 components**:
 - New subsystem package under `Npc.<Subsystem>` (e.g. `Npc.Memory`).

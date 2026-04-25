@@ -83,8 +83,35 @@ public class ActionBarPanel implements NpcProfilePanel {
             idx = addBtn(s.npcId(), "Crafting Orders",   NpcProfileActionPacket.Action.SHOW_CRAFTING_ORDERS, idx);
         if (s.canRentStall())
             idx = addBtn(s.npcId(), "Rent/Renew Stall",  NpcProfileActionPacket.Action.RENT_STALL, idx);
-        // Gift is always available
-        addBtn(s.npcId(), "Give Gift (hand)", NpcProfileActionPacket.Action.GIVE_GIFT, idx);
+
+        // ── Phase 1 task 09: render one button per available verb ───────────
+        // The legacy GIVE_GIFT button is replaced by the give_gift verb when
+        // the verb registry is initialised; both coexist during migration.
+        boolean hasGiveGiftVerb = s.availableVerbIds().contains("give_gift");
+        if (!hasGiveGiftVerb) {
+            addBtn(s.npcId(), "Give Gift (hand)", NpcProfileActionPacket.Action.GIVE_GIFT, idx);
+            idx++;
+        }
+        for (int i = 0; i < s.availableVerbIds().size(); i++) {
+            String verbId = s.availableVerbIds().get(i);
+            String label = i < s.verbLabels().size() ? s.verbLabels().get(i) : verbId;
+            idx = addVerbBtn(s.npcId(), label, verbId, idx);
+        }
+    }
+
+    /** Verb-button variant that fires {@code PlayerVerbInvokePacket}. */
+    private int addVerbBtn(UUID npcId, String label, String verbId, int idx) {
+        StyledButton btn = StyledButton.builder(
+                        Component.literal(label),
+                        sb -> ClientPacketDistributor.sendToServer(
+                                new tterrag1112.life_in_the_village.Networking.PlayerVerbInvokePacket(
+                                        npcId, verbId, java.util.Map.of())))
+                .pos(0, idx * 24)
+                .size(140, 20)
+                .build();
+        buttons.add(btn);
+        addWidget.accept(btn);
+        return idx + 1;
     }
 
     /** Creates and registers one button at a placeholder position (0,0); returns next index. */

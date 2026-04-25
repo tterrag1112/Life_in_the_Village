@@ -53,10 +53,28 @@ public final class NpcDialogue {
     /**
      * Returns a contextual greeting line from the NPC to the player.
      * Never returns null — worst case is a generic fallback.
+     *
+     * <p>Phase 1 routes through {@code DialogueRunner.lineFor} per
+     * {@code 08-dialogue-tree.md} line 309 ("NpcDialogue (existing)
+     * becomes a simple shim over the registry"). The existing
+     * event/reputation/season pools below act as fallbacks when the
+     * tree returns the universal-fallback "..." sentinel — keeps
+     * existing behaviour while letting trait/mood/memory-driven
+     * branches take precedence.</p>
      */
     public static String getGreeting(TownspersonMob npc,
                                      ServerPlayer player,
                                      ServerLevel level) {
+        // Phase 1: try the dialogue tree first.
+        String treeId = greetingTreeId(npc);
+        String runnerLine = tterrag1112.life_in_the_village.Npc.Dialogue.DialogueRunner
+                .lineFor(npc, player, level, treeId);
+        if (runnerLine != null
+                && !runnerLine.isEmpty()
+                && !tterrag1112.life_in_the_village.Npc.Dialogue.DialogueRunner.SAFETY_FALLBACK.equals(runnerLine)) {
+            return runnerLine;
+        }
+
         RandomSource rng = npc.getRandom();
 
         // 1. Active event
@@ -358,5 +376,24 @@ public final class NpcDialogue {
 
     private static String pick(RandomSource rng, String... options) {
         return options[rng.nextInt(options.length)];
+    }
+
+    /**
+     * Maps a profession to the dialogue-tree id used as the entry point
+     * for greeting lookups. The registry's fallback walk drops the
+     * trailing role segment if no tree matches, so unknown professions
+     * resolve to {@code greeting.player.default} naturally.
+     */
+    private static String greetingTreeId(TownspersonMob npc) {
+        var prof = npc.getProfession();
+        return switch (prof) {
+            case VILLAGE_LEADER, KINGDOM_RULER, CHANCELLOR, HERALD ->
+                    "greeting.player.leader";
+            case MERCHANT, WANDERING_TRADER, BAKER, BLACKSMITH,
+                    MILLER, WEAVER, STONEMASON, CARPENTER, CANDLEMAKER,
+                    INNKEEPER, STOCKPILE_KEEPER, BUILDER ->
+                    "greeting.player.shopkeeper";
+            default -> "greeting.player.default";
+        };
     }
 }

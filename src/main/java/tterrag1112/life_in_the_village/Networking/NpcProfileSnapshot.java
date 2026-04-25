@@ -74,7 +74,22 @@ public record NpcProfileSnapshot(
         boolean canOpenCompanyWorker,
         boolean canShowVillageBook,
         boolean canShowCraftingOrders,
-        boolean canRentStall
+        boolean canRentStall,
+
+        // -------------------------------------------------------------
+        // Life goals (Phase 1 task 07) — short labels for active goals,
+        // up to {@link LifeGoalSet#MAX_ACTIVE} entries. Phase 5 content
+        // pass replaces with richer narrative templates.
+        // -------------------------------------------------------------
+        List<String> activeGoalLabels,
+
+        // -------------------------------------------------------------
+        // Player verbs (Phase 1 task 09) — verb ids for which
+        // {@code isAvailable} returns true under this snapshot's
+        // implicit context. ActionBarPanel renders one button per id.
+        // -------------------------------------------------------------
+        List<String> availableVerbIds,
+        List<String> verbLabels
 ) {
 
     /** Sentinel representing "no village association". */
@@ -129,6 +144,14 @@ public record NpcProfileSnapshot(
                         buf.writeBoolean(s.canShowVillageBook);
                         buf.writeBoolean(s.canShowCraftingOrders);
                         buf.writeBoolean(s.canRentStall);
+
+                        buf.writeVarInt(s.activeGoalLabels.size());
+                        s.activeGoalLabels.forEach(buf::writeUtf);
+
+                        buf.writeVarInt(s.availableVerbIds.size());
+                        s.availableVerbIds.forEach(buf::writeUtf);
+                        buf.writeVarInt(s.verbLabels.size());
+                        s.verbLabels.forEach(buf::writeUtf);
                     },
                     buf -> {
                         UUID   npcId          = buf.readUUID();
@@ -175,6 +198,17 @@ public record NpcProfileSnapshot(
                         boolean canShowCraftingOrders = buf.readBoolean();
                         boolean canRentStall          = buf.readBoolean();
 
+                        int    goalCount      = buf.readVarInt();
+                        List<String> goals    = new ArrayList<>(goalCount);
+                        for (int i = 0; i < goalCount; i++) goals.add(buf.readUtf());
+
+                        int verbCount         = buf.readVarInt();
+                        List<String> verbIds  = new ArrayList<>(verbCount);
+                        for (int i = 0; i < verbCount; i++) verbIds.add(buf.readUtf());
+                        int verbLabelCount    = buf.readVarInt();
+                        List<String> verbLab  = new ArrayList<>(verbLabelCount);
+                        for (int i = 0; i < verbLabelCount; i++) verbLab.add(buf.readUtf());
+
                         return new NpcProfileSnapshot(
                                 npcId, name, isMale, age, lifeStage, profession,
                                 combat, skinId, hairStyle, hairColor, traits,
@@ -187,6 +221,8 @@ public record NpcProfileSnapshot(
                                 dialogueLine,
                                 canTrade, canOpenGuild, canAssignWork,
                                 canOpenCompanyWorker, canShowVillageBook,
-                                canShowCraftingOrders, canRentStall);
+                                canShowCraftingOrders, canRentStall,
+                                goals,
+                                verbIds, verbLab);
                     });
 }

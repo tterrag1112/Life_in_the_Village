@@ -366,4 +366,120 @@ Phase 1 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 1 implementation (task 09)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Verbs`:
+core types (`PlayerVerb` interface, `VerbContext` record,
+`VerbResult` record, `NpcVerbCooldowns` per-NPC component),
+`PlayerVerbRegistry` static catalogue + `VerbInvocation` server-
+side glue, and 8 verb implementations under `Impl/`. New packet
+`Networking.PlayerVerbInvokePacket` carries the verb id + arg map
+client→server. `ActionBarPanel` renders one button per available
+verb pulled from `NpcProfileSnapshot.availableVerbIds`.
+
+**Locked decisions:**
+
+- **Compliment-topic mapping** (spec line 75-80 ambiguous on
+  exact topic→trait list). Implemented in
+  `ComplimentVerb.TOPIC_TRAIT`:
+  work/craft → INDUSTRY, bravery → COURAGE,
+  honor/honesty → HONESTY, kindness → COMPASSION,
+  wit → SOCIABILITY, patience → TEMPERANCE, ambition → AMBITION,
+  generosity → GENEROSITY. Topics not in the map (appearance,
+  family, etc.) never trait-match — always hollow per spec.
+  Default topic when none supplied is "kindness".
+
+- **Public-insult radius**: 8 blocks (spec line 100 says "other
+  NPCs nearby" without a radius). Closer than the 16-block
+  death-witness scan since "earshot" is more localised.
+  `InsultVerb.PUBLIC_RADIUS_BLOCKS` constant. Open to retuning.
+
+- **Verb cooldowns**: spec defaults applied verbatim (line 253):
+  compliment / ask_life / ask_about / give_gift = 1 day,
+  challenge = 3 days, insult / commission / greet = none.
+  Stamped on `NpcVerbCooldowns` only when the verb returns
+  success.
+
+- **Favorite-gift detection** (spec line 173 explicitly defers to
+  Phase 5): `GiveGiftVerb.appropriatenessOf` returns
+  `APPROPRIATE` for everything as a Phase 1 stub. The bus event
+  carries the appropriateness; memory + mood producers respond
+  correctly when Phase 5 supplies a real table — no further code
+  changes needed.
+
+**GreetVerb is explicit** despite spec line 347 ("Open decisions")
+suggesting it be implicit. Spec preference noted on the class —
+if testing decides the auto-greeting from
+`NpcDialogue.getGreeting` is sufficient, the verb can be removed
+without other downstream changes (UI just renders one fewer
+button). Display order is 5 so it sits at the front of the verb
+list rather than crowding specialised verbs.
+
+**Network shape — separate packet, not extended.** Spec line 285
+suggests extending `NpcProfileActionPacket` with a verb id.
+Implementation ships a new `PlayerVerbInvokePacket` instead.
+Reasoning: the legacy `Action` enum is hardcoded across UI and
+server; extending it risks a serialisation collision with old
+clients. The new packet is additive, the legacy packet keeps
+working untouched, and the migration window stays clean. Phase 6
+or a later refactor can fold the legacy actions into verbs and
+retire `NpcProfileActionPacket`.
+
+**Cooldown enforcement** is centralised in `VerbInvocation.invoke`
+(used by both the network packet handler and `/verb fire`). Verbs
+return `VerbResult` and the central glue stamps cooldowns / routes
+the dialogue tree / sends chat feedback — verbs don't do their own
+cooldown bookkeeping.
+
+**Persistent component** `NpcVerbCooldowns` ships as the second
+new persistent field on `TownspersonMob` after Phase 1's
+`TraitDriftLog`. Saved under `npcVerbCooldowns` per spec NBT
+shape (line 264). Lazy-eviction on read keeps the map from
+accumulating expired entries.
+
+**ActionBarPanel coexistence.** Existing legacy buttons (Trade,
+Guild Board, Assign Work, etc.) keep their original packet path.
+Verb buttons render below them, sourced from
+`NpcProfileSnapshot.availableVerbIds`. The legacy "Give Gift
+(hand)" button is suppressed when the give_gift verb is in the
+list to avoid duplicates; it remains as a fallback if the verb
+registry is empty (e.g. tests that bypass init).
+
+**`CommissionVerb` is a stub** (spec line 357 explicitly defers
+the proper PlayerCommission implementation). Phase 1
+implementation eligibility-gates by profession + work-time, then
+returns a screen-open result that the host should route to the
+existing crafting-orders UI. Real PlayerCommission lands in a
+follow-up.
+
+**`ChallengeVerb` is a stub** (spec line 351). Phase 1 ships
+eligibility (relationship ≥ −30, Courage > −0.4) + a placeholder
+dialogue result. The actual contest mechanic (duel / wager /
+debate) lands in Phase 5 content pass.
+
+**Spec↔prompt deviations:**
+
+- Prompt says verbs implement
+  `boolean isAvailable(player, npc, context)`. Spec uses a
+  single `VerbContext` record (player + npc + level + tick) and
+  `boolean isAvailable(VerbContext)`. Used spec.
+- Prompt's `VerbResult` fields differ from spec — used spec
+  (success, resultTreeId, additionalEffects, opensExternalScreen,
+  statusText) plus a couple of factory constants for readability.
+- Prompt says "GreetVerb posts no event"; spec confirms greeting
+  is not an event source. Implementation matches.
+- Prompt mentions `ChallengeIssued` as a bus event — not in spec
+  event list and not in Phase 1 task 10. Skipped.
+
+**Not implemented in this session (deferred per prompt's DO NOT
+list and standing UI-deferral pattern):**
+
+- Verb-flavored response variation (Phase 5 content pass).
+- New verbs beyond the 8 starters (later phases).
+- Player profession gating (player professions integrate later).
+- Commission UI proper (Phase 1.5 / Phase 3).
+- Challenge contest mechanic (Phase 5).
+- Sub-option pickers for compliment topic / ask-about target /
+  challenge type (Phase 1 ships defaults; richer pickers can be
+  added without changing the verb pipeline — args map already
+  carries the data).

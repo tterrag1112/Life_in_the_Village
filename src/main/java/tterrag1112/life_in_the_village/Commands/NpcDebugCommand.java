@@ -12,15 +12,37 @@ import net.minecraft.commands.arguments.UuidArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeCategory;
+import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeEntry;
+import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeSource;
+import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
+import tterrag1112.life_in_the_village.Npc.Knowledge.RumorMutator;
 import tterrag1112.life_in_the_village.Npc.Memory.MemoryType;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemory;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
+import tterrag1112.life_in_the_village.Npc.Events.GiftAppropriateness;
+import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
+import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus;
+import tterrag1112.life_in_the_village.Npc.Events.RelationshipType;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.GoalStatus;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalRegistry;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSet;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalType;
+import tterrag1112.life_in_the_village.Npc.Mood.MoodEvent;
+import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
+import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
+import tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
 import tterrag1112.life_in_the_village.Npc.Traits.DisplayedTrait;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitAxis;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -65,8 +87,167 @@ public final class NpcDebugCommand {
                                 .then(Commands.argument("uuid", UuidArgument.uuid())
                                         .then(Commands.argument("days", FloatArgumentType.floatArg(0f, 3650f))
                                                 .executes(NpcDebugCommand::handleMemoryDecay)))))
+
+                // ── /npc knowledge <uuid> ────────────────────────────────────
+                // ── /npc knowledge add <uuid> <topic> <category> <fidelity> <source> <content...>
+                // ── /npc knowledge mutate <text> <mutatorUuid> ───────────────
+                .then(Commands.literal("knowledge")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleKnowledgeList))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("topic", StringArgumentType.word())
+                                                .then(Commands.argument("category", StringArgumentType.word())
+                                                        .suggests((c, b) -> {
+                                                            for (KnowledgeCategory k : KnowledgeCategory.values()) b.suggest(k.name());
+                                                            return b.buildFuture();
+                                                        })
+                                                        .then(Commands.argument("fidelity", FloatArgumentType.floatArg(0f, 1f))
+                                                                .then(Commands.argument("source", StringArgumentType.word())
+                                                                        .suggests((c, b) -> {
+                                                                            for (KnowledgeSource s : KnowledgeSource.values()) b.suggest(s.name());
+                                                                            return b.buildFuture();
+                                                                        })
+                                                                        .then(Commands.argument("content", StringArgumentType.greedyString())
+                                                                                .executes(NpcDebugCommand::handleKnowledgeAdd))))))))
+                        .then(Commands.literal("mutate")
+                                .then(Commands.argument("text", StringArgumentType.string())
+                                        .then(Commands.argument("mutatorUuid", UuidArgument.uuid())
+                                                .executes(NpcDebugCommand::handleKnowledgeMutate)))))
+
+                // ── /npc mood <uuid> ─────────────────────────────────────────
+                // ── /npc mood trigger <uuid> <triggerName> ───────────────────
+                // ── /npc mood decay <uuid> <days> ────────────────────────────
+                .then(Commands.literal("mood")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleMoodList))
+                        .then(Commands.literal("trigger")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("trigger", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (MoodTrigger t : MoodTrigger.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleMoodTrigger))))
+                        .then(Commands.literal("decay")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("days", FloatArgumentType.floatArg(0f, 3650f))
+                                                .executes(NpcDebugCommand::handleMoodDecay)))))
+
+                // ── /npc skills <uuid> ───────────────────────────────────────
+                // ── /npc skills add <uuid> <skill> <xp> ──────────────────────
+                // ── /npc skills set <uuid> <skill> <xp> ──────────────────────
+                .then(Commands.literal("skills")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleSkillsList))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("skill", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (Skill s : Skill.values()) b.suggest(s.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .then(Commands.argument("xp", FloatArgumentType.floatArg(0f, 40000f))
+                                                        .executes(NpcDebugCommand::handleSkillsAdd)))))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("skill", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (Skill s : Skill.values()) b.suggest(s.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .then(Commands.argument("xp", FloatArgumentType.floatArg(0f, 40000f))
+                                                        .executes(NpcDebugCommand::handleSkillsSet)))))
+
+                // ── /npc offices <uuid> ──────────────────────────────────────
+                .then(Commands.literal("offices")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleOfficesList)))
+
+                // ── /npc goals {list|set|complete|fail} ─────────────────────
+                .then(Commands.literal("goals")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleGoalsList))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("type", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (LifeGoalType t : LifeGoalType.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleGoalsSet)
+                                                .then(Commands.argument("targetParam", StringArgumentType.greedyString())
+                                                        .executes(NpcDebugCommand::handleGoalsSet)))))
+                        .then(Commands.literal("complete")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("type", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (LifeGoalType t : LifeGoalType.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleGoalsComplete))))
+                        .then(Commands.literal("fail")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("type", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (LifeGoalType t : LifeGoalType.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleGoalsFail)
+                                                .then(Commands.argument("reason", StringArgumentType.greedyString())
+                                                        .executes(NpcDebugCommand::handleGoalsFail))))))
+
+                // ── /npc events {listen|fire|stats} ──────────────────────────
+                .then(Commands.literal("events")
+                        .then(Commands.literal("listen")
+                                .executes(NpcDebugCommand::handleEventsListen))
+                        .then(Commands.literal("stats")
+                                .executes(NpcDebugCommand::handleEventsStats))
+                        .then(Commands.literal("fire")
+                                .then(Commands.literal("Married")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("spouseUuid", UuidArgument.uuid())
+                                                        .executes(ctx -> handleEventsFireMarried(ctx)))))
+                                .then(Commands.literal("Insulted")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("insulterUuid", UuidArgument.uuid())
+                                                        .then(Commands.argument("public", com.mojang.brigadier.arguments.BoolArgumentType.bool())
+                                                                .executes(ctx -> handleEventsFireInsulted(ctx))))))
+                                .then(Commands.literal("Complimented")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("complimenterUuid", UuidArgument.uuid())
+                                                        .then(Commands.argument("matchedTrait", com.mojang.brigadier.arguments.BoolArgumentType.bool())
+                                                                .executes(ctx -> handleEventsFireComplimented(ctx))))))
+                                .then(Commands.literal("WitnessedDeath")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("deceasedUuid", UuidArgument.uuid())
+                                                        .then(Commands.argument("relation", StringArgumentType.word())
+                                                                .suggests((c, b) -> {
+                                                                    for (RelationshipType r : RelationshipType.values()) b.suggest(r.name());
+                                                                    return b.buildFuture();
+                                                                })
+                                                                .executes(ctx -> handleEventsFireWitnessedDeath(ctx))))))
+                                .then(Commands.literal("Rescued")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("rescuerUuid", UuidArgument.uuid())
+                                                        .executes(ctx -> handleEventsFireRescued(ctx)))))
+                                .then(Commands.literal("SavedSomeone")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("savedUuid", UuidArgument.uuid())
+                                                        .executes(ctx -> handleEventsFireSavedSomeone(ctx)))))
+                                .then(Commands.literal("SurvivedBattle")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .executes(ctx -> handleEventsFireSurvivedBattle(ctx))))
+                                .then(Commands.literal("GoalCompleted")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("goalType", StringArgumentType.word())
+                                                        .then(Commands.argument("importance", IntegerArgumentType.integer(1, 10))
+                                                                .executes(ctx -> handleEventsFireGoalCompleted(ctx))))))))
         );
     }
+
+    /** Active /npc events listen registration; null when off. */
+    private static java.util.function.Consumer<NpcLifeEvent> ACTIVE_LISTENER = null;
 
     // =========================================================================
     // Traits
@@ -240,5 +421,613 @@ public final class NpcDebugCommand {
         return npc.getCustomName() != null
                 ? npc.getCustomName().getString()
                 : npc.getName().getString();
+    }
+
+    // =========================================================================
+    // Knowledge
+    // =========================================================================
+
+    private static int handleKnowledgeList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        NpcKnowledgeLedger ledger = npc.getKnowledge();
+        long now = src.getLevel().getGameTime();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Knowledge: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e  [")
+                .append(ledger.size()).append("/").append(NpcKnowledgeLedger.MAX_ENTRIES).append("] ===");
+
+        if (ledger.isEmpty()) {
+            sb.append("\n§7(ledger is empty)");
+            src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+            return 1;
+        }
+
+        Map<KnowledgeCategory, List<KnowledgeEntry>> grouped = ledger.groupedByCategory();
+        for (Map.Entry<KnowledgeCategory, List<KnowledgeEntry>> group : grouped.entrySet()) {
+            List<KnowledgeEntry> list = group.getValue();
+            if (list.isEmpty()) continue;
+            sb.append("\n§6").append(group.getKey().name()).append(" §7(").append(list.size()).append(")");
+            for (KnowledgeEntry e : list) {
+                long daysSince = (now - e.acquiredTick()) / TICKS_PER_DAY;
+                String contentSnippet = e.content().length() > 60
+                        ? e.content().substring(0, 57) + "..."
+                        : e.content();
+                sb.append(String.format(Locale.ROOT,
+                        "%n  %s §fφ=%.2f§7 %-14s  %4dd ago  §f%s §7[%s]",
+                        fidelityTag(e.fidelity()),
+                        e.fidelity(),
+                        e.source().name(),
+                        daysSince,
+                        e.topic(),
+                        contentSnippet));
+                if (e.sensitive()) sb.append(" §c[sensitive]");
+            }
+        }
+
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static String fidelityTag(float f) {
+        if (f >= KnowledgeEntry.RELIABLE_THRESHOLD) return "§a[RELIABLE]";
+        if (f <  KnowledgeEntry.VAGUE_THRESHOLD)    return "§8[vague]    ";
+        return                                             "§e[middling] ";
+    }
+
+    private static int handleKnowledgeAdd(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        String topic = StringArgumentType.getString(ctx, "topic");
+        String categoryName = StringArgumentType.getString(ctx, "category").toUpperCase(Locale.ROOT);
+        float fidelity = FloatArgumentType.getFloat(ctx, "fidelity");
+        String sourceName = StringArgumentType.getString(ctx, "source").toUpperCase(Locale.ROOT);
+        String content = StringArgumentType.getString(ctx, "content");
+
+        KnowledgeCategory category;
+        KnowledgeSource source;
+        try {
+            category = KnowledgeCategory.valueOf(categoryName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown KnowledgeCategory: " + categoryName));
+            return 0;
+        }
+        try {
+            source = KnowledgeSource.valueOf(sourceName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown KnowledgeSource: " + sourceName));
+            return 0;
+        }
+
+        KnowledgeEntry entry = KnowledgeEntry.create(
+                topic, category, fidelity, source,
+                src.getLevel().getGameTime(), content, null);
+        boolean stored = npc.getKnowledge().add(entry);
+        src.sendSuccess(() -> Component.literal(stored
+                        ? "Added/upgraded knowledge of '" + entry.topic() + "' (φ=" + entry.fidelity() + ")"
+                        : "Existing knowledge had equal-or-higher fidelity — new entry dropped."),
+                false);
+        return stored ? 1 : 0;
+    }
+
+    /**
+     * Test harness for {@link RumorMutator}. Uses stable test defaults for
+     * the other seed inputs (topic="debug", acquiredTick=0) so that the
+     * output depends only on the supplied text and mutator UUID — running
+     * the same command twice must produce identical output.
+     */
+    private static int handleKnowledgeMutate(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String text = StringArgumentType.getString(ctx, "text");
+        UUID mutatorUuid = UuidArgument.getUuid(ctx, "mutatorUuid");
+
+        // Mutation probability maxes out when fidelity is low; use a fixed
+        // low value in the test harness so operations actually fire.
+        float testFidelity = 0.30f;
+        String mutated = RumorMutator.mutate(text, testFidelity, "debug", 0L, mutatorUuid);
+        long seed = RumorMutator.deriveSeed("debug", 0L, mutatorUuid);
+
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "§eseed=§f%016x §7(topic=debug, acquiredTick=0, mutator=%s)%n§eIn: §f%s%n§eOut:§f%s",
+                seed, mutatorUuid, text, mutated)),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Mood
+    // =========================================================================
+
+    private static int handleMoodList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        NpcMoodState mood = npc.getMood();
+        long now = src.getLevel().getGameTime();
+        long daysSinceUpdate = mood.lastUpdateTick() == 0L
+                ? -1L
+                : (now - mood.lastUpdateTick()) / TICKS_PER_DAY;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Mood: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===");
+        sb.append(String.format(Locale.ROOT,
+                "%n  Value:    §f%+6.2f §7%s",
+                mood.value(), categoryTag(mood.category())));
+        sb.append(String.format(Locale.ROOT,
+                "%n  Baseline: §f%+6.2f",
+                mood.baseline()));
+        sb.append(String.format(Locale.ROOT,
+                "%n  Last update: §f%s",
+                daysSinceUpdate < 0 ? "(never)" : daysSinceUpdate + "d ago"));
+        if (mood.isGrieving(now)) {
+            sb.append("\n  §c[GRIEVING — decay halved]");
+        }
+
+        List<MoodEvent> events = mood.recentEvents();
+        if (events.isEmpty()) {
+            sb.append("\n  §7(no recent events)");
+        } else {
+            sb.append("\n  §6Recent events:");
+            for (MoodEvent e : events) {
+                long days = (now - e.tick()) / TICKS_PER_DAY;
+                sb.append(String.format(Locale.ROOT,
+                        "%n    %s §f%-26s %+4d  §7%dd ago",
+                        e.magnitude() >= 0 ? "§a+" : "§c−",
+                        e.trigger().name(),
+                        e.magnitude(),
+                        days));
+            }
+        }
+
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static String categoryTag(tterrag1112.life_in_the_village.Npc.Mood.MoodCategory c) {
+        return switch (c) {
+            case ELATED     -> "§a[ELATED]";
+            case CONTENT    -> "§a[CONTENT]";
+            case NEUTRAL    -> "§7[NEUTRAL]";
+            case TROUBLED   -> "§e[TROUBLED]";
+            case DISTRESSED -> "§c[DISTRESSED]";
+        };
+    }
+
+    private static int handleMoodTrigger(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        String triggerName = StringArgumentType.getString(ctx, "trigger").toUpperCase(Locale.ROOT);
+        MoodTrigger trigger;
+        try {
+            trigger = MoodTrigger.valueOf(triggerName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown MoodTrigger: " + triggerName));
+            return 0;
+        }
+
+        NpcMoodState mood = npc.getMood();
+        float before = mood.value();
+        int applied = mood.apply(trigger, npc.getTraitVector(), src.getLevel().getGameTime());
+        float after = mood.value();
+
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "Applied §f%s§r to §f%s§r: §7before=§f%+.2f §7after=§f%+.2f §7Δ=§f%+d§7 (raw=%+d × multiplier)",
+                trigger.name(),
+                displayName(npc),
+                before, after, applied, trigger.defaultMagnitude())),
+                false);
+        return 1;
+    }
+
+    private static int handleMoodDecay(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        float days = FloatArgumentType.getFloat(ctx, "days");
+        NpcMoodState mood = npc.getMood();
+        float before = mood.value();
+        mood.decay(days, src.getLevel().getGameTime());
+        float after = mood.value();
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "Decayed §f%.2f§r day(s): §7before=§f%+.2f §7after=§f%+.2f §7baseline=§f%+.2f",
+                days, before, after, mood.baseline())),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Skills
+    // =========================================================================
+
+    private static int handleSkillsList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        SkillComponent sk = npc.getSkills();
+        var profSkills = ProfessionSkills.of(npc.getProfession()).orElse(null);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Skills: ").append(displayName(npc))
+                .append(" §7(").append(id).append(") §6profession=§f")
+                .append(npc.getProfession().name()).append("§e ===");
+        for (Skill s : Skill.values()) {
+            int level = sk.getLevel(s);
+            float xp = sk.getXp(s);
+            String tag;
+            if (profSkills != null && profSkills.primary() == s)        tag = "§a[PRIMARY]  ";
+            else if (profSkills != null && profSkills.secondary() == s) tag = "§e[SECONDARY]";
+            else                                                         tag = "§7           ";
+            sb.append(String.format(Locale.ROOT,
+                    "%n  %s §f%-9s §7lv=§f%3d §8(%s) §7xp=§f%7.1f§7 / %.0f",
+                    tag, s.name(), level, SkillComponent.tierFor(level),
+                    xp, SkillComponent.xpRequiredFor(SkillComponent.MAX_LEVEL)));
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleSkillsAdd(CommandContext<CommandSourceStack> ctx) {
+        return handleSkillsMutation(ctx, true);
+    }
+
+    private static int handleSkillsSet(CommandContext<CommandSourceStack> ctx) {
+        return handleSkillsMutation(ctx, false);
+    }
+
+    // =========================================================================
+    // Offices (cross-entity walker)
+    // =========================================================================
+
+    private static int handleOfficesList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID uuid = UuidArgument.getUuid(ctx, "uuid");
+        long now = src.getLevel().getGameTime();
+
+        List<OfficeRegistry.Match> matches = OfficeRegistry.findOfficesHeldBy(uuid, src.getLevel());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Offices held by §f").append(uuid).append("§e ===");
+        if (matches.isEmpty()) {
+            sb.append("\n§7(none)");
+        } else {
+            for (OfficeRegistry.Match m : matches) {
+                long days = m.holding().daysRemaining(now);
+                String termDisplay = days < 0 ? "indefinite" : days + "d remaining";
+                sb.append(String.format(Locale.ROOT,
+                        "%n  §6%s §f%s §7(%s) §e%s§7 — %s",
+                        m.orgType().name().toLowerCase(Locale.ROOT),
+                        m.orgDisplayName(),
+                        m.orgId(),
+                        m.holding().officeId(),
+                        termDisplay));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Events (Phase 1)
+    // =========================================================================
+
+    private static int handleEventsListen(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        if (ACTIVE_LISTENER != null) {
+            NpcLifeEventBus.removeListener(ACTIVE_LISTENER);
+            ACTIVE_LISTENER = null;
+            src.sendSuccess(() -> Component.literal("§eEvent listener: §coff"), false);
+            return 1;
+        }
+        java.util.function.Consumer<NpcLifeEvent> listener = event -> {
+            String summary = summarizeEvent(event);
+            // Send to the original command source if still online; otherwise drop.
+            try {
+                src.sendSystemMessage(Component.literal("§7[evt] §f" + summary));
+            } catch (Throwable ignored) { /* command source gone */ }
+        };
+        NpcLifeEventBus.addListener(listener);
+        ACTIVE_LISTENER = listener;
+        src.sendSuccess(() -> Component.literal("§eEvent listener: §aon §7(re-run to disable)"), false);
+        return 1;
+    }
+
+    private static String summarizeEvent(NpcLifeEvent event) {
+        String type = event.getClass().getSimpleName();
+        UUID subjectId = event.subject() == null ? null : event.subject().getUUID();
+        return type + " subject=" + subjectId + " " + event.toString();
+    }
+
+    private static int handleEventsStats(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        StringBuilder sb = new StringBuilder("§e=== NpcLifeEventBus stats ===");
+        var counts = NpcLifeEventBus.allCounts();
+        if (counts.isEmpty()) {
+            sb.append("\n§7(no dispatchers registered yet)");
+        } else {
+            counts.forEach((name, count) -> sb.append(String.format(Locale.ROOT,
+                    "%n  §6%-14s §f%d", name, count)));
+        }
+        sb.append(String.format(Locale.ROOT, "%n§eListeners: §f%d",
+                NpcLifeEventBus.listenerCount()));
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleEventsFireMarried(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID spouse = UuidArgument.getUuid(ctx, "spouseUuid");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Married(npc, spouse));
+        return ackFire(src, "Married", npc.getUUID());
+    }
+
+    private static int handleEventsFireInsulted(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID insulter = UuidArgument.getUuid(ctx, "insulterUuid");
+        boolean inPublic = com.mojang.brigadier.arguments.BoolArgumentType.getBool(ctx, "public");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Insulted(npc, insulter, false, inPublic));
+        return ackFire(src, "Insulted", npc.getUUID());
+    }
+
+    private static int handleEventsFireComplimented(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID complimenter = UuidArgument.getUuid(ctx, "complimenterUuid");
+        boolean matched = com.mojang.brigadier.arguments.BoolArgumentType.getBool(ctx, "matchedTrait");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Complimented(npc, complimenter, false, matched));
+        return ackFire(src, "Complimented", npc.getUUID());
+    }
+
+    private static int handleEventsFireWitnessedDeath(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID deceased = UuidArgument.getUuid(ctx, "deceasedUuid");
+        String relName = StringArgumentType.getString(ctx, "relation").toUpperCase(Locale.ROOT);
+        RelationshipType relation;
+        try {
+            relation = RelationshipType.valueOf(relName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown RelationshipType: " + relName));
+            return 0;
+        }
+        NpcLifeEventBus.fire(new NpcLifeEvent.WitnessedDeath(npc, deceased, relation));
+        return ackFire(src, "WitnessedDeath", npc.getUUID());
+    }
+
+    private static int handleEventsFireRescued(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID rescuer = UuidArgument.getUuid(ctx, "rescuerUuid");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Rescued(npc, rescuer, true));
+        return ackFire(src, "Rescued", npc.getUUID());
+    }
+
+    private static int handleEventsFireSavedSomeone(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID saved = UuidArgument.getUuid(ctx, "savedUuid");
+        NpcLifeEventBus.fire(new NpcLifeEvent.SavedSomeone(npc, saved, false));
+        return ackFire(src, "SavedSomeone", npc.getUUID());
+    }
+
+    private static int handleEventsFireSurvivedBattle(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        NpcLifeEventBus.fire(new NpcLifeEvent.SurvivedBattle(npc));
+        return ackFire(src, "SurvivedBattle", npc.getUUID());
+    }
+
+    private static int handleEventsFireGoalCompleted(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        String goalTypeName = StringArgumentType.getString(ctx, "goalType").toUpperCase(Locale.ROOT);
+        int importance = IntegerArgumentType.getInteger(ctx, "importance");
+        tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalType type;
+        try {
+            type = tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalType.valueOf(goalTypeName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown LifeGoalType: " + goalTypeName));
+            return 0;
+        }
+        // Synthetic LifeGoal — not stored on the NPC; just for the bus event.
+        long now = src.getLevel().getGameTime();
+        tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal synth =
+                new tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal(
+                        UUID.randomUUID(), type, now, 0L, "", 1, 1,
+                        tterrag1112.life_in_the_village.Npc.LifeGoal.GoalStatus.COMPLETED,
+                        importance, "(synthetic)");
+        NpcLifeEventBus.fire(new NpcLifeEvent.GoalCompleted(npc, synth));
+        return ackFire(src, "GoalCompleted", npc.getUUID());
+    }
+
+    private static int ackFire(CommandSourceStack src, String type, UUID subjectId) {
+        src.sendSuccess(() -> Component.literal(
+                "Fired §f" + type + "§r on §f" + subjectId), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Life goals (Phase 1 task 07)
+    // =========================================================================
+
+    private static int handleGoalsList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        long now = src.getLevel().getGameTime();
+        LifeGoalSet set = npc.getLifeGoals();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Life goals: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===");
+        sb.append(String.format(Locale.ROOT, "%n§6Active §7(%d/%d)",
+                set.activeCount(), LifeGoalSet.MAX_ACTIVE));
+        if (set.active().isEmpty()) {
+            sb.append("\n  §7(none)");
+        } else {
+            for (LifeGoal g : set.active()) {
+                long days = (now - g.startTick()) / TICKS_PER_DAY;
+                sb.append(String.format(Locale.ROOT,
+                        "%n  §a%s §7imp=%d §fprog=%d/%d §7(%dd)  %s%s",
+                        g.type().name(), g.importance(),
+                        g.progressCount(), g.targetCount(), days,
+                        g.narrative(),
+                        g.targetParam().isEmpty() ? "" : " §8target=" + g.targetParam()));
+            }
+        }
+        sb.append(String.format(Locale.ROOT, "%n§6History §7(%d/%d)",
+                set.historyCount(), LifeGoalSet.MAX_HISTORY));
+        if (set.history().isEmpty()) {
+            sb.append("\n  §7(none)");
+        } else {
+            for (LifeGoal g : set.history()) {
+                String tag = switch (g.status()) {
+                    case COMPLETED -> "§a[done]";
+                    case FAILED -> "§c[failed]";
+                    case ABANDONED -> "§8[abandoned]";
+                    default -> "§7[?]";
+                };
+                sb.append(String.format(Locale.ROOT,
+                        "%n  %s §f%s §7imp=%d", tag, g.type().name(), g.importance()));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleGoalsSet(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        LifeGoalType type = parseGoalType(src, ctx);
+        if (type == null) return 0;
+        String targetParam = "";
+        try {
+            targetParam = StringArgumentType.getString(ctx, "targetParam");
+        } catch (IllegalArgumentException ignored) { /* arg not supplied */ }
+        var def = LifeGoalRegistry.get(type);
+        long now = src.getLevel().getGameTime();
+        int target = def != null ? def.defaultTargetCount() : 1;
+        int importance = def != null ? def.defaultImportance() : 5;
+        String narrative = def != null ? def.narrativeTemplate() : "";
+        LifeGoal goal = LifeGoal.newActive(type, now, targetParam, target, importance, narrative);
+        boolean added = npc.getLifeGoals().add(goal);
+        String status = added ? "added" : "rejected (cap reached or duplicate)";
+        src.sendSuccess(() -> Component.literal(
+                "Goal " + status + ": §f" + type.name() + "§r on §f" + displayName(npc)), false);
+        return added ? 1 : 0;
+    }
+
+    private static int handleGoalsComplete(CommandContext<CommandSourceStack> ctx) {
+        return goalTerminate(ctx, GoalStatus.COMPLETED);
+    }
+
+    private static int handleGoalsFail(CommandContext<CommandSourceStack> ctx) {
+        return goalTerminate(ctx, GoalStatus.FAILED);
+    }
+
+    private static int goalTerminate(CommandContext<CommandSourceStack> ctx, GoalStatus terminal) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        LifeGoalType type = parseGoalType(src, ctx);
+        if (type == null) return 0;
+        var existing = npc.getLifeGoals().activeByType(type);
+        if (existing.isEmpty()) {
+            src.sendFailure(Component.literal("No active goal of type " + type.name() + " on " + displayName(npc)));
+            return 0;
+        }
+        long now = src.getLevel().getGameTime();
+        LifeGoal goal = existing.get();
+        var moved = terminal == GoalStatus.COMPLETED
+                ? npc.getLifeGoals().complete(goal.goalId(), now)
+                : npc.getLifeGoals().fail(goal.goalId(), now);
+        moved.ifPresent(g -> {
+            if (terminal == GoalStatus.COMPLETED) {
+                NpcLifeEventBus.fire(new NpcLifeEvent.GoalCompleted(npc, g));
+            } else {
+                String reason = "";
+                try { reason = StringArgumentType.getString(ctx, "reason"); }
+                catch (IllegalArgumentException ignored) {}
+                NpcLifeEventBus.fire(new NpcLifeEvent.GoalFailed(npc, g, reason));
+            }
+        });
+        src.sendSuccess(() -> Component.literal(
+                "Goal " + terminal.name().toLowerCase(Locale.ROOT) + ": §f" + type.name()
+                        + "§r on §f" + displayName(npc)), false);
+        return 1;
+    }
+
+    private static LifeGoalType parseGoalType(CommandSourceStack src, CommandContext<CommandSourceStack> ctx) {
+        String name = StringArgumentType.getString(ctx, "type").toUpperCase(Locale.ROOT);
+        try {
+            return LifeGoalType.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown LifeGoalType: " + name));
+            return null;
+        }
+    }
+
+    private static int handleSkillsMutation(CommandContext<CommandSourceStack> ctx, boolean add) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+
+        String skillName = StringArgumentType.getString(ctx, "skill").toUpperCase(Locale.ROOT);
+        Skill skill;
+        try {
+            skill = Skill.valueOf(skillName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown Skill: " + skillName));
+            return 0;
+        }
+        float xp = FloatArgumentType.getFloat(ctx, "xp");
+        long now = src.getLevel().getGameTime();
+        SkillComponent sk = npc.getSkills();
+        float beforeXp = sk.getXp(skill);
+        int beforeLv  = sk.getLevel(skill);
+
+        if (add) sk.addXp(skill, xp, now);
+        else     sk.setXp(skill, xp, now);
+
+        float afterXp = sk.getXp(skill);
+        int afterLv   = sk.getLevel(skill);
+        src.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "%s §f%s§r: §7xp §f%.1f§7→§f%.1f §7(lv §f%d§7→§f%d§7, %s)",
+                add ? "Added XP to" : "Set XP for",
+                skill.name(), beforeXp, afterXp, beforeLv, afterLv,
+                SkillComponent.tierFor(afterLv))),
+                false);
+        return 1;
     }
 }

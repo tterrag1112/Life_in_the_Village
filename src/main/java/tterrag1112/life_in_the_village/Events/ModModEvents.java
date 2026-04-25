@@ -83,6 +83,10 @@ public class ModModEvents {
         MinecraftServer server = event.getServer();
         ResourceManager manager = server.getResourceManager();
 
+        // Phase 1: register the three default NpcLifeEvent dispatchers
+        // (memory, mood, trait drift). Idempotent.
+        tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.registerDefaults();
+
         System.out.println("Loading village types...");
         manager.listResources("village_types",
                 path -> path.getPath().endsWith(".json")
@@ -201,6 +205,10 @@ public class ModModEvents {
                 NpcProfileActionPacket.CODEC,
                 NpcProfileActionPacket::handle);
         registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.PlayerVerbInvokePacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.PlayerVerbInvokePacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.PlayerVerbInvokePacket::handle);
+        registrar.playToServer(
                 CloseNpcProfilePacket.TYPE,
                 CloseNpcProfilePacket.CODEC,
                 CloseNpcProfilePacket::handle);
@@ -226,6 +234,9 @@ public class ModModEvents {
         RoadDebugCommand.register(event.getDispatcher());
         RoadGraphDebugCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
+        OfficeDebugCommand.register(event.getDispatcher());
+        DialogueDebugCommand.register(event.getDispatcher());
+        VerbDebugCommand.register(event.getDispatcher());
 
     }
 

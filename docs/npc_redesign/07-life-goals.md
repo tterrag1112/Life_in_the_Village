@@ -388,4 +388,105 @@ dialogue tree exists.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 1 implementation (task 07)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.LifeGoal`
+(`LifeGoalType`, `GoalStatus`, `LifeGoal`, `LifeGoalDefinition`,
+`LifeGoalRegistry`, `LifeGoalSet`, `LifeGoalSelector`,
+`LifeGoalProgressDispatcher`, `LifeGoalEvaluator`). Pattern parallels
+prior Phase 0 components — single per-NPC container saved under
+`npcGoals` on the entity tag; Phase 1 dispatchers register on the
+bus; daily evaluator hangs off the existing
+`npc_daily_decay` tick subsystem.
+
+**Goal-count formula at adulthood (LOCKED).** Spec line 145 says
+"typically 1–2 at adulthood, with more added over life" without a
+precise rule. Phase 1 locks: **1 baseline + 1 if Ambition ≥ +0.4**,
+capped at `LifeGoalSet.MAX_ACTIVE = 3`. Vacancy-driven refill (daily,
+when active is empty) tries to add 1 more goal — over a lifetime the
+slate naturally fills toward 3 for high-activity NPCs. Documented on
+`LifeGoalSelector.desiredInitialCount`.
+
+**Goal type count.** Spec lists **26** entries (4 wealth + 5 career +
+6 family + 4 social + 3 spiritual + 2 location + 2 dark). Task
+prompt said 25 — used spec count.
+
+**Cultural-fit placeholder.** Phase 5 wires per-culture goal
+weighting; Phase 1 uses neutral cultural weight 1.0 in
+`LifeGoalSelector.scoreGoal`. Documented inline.
+
+**Selection scoring.** Trait alignment is a sparse dot product of the
+NPC's `TraitVector` with the goal's `traitWeights` map (per spec
+line 152–160: "+Industry, +Temperance, -Generosity" etc.). Skill
+bonus is `level / 100` for goals that gate on a craft skill (e.g.
+WIN_OFFICE × SOCIAL, AUTHOR_BOOK × LITERACY). Combined score is
+`(traitAlignment + skillBonus + 0.10) * culturalWeight`; the +0.10
+floor keeps tied/zero-aligned goals visible in the candidate pool.
+Top-K = 6 candidates feed weighted-random pick.
+
+**Bus events upgraded.** Task 10 had shipped `GoalCompleted` /
+`GoalFailed` / `GoalAbandoned` carrying `String goalType` +
+`int importance` placeholders since `LifeGoal` didn't exist yet.
+This session swaps them to carry `LifeGoal goal` per the spec
+record signature in `10-phase1-integration.md` line 266. `MoodProducer`
+and `TraitDriftProducer` cases now read `e.goal().importance()`.
+The synthetic-event path for `/npc events fire GoalCompleted`
+constructs a `LifeGoal` on the fly (with COMPLETED status, no
+storage on the NPC) so the bus debug surface keeps working.
+
+**Completion conditions.** Phase 1 evaluator polls only the goal
+types whose state lives in already-shipped subsystems:
+
+| Type | Source |
+|---|---|
+| SAVE_AMOUNT | `EconomyComponent.getWallet().toBronze()` |
+| REACH_SKILL_LEVEL | `SkillComponent.getLevel(skill)` (skill from `targetParam`) |
+| HAVE_CHILD | `FamilyComponent.getChildrenIds().size()` |
+| WIN_OFFICE | any office held — Phase 3 refines to specific-office |
+| MARRY_TARGET / MARRY_ANY | `LifeGoalProgressDispatcher` reacts to the bus `Married` event |
+
+Other goal types stay at progress 0 in Phase 1 — their producers
+land in Phase 2+ (apprenticeship → TEACH_APPRENTICE,
+relationship ledger → BEFRIEND_*, book publish → AUTHOR_BOOK,
+visit tracking → VISIT_VILLAGES / PILGRIMAGE, crime/justice →
+AVENGE_WRONG / RESTORE_FAMILY_HONOR, etc.). Each will hook in via
+`LifeGoalProgressDispatcher` without bus changes.
+
+**Failure detection.** `LifeGoal.isExpired(now)` (deadline passed
+when `targetTick > 0 && now > targetTick`) drives `GoalFailed`
+events from the daily evaluator. Target-NPC-died abandonment is
+deferred — Phase 2's relationship ledger or a Phase 1.5 follow-up
+will scan target UUIDs each day and abandon goals whose target is
+gone. Recorded explicitly in code as a TODO via the dispatcher's
+default-case no-op.
+
+**Player visibility.** `NpcProfileSnapshot` gained
+`activeGoalLabels: List<String>` (and matching `StreamCodec` writes
++ reads). Snapshot builder pulls the goal's `displayLabel` from
+`LifeGoalRegistry`. The actual GUI panel ("Aspirations") that
+renders the labels is deferred per the standing UI-deferral pattern
+across earlier sessions; the data is on the wire for whoever picks
+up the panel work.
+
+**Spec↔prompt naming / shape mismatches:**
+
+- Prompt says "ActiveLifeGoal record" — spec calls it `LifeGoal`.
+  Used spec.
+- Prompt mentions `LifeGoalComponent` — spec uses `LifeGoalSet`.
+  Used spec.
+- Prompt's example list ("MARRY_LOCAL, MARRY_FOREIGN, ...DIE_HERO")
+  doesn't match the spec's enum names. Used spec
+  (`MARRY_TARGET / MARRY_ANY / DIE_WITH_HONOR / ...`).
+- Prompt says 25 types; spec has 26. Used spec count.
+
+**Not implemented in this session (deferred per prompt's DO NOT
+list):**
+
+- Goal-driven AI (active pursuit). Phase 1 is selection +
+  completion detection only — passive goals like RAISE_FAMILY
+  complete when world state matches.
+- Dialogue references to goals (Phase 1 doc 08 — separate session).
+- Phase 5 content-pass narrative templates (Phase 1 ships
+  placeholder display labels).
+- Cultural goal-weighting (Phase 5).
+- Player help/hinder verbs (Phase 1 doc 09 — separate session).

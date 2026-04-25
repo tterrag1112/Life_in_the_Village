@@ -271,4 +271,113 @@ Phase 1+ consumers require this subsystem stable.
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 0 implementation (task 05)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Skills`
+(`Skill`, `ProfessionSkills`, `SkillComponent`). Pattern parallels
+prior Phase 0 components.
+
+**Storage shape (deviation).** Spec NBT shows per-skill named fields
+plus a parallel `xpProgress[]` array (effectively storing both level
+and sub-level progress). Implementation collapses this to a single
+8-element `xp[]` array plus an 8-element `lastXpTick[]` array, both
+under the `npcSkill` key. Cumulative XP is the sole source of truth;
+level is always derived via `levelFromXp` (binary search on the
+pre-computed level→XP table). Removes the inconsistency risk where
+a stored level could disagree with stored XP. Functionally identical
+to the spec format.
+
+**Level curve (LOCKED).** Spec gives 8 anchor points and says
+"intermediate levels interpolated logarithmically". Implementation
+locks this as: between adjacent anchors `(L_a, XP_a)` and
+`(L_b, XP_b)`, the cumulative XP for an intermediate level `L` is
+`exp(log(XP_a) + t * (log(XP_b) - log(XP_a)))` where
+`t = (L - L_a) / (L_b - L_a)`. The (0, 0) → (1, 50) segment uses
+linear interpolation (log of zero is undefined). The full 101-entry
+table is built once at class load in
+`SkillComponent.buildLevelXpTable`.
+
+Sample derived values: lv 15 ≈ 1500 XP, lv 35 ≈ 5703 XP, lv 50 ≈
+10245 XP. **Changing this curve later will shift every NPC's
+displayed level for the same XP**, so any future revisit must come
+with a save migration.
+
+**Profession→skill table.** Spec lists seven canonical rows ("FARMER,
+BLACKSMITH, GUARD, MERCHANT, SCRIBE, SCHOLAR, HEALER") with
+"...". Of those, only `FARMER`, `BLACKSMITH`, `GUARD`, `MERCHANT`,
+`SCHOLAR` exist in the current `Profession` enum (SCRIBE, HEALER are
+Phase 2 additions). The full table in
+`ProfessionSkills.buildTable()` covers every existing profession
+following the spec's "lean on" descriptions:
+
+- Farming family (FARMER, FARMHAND): FARMING + SURVIVAL
+- Crafting family (BLACKSMITH, BAKER, WEAVER, CANDLEMAKER, BUILDER,
+  STONEMASON, CARPENTER): CRAFTING + (COMMERCE | SURVIVAL)
+- Combat (GUARD, ADVENTURER): COMBAT + SURVIVAL
+- Commerce (MERCHANT, WANDERING_TRADER, STOCKPILE_KEEPER): COMMERCE +
+  SOCIAL
+- Hospitality (INNKEEPER): SOCIAL + COMMERCE
+- Leadership (VILLAGE_LEADER, KINGDOM_RULER, HERALD, PRIEST): SOCIAL
+  + LITERACY
+- Administrative (CHANCELLOR): LITERACY + SOCIAL
+- Scholar (SCHOLAR): LITERACY + MEDICINE (spec)
+- Industrial (MILLER, MINER): FARMING/SURVIVAL + CRAFTING
+- Guild (GUILDMASTER, GUILDWORKER, COMPANY_WORKER): SOCIAL/CRAFTING +
+  COMMERCE
+- NONE / CITIZEN: intentionally absent — no profession means no bias
+  at spawn-time skill init.
+
+These are tuning calls; can be adjusted in one place
+(`ProfessionSkills.buildTable`) without touching callers.
+
+**Migration from `NpcProfessionXp`.** Direct 1:1 map of the legacy
+`npcProfXp` int into the primary skill's cumulative XP. Legacy
+thresholds (Novice 0, Journeyman 150, Expert 600, Master 2000,
+Grandmaster 8000) under the new curve produce skill levels of
+roughly 0 / 3 / 9 / 17 / 41 — preserving the relative meaning (an
+old "Grandmaster" becomes a solid mid-career new-skill, with room to
+grow toward 100). Secondary and others stay at 0, per spec edge case
+"Existing saves load with all skills at 0; skills accumulate from
+first XP grant." Legacy `npcProfXp` field stays readable for one
+release per the standing migration window — `NpcProfessionXp.get(...)`
+is consulted on load but not cleared.
+
+**Spawn-time initialization.** `initializeFromProfession` in
+`finalizeSpawn`. Per spec: primary skill picked uniformly from level
+[15, 35], secondary from [5, 20], others from [0, 10], converted to
+cumulative XP via the locked level curve. New NPCs typically spawn
+with `Profession.NONE` until building assignment, in which case the
+init becomes "all skills random in [0, 10]" — the assigning code can
+re-init when it stamps a real profession.
+
+**Effect multipliers — not yet wired.** The spec's
+`getSpeedMultiplier(npc)` rewrite to read from skill levels is
+deferred. `NpcProfessionXp.getSpeedMultiplier` continues to drive
+production goals; the new SkillComponent stores XP additively. Phase
+1+ will retrofit production goals to grant skill XP via
+`SkillComponent.addXp` and migrate the multipliers.
+
+**No automatic XP grants in this session.** Per the task prompt; only
+`/npc skills add` and `/npc skills set` write XP. Decay also deferred.
+
+**Debug command.** `/npc skills <uuid>` lists all 8 skills with
+[PRIMARY] / [SECONDARY] tags relative to the NPC's current
+profession, shows level + tier (Amateur/Journeyman/Expert/Master per
+spec). `/npc skills add <uuid> <skill> <xp>` and `/npc skills set
+<uuid> <skill> <xp>` cover incremental and absolute changes.
+
+**Open decisions deferred (per spec):**
+- Children's Literacy cap of 20 (spec "Open decisions") not
+  implemented — life-stage gating is a Phase 2 child-arc concern.
+- Per-skill differential decay rates not implemented — uniform decay
+  rate is the spec's v1 default and decay itself ships in Phase 1.
+
+**Prompt↔spec naming mismatches (for the prompt-template maintainer):**
+- Prompt suggested `Map<Skill, Integer> xp`; spec spec'd
+  `short[] levels` plus a separate `xpProgress` float array. Used a
+  single `float[] xp` (cumulative) per the storage-shape discussion
+  above.
+- Prompt mentioned "buffs infrastructure (active skill-rate
+  multipliers from books per 18-letters-and-books.md)" — that doc is
+  Phase 2 and not present yet. Skipped for Phase 0; will land with
+  the book system.
