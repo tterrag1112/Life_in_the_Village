@@ -423,4 +423,127 @@ Must land in this order within Phase 1:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 1 implementation (task 10: bus + dispatchers)
+
+Implementation landed in `tterrag1112.life_in_the_village.Npc.Events`
+(`NpcLifeEvent` sealed interface, `NpcLifeEventBus`, `EventDispatcher`,
+`RelationshipType`, `GiftAppropriateness`) plus
+`Npc.Events.Producers` (`MemoryProducer`, `MoodProducer`,
+`TraitDriftProducer`). New persistent component
+`TraitDriftLog` lives in `Npc.Traits`; attached to `TownspersonMob`
+via the existing component pattern.
+
+**Locked decisions:**
+
+- **Synchronous dispatch.** Per spec line 402–404 ("synchronous for
+  v1"). `NpcLifeEventBus.fire` runs every dispatcher inline in
+  registration order; each dispatcher is wrapped in a try-catch so a
+  buggy one cannot cancel later ones. No event queue, no
+  persistence of pending events — fire-and-forget per spec line
+  367–369.
+
+- **Witness radius: 16 blocks.** Spec line 48. Implemented as an
+  AABB inflated 16 around the dying NPC's bounding box; no
+  line-of-sight check (spec doesn't require one).
+
+- **Trait-drift formula.** Per-event delta hard-capped at 0.05;
+  lifetime cap at ±0.40 per axis; once-per-NPC events use
+  `TraitDriftLog.markFired` keyed by string; calm-period drift-back
+  applied in the daily tick when `lastDriftTick` is more than 180
+  days behind, at 0.01/year (≈ 2.74e-5 per day). The drift-back
+  pass returns the per-axis deltas applied so the daily-tick caller
+  can mirror them on the {@link TraitVector}.
+
+- **TraitDriftLog persistence key.** New `npcTraitDrift` subtree on
+  the entity. Pre-Phase-1 saves load with an empty log (`hasFired`
+  returns false for everything; `lastDriftTick = 0`, treated as
+  "no drift yet"); calm-period drift-back skips when `lastDriftTick
+  == 0`.
+
+**Spec↔prompt naming / shape mismatches (kept for the prompt-template
+maintainer):**
+
+- Prompt's `TradeCompleted(buyer, seller, item, quantity, value)`
+  vs spec's `Trade(npc, partnerId, amount)`. Used spec name; record
+  carries `partnerId`, an `ItemStack item`, an `amount` in bronze,
+  and a `notable` flag derived inline from quantity / total value.
+- Prompt mentions `LifeStageAdvanced` and `PromiseMade`. Spec's
+  enumerated record list (lines 259–273) doesn't include either;
+  added `LifeStageAdvanced` because the existing
+  `TownspersonMob.onLifeStageChanged` callback is a real surface
+  worth exposing now. Skipped `PromiseMade` — no Phase 1 producer
+  source.
+- Prompt expected `GiftReceived(receiver, giver, item, isFavorite)`
+  with a boolean. Spec uses a `GiftAppropriateness` enum (line 261
+  references it). Defined the enum here with FAVORITE / APPROPRIATE
+  / OFF_BASE / INSULTING; INSULTING gifts route through the
+  `INSULTED_BY` memory + `INSULT_RECEIVED` mood path per the spec
+  table (lines 56–59).
+- `GoalCompleted` and `GoalFailed` carry `String goalType` /
+  `int importance` placeholders rather than the spec's `LifeGoal`
+  type (LifeGoal is Phase 1 task 07, not yet shipped). Task 07 will
+  swap the field type to `LifeGoal` and update the producer
+  switches; documented.
+
+**Producer trait-modulation table (memory).** Implemented per spec
+section "Trait-modulated memory values" — RECEIVED_GIFT × Generosity
+(+0.2/unit), INSULTED_BY × Temperance (−0.3/unit), SAVED_BY ×
+Compassion (+0.2), VICTIM_OF_CRIME_BY × Temperance (−0.2),
+DEFENDED_BY × Compassion (+0.3), COMPLIMENTED_BY × Sociability
+(+0.2). All other memory types apply no trait modulation. Final
+`initialValue` clamped to {@code [1, 100]} so the result is always a
+valid memory value.
+
+**Mood magnitude overrides.** Several spec rows specify "+15 flat",
+"×1.5 magnitude", "(small positive, +3)" — added a new public method
+`NpcMoodState.applyWithRawMagnitude(trigger, mag, currentTick)` so
+producers can apply an explicit magnitude through the same
+daily-cap / clamp / recent-event path as the default trigger
+magnitude. Used by `MoodProducer.applyWithMagnitude(...)`.
+
+**Existing event surfaces wired:**
+
+| Surface | File | Event fired |
+|---|---|---|
+| NPC death | `TownspersonMob.onNpcDeath` (extended) | `WitnessedDeath` (per nearby NPC), `FamilyDeath` (spouse / children / parent) |
+| NPC damage | `TownspersonMob.onNpcHurt` (new) | `Attacked` |
+| Marriage | `CourtingGoal.formCouple` (extended) | `Married` (both partners) |
+| Birth | `ChildBirthGoal` post-spawn (extended) | `BirthInFamily` (mother + spouse if loaded) |
+| Trade buy / sell | `TradeHandler.handleBuy/handleSell` (extended) | `Trade` (notable flag inferred from quantity/value) |
+| Bus default registration | `ModModEvents.onServerStarting` | `NpcLifeEventBus.registerDefaults()` |
+
+Existing reputation, kingdom, and household handlers stay
+untouched — Phase 1 is additive.
+
+**Hooks NOT yet wired (deferred to their own task sessions per the
+prompt's DO NOT list):**
+
+- `Hired` / `Fired` — `WorkplaceAssignmentManager` doesn't have a
+  clean fire path yet; deferred to Phase 1 task 09 (player verbs)
+  / a future workplace pass.
+- `Rescued` / `SavedSomeone` — needs a tick-level HP-watch heuristic
+  ("was at HP ≤ 1 within the last N ticks?"). Deferred to a
+  follow-up.
+- `GoalCompleted` / `GoalFailed` / `GoalAbandoned` — no LifeGoal
+  producer source yet (Phase 1 task 07).
+- `Promoted` / `Demoted`, `Defended`, `SharedHardship`,
+  `SharedFestival`, `TaughtSkill`, `LearnedSkill`,
+  `LifeStageAdvanced` — producers in Phase 2+ docs (16
+  apprenticeship, 19 crime, 20 religion, 22 laws, 32 events
+  expanded). Sub-types exist on the bus surface today so producers
+  fire without further bus changes.
+
+**Debug commands:** `/npc events listen` toggles a transient
+listener that prints every fired event to the issuing source;
+`/npc events stats` prints per-dispatcher counts and active
+listener count; `/npc events fire {Married|Insulted|Complimented|
+WitnessedDeath|Rescued|SavedSomeone|SurvivedBattle|GoalCompleted}`
+posts a synthetic event for testing. Other event types can be added
+as Phase 2 producers come online.
+
+**Reputation / kingdom system overlap.** `ReputationEvents.onLivingHurt`
+already listens on `LivingIncomingDamageEvent` and adjusts village
+reputation. The new `TownspersonMob.onNpcHurt` is a separate
+@SubscribeEvent on the same event, so both fire — additive per the
+prompt instruction "do not break existing event handlers". Phase 3
+will collapse duplication when the bus becomes the only consumer.

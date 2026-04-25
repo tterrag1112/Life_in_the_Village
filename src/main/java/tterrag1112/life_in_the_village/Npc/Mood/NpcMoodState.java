@@ -104,7 +104,19 @@ public final class NpcMoodState {
      *         {@code 0} when the cap blocked all of it.
      */
     public int apply(MoodTrigger trigger, TraitVector traits, long currentTick) {
-        int rawMag = Math.round(trigger.defaultMagnitude() * trigger.traitMultiplier(traits));
+        return applyWithRawMagnitude(trigger,
+                Math.round(trigger.defaultMagnitude() * trigger.traitMultiplier(traits)),
+                currentTick);
+    }
+
+    /**
+     * Phase 1 producer hook: applies an explicit pre-computed magnitude
+     * (already trait-modulated by the caller) under the same daily-cap
+     * + clamp + recent-event-log path as {@link #apply}. Used by
+     * {@code MoodProducer.applyWithMagnitude} for spec rows that
+     * specify "+15 flat" or "×1.5 magnitude".
+     */
+    public int applyWithRawMagnitude(MoodTrigger trigger, int rawMag, long currentTick) {
         int delta = rawMag;
 
         // Daily-stack cap (cumulative cap in mood points; sign-aware).

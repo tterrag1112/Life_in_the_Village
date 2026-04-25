@@ -103,6 +103,14 @@ public class CourtingGoal extends Goal {
         entity.setSpouseId(target.getUUID());
         target.setSpouseId(entity.getUUID());
 
+        // Phase 1: fire Married events for both partners.
+        tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.Married(
+                        entity, target.getUUID()));
+        tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.Married(
+                        target, entity.getUUID()));
+
         // Move spouse into head's house
         target.setHouseId(entity.getHouseId().orElse(null));
         target.setFamilyRole(FamilyRole.SPOUSE);

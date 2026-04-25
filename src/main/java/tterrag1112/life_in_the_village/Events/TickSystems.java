@@ -827,6 +827,16 @@ class NpcMemoryDecayTickSystem implements TickSubsystem {
 
             // Mood drift toward baseline (Phase 0-04).
             npc.getMood().decay(1f, currentTick);
+
+            // Trait calm-period drift-back (Phase 1, 10-phase1-integration).
+            // After 180 idle days, traits drift back toward origin at
+            // 0.01/year. Cap-aware: only fires when there is drift to
+            // unwind.
+            var driftBack = npc.getTraitDrift().applyCalmDriftBack(currentTick);
+            if (!driftBack.isEmpty()) {
+                var vec = npc.getTraitVector();
+                driftBack.forEach((axis, delta) -> vec.adjust(axis, delta));
+            }
         }
     }
 }

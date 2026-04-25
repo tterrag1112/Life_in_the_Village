@@ -47,6 +47,7 @@ import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
+import tterrag1112.life_in_the_village.Npc.Traits.TraitDriftLog;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -122,6 +123,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final AppearanceComponent appearance = new AppearanceComponent();
     private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
     private final TraitVector traits = new TraitVector();
+    private final TraitDriftLog traitDrift = new TraitDriftLog();
     private final NpcMemoryLog memory = new NpcMemoryLog();
     private final NpcKnowledgeLedger knowledge = new NpcKnowledgeLedger();
     private final NpcMoodState mood = new NpcMoodState();
@@ -433,6 +435,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      */
     public TraitVector getTraitVector() {
         return traits;
+    }
+
+    /** Cumulative trait-drift log; see {@code docs/npc_redesign/10-phase1-integration.md}. */
+    public TraitDriftLog getTraitDrift() {
+        return traitDrift;
     }
 
     /** Situational memory log; see {@code docs/npc_redesign/02-memory-system.md}. */
@@ -1138,6 +1145,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Skills ───────────────────────────────────────────────────────────
         skills.save(output);
+
+        // ── Trait drift log (Phase 1) ────────────────────────────────────────
+        traitDrift.save(output);
     }
 
     // =========================================================================
@@ -1261,6 +1271,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Mood (baseline derives from traits when not stored) ─────────────
         if (!mood.load(input)) mood.initializeFromTraits(traits);
 
+        // ── Trait drift log (Phase 1) ────────────────────────────────────────
+        traitDrift.load(input);
+
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {
             int legacyXp = tterrag1112.life_in_the_village.Profession.NpcProfessionXp.get(this);
@@ -1290,6 +1303,89 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         VillageSavedData data = VillageSavedData.get(level);
         HouseholdManager.onNpcDied(npc.getUUID(), data);
+
+        // ── Phase 1: fire WitnessedDeath for every nearby NPC, FamilyDeath
+        //    for every household member of the deceased.
+        UUID deceasedId = npc.getUUID();
+        net.minecraft.world.phys.AABB witnessZone =
+                npc.getBoundingBox().inflate(WITNESS_RADIUS_BLOCKS);
+        for (TownspersonMob witness : level.getEntitiesOfClass(
+                TownspersonMob.class, witnessZone,
+                w -> !w.getUUID().equals(deceasedId))) {
+            tterrag1112.life_in_the_village.Npc.Events.RelationshipType relation =
+                    classifyDeathRelation(witness, npc);
+            tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                    new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent
+                            .WitnessedDeath(witness, deceasedId, relation));
+        }
+
+        // FamilyDeath fan-out for spouse / children / parents in the
+        // deceased's household. Reuses FamilyComponent's records — those
+        // are the authoritative source for "who is family".
+        FamilyComponent family = npc.getFamily();
+        family.getSpouseId().ifPresent(spouseId -> findByUUID(level, spouseId).ifPresent(
+                spouse -> tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                        new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.FamilyDeath(
+                                spouse, deceasedId,
+                                tterrag1112.life_in_the_village.Entities.FamilyRole.SPOUSE))));
+        for (UUID childId : family.getChildrenIds()) {
+            findByUUID(level, childId).ifPresent(
+                    child -> tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                            new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.FamilyDeath(
+                                    child, deceasedId,
+                                    tterrag1112.life_in_the_village.Entities.FamilyRole.HEAD)));
+        }
+        family.getHeadOfHouseholdId().ifPresent(headId -> {
+            if (!headId.equals(deceasedId)) {
+                findByUUID(level, headId).ifPresent(
+                        head -> tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                                new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.FamilyDeath(
+                                        head, deceasedId,
+                                        tterrag1112.life_in_the_village.Entities.FamilyRole.CHILD)));
+            }
+        });
+    }
+
+    /** Spec: "scans nearby NPCs within 16 blocks" (10-phase1-integration.md line 48). */
+    private static final double WITNESS_RADIUS_BLOCKS = 16.0;
+
+    /**
+     * Classifies the witness's relation to the deceased for routing
+     * mood / drift. Phase 2's relationship ledger will provide a richer
+     * lookup; Phase 1 falls back on family-component flags only.
+     */
+    private static tterrag1112.life_in_the_village.Npc.Events.RelationshipType
+    classifyDeathRelation(TownspersonMob witness, TownspersonMob deceased) {
+        UUID deceasedId = deceased.getUUID();
+        FamilyComponent fam = witness.getFamily();
+        if (fam.getSpouseId().filter(deceasedId::equals).isPresent())
+            return tterrag1112.life_in_the_village.Npc.Events.RelationshipType.SPOUSE;
+        if (fam.getChildrenIds().contains(deceasedId)
+                || fam.getHeadOfHouseholdId().filter(deceasedId::equals).isPresent())
+            return tterrag1112.life_in_the_village.Npc.Events.RelationshipType.KIN;
+        return tterrag1112.life_in_the_village.Npc.Events.RelationshipType.NEUTRAL;
+    }
+
+    /**
+     * Phase 1 hook for damage. Fires {@code Attacked} on
+     * {@link net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent}
+     * so the bus can route {@code VICTIM_OF_CRIME_BY} memory +
+     * {@code CRIME_VICTIM} mood. Coexists with the existing
+     * {@code ReputationEvents.onLivingHurt} (which only listens for
+     * player attackers).
+     */
+    @SubscribeEvent
+    public static void onNpcHurt(
+            net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent event) {
+        if (!(event.getEntity() instanceof TownspersonMob npc)) return;
+        var src = event.getSource();
+        if (src == null) return;
+        net.minecraft.world.entity.Entity attacker = src.getEntity();
+        if (attacker == null || attacker.getUUID().equals(npc.getUUID())) return;
+        boolean isPlayer = attacker instanceof net.minecraft.world.entity.player.Player;
+        tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.Attacked(
+                        npc, attacker.getUUID(), isPlayer, event.getAmount()));
     }
 
     // =========================================================================

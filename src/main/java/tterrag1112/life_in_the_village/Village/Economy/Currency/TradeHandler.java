@@ -247,6 +247,14 @@ public class TradeHandler {
             ItemStack toGive = new ItemStack(item, quantity);
             if (!player.addItem(toGive)) player.drop(toGive, false);
 
+            // Phase 1: fire Trade event so memory/mood producers see it.
+            tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                    new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.Trade(
+                            merchant, player.getUUID(), true,
+                            new ItemStack(item, quantity),
+                            totalCost.toBronze(),
+                            quantity >= 4 || totalCost.toBronze() >= 200L));
+
             player.displayClientMessage(
                     Component.literal("Bought " + quantity + "x "
                             + item.getName().getString()
@@ -319,6 +327,14 @@ public class TradeHandler {
             // 3. Merchant spends, player receives — uses playerReceive
             merchant.getWallet().spend(totalEarned);
             CoinHelper.playerReceive(player, totalEarned);
+
+            // Phase 1: fire Trade event for the sell-side path too.
+            tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                    new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.Trade(
+                            merchant, player.getUUID(), true,
+                            new ItemStack(item, quantity),
+                            totalEarned.toBronze(),
+                            quantity >= 4 || totalEarned.toBronze() >= 200L));
 
             player.displayClientMessage(
                     Component.literal("Sold " + quantity + "x "

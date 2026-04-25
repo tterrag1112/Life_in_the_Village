@@ -20,6 +20,10 @@ import tterrag1112.life_in_the_village.Npc.Knowledge.RumorMutator;
 import tterrag1112.life_in_the_village.Npc.Memory.MemoryType;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemory;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
+import tterrag1112.life_in_the_village.Npc.Events.GiftAppropriateness;
+import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
+import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus;
+import tterrag1112.life_in_the_village.Npc.Events.RelationshipType;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodEvent;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
@@ -154,8 +158,58 @@ public final class NpcDebugCommand {
                 .then(Commands.literal("offices")
                         .then(Commands.argument("uuid", UuidArgument.uuid())
                                 .executes(NpcDebugCommand::handleOfficesList)))
+
+                // ── /npc events {listen|fire|stats} ──────────────────────────
+                .then(Commands.literal("events")
+                        .then(Commands.literal("listen")
+                                .executes(NpcDebugCommand::handleEventsListen))
+                        .then(Commands.literal("stats")
+                                .executes(NpcDebugCommand::handleEventsStats))
+                        .then(Commands.literal("fire")
+                                .then(Commands.literal("Married")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("spouseUuid", UuidArgument.uuid())
+                                                        .executes(ctx -> handleEventsFireMarried(ctx)))))
+                                .then(Commands.literal("Insulted")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("insulterUuid", UuidArgument.uuid())
+                                                        .then(Commands.argument("public", com.mojang.brigadier.arguments.BoolArgumentType.bool())
+                                                                .executes(ctx -> handleEventsFireInsulted(ctx))))))
+                                .then(Commands.literal("Complimented")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("complimenterUuid", UuidArgument.uuid())
+                                                        .then(Commands.argument("matchedTrait", com.mojang.brigadier.arguments.BoolArgumentType.bool())
+                                                                .executes(ctx -> handleEventsFireComplimented(ctx))))))
+                                .then(Commands.literal("WitnessedDeath")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("deceasedUuid", UuidArgument.uuid())
+                                                        .then(Commands.argument("relation", StringArgumentType.word())
+                                                                .suggests((c, b) -> {
+                                                                    for (RelationshipType r : RelationshipType.values()) b.suggest(r.name());
+                                                                    return b.buildFuture();
+                                                                })
+                                                                .executes(ctx -> handleEventsFireWitnessedDeath(ctx))))))
+                                .then(Commands.literal("Rescued")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("rescuerUuid", UuidArgument.uuid())
+                                                        .executes(ctx -> handleEventsFireRescued(ctx)))))
+                                .then(Commands.literal("SavedSomeone")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("savedUuid", UuidArgument.uuid())
+                                                        .executes(ctx -> handleEventsFireSavedSomeone(ctx)))))
+                                .then(Commands.literal("SurvivedBattle")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .executes(ctx -> handleEventsFireSurvivedBattle(ctx))))
+                                .then(Commands.literal("GoalCompleted")
+                                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                                .then(Commands.argument("goalType", StringArgumentType.word())
+                                                        .then(Commands.argument("importance", IntegerArgumentType.integer(1, 10))
+                                                                .executes(ctx -> handleEventsFireGoalCompleted(ctx))))))))
         );
     }
+
+    /** Active /npc events listen registration; null when off. */
+    private static java.util.function.Consumer<NpcLifeEvent> ACTIVE_LISTENER = null;
 
     // =========================================================================
     // Traits
@@ -628,6 +682,141 @@ public final class NpcDebugCommand {
             }
         }
         src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Events (Phase 1)
+    // =========================================================================
+
+    private static int handleEventsListen(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        if (ACTIVE_LISTENER != null) {
+            NpcLifeEventBus.removeListener(ACTIVE_LISTENER);
+            ACTIVE_LISTENER = null;
+            src.sendSuccess(() -> Component.literal("§eEvent listener: §coff"), false);
+            return 1;
+        }
+        java.util.function.Consumer<NpcLifeEvent> listener = event -> {
+            String summary = summarizeEvent(event);
+            // Send to the original command source if still online; otherwise drop.
+            try {
+                src.sendSystemMessage(Component.literal("§7[evt] §f" + summary));
+            } catch (Throwable ignored) { /* command source gone */ }
+        };
+        NpcLifeEventBus.addListener(listener);
+        ACTIVE_LISTENER = listener;
+        src.sendSuccess(() -> Component.literal("§eEvent listener: §aon §7(re-run to disable)"), false);
+        return 1;
+    }
+
+    private static String summarizeEvent(NpcLifeEvent event) {
+        String type = event.getClass().getSimpleName();
+        UUID subjectId = event.subject() == null ? null : event.subject().getUUID();
+        return type + " subject=" + subjectId + " " + event.toString();
+    }
+
+    private static int handleEventsStats(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        StringBuilder sb = new StringBuilder("§e=== NpcLifeEventBus stats ===");
+        var counts = NpcLifeEventBus.allCounts();
+        if (counts.isEmpty()) {
+            sb.append("\n§7(no dispatchers registered yet)");
+        } else {
+            counts.forEach((name, count) -> sb.append(String.format(Locale.ROOT,
+                    "%n  §6%-14s §f%d", name, count)));
+        }
+        sb.append(String.format(Locale.ROOT, "%n§eListeners: §f%d",
+                NpcLifeEventBus.listenerCount()));
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleEventsFireMarried(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID spouse = UuidArgument.getUuid(ctx, "spouseUuid");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Married(npc, spouse));
+        return ackFire(src, "Married", npc.getUUID());
+    }
+
+    private static int handleEventsFireInsulted(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID insulter = UuidArgument.getUuid(ctx, "insulterUuid");
+        boolean inPublic = com.mojang.brigadier.arguments.BoolArgumentType.getBool(ctx, "public");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Insulted(npc, insulter, false, inPublic));
+        return ackFire(src, "Insulted", npc.getUUID());
+    }
+
+    private static int handleEventsFireComplimented(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID complimenter = UuidArgument.getUuid(ctx, "complimenterUuid");
+        boolean matched = com.mojang.brigadier.arguments.BoolArgumentType.getBool(ctx, "matchedTrait");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Complimented(npc, complimenter, false, matched));
+        return ackFire(src, "Complimented", npc.getUUID());
+    }
+
+    private static int handleEventsFireWitnessedDeath(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID deceased = UuidArgument.getUuid(ctx, "deceasedUuid");
+        String relName = StringArgumentType.getString(ctx, "relation").toUpperCase(Locale.ROOT);
+        RelationshipType relation;
+        try {
+            relation = RelationshipType.valueOf(relName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown RelationshipType: " + relName));
+            return 0;
+        }
+        NpcLifeEventBus.fire(new NpcLifeEvent.WitnessedDeath(npc, deceased, relation));
+        return ackFire(src, "WitnessedDeath", npc.getUUID());
+    }
+
+    private static int handleEventsFireRescued(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID rescuer = UuidArgument.getUuid(ctx, "rescuerUuid");
+        NpcLifeEventBus.fire(new NpcLifeEvent.Rescued(npc, rescuer, true));
+        return ackFire(src, "Rescued", npc.getUUID());
+    }
+
+    private static int handleEventsFireSavedSomeone(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        UUID saved = UuidArgument.getUuid(ctx, "savedUuid");
+        NpcLifeEventBus.fire(new NpcLifeEvent.SavedSomeone(npc, saved, false));
+        return ackFire(src, "SavedSomeone", npc.getUUID());
+    }
+
+    private static int handleEventsFireSurvivedBattle(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        NpcLifeEventBus.fire(new NpcLifeEvent.SurvivedBattle(npc));
+        return ackFire(src, "SurvivedBattle", npc.getUUID());
+    }
+
+    private static int handleEventsFireGoalCompleted(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
+        if (npc == null) return 0;
+        String goalType = StringArgumentType.getString(ctx, "goalType");
+        int importance = IntegerArgumentType.getInteger(ctx, "importance");
+        NpcLifeEventBus.fire(new NpcLifeEvent.GoalCompleted(npc, goalType, importance));
+        return ackFire(src, "GoalCompleted", npc.getUUID());
+    }
+
+    private static int ackFire(CommandSourceStack src, String type, UUID subjectId) {
+        src.sendSuccess(() -> Component.literal(
+                "Fired §f" + type + "§r on §f" + subjectId), false);
         return 1;
     }
 

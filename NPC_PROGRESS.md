@@ -74,10 +74,11 @@ save/load. No behavior change yet.
 Goal: NPCs feel like people with goals, dialogue, and verb responses.
 
 - [ ] Read Phase 1 specs (07–10) end-to-end
-- [ ] **10** `NpcLifeEventBus` — event class hierarchy, dispatcher
+- [x] **10** `NpcLifeEventBus` — event class hierarchy, dispatcher
   registry
-    - [ ] Three Phase 1 dispatchers: memory, mood, trait-drift
-    - [ ] Tick hooks wired
+    - [x] Three Phase 1 dispatchers: memory, mood, trait-drift
+    - [x] Tick hooks wired (calm-period drift-back in
+      `npc_daily_decay`)
 - [ ] **07** Life goals
     - [ ] 25 goal type definitions
     - [ ] Adulthood selection (1–3 goals per NPC, trait-weighted)
@@ -351,6 +352,16 @@ testable via `/npc knowledge mutate` but has no production callers
 yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
+
+**Phase 1 progress:** Task 10 (NpcLifeEventBus) complete; tasks 07
+(life goals), 08 (dialogue), 09 (player verbs) remaining. Producer
+wiring (memory / mood / trait-drift) is in place; existing event
+surfaces hooked are LivingIncomingDamageEvent, LivingDeathEvent
+(witness scan + family-death fan-out), CourtingGoal.formCouple,
+ChildBirthGoal completion, and TradeHandler buy/sell paths.
+TraitDriftLog is a new persistent component on TownspersonMob; the
+calm-period drift-back is wired into the existing
+`npc_daily_decay` subsystem so no new tick path was added.
 
 **Phase 0 is COMPLETE.** All six components shipped:
 - 01 TraitVector
