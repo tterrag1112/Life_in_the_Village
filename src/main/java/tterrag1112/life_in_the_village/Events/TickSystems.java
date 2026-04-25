@@ -837,6 +837,12 @@ class NpcMemoryDecayTickSystem implements TickSubsystem {
                 var vec = npc.getTraitVector();
                 driftBack.forEach((axis, delta) -> vec.adjust(axis, delta));
             }
+
+            // Life-goal evaluator (Phase 1 task 07): poll progress, fire
+            // GoalCompleted / GoalFailed for finished goals, refill empty
+            // slates.
+            tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalEvaluator
+                    .runDaily(npc, currentTick);
         }
     }
 }

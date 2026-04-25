@@ -101,14 +101,15 @@ public final class MoodProducer implements EventDispatcher {
             // ── Goals ──────────────────────────────────────────────────────
             case NpcLifeEvent.GoalCompleted e -> {
                 MoodTrigger trigger = MoodTrigger.GOAL_COMPLETED;
-                if (e.importance() >= 7) {
+                int importance = e.goal().importance();
+                if (importance >= 7) {
                     // Spec: "GOAL_COMPLETED heavy" for importance ≥ 7.
                     int mag = Math.round(trigger.defaultMagnitude() * 1.5f);
                     applyWithMagnitude(e.subject(), trigger, mag);
                 } else {
                     // Proportional to importance (1..6).
                     int mag = Math.max(1, Math.round(
-                            trigger.defaultMagnitude() * (e.importance() / 7f)));
+                            trigger.defaultMagnitude() * (importance / 7f)));
                     applyWithMagnitude(e.subject(), trigger, mag);
                 }
             }

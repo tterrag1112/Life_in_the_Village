@@ -64,7 +64,7 @@ public final class TraitDriftProducer implements EventDispatcher {
 
             case NpcLifeEvent.GoalCompleted e -> {
                 // Spec: "+0.01 Ambition" for importance ≥ 7.
-                if (e.importance() >= 7) drift(e.subject(), TraitAxis.AMBITION, +0.01f);
+                if (e.goal().importance() >= 7) drift(e.subject(), TraitAxis.AMBITION, +0.01f);
             }
 
             // ── Social ─────────────────────────────────────────────────────

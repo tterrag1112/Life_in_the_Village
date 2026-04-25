@@ -24,6 +24,11 @@ import tterrag1112.life_in_the_village.Npc.Events.GiftAppropriateness;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus;
 import tterrag1112.life_in_the_village.Npc.Events.RelationshipType;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.GoalStatus;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalRegistry;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSet;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalType;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodEvent;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
@@ -158,6 +163,39 @@ public final class NpcDebugCommand {
                 .then(Commands.literal("offices")
                         .then(Commands.argument("uuid", UuidArgument.uuid())
                                 .executes(NpcDebugCommand::handleOfficesList)))
+
+                // ── /npc goals {list|set|complete|fail} ─────────────────────
+                .then(Commands.literal("goals")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleGoalsList))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("type", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (LifeGoalType t : LifeGoalType.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleGoalsSet)
+                                                .then(Commands.argument("targetParam", StringArgumentType.greedyString())
+                                                        .executes(NpcDebugCommand::handleGoalsSet)))))
+                        .then(Commands.literal("complete")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("type", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (LifeGoalType t : LifeGoalType.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleGoalsComplete))))
+                        .then(Commands.literal("fail")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("type", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (LifeGoalType t : LifeGoalType.values()) b.suggest(t.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .executes(NpcDebugCommand::handleGoalsFail)
+                                                .then(Commands.argument("reason", StringArgumentType.greedyString())
+                                                        .executes(NpcDebugCommand::handleGoalsFail))))))
 
                 // ── /npc events {listen|fire|stats} ──────────────────────────
                 .then(Commands.literal("events")
@@ -808,9 +846,23 @@ public final class NpcDebugCommand {
         CommandSourceStack src = ctx.getSource();
         TownspersonMob npc = resolveOrFail(src, UuidArgument.getUuid(ctx, "uuid"));
         if (npc == null) return 0;
-        String goalType = StringArgumentType.getString(ctx, "goalType");
+        String goalTypeName = StringArgumentType.getString(ctx, "goalType").toUpperCase(Locale.ROOT);
         int importance = IntegerArgumentType.getInteger(ctx, "importance");
-        NpcLifeEventBus.fire(new NpcLifeEvent.GoalCompleted(npc, goalType, importance));
+        tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalType type;
+        try {
+            type = tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalType.valueOf(goalTypeName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown LifeGoalType: " + goalTypeName));
+            return 0;
+        }
+        // Synthetic LifeGoal — not stored on the NPC; just for the bus event.
+        long now = src.getLevel().getGameTime();
+        tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal synth =
+                new tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal(
+                        UUID.randomUUID(), type, now, 0L, "", 1, 1,
+                        tterrag1112.life_in_the_village.Npc.LifeGoal.GoalStatus.COMPLETED,
+                        importance, "(synthetic)");
+        NpcLifeEventBus.fire(new NpcLifeEvent.GoalCompleted(npc, synth));
         return ackFire(src, "GoalCompleted", npc.getUUID());
     }
 
@@ -818,6 +870,131 @@ public final class NpcDebugCommand {
         src.sendSuccess(() -> Component.literal(
                 "Fired §f" + type + "§r on §f" + subjectId), false);
         return 1;
+    }
+
+    // =========================================================================
+    // Life goals (Phase 1 task 07)
+    // =========================================================================
+
+    private static int handleGoalsList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        long now = src.getLevel().getGameTime();
+        LifeGoalSet set = npc.getLifeGoals();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Life goals: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===");
+        sb.append(String.format(Locale.ROOT, "%n§6Active §7(%d/%d)",
+                set.activeCount(), LifeGoalSet.MAX_ACTIVE));
+        if (set.active().isEmpty()) {
+            sb.append("\n  §7(none)");
+        } else {
+            for (LifeGoal g : set.active()) {
+                long days = (now - g.startTick()) / TICKS_PER_DAY;
+                sb.append(String.format(Locale.ROOT,
+                        "%n  §a%s §7imp=%d §fprog=%d/%d §7(%dd)  %s%s",
+                        g.type().name(), g.importance(),
+                        g.progressCount(), g.targetCount(), days,
+                        g.narrative(),
+                        g.targetParam().isEmpty() ? "" : " §8target=" + g.targetParam()));
+            }
+        }
+        sb.append(String.format(Locale.ROOT, "%n§6History §7(%d/%d)",
+                set.historyCount(), LifeGoalSet.MAX_HISTORY));
+        if (set.history().isEmpty()) {
+            sb.append("\n  §7(none)");
+        } else {
+            for (LifeGoal g : set.history()) {
+                String tag = switch (g.status()) {
+                    case COMPLETED -> "§a[done]";
+                    case FAILED -> "§c[failed]";
+                    case ABANDONED -> "§8[abandoned]";
+                    default -> "§7[?]";
+                };
+                sb.append(String.format(Locale.ROOT,
+                        "%n  %s §f%s §7imp=%d", tag, g.type().name(), g.importance()));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleGoalsSet(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        LifeGoalType type = parseGoalType(src, ctx);
+        if (type == null) return 0;
+        String targetParam = "";
+        try {
+            targetParam = StringArgumentType.getString(ctx, "targetParam");
+        } catch (IllegalArgumentException ignored) { /* arg not supplied */ }
+        var def = LifeGoalRegistry.get(type);
+        long now = src.getLevel().getGameTime();
+        int target = def != null ? def.defaultTargetCount() : 1;
+        int importance = def != null ? def.defaultImportance() : 5;
+        String narrative = def != null ? def.narrativeTemplate() : "";
+        LifeGoal goal = LifeGoal.newActive(type, now, targetParam, target, importance, narrative);
+        boolean added = npc.getLifeGoals().add(goal);
+        String status = added ? "added" : "rejected (cap reached or duplicate)";
+        src.sendSuccess(() -> Component.literal(
+                "Goal " + status + ": §f" + type.name() + "§r on §f" + displayName(npc)), false);
+        return added ? 1 : 0;
+    }
+
+    private static int handleGoalsComplete(CommandContext<CommandSourceStack> ctx) {
+        return goalTerminate(ctx, GoalStatus.COMPLETED);
+    }
+
+    private static int handleGoalsFail(CommandContext<CommandSourceStack> ctx) {
+        return goalTerminate(ctx, GoalStatus.FAILED);
+    }
+
+    private static int goalTerminate(CommandContext<CommandSourceStack> ctx, GoalStatus terminal) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        LifeGoalType type = parseGoalType(src, ctx);
+        if (type == null) return 0;
+        var existing = npc.getLifeGoals().activeByType(type);
+        if (existing.isEmpty()) {
+            src.sendFailure(Component.literal("No active goal of type " + type.name() + " on " + displayName(npc)));
+            return 0;
+        }
+        long now = src.getLevel().getGameTime();
+        LifeGoal goal = existing.get();
+        var moved = terminal == GoalStatus.COMPLETED
+                ? npc.getLifeGoals().complete(goal.goalId(), now)
+                : npc.getLifeGoals().fail(goal.goalId(), now);
+        moved.ifPresent(g -> {
+            if (terminal == GoalStatus.COMPLETED) {
+                NpcLifeEventBus.fire(new NpcLifeEvent.GoalCompleted(npc, g));
+            } else {
+                String reason = "";
+                try { reason = StringArgumentType.getString(ctx, "reason"); }
+                catch (IllegalArgumentException ignored) {}
+                NpcLifeEventBus.fire(new NpcLifeEvent.GoalFailed(npc, g, reason));
+            }
+        });
+        src.sendSuccess(() -> Component.literal(
+                "Goal " + terminal.name().toLowerCase(Locale.ROOT) + ": §f" + type.name()
+                        + "§r on §f" + displayName(npc)), false);
+        return 1;
+    }
+
+    private static LifeGoalType parseGoalType(CommandSourceStack src, CommandContext<CommandSourceStack> ctx) {
+        String name = StringArgumentType.getString(ctx, "type").toUpperCase(Locale.ROOT);
+        try {
+            return LifeGoalType.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown LifeGoalType: " + name));
+            return null;
+        }
     }
 
     private static int handleSkillsMutation(CommandContext<CommandSourceStack> ctx, boolean add) {

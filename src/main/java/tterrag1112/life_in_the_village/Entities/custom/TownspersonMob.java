@@ -44,6 +44,7 @@ import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSet;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
@@ -128,6 +129,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final NpcKnowledgeLedger knowledge = new NpcKnowledgeLedger();
     private final NpcMoodState mood = new NpcMoodState();
     private final SkillComponent skills = new SkillComponent();
+    private final LifeGoalSet lifeGoals = new LifeGoalSet();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -460,6 +462,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** 8-skill cross-profession proficiency; see {@code docs/npc_redesign/05-skill-system.md}. */
     public SkillComponent getSkills() {
         return skills;
+    }
+
+    /** Active + history life goals; see {@code docs/npc_redesign/07-life-goals.md}. */
+    public LifeGoalSet getLifeGoals() {
+        return lifeGoals;
     }
 
     public void clearTraits() {
@@ -1005,6 +1012,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     }
 
     private void onLifeStageChanged(LifeStage from, LifeStage to, ServerLevel level) {
+        // Phase 1: fire LifeStageAdvanced so the bus can drive goal
+        // selection on ADULT and similar transitions.
+        tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.LifeStageAdvanced(
+                        this, from.name(), to.name()));
+
         switch (to) {
             case TEEN -> {
                 if (getProfession() == Profession.NONE) {
@@ -1148,6 +1161,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Trait drift log (Phase 1) ────────────────────────────────────────
         traitDrift.save(output);
+
+        // ── Life goals (Phase 1 task 07) ─────────────────────────────────────
+        lifeGoals.save(output);
     }
 
     // =========================================================================
@@ -1273,6 +1289,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Trait drift log (Phase 1) ────────────────────────────────────────
         traitDrift.load(input);
+
+        // ── Life goals (Phase 1 task 07) ─────────────────────────────────────
+        lifeGoals.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

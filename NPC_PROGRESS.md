@@ -79,11 +79,15 @@ Goal: NPCs feel like people with goals, dialogue, and verb responses.
     - [x] Three Phase 1 dispatchers: memory, mood, trait-drift
     - [x] Tick hooks wired (calm-period drift-back in
       `npc_daily_decay`)
-- [ ] **07** Life goals
-    - [ ] 25 goal type definitions
-    - [ ] Adulthood selection (1–3 goals per NPC, trait-weighted)
-    - [ ] Goal progress tracking
-    - [ ] Completion/failure hooks fire life events
+- [x] **07** Life goals
+    - [x] 26 goal type definitions (spec count, not 25 from prompt)
+    - [x] Adulthood selection (1-2 baseline, +1 if Ambition ≥ +0.4;
+      capped at MAX_ACTIVE = 3 over lifetime)
+    - [x] Goal progress tracking (poll for SAVE_AMOUNT /
+      REACH_SKILL_LEVEL / HAVE_CHILD / WIN_OFFICE; event-driven for
+      MARRY_TARGET / MARRY_ANY / HAVE_CHILD via the Married /
+      BirthInFamily bus events)
+    - [x] Completion/failure hooks fire life events
 - [ ] **08** Dialogue tree
     - [ ] `DialogueTree`, `DialogueNode`, `DialoguePredicate`,
       `DialogueEffect`
@@ -353,15 +357,31 @@ yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
 
-**Phase 1 progress:** Task 10 (NpcLifeEventBus) complete; tasks 07
-(life goals), 08 (dialogue), 09 (player verbs) remaining. Producer
-wiring (memory / mood / trait-drift) is in place; existing event
-surfaces hooked are LivingIncomingDamageEvent, LivingDeathEvent
-(witness scan + family-death fan-out), CourtingGoal.formCouple,
-ChildBirthGoal completion, and TradeHandler buy/sell paths.
-TraitDriftLog is a new persistent component on TownspersonMob; the
-calm-period drift-back is wired into the existing
-`npc_daily_decay` subsystem so no new tick path was added.
+**Phase 1 progress:** Tasks 10 (NpcLifeEventBus) and 07 (life goals)
+complete; tasks 08 (dialogue) and 09 (player verbs) remaining.
+
+Bus + producer wiring (memory / mood / trait-drift) from task 10 is
+in place; existing event surfaces hooked are
+LivingIncomingDamageEvent, LivingDeathEvent (witness scan +
+family-death fan-out), CourtingGoal.formCouple, ChildBirthGoal
+completion, TradeHandler buy/sell paths, and now
+TownspersonMob.onLifeStageChanged → LifeStageAdvanced.
+TraitDriftLog is a Phase 1 persistent component on TownspersonMob;
+calm-period drift-back is wired into the existing `npc_daily_decay`
+subsystem.
+
+Task 07 adds LifeGoalSet (cap 3 active, history TTL 90d) on
+TownspersonMob, an `npcGoals` save subtree, the 26-entry
+LifeGoalRegistry, and three event-bus dispatchers:
+LifeGoalSelector (runs goal selection on ADULT transition),
+LifeGoalProgressDispatcher (Married → MARRY_TARGET / MARRY_ANY,
+BirthInFamily → HAVE_CHILD), and the daily LifeGoalEvaluator that
+polls progress for SAVE_AMOUNT / REACH_SKILL_LEVEL / HAVE_CHILD /
+WIN_OFFICE and fires GoalCompleted / GoalFailed on
+threshold/expiry. Bus events `GoalCompleted` / `GoalFailed` /
+`GoalAbandoned` were upgraded from String/int placeholders to carry
+the real `LifeGoal` record per the spec. NpcProfileSnapshot gained
+an `activeGoalLabels` field surfaced by the snapshot builder.
 
 **Phase 0 is COMPLETE.** All six components shipped:
 - 01 TraitVector

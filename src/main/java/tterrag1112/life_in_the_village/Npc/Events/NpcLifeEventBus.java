@@ -53,6 +53,10 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.Events.Producers.MemoryProducer());
         register(new tterrag1112.life_in_the_village.Npc.Events.Producers.MoodProducer());
         register(new tterrag1112.life_in_the_village.Npc.Events.Producers.TraitDriftProducer());
+        // Phase 1 task 07: goal selection on ADULT life-stage transition.
+        register(new tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSelector());
+        // Phase 1 task 07: marriage event progresses MARRY_TARGET / MARRY_ANY.
+        register(new tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalProgressDispatcher());
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }

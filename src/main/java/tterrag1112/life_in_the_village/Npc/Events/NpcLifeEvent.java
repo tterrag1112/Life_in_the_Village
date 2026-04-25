@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Npc.Events;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 
 import java.util.UUID;
@@ -115,16 +116,15 @@ public sealed interface NpcLifeEvent {
     record LifeStageAdvanced(TownspersonMob subject, String oldStage,
                              String newStage) implements NpcLifeEvent {}
 
-    // ── Goals (life goals from doc 07; `goalType` is a String placeholder
-    //          until task 07 ships the LifeGoal type — this session is bus-
-    //          first per the user prompt) ─────────────────────────────────
+    // ── Goals (life goals from doc 07) ────────────────────────────────────
 
-    /** {@code importance} is 1..10; ≥ 7 fires the heavy-completion paths. */
-    record GoalCompleted(TownspersonMob subject, String goalType,
-                         int importance) implements NpcLifeEvent {}
+    /** Goal completed; producers route memory + mood per importance. */
+    record GoalCompleted(TownspersonMob subject, LifeGoal goal) implements NpcLifeEvent {}
 
-    record GoalFailed(TownspersonMob subject, String goalType,
+    /** Goal failed (deadline expired or prerequisite lost). */
+    record GoalFailed(TownspersonMob subject, LifeGoal goal,
                       String reason) implements NpcLifeEvent {}
 
-    record GoalAbandoned(TownspersonMob subject, String goalType) implements NpcLifeEvent {}
+    /** Goal abandoned (trait drift / target lost / explicit choice). */
+    record GoalAbandoned(TownspersonMob subject, LifeGoal goal) implements NpcLifeEvent {}
 }
