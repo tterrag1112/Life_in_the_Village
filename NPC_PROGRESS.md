@@ -88,12 +88,18 @@ Goal: NPCs feel like people with goals, dialogue, and verb responses.
       MARRY_TARGET / MARRY_ANY / HAVE_CHILD via the Married /
       BirthInFamily bus events)
     - [x] Completion/failure hooks fire life events
-- [ ] **08** Dialogue tree
-    - [ ] `DialogueTree`, `DialogueNode`, `DialoguePredicate`,
-      `DialogueEffect`
-    - [ ] Predicate/effect registries
-    - [ ] 25 starter trees authored
-    - [ ] Existing dialogue system integration / replacement path
+- [x] **08** Dialogue tree
+    - [x] `DialogueTree`, `DialogueNode` (sealed
+      Branch/Lines/Ref), `DialoguePredicate` (sealed, 17
+      variants), `DialogueEffect` (record + 9-entry
+      DialogueEffectType)
+    - [x] Predicate test paths against Phase 0 component surfaces;
+      EffectDispatcher routes the 9 effect types
+    - [x] 25 starter trees authored + universal fallback
+    - [x] NpcDialogue.getGreeting routes through
+      DialogueRunner.lineFor with profession→treeId mapping;
+      legacy line pools fall back when the runner returns the
+      "..." sentinel
 - [ ] **09** Player verbs
     - [ ] 8 starter verbs: greet, compliment, insult, ask_life,
       ask_about, give_gift, commission, challenge
@@ -357,8 +363,9 @@ yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
 
-**Phase 1 progress:** Tasks 10 (NpcLifeEventBus) and 07 (life goals)
-complete; tasks 08 (dialogue) and 09 (player verbs) remaining.
+**Phase 1 progress:** Tasks 10 (NpcLifeEventBus), 07 (life goals),
+and 08 (dialogue trees) complete; only task 09 (player verbs)
+remaining.
 
 Bus + producer wiring (memory / mood / trait-drift) from task 10 is
 in place; existing event surfaces hooked are

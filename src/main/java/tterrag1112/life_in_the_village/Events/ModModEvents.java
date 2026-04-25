@@ -231,6 +231,7 @@ public class ModModEvents {
         RoadGraphDebugCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
+        DialogueDebugCommand.register(event.getDispatcher());
 
     }
 
