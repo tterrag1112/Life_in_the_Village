@@ -40,7 +40,7 @@ public final class NpcRelationshipLedger {
     /** Spec line 187: close friends decay at half rate. */
     public static final int STICKY_THRESHOLD = 75;
 
-    private static final String SAVE_KEY = "npcRelationships";
+    private static final String SAVE_KEY = "npcNpcRelationshipLedger";
 
     private final Map<UUID, NpcRelationship> entries = new LinkedHashMap<>();
 
