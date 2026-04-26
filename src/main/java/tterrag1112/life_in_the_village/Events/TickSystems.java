@@ -843,7 +843,87 @@ class NpcMemoryDecayTickSystem implements TickSubsystem {
             // slates.
             tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalEvaluator
                     .runDaily(npc, currentTick);
+
+            // NPC↔NPC relationship decay (Phase 2 task 11). Boundary
+            // mode-changes from decay are fanned out as life events so
+            // the memory + mood producers can react.
+            var changes = npc.getNpcRelationships().decayAll(1f, currentTick);
+            for (var change : changes) {
+                tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                        new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent
+                                .RelationshipBoundaryCrossed(
+                                        npc, change.otherId(),
+                                        change.from(), change.to()));
+            }
+
+            // Rumor seed (Phase 2 task 12): chance to promote a recent
+            // high-value memory into a knowledge entry the NPC will
+            // gossip about. Sociability-scaled.
+            tterrag1112.life_in_the_village.Npc.Gossip.RumorSeeder.rollDaily(npc, currentTick);
         }
+
+        // SOCIAL-phase proximity sweep (Phase 2 task 11). Single sample
+        // per day per NPC currently in SOCIAL phase — see 11 Revision
+        // Notes for the simplified-vs-spec discussion.
+        runSocialProximitySweep(ctx);
+
+        // Gossip topic-heat daily decay (Phase 2 task 12). One pass
+        // across every village's tracker so old topics fade.
+        for (var heat : ctx.villageData().getAllGossipHeat().values()) {
+            heat.decay(1f);
+        }
+        ctx.villageData().setDirty();
+    }
+
+    /**
+     * Walks loaded NPCs once. For each NPC currently in SOCIAL phase,
+     * scans an 8-block AABB for any other TownspersonMob also in
+     * SOCIAL, and bumps each side's relationship by +1 (capped at the
+     * spec's PROXIMITY_CEILING via
+     * {@link tterrag1112.life_in_the_village.Npc.Relations.NpcRelationshipLedger#adjustFromProximity}).
+     */
+    private static void runSocialProximitySweep(TickContext ctx) {
+        long now = ctx.tick();
+        var level = ctx.level();
+        java.util.List<TownspersonMob> social = new java.util.ArrayList<>();
+        for (var entity : level.getEntities().getAll()) {
+            if (!(entity instanceof TownspersonMob mob)) continue;
+            if (tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver
+                    .isSocialTime(mob, now)) {
+                social.add(mob);
+            }
+        }
+        for (int i = 0; i < social.size(); i++) {
+            TownspersonMob a = social.get(i);
+            for (int j = i + 1; j < social.size(); j++) {
+                TownspersonMob b = social.get(j);
+                if (a.distanceToSqr(b) > 6.0 * 6.0) continue;
+                a.getNpcRelationships().adjustFromProximity(b.getUUID(), 1, now);
+                b.getNpcRelationships().adjustFromProximity(a.getUUID(), 1, now);
+            }
+        }
+    }
+}
+
+// =============================================================================
+// GOSSIP SCHEDULER (interval = 20, priority = 195)
+// =============================================================================
+
+/**
+ * Drives {@link tterrag1112.life_in_the_village.Npc.Gossip.GossipScheduler}
+ * once per second: ages active channels, runs exchanges, and rolls new
+ * channels for SOCIAL-phase NPC pairs in proximity. Spec
+ * {@code 12-gossip-rumor.md} line 70.
+ */
+class GossipSchedulerTickSystem implements TickSubsystem {
+    @Override public String name()     { return "gossip_scheduler"; }
+    @Override public int    interval() { return 20; }
+    @Override public int    priority() { return 195; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Gossip.GossipScheduler
+                .tick(ctx.level(), ctx.tick());
     }
 }
 

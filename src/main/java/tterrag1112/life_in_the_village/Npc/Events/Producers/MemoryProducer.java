@@ -129,6 +129,21 @@ public final class MemoryProducer implements EventDispatcher {
             case NpcLifeEvent.GoalCompleted ignored -> {}
             case NpcLifeEvent.GoalFailed ignored -> {}
             case NpcLifeEvent.GoalAbandoned ignored -> {}
+
+            // ── Relationship boundary transitions (Phase 2 task 11) ────────
+            // Fire a memory entry on "breakup" transitions where a positive
+            // bond turns neutral or negative. Boundary changes that stay
+            // positive (ACQUAINTANCE→FRIEND etc.) are silent — those are
+            // organic growth, not narrative moments.
+            case NpcLifeEvent.RelationshipBoundaryCrossed e -> {
+                if (e.oldMode().isPositive() && !e.newMode().isPositive()) {
+                    // Treat as INSULTED_BY — it's the closest spec memory
+                    // type for "this person let me down". Phase 5 may add
+                    // a dedicated BREAKUP / FRIENDSHIP_LOST type.
+                    record(e.subject(), tterrag1112.life_in_the_village.Npc.Memory.MemoryType.INSULTED_BY,
+                            e.otherId(), 30, "Relationship breakup");
+                }
+            }
         }
     }
 

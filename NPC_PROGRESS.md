@@ -126,36 +126,103 @@ Goal: NPCs feel like people with goals, dialogue, and verb responses.
 Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
 
 - [ ] Read Phase 2 specs (11–18) end-to-end
-- [ ] **11** NPC relationship ledger
-    - [ ] 15 entries/NPC, 7 modes, seeding rules
-    - [ ] Proximity growth during SOCIAL phase
-    - [ ] Daily decay
-    - [ ] Relationship dispatcher subscribes to life-event bus
-- [ ] **13** Weekly schedule (before 12, since 12 depends on SOCIAL
+- [x] **11** NPC relationship ledger
+    - [x] 15 entries/NPC, 7 modes (NEUTRAL/ACQUAINTANCE/FRIEND/
+      CLOSE_FRIEND/RIVAL/GRUDGE/FEUD); birth/adulthood/marriage
+      seeding + workplace seed helper; single-generation
+      grudge inheritance
+    - [x] Proximity growth during SOCIAL phase (simplified
+      once-per-day sample; capped at +20 from this source)
+    - [x] Daily decay toward neutral with sticky close-friend
+      half-rate; mode boundary crossings fire
+      RelationshipBoundaryCrossed events
+    - [x] Two new dispatchers on the bus
+      (`RelationshipDispatcher`, `RelationshipSeeder`)
+- [x] **13** Weekly schedule (before 12, since 12 depends on SOCIAL
   phase timing)
-    - [ ] Expanded `DayPhase` enum
-    - [ ] `WeeklySchedule`, `PersonalScheduleOverride`
-    - [ ] `ScheduleResolver` with layer stacking
-    - [ ] Migration of all existing schedule callers
-- [ ] **14** Hobby activities
-    - [ ] 15 starter hobbies, trait-weighted selection
-    - [ ] `HobbyGoal` registered for LEISURE/day-off
-    - [ ] Location resolution
-- [ ] **12** Gossip/rumor
-    - [ ] Gossip channels during SOCIAL
-    - [ ] Content mutation, slant templates (15 starter)
-    - [ ] Rumor seeding from memories and world events
-    - [ ] Per-village topic heat tracker
+    - [x] Expanded `DayPhase` enum (11 values; WORK_PRIMARY /
+      WORK_ERRAND / WORK_SECONDARY / COMMUTE / MARKET_RUN /
+      LEISURE / HOME_PREP added; `isWork()` covers all WORK_*)
+    - [x] `WeeklySchedule`, `PersonalScheduleOverride`
+    - [x] `ScheduleResolver` with layer stacking
+    - [x] Migration of all existing schedule callers via the
+      `WorkSchedule` façade (delegates to `ScheduleResolver`;
+      every legacy `isWorkTime()` etc. continues to work)
+- [x] **14** Hobby activities
+    - [x] 17 starter hobbies (15 from spec table + visit_grave +
+      tell_story_inn), trait-weighted selection with softmax
+      over top 5 of preferences
+    - [x] `HobbyGoal` registered at P_SOCIAL_LOW for all NPCs
+      via `ProfessionGoalFactory`; canUse honours LEISURE phase
+      and day-off
+    - [x] Location resolver covers HOME / TOWN_SQUARE / INN /
+      TEMPLE_OR_SHRINE (with CHAPEL fallback) / LIBRARY /
+      MARKET / FIELDS_NEARBY / WATER_EDGE / WORKSHOP_FREE /
+      NATURE_TRAIL / FRIEND_HOUSE; resolution failure filters
+      hobby out so missing infra never causes a stuck goal
+    - [x] Adulthood `HobbyPreferenceGenerator` registered on
+      bus seeds 3-5 preferred hobbies on LifeStageAdvanced(ADULT)
+    - [x] Per-session XP award on clean PERFORMING completion;
+      recent-use map down-weights repeats within 3 days
+    - [x] /npc hobby {list,set,regenerate} debug subcommands
+- [x] **12** Gossip/rumor
+    - [x] Gossip channels during SOCIAL (transient
+      `GossipChannel` + `GossipScheduler` 20-tick poll)
+    - [x] Content mutation via existing RumorMutator + 13 starter
+      slant templates (7 negative + 6 positive)
+    - [x] Rumor seeding from memories (daily `RumorSeeder.rollDaily`
+      promotion); world-event seeders deferred (see 12 Revision
+      Notes — needs new NpcLifeEvent records for festival end /
+      caravan arrival / building burn / office change)
+    - [x] Per-village topic heat tracker (`GossipTopicHeat`
+      attached to `VillageSavedData` as `gossipData`; daily decay
+      in `npc_daily_decay`)
+    - [x] Player verbs `listen_in` and `tell_rumor` registered
+    - [x] AskAboutVerb fabrication path (low-honesty +
+      high-sociability synthesises a FABRICATED entry on unknown
+      topic)
+    - [x] 3 new dialogue predicates: `KnowledgeSourceIs`,
+      `IsTopicHot`, `HasHeardRumor`
+    - [x] `/gossip {list,trace,seed,force-exchange,channels,clear}`
+      Brigadier debug commands
 - [ ] **15** Child/elderly arcs
     - [ ] `ChildhoodState`, `RetirementState`
     - [ ] Child play, attachment, schooling
     - [ ] Elderly retirement, mentor role, unfinished business
     - [ ] Coming-of-age transition hook
-- [ ] **17** Scribal professions (before 16 and 18 — they depend on
+- [x] **17** Scribal professions (before 16 and 18 — they depend on
   scribes)
-    - [ ] SCRIBE, LIBRARIAN, SCHOLAR professions
-    - [ ] SCRIBE_WORKSHOP, LIBRARY, SCHOLARS_RETREAT building types
-    - [ ] Work goals, commission queue, library catalogue
+    - [x] SCRIBE + LIBRARIAN added to Profession enum (SCHOLAR
+      already existed; rewired to SCHOLARS_RETREAT). LIBRARY now
+      maps to LIBRARIAN; SCRIBE_WORKSHOP → SCRIBE;
+      SCHOLARS_RETREAT → SCHOLAR via `professionFor`
+    - [x] SCRIBE_WORKSHOP + SCHOLARS_RETREAT added to BuildingType
+      (LIBRARY already existed). Both registered in
+      BuildingProfileRegistry (workshop civic-adjacent,
+      retreat landmark civic)
+    - [x] ProfessionSkills mappings: SCRIBE = LITERACY/COMMERCE,
+      LIBRARIAN = LITERACY/SOCIAL, SCHOLAR = LITERACY/MEDICINE
+    - [x] Weekly schedule: late-rising SCHOLAR_DAY for the trio,
+      WEEKEND_OFF
+    - [x] ProfessionRequirements helper enforces LITERACY ≥
+      50/60/80 hire gates; populator bumps bootstrap NPCs to the
+      required minimum so spawn-time literacy meets the bar
+    - [x] ScribeCommission / ScribeProductType / CommissionStatus
+      / CommissionQueue with persistence per workshop UUID on
+      VillageSavedData (9th codec field `scribalData`)
+    - [x] BookRecord / LibraryLending / LibraryCatalogue with
+      per-LIBRARY persistence on VillageSavedData
+    - [x] AuthorStatus + ScholarProgress components on
+      TownspersonMob with codec/save/load
+    - [x] ScribalItems helper produces placeholder
+      WRITTEN_BOOK / PAPER items with content data; doc 18 swaps
+      for real letter/book item types
+    - [x] ScribeWorkGoal / LibrarianWorkGoal / ScholarWorkGoal
+      registered via ProfessionGoalFactory at P_WORK_PRIMARY
+    - [x] 4 new player verbs: commission_letter,
+      commission_book_copy, borrow_book, take_lesson
+    - [x] /scribe commissions, /library catalogue,
+      /scholar books debug commands
 - [ ] **18** Letters and books
     - [ ] `WrittenLetterItem`, `ExtendedBookContent`
     - [ ] Delivery paths (self, courier, postal)
@@ -367,6 +434,26 @@ testable via `/npc knowledge mutate` but has no production callers
 yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
+
+**Phase 2 progress:** Tasks 13 (weekly schedule), 11
+(relationship ledger), 12 (gossip/rumor), 14 (hobby
+activities), and 17 (scribal professions) complete; tasks
+15 (child/elderly arcs), 18 (letters/books), 16
+(apprenticeship) remaining.
+
+Schedule landed first because gossip and hobbies need the new
+SOCIAL/LEISURE phase distinction, and the child/elderly arc
+needs the schedule-layer mechanism. New `Npc.Schedule` package
+holds the data model + library + resolver; legacy `WorkSchedule`
+is now a thin façade so every existing goal that calls
+`isWorkTime()` continues to work without touching the call site.
+
+`PersonalScheduleGenerator` registered on the bus —
+LifeStageAdvanced(ADULT) generates a trait-driven override per
+the spec's table (Industry / Sociability / Ambition / Temperance
+/ Compassion). Guard NPCs additionally get a `shiftIndex`
+seeded from COMBAT skill seniority so the village fields
+day/evening/night coverage.
 
 **Phase 1 is COMPLETE.** All four tasks shipped:
 - 10 NpcLifeEventBus + 3 producer dispatchers + TraitDriftLog

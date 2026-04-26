@@ -217,6 +217,12 @@ public final class VillageInhabitantPopulator {
             npc.setFamilyRole(familyRole);
             npc.assignToBuilding(building.getId(), village.getName());
 
+            // Phase 2 task 17 — scribal professions need a literacy
+            // top-up so the spec's hire gate (LITERACY ≥ 50/60/80) is
+            // already met for bootstrap villagers.
+            tterrag1112.life_in_the_village.Profession.ProfessionRequirements
+                    .ensureLiteracyForBootstrap(npc, profession, level.getGameTime());
+
             npc.receive(NpcStartingWealth.forProfession(profession, rng));
 
             level.addFreshEntity(npc);

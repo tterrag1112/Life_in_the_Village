@@ -57,6 +57,13 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSelector());
         // Phase 1 task 07: marriage event progresses MARRY_TARGET / MARRY_ANY.
         register(new tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalProgressDispatcher());
+        // Phase 2 task 13: trait-driven personal-schedule generation on ADULT.
+        register(new tterrag1112.life_in_the_village.Npc.Schedule.PersonalScheduleGenerator());
+        // Phase 2 task 11: NPC↔NPC relationship deltas + seeding hooks.
+        register(new tterrag1112.life_in_the_village.Npc.Relations.RelationshipDispatcher());
+        register(new tterrag1112.life_in_the_village.Npc.Relations.RelationshipSeeder());
+        // Phase 2 task 14: seed hobby preferences on ADULT transition.
+        register(new tterrag1112.life_in_the_village.Npc.Hobby.HobbyPreferenceGenerator());
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }

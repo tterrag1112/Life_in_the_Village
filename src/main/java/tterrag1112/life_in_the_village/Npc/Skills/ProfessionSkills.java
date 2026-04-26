@@ -53,6 +53,14 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         m.put(Profession.HERALD,           new ProfessionSkills(Skill.SOCIAL,   Skill.LITERACY));
         m.put(Profession.PRIEST,           new ProfessionSkills(Skill.SOCIAL,   Skill.LITERACY));
 
+        // Scribal (Phase 2 task 17). LITERACY primary across the trio;
+        // secondary differentiates the role: scribe writes for pay
+        // (COMMERCE), librarian curates and teaches (SOCIAL), scholar
+        // researches and authors (MEDICINE — captures the natural-
+        // philosopher / herbalist archetype).
+        m.put(Profession.SCRIBE,           new ProfessionSkills(Skill.LITERACY, Skill.COMMERCE));
+        m.put(Profession.LIBRARIAN,        new ProfessionSkills(Skill.LITERACY, Skill.SOCIAL));
+
         // Adventurer / guild
         m.put(Profession.ADVENTURER,       new ProfessionSkills(Skill.COMBAT,   Skill.SURVIVAL));
         m.put(Profession.GUILDMASTER,      new ProfessionSkills(Skill.SOCIAL,   Skill.COMMERCE));

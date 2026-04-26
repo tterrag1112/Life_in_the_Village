@@ -164,6 +164,41 @@ public final class NpcDebugCommand {
                         .then(Commands.argument("uuid", UuidArgument.uuid())
                                 .executes(NpcDebugCommand::handleOfficesList)))
 
+                // ── /npc schedule {<uuid>|override|reset} ────────────────────
+                .then(Commands.literal("schedule")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleScheduleList))
+                        .then(Commands.literal("override")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("phase", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (var p : tterrag1112.life_in_the_village.Npc.Schedule.DayPhase.values()) b.suggest(p.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .then(Commands.argument("start", IntegerArgumentType.integer(0, 23999))
+                                                        .then(Commands.argument("end", IntegerArgumentType.integer(0, 23999))
+                                                                .executes(NpcDebugCommand::handleScheduleOverride))))))
+                        .then(Commands.literal("reset")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .executes(NpcDebugCommand::handleScheduleReset))))
+
+                // ── /npc relationships {<uuid>|set|adjust} ──────────────────
+                .then(Commands.literal("relationships")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleRelationshipsList))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("other", UuidArgument.uuid())
+                                                .then(Commands.argument("score",
+                                                                IntegerArgumentType.integer(-100, 100))
+                                                        .executes(NpcDebugCommand::handleRelationshipsSet)))))
+                        .then(Commands.literal("adjust")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("other", UuidArgument.uuid())
+                                                .then(Commands.argument("delta",
+                                                                IntegerArgumentType.integer(-200, 200))
+                                                        .executes(NpcDebugCommand::handleRelationshipsAdjust))))))
+
                 // ── /npc goals {list|set|complete|fail} ─────────────────────
                 .then(Commands.literal("goals")
                         .then(Commands.argument("uuid", UuidArgument.uuid())
@@ -243,6 +278,18 @@ public final class NpcDebugCommand {
                                                 .then(Commands.argument("goalType", StringArgumentType.word())
                                                         .then(Commands.argument("importance", IntegerArgumentType.integer(1, 10))
                                                                 .executes(ctx -> handleEventsFireGoalCompleted(ctx))))))))
+
+                // ── /npc hobby <uuid> | set <uuid> <id> | regenerate <uuid> ──
+                .then(Commands.literal("hobby")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleHobbyList))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("hobbyId", StringArgumentType.word())
+                                                .executes(NpcDebugCommand::handleHobbySet))))
+                        .then(Commands.literal("regenerate")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .executes(NpcDebugCommand::handleHobbyRegenerate))))
         );
     }
 
@@ -873,6 +920,95 @@ public final class NpcDebugCommand {
     }
 
     // =========================================================================
+    // Schedule (Phase 2 task 13)
+    // =========================================================================
+
+    private static int handleScheduleList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        ServerLevel level = src.getLevel();
+        long gameTick = level.getGameTime();
+        long dayTime = ((gameTick % 24000L) + 24000L) % 24000L;
+        int dow = tterrag1112.life_in_the_village.Npc.Schedule.WeeklySchedule.computeDayOfWeek(gameTick);
+
+        var phase = tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver
+                .phaseAt(npc, gameTick);
+        boolean dayOff = tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver
+                .isDayOff(npc, gameTick);
+        var override = npc.getScheduleOverride();
+        var weekly = tterrag1112.life_in_the_village.Npc.Schedule.WeeklyScheduleLibrary
+                .forProfessionWithShift(npc.getProfession(), override.shiftIndex());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Schedule: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===");
+        sb.append(String.format(Locale.ROOT,
+                "%n  §6Day §f%d/7§7 dayTime=§f%d §7/24000",
+                dow, dayTime));
+        sb.append(String.format(Locale.ROOT,
+                "%n  §6Phase: §a%s§7%s",
+                phase.name(), dayOff ? " §c(day off)" : ""));
+        sb.append(String.format(Locale.ROOT,
+                "%n  §6Profession: §f%s§7  shiftIndex=§f%d",
+                npc.getProfession().name(), override.shiftIndex()));
+        sb.append("\n  §6Weekly day-offs: §f").append(weekly.dayOffs());
+        if (!override.isEmpty()) {
+            sb.append("\n  §6Personal override:");
+            override.phaseShifts().forEach((p, w) -> sb.append(String.format(Locale.ROOT,
+                    "%n    §f%-15s §7%d-%d", p.name(), w.startTick(), w.endTick())));
+            if (!override.extraDayOffs().isEmpty())
+                sb.append("\n    §fextra day-offs: §7").append(override.extraDayOffs());
+            if (!override.overrideDayOffs().isEmpty())
+                sb.append("\n    §fcleared day-offs: §7").append(override.overrideDayOffs());
+        } else {
+            sb.append("\n  §7(no personal override)");
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleScheduleOverride(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        String phaseName = StringArgumentType.getString(ctx, "phase").toUpperCase(Locale.ROOT);
+        tterrag1112.life_in_the_village.Npc.Schedule.DayPhase phase;
+        try {
+            phase = tterrag1112.life_in_the_village.Npc.Schedule.DayPhase.valueOf(phaseName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown DayPhase: " + phaseName));
+            return 0;
+        }
+        int start = IntegerArgumentType.getInteger(ctx, "start");
+        int end = IntegerArgumentType.getInteger(ctx, "end");
+        npc.getScheduleOverride().setPhaseShift(phase,
+                new tterrag1112.life_in_the_village.Npc.Schedule.TimeWindow(start, end));
+        src.sendSuccess(() -> Component.literal(
+                "Override §f" + phase.name() + "§r on §f" + displayName(npc)
+                        + "§r set to §f[" + start + ", " + end + ")"),
+                false);
+        return 1;
+    }
+
+    private static int handleScheduleReset(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        npc.getScheduleOverride().clear();
+        // Re-derive from traits so the NPC isn't left with a flat default.
+        tterrag1112.life_in_the_village.Npc.Schedule.PersonalScheduleGenerator
+                .generate(npc, npc.getScheduleOverride());
+        src.sendSuccess(() -> Component.literal(
+                "Reset and re-generated personal schedule for §f" + displayName(npc)),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
     // Life goals (Phase 1 task 07)
     // =========================================================================
 
@@ -1028,6 +1164,145 @@ public final class NpcDebugCommand {
                 skill.name(), beforeXp, afterXp, beforeLv, afterLv,
                 SkillComponent.tierFor(afterLv))),
                 false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Relationships (Phase 2 task 11)
+    // =========================================================================
+
+    private static int handleRelationshipsList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        var ledger = npc.getNpcRelationships();
+        long now = src.getLevel().getGameTime();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== NPC Relationships: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e [").append(ledger.size())
+                .append("/15]§e ===");
+        if (ledger.isEmpty()) {
+            sb.append("\n§7(no relationships yet)");
+        } else {
+            for (var rel : ledger.topByMagnitude(15)) {
+                long daysSince = (now - rel.lastInteractionTick()) / 24000L;
+                sb.append(String.format(Locale.ROOT,
+                        "%n  §f%-12s §7score=§f%+4d§7 mode=§f%-12s §7origin=%s §7last=§f%dd ago §7n=%d",
+                        rel.otherId().toString().substring(0, 8),
+                        rel.score(), rel.mode().name(),
+                        rel.origin().name(),
+                        daysSince, rel.interactionCount()));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleRelationshipsSet(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        UUID other = UuidArgument.getUuid(ctx, "other");
+        int score = IntegerArgumentType.getInteger(ctx, "score");
+        long tick = src.getLevel().getGameTime();
+        var ledger = npc.getNpcRelationships();
+        var existing = ledger.get(other).orElse(null);
+        var newRel = existing != null
+                ? existing.withScore(score).withInteraction(tick)
+                : tterrag1112.life_in_the_village.Npc.Relations.NpcRelationship
+                        .newAt(other, score, tick,
+                                tterrag1112.life_in_the_village.Npc.Relations
+                                        .RelationshipOrigin.MET_SOCIALLY);
+        ledger.set(other, newRel);
+        src.sendSuccess(() -> Component.literal(
+                "Set §f" + displayName(npc) + " §7→§f " + other.toString().substring(0, 8)
+                        + "§7 score=§f" + score + "§7 mode=§f" + newRel.mode().name()),
+                false);
+        return 1;
+    }
+
+    private static int handleRelationshipsAdjust(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        UUID other = UuidArgument.getUuid(ctx, "other");
+        int delta = IntegerArgumentType.getInteger(ctx, "delta");
+        // Use the dispatcher's symmetric path so both sides update and
+        // boundary events fire correctly.
+        tterrag1112.life_in_the_village.Npc.Relations.RelationshipDispatcher
+                .applyOne(npc, other, delta,
+                        tterrag1112.life_in_the_village.Npc.Relations
+                                .RelationshipOrigin.MET_SOCIALLY);
+        src.sendSuccess(() -> Component.literal(
+                "Adjusted §f" + displayName(npc) + " §7→§f " + other.toString().substring(0, 8)
+                        + "§7 by §f" + (delta >= 0 ? "+" : "") + delta),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Hobby (Phase 2 task 14)
+    // =========================================================================
+
+    private static int handleHobbyList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        var pref = npc.getHobbyPreference();
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Hobby: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===\n");
+        sb.append("§6Preferred:§r ");
+        if (pref.topHobbies().isEmpty()) {
+            sb.append("§7(none — not generated yet)\n");
+        } else {
+            sb.append(String.join(", ", pref.topHobbies())).append("\n");
+        }
+        sb.append("§6Current:§r ").append(pref.hasCurrent() ? pref.currentHobby() : "§7(none)").append("\n");
+        if (pref.hasCurrent()) {
+            sb.append("  started tick=").append(pref.currentHobbyStartTick()).append("\n");
+        }
+        sb.append("§6Recent uses:§r ").append(pref.recentUses().size()).append(" tracked");
+        long now = src.getLevel().getGameTime();
+        for (var e : pref.recentUses().entrySet()) {
+            long daysAgo = Math.max(0L, (now - e.getValue()) / 24000L);
+            sb.append(String.format(Locale.ROOT, "%n  %-22s %d days ago", e.getKey(), daysAgo));
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleHobbySet(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        String hobbyId = StringArgumentType.getString(ctx, "hobbyId");
+        if (tterrag1112.life_in_the_village.Npc.Hobby.HobbyCatalogue.get(hobbyId).isEmpty()) {
+            src.sendFailure(Component.literal("Unknown hobby id: " + hobbyId));
+            return 0;
+        }
+        npc.getHobbyPreference().setCurrent(hobbyId, src.getLevel().getGameTime());
+        src.sendSuccess(() -> Component.literal(
+                "Set " + displayName(npc) + " current hobby to " + hobbyId), true);
+        return 1;
+    }
+
+    private static int handleHobbyRegenerate(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        npc.getHobbyPreference().generate(npc, src.getLevel(), src.getLevel().getRandom());
+        var top = npc.getHobbyPreference().topHobbies();
+        src.sendSuccess(() -> Component.literal(
+                "Re-rolled hobbies for " + displayName(npc) + ": "
+                        + (top.isEmpty() ? "(none available)" : String.join(", ", top))), true);
         return 1;
     }
 }

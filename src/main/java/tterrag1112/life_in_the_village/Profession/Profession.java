@@ -32,9 +32,9 @@ public enum Profession {
     CHANCELLOR,
 
     /**
-     * Researcher assigned to the LIBRARY. Generates small passive
-     * reputation bonuses for the village over time by attracting
-     * visitors. Interactable — offers knowledge trades with the player.
+     * Researcher assigned to the SCHOLARS_RETREAT (or LIBRARY when no
+     * retreat exists). Studies books, authors original works, and
+     * teaches advanced lessons. Phase 2 task 17 wires the work goal.
      */
     SCHOLAR,
 
@@ -43,7 +43,19 @@ public enum Profession {
      * during festivals. Provides a minor wellbeing bonus to nearby NPCs.
      * Interactable — trades rare items for reputation.
      */
-    PRIEST;
+    PRIEST,
+
+    /**
+     * Literate craftsman of the SCRIBE_WORKSHOP. Writes letters, copies
+     * books, and drafts contracts on commission. Phase 2 task 17.
+     */
+    SCRIBE,
+
+    /**
+     * Curator of the LIBRARY. Catalogs and lends books, runs schooling
+     * sessions, and archives village records. Phase 2 task 17.
+     */
+    LIBRARIAN;
 
     public String getDisplayName() {
         return switch (this) {
@@ -71,7 +83,9 @@ public enum Profession {
             case TOWN_HALL       -> Profession.VILLAGE_LEADER;
             case CASTLE          -> Profession.KINGDOM_RULER;
             case CHANCELLERY     -> Profession.CHANCELLOR;
-            case LIBRARY         -> Profession.SCHOLAR;
+            case LIBRARY         -> Profession.LIBRARIAN;
+            case SCRIBE_WORKSHOP -> Profession.SCRIBE;
+            case SCHOLARS_RETREAT-> Profession.SCHOLAR;
             case TEMPLE          -> Profession.PRIEST;
             case TREASURY        -> Profession.GUARD;   // guarded, not staffed
             case HOUSE           -> Profession.NONE;

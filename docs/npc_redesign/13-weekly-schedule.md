@@ -354,4 +354,122 @@ Phase 2 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 2 implementation (task 13)
+
+Implementation landed in
+`tterrag1112.life_in_the_village.Npc.Schedule` (new package): the
+expanded `DayPhase` enum, relocated `TimeWindow`, extended
+`DailySchedule`, `WeeklySchedule`, `WeeklyScheduleLibrary`,
+`PersonalScheduleOverride`, `ScheduleResolver`, and the
+`PersonalScheduleGenerator` event dispatcher.
+
+**Locked decisions:**
+
+- **Wage on day-off — naturally satisfied.** Spec line 202 calls
+  for flat-daily wages on day-off. The existing
+  `TreasuryTickHandler.tick` does NOT consult `isWorkTime()` /
+  current-phase before paying; it iterates village NPCs and pays
+  the wage table directly. So day-off NPCs already receive their
+  wage with no code change. Documented here so future audits
+  don't accidentally add an `isWorkTime()` gate.
+
+- **Profession schedule split.** Spec gives the new fields but
+  no exact times. Phase 2 mapping: legacy `morningWork` →
+  `workPrimary`; legacy `afternoonWork` → `workSecondary`;
+  `meal`, `social`, `home`, `wakeUp` unchanged; `commute`,
+  `workErrand`, `marketRun`, `leisure`, `homePrep` start empty
+  (overridable via `PersonalScheduleOverride.setPhaseShift`).
+  `DailySchedule.legacy(...)` is the explicit factory shape so
+  future adjustments hit one call site. Phase 5 culture pass can
+  refine.
+
+- **Shift rotation fallback for fewer than 3 guards.** Spec line
+  211 specifies 3 shifts when there are ≥3 guards. With fewer:
+  `PersonalScheduleGenerator` still seeds shiftIndex from COMBAT
+  skill (senior=0, mid=1, junior=2), but a village with 1-2
+  guards naturally ends up with most or all on shift 0
+  (junior-only villages may have a single junior on shift 2 with
+  a coverage gap). Spec line 320 accepts the gap for v1; later
+  polish can add cross-shift pickup. Innkeeper rotation is the
+  same idea; Phase 2 leaves shiftIndex=0 for innkeepers and
+  defers village-population-aware shift assignment to a follow-up.
+
+- **`DayPhase` enum migration.** Replaced the legacy 5-value
+  `WorkSchedule.DayPhase` with the new 11-value
+  `Npc.Schedule.DayPhase`. Only one external caller existed
+  (`TownspersonMob.getCurrentPhase`); its return type swap is a
+  one-line change. Legacy `WorkSchedule.DayPhase` is gone — the
+  spec's "WORK maps to WORK_PRIMARY for backward compat" wording
+  refers to the rename, not a coexistence period. Stringified
+  uses (debug logs, profile snapshot's `currentActivity`) work
+  unchanged because the new enum's name strings are richer.
+
+- **`TimeWindow` relocation.** Moved from `WorkSchedule.TimeWindow`
+  (inner record) to top-level `Npc.Schedule.TimeWindow`. Identical
+  semantics; added `EMPTY`, `isEmpty()`, and `shifted(deltaTicks)`
+  helpers used by shift rotation and the legacy `asDayOff` path.
+  No external caller used `WorkSchedule.TimeWindow` outside
+  `WorkSchedule` itself, so the relocation is invisible.
+
+- **`WorkSchedule` is now a thin façade.** Kept its package /
+  class name + every static method (`isWorkTime`, `isMealTime`,
+  `isSleepTime`, `isSocialTime`, `shouldBeHome`,
+  `getCurrentPhase`, plus the deprecated single-window getters)
+  so existing goals that call `WorkSchedule.isWorkTime(mob)` or
+  `mob.isWorkTime()` continue to compile and behave correctly.
+  Each method delegates to `ScheduleResolver`. The legacy preset
+  daily schedules (EARLY_RISER, MERCHANT_SCHEDULE, etc.) moved
+  into `WeeklyScheduleLibrary` as the daily templates that tile
+  across all 7 days of the week.
+
+- **Day-off behavior.** When `ScheduleResolver.isDayOff(npc, tick)`
+  is true, the resolver applies `DailySchedule.asDayOff()` which
+  collapses WORK_PRIMARY / WORK_ERRAND / WORK_SECONDARY into a
+  single LEISURE span (using the union of the three windows as
+  the leisure range). `MARKET_RUN`, `MEAL`, `HOME`, `HOME_PREP`,
+  `SOCIAL` continue as normal (spec line 192). `isWorkTime()`
+  therefore returns false on day-off naturally — existing
+  production goals abort cleanly without partial-shift work.
+
+- **Personal-override generator** subscribes to
+  `LifeStageAdvanced(newStage="ADULT")` and skips NPCs whose
+  override is already populated (load-from-save or
+  `/npc schedule override` set wins). Trait mapping verbatim
+  from spec line 174 — Industry > +0.5 wakes 500 ticks early,
+  Sociability > +0.5 extends SOCIAL, etc. Phase 5 culture pass
+  layers on top.
+
+- **PersonalScheduleOverride layout.** Single record holding
+  `phaseShifts: Map<DayPhase, TimeWindow>`, `extraDayOffs`,
+  `overrideDayOffs`, and `shiftIndex`. Persisted under the
+  `npcSchedule` NBT key per spec line 247. `shiftIndex` lives
+  here rather than as a separate field (spec line 217 floats both
+  options; one component is simpler).
+
+**Spec↔prompt mismatches kept for the prompt-template
+maintainer:**
+
+- Prompt asks for `isDayOff(npc, gameTick)` on the resolver;
+  spec uses the same name. ✓
+- Prompt's `phaseAt(npc, gameTick)` matches spec line 151. ✓
+- Prompt mentions `dayOff index array` on `WeeklySchedule`; spec
+  uses `int[] dayOffs` but a `Set<Integer>` is more natural for
+  the lookups (no duplicate handling needed). Codec round-trips
+  through a `List<Integer>` form so the on-disk shape matches
+  spec line 248.
+
+**Debug commands added** to the existing `/npc` root:
+`/npc schedule <uuid>` (prints current phase, day-of-week,
+shiftIndex, and the personal override block);
+`/npc schedule override <uuid> <phase> <start> <end>`;
+`/npc schedule reset <uuid>` (clears + re-derives from traits).
+
+**Not implemented in this session (deferred per prompt's DO NOT
+list):**
+
+- Hobby behavior in `LEISURE` (Phase 2 task 14).
+- Cultural schedule overrides (Phase 5 doc 31; the resolver
+  layer leaves room).
+- Seasonal schedule variants (Phase 5+).
+- Player-facing scheduling UI.
+- Innkeeper village-staffing-aware shift assignment.

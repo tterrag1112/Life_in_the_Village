@@ -408,4 +408,131 @@ Phase 2 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### 2026-04-23 — Phase 2 implementation (task 11)
+
+Implementation landed in
+`tterrag1112.life_in_the_village.Npc.Relations`:
+`RelationshipMode`, `RelationshipOrigin`, `NpcRelationship`,
+`NpcRelationshipLedger`, `RelationshipDispatcher`,
+`RelationshipSeeder`. The bus event surface gained
+`NpcLifeEvent.RelationshipBoundaryCrossed` (memory + mood
+producers extended to react). The daily-decay tick subsystem
+extended with relationship decay + a SOCIAL-phase proximity sweep.
+
+**Locked decisions:**
+
+- **Field name on TownspersonMob: `npcRelationships`** (accessor
+  `getNpcRelationships()`). Spec line 317 calls for
+  `relationships`, but the existing Phase 0
+  `NpcRelationshipComponent` (player→NPC) already owns the
+  `relationships` / `getRelationships()` slot. Renaming the
+  legacy field would touch every existing call site (NpcDialogue,
+  reputation events, dialogue's `RelationshipAtLeast` predicate,
+  etc.). The new field keeps the legacy intact and reads cleanly
+  on its own.
+
+- **Symmetric pair-bumps.** The dispatcher writes the same delta
+  to both A→B and B→A ledgers when it can resolve the other side
+  to a loaded TownspersonMob. Player UUIDs always bypass the NPC
+  ledger — the player→NPC path stays on
+  `NpcRelationshipComponent`. Asymmetric one-sided cases (crush,
+  unrequited grudge) come from explicit one-sided callers via
+  `RelationshipDispatcher.applyOne` (the `/npc relationships
+  adjust` debug path uses this) and from per-event rules where
+  the spec calls for asymmetric magnitudes (none in the v1
+  table — every entry is symmetric).
+
+- **`RelationshipBoundaryCrossed` event.** Added as a 24th
+  `NpcLifeEvent` record. Fired from
+  `RelationshipDispatcher.applyOneAndFireBoundary` whenever an
+  adjust crosses a mode bucket, AND from the daily-decay path
+  when decay slides a score across a boundary. Memory +
+  mood producers listen for the "breakup" case
+  (positive→non-positive); other dispatchers (TraitDrift, Lifegoal
+  selector / progress, schedule generator) declare an explicit
+  no-op case so the sealed switch stays exhaustive.
+
+- **Proximity sweep — simplified vs spec.** Spec line 117 wants
+  per-pair accumulation: NPCs within 6 blocks for at least half
+  the SOCIAL-phase duration. A faithful implementation needs
+  sub-second sampling + per-pair tick counters (a transient
+  Map<UUID, Map<UUID, Integer>> keyed off pair-of-UUIDs and
+  reset at end-of-day). Phase 2 ships a simpler approximation:
+  once per in-game day, walk loaded NPCs; for each pair both
+  currently in SOCIAL within 6 blocks, +1 each direction.
+  Produces the right qualitative behaviour (chronic neighbours
+  become acquaintances) at meaningfully lower cost. Phase 5
+  polish can replace with accumulation if testing demands it.
+
+- **Proximity ceiling.** Spec line 119 says proximity caps at
+  +20 from this source. Implementation interpretation: when the
+  current score is already ≥ +20, proximity-source increments
+  are silently dropped via
+  `NpcRelationshipLedger.adjustFromProximity`. This is "score
+  must be < 20 to receive proximity bumps" rather than tracking
+  per-source contribution per relationship — accepted simplification,
+  documented.
+
+- **Decay formula.** Direct port of spec line 169:
+  `daysSinceInteraction > 7` triggers a ramp-up over 30 days to
+  0.1/day. Close friends (|score| ≥ 75) decay at half rate.
+  Decay is rounded — tiny per-day ramps may round to 0, so
+  decay can plateau briefly between ramp days; matches spec's
+  ~12-month-to-neutral ballpark.
+
+- **Boundary detection on adjust.** When the dispatcher applies
+  a delta, `applyOneAndFireBoundary` snapshots the prior mode
+  before calling `ledger.adjust`, then compares against the new
+  mode. If they differ, fires `RelationshipBoundaryCrossed`. New
+  entries (no prior) are treated as crossing from `NEUTRAL`.
+
+- **Inherited grudges.** Single-generation only per spec line
+  227. Triggered at adulthood inside `RelationshipSeeder` when
+  any household relative has a relationship at score ≤ -85.
+  Skips entries the heir already has (existing entry wins per
+  spec line 372).
+
+- **Marriage seed.** Symmetric +60 between spouses fires from
+  `RelationshipDispatcher`'s `Married` case (the spec table at
+  line 165 also lists this; redirecting through the dispatcher
+  keeps the boundary-crossing event firing too). Stacks on top
+  of any prior courtship score.
+
+- **Snapshot/UI.** Top 5 by |score| populated into
+  `NpcProfileSnapshot.topRelationshipIds / topRelationshipScores
+  / topRelationshipModes`. Three parallel arrays kept the
+  StreamCodec read/write trivially symmetric. The Profile GUI
+  panel that renders these arrays is deferred to a follow-up
+  session along with the goals/mood UI panels — the wire data
+  is ready.
+
+**Spec↔prompt naming notes:**
+- Spec: `decayAll(float daysElapsed)`. Implementation:
+  `decayAll(float daysElapsed, long currentTick)` because
+  decay-rate calculation needs the current tick to compute
+  `daysSinceInteraction`. Backward-compat-equivalent — caller
+  passes 1f and the current tick from the daily sweep.
+- Spec: `adjust(otherId, delta, tick, origin)`. Implementation
+  adds `adjustFromProximity(otherId, delta, tick)` as a
+  ceiling-aware variant the proximity ticker calls. Origin is
+  always `MET_SOCIALLY` for proximity entries.
+- Spec line 144 (witness-of-friend's-death + group fan-out) is
+  not implemented in this session — it requires scanning all
+  nearby NPCs at the moment of death to compute "shared grief".
+  Documented as a Phase 2 follow-up; trivial to add inside the
+  existing `LivingDeathEvent` handler.
+
+**Deferred to follow-up:**
+- Profile GUI "Relationships" panel rendering (data shipped on
+  the snapshot; a UI session adds the panel).
+- Workplace seeding hook from existing assignment paths (the
+  `RelationshipSeeder.seedWorkplaceColleagues` static helper is
+  exposed; assignment paths haven't been touched yet —
+  documented for Phase 2 task 16 / a workplace-pass).
+- Relationship-aware modifications in courtship, hiring,
+  apprenticeship, price adjustment, office voting (each is a
+  separate subsystem; the ledger query surface is in place).
+
+**Not implemented in this session per prompt's DO NOT list:**
+gossip biasing (next session, doc 12), price adjustments (Phase
+3), office voting (Phase 3), crime/justice integration (Phase 3).

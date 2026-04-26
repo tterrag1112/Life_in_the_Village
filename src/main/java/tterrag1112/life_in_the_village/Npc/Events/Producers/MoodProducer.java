@@ -119,6 +119,18 @@ public final class MoodProducer implements EventDispatcher {
             case NpcLifeEvent.GoalAbandoned e ->
                     // Spec: "small negative (−10 flat)".
                     applyWithMagnitude(e.subject(), MoodTrigger.GOAL_FAILED, -10);
+
+            // ── Relationship transitions (Phase 2 task 11) ─────────────────
+            case NpcLifeEvent.RelationshipBoundaryCrossed e -> {
+                // Mood hit on positive→non-positive crossings
+                // (FRIEND→NEUTRAL or worse). Negative→positive is silent —
+                // gradual recovery, not a single event.
+                if (e.oldMode().isPositive() && !e.newMode().isPositive()) {
+                    int mag = e.oldMode() == tterrag1112.life_in_the_village.Npc.Relations
+                            .RelationshipMode.CLOSE_FRIEND ? -15 : -8;
+                    applyWithMagnitude(e.subject(), MoodTrigger.INSULT_RECEIVED, mag);
+                }
+            }
         }
     }
 

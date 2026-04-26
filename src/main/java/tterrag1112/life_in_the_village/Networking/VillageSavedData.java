@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Entities.HouseholdData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
+import tterrag1112.life_in_the_village.Npc.Gossip.GossipTopicHeat;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Profession.ProfessionPerkManager;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -213,6 +214,52 @@ public class VillageSavedData extends SavedData implements
 
     }
 
+    // ── 8. Gossip (Phase 2 task 12) ──────────────────────────────────────────
+
+    /**
+     * Per-village {@link GossipTopicHeat} keyed by village UUID. Spec
+     * {@code 12-gossip-rumor.md} line 250. Persists; channels do not.
+     */
+    public record VillageGossipData(
+            Map<UUID, GossipTopicHeat> topicHeat
+    ) {
+        private static final Codec<UUID> UUID_STRING =
+                Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
+        public static final Codec<VillageGossipData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        Codec.unboundedMap(UUID_STRING, GossipTopicHeat.CODEC)
+                                .optionalFieldOf("topicHeat", new LinkedHashMap<>())
+                                .forGetter(VillageGossipData::topicHeat)
+                ).apply(i, VillageGossipData::new));
+    }
+
+    // ── 9. Scribal (Phase 2 task 17) ─────────────────────────────────────────
+
+    /**
+     * Scribal data: per-SCRIBE_WORKSHOP commission queues and per-LIBRARY
+     * book catalogues, both keyed by building UUID. Spec line 336–337.
+     */
+    public record VillageScribalData(
+            Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue> commissionQueues,
+            Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue> libraryCatalogues
+    ) {
+        private static final Codec<UUID> UUID_STRING =
+                Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
+        public static final Codec<VillageScribalData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        Codec.unboundedMap(UUID_STRING,
+                                        tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue.CODEC)
+                                .optionalFieldOf("commissionQueues", new LinkedHashMap<>())
+                                .forGetter(VillageScribalData::commissionQueues),
+                        Codec.unboundedMap(UUID_STRING,
+                                        tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue.CODEC)
+                                .optionalFieldOf("libraryCatalogues", new LinkedHashMap<>())
+                                .forGetter(VillageScribalData::libraryCatalogues)
+                ).apply(i, VillageScribalData::new));
+    }
+
     // ── 7. Property ───────────────────────────────────────────────────────────
 
     public record VillagePropertyData(
@@ -234,7 +281,7 @@ public class VillageSavedData extends SavedData implements
     }
 
     // =========================================================================
-    // Top-level codec — 7 fields
+    // Top-level codec — 8 fields
     // =========================================================================
 
     public static final Codec<VillageSavedData> CODEC =
@@ -276,7 +323,17 @@ public class VillageSavedData extends SavedData implements
                             .fieldOf("propertyData")
                             .forGetter(d -> new VillagePropertyData(
                                     new ArrayList<>(d.playerProperties),
-                                    new HashMap<>(d.propertyTaxRates)))
+                                    new HashMap<>(d.propertyTaxRates))),
+                    VillageGossipData.CODEC
+                            .optionalFieldOf("gossipData", new VillageGossipData(new LinkedHashMap<>()))
+                            .forGetter(d -> new VillageGossipData(
+                                    new LinkedHashMap<>(d.gossipTopicHeat))),
+                    VillageScribalData.CODEC
+                            .optionalFieldOf("scribalData",
+                                    new VillageScribalData(new LinkedHashMap<>(), new LinkedHashMap<>()))
+                            .forGetter(d -> new VillageScribalData(
+                                    new LinkedHashMap<>(d.commissionQueues),
+                                    new LinkedHashMap<>(d.libraryCatalogues)))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -290,7 +347,9 @@ public class VillageSavedData extends SavedData implements
             VillageSocialData     socialData,
             VillageHousingData    housingData,
             VillageEconomyData    economyData,
-            VillagePropertyData   propertyData) {
+            VillagePropertyData   propertyData,
+            VillageGossipData     gossipData,
+            VillageScribalData    scribalData) {
 
         VillageSavedData data = new VillageSavedData();
 
@@ -336,6 +395,17 @@ public class VillageSavedData extends SavedData implements
         // Property
         propertyData.properties().forEach(data.playerProperties::add);
         data.propertyTaxRates.putAll(propertyData.propertyTaxRates());
+
+        // Gossip
+        if (gossipData != null) {
+            data.gossipTopicHeat.putAll(gossipData.topicHeat());
+        }
+
+        // Scribal (Phase 2 task 17)
+        if (scribalData != null) {
+            data.commissionQueues.putAll(scribalData.commissionQueues());
+            data.libraryCatalogues.putAll(scribalData.libraryCatalogues());
+        }
 
         // Rebuild indices
         data.buildings.forEach(b -> data.buildingIndex.put(b.getId(), b));
@@ -402,6 +472,15 @@ public class VillageSavedData extends SavedData implements
     // Property
     private final List<PlayerHousingData.PlayerProperty> playerProperties = new ArrayList<>();
     private final Map<UUID, Long>                        propertyTaxRates = new HashMap<>();
+
+    // Gossip (Phase 2 task 12)
+    private final Map<UUID, GossipTopicHeat> gossipTopicHeat = new LinkedHashMap<>();
+
+    // Scribal (Phase 2 task 17)
+    private final Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue>
+            commissionQueues = new LinkedHashMap<>();
+    private final Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue>
+            libraryCatalogues = new LinkedHashMap<>();
 
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
@@ -1068,6 +1147,66 @@ public class VillageSavedData extends SavedData implements
 
     public List<SeaRoute> getAllSeaRoutes() {
         return List.copyOf(seaRoutes.values());
+    }
+
+    // =========================================================================
+    // Gossip (Phase 2 task 12)
+    // =========================================================================
+
+    /** Returns (lazily creating) the heat tracker for the given village. */
+    public GossipTopicHeat getOrCreateGossipHeat(UUID villageId) {
+        return gossipTopicHeat.computeIfAbsent(villageId, k -> {
+            setDirty();
+            return new GossipTopicHeat();
+        });
+    }
+
+    public Optional<GossipTopicHeat> getGossipHeat(UUID villageId) {
+        return Optional.ofNullable(gossipTopicHeat.get(villageId));
+    }
+
+    public Map<UUID, GossipTopicHeat> getAllGossipHeat() {
+        return Collections.unmodifiableMap(gossipTopicHeat);
+    }
+
+    // =========================================================================
+    // Scribal (Phase 2 task 17)
+    // =========================================================================
+
+    public tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue
+            getOrCreateCommissionQueue(UUID workshopBuildingId) {
+        return commissionQueues.computeIfAbsent(workshopBuildingId, id -> {
+            setDirty();
+            return new tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue(id);
+        });
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue>
+            getCommissionQueue(UUID workshopBuildingId) {
+        return Optional.ofNullable(commissionQueues.get(workshopBuildingId));
+    }
+
+    public Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue>
+            getAllCommissionQueues() {
+        return Collections.unmodifiableMap(commissionQueues);
+    }
+
+    public tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue
+            getOrCreateLibraryCatalogue(UUID libraryBuildingId) {
+        return libraryCatalogues.computeIfAbsent(libraryBuildingId, id -> {
+            setDirty();
+            return new tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue(id);
+        });
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue>
+            getLibraryCatalogue(UUID libraryBuildingId) {
+        return Optional.ofNullable(libraryCatalogues.get(libraryBuildingId));
+    }
+
+    public Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue>
+            getAllLibraryCatalogues() {
+        return Collections.unmodifiableMap(libraryCatalogues);
     }
 
     /**

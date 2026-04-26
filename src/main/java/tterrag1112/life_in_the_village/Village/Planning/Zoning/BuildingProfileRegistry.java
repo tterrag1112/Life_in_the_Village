@@ -58,6 +58,15 @@ public final class BuildingProfileRegistry {
         landmarkCivic(BuildingType.NOBLE_MANOR);
         landmarkCivic(BuildingType.LIBRARY);
 
+        // Scribal (Phase 2 task 17) — workshops cluster like production
+        // but sit civic-adjacent so paperwork flows toward the town
+        // hall; the retreat is a quiet landmark like the library.
+        put(BuildingType.SCRIBE_WORKSHOP, AnchorPolicy.CORE, null,
+                tier(W_PRIMARY, CIVIC_ADJACENT),
+                tier(W_SECONDARY, PRODUCTION_CLUSTER),
+                tier(W_TERTIARY, ROAD_ADJACENT));
+        landmarkCivic(BuildingType.SCHOLARS_RETREAT);
+
         // ── Civic filler ─────────────────────────────────────────────────
         put(BuildingType.WELL, AnchorPolicy.FILLER, null,
                 tier(W_PRIMARY, CIVIC_ADJACENT),

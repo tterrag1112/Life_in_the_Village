@@ -4,6 +4,7 @@ import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal;
+import tterrag1112.life_in_the_village.Npc.Relations.RelationshipMode;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 
 import java.util.UUID;
@@ -127,4 +128,16 @@ public sealed interface NpcLifeEvent {
 
     /** Goal abandoned (trait drift / target lost / explicit choice). */
     record GoalAbandoned(TownspersonMob subject, LifeGoal goal) implements NpcLifeEvent {}
+
+    // ── Relationship transitions (Phase 2 task 11) ────────────────────────
+
+    /**
+     * Fired when {@code subject}'s relationship with {@code otherId}
+     * crosses a {@link RelationshipMode} boundary. Memory + mood
+     * producers react to "breakup" transitions (FRIEND→NEUTRAL or
+     * worse) per spec line 244.
+     */
+    record RelationshipBoundaryCrossed(TownspersonMob subject, UUID otherId,
+                                       RelationshipMode oldMode,
+                                       RelationshipMode newMode) implements NpcLifeEvent {}
 }
