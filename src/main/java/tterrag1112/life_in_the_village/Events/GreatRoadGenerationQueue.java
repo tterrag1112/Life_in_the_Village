@@ -13,8 +13,10 @@ import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTru
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.GreatRoadTrunkRouter.PlannedTrunk;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GreatRoadCharacter;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.Worldgen.NamedRoadSelector;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.util.*;
 
@@ -397,6 +399,13 @@ public final class GreatRoadGenerationQueue {
 
         @Override public StepType stepType() { return StepType.COMMIT_EDGE; }
 
+        /**
+         * Session B5 — overlap budget. If a new trunk shares more cells than this
+         * with any single existing GREAT_ROAD edge, we treat it as a duplicate
+         * route and drop it instead of trying to junction at every shared cell.
+         */
+        private static final int MAX_SHARED_FOR_JUNCTION = 2;
+
         @Override
         public boolean process(ServerLevel level) {
             WorldRoadSavedData roadData = WorldRoadSavedData.get(level);
@@ -424,6 +433,95 @@ public final class GreatRoadGenerationQueue {
                     character.meanderAmplitude(),
                     character.meanderFrequency(),
                     character.characterSeed());
+
+            // Session B5 — junction handling. Walk the new trunk's cellPath,
+            // collect cells where existing GREAT_ROAD edges already pass.
+            // If any single existing edge shares more than MAX_SHARED_FOR_JUNCTION
+            // cells with us, treat ourselves as a duplicate route and skip.
+            // Otherwise pick the first overlap cell as a convergence point and
+            // junction with the first existing edge that overlaps us there.
+            int junctionCellIdx = -1;
+            java.util.UUID overlappingEdgeId = null;
+            long junctionCellKey = 0;
+            for (int i = 0; i < trunk.cellPath().size(); i++) {
+                long c = trunk.cellPath().get(i);
+                Set<java.util.UUID> through = graph.edgesInCell(c);
+                if (through.isEmpty()) continue;
+                for (java.util.UUID id : through) {
+                    RoadEdge ex = graph.getEdge(id);
+                    if (ex == null) continue;
+                    if (ex.getTier() != RoadEdge.EdgeTier.GREAT_ROAD) continue;
+                    if (junctionCellIdx < 0) {
+                        junctionCellIdx = i;
+                        overlappingEdgeId = id;
+                        junctionCellKey = c;
+                    }
+                }
+                if (junctionCellIdx >= 0) break;
+            }
+
+            if (junctionCellIdx >= 0) {
+                RoadEdge existing = graph.getEdge(overlappingEdgeId);
+                if (existing != null) {
+                    Set<Long> existingCells = new HashSet<>(existing.getCellPath());
+                    int shared = 0;
+                    for (long c : trunk.cellPath()) {
+                        if (existingCells.contains(c)) shared++;
+                    }
+                    if (shared > MAX_SHARED_FOR_JUNCTION) {
+                        System.out.println("[GreatRoadGen] Trunk shares " + shared
+                                + " cells with edge "
+                                + overlappingEdgeId.toString().substring(0, 8)
+                                + " — likely duplicate route, dropping new trunk.");
+                        completedTrunks++;
+                        return true;
+                    }
+
+                    // Surface-snap the junction position so the inserted node sits
+                    // at (or near) the world surface.
+                    BlockPos junctionPos = AtlasRouteRouter.cellKeyToBlockCenter(junctionCellKey);
+                    int jy = level.getHeight(
+                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                            junctionPos.getX(), junctionPos.getZ());
+                    junctionPos = new BlockPos(junctionPos.getX(), jy, junctionPos.getZ());
+
+                    Optional<WorldRoadGraph.SplitResult> splitOpt =
+                            graph.splitEdgeAtCell(overlappingEdgeId, junctionCellKey, junctionPos);
+                    if (splitOpt.isPresent()) {
+                        java.util.UUID junctionNodeId = splitOpt.get().junctionNodeId();
+                        // Two halves of the new trunk meet at the junction node.
+                        List<Long> halfA = new ArrayList<>(
+                                trunk.cellPath().subList(0, junctionCellIdx + 1));
+                        List<Long> halfB = new ArrayList<>(
+                                trunk.cellPath().subList(junctionCellIdx, trunk.cellPath().size()));
+
+                        RoadEdge edgeA = RoadEdge.create(
+                                nodeA.nodeId(), junctionNodeId, halfA,
+                                RoadEdge.EdgeTier.GREAT_ROAD, meander);
+                        edgeA.setMaintenance(100);
+                        edgeA.setCharacter(Optional.of(character));
+                        graph.addEdge(edgeA);
+
+                        RoadEdge edgeB = RoadEdge.create(
+                                junctionNodeId, nodeB.nodeId(), halfB,
+                                RoadEdge.EdgeTier.GREAT_ROAD, meander);
+                        edgeB.setMaintenance(100);
+                        edgeB.setCharacter(Optional.of(character));
+                        graph.addEdge(edgeB);
+
+                        roadData.markDirty();
+                        completedTrunks++;
+
+                        System.out.println("[GreatRoadGen] Trunk junctioned with edge "
+                                + overlappingEdgeId.toString().substring(0, 8)
+                                + " at " + junctionPos.toShortString()
+                                + " (junction node "
+                                + junctionNodeId.toString().substring(0, 8) + ")");
+                        return true;
+                    }
+                    System.out.println("[GreatRoadGen] WARNING: split failed, falling back to overlap commit");
+                }
+            }
 
             RoadEdge edge = RoadEdge.create(
                     nodeA.nodeId(), nodeB.nodeId(),

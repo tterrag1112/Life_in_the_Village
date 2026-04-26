@@ -26,6 +26,7 @@ import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.BuildingInhabitantRegistry;
 import tterrag1112.life_in_the_village.Village.Buildings.ModBuildings;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRuleRegistration;
+import tterrag1112.life_in_the_village.Village.Roads.Events.PlaceholderEvents;
 
 import static net.neoforged.neoforge.common.NeoForgeMod.MOD_ID;
 
@@ -82,7 +83,8 @@ public class Life_in_the_village {
         ShapeRuleRegistration.registerBuiltins();
         BuildingInhabitantRegistry.registerDefaults();
 
-
+        // Phase 10 — register placeholder road events when -Dlitv.testEvents=true
+        PlaceholderEvents.registerIfEnabled();
     }
 
     @SubscribeEvent
