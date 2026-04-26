@@ -149,6 +149,8 @@ public final class WeeklyScheduleLibrary {
             case INNKEEPER -> TUESDAY_OFF;
             // Priest: monday off (spec line 124 — Sunday busy with services).
             case PRIEST -> MONDAY_OFF;
+            // Healer: Sunday off; plague response overrides this elsewhere.
+            case HEALER -> SUNDAY_OFF;
             // Blacksmith: full weekend (spec line 123).
             case BLACKSMITH, CARPENTER, STONEMASON, WEAVER, CANDLEMAKER -> WEEKEND_OFF;
             // Guards: shift rotation handles coverage; each guard still

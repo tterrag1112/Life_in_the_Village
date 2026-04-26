@@ -150,6 +150,20 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      */
     private final tterrag1112.life_in_the_village.Npc.Religion.PietyComponent piety =
             new tterrag1112.life_in_the_village.Npc.Religion.PietyComponent();
+    /**
+     * Per-NPC health state (Phase 3 doc 21). Conditions, constitution,
+     * day counters. The daily {@code HealthTickSystem} sweeps onset +
+     * resolution; onset hooks (combat, work-accident) write here.
+     */
+    private final tterrag1112.life_in_the_village.Npc.Health.HealthComponent health =
+            new tterrag1112.life_in_the_village.Npc.Health.HealthComponent();
+    /**
+     * Healer-only stash for produced remedies. Stays empty for any
+     * non-HEALER profession; the HealerWorkGoal fills it between
+     * treatments.
+     */
+    private final tterrag1112.life_in_the_village.Npc.Health.HealerInventory healerInventory =
+            new tterrag1112.life_in_the_village.Npc.Health.HealerInventory();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -530,6 +544,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Per-NPC religious belief state (Phase 3 doc 20). Never null after construction. */
     public tterrag1112.life_in_the_village.Npc.Religion.PietyComponent getPiety() {
         return piety;
+    }
+
+    /** Per-NPC health state (Phase 3 doc 21). Never null. */
+    public tterrag1112.life_in_the_village.Npc.Health.HealthComponent getHealth() {
+        return health;
+    }
+
+    /** Healer remedy stash (Phase 3 doc 21). Empty for non-healers. */
+    public tterrag1112.life_in_the_village.Npc.Health.HealerInventory getHealerInventory() {
+        return healerInventory;
     }
 
     public void clearTraits() {
@@ -1151,6 +1175,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         String religionId = tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry
                 .dominantReligionFor(culture);
         piety.setBelief(religionId, 0.3f);
+
+        // Seed constitution per spec line 53 — 50..90 with mild bias
+        // toward higher values; CHILD spawns underweighted, ELDERLY
+        // already in decline.
+        java.util.Random rng = level.getRandom();
+        int rawConstitution = 60 + rng.nextInt(31);
+        if (isChild())   rawConstitution -= 15;
+        if (isElderly()) rawConstitution -= 25;
+        health.setConstitution(rawConstitution);
+
         updateScale();
         return super.finalizeSpawn(level, difficulty, spawnType, spawnGroupData);
     }
@@ -1264,6 +1298,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Religious belief state (Phase 3 task 20) ────────────────────────
         piety.save(output);
+
+        // ── Health + remedy stash (Phase 3 task 21) ─────────────────────────
+        health.save(output);
+        healerInventory.save(output);
     }
 
     // =========================================================================
@@ -1411,6 +1449,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Religious belief state (Phase 3 task 20) ────────────────────────
         piety.load(input);
+
+        // ── Health + remedy stash (Phase 3 task 21) ─────────────────────────
+        health.load(input);
+        healerInventory.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

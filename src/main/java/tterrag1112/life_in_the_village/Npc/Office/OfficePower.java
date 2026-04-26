@@ -28,7 +28,9 @@ public enum OfficePower {
     RECRUIT_APPRENTICE,
     CERTIFY_MASTERPIECE,
     BLESS,
-    CURSE;
+    CURSE,
+    QUARANTINE_VILLAGE,
+    REQUISITION_REMEDIES;
 
     public static final Codec<OfficePower> CODEC =
             Codec.STRING.xmap(OfficePower::valueOf, OfficePower::name);

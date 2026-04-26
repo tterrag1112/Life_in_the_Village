@@ -48,6 +48,7 @@ public class ZoneRegistry {
         reg(BuildingType.CANDLEMAKER,  BuildingZone.PRODUCTION,  6, true,  StreetTier.TERTIARY);
         reg(BuildingType.WOODCUTTER,   BuildingZone.PRODUCTION,  7, true,  StreetTier.TERTIARY);
         reg(BuildingType.APOTHECARY,   BuildingZone.PRODUCTION,  8, true,  StreetTier.TERTIARY);
+        reg(BuildingType.HEALER_HUT,   BuildingZone.PRODUCTION,  8, true,  StreetTier.SECONDARY);
         reg(BuildingType.TOOLSMITH,    BuildingZone.PRODUCTION,  9, true,  StreetTier.SECONDARY);
         reg(BuildingType.ARMORER,      BuildingZone.PRODUCTION, 10, true,  StreetTier.SECONDARY);
         reg(BuildingType.WINERY,       BuildingZone.PRODUCTION, 11, true,  StreetTier.TERTIARY);

@@ -55,7 +55,14 @@ public enum Profession {
      * Curator of the LIBRARY. Catalogs and lends books, runs schooling
      * sessions, and archives village records. Phase 2 task 17.
      */
-    LIBRARIAN;
+    LIBRARIAN,
+
+    /**
+     * Diagnoses and treats sick or injured villagers from the
+     * HEALER_HUT. Produces remedies between treatments and runs the
+     * around-the-clock plague response. Phase 3 task 21.
+     */
+    HEALER;
 
     public String getDisplayName() {
         return switch (this) {
@@ -87,6 +94,7 @@ public enum Profession {
             case SCRIBE_WORKSHOP -> Profession.SCRIBE;
             case SCHOLARS_RETREAT-> Profession.SCHOLAR;
             case TEMPLE          -> Profession.PRIEST;
+            case HEALER_HUT      -> Profession.HEALER;
             case TREASURY        -> Profession.GUARD;   // guarded, not staffed
             case HOUSE           -> Profession.NONE;
             case MILLER          -> Profession.MILLER;

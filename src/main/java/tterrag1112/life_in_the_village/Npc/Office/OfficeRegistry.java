@@ -47,6 +47,7 @@ public final class OfficeRegistry {
     public static final String VILLAGE_BAILIFF    = "village_bailiff";
     public static final String VILLAGE_SCRIBE     = "village_scribe";
     public static final String VILLAGE_PRIEST     = "village_priest";
+    public static final String VILLAGE_HEALER     = "village_healer";
 
     public static final String GUILD_MASTER          = "guild_master";
     public static final String GUILD_TREASURER       = "guild_treasurer";
@@ -222,6 +223,14 @@ public final class OfficeRegistry {
                 0,
                 List.of(OfficePower.OFFICIATE_RITE, OfficePower.BLESS),
                 new Competence(Skill.SOCIAL, 30, 70, 1.15f, -0.07f)));
+
+        register(OfficeDefinition.of(VILLAGE_HEALER, OrgType.VILLAGE, "Village Healer",
+                List.of(Profession.HEALER),
+                Map.of(Skill.MEDICINE, 40, Skill.SURVIVAL, 20),
+                SelectionMethod.APPOINTED,
+                0,
+                List.of(OfficePower.QUARANTINE_VILLAGE, OfficePower.REQUISITION_REMEDIES),
+                new Competence(Skill.MEDICINE, 40, 80, 1.20f, -0.08f)));
     }
 
     private static void registerGuildOffices() {

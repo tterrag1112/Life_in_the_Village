@@ -216,6 +216,15 @@ public class BuildingRegistry {
                 10, 8, true,
                 "apothecary/level_1");
 
+        register(BuildingType.HEALER_HUT,
+                VillageSizeTier.TOWN, 1,
+                List.of(BuildingType.TOWN_HALL),
+                Map.of(Items.OAK_LOG, 24,
+                        Items.OAK_PLANKS, 16,
+                        Items.WHITE_WOOL, 8),
+                10, 8, true,
+                "apothecary/level_1");
+
         register(BuildingType.WATCHTOWER,
                 VillageSizeTier.TOWN, 3,
                 List.of(BuildingType.BARRACKS),
