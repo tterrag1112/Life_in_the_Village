@@ -438,3 +438,56 @@ Phase 2 depends on:
   prescribe the exact threshold; chosen value
   (`fidelity < 0.5` ≈ "vague") is open to retuning during
   the Phase 5 tuning pass.
+
+### Phase 3 post-mortem: scheduler tick budget overrun
+
+**Failure mode.** Profiler showed `gossip_scheduler` consuming
+~670 ms per tick — 99.6% of the tick budget at idle scenes. Root
+causes (in descending order of cost):
+
+1. `rollNewChannels` walked `level.getEntities().getAll()` —
+   every entity in the level (items, projectiles, particles,
+   non-mob entities), `instanceof`-filtered to townspersons.
+   With chest contents and dropped items, this is several
+   thousand entities per loaded chunk.
+2. The candidate list was treated as one global pool and the
+   pair scan was O(N²) across every SOCIAL-phase townsperson
+   in the level. Two villages of 50 each means
+   `100*99/2 = 4,950` pairs per tick before any proximity
+   filter, even though no cross-village pair could ever
+   start a channel (spec line 365 — "limited to village for v1").
+3. `channelFor(uuid).isPresent()` was a stream walk over every
+   active channel, called once per loaded townsperson during
+   the candidate filter and twice per pair in the inner loop.
+
+**Fix.** No spec-semantics changed. The 20-tick interval, the
+4-block proximity, and the `BASE_START_PROB * relationship_mod *
+sociability_mod` formula are all unchanged.
+
+- Bucket by village. `rollNewChannels` iterates
+  `VillageSavedData.getAllVillages()`; per village it scans
+  `level.getEntitiesOfClass(TownspersonMob.class,
+  village.getBounds().inflate(16))`. The chunk index
+  short-circuits non-mob entities at the source, and the pair
+  scan is now O(sum of v_i²) — for two 50-NPC villages,
+  `2 * 50*49/2 = 2,450` pairs, still high but only when both
+  villages are fully populated and entirely SOCIAL-phase.
+- Empty-ledger early-out. Townspersons with `getKnowledge().isEmpty()`
+  skip immediately; spec-side gossip cannot exist without at least
+  one knowledge entry to retell, so this is sound and not a
+  semantic change.
+- O(1) participants index. A `Set<UUID> PARTICIPANTS` mirror of
+  `ACTIVE` makes membership checks constant-time. Maintained in
+  lockstep via `startChannel` / `expireChannel` / `clearAll`; the
+  old `channelFor` stream-walk is now a pre-filtered fall-through.
+
+**Diagnostics.** `GossipScheduler.TickStats` records pairs
+examined, pairs in proximity, channels created, exchanges
+attempted / committed, and last-tick wall-clock duration in
+microseconds. Surfaced via `/gossip diagnostics`. Use this to
+verify the budget after every change to the scheduler.
+
+**Validation method.** Static analysis only — the build sandbox
+blocks `maven.neoforged.net`, so runtime profiling is left for
+the next playtest. Expected post-fix budget: under 5 ms / tick at
+v1 scale, dozens of pairs examined per tick (not thousands).
