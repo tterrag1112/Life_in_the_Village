@@ -73,7 +73,30 @@ public final class GossipDebugCommand {
                                     () -> Component.literal("Cleared all gossip channels."), true);
                             return 1;
                         }))
+
+                // ── /gossip diagnostics  (last-tick counters + budget) ──
+                .then(Commands.literal("diagnostics")
+                        .executes(GossipDebugCommand::handleDiagnostics))
         );
+    }
+
+    private static int handleDiagnostics(CommandContext<CommandSourceStack> ctx) {
+        GossipScheduler.TickStats s = GossipScheduler.stats();
+        StringBuilder sb = new StringBuilder("§e=== Gossip last-tick diagnostics ===");
+        sb.append(String.format(Locale.ROOT, "%n  §7duration:§f %d µs", s.lastTickMicros));
+        sb.append(String.format(Locale.ROOT, "%n  §7loaded NPCs (sum across villages):§f %d", s.loadedNpcs));
+        sb.append(String.format(Locale.ROOT, "%n  §7SOCIAL candidates:§f %d", s.socialCandidates));
+        sb.append(String.format(Locale.ROOT, "%n  §7pairs examined:§f %d", s.pairsExamined));
+        sb.append(String.format(Locale.ROOT, "%n  §7pairs in proximity:§f %d", s.pairsInProximity));
+        sb.append(String.format(Locale.ROOT, "%n  §7channels created:§f %d", s.channelsCreated));
+        sb.append(String.format(Locale.ROOT, "%n  §7channels expired:§f %d", s.channelsExpired));
+        sb.append(String.format(Locale.ROOT, "%n  §7exchanges attempted:§f %d", s.exchangesAttempted));
+        sb.append(String.format(Locale.ROOT, "%n  §7exchanges committed:§f %d", s.exchangesCommitted));
+        sb.append(String.format(Locale.ROOT, "%n  §7active channels:§f %d",
+                GossipScheduler.activeChannels().size()));
+        ctx.getSource().sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
     }
 
     // =========================================================================

@@ -32,6 +32,8 @@ import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -134,6 +136,24 @@ public final class NpcInteractionHandler {
                 .isPresent();
         if (!npcWorksHere) return null;
 
+        // Profession-specific overrides — these professions own their
+        // GUI (village book, merchant trade, guild panel) and skip the
+        // shared business-front screen even when the building flags
+        // mark it as a service / business front. Returning null here
+        // hands control back to the legacy NpcProfileHub path which
+        // routes the leader → village book, merchant → trade UI, etc.
+        // Eventually the shared GUI will absorb these; for now they
+        // stay on their own dedicated screens.
+        Profession prof = npc.getProfession();
+        if (prof == Profession.VILLAGE_LEADER
+                || prof == Profession.KINGDOM_RULER
+                || prof == Profession.MERCHANT
+                || prof == Profession.WANDERING_TRADER
+                || prof == Profession.GUILDMASTER
+                || prof == Profession.GUILDWORKER) {
+            return null;
+        }
+
         // Off-hours: refusal + repeat-mood-penalty.
         if (!npc.isWorkTime()) {
             sp.displayClientMessage(
@@ -154,13 +174,31 @@ public final class NpcInteractionHandler {
         tterrag1112.life_in_the_village.Village.Village village = npc.getAssignedVillageName()
                 .flatMap(VillageSavedData.get(level)::getVillageByName)
                 .orElse(null);
+
+        // Build the per-NPC verb list using the same gating the
+        // profile screen uses (PlayerVerb#isAvailable). The screen
+        // renders one button per entry, so cap to a sensible row
+        // count to keep the layout sane.
+        var verbCtx = tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerb
+                .context(sp, npc, level);
+        List<String> verbIds = new ArrayList<>();
+        List<String> verbLabels = new ArrayList<>();
+        for (var verb : tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry
+                .availableFor(verbCtx)) {
+            verbIds.add(verb.id());
+            verbLabels.add(verb.label().getString());
+            if (verbIds.size() >= 8) break;
+        }
+
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp,
                 new tterrag1112.life_in_the_village.Networking.OpenBusinessFrontPacket(
                         npc.getUUID(),
                         npc.getNpcName(),
                         npc.getProfession().getDisplayName(),
                         building.getType().name(),
-                        village == null ? "" : village.getName()));
+                        village == null ? "" : village.getName(),
+                        verbIds,
+                        verbLabels));
         return InteractionResult.SUCCESS;
     }
 
