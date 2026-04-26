@@ -56,7 +56,7 @@ public record DailySchedule(
         TimeWindow leisureSpan = mergeWorkSpan();
         return new DailySchedule(
                 wakeUp,
-                commute.isEmpty() ? TimeWindow.EMPTY : TimeWindow.EMPTY,
+                TimeWindow.EMPTY,            // commute zeroed — no workplace to head to
                 TimeWindow.EMPTY,            // workPrimary collapsed
                 TimeWindow.EMPTY,            // workErrand collapsed
                 meal,                        // keep meal so NPC eats
