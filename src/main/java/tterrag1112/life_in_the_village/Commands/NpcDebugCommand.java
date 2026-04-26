@@ -164,6 +164,24 @@ public final class NpcDebugCommand {
                         .then(Commands.argument("uuid", UuidArgument.uuid())
                                 .executes(NpcDebugCommand::handleOfficesList)))
 
+                // ── /npc schedule {<uuid>|override|reset} ────────────────────
+                .then(Commands.literal("schedule")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleScheduleList))
+                        .then(Commands.literal("override")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("phase", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (var p : tterrag1112.life_in_the_village.Npc.Schedule.DayPhase.values()) b.suggest(p.name());
+                                                    return b.buildFuture();
+                                                })
+                                                .then(Commands.argument("start", IntegerArgumentType.integer(0, 23999))
+                                                        .then(Commands.argument("end", IntegerArgumentType.integer(0, 23999))
+                                                                .executes(NpcDebugCommand::handleScheduleOverride))))))
+                        .then(Commands.literal("reset")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .executes(NpcDebugCommand::handleScheduleReset))))
+
                 // ── /npc goals {list|set|complete|fail} ─────────────────────
                 .then(Commands.literal("goals")
                         .then(Commands.argument("uuid", UuidArgument.uuid())
@@ -869,6 +887,95 @@ public final class NpcDebugCommand {
     private static int ackFire(CommandSourceStack src, String type, UUID subjectId) {
         src.sendSuccess(() -> Component.literal(
                 "Fired §f" + type + "§r on §f" + subjectId), false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Schedule (Phase 2 task 13)
+    // =========================================================================
+
+    private static int handleScheduleList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        ServerLevel level = src.getLevel();
+        long gameTick = level.getGameTime();
+        long dayTime = ((gameTick % 24000L) + 24000L) % 24000L;
+        int dow = tterrag1112.life_in_the_village.Npc.Schedule.WeeklySchedule.computeDayOfWeek(gameTick);
+
+        var phase = tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver
+                .phaseAt(npc, gameTick);
+        boolean dayOff = tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver
+                .isDayOff(npc, gameTick);
+        var override = npc.getScheduleOverride();
+        var weekly = tterrag1112.life_in_the_village.Npc.Schedule.WeeklyScheduleLibrary
+                .forProfessionWithShift(npc.getProfession(), override.shiftIndex());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Schedule: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===");
+        sb.append(String.format(Locale.ROOT,
+                "%n  §6Day §f%d/7§7 dayTime=§f%d §7/24000",
+                dow, dayTime));
+        sb.append(String.format(Locale.ROOT,
+                "%n  §6Phase: §a%s§7%s",
+                phase.name(), dayOff ? " §c(day off)" : ""));
+        sb.append(String.format(Locale.ROOT,
+                "%n  §6Profession: §f%s§7  shiftIndex=§f%d",
+                npc.getProfession().name(), override.shiftIndex()));
+        sb.append("\n  §6Weekly day-offs: §f").append(weekly.dayOffs());
+        if (!override.isEmpty()) {
+            sb.append("\n  §6Personal override:");
+            override.phaseShifts().forEach((p, w) -> sb.append(String.format(Locale.ROOT,
+                    "%n    §f%-15s §7%d-%d", p.name(), w.startTick(), w.endTick())));
+            if (!override.extraDayOffs().isEmpty())
+                sb.append("\n    §fextra day-offs: §7").append(override.extraDayOffs());
+            if (!override.overrideDayOffs().isEmpty())
+                sb.append("\n    §fcleared day-offs: §7").append(override.overrideDayOffs());
+        } else {
+            sb.append("\n  §7(no personal override)");
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleScheduleOverride(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        String phaseName = StringArgumentType.getString(ctx, "phase").toUpperCase(Locale.ROOT);
+        tterrag1112.life_in_the_village.Npc.Schedule.DayPhase phase;
+        try {
+            phase = tterrag1112.life_in_the_village.Npc.Schedule.DayPhase.valueOf(phaseName);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown DayPhase: " + phaseName));
+            return 0;
+        }
+        int start = IntegerArgumentType.getInteger(ctx, "start");
+        int end = IntegerArgumentType.getInteger(ctx, "end");
+        npc.getScheduleOverride().setPhaseShift(phase,
+                new tterrag1112.life_in_the_village.Npc.Schedule.TimeWindow(start, end));
+        src.sendSuccess(() -> Component.literal(
+                "Override §f" + phase.name() + "§r on §f" + displayName(npc)
+                        + "§r set to §f[" + start + ", " + end + ")"),
+                false);
+        return 1;
+    }
+
+    private static int handleScheduleReset(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        npc.getScheduleOverride().clear();
+        // Re-derive from traits so the NPC isn't left with a flat default.
+        tterrag1112.life_in_the_village.Npc.Schedule.PersonalScheduleGenerator
+                .generate(npc, npc.getScheduleOverride());
+        src.sendSuccess(() -> Component.literal(
+                "Reset and re-generated personal schedule for §f" + displayName(npc)),
+                false);
         return 1;
     }
 

@@ -47,6 +47,7 @@ import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
 import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSet;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Schedule.PersonalScheduleOverride;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitDriftLog;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
@@ -132,6 +133,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final SkillComponent skills = new SkillComponent();
     private final LifeGoalSet lifeGoals = new LifeGoalSet();
     private final NpcVerbCooldowns verbCooldowns = new NpcVerbCooldowns();
+    private final PersonalScheduleOverride scheduleOverride = new PersonalScheduleOverride();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -273,8 +275,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public boolean isMealTime()   { return WorkSchedule.isMealTime(this); }
     public boolean shouldBeHome() { return WorkSchedule.shouldBeHome(this); }
 
-    public WorkSchedule.DayPhase getCurrentPhase() {
-        return WorkSchedule.getCurrentPhase(this);
+    public tterrag1112.life_in_the_village.Npc.Schedule.DayPhase getCurrentPhase() {
+        return tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver
+                .phaseAt(this, level().getDayTime());
     }
 
     // =========================================================================
@@ -474,6 +477,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Verb cooldown log; see {@code docs/npc_redesign/09-player-verbs.md}. */
     public NpcVerbCooldowns getVerbCooldowns() {
         return verbCooldowns;
+    }
+
+    /** Personal schedule deviation; see {@code docs/npc_redesign/13-weekly-schedule.md}. */
+    public PersonalScheduleOverride getScheduleOverride() {
+        return scheduleOverride;
     }
 
     public void clearTraits() {
@@ -1174,6 +1182,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Verb cooldowns (Phase 1 task 09) ─────────────────────────────────
         verbCooldowns.save(output);
+
+        // ── Personal schedule override (Phase 2 task 13) ────────────────────
+        scheduleOverride.save(output);
     }
 
     // =========================================================================
@@ -1305,6 +1316,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Verb cooldowns (Phase 1 task 09) ─────────────────────────────────
         verbCooldowns.load(input);
+
+        // ── Personal schedule override (Phase 2 task 13) ────────────────────
+        scheduleOverride.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

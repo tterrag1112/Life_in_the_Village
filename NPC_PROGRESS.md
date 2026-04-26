@@ -131,12 +131,16 @@ Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
     - [ ] Proximity growth during SOCIAL phase
     - [ ] Daily decay
     - [ ] Relationship dispatcher subscribes to life-event bus
-- [ ] **13** Weekly schedule (before 12, since 12 depends on SOCIAL
+- [x] **13** Weekly schedule (before 12, since 12 depends on SOCIAL
   phase timing)
-    - [ ] Expanded `DayPhase` enum
-    - [ ] `WeeklySchedule`, `PersonalScheduleOverride`
-    - [ ] `ScheduleResolver` with layer stacking
-    - [ ] Migration of all existing schedule callers
+    - [x] Expanded `DayPhase` enum (11 values; WORK_PRIMARY /
+      WORK_ERRAND / WORK_SECONDARY / COMMUTE / MARKET_RUN /
+      LEISURE / HOME_PREP added; `isWork()` covers all WORK_*)
+    - [x] `WeeklySchedule`, `PersonalScheduleOverride`
+    - [x] `ScheduleResolver` with layer stacking
+    - [x] Migration of all existing schedule callers via the
+      `WorkSchedule` façade (delegates to `ScheduleResolver`;
+      every legacy `isWorkTime()` etc. continues to work)
 - [ ] **14** Hobby activities
     - [ ] 15 starter hobbies, trait-weighted selection
     - [ ] `HobbyGoal` registered for LEISURE/day-off
@@ -367,6 +371,25 @@ testable via `/npc knowledge mutate` but has no production callers
 yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
+
+**Phase 2 progress:** Task 13 (weekly schedule) complete; tasks
+11 (relationship ledger), 14 (hobby), 12 (gossip), 15 (child/
+elderly arcs), 17 (scribal), 18 (letters/books), 16
+(apprenticeship) remaining.
+
+Schedule landed first because gossip and hobbies need the new
+SOCIAL/LEISURE phase distinction, and the child/elderly arc
+needs the schedule-layer mechanism. New `Npc.Schedule` package
+holds the data model + library + resolver; legacy `WorkSchedule`
+is now a thin façade so every existing goal that calls
+`isWorkTime()` continues to work without touching the call site.
+
+`PersonalScheduleGenerator` registered on the bus —
+LifeStageAdvanced(ADULT) generates a trait-driven override per
+the spec's table (Industry / Sociability / Ambition / Temperance
+/ Compassion). Guard NPCs additionally get a `shiftIndex`
+seeded from COMBAT skill seniority so the village fields
+day/evening/night coverage.
 
 **Phase 1 is COMPLETE.** All four tasks shipped:
 - 10 NpcLifeEventBus + 3 producer dispatchers + TraitDriftLog
