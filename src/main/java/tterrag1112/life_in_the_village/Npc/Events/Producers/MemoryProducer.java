@@ -144,6 +144,21 @@ public final class MemoryProducer implements EventDispatcher {
                             e.otherId(), 30, "Relationship breakup");
                 }
             }
+
+            // ── Letter received (Phase 2 task 18) ──────────────────────────
+            // RECEIVED_LETTER memory; value scales with special tag.
+            case NpcLifeEvent.LetterReceived e -> {
+                int value = switch (e.content().special().orElse(null)) {
+                    case null -> 30;
+                    case LOVE_LETTER, APOLOGY -> 60;
+                    case THREAT -> 70;
+                    case ANNOUNCEMENT -> 25;
+                    case CONTRACT, INTRODUCTION -> 40;
+                };
+                String summary = "Letter from " + e.content().authorName();
+                record(e.subject(), tterrag1112.life_in_the_village.Npc.Memory.MemoryType.RECEIVED_LETTER,
+                        e.content().authorId(), value, summary);
+            }
         }
     }
 

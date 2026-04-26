@@ -131,6 +131,23 @@ public final class MoodProducer implements EventDispatcher {
                     applyWithMagnitude(e.subject(), MoodTrigger.INSULT_RECEIVED, mag);
                 }
             }
+
+            // ── Letter received (Phase 2 task 18) ──────────────────────────
+            // Spec line 159: route by special tag; THREAT triggers
+            // INSULT_RECEIVED, friend-sourced letters use
+            // LETTER_FROM_FRIEND, everything else uses LETTER_RECEIVED.
+            case NpcLifeEvent.LetterReceived e -> {
+                var special = e.content().special().orElse(null);
+                if (special == tterrag1112.life_in_the_village.Npc.Letters.LetterSpecial.THREAT) {
+                    apply(e.subject(), MoodTrigger.INSULT_RECEIVED);
+                } else {
+                    boolean fromFriend = e.subject().getNpcRelationships()
+                            .getMode(e.content().authorId()).isPositive();
+                    apply(e.subject(),
+                            fromFriend ? MoodTrigger.LETTER_FROM_FRIEND
+                                    : MoodTrigger.LETTER_RECEIVED);
+                }
+            }
         }
     }
 

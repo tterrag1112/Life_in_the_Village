@@ -114,12 +114,25 @@ public final class SkillComponent {
 
     private final float[] xp = new float[Skill.values().length];
     private final long[] lastXpTick = new long[Skill.values().length];
+    /**
+     * Active skill-rate buffs (Phase 2 task 18). Each entry adds a
+     * multiplicative factor to {@link #addXp} for the buff's skill
+     * until {@link tterrag1112.life_in_the_village.Npc.Letters.ActiveSkillBuff#expiresTick}.
+     * Expired entries are pruned lazily on the next {@code addXp}
+     * call for the matching skill.
+     */
+    private final java.util.List<tterrag1112.life_in_the_village.Npc.Letters.ActiveSkillBuff>
+            activeBuffs = new java.util.ArrayList<>();
 
     public SkillComponent() {}
 
     public float getXp(Skill skill) { return xp[skill.ordinal()]; }
     public int getLevel(Skill skill) { return levelFromXp(xp[skill.ordinal()]); }
     public long getLastXpTick(Skill skill) { return lastXpTick[skill.ordinal()]; }
+
+    public java.util.List<tterrag1112.life_in_the_village.Npc.Letters.ActiveSkillBuff> getActiveBuffs() {
+        return java.util.Collections.unmodifiableList(activeBuffs);
+    }
 
     /** Cumulative XP, clamped to {@code [0, xpRequiredFor(MAX_LEVEL)]}. */
     public void setXp(Skill skill, float newXp, long currentTick) {
@@ -134,7 +147,32 @@ public final class SkillComponent {
 
     public void addXp(Skill skill, float amount, long currentTick) {
         if (amount == 0f) return;
-        setXp(skill, xp[skill.ordinal()] + amount, currentTick);
+        float multiplier = pruneAndComputeMultiplier(skill, currentTick);
+        setXp(skill, xp[skill.ordinal()] + amount * multiplier, currentTick);
+    }
+
+    /** Stacks an additional buff. Returns the buff actually stored. */
+    public tterrag1112.life_in_the_village.Npc.Letters.ActiveSkillBuff addBuff(
+            tterrag1112.life_in_the_village.Npc.Letters.ActiveSkillBuff buff) {
+        if (buff == null) return null;
+        activeBuffs.add(buff);
+        return buff;
+    }
+
+    /**
+     * Returns the product of every non-expired buff's multiplier for
+     * {@code skill}. Side-effect: removes expired buffs.
+     */
+    private float pruneAndComputeMultiplier(Skill skill, long currentTick) {
+        if (activeBuffs.isEmpty()) return 1f;
+        float product = 1f;
+        var it = activeBuffs.iterator();
+        while (it.hasNext()) {
+            var b = it.next();
+            if (b.expired(currentTick)) { it.remove(); continue; }
+            if (b.skill() == skill) product *= b.rateMultiplier();
+        }
+        return product;
     }
 
     /** Returns the highest-level skill (ties broken by enum order). */
@@ -207,6 +245,8 @@ public final class SkillComponent {
         SkillComponent loaded = read.get();
         System.arraycopy(loaded.xp, 0, this.xp, 0, this.xp.length);
         System.arraycopy(loaded.lastXpTick, 0, this.lastXpTick, 0, this.lastXpTick.length);
+        this.activeBuffs.clear();
+        this.activeBuffs.addAll(loaded.activeBuffs);
         return true;
     }
 
@@ -216,10 +256,14 @@ public final class SkillComponent {
             Codec.FLOAT.listOf().optionalFieldOf("xp", List.of())
                     .forGetter(c -> floatArrayToList(c.xp)),
             Codec.LONG.listOf().optionalFieldOf("lastXpTick", List.of())
-                    .forGetter(c -> longArrayToList(c.lastXpTick))
+                    .forGetter(c -> longArrayToList(c.lastXpTick)),
+            tterrag1112.life_in_the_village.Npc.Letters.ActiveSkillBuff.CODEC.listOf()
+                    .optionalFieldOf("buffs", List.of())
+                    .forGetter(c -> List.copyOf(c.activeBuffs))
     ).apply(i, SkillComponent::fromCodec));
 
-    public static SkillComponent fromCodec(List<Float> xpList, List<Long> tickList) {
+    public static SkillComponent fromCodec(List<Float> xpList, List<Long> tickList,
+                                           List<tterrag1112.life_in_the_village.Npc.Letters.ActiveSkillBuff> buffs) {
         SkillComponent c = new SkillComponent();
         for (int i = 0; i < c.xp.length && i < xpList.size(); i++) {
             c.xp[i] = Math.max(0f, Math.min(LEVEL_XP[MAX_LEVEL], xpList.get(i)));
@@ -227,6 +271,7 @@ public final class SkillComponent {
         for (int i = 0; i < c.lastXpTick.length && i < tickList.size(); i++) {
             c.lastXpTick[i] = tickList.get(i);
         }
+        if (buffs != null) c.activeBuffs.addAll(buffs);
         return c;
     }
 

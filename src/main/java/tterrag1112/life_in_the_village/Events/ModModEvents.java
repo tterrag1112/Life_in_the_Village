@@ -239,6 +239,7 @@ public class ModModEvents {
         VerbDebugCommand.register(event.getDispatcher());
         GossipDebugCommand.register(event.getDispatcher());
         ScribalDebugCommand.register(event.getDispatcher());
+        LetterBookDebugCommand.register(event.getDispatcher());
 
     }
 

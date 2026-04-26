@@ -112,6 +112,11 @@ public final class TraitDriftProducer implements EventDispatcher {
             // Relationship boundaries don't drive trait drift directly —
             // memory + mood handle the moment.
             case NpcLifeEvent.RelationshipBoundaryCrossed ignored -> {}
+
+            // Letters and books don't drive trait drift in v1.
+            // (Phase 5 polish could nudge LITERACY-adjacent traits on
+            // sustained reading; out of scope here.)
+            case NpcLifeEvent.LetterReceived ignored -> {}
         }
     }
 

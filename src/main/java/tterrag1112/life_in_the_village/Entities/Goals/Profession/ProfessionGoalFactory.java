@@ -318,8 +318,13 @@ public final class ProfessionGoalFactory {
                 npc.goalSelector.addGoal(P_WORK_PRIMARY, new SeekJobGoal(npc)));
 
         // ── Scribal (Phase 2 task 17) ────────────────────────────────────────
-        REGISTRARS.put(Profession.SCRIBE, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
-                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScribeWorkGoal(npc)));
+        REGISTRARS.put(Profession.SCRIBE, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY,
+                    new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScribeWorkGoal(npc));
+            // Phase 2 task 18: postal round during SOCIAL phase.
+            npc.goalSelector.addGoal(P_SOCIAL_LOW,
+                    new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.PostalGoal(npc));
+        });
         REGISTRARS.put(Profession.LIBRARIAN, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
                 new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.LibrarianWorkGoal(npc)));
         REGISTRARS.put(Profession.SCHOLAR, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,

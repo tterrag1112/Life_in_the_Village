@@ -22,7 +22,30 @@ public class ModDataComponents {
     public static final DeferredHolder<DataComponentType<?>, DataComponentType<Integer>> ITEM_COUNT = register("item_count",
             builder -> builder.persistent(Codec.INT).networkSynchronized(ByteBufCodecs.INT));
 
+    /**
+     * Letter payload (Phase 2 task 18). Lives on
+     * {@link tterrag1112.life_in_the_village.Items.WrittenLetterItem}
+     * stacks; carries author / recipient / pages / sealed state.
+     */
+    public static final DeferredHolder<DataComponentType<?>,
+            DataComponentType<tterrag1112.life_in_the_village.Npc.Letters.LetterContent>>
+            LETTER_CONTENT = register("letter_content",
+                    builder -> builder
+                            .persistent(tterrag1112.life_in_the_village.Npc.Letters.LetterContent.CODEC)
+                            .networkSynchronized(tterrag1112.life_in_the_village.Npc.Letters.LetterContent.STREAM_CODEC));
 
+    /**
+     * Mod-side metadata for books — rides alongside vanilla
+     * {@code WRITTEN_BOOK_CONTENT}. Carries topicsCovered, optional
+     * skill buff, and the canonical bookId so the LibraryCatalogue
+     * stays consistent across copies.
+     */
+    public static final DeferredHolder<DataComponentType<?>,
+            DataComponentType<tterrag1112.life_in_the_village.Npc.Letters.ExtendedBookContent>>
+            EXTENDED_BOOK_CONTENT = register("extended_book_content",
+                    builder -> builder
+                            .persistent(tterrag1112.life_in_the_village.Npc.Letters.ExtendedBookContent.CODEC)
+                            .networkSynchronized(tterrag1112.life_in_the_village.Npc.Letters.ExtendedBookContent.STREAM_CODEC));
 
     private static <T>DeferredHolder<DataComponentType<?>, DataComponentType<T>> register(String name, UnaryOperator<DataComponentType.Builder<T>> builderOperator) {
 

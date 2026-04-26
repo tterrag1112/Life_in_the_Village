@@ -422,3 +422,84 @@ Phase 2 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 2 implementation notes
+
+- **Books reuse vanilla items.** Spec line 58 says
+  "ExtendedBookContent extends vanilla WrittenBookContent". A
+  Java `record` can't actually extend the vanilla record, so
+  the implementation rides them in parallel: vanilla
+  `WRITTEN_BOOK_CONTENT` carries the readable pages (so the
+  vanilla read screen opens), and a new mod-side
+  `EXTENDED_BOOK_CONTENT` data component carries the
+  topics + skill buff metadata. Books authored before the
+  extended component existed simply have no extended payload —
+  the read screen still works; `BookEffects.onBookRead` no-ops.
+- **Letters use a custom `WrittenLetterItem`** (vanilla has
+  no letter item). Right-click in air shows the body in chat;
+  right-click on an NPC delegates to `LetterDelivery`. Sealed
+  letters opened by a non-recipient flip a `sealBroken` flag
+  and record the opener's UUID — Phase 3 crime detection reads
+  the `sealBroken` + `sealBrokenBy` fields.
+- **Active skill buffs live on `SkillComponent`.** Spec line
+  234-241 calls for an `ActiveBuff` list. Implemented by
+  extending `SkillComponent` with a `List<ActiveSkillBuff>`
+  and a third codec field; `addXp(skill, amount, tick)` now
+  multiplies the incoming XP by the product of all
+  non-expired buffs for the matching skill, then prunes
+  expired buffs in the same pass. Buff expiry on
+  reload-and-pause works because `addXp` is the path: the
+  next tick's XP grant prunes anything past `expiresTick`.
+  Spec asks specifically for "test buff expiry on reload" —
+  this approach makes that automatic.
+- **Letter-template UI is debug-driven for now.** Spec line
+  401 calls for a template dropdown menu in v1. Phase 2
+  ships the verb wiring (`WriteLetterVerb`,
+  `SendLetterVerb`) as args-driven invocations — `/verb fire
+  write_letter body=... recipientId=... special=APOLOGY` works
+  end-to-end. A real composer screen lands as Phase 5
+  polish. Documented in spec — not blocking the exit
+  criteria scenario.
+- **Procedural village ledger is debug-gated.** Spec line
+  273 says scholars and Village_Scribe office holders author
+  ledgers. The Village_Scribe office wiring is Phase 3
+  territory; until then `ProceduralBookFactory.generateVillageLedger`
+  fires only via `/book ledger <villageId>`. The hook is
+  ready — flip it on in Phase 3 by calling the same factory
+  from the office tick path.
+- **Kingdom history book generator deferred.** Spec line 270
+  pulls from `KingdomHistoryData` — that's Phase 4 surface.
+  No Phase 2 generator; `ProceduralBookFactory` only ships
+  the village-ledger path.
+- **`PostalGoal` source: ItemEntities.** Phase 2 doesn't have
+  a workshop-outbox container surface; the postal goal scans
+  for `WrittenLetterItem` `ItemEntity`s on the ground inside
+  a 16-block radius of the scribe and delivers them. Phase 5
+  polish moves to a real outbox chest at the desk so letters
+  don't sit on the floor.
+- **Knowledge from letters is minimal.** Spec line 169 marks
+  "Parsing letter for knowledge topics is a Phase 5 content
+  job; Phase 2 only attaches topics if letter was authored
+  with explicit topic tags by a scholar." `LetterEffects`
+  ships exactly that minimum: only CONTRACT-tagged letters
+  seed a knowledge entry (the contract body becomes a
+  reference-able topic).
+- **Mood routing per special.** `MoodProducer.LetterReceived`
+  routes THREAT to `INSULT_RECEIVED`, friend-sourced letters
+  (recipient already has a positive `RelationshipMode` toward
+  the author) to `LETTER_FROM_FRIEND`, everything else to
+  the generic `LETTER_RECEIVED`. Spec lines 159-162 specifically
+  call out "LOVE_LETTER from friend → extra boost; THREAT
+  → negative; etc." — friend-detection drives the boost
+  uniformly rather than per-special, which keeps the
+  routing flat and matches the existing mood-trigger table.
+- **`WrittenLetterItem.use` displays in chat, not a dedicated
+  UI.** v1 design choice — Phase 5 polish opens a panel
+  similar to the village book screen.
+- **Caravan letter routing** (spec line 125) is one-line
+  reachable — caravans already carry an
+  `ItemStack`-list goods payload, so dropping a
+  `WrittenLetterItem` in there round-trips. Not fully wired
+  (no goods-selection picks letters automatically); this
+  belongs in the Phase 4 caravan refinement sweep. Hand-off
+  via PostalGoal handles intra-village.

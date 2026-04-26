@@ -24,6 +24,12 @@ public class ModItems {
     public static final DeferredItem<Item> COMPANY_LEDGER = ITEMS.registerItem("company_ledger", CompanyLedgerItem::new, props -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<Item> WHEAT_FLOUR = ITEMS.registerSimpleItem("wheat_flour");
 
+    /** Phase 2 task 18 — sealed letter item carrying a LetterContent component. */
+    public static final DeferredItem<Item> WRITTEN_LETTER = ITEMS.registerItem(
+            "written_letter",
+            WrittenLetterItem::new,
+            props -> new Item.Properties().stacksTo(1));
+
 
 
 
