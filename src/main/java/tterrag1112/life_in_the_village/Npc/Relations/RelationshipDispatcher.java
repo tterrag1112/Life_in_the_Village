@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus;
 import tterrag1112.life_in_the_village.Npc.Events.RelationshipType;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -142,6 +143,7 @@ public final class RelationshipDispatcher implements EventDispatcher {
             case NpcLifeEvent.GoalFailed ignored -> {}
             case NpcLifeEvent.GoalAbandoned ignored -> {}
             case NpcLifeEvent.RelationshipBoundaryCrossed ignored -> {}
+            default -> throw new IllegalStateException("Unexpected value: " + event);
         }
     }
 
@@ -197,8 +199,8 @@ public final class RelationshipDispatcher implements EventDispatcher {
         }
     }
 
-    private static java.util.Optional<NpcRelationshipLedger> ledgerOf(TownspersonMob mob) {
-        return mob == null ? java.util.Optional.empty()
-                : java.util.Optional.ofNullable(mob.getNpcRelationships());
+    private static Optional<NpcRelationshipLedger> ledgerOf(TownspersonMob mob) {
+        return mob == null ? Optional.empty()
+                : Optional.ofNullable(mob.getNpcRelationships());
     }
 }

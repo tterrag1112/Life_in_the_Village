@@ -84,7 +84,7 @@ public final class PlaceholderResolver {
     }
 
     private static String listenerName(DialogueContext ctx) {
-        if (ctx.player() != null) return ctx.player().getGameProfile().getName();
+        if (ctx.player() != null) return ctx.player().getGameProfile().name();
         if (ctx.listener() != null) return displayName(ctx.listener());
         return "stranger";
     }

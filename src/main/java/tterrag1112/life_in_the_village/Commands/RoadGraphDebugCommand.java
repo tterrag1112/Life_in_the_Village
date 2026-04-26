@@ -4264,9 +4264,11 @@ public class RoadGraphDebugCommand {
             totalLightsPlaced += edge.getDecorationPositions().size();
         }
 
+        int finalRealisedEdges = realisedEdges;
+        int finalTotalLightsPlaced = totalLightsPlaced;
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "[lighting_summary] realisedEdges=" + realisedEdges
-                + " approxLightPositions=" + totalLightsPlaced),
+                "[lighting_summary] realisedEdges=" + finalRealisedEdges
+                + " approxLightPositions=" + finalTotalLightsPlaced),
                 false);
 
         StringBuilder sb = new StringBuilder("  frequencies:");

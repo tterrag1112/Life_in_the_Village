@@ -290,7 +290,7 @@ public final class NpcDebugCommand {
                         .then(Commands.literal("regenerate")
                                 .then(Commands.argument("uuid", UuidArgument.uuid())
                                         .executes(NpcDebugCommand::handleHobbyRegenerate))))
-        );
+        ));
     }
 
     /** Active /npc events listen registration; null when off. */

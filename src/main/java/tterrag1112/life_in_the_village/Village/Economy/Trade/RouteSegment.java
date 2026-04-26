@@ -39,8 +39,8 @@ public sealed interface RouteSegment
             "type",
             seg -> seg instanceof WorldEdge ? "world_edge" : "village_traversal",
             type -> switch (type) {
-                case "world_edge"         -> WorldEdge.MAP_CODEC.codec();
-                case "village_traversal"  -> VillageTraversal.MAP_CODEC.codec();
+                case "world_edge"         -> WorldEdge.MAP_CODEC;
+                case "village_traversal"  -> VillageTraversal.MAP_CODEC;
                 default -> throw new IllegalArgumentException("unknown RouteSegment type: " + type);
             }
     );

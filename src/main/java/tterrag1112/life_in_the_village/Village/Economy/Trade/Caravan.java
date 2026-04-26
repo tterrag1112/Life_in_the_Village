@@ -248,7 +248,7 @@ public class Caravan implements TravellingGroup {
     }
 
     /** Concatenates block paths for each segment, skipping the first block of each non-first segment. */
-    static List<BlockPos> resolveSegmentBlocks(ServerLevel level, List<RouteSegment> segments) {
+    public static List<BlockPos> resolveSegmentBlocks(ServerLevel level, List<RouteSegment> segments) {
         List<BlockPos> result = new ArrayList<>();
         for (RouteSegment seg : segments) {
             List<BlockPos> segBlocks = seg.resolveBlocks(level);
