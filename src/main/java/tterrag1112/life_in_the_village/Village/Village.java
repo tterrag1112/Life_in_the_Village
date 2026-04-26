@@ -55,6 +55,15 @@ public class Village {
      */
     private tterrag1112.life_in_the_village.Npc.Office.OfficeState offices;
 
+    /**
+     * Per-village law state. Spec {@code 22-village-laws.md}. Lazy-init
+     * to an empty {@link tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy}
+     * so callers can always {@code village.getPolicy().hasLaw(...)} without
+     * a null-check; the codec rebuilds the same field on load.
+     */
+    private tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy policy =
+            new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy();
+
     /** Transient: last computed size tier. Null until first access; recomputed after building count changes. */
     @Nullable private transient VillageSizeTier storedSizeTier = null;
 
@@ -342,12 +351,17 @@ public class Village {
                             .forGetter(Village::useGraphConnector),
                     tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                             .optionalFieldOf("offices")
-                            .forGetter(v -> Optional.ofNullable(v.offices))
+                            .forGetter(v -> Optional.ofNullable(v.offices)),
+                    tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy.CODEC
+                            .optionalFieldOf("villageLaws", new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy())
+                            .forGetter(v -> v.policy != null
+                                    ? v.policy
+                                    : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy())
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
                                layoutMeta, villageType, dockNodeId,
-                               useGraphConnector, offices) -> {
+                               useGraphConnector, offices, policy) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -375,6 +389,7 @@ public class Village {
                                         tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.ASCENSION));
                     }
                 }
+                v.policy = policy != null ? policy : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy();
                 return v;
             })
     );
@@ -382,6 +397,11 @@ public class Village {
     /** Office state for this village; never {@code null} after construction. */
     public tterrag1112.life_in_the_village.Npc.Office.OfficeState getOffices() {
         return offices;
+    }
+
+    /** Per-village laws; never {@code null} after construction. */
+    public tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy getPolicy() {
+        return policy;
     }
 
     // =========================================================================

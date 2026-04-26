@@ -26,13 +26,20 @@ public final class ScheduleResolver {
      * Returns the active {@link DayPhase} for {@code npc} at
      * {@code gameTick}. Never throws — returns
      * {@link DayPhase#HOME} as a safe default if anything is missing.
+     *
+     * <p>Doc 22 wired: the resolved phase is then passed through
+     * {@link tterrag1112.life_in_the_village.Npc.Laws.LawScheduleHooks#applyLaws}
+     * so a CURFEW-active village shoves the NPC into HOME after the
+     * curfew daytick.</p>
      */
     public static DayPhase phaseAt(TownspersonMob npc, long gameTick) {
         if (npc == null) return DayPhase.HOME;
         try {
             DailySchedule schedule = resolveDaily(npc, gameTick);
             long dayTime = ((gameTick % 24000L) + 24000L) % 24000L;
-            return schedule.phaseAt(dayTime);
+            DayPhase base = schedule.phaseAt(dayTime);
+            return tterrag1112.life_in_the_village.Npc.Laws.LawScheduleHooks
+                    .applyLaws(npc, gameTick, base);
         } catch (Throwable t) {
             return DayPhase.HOME;
         }

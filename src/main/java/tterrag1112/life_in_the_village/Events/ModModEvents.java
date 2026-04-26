@@ -87,6 +87,18 @@ public class ModModEvents {
         // (memory, mood, trait drift). Idempotent.
         tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.registerDefaults();
 
+        // Phase 3 task 24: register building enter/leave listeners that
+        // drive greeter assignment + close refusal logic. Listener
+        // registration is idempotent because BuildingPresenceTracker's
+        // listener lists are session-scoped and ServerStartingEvent
+        // fires once per server lifecycle.
+        tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
+                .registerEnterListener(tterrag1112.life_in_the_village.Npc.BusinessFront
+                        .GreeterAssignment::onPlayerEntered);
+        tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
+                .registerLeaveListener(tterrag1112.life_in_the_village.Npc.BusinessFront
+                        .GreeterAssignment::onPlayerLeft);
+
         System.out.println("Loading village types...");
         manager.listResources("village_types",
                 path -> path.getPath().endsWith(".json")
@@ -213,6 +225,12 @@ public class ModModEvents {
                 CloseNpcProfilePacket.CODEC,
                 CloseNpcProfilePacket::handle);
 
+        // Phase 3 task 24: business-front screen open packet.
+        registrar.playToClient(
+                OpenBusinessFrontPacket.TYPE,
+                OpenBusinessFrontPacket.CODEC,
+                OpenBusinessFrontPacket::handle);
+
     }
 
     @SubscribeEvent
@@ -240,7 +258,18 @@ public class ModModEvents {
         GossipDebugCommand.register(event.getDispatcher());
         ScribalDebugCommand.register(event.getDispatcher());
         LetterBookDebugCommand.register(event.getDispatcher());
+        EconomyDebugCommand.register(event.getDispatcher());
+        LawDebugCommand.register(event.getDispatcher());
+        BusinessDebugCommand.register(event.getDispatcher());
 
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
+                    .onPlayerLogout(player.getUUID());
+        }
     }
 
     @SubscribeEvent

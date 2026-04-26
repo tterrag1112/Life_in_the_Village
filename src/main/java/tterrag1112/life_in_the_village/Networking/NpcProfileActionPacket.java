@@ -28,7 +28,10 @@ public record NpcProfileActionPacket(UUID npcId, Action action)
         SHOW_VILLAGE_BOOK,
         SHOW_CRAFTING_ORDERS,
         RENT_STALL,
-        GIVE_GIFT
+        GIVE_GIFT,
+        /** Phase 3 task 24: "View Profile" small button on the
+         *  BusinessFrontScreen — opens the full profile via NpcProfileHub. */
+        OPEN_PROFILE
     }
 
     public static final Type<NpcProfileActionPacket> TYPE = new Type<>(

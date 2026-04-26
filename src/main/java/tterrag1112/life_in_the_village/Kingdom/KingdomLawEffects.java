@@ -32,13 +32,14 @@ public final class KingdomLawEffects {
 
     /**
      * Returns true if the player should be treated as a citizen of the
-     * given kingdom. Currently this is only true for the ruler.
+     * given kingdom. Currently this is only true for someone who holds a
+     * kingdom office — the office system is the new source of truth as
+     * of Phase 3 task 06; the legacy {@code rulerPlayerId} stays
+     * populated for one release window but no longer drives this gate.
      */
     public static boolean isCitizen(ServerPlayer player, Kingdom kingdom) {
         if (kingdom == null) return false;
-        return kingdom.getRulerPlayerId()
-                .map(id -> id.equals(player.getUUID()))
-                .orElse(false);
+        return kingdom.getOffices().isHeldBy(player.getUUID());
     }
 
     /** Returns the kingdom for the given village id, or empty. */

@@ -103,6 +103,10 @@ public final class NpcProfileHub {
             case SHOW_CRAFTING_ORDERS -> doShowCraftingOrders(npc, player, level);
             case RENT_STALL          -> doRentStall(npc, player, level);
             case GIVE_GIFT           -> doGiveGift(npc, player, level);
+            // Phase 3 task 24: "View Profile" small button on the
+            // BusinessFrontScreen routes here. open() sets the
+            // conversation lock and pushes OpenNpcProfilePacket.
+            case OPEN_PROFILE        -> open(npc, player, level);
         }
     }
 

@@ -91,8 +91,76 @@ public final class NpcInteractionHandler {
             return handleWanderingTrader(npc, sp, level);
         }
 
+        // Phase 3 task 24: business-front routing. If the player is
+        // currently inside a BUSINESS_FRONT building during work hours
+        // and the NPC works there, open the BusinessFrontScreen instead
+        // of the full profile. Off-hours falls through to the
+        // closed-refusal path; non-business buildings fall through to
+        // the existing profile screen.
+        InteractionResult businessRouted = tryRouteBusinessFront(npc, sp, level);
+        if (businessRouted != null) return businessRouted;
+
         // All other professions → unified profile screen
         NpcProfileHub.open(npc, sp, level);
+        return InteractionResult.SUCCESS;
+    }
+
+    /**
+     * Returns a non-null result iff this right-click is handled by the
+     * business-front routing (business screen opened, or "we're closed"
+     * refusal sent). Returns null when the caller should fall through
+     * to the legacy {@link NpcProfileHub#open} path.
+     */
+    private static InteractionResult tryRouteBusinessFront(TownspersonMob npc,
+                                                           ServerPlayer sp,
+                                                           ServerLevel level) {
+        Optional<UUID> presentBuildingId = tterrag1112.life_in_the_village.Npc.BusinessFront
+                .BuildingPresenceTracker.getBuildingFor(sp.getUUID());
+        if (presentBuildingId.isEmpty()) return null;
+        UUID buildingId = presentBuildingId.get();
+
+        Optional<Building> buildingOpt = VillageSavedData.get(level).getBuildingById(buildingId);
+        if (buildingOpt.isEmpty()) return null;
+        Building building = buildingOpt.get();
+        if (!tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingTypeFlags
+                .hasBusinessFront(building.getType())
+                && !tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingTypeFlags
+                .hasServiceFront(building.getType())) {
+            return null; // residence / unflagged — legacy profile path
+        }
+
+        boolean npcWorksHere = npc.getAssignedBuildingId()
+                .filter(id -> id.equals(buildingId))
+                .isPresent();
+        if (!npcWorksHere) return null;
+
+        // Off-hours: refusal + repeat-mood-penalty.
+        if (!npc.isWorkTime()) {
+            sp.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal(
+                            "[" + npc.getNpcName() + "] We're closed. Come back during work hours."),
+                    /* actionBar */ true);
+            int refusals = tterrag1112.life_in_the_village.Npc.BusinessFront
+                    .BusinessFrontTracker.recordRefusal(sp.getUUID(), buildingId);
+            if (refusals >= 3) {
+                npc.getMood().applyWithRawMagnitude(
+                        tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger.INSULT_RECEIVED,
+                        -2, level.getGameTime());
+            }
+            return InteractionResult.SUCCESS;
+        }
+
+        // Work hours: open BusinessFrontScreen.
+        tterrag1112.life_in_the_village.Village.Village village = npc.getAssignedVillageName()
+                .flatMap(VillageSavedData.get(level)::getVillageByName)
+                .orElse(null);
+        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp,
+                new tterrag1112.life_in_the_village.Networking.OpenBusinessFrontPacket(
+                        npc.getUUID(),
+                        npc.getNpcName(),
+                        npc.getProfession().getDisplayName(),
+                        building.getType().name(),
+                        village == null ? "" : village.getName()));
         return InteractionResult.SUCCESS;
     }
 

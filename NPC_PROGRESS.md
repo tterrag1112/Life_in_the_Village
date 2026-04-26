@@ -274,25 +274,89 @@ Goal: villages have real politics and economics that work without
 markets.
 
 - [ ] Read Phase 3 specs (19–24) end-to-end
-- [ ] **06 → wire** Office framework behavior
-    - [ ] Selection engine per method
-    - [ ] Office appointment/election at village bootstrap
-    - [ ] Office holder memory/relationship/mood integration
-- [ ] **23** Economic channels
-    - [ ] `EconomicChannel`, `ChannelRouter`
-    - [ ] MARKET, DIRECT_BUSINESS, CARAVAN, STOCKPILE channels
-    - [ ] GUILD_REQUEST, VISITOR stubs
-    - [ ] Migrate existing market-only goals to router
-- [ ] **24** Business greeting
-    - [ ] `BuildingPresenceTracker` per-player
-    - [ ] `GreetPlayerGoal` assignment
-    - [ ] `BusinessFrontScreen` with profile as secondary
-    - [ ] Greeter dialogue trees (6 trees)
-- [ ] **22** Village laws (before 19, since crime reads laws)
-    - [ ] `VillageLaw` enum, `VillagePolicy` per village
-    - [ ] `LawEffect` implementations wired into subsystem hooks
-    - [ ] NPC leader decision engine
-    - [ ] Player leader laws UI panel
+- [x] **06 → wire** Office framework behavior
+    - [x] Selection engine per method (7 implementations + tiebreak helper
+      under `Npc.Office.Selection`; `SelectionEngines` static lookup)
+    - [x] Office appointment/election at village bootstrap
+      (founding-elections queue on `addVillage`, drained by the daily
+      `office_elections` tick subsystem)
+    - [x] Office holder memory/relationship/mood integration
+      (Promoted / Demoted life-events fire on every seat change)
+    - [x] `OfficeElection` driver: `runElection`, `runFoundingElections`,
+      `dailyTick`, `vacateAllHeldBy`, `seatPlayer`, `seatNpc`
+    - [x] `PowerGrant` capability lookup utility (single-org and
+      cross-level walkers)
+    - [x] `CultureSelectionResolver` Phase 5 stub wired at the resolution
+      site (Phase 5 only has to populate the resolver)
+    - [x] `LivingDeathEvent` hook now vacates every held office and
+      re-runs elections so seats refill same-tick
+    - [x] Legacy migration cutover: `KingdomActionPacket.TOGGLE_LAW`
+      and `KingdomLawEffects.isCitizen` route through `PowerGrant`
+      (legacy `rulerPlayerId` stays populated for the one-release window)
+    - [x] Player verbs: `petition_for_office` (rel ≥ +20 gate),
+      `appoint_to_office`, `resign_from_office`
+    - [x] `/office` subcommands extended: `election`, `grant`,
+      `vacate-and-elect`, `powers <uuid>`, `me`
+- [x] **23** Economic channels
+    - [x] `EconomicChannel`, `ChannelRouter` (new package
+      `Npc.Economy.Channels`)
+    - [x] MARKET, DIRECT_BUSINESS, CARAVAN, STOCKPILE channels
+    - [x] GUILD_REQUEST, VISITOR stubs (registered, always-unavailable
+      until Phase 4 docs 28/29 fill them in)
+    - [x] Migrate existing market-only goals to router:
+      - `HouseholdWealthManager.tickHouseholdSpending`
+      - `AbstractWorkstationProductionGoal.executeBuy`
+      - `BuyFromMarketGoal` → `BuyGoodsGoal` (renamed, routed)
+    - [x] `VillagePolicy` Phase-3-doc-22 stub wired at quote time
+    - [x] `/economy quote|channels|migrate-status` debug commands
+- [x] **24** Business greeting
+    - [x] `BuildingPresenceTracker` per-player (player-tick driven,
+      enter/leave listeners, logout cleanup)
+    - [x] `BuildingTypeFlags` static lookup — BUSINESS_FRONT /
+      SERVICE_FRONT / RESIDENCE per spec table (separate class because
+      `BuildingType` is bare-entry; spec deviation logged in 24
+      Revision Notes)
+    - [x] `GreetPlayerGoal` slotted at `P_SOCIAL_HIGH` via
+      `ProfessionGoalFactory.registerUniversal`; externally seated by
+      `GreeterAssignment`; bark on APPROACH; auto-DISMISS after 600
+      ticks
+    - [x] `GreeterAssignment` selector — SERVICE_FACING > master >
+      first; 60-second re-greet cooldown
+    - [x] `BusinessFrontScreen` (compact functional layout: title +
+      type-aware primary action button + 4 verb buttons + View Profile
+      + Close)
+    - [x] `OpenBusinessFrontPacket` + `NpcProfileActionPacket.Action.OPEN_PROFILE`
+      back-route
+    - [x] `NpcInteractionHandler.tryRouteBusinessFront` — opens
+      BusinessFrontScreen during work hours; off-hours sends
+      "We're closed" + 3-strike mood penalty
+    - [x] 6 greeter dialogue trees + `greeting.business` fallback
+      registered in `StarterTrees.registerAll`
+    - [x] `/business presence|greeter|flags` debug commands
+- [x] **22** Village laws (before 19, since crime reads laws)
+    - [x] `VillageLaw` enum (22 entries across 4 categories),
+      `VillagePolicy` per village with codec
+    - [x] `LawEffect` interface + 22 impls; registry covers every law
+    - [x] NPC leader decision engine + daily tick subsystem
+      (`law_decision`, priority 197)
+    - [x] Tax/wage/treasury hooks (`LawTaxHooks` — property tax mult,
+      market tax mult, daily subsidies w/ overdraft suspend, profits
+      to treasury fraction)
+    - [x] Channel hooks (`LawPriceHooks` — replaces last-session
+      stub; food price ceiling/floor + caravan-ban + market multipliers)
+    - [x] Schedule hooks (`LawScheduleHooks` — CURFEW shifts phase;
+      FESTIVAL_MANDATORY + COMPULSORY_SCHOOLING flag for downstream
+      systems)
+    - [x] Lifecycle: `LawAnnouncement` (gossip seed via topic-heat
+      bump, mood shock via new MoodTrigger.LAW_TRANSITION, leader rep
+      delta for player-leaders)
+    - [x] Player verb: `petition_leader` (rel ≥ +20 gate, picks
+      highest-scoring law via the same engine the NPC leader uses)
+    - [x] `/law` debug subcommands: list, enact, repeal, popularity,
+      audit
+    - [ ] Player leader Laws UI panel — deferred (the proper Office
+      tab GUI is itself a Phase 3 follow-up; `/law enact|repeal`
+      stands in until then)
 - [ ] **19** Crime & justice
     - [ ] CrimeType, CrimeReport, Trial, Punishment
     - [ ] Detection hooks (theft, assault, vandalism, trespass, seal,
@@ -570,3 +634,199 @@ manually + by Explore agent against the known-working pattern.
 **Suggested next session**: task 02 (NpcMemoryLog). The 32-entry cap and
 decay math are new territory vs. the straightforward TraitVector — read
 `docs/npc_redesign/02-memory-system.md` fully before coding.
+
+---
+
+**Phase 3 progress (this session)**: task 06 (office framework wiring)
+complete. New packages:
+
+- `Npc.Office.Selection` — 7 engines (`MeritocraticSelection`,
+  `AscensionSelection`, `CouncilSelection`, `ElectiveSelection`,
+  `HereditarySelection`, `AppointedSelection`, `DictatorialSelection`)
+  + `OfficeCandidate`, `OfficeSelectionContext`, `CandidatePool`,
+  `CouncilResolver`, `SelectionTiebreaker`, `SelectionEngines` lookup.
+- `Npc.Office.Powers.PowerGrant` — capability lookup utility used by
+  every "is this player allowed to ..." gate going forward.
+- `Npc.Office.OfficeElection` — driver: `runElection`,
+  `runFoundingElections`, `dailyTick`, `vacateAllHeldBy`, `seatPlayer`,
+  `seatNpc`. `Npc.Office.CultureSelectionResolver` is the Phase 5 stub
+  consulted before each engine pick.
+
+Tick wiring: new `OfficeElectionTickSystem` (interval 24000, priority
+195) registered in `TickSubsystemRegistry`. Drains
+`VillageSavedData.pendingFoundingElections` then sweeps every loaded
+Village / GuildData / Kingdom / Company.
+
+Lifecycle hooks: `TownspersonMob.onNpcDeath` calls
+`OfficeElection.vacateAllHeldBy` so a leader's death triggers
+immediate refill; the player verbs `petition_for_office`,
+`appoint_to_office`, `resign_from_office` are registered on the
+PlayerVerbRegistry.
+
+Legacy migration cutover: `KingdomActionPacket.TOGGLE_LAW` and
+`KingdomLawEffects.isCitizen` route via `PowerGrant`; the legacy
+`Kingdom.rulerPlayerId` / `Village.villageLeaderId` /
+`GuildData.guildmasterId` / `Company.ownerPlayerId` fields stay
+populated for the one-release window — but are no longer the source of
+truth for any *gate*.
+
+Office Tab UI replaced with `/office me` text listing for this session
+— a full inventory tab is documented as a follow-up. Action buttons per
+power are deferred to the per-power UIs (constable/leader/healer
+sessions) per the brief's explicit Phase 3 scope cut.
+
+---
+
+**Phase 3 progress (next session)**: task 23 (economic channels) complete.
+New package `Npc.Economy.Channels`:
+
+- Core types: `TradeIntent`, `TradeDirection`, `Urgency`, `ChannelType`,
+  `ChannelQuote`, `TradeResult`, `EconomicChannel` interface.
+- 4 channel impls (`MarketChannel`, `DirectBusinessChannel`,
+  `CaravanChannel`, `StockpileChannel`) + 2 stubs
+  (`GuildRequestChannel`, `VisitorChannel`) registered.
+- `ChannelRouter.findBestChannel` / `rankAllChannels` with the spec's
+  scoring formula (priority − price penalty − travel penalty +
+  urgency bonus).
+- `VillagePolicy` Phase-3-doc-22 stub at the law-aware-pricing call
+  site so doc 22 (next session) only has to populate the resolver.
+
+Legacy trade-caller migrations:
+- `Entities/HouseholdWealthManager.tickHouseholdSpending` — household
+  daily shopping now routes via `ChannelRouter`; villages without a
+  market fall through to `DirectBusinessChannel`.
+- `Entities/Goals/Profession/Workshop/AbstractWorkstationProductionGoal.executeBuy`
+  — workshops bridge `BuildingEconomy` → NPC wallet → channel →
+  seller, with refund on partial fills.
+- `Entities/Goals/Social/BuyFromMarketGoal` deleted; replaced by
+  `Entities/Goals/Social/BuyGoodsGoal`. Registered in
+  `ProfessionGoalFactory`.
+
+Workshop production goals still gate the MARKET_VISIT phase on a
+present `MARKET` building — the buy *path* is migrated, but the goal's
+trigger is unchanged. A follow-up may unlock workshop-to-workshop
+input sourcing without a market; flagged in 23 Revision Notes.
+
+Debug commands: `/economy quote <actor> <buy|sell> <item> <qty>
+[urgency]`, `/economy channels`, `/economy migrate-status`.
+
+Spec deviation (signature): `EconomicChannel.isAvailable` adds a
+`ServerLevel` parameter that the spec omits — needed so `CaravanChannel`
+/ `VisitorChannel` can read level-scoped saved data without a second
+quote round-trip. Logged in 23 Revision Notes.
+
+---
+
+**Phase 3 progress (next session)**: task 22 (village laws) complete.
+New package `Npc.Laws`:
+
+- 22 `VillageLaw` enum entries across 4 categories (10 economy / 4 crime
+  / 5 social / 3 economic restriction).
+- `VillagePolicy` per-village state class with codec on `Village` (15-
+  field codec group, still under the 16-arity limit).
+- `LawEffect` interface + 22 small impls in `Npc.Laws.effects`.
+- `LawEffectRegistry` static map.
+- 3 hook facades: `LawPriceHooks` (replaces last session's
+  channels-side stub), `LawTaxHooks`, `LawScheduleHooks`.
+- `LawPopularity` calculator (per-villager trait fit + benefits/affected
+  bias); `LawAnnouncement` lifecycle (gossip seed + mood shock + leader
+  rep delta); `LawEnactment` orchestrator.
+- `LawDecisionEngine` daily autonomy for NPC leaders; new tick
+  subsystem `law_decision` (interval 24000, priority 197).
+- `petition_leader` verb (rel ≥ +20 gate).
+- `/law list|enact|repeal|popularity|audit` debug commands.
+
+Hook wiring:
+- `VillageSimEngine` property tax now multiplies by
+  `LawTaxHooks.propertyTaxMultiplier`.
+- `TreasuryTickHandler` resumes suspended subsidies, then pays daily
+  subsidies via `applySubsidyOrSuspend`.
+- `MarketChannel` market-tax slice scales by law multiplier; food
+  ceiling / floor applied to all three concrete sell-side channels.
+- `CaravanChannel.isAvailable` honours FOREIGN_TRADER_BAN.
+- `ScheduleResolver.phaseAt` runs results through
+  `LawScheduleHooks.applyLaws` so CURFEW forces HOME after daytick
+  12000.
+
+`MoodTrigger.LAW_TRANSITION` added (signed magnitude per-NPC, ±25 cap)
+so enactment / repeal mood shocks reuse the existing daily-stack
+infrastructure.
+
+Spec deviations: `LawEffect` defines small primitive accessors per
+hook surface rather than the spec's monolithic `modifyTax /
+modifyToll / modifyWage / modifyPunishment / blocksAction` shape —
+keeps the hook-facade classes (`LawPriceHooks`, `LawTaxHooks`,
+`LawScheduleHooks`) thin and lets crime / visitor / festival sessions
+add their own facade classes for their hook surfaces. Logged in 22
+Revision Notes.
+
+NPC-leader daily reputation drift skipped in v1 (no player ledger to
+consult for an NPC leader); player-leader rep delta still applies at
+enact / repeal time. SUBSIDIZE_HEALER and GUILD_MEMBERSHIP_REQUIRED
+ship as registered no-ops awaiting their dependent subsystems
+(profession enum + guild refactor). Player Laws UI panel deferred
+behind the Office tab GUI follow-up; `/law` commands serve as the v1
+surface.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 3 progress (next session)**: task 24 (business greeting) complete.
+New package `Npc.BusinessFront`:
+
+- `BuildingPresence` record + `BuildingPresenceTracker` (player-tick
+  driven; enter/leave listener registry; logout cleanup).
+- `BuildingTypeFlags` (separate static lookup, not enum body) — BUSINESS_FRONT
+  / SERVICE_FRONT / RESIDENCE per the spec table.
+- `BusinessFrontStatus` enum + `BusinessFrontState` record + `BusinessFrontTracker`
+  (transient state map + closed-refusal counter).
+- `GreetPlayerGoal` (APPROACH / ATTENDING / FOLLOW_UP / DISMISS phases;
+  externally seated; bark on approach; 30s auto-dismiss).
+- `GreeterAssignment` (priority ranking — service-facing → master → first;
+  60s re-greet cooldown).
+
+GUI / packet wiring:
+- `OpenBusinessFrontPacket` (server→client, minimal payload).
+- `BusinessFrontScreen` (compact: title, type-aware primary action,
+  4 verb buttons, View Profile, Close).
+- `NpcProfileActionPacket.Action.OPEN_PROFILE` lets the View Profile
+  button bounce back through `NpcProfileHub.open`.
+
+Routing:
+- `NpcInteractionHandler.tryRouteBusinessFront` opens the new screen
+  during work hours iff player is in a BUSINESS_FRONT/SERVICE_FRONT
+  building AND the NPC works there. Off-hours sends "We're closed"
+  + INSULT_RECEIVED mood penalty (-2) on the third refusal in a visit.
+- Outside any business-front / in a residence: falls through to the
+  existing `NpcProfileHub.open` path.
+
+Tick + listeners:
+- `PlayerEventProximityHandler.onPlayerTick` calls
+  `BuildingPresenceTracker.onPlayerTick(player)` every tick (cheap —
+  one `getBuildingAt` per player).
+- `ServerStartingEvent` registers `GreeterAssignment::onPlayerEntered`
+  and `onPlayerLeft` as enter/leave listeners.
+- `PlayerLoggedOutEvent` clears the player's tracker entry.
+
+Goal wiring:
+- `GreetPlayerGoal` added at `P_SOCIAL_HIGH` (between combat and work)
+  via `ProfessionGoalFactory.registerUniversal`. Stays no-op until
+  `GreeterAssignment.assign()` seats a target.
+
+Dialogue:
+- 6 greeter trees + `greeting.business` fallback registered in
+  `StarterTrees.registerAll`. Phase 5 polishes the content.
+
+Debug: `/business presence|greeter <npc>|flags <type>`.
+
+Spec deviations:
+- `BuildingTypeFlags` is a separate static lookup rather than a
+  constructor-arg field on `BuildingType` because the enum has no
+  body and adding constructor args would touch every existing line.
+  Same surface (`hasBusinessFront`, `hasServiceFront`, `isResidence`).
+- `BusinessFrontScreen` is a compact custom Screen, not a re-skin of
+  `NpcProfileScreen`. v1 prioritises functional flow over visual
+  polish — Phase 5 may align styling with the profile screen.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).

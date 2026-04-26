@@ -9,8 +9,6 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
-import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcTransactionVisual;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -134,85 +132,94 @@ public final class HouseholdWealthManager {
         }
     }
 
-    // tickHouseholdSpending — called once per day from VillageDailyTickSystem
+    // tickHouseholdSpending — called once per day from VillageDailyTickSystem.
+    // PHASE-3-MIGRATION-23: shopping is now routed through ChannelRouter.
+    // The previous market-only path is preserved as MarketChannel.execute,
+    // so a village with a MARKET keeps its prior behaviour; a village
+    // without one now falls through to DirectBusinessChannel.
     public static void tickHouseholdSpending(ServerLevel level,
                                              Village village,
                                              VillageSavedData data) {
         data.getHouseholdsForVillage(village.getId()).forEach(household -> {
             if (household.getPooledWealth() <= 0) return;
 
-            Building market = village.getBuildingIds().stream()
-                    .map(data::getBuildingById)
-                    .filter(Optional::isPresent).map(Optional::get)
-                    .filter(b -> b.getType() == BuildingType.MARKET)
-                    .findFirst().orElse(null);
-            if (market == null) return;
-
             Building house = data.getBuildingById(household.getBuildingId())
                     .orElse(null);
+            // Head NPC drives the trade — needed as the actorId on the
+            // intent so DirectBusinessChannel can read relationships and
+            // find the wallet for any non-pool components.
+            TownspersonMob headNpc = household.getMemberNpcIds().stream()
+                    .flatMap(id -> level.getEntitiesOfClass(
+                                    TownspersonMob.class,
+                                    new net.minecraft.world.phys.AABB(
+                                            BlockPos.ZERO).inflate(30000000),
+                                    mob -> mob.getUUID().equals(id))
+                            .stream())
+                    .filter(mob -> mob.getFamilyRole() == FamilyRole.HEAD)
+                    .findFirst().orElse(null);
 
             List<ShopEntry> shoppingList = getShoppingList(household.getPooledWealth());
 
             for (ShopEntry entry : shoppingList) {
-                long cost = entry.maxSpendBronze();
-                if (!household.canWithdraw(cost, FamilyRole.HEAD)) continue;
+                long perUnitCeiling = entry.qty() > 0 ? entry.maxSpendBronze() / entry.qty() : 0L;
+                if (perUnitCeiling <= 0 || headNpc == null) continue;
 
-                int inMarket = BuildingStorageAccess.countItem(
-                        level, market, entry.item());
-                if (inMarket <= 0) continue;
+                tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent intent =
+                        tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent.buy(
+                                entry.item(), entry.qty(),
+                                headNpc.getUUID(), house == null ? null : house.getId(),
+                                village.getId(),
+                                perUnitCeiling,
+                                tterrag1112.life_in_the_village.Npc.Economy.Channels.Urgency.NORMAL,
+                                java.util.Set.of());
 
-                int qty = Math.min(entry.qty(), inMarket);
-                if (qty <= 0) continue;
+                var quote = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
+                        .findBestChannel(intent, village, data, level)
+                        .orElse(null);
+                if (quote == null) continue;
 
-                if (!BuildingStorageAccess.takeItem(level, market, entry.item(), qty))
+                long total = quote.totalBronze();
+                if (!household.canWithdraw(total, FamilyRole.HEAD)) continue;
+                if (!household.withdrawFromPool(total, FamilyRole.HEAD)) continue;
+
+                // Top up the head's wallet with the pool draw so the
+                // channel's execute can spend it; the channel returns
+                // bronze to the seller. The pool already paid out so no
+                // double-charging.
+                headNpc.getWallet().receive(
+                        tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue.of(total));
+
+                var result = quote.channel() == tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelType.MARKET
+                        ? new tterrag1112.life_in_the_village.Npc.Economy.Channels.impl.MarketChannel()
+                            .execute(quote, intent, level)
+                        : tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
+                            .registeredChannels().stream()
+                            .filter(c -> c.type() == quote.channel())
+                            .findFirst()
+                            .map(c -> c.execute(quote, intent, level))
+                            .orElse(tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult
+                                    .fail("channel missing"));
+
+                if (!result.success()) {
+                    // Refund pool on failure.
+                    headNpc.getWallet().spend(total);
+                    household.depositToPool(total);
                     continue;
-
-                // Withdraw from pool (pool is a virtual long — no NPC involved)
-                if (!household.withdrawFromPool(cost, FamilyRole.HEAD)) continue;
-
-                // Route payment to stall owner or merchant
-                // Find head-of-household NPC for visual purposes
-                TownspersonMob headNpc = household.getMemberNpcIds().stream()
-                        .flatMap(id -> level.getEntitiesOfClass(
-                                        TownspersonMob.class,
-                                        new net.minecraft.world.phys.AABB(
-                                                BlockPos.ZERO).inflate(30000000),
-                                        mob -> mob.getUUID().equals(id))
-                                .stream())
-                        .filter(mob -> mob.getFamilyRole() == FamilyRole.HEAD)
-                        .findFirst().orElse(null);
-
-                TownspersonMob merchant = findMerchantAtBuilding(level, market);
-                if (headNpc != null && merchant != null) {
-                    // Credit merchant wallet — visual fires on head NPC
-                    headNpc.getWallet().spend(0); // ensure wallet is initialized
-                    NpcTransactionVisual.showPayment(headNpc, merchant, level);
-                    merchant.getWallet().receive(cost);
-                } else if (merchant != null) {
-                    merchant.getWallet().receive(cost);
                 }
-                // 10% to treasury
-                village.depositToTreasury(cost / 10);
 
-                // Put goods in house
+                // Goods → house storage if available, else personal inventory.
+                int qty = result.quantityTraded();
                 if (house != null) {
                     BuildingStorageAccess.storeItem(level, house,
                             new ItemStack(entry.item(), qty));
+                } else {
+                    headNpc.getPersonalInventory().addItem(new ItemStack(entry.item(), qty));
                 }
 
+                NpcTransactionVisual.showPayment(headNpc, level);
                 data.markDirty();
             }
         });
-    }
-
-    private static TownspersonMob findMerchantAtBuilding(ServerLevel level,
-                                                         Building building) {
-        return level.getEntitiesOfClass(
-                TownspersonMob.class,
-                building.getShape().toAABB().inflate(16),
-                mob -> mob.getProfession()
-                        == tterrag1112.life_in_the_village.Profession.Profession.MERCHANT
-        ).stream().findFirst().orElse(null);
     }
 
     private static List<ShopEntry> getShoppingList(long pooledWealth) {

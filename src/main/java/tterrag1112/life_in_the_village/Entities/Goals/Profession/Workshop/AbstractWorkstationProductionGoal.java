@@ -678,6 +678,12 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
         }
     }
 
+    // PHASE-3-MIGRATION-23: input procurement now routes via
+    // ChannelRouter. The previous "market chest only" path is preserved
+    // as MarketChannel.execute, which keeps stall/merchant routing
+    // bytecode-identical for villages that have a market. Workshops in
+    // market-less villages now succeed via DirectBusinessChannel against
+    // a producing peer (e.g. a baker buying flour from a miller).
     private void executeBuy(ServerLevel level, Map<Item, Integer> toBuy) {
         UUID buildingId = entity.getAssignedBuildingId().orElse(null);
         if (buildingId == null) return;
@@ -685,63 +691,69 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
         VillageSavedData data = VillageSavedData.get(level);
         tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy bEconomy =
                 data.getOrCreateBuildingEconomy(buildingId);
+        Village village = entity.getAssignedVillageName()
+                .flatMap(data::getVillageByName).orElse(null);
+        if (village == null) return;
 
         for (Map.Entry<Item, Integer> entry : toBuy.entrySet()) {
             Item item   = entry.getKey();
             int  wanted = entry.getValue();
+            if (wanted <= 0) continue;
 
-            int inMarket = BuildingStorageAccess.countItem(level, market, item);
-            int buyNow   = Math.min(wanted, inMarket);
-            if (buyNow <= 0) continue;
+            // Per-unit ceiling: profession's existing buy-price helper
+            // gives the workshop's idea of fair market value.
+            long perUnitCeiling = Math.max(1L, getItemBuyPrice(level, item));
 
-            long cost = getItemBuyPrice(level, item) * buyNow;
-            if (!bEconomy.canAfford(cost)) continue;
+            tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent intent =
+                    tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent.buy(
+                            item, wanted, entity.getUUID(), buildingId,
+                            village.getId(), perUnitCeiling,
+                            tterrag1112.life_in_the_village.Npc.Economy.Channels.Urgency.NORMAL,
+                            java.util.Set.of());
 
-            if (!BuildingStorageAccess.takeItem(level, market, item, buyNow)) continue;
+            var quote = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
+                    .findBestChannel(intent, village, data, level)
+                    .orElse(null);
+            if (quote == null) continue;
 
-            // Deduct from building treasury and pay the market merchant
-            bEconomy.withdraw(cost);
-            data.setDirty();
+            long total = quote.totalBronze();
+            if (!bEconomy.canAfford(total)) continue;
 
-            // Route payment to stall owner or merchant NPC
-            CurrencyValue costValue = CurrencyValue.of(cost);
-            tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall stall =
-                    data.getStallsForMarket(market.getId()).stream()
-                            .filter(s -> s.isActive()
-                                    && !s.getChestPos().equals(
-                                    net.minecraft.core.BlockPos.ZERO))
-                            .filter(s -> {
-                                var be = level.getBlockEntity(s.getChestPos());
-                                if (!(be instanceof net.minecraft.world.Container chest))
-                                    return false;
-                                for (int i = 0; i < chest.getContainerSize(); i++)
-                                    if (chest.getItem(i).is(item)) return true;
-                                return false;
-                            })
-                            .findFirst().orElse(null);
+            // Bridge BuildingEconomy → entity wallet so the channel can
+            // spend on behalf of the buyer NPC. The channel's execute
+            // pays the seller; the building treasury is what's debited
+            // overall.
+            bEconomy.withdraw(total);
+            entity.getWallet().receive(CurrencyValue.of(total));
 
-            if (stall != null && stall.getOwnerType()
-                    == tterrag1112.life_in_the_village.Village.Economy.Market
-                    .MarketStall.OwnerType.NPC) {
-                level.getEntitiesOfClass(
-                                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
-                                entity.getBoundingBox().inflate(128),
-                                mob -> mob.getUUID().equals(stall.getOwnerUUID()))
-                        .stream().findFirst()
-                        .ifPresent(owner -> owner.getWallet().receive(costValue));
-            } else {
-                // No stall — pay the merchant NPC if present
-                level.getEntitiesOfClass(
-                                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
-                                market.getShape().toAABB().inflate(16),
-                                mob -> mob.getProfession()
-                                        == tterrag1112.life_in_the_village.Profession.Profession.MERCHANT)
-                        .stream().findFirst()
-                        .ifPresent(merchant -> merchant.getWallet().receive(costValue));
+            var channel = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
+                    .registeredChannels().stream()
+                    .filter(c -> c.type() == quote.channel())
+                    .findFirst().orElse(null);
+            var result = channel == null
+                    ? tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult
+                            .fail("channel missing")
+                    : channel.execute(quote, intent, level);
+
+            if (!result.success()) {
+                // Refund the building treasury on failure.
+                entity.getWallet().spend(CurrencyValue.of(total));
+                bEconomy.depositRevenue(total);
+                continue;
             }
 
+            // Partial fill: channel spent less than the bridged total;
+            // refund the leftover to the building treasury.
+            long leftover = total - result.totalBronze();
+            if (leftover > 0) {
+                entity.getWallet().spend(CurrencyValue.of(leftover));
+                bEconomy.depositRevenue(leftover);
+            }
+
+            // Stash purchased items in the workshop's input chest.
             BuildingStorageAccess.storeItem(level, workBuilding,
-                    new ItemStack(item, buyNow));
+                    new ItemStack(item, result.quantityTraded()));
+            data.setDirty();
         }
     }
 
