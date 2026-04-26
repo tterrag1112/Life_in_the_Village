@@ -62,4 +62,36 @@ public final class MentorshipBonus {
     public static float scalePlayerXp(float baseXp, ServerPlayer player, ServerLevel level) {
         return baseXp * playerMultiplierFor(player, level);
     }
+
+    /**
+     * NPC mentorship multiplier from <em>any</em> source — combines the
+     * apprenticeship master-presence bonus (Phase 2 task 16) with the
+     * elderly-mentor presence bonus (Phase 2 task 15). Returns the
+     * largest multiplier for which the mentor is currently co-located.
+     *
+     * <p>Returns {@link #NPC_MENTORSHIP_MULTIPLIER} when either:</p>
+     * <ul>
+     *   <li>The NPC is an active apprentice and their master is at
+     *       the same workshop within range, or</li>
+     *   <li>An ELDERLY mentor lists this NPC as their {@code mentorTargetId}
+     *       and is within range.</li>
+     * </ul>
+     */
+    public static float npcMentorshipFor(TownspersonMob apprentice, ServerLevel level) {
+        if (apprentice == null || level == null) return 1f;
+        // Apprenticeship path.
+        float apprenticeBonus = ApprenticeshipManager.mentorshipMultiplierFor(apprentice, level);
+        if (apprenticeBonus > 1f) return apprenticeBonus;
+        // Elderly-mentor path: scan loaded NPCs for a mentor whose
+        // RetirementState targets this NPC and who is co-located.
+        for (var entity : level.getEntitiesOfClass(TownspersonMob.class,
+                apprentice.getBoundingBox().inflate(16.0),
+                m -> m != apprentice && m.isElderly())) {
+            var rs = entity.getRetirementState();
+            if (rs.mentorTargetId().map(id -> id.equals(apprentice.getUUID())).orElse(false)) {
+                return NPC_MENTORSHIP_MULTIPLIER;
+            }
+        }
+        return 1f;
+    }
 }

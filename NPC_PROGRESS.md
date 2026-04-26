@@ -185,11 +185,43 @@ Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
       `IsTopicHot`, `HasHeardRumor`
     - [x] `/gossip {list,trace,seed,force-exchange,channels,clear}`
       Brigadier debug commands
-- [ ] **15** Child/elderly arcs
-    - [ ] `ChildhoodState`, `RetirementState`
-    - [ ] Child play, attachment, schooling
-    - [ ] Elderly retirement, mentor role, unfinished business
-    - [ ] Coming-of-age transition hook
+- [x] **15** Child/elderly arcs
+    - [x] `ChildhoodSkill` / `ProfessionPreference` / `ChildhoodState`
+      with codec save/load, attached to `TownspersonMob`
+    - [x] `UnfinishedBusinessType` / `UnfinishedBusiness` /
+      `RetirementState` with codec save/load, attached to
+      `TownspersonMob`
+    - [x] Caregiver attachment seeded at +50 (primary) / +30
+      (secondary) via `ChildhoodInitializer` on `BirthInFamily`;
+      mirrored on caregiver where loaded
+    - [x] Coming-of-age handler on `LifeStageAdvanced(ADULT)`:
+      leader-presence rite stub (officiated-by/-for memories),
+      preferred-profession recompute, fallback to FARMHAND when
+      no master is available; `ApprenticeshipDispatcher` already
+      handles the contract creation
+    - [x] Retirement decision on `LifeStageAdvanced(ELDERLY)`:
+      hard never-retire roles (priest/scholar/librarian/scribe/
+      leaders/herald/chancellor), physical professions retire
+      below Industry +0.5, others stay active
+    - [x] Unfinished-business roll on ELDERLY entry weighted by
+      Ambition + memory state; 5 types each map to an existing
+      `LifeGoalType` proxy
+    - [x] `MentorGoal` for elderly (skill ≥ 60); shares the
+      apprenticeship's `MentorshipBonus.npcMentorshipFor` so
+      the mentee's existing work-goal XP path picks up the +50%
+      multiplier when co-located
+    - [x] Elderly-slowdown layer in `ScheduleResolver`: earlier
+      WAKE_UP, halved WORK_PRIMARY, +60% LEISURE, earlier
+      HOME_PREP
+    - [x] `ChildPlayGoal` extended with shared-interest skill XP
+      grant on play-tag; `LibrarianWorkGoal` schooling stub from
+      task 17 already runs
+    - [x] `DeathArc.onNpcDeath` wired into
+      `TownspersonMob.onNpcDeath`: peaceful-death memory for
+      attendees, gossip-topic seed + small mood drop on
+      DIE_WITH_REGRET when an unresolved business survives the NPC
+    - [x] /npc {children,elderly,force-coming-of-age,
+      set-unfinished} debug commands
 - [x] **17** Scribal professions (before 16 and 18 — they depend on
   scribes)
     - [x] SCRIBE + LIBRARIAN added to Profession enum (SCHOLAR
@@ -490,11 +522,22 @@ yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
 
-**Phase 2 progress:** Tasks 13 (weekly schedule), 11
-(relationship ledger), 12 (gossip/rumor), 14 (hobby
-activities), 17 (scribal professions), 18 (letters/books),
-and 16 (apprenticeship) complete; only task 15
-(child/elderly arcs) remaining for Phase 2.
+**Phase 2 is COMPLETE.** All 8 phase 2 tasks shipped:
+- 11 NPC relationship ledger
+- 12 Gossip/rumor
+- 13 Weekly schedule
+- 14 Hobby activities
+- 15 Child/elderly arcs
+- 16 Apprenticeship
+- 17 Scribal professions
+- 18 Letters/books
+
+**Phase 2 exit-criteria scenario** (per NPC_PLAN.md): NPC
+relationships, gossip, apprenticeship arcs, letters,
+schooling-to-apprenticeship handoff, and elderly
+mentorship/unfinished-business → DIE_WITH_REGRET all
+implemented. Verification deferred until a successful
+local build run.
 
 Schedule landed first because gossip and hobbies need the new
 SOCIAL/LEISURE phase distinction, and the child/elderly arc

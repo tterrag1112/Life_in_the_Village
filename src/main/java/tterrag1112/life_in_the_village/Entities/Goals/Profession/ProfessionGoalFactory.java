@@ -154,6 +154,10 @@ public final class ProfessionGoalFactory {
             case ELDERLY -> {
                 npc.goalSelector.addGoal(P_SOCIAL_MID, new ElderlyRelaxGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
+                // Phase 2 task 15 — elderly with master-tier skill mentor a
+                // younger colleague at the same workplace.
+                npc.goalSelector.addGoal(P_SOCIAL_MID,
+                        new tterrag1112.life_in_the_village.Entities.Goals.Social.MentorGoal(npc));
             }
         }
     }
