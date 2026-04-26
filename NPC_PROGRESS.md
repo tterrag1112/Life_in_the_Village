@@ -413,11 +413,11 @@ Goal: specialized villages exist and trade with each other;
 companies and guilds have structure; visitors bring coin.
 
 - [ ] Read Phase 4 specs (25–30) end-to-end
-- [ ] **25** Resource categories
-    - [ ] Expanded `ResourceCategory` enum
-    - [ ] `BuildingResourceProfile.TABLE` populated
-    - [ ] `VillageSimData` refactor to category maps
-    - [ ] Save migration
+- [x] **25** Resource categories
+    - [x] Expanded `ResourceCategory` enum
+    - [x] `BuildingResourceProfile.TABLE` populated
+    - [x] `VillageSimData` refactor to category maps
+    - [x] Save migration
 - [ ] **27** Guild refactor (before 26 and 28 — they depend on
   abstract guild)
     - [ ] `AbstractGuild` base + 6 subclasses
@@ -1150,5 +1150,98 @@ Audit-discovered fixes:
   result: the stash could keep the highest-potency entry while
   the player got a lower-potency duplicate. Now uses the
   `takeFor` return value directly.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 25 (resource
+categories) complete. Phase 4 opens here.
+
+New types in `Village.Simulation`:
+- `ResourceCategory` (12 entries: FOOD, BUILDING_MATERIALS,
+  SEEDS, TOOLS, WEAPONS, CLOTH, LUXURY, PAPER, LITURGICAL,
+  MEDICINE, LIVESTOCK, COIN_INFLUX) with `isPhysical()` helper
+  (false only for COIN_INFLUX) and a STRING xmap codec.
+- `BuildingResourceProfile` record (production / consumption
+  enum-keyed maps) + static `TABLE` populated for ~30 building
+  types per the spec's first-pass numbers. Buildings with no
+  entry contribute neutrally per spec line 214.
+
+`VillageSimData` refactor:
+- `Map<ResourceCategory, Float>` for production / consumption,
+  replacing the four flat float fields. Queries `production(c)`,
+  `consumption(c)`, `net(c)`, `isExporterOf(c)`,
+  `isImporterOf(c)`. Read-only views via `productionView()` /
+  `consumptionView()`.
+- Backward-compat codec: legacy `foodProductionPerDay`,
+  `materialProductionPerDay`, `foodConsumptionPerDay`,
+  `materialConsumptionPerDay` still read with `optionalFieldOf`
+  default 0f and merged into the maps in `fromCodec`. Writes
+  always emit zero for those fields, which DFU's optional codec
+  elides — so a v1 save migrates cleanly and the next save
+  drops the legacy keys.
+- `blendReal(realProd, realCons, pop, tick)` — 80/20 blend per
+  category, with a `putOrRemove` floor that drops categories
+  whose blended value decays to 0.
+- `advanceSim(seasonFoodMult, genericMult)` — multiplicative
+  drift on FOOD via merge with delta `current * (mult - 1)`.
+
+`VillageSimEngine` rewrite:
+- `syncFromReal` walks village buildings, sums each
+  `BuildingResourceProfile` entry into per-category EnumMaps,
+  adds population-driven FOOD consumption with seasonal
+  multiplier, adds direct FOOD production from STOCKPILE
+  nutrition counts, and stubs COIN_INFLUX visitor flux at 0
+  pending Phase 4 doc 29.
+- `buildBaseline` — same accumulation but no real measurement,
+  used at village spawn and as the orElseGet path in tick.
+- `reconcileOnLoad` deduped (the old file shipped two copies);
+  uses `sim.net(FOOD)` and `sim.net(BUILDING_MATERIALS)` for
+  bread / log / cobblestone materialisation.
+- `advanceSim` delegates to `VillageSimData.advanceSim` with
+  the season's food multiplier.
+
+`KingdomEconomyEngine.findExportPartner` generalised to take a
+`ResourceCategory`. Per-category surplus thresholds in
+`EXPORT_THRESHOLDS` (FOOD ≥ 200, BUILDING_MATERIALS ≥ 32) with
+a fallback `defaultExportThreshold` for any other category.
+`evaluate` loops the registered thresholds and calls
+`handleDeficit` per category in negative net.
+
+Debug:
+- `/sim resources <village>` — table of every category's
+  production / consumption / net per day with sign-coloured
+  net column.
+- `/sim category <village> <category>` — single-category
+  detail.
+- `/sim profile <buildingType>` — print the
+  `BuildingResourceProfile.TABLE` entry.
+
+Audit-discovered fixes:
+- `reconcileOnLoad` re-blend was passing
+  `new EnumMap<>(unmodifiableViewOfEnumMap)` which throws
+  IllegalArgumentException when the view is empty (brand-new
+  village in its first day). Switched to
+  `new EnumMap<>(ResourceCategory.class)` + `putAll(view)` so
+  the empty-map path is safe.
+- FARMHOUSE consumption table listed SEEDS twice via the 3-arg
+  `m1` helper, doubling the seed-consumption rate. Trimmed to
+  one SEEDS entry.
+
+Spec deviations + deferrals (logged in 25 Revision Notes):
+- `NeedCategory` left intact rather than aliased — it's a spot-
+  state stockpile query (`village.getNeeds().get(...)`),
+  semantically separate from the rolling-average sim. The
+  shared FOOD / BUILDING_MATERIALS / SEEDS naming makes a
+  future unification mechanical.
+- COIN_INFLUX visitor-flux source is a 0 stub — Phase 4 doc 29
+  wires the real estimate.
+- `BuildingResourceProfile.TABLE` numbers are first-pass per
+  spec line 118; Phase 5 content tuning revisits.
+- Negative production in a profile is preserved as-given (the
+  per-tick blend clamps inputs ≥ 0 via `clamp` in
+  `blendReal`); spec line 217 calls for clamping which is
+  honoured at the blend step rather than the table step.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

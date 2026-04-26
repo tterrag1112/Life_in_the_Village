@@ -271,6 +271,7 @@ public class ModModEvents {
         ReligionDebugCommand.register(event.getDispatcher());
         HealthDebugCommand.register(event.getDispatcher());
         PlagueDebugCommand.register(event.getDispatcher());
+        SimDebugCommand.register(event.getDispatcher());
 
     }
 

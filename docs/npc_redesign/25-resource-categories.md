@@ -241,4 +241,70 @@ Phase 4 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### Phase 4 task 25 implementation pass
+
+Things-to-flag responses:
+
+1. **First-pass profile values.** Shipped per the spec's example
+   table; values feel reasonable for v1 but every entry is a candidate
+   for Phase 5 tuning. Particularly subjective: TEMPLE COIN_INFLUX = 5
+   (high relative to MARKET = 3 — assumes pilgrim donations dominate
+   over market traffic), CARPENTRY producing both TOOLS and
+   BUILDING_MATERIALS (real shops only output one or the other), and
+   the LIVESTOCK consumption on WEAVER (proxy for "wool source" — a
+   real model would have STABLE produce LIVESTOCK and WEAVER consume).
+2. **Legacy save migration.** Confirmed field names —
+   `foodProductionPerDay`, `foodConsumptionPerDay`,
+   `materialProductionPerDay`, `materialConsumptionPerDay`. All four
+   read as `optionalFieldOf(name, 0f)` and merge into the new maps via
+   `Float::sum` in `VillageSimData.fromCodec`. On round-trip, the
+   getters return 0f and DFU's `optionalFieldOf` elides default values
+   from the written form, so the legacy keys disappear after the first
+   save under the new format.
+3. **Negative production clamping.** Ships in the blend step rather
+   than the profile-table step. `VillageSimData.blendReal` clamps each
+   incoming category value via `clamp(v) = max(0, v)` before the
+   80/20 average. This makes the table values informational —
+   negative entries would just be flattened. `BuildingResourceProfile`
+   itself does not enforce ≥ 0.
+4. **COIN_INFLUX placeholder.** `VillageSimEngine.estimateVisitorFlux`
+   returns 0 unconditionally. Phase 4 doc 29 (visitor flux) replaces
+   this with a real estimate. Documented inline at the call site so
+   the wiring point is obvious.
+
+Spec deviations:
+- **NeedCategory left in place.** Spec line 188 mentions "NeedCategory
+  aliased to ResourceCategory for compat." v1 keeps them as separate
+  enums because `NeedCategory` is consumed by `village.getNeeds()` —
+  a spot-state stockpile query, distinct from the rolling-average
+  sim. The two share names so a future unification is mechanical;
+  doing it now would touch every consumer of `village.getNeeds()`,
+  which is out of scope for this session.
+- **`KingdomEconomyEngine.findExportPartner` no longer takes a
+  `ServerLevel`.** The previous signature accepted one but never used
+  it — the partner search reads only `VillageSavedData` and per-village
+  bounds. Dropped the parameter; the surviving call site
+  (`handleDeficit` inside the same class) doesn't need it.
+- **`KingdomEconomyEngine.evaluate` log line.** Previously hard-coded
+  `food` / `mat` columns; now iterates `EXPORT_THRESHOLDS` so any
+  category we add a threshold for shows up in the daily log line.
+
+Audit-discovered fixes:
+- `VillageSimEngine.reconcileOnLoad` originally re-blended via
+  `new EnumMap<>(sim.productionView())`. The view is
+  `Collections.unmodifiableMap` over an `EnumMap`, but the wrapper is
+  a generic `Map` — the `EnumMap(Map)` constructor throws on an empty
+  generic map. Brand-new villages would crash on their first
+  reconcile. Switched to `new EnumMap<>(ResourceCategory.class)` +
+  `putAll(view)`.
+- `BuildingResourceProfile.FARMHOUSE` consumption listed SEEDS twice
+  via the 3-arg `m1` helper (which `Float::sum`-merges duplicates),
+  giving a 2-units/day SEEDS drain instead of 1. Trimmed to a single
+  SEEDS entry.
+
+Open follow-ups:
+- A `LivestockProducer` profile (STABLE → LIVESTOCK production) so
+  WEAVER's LIVESTOCK consumption isn't free.
+- LUXURY / COIN_INFLUX coupling per spec "Open decisions" #3 —
+  currently every LUXURY producer also lists COIN_INFLUX, so the
+  effect lands but isn't formalised as a rule.
