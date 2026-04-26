@@ -14,8 +14,11 @@ import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionLetterVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.GreetVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.InsultVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ListenInVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ReadBookVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.SendLetterVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TakeLessonVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TellRumorVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.WriteLetterVerb;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -98,5 +101,9 @@ public final class PlayerVerbRegistry {
         register(new CommissionBookCopyVerb());
         register(new BorrowBookVerb());
         register(new TakeLessonVerb());
+        // Phase 2 task 18: letters and books.
+        register(new WriteLetterVerb());
+        register(new SendLetterVerb());
+        register(new ReadBookVerb());
     }
 }

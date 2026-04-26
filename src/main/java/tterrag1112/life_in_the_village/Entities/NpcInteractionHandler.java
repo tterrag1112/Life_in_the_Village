@@ -75,6 +75,17 @@ public final class NpcInteractionHandler {
         if (!(npc.level() instanceof ServerLevel level)) return InteractionResult.PASS;
         if (!(player instanceof ServerPlayer sp)) return InteractionResult.PASS;
 
+        // ── Letter delivery (Phase 2 task 18) ────────────────────────────────
+        // Right-click on NPC with a WrittenLetterItem in main hand
+        // delivers the letter and runs the receive pipeline if the
+        // recipient matches.
+        if (hand == InteractionHand.MAIN_HAND
+                && player.getMainHandItem().is(
+                        tterrag1112.life_in_the_village.Items.ModItems.WRITTEN_LETTER.get())) {
+            return tterrag1112.life_in_the_village.Npc.Letters.LetterDelivery
+                    .handleHandoff(npc, sp, level, player.getMainHandItem());
+        }
+
         // Wandering traders bypass the profile screen
         if (npc.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.WANDERING_TRADER) {
             return handleWanderingTrader(npc, sp, level);

@@ -223,11 +223,41 @@ Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
       commission_book_copy, borrow_book, take_lesson
     - [x] /scribe commissions, /library catalogue,
       /scholar books debug commands
-- [ ] **18** Letters and books
-    - [ ] `WrittenLetterItem`, `ExtendedBookContent`
-    - [ ] Delivery paths (self, courier, postal)
-    - [ ] onLetterReceived / onBookRead effects
-    - [ ] Procedural history/ledger book generation
+- [x] **18** Letters and books
+    - [x] `WrittenLetterItem` registered with `LetterContent` data
+      component (Codec + StreamCodec); right-click reads body in
+      chat and flips seal flag if the player isn't the recipient
+    - [x] `ExtendedBookContent` rides alongside vanilla
+      `WRITTEN_BOOK_CONTENT` so the vanilla read screen still
+      opens; carries topicsCovered + optional skill buff
+    - [x] `LetterContent` / `BookCategory` / `LetterSpecial` /
+      `SkillBuff` / `ActiveSkillBuff` records + codecs
+    - [x] `SkillComponent` extended with active-buff list; new
+      buffs apply a multiplicative XP multiplier on
+      `addXp(skill, ...)`; expired buffs prune lazily; codec +
+      save/load round-trip
+    - [x] Delivery paths: right-click handoff via
+      `NpcInteractionHandler` + `LetterDelivery`; scribe
+      `PostalGoal` runs during SOCIAL phase scanning for
+      outbox letters and walking them to recipients in-village
+    - [x] `onLetterReceived` fires `NpcLifeEvent.LetterReceived`
+      (memory + mood producers updated to handle the new
+      sealed-interface case); refreshes sender memory; +2
+      relationship; LITERACY trickle on read; CONTRACT-tagged
+      letters seed knowledge entry
+    - [x] `onBookRead` literacy gating: <30 silent skip, 30-59
+      partial (50% topic count + half buff XP, no rate
+      multiplier), ≥60 full effects
+    - [x] 4 starter textbooks in `StarterTextbookLibrary`
+      (forges → CRAFTING, herbal → MEDICINE, swordsmanship →
+      COMBAT, ledger-keeping → COMMERCE)
+    - [x] Procedural village ledger generator
+      (`ProceduralBookFactory.generateVillageLedger`); spec
+      line 273 — debug-gated only via `/book ledger`; Phase 3
+      Village_Scribe office wires it into authorship pipeline
+    - [x] Player verbs: write_letter, send_letter, read_book
+    - [x] /letter {create,deliver} and /book
+      {create,read,starter,ledger} debug commands
 - [ ] **16** Apprenticeship
     - [ ] `ApprenticeshipContract`, 4 milestones, masterpiece phase
     - [ ] `ApprenticeshipSavedData`
@@ -437,9 +467,9 @@ locked for stability — future Phase 2 work depends on it.
 
 **Phase 2 progress:** Tasks 13 (weekly schedule), 11
 (relationship ledger), 12 (gossip/rumor), 14 (hobby
-activities), and 17 (scribal professions) complete; tasks
-15 (child/elderly arcs), 18 (letters/books), 16
-(apprenticeship) remaining.
+activities), 17 (scribal professions), and 18
+(letters/books) complete; tasks 15 (child/elderly arcs)
+and 16 (apprenticeship) remaining.
 
 Schedule landed first because gossip and hobbies need the new
 SOCIAL/LEISURE phase distinction, and the child/elderly arc

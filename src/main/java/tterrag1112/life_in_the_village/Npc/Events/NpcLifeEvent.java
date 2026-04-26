@@ -140,4 +140,16 @@ public sealed interface NpcLifeEvent {
     record RelationshipBoundaryCrossed(TownspersonMob subject, UUID otherId,
                                        RelationshipMode oldMode,
                                        RelationshipMode newMode) implements NpcLifeEvent {}
+
+    // ── Letters and books (Phase 2 task 18) ───────────────────────────────
+
+    /**
+     * Fired when an NPC reads a letter delivered to them. Carries the
+     * full {@code LetterContent} so memory / mood / relationship
+     * producers can route off the special tag, sealed status, and
+     * sender identity. Spec line 150.
+     */
+    record LetterReceived(TownspersonMob subject,
+                          tterrag1112.life_in_the_village.Npc.Letters.LetterContent content)
+            implements NpcLifeEvent {}
 }
