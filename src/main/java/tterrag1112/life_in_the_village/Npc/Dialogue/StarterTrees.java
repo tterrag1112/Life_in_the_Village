@@ -88,6 +88,11 @@ public final class StarterTrees {
         DialogueRegistry.register(greetingBusinessHealer());
         DialogueRegistry.register(greetingBusinessLibrarian());
         DialogueRegistry.register(greetingBusinessFallback());
+
+        // ── Phase 3 task 19: crime + trial trees (3) ─────────────────────
+        DialogueRegistry.register(constableInvestigation());
+        DialogueRegistry.register(trialTestimony());
+        DialogueRegistry.register(trialVerdictAnnouncement());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -461,5 +466,28 @@ public final class StarterTrees {
                 pool("Welcome. How may I help?",
                         "What brings you in today?",
                         "Be welcome. Take your time."));
+    }
+
+    // ── Crime + trial (Phase 3 task 19) ───────────────────────────────────
+
+    private static DialogueTree constableInvestigation() {
+        return new DialogueTree("constable.investigation",
+                pool("I'm looking into a recent matter — what did you see?",
+                        "Tell me what you witnessed, plain as you remember it.",
+                        "I have a few questions about an incident."));
+    }
+
+    private static DialogueTree trialTestimony() {
+        return new DialogueTree("trial.testimony",
+                pool("On my honour, this is what I saw.",
+                        "I'll speak truthfully — I owe nothing to the accused.",
+                        "Yes, I was present. Here's what happened."));
+    }
+
+    private static DialogueTree trialVerdictAnnouncement() {
+        return new DialogueTree("trial.verdict-announcement",
+                pool("By the authority of {village.name}, judgement is rendered.",
+                        "The court has heard the case. Hear the verdict.",
+                        "Let the record reflect this finding."));
     }
 }

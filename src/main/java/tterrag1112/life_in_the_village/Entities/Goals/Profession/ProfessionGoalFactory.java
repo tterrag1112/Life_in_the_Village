@@ -135,6 +135,12 @@ public final class ProfessionGoalFactory {
         // GreeterAssignment.assign() seats a target player.
         npc.goalSelector.addGoal(P_SOCIAL_HIGH,
                 new tterrag1112.life_in_the_village.Npc.BusinessFront.GreetPlayerGoal(npc));
+        // Phase 3 task 19: village_constable's investigation pass.
+        // canUse short-circuits when the NPC doesn't currently hold
+        // INVESTIGATE_CRIME, so non-constables pay only the Goal-list
+        // overhead.
+        npc.goalSelector.addGoal(P_WORK_PRIMARY,
+                new tterrag1112.life_in_the_village.Npc.Crime.ConstableInvestigationGoal(npc));
         npc.goalSelector.addGoal(P_IDLE,      new WanderInBuildingGoal(npc));
         npc.goalSelector.addGoal(P_AMBIENT,   new LookAtPlayerGoal(npc, Player.class, 8.0f));
         npc.goalSelector.addGoal(P_AMBIENT,   new RandomLookAroundGoal(npc));
