@@ -99,6 +99,7 @@ public final class BuildingProfileRegistry {
         production(BuildingType.WEAVER);
         production(BuildingType.CANDLEMAKER);
         production(BuildingType.APOTHECARY);
+        production(BuildingType.HEALER_HUT);
         production(BuildingType.ATELIER);
         production(BuildingType.WINERY);
         production(BuildingType.WAREHOUSE);

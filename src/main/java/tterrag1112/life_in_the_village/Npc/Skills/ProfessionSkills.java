@@ -52,6 +52,7 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         m.put(Profession.CHANCELLOR,       new ProfessionSkills(Skill.LITERACY, Skill.SOCIAL));
         m.put(Profession.HERALD,           new ProfessionSkills(Skill.SOCIAL,   Skill.LITERACY));
         m.put(Profession.PRIEST,           new ProfessionSkills(Skill.SOCIAL,   Skill.LITERACY));
+        m.put(Profession.HEALER,           new ProfessionSkills(Skill.MEDICINE, Skill.SURVIVAL));
 
         // Scribal (Phase 2 task 17). LITERACY primary across the trio;
         // secondary differentiates the role: scribe writes for pay

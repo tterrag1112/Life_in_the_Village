@@ -269,6 +269,8 @@ public class ModModEvents {
         BusinessDebugCommand.register(event.getDispatcher());
         CrimeDebugCommand.register(event.getDispatcher());
         ReligionDebugCommand.register(event.getDispatcher());
+        HealthDebugCommand.register(event.getDispatcher());
+        PlagueDebugCommand.register(event.getDispatcher());
 
     }
 

@@ -102,6 +102,10 @@ public final class BuildingInhabitantRegistry {
                 .worker(Profession.PRIEST)
                 .build());
 
+        register(BuildingType.HEALER_HUT, BuildingInhabitantSpec.builder()
+                .worker(Profession.HEALER)
+                .build());
+
         // ── Production ──────────────────────────────────────────────────────
         register(BuildingType.FARMHOUSE, BuildingInhabitantSpec.builder()
                 .workerHousehold(Profession.FARMER, 0.6f, 3, 0.4f)

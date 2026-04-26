@@ -67,7 +67,17 @@ public enum MoodTrigger {
      * accumulate across multiple enactments in a tumultuous month
      * but caps the per-day swing at ±25.
      */
-    LAW_TRANSITION           (+5,  0.25f);
+    LAW_TRANSITION           (+5,  0.25f),
+
+    // ── Health / medicine (Phase 3 doc 21) ───────────────────────────────────
+    /** Onset of a new injury or illness. Daily-stack cap keeps repeat
+     *  re-injuries from cratering mood beyond a -36 ceiling per day. */
+    INJURY_SUSTAINED         (-10, 0.36f),
+    /** A condition resolves naturally or via successful treatment. */
+    HEALED                   (+15, 0.3f),
+    /** Plague crisis hit the village — ambient daily mood pressure on
+     *  every villager while the outbreak is active. */
+    PLAGUE_AMBIENT           (-6,  0.18f);
 
     private final int defaultMagnitude;
     private final float dailyStackCap;

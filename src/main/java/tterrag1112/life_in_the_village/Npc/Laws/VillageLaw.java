@@ -81,6 +81,9 @@ public enum VillageLaw {
     BAN_EXECUTION            (LawCategory.CRIME,   7,  +10,
                               Set.of(),
                               Map.of(TraitAxis.COMPASSION, +0.6f)),
+    QUARANTINE_VILLAGE       (LawCategory.CRIME,   5,  -25,
+                              Set.of(),
+                              Map.of(TraitAxis.COMPASSION, +0.4f, TraitAxis.SOCIABILITY, -0.3f)),
 
     // ── Social / cultural ──────────────────────────────────────────────────
 

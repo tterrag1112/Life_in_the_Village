@@ -43,6 +43,7 @@ public final class BuildingTypeFlags {
         m.put(BuildingType.CANDLEMAKER,      EnumSet.of(Flag.BUSINESS_FRONT));
         m.put(BuildingType.MILLER,           EnumSet.of(Flag.BUSINESS_FRONT));
         m.put(BuildingType.APOTHECARY,       EnumSet.of(Flag.BUSINESS_FRONT));
+        m.put(BuildingType.HEALER_HUT,       EnumSet.of(Flag.BUSINESS_FRONT));
         m.put(BuildingType.SCHOLARS_RETREAT, EnumSet.of(Flag.BUSINESS_FRONT));
         m.put(BuildingType.STABLE,           EnumSet.of(Flag.BUSINESS_FRONT));
         m.put(BuildingType.WAREHOUSE,        EnumSet.of(Flag.BUSINESS_FRONT));

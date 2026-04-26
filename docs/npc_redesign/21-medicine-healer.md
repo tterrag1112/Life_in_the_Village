@@ -280,4 +280,76 @@ Phase 3 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### Phase 3 task 21 implementation pass
+
+Things-to-flag responses:
+1. **Healer death rate during plague.** Implemented at the spec'd
+   5%/day per `HealthTicker.applyHealerOverwork`. There is no fallback
+   priest yet — the village just runs without medical leadership when
+   the healer dies. Phase 4 inter-village healer travel covers this
+   per `21-medicine-healer.md` Edge Cases.
+2. **Constitution reveal.** Hidden value, surfaced via
+   `/health show <npc>` debug only. Healer-examination dialogue cue
+   is Phase 5 polish.
+3. **Plague-carrier visitor source.** Stub: `PlagueScheduler` rolls
+   weekly per village at 0.4% baseline scaled by village size. The
+   visitor-flux integration is left for Phase 4 — see
+   `12-inter-village-visitor-flux.md`.
+4. **Remedy expiry handling.** Expired remedies are pruned by the
+   healer's work goal (`HealerInventory.pruneExpired`) at the start
+   of each `canUse()` cycle. Player stashes are not scanned by the
+   daily sweep; expiry pruning happens lazily when a verb opens the
+   stash. Future work: a per-day sweep over all open player stashes.
+
+Spec deviations:
+- **Remedy is a record, not a vanilla Item with NBT.** The spec gives
+  the {@code Remedy} record shape directly; v1 stores it on
+  {@code HealthSavedData}'s player-stash map and on each healer's
+  {@code HealerInventory}. The "Buy remedy" verb hands a record
+  between stashes rather than spawning an item entity.
+- **Recipe ingredient consumption is abstract.** Producing a remedy
+  in {@link HealerWorkGoal} doesn't yet pull herbs / honey / cloth
+  from a workshop chest. The 200-tick "produce" phase is a stand-in
+  until the apprentice / workshop-inventory hooks ship.
+- **Player diagnosis stub.** Player has no HealthComponent (vanilla
+  HP only), so {@link RequestTreatmentVerb} defaults to MINOR_WOUND
+  and falls back to any-on-hand remedy. Phase 4 may add an opt-in
+  player HealthComponent for the curious-player path.
+- **Misdiagnosis** (spec line 158) is deferred. v1 always picks the
+  patient's highest-severity treatable condition and a remedy that
+  targets it; misdiagnosis at MEDICINE < 50 lands in Phase 5.
+- **Confession heals MELANCHOLY directly.** Per spec "Open decisions"
+  #4 ("treatable by priest (CONFESSION) or time"),
+  {@link RiteExecutor#handleConfession} now removes a MELANCHOLY
+  condition outright and fires a HEALED mood blip.
+- **Calendar.** 384-day year split into 4×96-day seasons; the
+  health subsystem uses {@code (gameTime / 24000) % 384} to derive
+  the day-of-year. Vanilla doesn't ship seasons, and the religion
+  subsystem already uses 365 — the medical calendar uses 384 because
+  it lines up cleanly with the 4-season split. Phase 4 may unify the
+  two if the discrepancy starts mattering.
+- **Quarantine law** added as `VillageLaw.QUARANTINE_VILLAGE`
+  (CRIME category, popularity -25, Compassion +0.4 / Sociability
+  -0.3 trait fit). Office power `QUARANTINE_VILLAGE` and
+  `REQUISITION_REMEDIES` added to `OfficePower`. The actual law-
+  popularity decay and quarantine-detection enforcement leans on the
+  existing law machinery from doc 22.
+
+Deferrals:
+- Healer apprenticeship — Phase 2 task 16 must ship first.
+- Player as healer profession — placeholder; v1 only handles NPC
+  healers + the three player verbs (request, donate, buy).
+- COMMUNITY_TRIAGE / inter-village healer travel — Phase 4.
+- Kingdom physician office — Phase 4+.
+- Magical healing, religious persecution, food restrictions —
+  per Does-not-include section.
+
+### Audit-discovered fixes
+- `HealerWorkGoal.canUse` originally consumed the remedy before
+  `start()` was guaranteed; reworked to check availability only
+  (`hasRemedyFor`) and call `takeFor` in `start()` with a fallback.
+- `RequestTreatmentVerb` had a redundant double-`takeFor` in the
+  fallback path; collapsed to a clean if-else.
+- `BuyRemedyVerb` could mismatch the highest-potency lookup vs. the
+  remedy actually returned by `takeFor`; now uses the `takeFor`
+  return value directly.

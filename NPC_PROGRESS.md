@@ -395,11 +395,11 @@ markets.
     - [x] `PietyComponent`, temple treasury
     - [x] 10 rite handlers
     - [x] Village priest office wiring
-- [ ] **21** Medicine & healer
-    - [ ] `HealthComponent`, condition enum, onset rules
-    - [ ] HEALER profession, HEALER_HUT building
-    - [ ] Remedy items and recipes
-    - [ ] PLAGUE_OUTBREAK event integration
+- [x] **21** Medicine & healer
+    - [x] `HealthComponent`, condition enum, onset rules
+    - [x] HEALER profession, HEALER_HUT building
+    - [x] Remedy items and recipes
+    - [x] PLAGUE_OUTBREAK event integration
 - [ ] **Exit criteria**: a market-less village functions
   economically; a crime is witnessed, investigated, tried, and
   punished; priest officiates a wedding; healer treats an
@@ -1013,5 +1013,142 @@ Midsummer instead of day 264). Replaced with a direct calendar
 lookup of "Harvest Equinox" / "Last Catch" by name.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 3 progress (next session)**: task 21 (medicine & healer)
+complete. Phase 3 closes with this entry.
+New package `Npc.Health`:
+
+- `HealthCondition` (12 entries: 5 injuries, 4 illnesses,
+  FRAILTY, MELANCHOLY, NERVOUS_BREAKDOWN) with `isContagious()`
+  + `requiresMedicine()` + `isFatal()` helpers.
+- `ActiveCondition` record with severity 1-5, treated flag,
+  treatedById; `markTreated` halves the remaining duration per
+  spec line 112.
+- `HealthDurations` table — untreated durations, complication
+  rates (SERIOUS_WOUND 10%, PLAGUE_CARRIER 20%, etc.) and
+  mortality rates per spec lines 100-114.
+- `HealthComponent` — conditions list, hidden constitution
+  (0..100), consecutiveWorkDays + distressedDayCount counters,
+  pendingDeath flag for daily-tick mortality. Aggregates:
+  `workEfficiencyModifier`, `canWork`, `canTravel`,
+  `moodPenalty`, `isContagious`. Codec round-trips everything.
+- `RemedyType` (7 entries) + `Remedy` record with potency 1-3
+  + per-type shelf life (30-60d). `HealerInventory` 24-slot
+  stash with potency-aware `takeFor(HealthCondition)`.
+- `Plague` record with stage / counts / on-duty healer +
+  `withCounts/withHealer/resolve` mutators.
+- `HealthSavedData extends SavedData` — active plague per
+  village (one map keyed by villageId) + per-player remedy
+  stashes.
+- `HealthTicker.dailyTick` — conditions resolve + complications
+  + mortality; seasonal RESPIRATORY/STOMACH onset; contagion
+  proximity scan (4 blocks); plague daily 10% infection roll
+  with quarantine 60% reduction; healer overwork 5%/day plague
+  mortality; FRAILTY at ELDERLY + monthly constitution decay;
+  EXHAUSTION at 20 consecutive work days; NERVOUS_BREAKDOWN at
+  30 distressed days.
+- `PlagueScheduler.weeklyRoll` — 0.4%/week baseline scaled by
+  village size; `start(level, village, tick)` API for the
+  /plague debug + spec test paths.
+- `InjuryHooks` — `LivingIncomingDamageEvent` listener that
+  routes combat damage into condition onset (BURN for fire,
+  BROKEN_BONE for fall / heavy blunt, SERIOUS_WOUND ≥ 6 dmg,
+  MINOR_WOUND otherwise).
+
+Profession + building:
+- `Profession.HEALER` with `professionFor(HEALER_HUT)` mapping.
+- `BuildingType.HEALER_HUT` + ZoneRegistry / BuildingRegistry /
+  BuildingProfileRegistry / BuildingInhabitantRegistry /
+  BuildingTypeFlags entries (BUSINESS_FRONT — "Request
+  Treatment" already wired in `BusinessFrontScreen`).
+- `ProfessionSkills.HEALER → (MEDICINE, SURVIVAL)`.
+- `WeeklyScheduleLibrary.HEALER → SUNDAY_OFF`; plague response
+  overrides the schedule via `HealerWorkGoal.isPlagueOverride`.
+
+Office + law + powers:
+- `OfficePower.QUARANTINE_VILLAGE`, `REQUISITION_REMEDIES`.
+- `OfficeRegistry.VILLAGE_HEALER` (APPOINTED, MEDICINE 40 +
+  SURVIVAL 20, competence (MEDICINE 40-80, 1.20x, -0.08).
+- `VillageLaw.QUARANTINE_VILLAGE` (CRIME category, popularity
+  -25, +Compassion / -Sociability trait fit).
+
+Goal:
+- `HealerWorkGoal` registered at `P_WORK_PRIMARY` via
+  `ProfessionGoalFactory`. Phases: WALKING → TREATING (400t
+  default, 200t plague triage, consumes one remedy) → IDLE,
+  or PRODUCING (200t to brew one remedy, type cycles by day).
+  Plague triage prioritises PLAGUE_CARRIER then severity.
+
+Daily tick:
+- `HealthDailyTickSystem` (interval 24000, priority 200) runs
+  after religion (199).
+- `PlagueRollTickSystem` (interval 7×24000, priority 201).
+
+Hooks:
+- `RiteExecutor.handleConfession` extended — confession clears
+  MELANCHOLY directly (spec "Open decisions" #4) and applies a
+  HEALED mood blip when it does.
+- `MoodTrigger` adds `INJURY_SUSTAINED`, `HEALED`,
+  `PLAGUE_AMBIENT`.
+
+Player verbs:
+- `request_treatment` — buy / receive a remedy from the healer's
+  stash; healer earns +2 MEDICINE XP and +5 relationship.
+- `donate_herbs` — adds one HERBAL_POULTICE pot 2 to the stash.
+- `buy_remedy` — picks the highest-potency entry, transfers it
+  to the player's `HealthSavedData` stash.
+
+Debug:
+- `/health show <npc>` — list active conditions + constitution.
+- `/health add <npc> <condition> [severity]`.
+- `/health treat <npc> <condition> [healer]`.
+- `/health clear <npc>`.
+- `/plague start|status|end <village>`.
+
+Spec deviations + deferrals (logged in 21 Revision Notes):
+- Remedy is a record-shaped saved-data entry, not a vanilla
+  Item with NBT — v1 ships without item-side recipes; "buy
+  remedy" hands a record from the healer's stash to the
+  player's stash on `HealthSavedData`.
+- Recipe-side ingredient consumption is abstracted: producing a
+  remedy doesn't yet consume herbs / honey / cloth from a
+  workshop chest. Phase 4 can wire this once the apprentice
+  inventory hooks ship.
+- Player diagnosis (spec line 192 — "Request treatment" with a
+  player condition) is stubbed: the player has no
+  HealthComponent (vanilla HP only), so the verb defaults to
+  MINOR_WOUND and falls back to any-on-hand remedy.
+- Misdiagnosis (spec line 158) deferred — v1's diagnosis is
+  always exact (highest-severity treatable condition).
+- Healer apprenticeship (spec line 163) untouched — Phase 2
+  task 16 hasn't shipped the apprenticeship machinery yet.
+- Constitution-reveal dialogue (spec "Things to flag" #2)
+  deferred to Phase 5 dialogue polish.
+- Player remedy expiry — when expired, the remedy stays in the
+  player's stash until the next stash-open verb prunes it
+  (spec "Things to flag" #4). The daily sweep does not iterate
+  player stashes.
+- Visitor-flux plague seeding (spec "Things to flag" #3) is
+  unimplemented; v1 ships only the random per-village weekly
+  roll. Phase 4 wires the inter-village vector.
+- DAY length = 24000 ticks (matches the existing daily tick
+  systems); seasonal calendar uses a 384-day year split into
+  4 × 96-day seasons (no vanilla season system).
+
+Audit-discovered fixes:
+- `HealerWorkGoal.canUse` originally called `takeFor` to remove
+  the remedy before `start()` was guaranteed to run; reworked
+  to check `hasRemedyFor` only and call `takeFor` in `start()`
+  with a fallback to abort if the stash drained between phases.
+- `RequestTreatmentVerb` had a redundant double-`takeFor` in
+  the fallback path (the `ifPresent` lambda was a no-op);
+  rewrote as a clean if-else that takes once.
+- `BuyRemedyVerb` selected the highest-potency remedy via
+  `stream().max(...)` but then called `takeFor` separately —
+  result: the stash could keep the highest-potency entry while
+  the player got a lower-potency duplicate. Now uses the
+  `takeFor` return value directly.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

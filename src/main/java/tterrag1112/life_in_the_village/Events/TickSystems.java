@@ -1034,3 +1034,34 @@ class ReligionRiteTickSystem implements TickSubsystem {
         tterrag1112.life_in_the_village.Npc.Religion.RiteScheduler.dailyTick(ctx.level());
     }
 }
+
+/**
+ * Phase 3 doc 21 — daily medical sweep. Runs after religion (199) so
+ * healed-by-confession side effects from rites land before resolution.
+ */
+class HealthDailyTickSystem implements TickSubsystem {
+    @Override public String name()     { return "health_daily"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 200; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Health.HealthTicker.dailyTick(ctx.level());
+    }
+}
+
+/**
+ * Weekly plague-outbreak roll per village (spec line 169). Runs once
+ * a week ({@code 168000} ticks); chance is gated on village size +
+ * region (Phase 4 visitor flux is stubbed for v1).
+ */
+class PlagueRollTickSystem implements TickSubsystem {
+    @Override public String name()     { return "plague_roll"; }
+    @Override public int    interval() { return 7 * 24000; }
+    @Override public int    priority() { return 201; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Health.PlagueScheduler.weeklyRoll(ctx.level());
+    }
+}

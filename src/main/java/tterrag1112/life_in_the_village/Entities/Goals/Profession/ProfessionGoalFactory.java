@@ -341,6 +341,8 @@ public final class ProfessionGoalFactory {
                 new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.LibrarianWorkGoal(npc)));
         REGISTRARS.put(Profession.SCHOLAR, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
                 new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScholarWorkGoal(npc)));
+        REGISTRARS.put(Profession.HEALER, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
+                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Healer.HealerWorkGoal(npc)));
     }
 
     /**
