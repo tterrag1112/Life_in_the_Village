@@ -278,6 +278,18 @@ public final class NpcDebugCommand {
                                                 .then(Commands.argument("goalType", StringArgumentType.word())
                                                         .then(Commands.argument("importance", IntegerArgumentType.integer(1, 10))
                                                                 .executes(ctx -> handleEventsFireGoalCompleted(ctx))))))))
+
+                // ── /npc hobby <uuid> | set <uuid> <id> | regenerate <uuid> ──
+                .then(Commands.literal("hobby")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleHobbyList))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("hobbyId", StringArgumentType.word())
+                                                .executes(NpcDebugCommand::handleHobbySet))))
+                        .then(Commands.literal("regenerate")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .executes(NpcDebugCommand::handleHobbyRegenerate))))
         );
     }
 
@@ -1229,6 +1241,68 @@ public final class NpcDebugCommand {
                 "Adjusted §f" + displayName(npc) + " §7→§f " + other.toString().substring(0, 8)
                         + "§7 by §f" + (delta >= 0 ? "+" : "") + delta),
                 false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Hobby (Phase 2 task 14)
+    // =========================================================================
+
+    private static int handleHobbyList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        var pref = npc.getHobbyPreference();
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Hobby: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e ===\n");
+        sb.append("§6Preferred:§r ");
+        if (pref.topHobbies().isEmpty()) {
+            sb.append("§7(none — not generated yet)\n");
+        } else {
+            sb.append(String.join(", ", pref.topHobbies())).append("\n");
+        }
+        sb.append("§6Current:§r ").append(pref.hasCurrent() ? pref.currentHobby() : "§7(none)").append("\n");
+        if (pref.hasCurrent()) {
+            sb.append("  started tick=").append(pref.currentHobbyStartTick()).append("\n");
+        }
+        sb.append("§6Recent uses:§r ").append(pref.recentUses().size()).append(" tracked");
+        long now = src.getLevel().getGameTime();
+        for (var e : pref.recentUses().entrySet()) {
+            long daysAgo = Math.max(0L, (now - e.getValue()) / 24000L);
+            sb.append(String.format(Locale.ROOT, "%n  %-22s %d days ago", e.getKey(), daysAgo));
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleHobbySet(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        String hobbyId = StringArgumentType.getString(ctx, "hobbyId");
+        if (tterrag1112.life_in_the_village.Npc.Hobby.HobbyCatalogue.get(hobbyId).isEmpty()) {
+            src.sendFailure(Component.literal("Unknown hobby id: " + hobbyId));
+            return 0;
+        }
+        npc.getHobbyPreference().setCurrent(hobbyId, src.getLevel().getGameTime());
+        src.sendSuccess(() -> Component.literal(
+                "Set " + displayName(npc) + " current hobby to " + hobbyId), true);
+        return 1;
+    }
+
+    private static int handleHobbyRegenerate(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        npc.getHobbyPreference().generate(npc, src.getLevel(), src.getLevel().getRandom());
+        var top = npc.getHobbyPreference().topHobbies();
+        src.sendSuccess(() -> Component.literal(
+                "Re-rolled hobbies for " + displayName(npc) + ": "
+                        + (top.isEmpty() ? "(none available)" : String.join(", ", top))), true);
         return 1;
     }
 }

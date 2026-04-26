@@ -124,6 +124,11 @@ public final class ProfessionGoalFactory {
         npc.goalSelector.addGoal(P_PATHFIND,  new SeekHouseGoal(npc));
         npc.goalSelector.addGoal(P_SOCIAL_HIGH, new EatMealGoal(npc));
         npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
+        // Hobby goal (Phase 2 task 14) — slots above WanderInBuilding so
+        // an NPC in LEISURE actually goes and does their hobby instead
+        // of milling around at home.
+        npc.goalSelector.addGoal(P_SOCIAL_LOW,
+                new tterrag1112.life_in_the_village.Npc.Hobby.HobbyGoal(npc));
         npc.goalSelector.addGoal(P_IDLE,      new WanderInBuildingGoal(npc));
         npc.goalSelector.addGoal(P_AMBIENT,   new LookAtPlayerGoal(npc, Player.class, 8.0f));
         npc.goalSelector.addGoal(P_AMBIENT,   new RandomLookAroundGoal(npc));

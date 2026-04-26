@@ -148,10 +148,23 @@ Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
     - [x] Migration of all existing schedule callers via the
       `WorkSchedule` façade (delegates to `ScheduleResolver`;
       every legacy `isWorkTime()` etc. continues to work)
-- [ ] **14** Hobby activities
-    - [ ] 15 starter hobbies, trait-weighted selection
-    - [ ] `HobbyGoal` registered for LEISURE/day-off
-    - [ ] Location resolution
+- [x] **14** Hobby activities
+    - [x] 17 starter hobbies (15 from spec table + visit_grave +
+      tell_story_inn), trait-weighted selection with softmax
+      over top 5 of preferences
+    - [x] `HobbyGoal` registered at P_SOCIAL_LOW for all NPCs
+      via `ProfessionGoalFactory`; canUse honours LEISURE phase
+      and day-off
+    - [x] Location resolver covers HOME / TOWN_SQUARE / INN /
+      TEMPLE_OR_SHRINE (with CHAPEL fallback) / LIBRARY /
+      MARKET / FIELDS_NEARBY / WATER_EDGE / WORKSHOP_FREE /
+      NATURE_TRAIL / FRIEND_HOUSE; resolution failure filters
+      hobby out so missing infra never causes a stuck goal
+    - [x] Adulthood `HobbyPreferenceGenerator` registered on
+      bus seeds 3-5 preferred hobbies on LifeStageAdvanced(ADULT)
+    - [x] Per-session XP award on clean PERFORMING completion;
+      recent-use map down-weights repeats within 3 days
+    - [x] /npc hobby {list,set,regenerate} debug subcommands
 - [x] **12** Gossip/rumor
     - [x] Gossip channels during SOCIAL (transient
       `GossipChannel` + `GossipScheduler` 20-tick poll)
@@ -395,9 +408,10 @@ yet. Its seed formula (splitmix64 finaliser of each of
 locked for stability — future Phase 2 work depends on it.
 
 **Phase 2 progress:** Tasks 13 (weekly schedule), 11
-(relationship ledger), and 12 (gossip/rumor) complete; tasks 14
-(hobby), 15 (child/elderly arcs), 17 (scribal), 18
-(letters/books), 16 (apprenticeship) remaining.
+(relationship ledger), 12 (gossip/rumor), and 14 (hobby
+activities) complete; tasks 15 (child/elderly arcs), 17
+(scribal), 18 (letters/books), 16 (apprenticeship)
+remaining.
 
 Schedule landed first because gossip and hobbies need the new
 SOCIAL/LEISURE phase distinction, and the child/elderly arc

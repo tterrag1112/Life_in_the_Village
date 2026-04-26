@@ -136,6 +136,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final NpcVerbCooldowns verbCooldowns = new NpcVerbCooldowns();
     private final PersonalScheduleOverride scheduleOverride = new PersonalScheduleOverride();
     private final NpcRelationshipLedger npcRelationships = new NpcRelationshipLedger();
+    private final tterrag1112.life_in_the_village.Npc.Hobby.NpcHobbyPreference hobbyPreference =
+            new tterrag1112.life_in_the_village.Npc.Hobby.NpcHobbyPreference();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -493,6 +495,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      */
     public NpcRelationshipLedger getNpcRelationships() {
         return npcRelationships;
+    }
+
+    /**
+     * Per-NPC hobby state (Phase 2 task 14). See
+     * {@code docs/npc_redesign/14-hobby-activities.md}.
+     */
+    public tterrag1112.life_in_the_village.Npc.Hobby.NpcHobbyPreference getHobbyPreference() {
+        return hobbyPreference;
     }
 
     public void clearTraits() {
@@ -1199,6 +1209,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── NPC↔NPC relationship ledger (Phase 2 task 11) ───────────────────
         npcRelationships.save(output);
+
+        // ── Hobby preferences (Phase 2 task 14) ─────────────────────────────
+        hobbyPreference.save(output);
     }
 
     // =========================================================================
@@ -1336,6 +1349,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── NPC↔NPC relationship ledger (Phase 2 task 11) ───────────────────
         npcRelationships.load(input);
+
+        // ── Hobby preferences (Phase 2 task 14) ─────────────────────────────
+        hobbyPreference.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

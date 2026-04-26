@@ -62,6 +62,8 @@ public final class NpcLifeEventBus {
         // Phase 2 task 11: NPC↔NPC relationship deltas + seeding hooks.
         register(new tterrag1112.life_in_the_village.Npc.Relations.RelationshipDispatcher());
         register(new tterrag1112.life_in_the_village.Npc.Relations.RelationshipSeeder());
+        // Phase 2 task 14: seed hobby preferences on ADULT transition.
+        register(new tterrag1112.life_in_the_village.Npc.Hobby.HobbyPreferenceGenerator());
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }

@@ -356,3 +356,72 @@ Phase 2 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 2 implementation notes
+
+- **17 starter hobbies, not 15.** Spec table (line 127) lists 15;
+  the prose elsewhere also calls out `visit_grave` and
+  `tell_story` which the table omits. Catalogue ships both as
+  full entries (`visit_grave` and `tell_story_inn`).
+- **CultureGate dropped from `HobbyDefinition`.** Spec line 42
+  reserves a `cultureGate` field for Phase 5 culture-weighted
+  availability. Phase 2 doesn't ship `Culture` integration;
+  to avoid an unused field that would force migration later,
+  the record omits it. The scoring path
+  (`NpcHobbyPreference#generate`) still has the spec's
+  cultureBonus stub at zero and inline-comments where Phase 5
+  plugs in.
+- **HOBBY locations expanded by two enum values:**
+  `FRIEND_HOUSE` (resolves to a top-friend's home, used by
+  `visit_friend`) and `GRAVEYARD` (used by `visit_grave`).
+  Spec line 142 spells out "(target NPC's home)" and
+  "(graveyard)" as ad-hoc resolution hints; encoded as proper
+  enum values so the resolver can fail cleanly when no friend
+  / no graveyard exists. `GRAVEYARD` always returns empty in
+  Phase 2 (no graveyard infrastructure yet) — `visit_grave`
+  is therefore filtered out for v1, and the hobby will
+  start firing once a graveyard building type lands.
+- **NATURE_TRAIL bound at 40 blocks.** Spec line 250 calls for
+  "~40 blocks". `HobbyLocationResolver.NATURE_TRAIL_DISTANCE
+  = 40` matches verbatim. Direction is hashed off village
+  name plus a small per-roll jitter so NPCs in the same
+  village don't all walk identical lines but stable enough
+  that the same NPC tends to revisit familiar trails.
+  Pathing budget acceptable: vanilla mob navigation handles
+  40-block targets within the loaded chunk radius. If
+  realised distance proves too pricey in profiling, scope
+  down here.
+- **Animation reuse map (spec line 215).** `equipForActivity`
+  swaps the held item per `HobbyActivity` (book / fishing rod
+  / iron sword / bow / paper / etc.); `performTick` adds a
+  swing every 30 ticks (sword / archery) or 200 ticks (fish)
+  per spec example. SIT_AND_*, MEDITATE, PRAY, and the
+  social variants are pose-only, looking at the target.
+  Cards / stories / shopping / visit-friend / visit-grave
+  use no held-item change — the look-pose carries them.
+- **Skill XP only on PERFORMING completion.** Spec line 220
+  says "per-session XP award on hobby completion". The goal
+  awards XP only when the LEAVING phase is reached after a
+  full performing duration; goals stopped early
+  (interrupted by combat, schedule shift, or canUse failure)
+  grant nothing.
+- **`hobbyPreference.clearCurrent()` fires on stop.** Each
+  LEISURE entry re-rolls a session hobby. Spec doesn't
+  specify whether the same hobby can persist across LEISURE
+  phases on the same day; clearing on stop is simpler and
+  produces variety. If the spec's "(LEISURE) phase start"
+  pick should be sticky, just stop calling `clearCurrent`
+  and let the existing same-hobby-still-known check
+  short-circuit.
+- **Recent-use map self-prunes.** Entries older than
+  `(RECENCY_WINDOW_DAYS + 7) * 24000` ticks are dropped at
+  the next `noteUsed`, so the map can't grow unbounded over
+  years of play. The exact choice (7-day grace) is mild
+  insurance — the recency window itself is 3 days.
+- **Pathing budget (NATURE_TRAIL).** Standard mob navigation
+  with `WALK_SPEED = 0.7` reaches ~40 blocks comfortably in
+  ~30 in-game seconds. Per-tick navigation cost sits well
+  under the budget already paid for `SocializeGoal` /
+  `ReturnHomeGoal`. A stuck path is bailed at 600 sub-tics
+  (~30s) into LEAVING, so a misplaced trail point can't
+  pin the goal.
