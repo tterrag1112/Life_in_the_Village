@@ -1131,7 +1131,19 @@ public class VillageSavedData extends SavedData implements
     }
     public BuildingEconomy getOrCreateBuildingEconomy(UUID buildingId) {
         return buildingEconomies.computeIfAbsent(buildingId,
-                id -> BuildingEconomy.create(id, 0L));
+                id -> {
+                    // Seed on first creation only (computeIfAbsent
+                    // guarantees this lambda runs once). Look up the
+                    // building type from the index; degrade to 0L when
+                    // the building isn't tracked yet (caller is racing
+                    // against placement).
+                    Building b = buildingIndex.get(id);
+                    long seed = b == null
+                            ? 0L
+                            : tterrag1112.life_in_the_village.Village.Economy
+                                    .BuildingStarterTable.seedFor(b.getType());
+                    return BuildingEconomy.create(id, seed);
+                });
     }
 
     public UUID reserveIdleMerchant(UUID villageId, ServerLevel level) {

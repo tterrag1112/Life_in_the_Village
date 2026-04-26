@@ -12,7 +12,6 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcStartingWealth;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -223,7 +222,12 @@ public final class VillageInhabitantPopulator {
             tterrag1112.life_in_the_village.Profession.ProfessionRequirements
                     .ensureLiteracyForBootstrap(npc, profession, level.getGameTime());
 
-            npc.receive(NpcStartingWealth.forProfession(profession, rng));
+            // Starter wealth + items are now paid centrally by
+            // setProfession on its first non-NONE invocation
+            // (see TownspersonMob#applyStarterFor). Removed the
+            // populator-side duplicate so other spawn paths
+            // (VillageLeaderGoal, PostJobGoal, AdventurerSavedData,
+            // /summon TOWNSPERSON, etc.) get the same treatment.
 
             level.addFreshEntity(npc);
             return npc;

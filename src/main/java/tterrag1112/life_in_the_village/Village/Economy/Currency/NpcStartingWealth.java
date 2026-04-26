@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Village.Economy.Currency;
 
+import net.minecraft.util.RandomSource;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.Random;
@@ -56,5 +57,16 @@ public final class NpcStartingWealth {
 
     private static long range(Random rng, long min, long max) {
         return min + (long)(rng.nextDouble() * (max - min));
+    }
+
+    /**
+     * RandomSource overload for callers that don't have a local
+     * {@link Random} (entity goals, setProfession, etc). Wraps the
+     * source in a thin Random adapter so the existing per-profession
+     * switch needs no duplicate.
+     */
+    public static CurrencyValue forProfession(Profession profession,
+                                              RandomSource source) {
+        return forProfession(profession, new Random(source.nextLong()));
     }
 }

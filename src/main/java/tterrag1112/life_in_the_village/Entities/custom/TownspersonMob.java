@@ -124,6 +124,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     private final FamilyComponent family = new FamilyComponent();
     private final EconomyComponent economy = new EconomyComponent();
+    /** True once the NPC has received its one-time profession starter
+     *  bundle. Persisted; flipped by {@link #setProfession} on the
+     *  first non-NONE assignment so re-assignment doesn't re-pay. */
+    private boolean professionStarterPaid;
     private final AppearanceComponent appearance = new AppearanceComponent();
     private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
     private final TraitVector traits = new TraitVector();
@@ -279,6 +283,39 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         ProfessionGoalFactory.register(this);
         if (appearance.getName() != null && !appearance.getName().isEmpty()) {
             updateDisplayName();
+        }
+        // First-ever real-profession assignment pays the starter pouch
+        // (bronze via NpcStartingWealth + items via ProfessionStarterTable).
+        // Guard prevents re-payment when an NPC swaps roles later.
+        // NONE assignments don't burn the slot — drifters can still get
+        // a starter when they later get hired into a real profession.
+        if (!professionStarterPaid && profession != Profession.NONE) {
+            applyStarterFor(profession);
+            professionStarterPaid = true;
+        }
+    }
+
+    /** Pays bronze via {@link tterrag1112.life_in_the_village.Village.Economy.Currency.NpcStartingWealth}
+     *  and inserts the {@link tterrag1112.life_in_the_village.Profession.ProfessionStarterTable}
+     *  item bundle. Called once per NPC by {@link #setProfession}. */
+    private void applyStarterFor(Profession profession) {
+        var bronze = tterrag1112.life_in_the_village.Village.Economy.Currency
+                .NpcStartingWealth.forProfession(profession, getRandom());
+        economy.receive(bronze);
+        for (net.minecraft.world.item.ItemStack stack
+                : tterrag1112.life_in_the_village.Profession
+                        .ProfessionStarterTable.itemsFor(profession)) {
+            if (stack == null || stack.isEmpty()) continue;
+            net.minecraft.world.item.ItemStack remainder =
+                    economy.getInventory().addItem(stack.copy());
+            // If the inventory was full (rare — first-time payment
+            // typically lands in an empty stash), drop the leftover at
+            // the NPC's feet so the player can pick it up.
+            if (!remainder.isEmpty()
+                    && level() instanceof net.minecraft.server.level.ServerLevel sl) {
+                sl.addFreshEntity(new net.minecraft.world.entity.item.ItemEntity(
+                        sl, getX(), getY(), getZ(), remainder));
+            }
         }
     }
 
@@ -1255,6 +1292,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         }
         net.minecraft.world.ContainerHelper.saveAllItems(output, items, false);
 
+        // ── Wallet + starter-paid flag ──────────────────────────────────────
+        // Wallet was previously memory-only; restarts wiped every NPC's
+        // bronze. Now persisted as a single long; load defaults to 0 so
+        // pre-fix saves come back as empty wallets (no migration risk).
+        output.putLong("walletBronze", economy.getWallet().toBronze());
+        output.putBoolean("professionStarterPaid", professionStarterPaid);
+
         // ── Relationships ────────────────────────────────────────────────────
         String rel = relationships.encode();
         if (!rel.isEmpty()) output.putString("npcRelationships", rel);
@@ -1406,6 +1450,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         for (int i = 0; i < items.size(); i++) {
             economy.getInventory().setItem(i, items.get(i));
         }
+
+        // ── Wallet + starter-paid flag ──────────────────────────────────────
+        long bronze = input.read("walletBronze", Codec.LONG).orElse(0L);
+        if (bronze > 0L) economy.getWallet().receive(bronze);
+        professionStarterPaid = input.read("professionStarterPaid", Codec.BOOL).orElse(false);
 
         // ── Relationships ────────────────────────────────────────────────────
         input.read("npcRelationships", Codec.STRING).ifPresent(relationships::decode);
