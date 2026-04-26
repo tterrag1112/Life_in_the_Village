@@ -8,11 +8,12 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.level.Level;
 import tterrag1112.life_in_the_village.Components.ModDataComponents;
 import tterrag1112.life_in_the_village.Npc.Letters.LetterContent;
 
-import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Sealed letter item — the v1 home for {@link LetterContent}. Spec
@@ -68,23 +69,24 @@ public class WrittenLetterItem extends Item {
     @Override
     public void appendHoverText(ItemStack stack,
                                 TooltipContext context,
-                                List<Component> tooltip,
+                                TooltipDisplay tooltipDisplay,
+                                Consumer<Component> tooltipAdder,
                                 TooltipFlag flag) {
         LetterContent content = stack.get(ModDataComponents.LETTER_CONTENT.get());
         if (content == null) return;
-        tooltip.add(Component.literal("From: " + content.authorName())
+        tooltipAdder.accept(Component.literal("From: " + content.authorName())
                 .withStyle(ChatFormatting.GRAY));
-        tooltip.add(Component.literal("To: " + content.recipientName())
+        tooltipAdder.accept(Component.literal("To: " + content.recipientName())
                 .withStyle(ChatFormatting.GRAY));
         if (content.special().isPresent()) {
-            tooltip.add(Component.literal("Type: " + content.special().get().name())
+            tooltipAdder.accept(Component.literal("Type: " + content.special().get().name())
                     .withStyle(ChatFormatting.AQUA));
         }
         if (content.sealed() && !content.sealBroken()) {
-            tooltip.add(Component.literal("Sealed")
+            tooltipAdder.accept(Component.literal("Sealed")
                     .withStyle(ChatFormatting.GOLD));
         } else if (content.sealBroken()) {
-            tooltip.add(Component.literal("Seal broken")
+            tooltipAdder.accept(Component.literal("Seal broken")
                     .withStyle(ChatFormatting.RED));
         }
     }
