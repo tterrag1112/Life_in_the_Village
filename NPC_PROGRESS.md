@@ -258,10 +258,35 @@ Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
     - [x] Player verbs: write_letter, send_letter, read_book
     - [x] /letter {create,deliver} and /book
       {create,read,starter,ledger} debug commands
-- [ ] **16** Apprenticeship
-    - [ ] `ApprenticeshipContract`, 4 milestones, masterpiece phase
-    - [ ] `ApprenticeshipSavedData`
-    - [ ] NPC-NPC, player-as-apprentice, player-as-master paths
+- [x] **16** Apprenticeship
+    - [x] `ApprenticeRank` (APPRENTICE/JOURNEYMAN/MASTER) +
+      `ContractStatus` (ACTIVE/COMPLETED/TERMINATED/BROKEN/
+      ABANDONED) enums
+    - [x] `ApprenticeshipContract` 16-field record + codec;
+      masterpiece phase fields (target, deadline, attempts)
+      rolled into the contract record rather than introducing a
+      `COMMISSION_MASTERPIECE` order type
+    - [x] `ApprenticeshipSavedData` standalone with 3 indices
+      (byContractId / apprenticeToContract / masterToContracts)
+    - [x] `ApprenticeshipMatcher` discovery + master-side decision
+      with relationship + Compassion/Ambition trait bias
+    - [x] `ApprenticeshipManager` weekly tick: milestone advance
+      (skill 20/40/55/70), TAUGHT_BY memories every 30 days,
+      masterpiece auto-evaluation (skill ≥ 75 → MASTER, else
+      JOURNEYMAN after 2 retries)
+    - [x] `MentorshipBonus` helper: NPC +50% (master co-located),
+      player +10% (within 32 blocks); apprentice wage halved in
+      `WorkplaceAssignmentManager.tickWeeklyPay`
+    - [x] `ApprenticeshipContractFactory` queues a CONTRACT-tagged
+      letter via the village scribe's commission queue;
+      direct-mint fallback when no scribe exists
+    - [x] Bus dispatcher on `LifeStageAdvanced(ADULT)` + weekly
+      tick subsystem (`apprenticeship_weekly`, interval 7 days);
+      master death triggers BROKEN cleanup
+    - [x] 3 player verbs: apprentice_under_me, take_apprentice,
+      release_apprenticeship
+    - [x] /apprentice {list,info,promote,masterpiece,complete,
+      terminate} debug commands
 - [ ] **Exit criteria**: NPCs greet each other with familiarity,
   gossip about recent events, master-apprentice arcs run to
   graduation, letters flow between NPCs
@@ -467,9 +492,9 @@ locked for stability — future Phase 2 work depends on it.
 
 **Phase 2 progress:** Tasks 13 (weekly schedule), 11
 (relationship ledger), 12 (gossip/rumor), 14 (hobby
-activities), 17 (scribal professions), and 18
-(letters/books) complete; tasks 15 (child/elderly arcs)
-and 16 (apprenticeship) remaining.
+activities), 17 (scribal professions), 18 (letters/books),
+and 16 (apprenticeship) complete; only task 15
+(child/elderly arcs) remaining for Phase 2.
 
 Schedule landed first because gossip and hobbies need the new
 SOCIAL/LEISURE phase distinction, and the child/elderly arc

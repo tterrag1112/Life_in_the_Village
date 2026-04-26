@@ -281,6 +281,15 @@ public class WorkplaceAssignmentManager {
                     }
                 }
 
+                // Phase 2 task 16: apprentices earn half wage during
+                // training (spec line 132). Player-as-apprentice path —
+                // an active apprenticeship contract halves the weekly
+                // wage for the contract's profession.
+                if (tterrag1112.life_in_the_village.Npc.Apprentice
+                        .MentorshipBonus.isApprentice(player.getUUID(), level)) {
+                    finalPay = finalPay / 2L;
+                }
+
                 CurrencyValue wage = CurrencyValue.of(finalPay);
 
                 var container = buildTempContainer(player);

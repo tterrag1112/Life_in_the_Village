@@ -906,6 +906,26 @@ class NpcMemoryDecayTickSystem implements TickSubsystem {
 }
 
 // =============================================================================
+// APPRENTICESHIP WEEKLY TICK (interval = 168000 ≈ 7 in-game days, priority = 192)
+// =============================================================================
+
+/**
+ * Drives {@link tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipManager#weeklyTick}.
+ * Spec line 148: "Milestone progression is checked weekly."
+ */
+class ApprenticeshipWeeklyTickSystem implements TickSubsystem {
+    @Override public String name()     { return "apprenticeship_weekly"; }
+    @Override public int    interval() { return 7 * 24000; }
+    @Override public int    priority() { return 192; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipManager
+                .weeklyTick(ctx.level());
+    }
+}
+
+// =============================================================================
 // GOSSIP SCHEDULER (interval = 20, priority = 195)
 // =============================================================================
 

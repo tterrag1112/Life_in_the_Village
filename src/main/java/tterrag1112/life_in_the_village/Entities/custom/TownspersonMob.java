@@ -1405,6 +1405,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         VillageSavedData data = VillageSavedData.get(level);
         HouseholdManager.onNpcDied(npc.getUUID(), data);
 
+        // Phase 2 task 16: BROKEN any active apprenticeship contracts
+        // where this NPC was the master.
+        tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipManager
+                .onMasterDeath(level, npc.getUUID());
+
         // ── Phase 1: fire WitnessedDeath for every nearby NPC, FamilyDeath
         //    for every household member of the deceased.
         UUID deceasedId = npc.getUUID();

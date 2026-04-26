@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ChallengeVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ComplimentVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.GiveGiftVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ApprenticeUnderMeVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.BorrowBookVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionBookCopyVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionLetterVerb;
@@ -15,7 +16,9 @@ import tterrag1112.life_in_the_village.Npc.Verbs.Impl.GreetVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.InsultVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ListenInVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ReadBookVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ReleaseApprenticeVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.SendLetterVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TakeApprenticeVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TakeLessonVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TellRumorVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.WriteLetterVerb;
@@ -105,5 +108,9 @@ public final class PlayerVerbRegistry {
         register(new WriteLetterVerb());
         register(new SendLetterVerb());
         register(new ReadBookVerb());
+        // Phase 2 task 16: apprenticeship.
+        register(new ApprenticeUnderMeVerb());
+        register(new TakeApprenticeVerb());
+        register(new ReleaseApprenticeVerb());
     }
 }

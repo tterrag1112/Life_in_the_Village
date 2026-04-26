@@ -240,6 +240,7 @@ public class ModModEvents {
         GossipDebugCommand.register(event.getDispatcher());
         ScribalDebugCommand.register(event.getDispatcher());
         LetterBookDebugCommand.register(event.getDispatcher());
+        ApprenticeDebugCommand.register(event.getDispatcher());
 
     }
 
