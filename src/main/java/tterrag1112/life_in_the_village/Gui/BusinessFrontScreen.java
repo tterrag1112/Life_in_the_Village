@@ -5,6 +5,7 @@ import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
+import tterrag1112.life_in_the_village.Gui.Framework.Chrome;
 import tterrag1112.life_in_the_village.Gui.Framework.StyledButton;
 import tterrag1112.life_in_the_village.Networking.NpcProfileActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenBusinessFrontPacket;
@@ -15,37 +16,43 @@ import java.util.List;
 /**
  * Business-front interaction screen. Spec line 178.
  *
- * <p>Layout:</p>
+ * <p>Layout (320 × 240 Chrome.COMPACT panel):</p>
  * <ul>
  *   <li>Title row: NPC name + profession + building subtitle.</li>
+ *   <li>Corner shortcut: small "i" button top-right, sends
+ *   {@link NpcProfileActionPacket.Action#OPEN_PROFILE} so the player
+ *   can hop to the full profile from this compact screen.</li>
  *   <li>Primary action: large button labelled per
  *   {@link #primaryActionLabel} (Trade / Borrow / Order Meal /
  *   Commission / Request Treatment, etc.).</li>
- *   <li>Verb grid: every entry from {@code data.verbIds()} renders
- *   as a button (server-side
- *   {@link tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry#availableFor}
- *   has already gated profession + cooldown). Layout is two columns
- *   of up-to-four rows, so an 8-verb list fits without scrolling.</li>
- *   <li>Corner circle: top-right "@"-style profile shortcut, sends
- *   {@link NpcProfileActionPacket.Action#OPEN_PROFILE}.</li>
+ *   <li>Verb grid: 2 columns × 4 rows of profession-aware verbs,
+ *   sourced from {@code data.verbIds()} populated server-side via
+ *   {@code PlayerVerbRegistry.availableFor}.</li>
  *   <li>Close: bottom-right small button.</li>
  * </ul>
  *
  * <p>Profession overrides — village leader, kingdom ruler, merchant,
  * and guild members never reach this screen; their dedicated GUIs
  * intercept earlier (see {@code NpcInteractionHandler.tryRouteBusinessFront}).</p>
+ *
+ * <p>Migrated to Gui.Framework on Phase 3 close. The previous version
+ * called {@code super.render} BEFORE drawing the parchment background,
+ * which painted the panel over the buttons and made them invisible.
+ * The framework convention (see CompanyWorkerScreen) is dim fill →
+ * Chrome.draw → text → {@code super.render} so widgets render on top.</p>
  */
 public class BusinessFrontScreen extends Screen {
 
-    private static final int W = 260;
-    private static final int H = 200;
+    private static final Chrome.Dims DIMS = Chrome.COMPACT;
+    private static final int W = DIMS.w();
+    private static final int H = DIMS.h();
     private static final int PADDING = 8;
     private static final int CORNER_DIAMETER = 16;
-    private static final int VERB_BTN_W = (W - PADDING * 2 - 6) / 2; // two columns
+    private static final int VERB_BTN_W = (W - PADDING * 2 - 6) / 2;
     private static final int VERB_BTN_H = 18;
 
     private final OpenBusinessFrontPacket data;
-    private int originX, originY;
+    private int panelX, panelY;
 
     public BusinessFrontScreen(OpenBusinessFrontPacket data) {
         super(Component.literal(data.npcName()));
@@ -56,28 +63,28 @@ public class BusinessFrontScreen extends Screen {
 
     @Override
     protected void init() {
-        originX = (width - W) / 2;
-        originY = (height - H) / 2;
+        panelX = (width - W) / 2;
+        panelY = (height - H) / 2;
 
         // Primary action — large button just under the title bar.
         Component primaryLabel = Component.literal(primaryActionLabel(data.buildingTypeName()));
         addRenderableWidget(StyledButton.builder(primaryLabel, b -> sendPrimaryAction())
-                .pos(originX + PADDING, originY + 36)
+                .pos(panelX + PADDING, panelY + 36)
                 .size(W - PADDING * 2, 24)
                 .build());
 
         // Verb grid: two-column layout, up to 4 rows.
         layoutVerbButtons();
 
-        // Corner profile circle — top-right inside the panel.
-        var profileBtn = StyledButton.builder(Component.literal("@"),
+        // Corner profile shortcut — top-right inside the panel.
+        var profileBtn = StyledButton.builder(Component.literal("i"),
                         b -> {
                             PacketDistributor.sendToServer(
                                     new NpcProfileActionPacket(data.npcId(),
                                             NpcProfileActionPacket.Action.OPEN_PROFILE));
                             this.onClose();
                         })
-                .pos(originX + W - CORNER_DIAMETER - 4, originY + 4)
+                .pos(panelX + W - CORNER_DIAMETER - 4, panelY + 4)
                 .size(CORNER_DIAMETER, CORNER_DIAMETER)
                 .build();
         profileBtn.setTooltip(Tooltip.create(Component.literal("View full profile")));
@@ -86,7 +93,7 @@ public class BusinessFrontScreen extends Screen {
         // Close button bottom-right.
         addRenderableWidget(StyledButton.builder(Component.literal("Close"),
                         b -> this.onClose())
-                .pos(originX + W - 60 - PADDING, originY + H - 22)
+                .pos(panelX + W - 60 - PADDING, panelY + H - 22)
                 .size(60, 18).build());
     }
 
@@ -95,7 +102,7 @@ public class BusinessFrontScreen extends Screen {
         List<String> labels = data.verbLabels();
         if (ids.isEmpty()) return;
 
-        int gridY0 = originY + 70;
+        int gridY0 = panelY + 70;
         int rowGap = 4;
         int colGap = 6;
         int maxRows = 4;
@@ -105,7 +112,7 @@ public class BusinessFrontScreen extends Screen {
             String label = i < labels.size() ? labels.get(i) : id;
             int col = placed % 2;
             int row = placed / 2;
-            int x = originX + PADDING + col * (VERB_BTN_W + colGap);
+            int x = panelX + PADDING + col * (VERB_BTN_W + colGap);
             int y = gridY0 + row * (VERB_BTN_H + rowGap);
             addRenderableWidget(StyledButton.builder(Component.literal(label),
                             b -> sendVerb(id))
@@ -116,16 +123,21 @@ public class BusinessFrontScreen extends Screen {
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partial) {
-        super.render(g, mouseX, mouseY, partial);
-        g.fill(originX, originY, originX + W, originY + H, BookScreenColors.PARCHMENT);
-        g.renderOutline(originX, originY, W, H, BookScreenColors.BORDER);
+        // Framework render order: dim → Chrome → panel content → widgets.
+        // The previous bug here painted Chrome AFTER super.render and so
+        // hid every button under the parchment fill.
+        g.fill(0, 0, width, height, 0x88000000);
+        Chrome.draw(g, panelX, panelY, DIMS, Chrome.PARCHMENT);
+
         var font = net.minecraft.client.Minecraft.getInstance().font;
         g.drawString(font, data.npcName(),
-                originX + PADDING, originY + PADDING, BookScreenColors.DARK, false);
+                panelX + PADDING, panelY + PADDING, BookScreenColors.DARK, false);
         String subtitle = data.professionName() + " — " + prettyBuildingName(data.buildingTypeName())
                 + (data.villageName().isEmpty() ? "" : " in " + data.villageName());
         g.drawString(font, subtitle,
-                originX + PADDING, originY + PADDING + 12, BookScreenColors.LIGHT, false);
+                panelX + PADDING, panelY + PADDING + 12, BookScreenColors.LIGHT, false);
+
+        super.render(g, mouseX, mouseY, partial);
     }
 
     // ── Wire helpers ──────────────────────────────────────────────────────
