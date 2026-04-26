@@ -70,13 +70,33 @@ public final class RoadLightingPlacer {
                                                  CulturePalette palette,
                                                  RoadLightingProfile profile,
                                                  WorldRoadGraph graph) {
+        // Backwards-compat overload — falls back to edge.getBlockPath(), which
+        // is the full-width placed-block list. Callers post-Session-B5 should
+        // pass an explicit centerline via the 6-arg overload below.
+        return placeLighting(level, edge, edge.getBlockPath(), palette, profile, graph);
+    }
+
+    /**
+     * Session B5 — explicit centerline overload. The edge's persisted
+     * {@code blockPath} is the full-width placed-block list (one block per
+     * lateral position per centerline step) and is unsuitable for step-wise
+     * iteration along the road direction. Callers in the realisation pipeline
+     * already have the per-primitive centerline available — pass it here so
+     * spacing math and perpendicular offsets work correctly.
+     */
+    public static PlacementResult placeLighting(ServerLevel level,
+                                                 RoadEdge edge,
+                                                 List<BlockPos> centerline,
+                                                 CulturePalette palette,
+                                                 RoadLightingProfile profile,
+                                                 WorldRoadGraph graph) {
         if (profile.isNone()) return PlacementResult.empty();
         // JUNCTIONS_ONLY is handled by junction decorators, not this placer.
         if (profile.strategy() == RoadLightingProfile.Strategy.JUNCTIONS_ONLY) {
             return PlacementResult.empty();
         }
 
-        List<BlockPos> path = edge.getBlockPath();
+        List<BlockPos> path = centerline;
         if (path.size() < 2) return PlacementResult.empty();
 
         int halfWidth = halfWidthFor(edge.getTier());

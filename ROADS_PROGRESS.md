@@ -2477,3 +2477,175 @@ Static inspection confirms:
 **Phase 11 — player-initiated road construction**. Real event types will
 arrive as small additions in later phases; Phase 11 takes precedence per
 the road plan.
+
+---
+
+## Session B5 — bugfix pass: gateway selection, lighting, signs, great-road junctioning
+
+**Date:** 2026-04-24
+**Phase:** Bugfix (post-Phase-10)
+
+### Summary
+
+Four defects investigated. Three confirmed and fixed; the fourth (Defect 3,
+spurious road crossings) is deferred for re-test because it is a likely
+downstream symptom of Defect 1.
+
+### Defect 1 — gateway selection backward — FIXED
+
+**Root cause:** `VillageRoadNode.OutwardDirection.fromAngle(...)` computes a
+sector index `(int)(r/(π/4) + 0.5) % 8` where sector 0 corresponds to angle 0
+(EAST in Minecraft +x convention), then returns `values()[sector]`. But the
+enum is declared in the order `NORTH, NORTHEAST, EAST, SOUTHEAST, SOUTH,
+SOUTHWEST, WEST, NORTHWEST`, so `values()[0]` is NORTH, not EAST. Every
+gateway's `outwardDirection` was therefore wrong by two sectors. In
+`ConnectorPlanner.selectGateway`, every alignment dot product collapsed to ~0
+(a perpendicular outward vs. an east-pointing approach), and the
+PRIMARY-vs-SIDE role priority became the tiebreaker — selecting whichever
+gateway happened to be PRIMARY regardless of approach direction. The user's
+report ("eastern connector ends at the western gateway") matches this
+exactly when the western gate was the layout's primary.
+
+**Fix:** explicit `switch (sector)` mapping in `OutwardDirection.fromAngle`.
+The selection logic was correct; only the direction lookup was broken. The
+codec persists the enum by `name`, so existing saves are unaffected.
+
+**Files modified:** `Village/Roads/Graph/VillageRoadNode.java`.
+
+**Verification:** trace through with east gate at (+50, 0) and a connector
+at (+300, 0): old code returned NORTH for the east gate, new code returns
+EAST; alignment becomes +1.0 instead of 0; east gate selected.
+`/litv road debug test_gateway_selection` should now report the correct
+gateway for any external position.
+
+### Defect 2 — road lighting has no visible pattern — FIXED
+
+**Root cause:** `RoadLightingPlacer.placeLighting` iterated over
+`edge.getBlockPath()`, but post-Phase-5 that field is the **full-width
+placed-block list** returned by `OrganicRoadPlacer.PlacementResult.placedBlocks`
+— every block placed across the road's core/inner/edge zones, not the
+centerline. The lighting placer's accumulator advanced 1 per step, but
+"steps" were perpendicular siblings of the same centerline position, so
+spacing math broke and the perpendicular calculation derived from
+consecutive-block deltas pointed in nonsensical directions. Result: lights
+scattered everywhere, sometimes on the road, sometimes off it, with no
+visible cadence.
+
+**Fix:** `EdgeRealizer.realizeEdgeImpl` now accumulates a `centerlinePath`
+in parallel with `fullPath`, by appending each primitive's `computeCenterline`
+output (with the same first-block-skip dedup as `fullPath`).
+`RoadLightingPlacer` gains a 6-arg overload that accepts an explicit
+centerline; the 5-arg legacy overload still falls back to
+`edge.getBlockPath()` for any external caller (debug `force_lighting`),
+but the realisation pipeline always uses the new overload.
+
+**Files modified:**
+- `Village/Roads/Realization/EdgeRealizer.java` — accumulate centerlinePath,
+  pass to lighting placer.
+- `Village/Roads/Lighting/RoadLightingPlacer.java` — new
+  `placeLighting(level, edge, centerline, palette, profile, graph)` overload;
+  legacy 5-arg variant delegates with `edge.getBlockPath()`.
+
+**Verification:** with the centerline path, the accumulator's
+`blockDistXZ(prev, cur)` is consistently 1 per step, so spacing
+(SPARSE 24 / MODERATE 16 / DENSE 8) is enforced; `computePerp` derives a
+real road-direction perpendicular; offset `halfWidth + 1` lands lights
+clearly off the road; strategy (BOTH_SIDES / ALTERNATING_SIDES /
+SINGLE_SIDE_*) behaves as designed.
+
+### Defect 2b — junction signs on road surface — FIXED
+
+**Root cause:** `JunctionDecorator.placeRoadSigns` computed sign position as
+`nodePos + (dx/dist, dz/dist)` — i.e. one block forward along the outgoing
+road direction. That landed the sign on the road centerline.
+`isRoadMaterial` skipped placement when the road was already realised but
+let the sign through when the sign decorator ran first.
+
+**Fix:** sign position is now computed as
+`nodePos + forward + perpendicular * (halfWidth + 1)` — one block forward
+plus a perpendicular offset using `RoadClearanceValidator.minimumDecorationOffset(tier)`,
+mirroring the milestone / lighting offset convention. Added an explicit
+`RoadClearanceValidator.isClearOfRoads(signBase, graph, 1)` guard before
+placement.
+
+**Files modified:** `Village/Roads/Decoration/JunctionDecorator.java`.
+
+### Defect 3 — new roads cross over older roads — DEFERRED
+
+**Hypothesis:** likely a downstream symptom of Defect 1. With the wrong
+gateway selected, connector A* targets a destination on the wrong side of
+the village, so the route detours backward and crosses any existing road
+that lies between start and the wrong-side gateway. Once the gateway
+selection picks the correct (near-side) gateway, the route should be
+direct and the spurious crossing should disappear.
+
+**Action:** no code change in B5. Re-test after the Defect 1 fix is in.
+If perpendicular crossings still appear in playtest, add the perpendicular-
+crossing penalty to `AtlasRouteRouter` per the spec: query
+`EdgeGridIndex` for any edge in the cell, compute the angle between the
+proposed move and the edge direction; apply the existing road-cell
+discount only when the move is within ~30° of the edge direction;
+otherwise apply a `COST_ROAD_CROSSING ≈ 4.0f` penalty.
+
+### Defect 4 — great roads don't junction with each other — FIXED
+
+**Root cause:** `GreatRoadGenerationQueue.CommitEdgeTask.process` checked
+only for an exact-endpoint duplicate; it never asked "does my path overlap
+an existing GREAT_ROAD edge's cellPath?" Two trunks routed independently
+through the same area would both commit and both place blocks, producing
+the visual "weaving / looping" the user reported, with no
+TRUNK_JUNCTION node ever inserted.
+
+**Fix:** before committing the new trunk, the task now walks
+`trunk.cellPath()` and queries `graph.edgesInCell(cellKey)` for each cell.
+The first cell that is also in any existing GREAT_ROAD edge's cellPath
+becomes the convergence cell. If the new trunk shares more than 2 cells
+with that existing edge, the new trunk is treated as a duplicate route
+and dropped (with a warning). Otherwise the existing edge is split at the
+convergence cell via `WorldRoadGraph.splitEdgeAtCell` (creating a
+TRUNK_JUNCTION node), and the new trunk is committed as **two** edges
+(`anchorA → junction` and `junction → anchorB`) that share the new junction
+node. `splitEdgeAtCell` already handles preservation of meanderProfile,
+maintenance, maintainerVillageIds, staleCells, and realized blockPath.
+
+The MAX_SHARED_FOR_JUNCTION threshold is 2 cells (~128 world blocks), per
+the spec's guideline that 1–2 cells = junction, more = duplicate route.
+Junction surface-snap uses
+`level.getHeight(MOTION_BLOCKING_NO_LEAVES, x, z)` so the inserted node
+sits at the surface.
+
+**Files modified:**
+- `Events/GreatRoadGenerationQueue.java` — pre-commit overlap detection +
+  conditional split-and-rejoin or duplicate-skip in `CommitEdgeTask.process`.
+  Added imports for `AtlasRouteRouter` and `Heightmap`.
+
+### Open questions / follow-ups
+
+- **Multi-cell overlap divergence point:** the current fix splits at the
+  *first* shared cell only. If a new trunk has 2 shared cells (within the
+  junction-allowed range), the second shared cell is silently un-junctioned —
+  the new trunk's halfB segment passes through it but doesn't insert a
+  matching node. Acceptable for now because the visual artifact is
+  vastly reduced; the second cell is short and the rendered overlap is
+  small. If it shows up in playtest, extend the split logic to also
+  insert a divergence junction.
+- **Multiple simultaneous overlaps with different edges:** the current fix
+  handles overlap with the *first* existing edge encountered. If the new
+  trunk crosses two different existing trunks, the second crossing falls
+  through to the normal commit path and visually overlaps. Rare in
+  practice (worldgen anchor spacing is wide enough that triple-overlaps
+  are unusual). Tracked for follow-up if observed.
+- **Defect 3 retest:** required after Defect 1 lands. Add to next
+  playtest checklist.
+- **Pre-B5 saved worlds with broken outwardDirections:** village graphs
+  stored before this session have stale (NORTH-instead-of-EAST etc.)
+  gateway directions. They will reload with the wrong directions because
+  the field is persisted by name. Re-spawning a village or manually
+  editing the value would fix individual cases. No automatic migration
+  shipped — the symptom is "wrong gateway sometimes selected on a
+  village created in a pre-B5 session"; new villages from B5 onward are
+  correct.
+
+### Next
+
+Per-user direction.

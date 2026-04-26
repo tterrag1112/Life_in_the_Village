@@ -114,6 +114,11 @@ public final class EdgeRealizer {
         }
 
         List<BlockPos> fullPath = new ArrayList<>();
+        // Session B5 fix — Phase 7g lighting needs the road centerline (one block
+        // per forward step), not the full-width placed-block list. Without this,
+        // lighting iterated over perpendicular siblings and accumulated distance
+        // wrongly, producing scattered lights everywhere instead of cadenced ones.
+        List<BlockPos> centerlinePath = new ArrayList<>();
         RoadShape.RoadTier edgeTier = PrimitiveChainBuilder.edgeTierToRoadTier(edge.getTier());
 
         for (RoadPrimitive primitive : primitives) {
@@ -131,10 +136,12 @@ public final class EdgeRealizer {
 
             if (fullPath.isEmpty()) {
                 fullPath.addAll(placed.isEmpty() ? centerline : placed);
+                centerlinePath.addAll(centerline);
             } else {
                 // Skip first block of each successive primitive to avoid duplicates at joins
                 List<BlockPos> src = placed.isEmpty() ? centerline : placed;
                 if (src.size() > 1) fullPath.addAll(src.subList(1, src.size()));
+                if (centerline.size() > 1) centerlinePath.addAll(centerline.subList(1, centerline.size()));
             }
         }
 
@@ -152,11 +159,14 @@ public final class EdgeRealizer {
         // Phase 7g lighting pass — place fixtures based on the edge's resolved
         // profile (override first, else palette default). Runs before milestones
         // so later decorators can read light positions from decorationPositions.
+        // Session B5 fix — pass the centerline path explicitly. The edge's stored
+        // blockPath is the full-width placed-block list and is unsuitable for
+        // step-wise iteration along the road direction.
         RoadLightingProfile lightingProfile = edge.getLightingOverride()
                 .orElse(edgePalette.defaultLighting());
         RoadLightingPlacer.PlacementResult lightingResult =
                 RoadLightingPlacer.placeLighting(
-                        level, edge, edgePalette, lightingProfile, graph);
+                        level, edge, centerlinePath, edgePalette, lightingProfile, graph);
         if (lightingResult.lightsPlaced() > 0) {
             System.out.println("[EdgeRealizer] Placed " + lightingResult.lightsPlaced()
                     + " light(s) on edge " + shortId

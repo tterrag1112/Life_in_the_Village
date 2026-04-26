@@ -105,9 +105,24 @@ public record VillageRoadNode(
         public static OutwardDirection fromAngle(double radians) {
             // Normalize to [0, 2π)
             double r = ((radians % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-            // Each of 8 sectors spans π/4 radians
+            // Each of 8 sectors spans π/4 radians.
+            // Sector 0 covers angles ≈0 (EAST in Minecraft +x convention), increasing
+            // clockwise through SOUTH (sector 2), WEST (sector 4), NORTH (sector 6).
+            // We map sector index to the enum constant explicitly because the enum's
+            // declaration order does NOT match the sector → cardinal mapping —
+            // values()[sector] would return the wrong direction (Session B5 fix).
             int sector = (int)(r / (Math.PI / 4.0) + 0.5) % 8;
-            return values()[sector];
+            return switch (sector) {
+                case 0 -> EAST;
+                case 1 -> SOUTHEAST;
+                case 2 -> SOUTH;
+                case 3 -> SOUTHWEST;
+                case 4 -> WEST;
+                case 5 -> NORTHWEST;
+                case 6 -> NORTH;
+                case 7 -> NORTHEAST;
+                default -> EAST;
+            };
         }
 
         public static final Codec<OutwardDirection> CODEC =
