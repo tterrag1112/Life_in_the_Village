@@ -142,6 +142,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             new tterrag1112.life_in_the_village.Npc.Scribal.AuthorStatus();
     private final tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress scholarProgress =
             new tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress();
+    /**
+     * Per-NPC religious belief state (Phase 3 doc 20). Phase 0
+     * accessors leave the field empty; the spawn pass in
+     * {@code finalizeSpawn} seeds the village's dominant religion
+     * at strength 0.3 per spec line 64.
+     */
+    private final tterrag1112.life_in_the_village.Npc.Religion.PietyComponent piety =
+            new tterrag1112.life_in_the_village.Npc.Religion.PietyComponent();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -517,6 +525,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Scholar in-progress research (Phase 2 task 17). */
     public tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress getScholarProgress() {
         return scholarProgress;
+    }
+
+    /** Per-NPC religious belief state (Phase 3 doc 20). Never null after construction. */
+    public tterrag1112.life_in_the_village.Npc.Religion.PietyComponent getPiety() {
+        return piety;
     }
 
     public void clearTraits() {
@@ -1120,6 +1133,24 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // randomizes the "others in [0..10]" tail per spec. When the NPC is
         // later assigned a real profession, callers may re-init.
         skills.initializeFromProfession(getProfession(), random, level.getLevel().getGameTime());
+        // Phase 3 doc 20: seed belief in the village's dominant religion
+        // at strength 0.3 per spec line 64. The dominance lookup uses
+        // the kingdom culture when available; outside any kingdom we
+        // fall back to "default" → SUNSTEAD. Foreign-religion + low-
+        // local-religion syncretism (spec line 64) lands when the
+        // visitor flux pass ships in Phase 4.
+        String culture = "default";
+        if (level.getLevel() instanceof net.minecraft.server.level.ServerLevel sl) {
+            var data = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(sl);
+            culture = getAssignedVillageName()
+                    .flatMap(data::getVillageByName)
+                    .flatMap(v -> data.getKingdomForVillage(v.getId()))
+                    .map(tterrag1112.life_in_the_village.Kingdom.Kingdom::getCulture)
+                    .orElse("default");
+        }
+        String religionId = tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry
+                .dominantReligionFor(culture);
+        piety.setBelief(religionId, 0.3f);
         updateScale();
         return super.finalizeSpawn(level, difficulty, spawnType, spawnGroupData);
     }
@@ -1230,6 +1261,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Author + scholar progress (Phase 2 task 17) ─────────────────────
         authorStatus.save(output);
         scholarProgress.save(output);
+
+        // ── Religious belief state (Phase 3 task 20) ────────────────────────
+        piety.save(output);
     }
 
     // =========================================================================
@@ -1374,6 +1408,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Author + scholar progress (Phase 2 task 17) ─────────────────────
         authorStatus.load(input);
         scholarProgress.load(input);
+
+        // ── Religious belief state (Phase 3 task 20) ────────────────────────
+        piety.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

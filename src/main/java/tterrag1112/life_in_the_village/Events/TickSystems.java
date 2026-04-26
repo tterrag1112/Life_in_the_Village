@@ -1012,3 +1012,25 @@ class CrimeTrialTickSystem implements TickSubsystem {
         tterrag1112.life_in_the_village.Npc.Crime.TrialExecutor.runDue(ctx.level());
     }
 }
+
+// =============================================================================
+// RELIGION RITES (once per in-game day, interval = 24000, priority = 199)
+// =============================================================================
+
+/**
+ * Phase 3 doc 20 rite execution + holy-day calendar pass. Runs every
+ * scheduled rite whose tick has passed and queues HARVEST_THANKSGIVING /
+ * FEAST_DAY when today matches the village's religion calendar.
+ * Priority 199 — after crime trials so a SERIOUS guilty verdict's
+ * kingdom history entry lands before a same-day religious rite.
+ */
+class ReligionRiteTickSystem implements TickSubsystem {
+    @Override public String name()     { return "religion_rite"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 199; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Religion.RiteScheduler.dailyTick(ctx.level());
+    }
+}

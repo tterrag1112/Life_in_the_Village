@@ -268,6 +268,7 @@ public class ModModEvents {
         LawDebugCommand.register(event.getDispatcher());
         BusinessDebugCommand.register(event.getDispatcher());
         CrimeDebugCommand.register(event.getDispatcher());
+        ReligionDebugCommand.register(event.getDispatcher());
 
     }
 

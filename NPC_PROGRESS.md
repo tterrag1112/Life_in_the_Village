@@ -390,11 +390,11 @@ markets.
     - [x] Dialogue trees: `constable.investigation`, `trial.testimony`,
       `trial.verdict-announcement`
     - [x] `/crime list|report|trial|punish|convict` debug commands
-- [ ] **20** Religion & priest
-    - [ ] 4 religion records, PRIEST profession
-    - [ ] `PietyComponent`, temple treasury
-    - [ ] 10 rite handlers
-    - [ ] Village priest office wiring
+- [x] **20** Religion & priest
+    - [x] 4 religion records, PRIEST profession
+    - [x] `PietyComponent`, temple treasury
+    - [x] 10 rite handlers
+    - [x] Village priest office wiring
 - [ ] **21** Medicine & healer
     - [ ] `HealthComponent`, condition enum, onset rules
     - [ ] HEALER profession, HEALER_HUT building
@@ -922,5 +922,96 @@ doesn't exist on this Minecraft version (switched to
 `getLastHurtByMob() != null`); `Player.hasPermissions(int)` doesn't
 either (switched to `isCreative() || isSpectator()` for the
 vandalism-bypass check).
+
+---
+
+**Phase 3 progress (next session)**: task 20 (religion & priest)
+complete. New package `Npc.Religion`:
+
+- 4 enums (`Rite` (10 values), `RiteOutcome`, `PietyTier`,
+  `ReligiousCalendar` constants).
+- 6 records (`Religion`, `ReligiousCalendar`, `RiteExecution`,
+  `PietyComponent`, plus the existing `RiteOutcome` codec hook).
+- `ReligionRegistry` ships 4 starter religions per spec line 36 —
+  Sunstead, The Loom, Tidecall, Forge Creed — each with rite
+  filter, sacred-location tags, holy-day calendar (4 named days
+  per religion, mapped to day-of-year integers), preferred book
+  categories. `dominantReligionFor(culture)` maps Plainfolk →
+  Sunstead, Silkwood → The Loom, Tidereach → Tidecall, Highmarch
+  → Forge Creed.
+- `PietyComponent` per-NPC: `Map<String, Float> beliefs`, plus
+  rolling 30-day attendance counter for the rite-attendance
+  modifier in spec line 167. `setBelief` / `adjustBelief` /
+  `beliefIn`, `primaryReligion` / `primaryStrength` /
+  `primaryTier` (UNAFFILIATED < 0.2, FAITHFUL < 0.5, DEVOUT < 0.8,
+  PIOUS), `attendsRite(Rite)` per spec line 162. Saves under
+  `npcPiety` on the NPC and on `RiteSavedData` for player piety.
+- `RiteSavedData extends SavedData` — keyed by riteId (every
+  scheduled rite, completed or pending) + per-player
+  `PietyComponent` map. `dueRites(tick)` /
+  `ritesForVillage(villageId)` indexers; codec persists
+  everything.
+- `RiteExecutor` — one handler per rite (10 total) per spec line
+  113. Handlers grant the priest +5 SOCIAL XP; fire mood arms
+  per spec line 119 (COMING_OF_AGE → GIFT_FAVORITE +20, MARRIAGE
+  → MARRIAGE +50, NAMING → GIFT_RECEIVED +15, FUNERAL +6,
+  BLESSING → GIFT_RECEIVED +8, CONFESSION → LETTER_FROM_FRIEND
+  +12, OFFERING +5, HARVEST_THANKSGIVING → FESTIVAL_ATTENDED +12
+  village-wide + 50 bronze treasury, FEAST_DAY +8 village-wide).
+  CONFESSION grants the priest a sensitive `KnowledgeEntry` with
+  `KnowledgeCategory.PERSONAL`. MARRIAGE without a priest defers
+  up to 14 days (`MARRIAGE_DEFER_LIMIT_TICKS`); COMING_OF_AGE
+  without a priest skips silently.
+- `RiteScheduler` — daily-tick subsystem; runs due rites then
+  schedules calendar rites (HARVEST_THANKSGIVING on the
+  religion's named "Harvest Equinox" / "Last Catch" day if it
+  ritualises that rite, otherwise FEAST_DAY for other holy
+  days). Public `schedule(level, village, rite, participantIds,
+  delayTicks)` for lifecycle-event triggers and verb invocations.
+- `RiteLifeEventProducer` — registered on `NpcLifeEventBus`.
+  Reacts to `LifeStageAdvanced` (newStage = "ADULT") →
+  COMING_OF_AGE 1 day out, `Married` → MARRIAGE 1 day out,
+  `BirthInFamily` → NAMING 2 days out, `FamilyDeath` → FUNERAL 1
+  day out. Each gated on the village's primary religion's
+  `ritualises(rite)` filter.
+- 3 player verbs (`request_blessing`, `confess`, `make_offering`)
+  + `/religion list|set|rite|calendar|tithe` debug commands.
+- `Profession.PRIEST` already existed (Phase 2-task-15);
+  `professionFor(BuildingType.TEMPLE)` returns it; `ProfessionSkills`
+  already maps PRIEST → (SOCIAL, LITERACY); weekly schedule
+  PRIEST → MONDAY_OFF.
+- `MakeOfferingVerb` deposits 10 bronze to the temple
+  `BuildingEconomy` if the priest's assigned building is
+  TEMPLE (spec line 141 temple treasury seed).
+- `TownspersonMob` integration: piety field, save/load,
+  `getPiety()` accessor, `finalizeSpawn` seeding from the
+  village's kingdom culture (initial belief 0.3).
+
+Spec deviations + deferrals (logged in 20 Revision Notes):
+- `PriestWorkGoal` (spec line 86) deferred — the lifecycle-
+  dispatcher + scheduler covers most rite triggering without
+  requiring a dedicated priest goal in v1.
+- `AttendRite`, `PayTithe`, `CommissionRite` verbs deferred —
+  recurring tithe + rite-attendance scanning is heavier
+  infrastructure that lands with the priest goal.
+- BLESSING skill-buff arm (spec line 121 — temporary +1 skill
+  modifier) deferred; the mood arm fires.
+- Officiation animation (spec "Things to flag" #2) deferred —
+  the goal pass will add the priest stand-and-gesture.
+- Treasury fund priorities (spec line 145 — temple fund use
+  cases) tracked as TODO; depositRevenue lands but the priest
+  doesn't yet draw on it for repairs / aid.
+- Calendar tick conversion (spec "Things to flag" #1) uses
+  `ReligiousCalendar.DAYS_PER_YEAR = 365` and `(gameTime / 24000)
+  % DAYS_PER_YEAR` for day-of-year, matching the existing
+  daily-tick subsystem cadence.
+
+Audit-discovered fixes: operator-precedence bug in
+`RiteScheduler.scheduleCalendarRites` (the harvest-equinox check
+read `DAYS_PER_YEAR / 4 + 80 % DAYS_PER_YEAR = 171`, hitting
+Midsummer instead of day 264). Replaced with a direct calendar
+lookup of "Harvest Equinox" / "Last Catch" by name.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

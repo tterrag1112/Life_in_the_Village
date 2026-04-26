@@ -112,6 +112,7 @@ public final class TickSubsystemRegistry {
         register(new OfficeElectionTickSystem());
         register(new LawDecisionTickSystem());
         register(new CrimeTrialTickSystem());
+        register(new ReligionRiteTickSystem());
 
         // ── Travel incentives ─────────────────────────────────────────────────
         register(new PlayerRoadSpeedSystem());

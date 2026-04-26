@@ -292,3 +292,68 @@ Phase 3 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 3-20 implementation (initial pass)
+
+Things-to-flag responses:
+
+1. **Calendar tick conversion.** Resolved via
+   `ReligiousCalendar.DAYS_PER_YEAR = 365`, with day-of-year =
+   `(gameTime / 24000) % DAYS_PER_YEAR`. Holy-day map stores
+   `Map<String, Integer>` keyed by day-of-year; `RiteScheduler`
+   compares against this on its daily tick.
+2. **Priest officiation animation.** Deferred — no dedicated
+   `PriestWorkGoal` ships in v1. Lifecycle-event dispatcher +
+   `RiteScheduler` cover triggering; the priest's stand-and-
+   gesture animation lands with the Phase 4 jobs/AI refactor.
+3. **Treasury fund priorities.** Tracked as TODO. `MakeOfferingVerb`
+   deposits 10 bronze to the temple `BuildingEconomy` when the
+   priest's assigned building is `BuildingType.TEMPLE`. The fund
+   is real and persists, but the priest doesn't yet draw on it
+   for repairs / village aid — that arm waits on the priest
+   goal.
+4. **Confession sensitive flag.** Wired correctly via
+   `KnowledgeEntry.create(..., true)` 8-arg overload,
+   `KnowledgeCategory.PERSONAL`. The privacy-leak rate decision
+   (10% per month if priest Honesty < −0.5 — Open decisions
+   bullet 2) lands when the confession privacy gossip routing
+   ships in Phase 5.
+
+Deferrals:
+
+- **`PriestWorkGoal`** (spec line 86). The lifecycle-event
+  dispatcher (`RiteLifeEventProducer`) + `RiteScheduler` daily
+  tick cover scheduling + execution without requiring a per-NPC
+  goal in v1. The goal pass will add walk-to-temple + officiation
+  animation.
+- **`AttendRite`, `PayTithe`, `CommissionRite`** verbs (3 of 6
+  spec verbs). v1 ships `RequestBlessing`, `Confess`,
+  `MakeOffering`. The deferred verbs need recurring tithe
+  schedule + per-NPC rite-attendance scanning, which is the same
+  infrastructure as the priest goal.
+- **BLESSING skill-buff arm** (spec line 121 — temporary +1
+  skill modifier). The mood arm fires (+8 GIFT_RECEIVED); the
+  skill-buff side effect waits on a transient skill-modifier
+  channel.
+- **Multi-faith villages** (spec line 188). The
+  `dominantReligionFor(culture)` lookup picks one religion per
+  village; per-NPC `PietyComponent` does support multiple
+  beliefs via the `Map<String, Float>` shape, but the village's
+  primary religion is single in v1.
+
+Implementation deviations:
+
+- **`RiteScheduler.scheduleCalendarRites` operator-precedence
+  fix.** First pass had `DAYS_PER_YEAR / 4 + 80 %
+  DAYS_PER_YEAR`, which Java parses as `(DAYS_PER_YEAR/4) + (80
+  % DAYS_PER_YEAR) = 91 + 80 = 171` (Midsummer) rather than the
+  intended Sunstead Harvest Equinox (day 264). Audit caught it;
+  replaced with a direct holy-day-name lookup
+  (`"Harvest Equinox"` / `"Last Catch"`) so the rite type
+  resolves from the religion's actual calendar instead of a
+  hard-coded computation.
+- **MARRIAGE deferral window.** Spec line 130 ("postpone if no
+  priest") implemented as a 14-day max defer
+  (`MARRIAGE_DEFER_LIMIT_TICKS = 14L * 24000L`); past that the
+  rite skips. Matches spec edge case "marriage when no priest
+  available" (spec line 251).

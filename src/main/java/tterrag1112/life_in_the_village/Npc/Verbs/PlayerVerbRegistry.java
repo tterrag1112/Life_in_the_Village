@@ -113,5 +113,9 @@ public final class PlayerVerbRegistry {
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.PetitionLeaderVerb());
         // Phase 3 task 19: crime accusation verb.
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.AccuseOfCrimeVerb());
+        // Phase 3 task 20: religion verbs.
+        register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.RequestBlessingVerb());
+        register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.ConfessVerb());
+        register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.MakeOfferingVerb());
     }
 }

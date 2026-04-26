@@ -64,6 +64,8 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.Relations.RelationshipSeeder());
         // Phase 2 task 14: seed hobby preferences on ADULT transition.
         register(new tterrag1112.life_in_the_village.Npc.Hobby.HobbyPreferenceGenerator());
+        // Phase 3 task 20: schedule religious rites on lifecycle events.
+        register(new tterrag1112.life_in_the_village.Npc.Religion.RiteLifeEventProducer());
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }
