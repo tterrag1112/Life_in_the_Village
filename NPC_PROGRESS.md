@@ -126,11 +126,18 @@ Goal: NPCs feel like people with goals, dialogue, and verb responses.
 Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
 
 - [ ] Read Phase 2 specs (11–18) end-to-end
-- [ ] **11** NPC relationship ledger
-    - [ ] 15 entries/NPC, 7 modes, seeding rules
-    - [ ] Proximity growth during SOCIAL phase
-    - [ ] Daily decay
-    - [ ] Relationship dispatcher subscribes to life-event bus
+- [x] **11** NPC relationship ledger
+    - [x] 15 entries/NPC, 7 modes (NEUTRAL/ACQUAINTANCE/FRIEND/
+      CLOSE_FRIEND/RIVAL/GRUDGE/FEUD); birth/adulthood/marriage
+      seeding + workplace seed helper; single-generation
+      grudge inheritance
+    - [x] Proximity growth during SOCIAL phase (simplified
+      once-per-day sample; capped at +20 from this source)
+    - [x] Daily decay toward neutral with sticky close-friend
+      half-rate; mode boundary crossings fire
+      RelationshipBoundaryCrossed events
+    - [x] Two new dispatchers on the bus
+      (`RelationshipDispatcher`, `RelationshipSeeder`)
 - [x] **13** Weekly schedule (before 12, since 12 depends on SOCIAL
   phase timing)
     - [x] Expanded `DayPhase` enum (11 values; WORK_PRIMARY /
@@ -372,9 +379,9 @@ yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
 
-**Phase 2 progress:** Task 13 (weekly schedule) complete; tasks
-11 (relationship ledger), 14 (hobby), 12 (gossip), 15 (child/
-elderly arcs), 17 (scribal), 18 (letters/books), 16
+**Phase 2 progress:** Tasks 13 (weekly schedule) and 11
+(relationship ledger) complete; tasks 14 (hobby), 12 (gossip),
+15 (child/elderly arcs), 17 (scribal), 18 (letters/books), 16
 (apprenticeship) remaining.
 
 Schedule landed first because gossip and hobbies need the new

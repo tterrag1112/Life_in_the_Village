@@ -47,6 +47,7 @@ import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
 import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSet;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Relations.NpcRelationshipLedger;
 import tterrag1112.life_in_the_village.Npc.Schedule.PersonalScheduleOverride;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitDriftLog;
@@ -134,6 +135,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final LifeGoalSet lifeGoals = new LifeGoalSet();
     private final NpcVerbCooldowns verbCooldowns = new NpcVerbCooldowns();
     private final PersonalScheduleOverride scheduleOverride = new PersonalScheduleOverride();
+    private final NpcRelationshipLedger npcRelationships = new NpcRelationshipLedger();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -482,6 +484,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Personal schedule deviation; see {@code docs/npc_redesign/13-weekly-schedule.md}. */
     public PersonalScheduleOverride getScheduleOverride() {
         return scheduleOverride;
+    }
+
+    /**
+     * NPC↔NPC relationship ledger; see
+     * {@code docs/npc_redesign/11-npc-relationship-ledger.md}. Distinct
+     * from the player→NPC ledger exposed via {@link #getRelationships()}.
+     */
+    public NpcRelationshipLedger getNpcRelationships() {
+        return npcRelationships;
     }
 
     public void clearTraits() {
@@ -1185,6 +1196,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Personal schedule override (Phase 2 task 13) ────────────────────
         scheduleOverride.save(output);
+
+        // ── NPC↔NPC relationship ledger (Phase 2 task 11) ───────────────────
+        npcRelationships.save(output);
     }
 
     // =========================================================================
@@ -1319,6 +1333,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Personal schedule override (Phase 2 task 13) ────────────────────
         scheduleOverride.load(input);
+
+        // ── NPC↔NPC relationship ledger (Phase 2 task 11) ───────────────────
+        npcRelationships.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

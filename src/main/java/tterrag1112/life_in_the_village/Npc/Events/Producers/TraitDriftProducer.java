@@ -108,6 +108,10 @@ public final class TraitDriftProducer implements EventDispatcher {
             case NpcLifeEvent.LearnedSkill ignored -> {}
             case NpcLifeEvent.LifeStageAdvanced ignored -> {}
             case NpcLifeEvent.GoalAbandoned ignored -> {}
+
+            // Relationship boundaries don't drive trait drift directly —
+            // memory + mood handle the moment.
+            case NpcLifeEvent.RelationshipBoundaryCrossed ignored -> {}
         }
     }
 

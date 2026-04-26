@@ -89,7 +89,16 @@ public record NpcProfileSnapshot(
         // implicit context. ActionBarPanel renders one button per id.
         // -------------------------------------------------------------
         List<String> availableVerbIds,
-        List<String> verbLabels
+        List<String> verbLabels,
+
+        // -------------------------------------------------------------
+        // NPC↔NPC top-5 relationships (Phase 2 task 11). Parallel
+        // arrays: ids[i] / scores[i] / modes[i]. Empty for NPCs with
+        // no relationships. Profile GUI panel renders these.
+        // -------------------------------------------------------------
+        List<UUID>   topRelationshipIds,
+        List<Integer> topRelationshipScores,
+        List<String>  topRelationshipModes
 ) {
 
     /** Sentinel representing "no village association". */
@@ -152,6 +161,13 @@ public record NpcProfileSnapshot(
                         s.availableVerbIds.forEach(buf::writeUtf);
                         buf.writeVarInt(s.verbLabels.size());
                         s.verbLabels.forEach(buf::writeUtf);
+
+                        buf.writeVarInt(s.topRelationshipIds.size());
+                        s.topRelationshipIds.forEach(buf::writeUUID);
+                        buf.writeVarInt(s.topRelationshipScores.size());
+                        s.topRelationshipScores.forEach(buf::writeVarInt);
+                        buf.writeVarInt(s.topRelationshipModes.size());
+                        s.topRelationshipModes.forEach(buf::writeUtf);
                     },
                     buf -> {
                         UUID   npcId          = buf.readUUID();
@@ -209,6 +225,16 @@ public record NpcProfileSnapshot(
                         List<String> verbLab  = new ArrayList<>(verbLabelCount);
                         for (int i = 0; i < verbLabelCount; i++) verbLab.add(buf.readUtf());
 
+                        int relIdCount        = buf.readVarInt();
+                        List<UUID> relIds     = new ArrayList<>(relIdCount);
+                        for (int i = 0; i < relIdCount; i++) relIds.add(buf.readUUID());
+                        int relScoreCount     = buf.readVarInt();
+                        List<Integer> relScores = new ArrayList<>(relScoreCount);
+                        for (int i = 0; i < relScoreCount; i++) relScores.add(buf.readVarInt());
+                        int relModeCount      = buf.readVarInt();
+                        List<String> relModes = new ArrayList<>(relModeCount);
+                        for (int i = 0; i < relModeCount; i++) relModes.add(buf.readUtf());
+
                         return new NpcProfileSnapshot(
                                 npcId, name, isMale, age, lifeStage, profession,
                                 combat, skinId, hairStyle, hairColor, traits,
@@ -223,6 +249,7 @@ public record NpcProfileSnapshot(
                                 canOpenCompanyWorker, canShowVillageBook,
                                 canShowCraftingOrders, canRentStall,
                                 goals,
-                                verbIds, verbLab);
+                                verbIds, verbLab,
+                                relIds, relScores, relModes);
                     });
 }

@@ -182,6 +182,23 @@ public final class NpcDebugCommand {
                                 .then(Commands.argument("uuid", UuidArgument.uuid())
                                         .executes(NpcDebugCommand::handleScheduleReset))))
 
+                // ── /npc relationships {<uuid>|set|adjust} ──────────────────
+                .then(Commands.literal("relationships")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleRelationshipsList))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("other", UuidArgument.uuid())
+                                                .then(Commands.argument("score",
+                                                                IntegerArgumentType.integer(-100, 100))
+                                                        .executes(NpcDebugCommand::handleRelationshipsSet)))))
+                        .then(Commands.literal("adjust")
+                                .then(Commands.argument("uuid", UuidArgument.uuid())
+                                        .then(Commands.argument("other", UuidArgument.uuid())
+                                                .then(Commands.argument("delta",
+                                                                IntegerArgumentType.integer(-200, 200))
+                                                        .executes(NpcDebugCommand::handleRelationshipsAdjust))))))
+
                 // ── /npc goals {list|set|complete|fail} ─────────────────────
                 .then(Commands.literal("goals")
                         .then(Commands.argument("uuid", UuidArgument.uuid())
@@ -1134,6 +1151,83 @@ public final class NpcDebugCommand {
                 add ? "Added XP to" : "Set XP for",
                 skill.name(), beforeXp, afterXp, beforeLv, afterLv,
                 SkillComponent.tierFor(afterLv))),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Relationships (Phase 2 task 11)
+    // =========================================================================
+
+    private static int handleRelationshipsList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        var ledger = npc.getNpcRelationships();
+        long now = src.getLevel().getGameTime();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== NPC Relationships: ").append(displayName(npc))
+                .append(" §7(").append(id).append(")§e [").append(ledger.size())
+                .append("/15]§e ===");
+        if (ledger.isEmpty()) {
+            sb.append("\n§7(no relationships yet)");
+        } else {
+            for (var rel : ledger.topByMagnitude(15)) {
+                long daysSince = (now - rel.lastInteractionTick()) / 24000L;
+                sb.append(String.format(Locale.ROOT,
+                        "%n  §f%-12s §7score=§f%+4d§7 mode=§f%-12s §7origin=%s §7last=§f%dd ago §7n=%d",
+                        rel.otherId().toString().substring(0, 8),
+                        rel.score(), rel.mode().name(),
+                        rel.origin().name(),
+                        daysSince, rel.interactionCount()));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleRelationshipsSet(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        UUID other = UuidArgument.getUuid(ctx, "other");
+        int score = IntegerArgumentType.getInteger(ctx, "score");
+        long tick = src.getLevel().getGameTime();
+        var ledger = npc.getNpcRelationships();
+        var existing = ledger.get(other).orElse(null);
+        var newRel = existing != null
+                ? existing.withScore(score).withInteraction(tick)
+                : tterrag1112.life_in_the_village.Npc.Relations.NpcRelationship
+                        .newAt(other, score, tick,
+                                tterrag1112.life_in_the_village.Npc.Relations
+                                        .RelationshipOrigin.MET_SOCIALLY);
+        ledger.set(other, newRel);
+        src.sendSuccess(() -> Component.literal(
+                "Set §f" + displayName(npc) + " §7→§f " + other.toString().substring(0, 8)
+                        + "§7 score=§f" + score + "§7 mode=§f" + newRel.mode().name()),
+                false);
+        return 1;
+    }
+
+    private static int handleRelationshipsAdjust(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        TownspersonMob npc = resolveOrFail(src, id);
+        if (npc == null) return 0;
+        UUID other = UuidArgument.getUuid(ctx, "other");
+        int delta = IntegerArgumentType.getInteger(ctx, "delta");
+        // Use the dispatcher's symmetric path so both sides update and
+        // boundary events fire correctly.
+        tterrag1112.life_in_the_village.Npc.Relations.RelationshipDispatcher
+                .applyOne(npc, other, delta,
+                        tterrag1112.life_in_the_village.Npc.Relations
+                                .RelationshipOrigin.MET_SOCIALLY);
+        src.sendSuccess(() -> Component.literal(
+                "Adjusted §f" + displayName(npc) + " §7→§f " + other.toString().substring(0, 8)
+                        + "§7 by §f" + (delta >= 0 ? "+" : "") + delta),
                 false);
         return 1;
     }

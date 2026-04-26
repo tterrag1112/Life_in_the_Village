@@ -131,6 +131,16 @@ public final class NpcProfileSnapshotBuilder {
             verbLabels.add(verb.label().getString());
         }
 
+        // ── Top-5 NPC↔NPC relationships (Phase 2 task 11) ────────────────────
+        java.util.List<java.util.UUID> relIds = new java.util.ArrayList<>();
+        java.util.List<Integer> relScores = new java.util.ArrayList<>();
+        java.util.List<String> relModes = new java.util.ArrayList<>();
+        for (var rel : npc.getNpcRelationships().topByMagnitude(5)) {
+            relIds.add(rel.otherId());
+            relScores.add(rel.score());
+            relModes.add(rel.mode().name());
+        }
+
         // ── Assemble ─────────────────────────────────────────────────────────
         return new NpcProfileSnapshot(
                 npc.getUUID(),
@@ -177,6 +187,7 @@ public final class NpcProfileSnapshotBuilder {
 
                 goalLabels,
                 verbIds,
-                verbLabels);
+                verbLabels,
+                relIds, relScores, relModes);
     }
 }
