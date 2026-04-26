@@ -274,10 +274,29 @@ Goal: villages have real politics and economics that work without
 markets.
 
 - [ ] Read Phase 3 specs (19–24) end-to-end
-- [ ] **06 → wire** Office framework behavior
-    - [ ] Selection engine per method
-    - [ ] Office appointment/election at village bootstrap
-    - [ ] Office holder memory/relationship/mood integration
+- [x] **06 → wire** Office framework behavior
+    - [x] Selection engine per method (7 implementations + tiebreak helper
+      under `Npc.Office.Selection`; `SelectionEngines` static lookup)
+    - [x] Office appointment/election at village bootstrap
+      (founding-elections queue on `addVillage`, drained by the daily
+      `office_elections` tick subsystem)
+    - [x] Office holder memory/relationship/mood integration
+      (Promoted / Demoted life-events fire on every seat change)
+    - [x] `OfficeElection` driver: `runElection`, `runFoundingElections`,
+      `dailyTick`, `vacateAllHeldBy`, `seatPlayer`, `seatNpc`
+    - [x] `PowerGrant` capability lookup utility (single-org and
+      cross-level walkers)
+    - [x] `CultureSelectionResolver` Phase 5 stub wired at the resolution
+      site (Phase 5 only has to populate the resolver)
+    - [x] `LivingDeathEvent` hook now vacates every held office and
+      re-runs elections so seats refill same-tick
+    - [x] Legacy migration cutover: `KingdomActionPacket.TOGGLE_LAW`
+      and `KingdomLawEffects.isCitizen` route through `PowerGrant`
+      (legacy `rulerPlayerId` stays populated for the one-release window)
+    - [x] Player verbs: `petition_for_office` (rel ≥ +20 gate),
+      `appoint_to_office`, `resign_from_office`
+    - [x] `/office` subcommands extended: `election`, `grant`,
+      `vacate-and-elect`, `powers <uuid>`, `me`
 - [ ] **23** Economic channels
     - [ ] `EconomicChannel`, `ChannelRouter`
     - [ ] MARKET, DIRECT_BUSINESS, CARAVAN, STOCKPILE channels
@@ -570,3 +589,43 @@ manually + by Explore agent against the known-working pattern.
 **Suggested next session**: task 02 (NpcMemoryLog). The 32-entry cap and
 decay math are new territory vs. the straightforward TraitVector — read
 `docs/npc_redesign/02-memory-system.md` fully before coding.
+
+---
+
+**Phase 3 progress (this session)**: task 06 (office framework wiring)
+complete. New packages:
+
+- `Npc.Office.Selection` — 7 engines (`MeritocraticSelection`,
+  `AscensionSelection`, `CouncilSelection`, `ElectiveSelection`,
+  `HereditarySelection`, `AppointedSelection`, `DictatorialSelection`)
+  + `OfficeCandidate`, `OfficeSelectionContext`, `CandidatePool`,
+  `CouncilResolver`, `SelectionTiebreaker`, `SelectionEngines` lookup.
+- `Npc.Office.Powers.PowerGrant` — capability lookup utility used by
+  every "is this player allowed to ..." gate going forward.
+- `Npc.Office.OfficeElection` — driver: `runElection`,
+  `runFoundingElections`, `dailyTick`, `vacateAllHeldBy`, `seatPlayer`,
+  `seatNpc`. `Npc.Office.CultureSelectionResolver` is the Phase 5 stub
+  consulted before each engine pick.
+
+Tick wiring: new `OfficeElectionTickSystem` (interval 24000, priority
+195) registered in `TickSubsystemRegistry`. Drains
+`VillageSavedData.pendingFoundingElections` then sweeps every loaded
+Village / GuildData / Kingdom / Company.
+
+Lifecycle hooks: `TownspersonMob.onNpcDeath` calls
+`OfficeElection.vacateAllHeldBy` so a leader's death triggers
+immediate refill; the player verbs `petition_for_office`,
+`appoint_to_office`, `resign_from_office` are registered on the
+PlayerVerbRegistry.
+
+Legacy migration cutover: `KingdomActionPacket.TOGGLE_LAW` and
+`KingdomLawEffects.isCitizen` route via `PowerGrant`; the legacy
+`Kingdom.rulerPlayerId` / `Village.villageLeaderId` /
+`GuildData.guildmasterId` / `Company.ownerPlayerId` fields stay
+populated for the one-release window — but are no longer the source of
+truth for any *gate*.
+
+Office Tab UI replaced with `/office me` text listing for this session
+— a full inventory tab is documented as a follow-up. Action buttons per
+power are deferred to the per-power UIs (constable/leader/healer
+sessions) per the brief's explicit Phase 3 scope cut.

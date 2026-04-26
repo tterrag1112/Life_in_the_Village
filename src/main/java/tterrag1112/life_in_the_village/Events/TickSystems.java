@@ -941,3 +941,28 @@ class TollGateTickSystem implements TickSubsystem {
         TollGateSystem.tick(ctx.level(), ctx.villageData());
     }
 }
+
+// =============================================================================
+// OFFICE ELECTIONS (once per in-game day, interval = 24000, priority = 195)
+// =============================================================================
+
+/**
+ * Drives the office-framework election cycle once per in-game day per
+ * spec {@code 06-office-framework.md} → "Term end detection" /
+ * "Selection methods". Walks every loaded org, vacates term-ended seats,
+ * and re-runs the appropriate selection engine for each vacancy.
+ *
+ * <p>Priority 195 places this just before the gossip scheduler so a
+ * promotion/demotion fired from the election can seed gossip on the
+ * same day.</p>
+ */
+class OfficeElectionTickSystem implements TickSubsystem {
+    @Override public String name()     { return "office_elections"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 195; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Office.OfficeElection.dailyTick(ctx.level());
+    }
+}

@@ -1445,6 +1445,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                         tterrag1112.life_in_the_village.Entities.FamilyRole.CHILD)));
             }
         });
+
+        // Phase 3 task 06: vacate every office the deceased held and run
+        // immediate elections so the village isn't down a leader / priest /
+        // constable for the rest of the day. The death event has already
+        // fired Phase 1 events above, so order doesn't matter.
+        tterrag1112.life_in_the_village.Npc.Office.OfficeElection
+                .vacateAllHeldBy(deceasedId, level, "death");
     }
 
     /** Spec: "scans nearby NPCs within 16 blocks" (10-phase1-integration.md line 48). */

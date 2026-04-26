@@ -71,14 +71,21 @@ public record KingdomActionPacket(
                     .orElse(null);
             if (kingdom == null) return;
 
-            // Verify player is the ruler
-            if (!kingdom.getRulerPlayerId()
-                    .map(id -> id.equals(player.getUUID()))
-                    .orElse(false)) {
+            // Phase 3 task 06: route the law-toggle gate through
+            // PowerGrant. The ENACT_LAW power is granted by both
+            // KINGDOM_KING and (for villages) VILLAGE_LEADER; for the
+            // kingdom-scoped packet only the kingdom's office state is
+            // consulted. The legacy rulerPlayerId remains populated for
+            // one release window — but the gate itself sources its
+            // truth from the office state now.
+            if (!tterrag1112.life_in_the_village.Npc.Office.Powers.PowerGrant
+                    .hasPower(player.getUUID(),
+                            tterrag1112.life_in_the_village.Npc.Office.OfficePower.ENACT_LAW,
+                            kingdom)) {
                 player.sendSystemMessage(
                         net.minecraft.network.chat.Component
-                                .literal("You are not the ruler "
-                                        + "of this kingdom."));
+                                .literal("You don't hold the office that "
+                                        + "lets you change this kingdom's laws."));
                 return;
             }
 

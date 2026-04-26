@@ -566,9 +566,38 @@ public class VillageSavedData extends SavedData implements
     // =========================================================================
 
     public void addVillage(Village village) {
+        boolean alreadyTracked = villageIndex.containsKey(village.getId());
         villages.add(village);
         villageIndex.put(village.getId(), village);
         setDirty();
+        // Phase 3 task 06: queue a founding-elections pass so the daily
+        // tick runs them on the next sweep. Newly founded villages would
+        // otherwise wait up to one in-game day for their first leader.
+        // Skip when re-adding an existing village (e.g. realisation
+        // reload paths) — the saved holdings are already authoritative.
+        if (!alreadyTracked) {
+            pendingFoundingElections.add(village.getId());
+        }
+    }
+
+    /**
+     * Set of village UUIDs awaiting a founding-elections pass. Drained by
+     * {@link tterrag1112.life_in_the_village.Npc.Office.OfficeElection#dailyTick}
+     * on the next sweep, or by a same-tick caller via
+     * {@link #drainPendingFoundingElections}.
+     */
+    private final java.util.LinkedHashSet<UUID> pendingFoundingElections = new java.util.LinkedHashSet<>();
+
+    /**
+     * Drains and returns the queued founding-election village ids. The
+     * caller (typically the office election driver) is responsible for
+     * running the elections.
+     */
+    public java.util.List<UUID> drainPendingFoundingElections() {
+        if (pendingFoundingElections.isEmpty()) return java.util.List.of();
+        java.util.List<UUID> out = java.util.List.copyOf(pendingFoundingElections);
+        pendingFoundingElections.clear();
+        return out;
     }
 
     public List<Village>      getAllVillages()             { return List.copyOf(villages); }

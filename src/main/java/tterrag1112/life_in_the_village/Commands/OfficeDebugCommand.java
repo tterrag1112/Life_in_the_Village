@@ -15,7 +15,9 @@ import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeDefinition;
+import tterrag1112.life_in_the_village.Npc.Office.OfficeElection;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeHolding;
+import tterrag1112.life_in_the_village.Npc.Office.OfficePower;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeState;
 import tterrag1112.life_in_the_village.Npc.Office.OrgType;
@@ -60,6 +62,36 @@ public final class OfficeDebugCommand {
                                         .executes(OfficeDebugCommand::handleVacate))))
                 .then(Commands.literal("list-all")
                         .executes(OfficeDebugCommand::handleListAll))
+                .then(Commands.literal("election")
+                        .then(Commands.argument("entityRef", StringArgumentType.string())
+                                .then(Commands.argument("officeId", StringArgumentType.word())
+                                        .suggests((c, b) -> {
+                                            for (OfficeDefinition d : OfficeRegistry.all()) b.suggest(d.id());
+                                            return b.buildFuture();
+                                        })
+                                        .executes(OfficeDebugCommand::handleElection))))
+                .then(Commands.literal("grant")
+                        .then(Commands.argument("entityRef", StringArgumentType.string())
+                                .then(Commands.argument("officeId", StringArgumentType.word())
+                                        .suggests((c, b) -> {
+                                            for (OfficeDefinition d : OfficeRegistry.all()) b.suggest(d.id());
+                                            return b.buildFuture();
+                                        })
+                                        .then(Commands.argument("holderUuid", UuidArgument.uuid())
+                                                .executes(OfficeDebugCommand::handleGrant)))))
+                .then(Commands.literal("vacate-and-elect")
+                        .then(Commands.argument("entityRef", StringArgumentType.string())
+                                .then(Commands.argument("officeId", StringArgumentType.word())
+                                        .suggests((c, b) -> {
+                                            for (OfficeDefinition d : OfficeRegistry.all()) b.suggest(d.id());
+                                            return b.buildFuture();
+                                        })
+                                        .executes(OfficeDebugCommand::handleVacateAndElect))))
+                .then(Commands.literal("powers")
+                        .then(Commands.argument("holderUuid", UuidArgument.uuid())
+                                .executes(OfficeDebugCommand::handlePowers)))
+                .then(Commands.literal("me")
+                        .executes(OfficeDebugCommand::handleMe))
         );
     }
 
@@ -228,6 +260,143 @@ public final class OfficeDebugCommand {
         h.persist.run();
         src.sendSuccess(() -> Component.literal(
                 "Vacated §f" + officeId + "§r on §f" + h.displayName), false);
+        return 1;
+    }
+
+    private static int handleElection(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        EntityHandle h = resolveOrFail(src, StringArgumentType.getString(ctx, "entityRef"));
+        if (h == null) return 0;
+        String officeId = StringArgumentType.getString(ctx, "officeId");
+        if (OfficeRegistry.get(officeId) == null) {
+            src.sendFailure(Component.literal("Unknown officeId: " + officeId));
+            return 0;
+        }
+        OfficeHolding result = OfficeElection.runElection(h.orgType, h.uuid, officeId, src.getLevel());
+        h.persist.run();
+        long now = src.getLevel().getGameTime();
+        src.sendSuccess(() -> Component.literal(
+                "Ran election for §f" + officeId + "§r on §f" + h.displayName + "§r → "
+                        + (result.isVacant() ? "vacant"
+                            : (result.holderIsPlayer() ? "PLAYER " : "NPC ")
+                                + result.holderUuid().orElseThrow()
+                                + " (" + result.actualSelection() + ", "
+                                + (result.daysRemaining(now) < 0 ? "indefinite"
+                                    : result.daysRemaining(now) + "d)")), false);
+        return 1;
+    }
+
+    private static int handleGrant(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        EntityHandle h = resolveOrFail(src, StringArgumentType.getString(ctx, "entityRef"));
+        if (h == null) return 0;
+        String officeId = StringArgumentType.getString(ctx, "officeId");
+        UUID holderUuid = UuidArgument.getUuid(ctx, "holderUuid");
+        OfficeDefinition def = OfficeRegistry.get(officeId);
+        if (def == null) {
+            src.sendFailure(Component.literal("Unknown officeId: " + officeId));
+            return 0;
+        }
+        if (def.orgType() != h.orgType) {
+            src.sendFailure(Component.literal(
+                    "Office '" + officeId + "' belongs to " + def.orgType()
+                            + ", not " + h.orgType));
+            return 0;
+        }
+        boolean isOnlinePlayer = src.getServer().getPlayerList().getPlayer(holderUuid) != null;
+        if (isOnlinePlayer) {
+            OfficeElection.seatPlayer(h.orgType, h.uuid, officeId, holderUuid, src.getLevel());
+        } else {
+            OfficeElection.seatNpc(h.orgType, h.uuid, officeId, holderUuid,
+                    SelectionMethod.APPOINTED, src.getLevel());
+        }
+        h.persist.run();
+        src.sendSuccess(() -> Component.literal(
+                "Granted §f" + officeId + "§r on §f" + h.displayName + "§r to "
+                        + (isOnlinePlayer ? "player " : "NPC ") + holderUuid
+                        + " §7(events fired)"), false);
+        return 1;
+    }
+
+    private static int handleVacateAndElect(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        EntityHandle h = resolveOrFail(src, StringArgumentType.getString(ctx, "entityRef"));
+        if (h == null) return 0;
+        String officeId = StringArgumentType.getString(ctx, "officeId");
+        if (OfficeRegistry.get(officeId) == null) {
+            src.sendFailure(Component.literal("Unknown officeId: " + officeId));
+            return 0;
+        }
+        h.state.vacate(officeId);
+        OfficeHolding result = OfficeElection.runElection(h.orgType, h.uuid, officeId, src.getLevel());
+        h.persist.run();
+        src.sendSuccess(() -> Component.literal(
+                "Vacated and re-elected §f" + officeId + "§r on §f" + h.displayName + "§r → "
+                        + (result.isVacant() ? "vacant" : result.holderUuid().orElseThrow().toString())), false);
+        return 1;
+    }
+
+    private static int handlePowers(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID holderUuid = UuidArgument.getUuid(ctx, "holderUuid");
+        var matches = OfficeRegistry.findOfficesHeldBy(holderUuid, src.getLevel());
+        if (matches.isEmpty()) {
+            src.sendSuccess(() -> Component.literal(
+                    "§7" + holderUuid + " holds no offices."), false);
+            return 1;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Powers held by ").append(holderUuid).append(" ===");
+        for (var m : matches) {
+            OfficeDefinition def = OfficeRegistry.get(m.holding().officeId());
+            sb.append("\n  §a").append(m.holding().officeId())
+                    .append("§7 on ").append(m.orgType().name().toLowerCase(Locale.ROOT))
+                    .append(" §f").append(m.orgDisplayName());
+            if (def != null) {
+                for (OfficePower p : def.powers()) {
+                    sb.append("\n      §b• ").append(p.name());
+                }
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleMe(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        var player = src.getPlayer();
+        if (player == null) {
+            src.sendFailure(Component.literal("/office me requires a player executor."));
+            return 0;
+        }
+        var matches = OfficeRegistry.findOfficesHeldBy(player.getUUID(), src.getLevel());
+        long now = src.getLevel().getGameTime();
+        if (matches.isEmpty()) {
+            src.sendSuccess(() -> Component.literal(
+                    "§7You hold no offices."), false);
+            return 1;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Your offices ===");
+        for (var m : matches) {
+            OfficeDefinition def = OfficeRegistry.get(m.holding().officeId());
+            long days = m.holding().daysRemaining(now);
+            sb.append("\n  §a").append(def != null ? def.displayName() : m.holding().officeId())
+                    .append("§7 of §f").append(m.orgDisplayName())
+                    .append(" §7(").append(days < 0 ? "indefinite" : days + "d remaining").append(")");
+            if (def != null) {
+                StringBuilder powerLine = new StringBuilder();
+                for (OfficePower p : def.powers()) {
+                    if (powerLine.length() > 0) powerLine.append(", ");
+                    powerLine.append(p.name());
+                }
+                if (powerLine.length() > 0) {
+                    sb.append("\n      §bPowers: §f").append(powerLine);
+                }
+            }
+        }
+        sb.append("\n§7Use §f/office grant§7 / §f/office vacate-and-elect§7 to manage these.");
+        src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
         return 1;
     }
 

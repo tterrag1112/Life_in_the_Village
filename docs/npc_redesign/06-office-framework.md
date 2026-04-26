@@ -589,3 +589,103 @@ maintainer):**
   `OfficeState.emptyFor(orgType, orgId)`. The orgId is needed so
   pre-populated holdings carry the correct `orgId` reference;
   documented on the static factory.
+
+### 2026-04-26 — Phase 3 wiring session (task 06)
+
+Selection / lifecycle / power-grant layer landed in
+`tterrag1112.life_in_the_village.Npc.Office.Selection`,
+`tterrag1112.life_in_the_village.Npc.Office.Powers`, plus
+`OfficeElection` and `CultureSelectionResolver` at the package root.
+
+**Council composition (spec "Things to flag" #2 resolved).**
+- `village_leader` → `FamilyRole.HEAD` of NPCs assigned to the village.
+- `guild_master` / `master_of_apprentices` → adults assigned to the
+  guild's village whose profession is GUILDMASTER, GUILDWORKER, or
+  ADVENTURER. Phase 2 task 27's `AbstractGuild` refactor will replace
+  this with explicit membership records.
+- `kingdom_king` / `kingdom_council_seat` → village leaders of every
+  village in the kingdom. Reads `OfficeState.village_leader` and falls
+  back to legacy `villageLeaderId` during the migration window.
+- All other office IDs route to MERITOCRATIC fallback when COUNCIL is
+  selected.
+
+**Ascension chains (spec "Things to flag" #1 resolved).** v1 only
+populates `guild_master ← master_of_apprentices` (registry already
+carried that). `village_leader` ASCENSION with an empty prereq list
+falls back to MERITOCRATIC. `bailiff → leader` chain is a one-line
+registry change in a follow-up if playtesting shows it's needed.
+
+**Cultural rules stub (spec "Things to flag" #3 resolved).**
+`CultureSelectionResolver.cultureSelectionFor(culture, officeId)`
+always returns `Optional.empty()` in Phase 3. The call site
+(`OfficeElection.resolveMethod`) is permanent; Phase 5 only has to
+populate the resolver.
+
+**Legacy migration cutover (spec "Things to flag" #4 resolved).** The
+*gates* migrated this session are
+- `KingdomActionPacket.TOGGLE_LAW` → `PowerGrant.hasPower(...,
+  OfficePower.ENACT_LAW, kingdom)`,
+- `KingdomLawEffects.isCitizen` → `kingdom.getOffices().isHeldBy(
+  playerId)`.
+
+The legacy fields (`Kingdom.rulerPlayerId`, `Village.villageLeaderId`,
+`GuildData.guildmasterId`, `Company.ownerPlayerId`) stay populated for
+the one-release window but no longer drive any permission decision.
+Other read sites (UI labels, history-text generators) keep using the
+legacy field — they're cosmetic and the values stay synced via the
+codec migration.
+
+**MeritocraticSelection trait nudges.** `+5 * Industry +
+3 * Honesty` per spec line "scores candidates by relevant skill +
+traits". Per-office trait preferences (Courage for constable, Honesty
+for treasurer, Compassion for priest, Ambition for guild_master /
+kingdom_king / kingdom_chancellor, Sociability for village_leader)
+live in `ElectiveSelection.officeTrait()` instead — meritocratic stays
+generic so its score remains predictable across every office.
+
+**Vote weight formula (CouncilSelection / ElectiveSelection).** Each
+voter casts `max(1, npcRelScore + 50)` for each candidate (range
+−100..+100 → 1..150). Floor at +1 keeps unfamiliar candidates from
+getting a 0 vote; relationship still dominates above the floor.
+Tiebreak adds `+0.001 × primarySkillLevel` so a tied vote picks the
+more competent candidate.
+
+**HereditarySelection succession crisis.** When no eligible adult
+child exists, falls back to COUNCIL → MERITOCRATIC. Recorded
+`actualSelection` becomes the actual fallback used (not HEREDITARY)
+so history reads correctly.
+
+**AppointedSelection appointer chain.** village_leader → treasurer /
+constable / bailiff / scribe; guild_master → guild_treasurer /
+guild_registrar; company_owner → company_foreman /
+company_bookkeeper; kingdom_king → kingdom_chancellor /
+kingdom_treasurer. When the appointer is a player, the silent engine
+declines and waits for `appoint_to_office` verb.
+
+**Founding-elections queue.** `VillageSavedData.addVillage` enqueues
+the village id; the daily `office_elections` tick subsystem drains
+the queue at the start of each pass, then runs the standard vacancy
+/ term-end sweep. NBT load uses `villages.addAll` directly,
+bypassing `addVillage`, so reload paths don't re-run founding
+elections.
+
+**Office Tab UI deferral.** v1 ships `/office me` as the menu
+surface — a real GUI tab needs new `OpenOfficeStatus` packet + screen
+plumbing, which is heavier than the per-power UIs that are
+themselves Phase 3 follow-up sessions. The proper inventory tab is a
+follow-up so this session stayed focused on the selection /
+lifecycle work the rest of Phase 3 depends on.
+
+**Resign verb scope.** `resign_from_office` vacates ONLY the office
+on the targeted NPC's village, not every office the player holds.
+The first cut called `OfficeElection.vacateAllHeldBy` directly —
+that was too aggressive (kingdom + guild offices wiped via a village
+dialogue). Current implementation manually vacates one slot and
+immediately re-elects.
+
+**Build verification deferred.** The sandbox can't reach
+`maven.neoforged.net` (HTTP 403, `host_not_allowed`). Code review
+covered imports / signatures / null-paths but the exit-criteria
+scenario (founding election, leader-death refill, term-end vacate,
+`/office powers` listing, save/reload) needs to run on a dev box
+before the wiring is considered validated.
