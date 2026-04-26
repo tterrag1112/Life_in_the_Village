@@ -7,6 +7,7 @@ import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterInstance;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
+import tterrag1112.life_in_the_village.Village.Roads.Events.RoadEvent;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
@@ -14,9 +15,11 @@ import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -85,7 +88,9 @@ public class WorldRoadSavedData extends SavedData {
                              Map<UUID, VillageUpkeepLedger> ledgers,
                              boolean greatRoadGenerationComplete,
                              Map<UUID, List<ShelterInstance>> edgeShelters,
-                             Map<UUID, TollGateRecord> tollGates) {
+                             Map<UUID, TollGateRecord> tollGates,
+                             Map<UUID, RoadEvent> events,
+                             List<String> worldUniqueTypesPlaced) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
@@ -101,7 +106,13 @@ public class WorldRoadSavedData extends SavedData {
                         .forGetter(Snapshot::edgeShelters),
                 Codec.unboundedMap(UUID_CODEC, TollGateRecord.CODEC)
                         .optionalFieldOf("tollGates", new HashMap<>())
-                        .forGetter(Snapshot::tollGates)
+                        .forGetter(Snapshot::tollGates),
+                Codec.unboundedMap(UUID_CODEC, RoadEvent.CODEC)
+                        .optionalFieldOf("events", new HashMap<>())
+                        .forGetter(Snapshot::events),
+                Codec.STRING.listOf()
+                        .optionalFieldOf("worldUniqueTypesPlaced", new ArrayList<>())
+                        .forGetter(Snapshot::worldUniqueTypesPlaced)
         ).apply(i, Snapshot::new));
     }
 
@@ -110,7 +121,9 @@ public class WorldRoadSavedData extends SavedData {
                 WorldRoadSavedData data = new WorldRoadSavedData(
                         snap.graph(), snap.migrated(), new HashMap<>(snap.ledgers()),
                         snap.greatRoadGenerationComplete(), new HashMap<>(snap.edgeShelters()),
-                        new HashMap<>(snap.tollGates()));
+                        new HashMap<>(snap.tollGates()),
+                        new HashMap<>(snap.events()),
+                        new HashSet<>(snap.worldUniqueTypesPlaced()));
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -124,7 +137,9 @@ public class WorldRoadSavedData extends SavedData {
             },
             data -> new Snapshot(data.graph, data.migrated, new HashMap<>(data.ledgers),
                     data.greatRoadGenerationComplete, new HashMap<>(data.edgeShelters),
-                    new HashMap<>(data.tollGates))
+                    new HashMap<>(data.tollGates),
+                    new HashMap<>(data.events),
+                    new ArrayList<>(data.worldUniqueTypesPlaced))
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -146,6 +161,10 @@ public class WorldRoadSavedData extends SavedData {
     private final Map<UUID, List<ShelterInstance>> edgeShelters;
     /** Node UUID → toll gate record (kingdom + cumulative revenue). */
     private final Map<UUID, TollGateRecord> tollGates;
+    /** Phase 10 — event UUID → road event record. */
+    private final Map<UUID, RoadEvent> events;
+    /** Phase 10 — typeIds of world-unique events that have already been placed. */
+    private final Set<String> worldUniqueTypesPlaced;
 
     // =========================================================================
     // Constructors
@@ -159,19 +178,25 @@ public class WorldRoadSavedData extends SavedData {
         this.greatRoadGenerationComplete = false;
         this.edgeShelters                = new HashMap<>();
         this.tollGates                   = new HashMap<>();
+        this.events                      = new HashMap<>();
+        this.worldUniqueTypesPlaced      = new HashSet<>();
     }
 
     private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated,
                                 Map<UUID, VillageUpkeepLedger> ledgers,
                                 boolean greatRoadGenerationComplete,
                                 Map<UUID, List<ShelterInstance>> edgeShelters,
-                                Map<UUID, TollGateRecord> tollGates) {
+                                Map<UUID, TollGateRecord> tollGates,
+                                Map<UUID, RoadEvent> events,
+                                Set<String> worldUniqueTypesPlaced) {
         this.graph                       = graph;
         this.migrated                    = migrated;
         this.ledgers                     = ledgers;
         this.greatRoadGenerationComplete = greatRoadGenerationComplete;
         this.edgeShelters                = edgeShelters;
         this.tollGates                   = tollGates;
+        this.events                      = events;
+        this.worldUniqueTypesPlaced      = worldUniqueTypesPlaced;
     }
 
     // =========================================================================
@@ -293,6 +318,63 @@ public class WorldRoadSavedData extends SavedData {
     /** Unmodifiable view of all toll gate records, keyed by node UUID. */
     public Map<UUID, TollGateRecord> getAllTollGates() {
         return Collections.unmodifiableMap(tollGates);
+    }
+
+    // =========================================================================
+    // Road events (Phase 10)
+    // =========================================================================
+
+    public Optional<RoadEvent> getEvent(UUID eventId) {
+        return Optional.ofNullable(events.get(eventId));
+    }
+
+    public void registerEvent(RoadEvent event) {
+        events.put(event.eventId(), event);
+    }
+
+    /** Replaces an existing event in-place (e.g. after editing a property). */
+    public void updateEvent(RoadEvent event) {
+        events.put(event.eventId(), event);
+    }
+
+    public void removeEvent(UUID eventId) {
+        events.remove(eventId);
+    }
+
+    public List<RoadEvent> allEvents() {
+        return new ArrayList<>(events.values());
+    }
+
+    public List<RoadEvent> eventsForEdge(UUID edgeId) {
+        List<RoadEvent> out = new ArrayList<>();
+        for (RoadEvent e : events.values()) {
+            if (e.containingEdgeId().filter(edgeId::equals).isPresent()) out.add(e);
+        }
+        return out;
+    }
+
+    public List<RoadEvent> eventsForNode(UUID nodeId) {
+        List<RoadEvent> out = new ArrayList<>();
+        for (RoadEvent e : events.values()) {
+            if (e.containingNodeId().filter(nodeId::equals).isPresent()) out.add(e);
+        }
+        return out;
+    }
+
+    public boolean isWorldUniquePlaced(String typeId) {
+        return worldUniqueTypesPlaced.contains(typeId);
+    }
+
+    public void markWorldUniquePlaced(String typeId) {
+        worldUniqueTypesPlaced.add(typeId);
+    }
+
+    public void unmarkWorldUniquePlaced(String typeId) {
+        worldUniqueTypesPlaced.remove(typeId);
+    }
+
+    public Set<String> getWorldUniqueTypesPlaced() {
+        return Collections.unmodifiableSet(worldUniqueTypesPlaced);
     }
 
     // =========================================================================

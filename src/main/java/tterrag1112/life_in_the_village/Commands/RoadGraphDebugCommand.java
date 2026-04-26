@@ -27,6 +27,11 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePaletteRe
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Roads.Events.EventLifecycleSystem;
+import tterrag1112.life_in_the_village.Village.Roads.Events.EventPlacementContext;
+import tterrag1112.life_in_the_village.Village.Roads.Events.RoadEvent;
+import tterrag1112.life_in_the_village.Village.Roads.Events.RoadEventRegistry;
+import tterrag1112.life_in_the_village.Village.Roads.Events.RoadEventType;
 import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeState;
 import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.NetworkAlignmentScorer;
@@ -328,6 +333,23 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("show_village_graph")
                                         .then(Commands.argument("villageName", StringArgumentType.greedyString())
                                                 .executes(RoadGraphDebugCommand::showVillageGraph)))
+                                // ── 10: event infrastructure debug ────────────────────────────
+                                .then(Commands.literal("events")
+                                        .then(Commands.argument("targetId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::eventsForTarget)))
+                                .then(Commands.literal("events_near")
+                                        .then(Commands.argument("radius", IntegerArgumentType.integer(1, 8192))
+                                                .executes(RoadGraphDebugCommand::eventsNear)))
+                                .then(Commands.literal("spawn_event")
+                                        .then(Commands.argument("typeId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::spawnEvent)))
+                                .then(Commands.literal("despawn_event")
+                                        .then(Commands.argument("eventId", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::despawnEvent)))
+                                .then(Commands.literal("event_registry")
+                                        .executes(RoadGraphDebugCommand::eventRegistry))
+                                .then(Commands.literal("event_stats")
+                                        .executes(RoadGraphDebugCommand::eventStats))
                                 // ── 9: dead edges + network alignment debug ───────────────────
                                 .then(Commands.literal("dead_edges")
                                         .executes(RoadGraphDebugCommand::deadEdges))
@@ -4505,5 +4527,227 @@ public class RoadGraphDebugCommand {
                 + "); scan flagged " + newlyDead + " new dead edge(s)."),
                 false);
         return newlyDead;
+    }
+
+    // =========================================================================
+    // Phase 10 — events debug
+    // =========================================================================
+
+    /**
+     * Lists events on either an edge or a node — argument is matched against
+     * both edge and node UUIDs by prefix.
+     */
+    private static int eventsForTarget(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        WorldRoadSavedData saved = WorldRoadSavedData.get(level);
+        long currentTick = level.getGameTime();
+
+        String prefix = StringArgumentType.getString(ctx, "targetId").toLowerCase(Locale.ROOT);
+        RoadEdge edge = null;
+        for (RoadEdge e : graph.allEdges()) {
+            if (e.getEdgeId().toString().startsWith(prefix)) { edge = e; break; }
+        }
+        RoadNode node = null;
+        if (edge == null) {
+            for (RoadNode n : graph.allNodes()) {
+                if (n.nodeId().toString().startsWith(prefix)) { node = n; break; }
+            }
+        }
+        if (edge == null && node == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[events] No edge or node matches prefix '" + prefix + "'."));
+            return 0;
+        }
+
+        List<UUID> ids = edge != null ? edge.getEventIds() : node.getEventIds();
+        String label = edge != null
+                ? ("edge " + edge.getEdgeId().toString().substring(0, 8))
+                : ("node " + node.nodeId().toString().substring(0, 8));
+        if (ids.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[events] " + label + " has no events."), false);
+            return 0;
+        }
+        for (UUID id : ids) {
+            RoadEvent ev = saved.getEvent(id).orElse(null);
+            if (ev == null) continue;
+            String shortId = id.toString().substring(0, 8);
+            String exp = ev.expiresAtTick()
+                    .map(t -> String.valueOf(t - currentTick))
+                    .orElse("permanent");
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + shortId + " type=" + ev.typeId()
+                    + " pos=" + ev.position().toShortString()
+                    + " placedTick=" + ev.placedTick()
+                    + " expires=" + exp),
+                    false);
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[events] " + label + " has " + ids.size() + " event(s)."), false);
+        return ids.size();
+    }
+
+    private static int eventsNear(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData saved = WorldRoadSavedData.get(level);
+        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        long r2 = (long) radius * radius;
+
+        BlockPos here = player.blockPosition();
+        List<RoadEvent> sorted = new ArrayList<>();
+        for (RoadEvent ev : saved.allEvents()) {
+            long dx = ev.position().getX() - here.getX();
+            long dz = ev.position().getZ() - here.getZ();
+            if (dx * dx + dz * dz > r2) continue;
+            sorted.add(ev);
+        }
+        sorted.sort((a, b) -> Long.compare(distSqXZ(a.position(), here), distSqXZ(b.position(), here)));
+        for (RoadEvent ev : sorted) {
+            String shortId = ev.eventId().toString().substring(0, 8);
+            long dist = (long) Math.sqrt(distSqXZ(ev.position(), here));
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + shortId + " type=" + ev.typeId()
+                    + " pos=" + ev.position().toShortString()
+                    + " dist=" + dist
+                    + (ev.properties().isEmpty() ? "" : " props=" + ev.properties())),
+                    false);
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[events_near] " + sorted.size() + " event(s) within " + radius + " blocks."), false);
+        return sorted.size();
+    }
+
+    private static int spawnEvent(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData saved = WorldRoadSavedData.get(level);
+
+        String typeId = StringArgumentType.getString(ctx, "typeId");
+        RoadEventType type = RoadEventRegistry.get(typeId).orElse(null);
+        if (type == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[spawn_event] Unknown typeId '" + typeId + "'. Use event_registry to list."));
+            return 0;
+        }
+        if (type.worldUnique() && saved.isWorldUniquePlaced(typeId)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[spawn_event] type '" + typeId + "' is worldUnique and already placed."));
+            return 0;
+        }
+
+        BlockPos pos = player.blockPosition();
+        net.minecraft.util.RandomSource rng = net.minecraft.util.RandomSource.create(
+                ((long) pos.getX() << 32) ^ pos.getZ() ^ level.getGameTime());
+        EventPlacementContext placeCtx = new EventPlacementContext(
+                level, null, java.util.Optional.empty(), pos, level.getGameTime(), rng);
+
+        RoadEvent ev;
+        try {
+            ev = type.factory().create(placeCtx);
+        } catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[spawn_event] factory threw: " + e));
+            return 0;
+        }
+        if (ev == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[spawn_event] factory returned null (terrain unsuitable?)."));
+            return 0;
+        }
+        saved.registerEvent(ev);
+        if (type.worldUnique()) saved.markWorldUniquePlaced(typeId);
+        saved.markDirty();
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[spawn_event] placed " + typeId
+                + " id=" + ev.eventId().toString().substring(0, 8)
+                + " at " + ev.position().toShortString()),
+                false);
+        return 1;
+    }
+
+    private static int despawnEvent(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData saved = WorldRoadSavedData.get(level);
+        WorldRoadGraph graph = saved.getGraph();
+        String prefix = StringArgumentType.getString(ctx, "eventId").toLowerCase(Locale.ROOT);
+
+        RoadEvent target = null;
+        for (RoadEvent ev : saved.allEvents()) {
+            if (ev.eventId().toString().startsWith(prefix)) { target = ev; break; }
+        }
+        if (target == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "[despawn_event] No event matches prefix '" + prefix + "'."));
+            return 0;
+        }
+        EventLifecycleSystem.despawnEvent(level, saved, graph, target);
+        saved.markDirty();
+        String shortId = target.eventId().toString().substring(0, 8);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[despawn_event] removed " + shortId), false);
+        return 1;
+    }
+
+    private static int eventRegistry(CommandContext<CommandSourceStack> ctx) {
+        java.util.Map<String, RoadEventType> all = RoadEventRegistry.all();
+        if (all.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "[event_registry] no event types registered (set -Dlitv.testEvents=true to register placeholders)."),
+                    false);
+            return 0;
+        }
+        for (RoadEventType t : all.values()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + t.typeId()
+                    + " category=" + t.category()
+                    + " permanence=" + t.permanence()
+                    + " rarity=" + t.rarity()
+                    + " spacing=" + t.minSpacingBlocks()
+                    + (t.worldUnique() ? " [worldUnique]" : "")
+                    + " tiers=" + t.applicableTiers()
+                    + (t.applicableBiomes().isEmpty() ? "" : " biomes=" + t.applicableBiomes())),
+                    false);
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[event_registry] " + all.size() + " type(s) registered."), false);
+        return all.size();
+    }
+
+    private static int eventStats(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        WorldRoadSavedData saved = WorldRoadSavedData.get(level);
+        java.util.List<RoadEvent> all = saved.allEvents();
+
+        java.util.Map<String, Integer> byType = new java.util.HashMap<>();
+        java.util.Map<RoadEventType.EventCategory, Integer> byCategory =
+                new java.util.HashMap<>();
+        for (RoadEvent e : all) {
+            byType.merge(e.typeId(), 1, Integer::sum);
+            RoadEventRegistry.get(e.typeId()).ifPresent(t ->
+                    byCategory.merge(t.category(), 1, Integer::sum));
+        }
+
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "[event_stats] total=" + all.size()
+                + " worldUniquePlaced=" + saved.getWorldUniqueTypesPlaced()),
+                false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  byCategory=" + byCategory), false);
+        for (var e : byType.entrySet()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + e.getKey() + " = " + e.getValue()), false);
+        }
+        return all.size();
+    }
+
+    private static long distSqXZ(BlockPos a, BlockPos b) {
+        long dx = (long) a.getX() - b.getX();
+        long dz = (long) a.getZ() - b.getZ();
+        return dx * dx + dz * dz;
     }
 }

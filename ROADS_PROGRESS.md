@@ -2236,3 +2236,244 @@ returns 403. Static inspection confirms:
 **Phase 10 — events (travelers, lone structures, junctions, landmarks)**.
 Phase 9's `EdgeDeathEvent` and `VillagePlacementEvent` hooks are available
 for Phase 10 lore generators / event spawners to subscribe to.
+
+---
+
+## Phase 10 — Event system infrastructure
+
+**Date:** 2026-04-24
+
+### Summary
+
+Lays the groundwork for four categories of road events (TRAVELER /
+LONE_STRUCTURE / JUNCTION / LANDMARK) without shipping any real event
+content. Event types are registered at mod init via a static
+`RoadEventRegistry`, planned deterministically along an edge or at a node by
+`EventSitePlanner`, materialised by per-type `EventFactory`s through
+`EventRealizer`, persisted alongside the road graph in `WorldRoadSavedData`,
+and despawned on expiry by `EventLifecycleSystem` (running daily from
+`KingdomTaxEvent` alongside the Phase 9 dead-edge sweep).
+
+Two placeholder event types — `test_marker` (COMMON, PERMANENT,
+LONE_STRUCTURE — polished andesite + redstone torch every 2000 blocks on
+CONNECTOR/TRUNK) and `test_ephemeral` (UNCOMMON, EPHEMERAL, JUNCTION —
+2x2 leaves cluster with a 5-day lifespan) — register only when the JVM is
+launched with `-Dlitv.testEvents=true`. They exist for regression testing
+of the registry, planning, realisation, persistence, and expiry paths.
+
+### Files created (new package: `Village/Roads/Events/`)
+
+**`RoadEvent.java`**
+- Record `(eventId, typeId, position, containingEdgeId, containingNodeId,
+  placedTick, expiresAtTick, properties, historyRefId)` with Codec.
+- Helpers: `isPermanent()`, `hasExpired(currentTick)`, `withProperty`,
+  `withHistoryRef`. Properties bag is `Map<String,String>` for cheap codec
+  + extensibility.
+- Codec uses `optionalFieldOf` for every nullable / optional field so old
+  saves with no events load cleanly.
+
+**`RoadEventType.java`**
+- Record `(typeId, category, permanence, rarity, minSpacingBlocks,
+  applicableTiers, applicableBiomes, worldUnique, factory)`.
+- Enums: `EventCategory` (TRAVELER / LONE_STRUCTURE / JUNCTION / LANDMARK),
+  `EventPermanence` (PERMANENT / EPHEMERAL / MIXED),
+  `EventRarity` (COMMON 1.0× / UNCOMMON 0.5× / RARE 0.1× / WORLD_UNIQUE).
+- The factory and predicates are code-only — only `typeId` is persisted on
+  events; the type is re-resolved through the registry on load.
+
+**`EventFactory.java`**
+- Interface `(create(EventPlacementContext) -> RoadEvent | null,
+  despawn(level, event))`.
+
+**`EventPlacementContext.java`**
+- Record `(level, edge, node, sitePosition, currentTick, rng)` passed to
+  `create`.
+
+**`RoadEventRegistry.java`**
+- Static `LinkedHashMap<String, RoadEventType>` with `register`, `get`,
+  `all`, `byCategory`, `applicableTo(edge|node)`, `worldUniqueTypes`.
+- JUNCTION-only types are filtered out of the edge applicability list;
+  edge-only categories are filtered out of node applicability.
+
+**`EventSitePlanner.java`**
+- `planSitesForEdge(edge, graph, level)` walks `edge.blockPath()` by XZ
+  block distance, steps every `minSpacingBlocks`, applies biome filter via
+  `WorldAtlas.getCellAtBlock`, and rolls a deterministic per-slot float
+  against `rarity.targetDensityMultiplier()` seeded by
+  `edgeId XOR worldSeed XOR typeIdHash XOR slotIndex`.
+- A second pass enforces same-type spacing along path order.
+- `planSitesForNode(node, graph, level)` is a single deterministic roll
+  per (node, type) with rarity-mapped probabilities (COMMON 0.30 →
+  WORLD_UNIQUE 1.0).
+
+**`EventRealizer.java`**
+- `realizeEvents(level, edge|node, plans, graph)` iterates planned sites,
+  invokes each factory inside
+  `RoadPlacementContext.withSuppressionReturning(...)` (new helper),
+  registers the result in `WorldRoadSavedData`, threads the new event UUID
+  into the owner's `eventIds` list, and marks world-unique types placed.
+- Idempotency: re-realising an edge skips planned sites whose type already
+  has an event within `minSpacingBlocks` on the same owner.
+- Factory exceptions are caught + logged; bad factories don't abort the
+  rest of the plan.
+
+**`EventLifecycleSystem.java`**
+- `maybeTickExpirations(level)` self-throttles to once per game day.
+- `tickExpirations` collects expired events, calls each factory's
+  `despawn` (catching exceptions), removes the event from owner edge/node
+  `eventIds`, removes from `WorldRoadSavedData.events`, and unmarks the
+  world-unique flag if applicable so the type can re-place later.
+- `despawnEvent(level, saved, graph, event)` is exposed for the
+  `despawn_event` debug command.
+
+**`PlaceholderEvents.java`**
+- `test_marker`: polished_andesite at offset (+3X, ground) with a
+  redstone_torch on top. PERMANENT.
+- `test_ephemeral`: 2x2 persistent oak_leaves block at node.above().
+  EPHEMERAL with `currentTick + 5 days` expiry.
+- `registerIfEnabled()` only registers when `-Dlitv.testEvents=true`;
+  `register()` is a force-on entry point used by tests.
+
+### Files modified
+
+**`Village/Roads/Graph/RoadEdge.java`**
+- Added `List<UUID> eventIds` field; codec slot lives in the `ExtrasTuple`
+  half (now 3 fields, still under the 16-arity ceiling). Accessors:
+  `getEventIds`, `addEventId`, `removeEventId`, `clearEventIds`.
+
+**`Village/Roads/Graph/RoadNode.java`**
+- Added `List<UUID> eventIds` field; codec is now 7 fields. Same accessors
+  as RoadEdge.
+
+**`Networking/WorldRoadSavedData.java`**
+- `Snapshot` record gained `Map<UUID, RoadEvent> events` and
+  `List<String> worldUniqueTypesPlaced` (codec is now 8 fields). Both
+  `optionalFieldOf` so pre-Phase-10 saves load cleanly.
+- Added accessor methods: `getEvent`, `registerEvent`, `updateEvent`,
+  `removeEvent`, `allEvents`, `eventsForEdge`, `eventsForNode`,
+  `isWorldUniquePlaced`, `markWorldUniquePlaced`,
+  `unmarkWorldUniquePlaced`, `getWorldUniqueTypesPlaced`.
+
+**`Village/Roads/Realization/RoadPlacementContext.java`**
+- Added `withSuppressionReturning(Supplier<T>)` that mirrors the existing
+  `Runnable` flavour but allows the work to return a value. Used by
+  `EventRealizer` to capture the factory's `RoadEvent` while keeping
+  terrain-change suppression active.
+
+**`Village/Roads/Realization/EdgeRealizer.java`**
+- After shelter placement, calls `EventSitePlanner.planSitesForEdge` and
+  `EventRealizer.realizeEvents`. Then for each unprocessed adjacent node
+  (by empty `eventIds`) plans + realises node events. Whole event block
+  is wrapped in try/catch so an event-placement bug never aborts road
+  realisation.
+
+**`Events/KingdomTaxEvent.java`**
+- After the Phase 9 lifecycle calls, invokes
+  `EventLifecycleSystem.maybeTickExpirations(level)`.
+
+**`Lore/HistoryTextGenerator.java`**
+- Added `recordEventInHistory(typeId, description, relatedKingdomId, tick)
+  -> UUID`. Phase 10 hook only — no event factories invoke it yet. Logs
+  the description and returns a generated UUID.
+
+**`Life_in_the_village.java`**
+- `commonSetup` calls `PlaceholderEvents.registerIfEnabled()` so the test
+  types appear when launched with `-Dlitv.testEvents=true`.
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Six new subcommands under `/liv road debug`:
+  - `events <targetId>` — argument is matched against edge then node UUIDs
+    by prefix. Prints type, position, placed tick, expiry delta.
+  - `events_near <radius>` — sorts saved events by distance from the
+    player; useful for "what's around me?" inspection.
+  - `spawn_event <typeId>` — calls the type's factory at the player's
+    position with no edge/node owner. Refuses if `worldUnique` is already
+    placed. Marks `WorldRoadSavedData` dirty.
+  - `despawn_event <eventId>` — prefix-matches an event UUID and routes
+    through `EventLifecycleSystem.despawnEvent` so factory teardown,
+    owner-list cleanup, and saved-data removal all run.
+  - `event_registry` — lists every registered type with category /
+    permanence / rarity / spacing / tiers.
+  - `event_stats` — total events, by category, by type, plus the
+    world-unique-placed set.
+
+### Design decisions
+
+**Property bag uses `Map<String,String>` rather than typed records.**
+Phase 10 doesn't yet know what data future events will store; a string
+map is the cheapest way to keep the codec stable across future event
+types without adding a `Codec.dispatch` for properties. Specific event
+types that need richer state can encode multiple keys.
+
+**Re-planning is deterministic, realisation is idempotent.** Re-realising
+an edge calls the planner again; the planner produces the same site
+positions; the realiser drops any planned site that already has an event
+of the same type within `minSpacingBlocks`. The combined effect is
+equivalent to "place once, never again", but without needing a separate
+"events placed" persistent flag.
+
+**Node events trigger from the first adjacent edge's realisation.** Nodes
+don't have their own realise hook. The first edge to be realised that
+touches a node with empty `eventIds` runs the node planner. Re-running
+the planner on a later edge realisation no-ops because `eventIds` is
+non-empty. If a node has no realised edges, its events stay deferred —
+acceptable, since unrealised nodes aren't visible anyway.
+
+**`isCapital`-style filter is not used here.** Unlike Phase 9's
+network-alignment scoring, Phase 10 events apply uniformly across edges
+of the eligible tier. Specific event types can constrain themselves
+through `applicableTiers` and `applicableBiomes`.
+
+**World-unique gates run twice.** The planner skips a world-unique type
+already placed (cheap pre-filter); the realiser re-checks immediately
+before invoking the factory (race-safe in case two edges realise the
+same tick). The factory is responsible for its own internal
+race-tolerance — only one of the two callers will end up registering the
+event in `WorldRoadSavedData`.
+
+**`unmarkWorldUniquePlaced` on despawn.** When the only world-unique
+event of its type expires, the slot opens up again. Future placements of
+the same type are eligible. This avoids permanent lockout if a temporary
+landmark expires mid-world-life.
+
+### Known tuning candidates
+
+- **Density multipliers** are guesses (`COMMON 1.0 / UNCOMMON 0.5 /
+  RARE 0.1`). They scale the per-slot probability so a long edge gets
+  more sites; a short edge gets fewer. Likely too dense at COMMON for
+  some types — worth checking once real types ship.
+- **Node-event probabilities** (COMMON 0.30 → RARE 0.05) are picks; if
+  junction events feel rare in playtest the COMMON bucket can rise.
+- **`test_marker` offset** is hardcoded `+3X` rather than perpendicular to
+  the road direction. Real events should compute perpendicular like
+  `RoadLightingPlacer`. Acceptable for placeholder.
+- **Event-event spacing across types** is unenforced. Two different
+  COMMON types can stack on the same block. If clutter becomes an issue,
+  add a global-spacing pass to the planner.
+
+### Observations
+
+The build can't be verified in this sandbox (NeoForge maven returns 403).
+Static inspection confirms:
+- All five new codec sites stay within DFU's 16-field arity ceiling
+  (BaseTuple 16, ExtrasTuple 3, RoadNode 7, Snapshot 8, RoadEvent 9).
+- The `ExtrasTuple` slot is the only place RoadEdge can grow without
+  breaking the 16-field limit; future road-edge fields should bundle here
+  too.
+- `Codec.unboundedMap(UUID_CODEC, RoadEvent.CODEC)` mirrors the existing
+  `edgeShelters` codec pattern; persistence behaviour should match.
+
+### Carryovers
+
+- No real event types yet. Spec says they come after the NPC rework.
+- History integration is a hook only; nothing invokes it.
+- `EventSitePlanner.planSitesForNode` does not honour `minSpacingBlocks`
+  across types yet — single roll per (node, type). Add if needed.
+- Test placeholder events default off; flip `-Dlitv.testEvents=true` to
+  exercise them.
+
+### Next
+
+**Phase 11 — player-initiated road construction**. Real event types will
+arrive as small additions in later phases; Phase 11 takes precedence per
+the road plan.

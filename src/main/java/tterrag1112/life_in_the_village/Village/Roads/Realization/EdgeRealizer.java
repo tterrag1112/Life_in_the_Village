@@ -18,6 +18,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Events.EventRealizer;
+import tterrag1112.life_in_the_village.Village.Roads.Events.EventSitePlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingPlacer;
 import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -168,6 +170,37 @@ public final class EdgeRealizer {
 
         // Shelter planning — only for long GREAT_ROAD and TRUNK edges, only on first realization
         placeSheltersIfAbsent(level, edge, graph, roadData, culture);
+
+        // Phase 10 — road events. Plan deterministic sites and run each type's
+        // factory. Re-realisation is idempotent because planning is deterministic
+        // and the realiser dedupes by spacing.
+        try {
+            List<EventSitePlanner.PlannedEvent> plans =
+                    EventSitePlanner.planSitesForEdge(edge, graph, level);
+            int placed = EventRealizer.realizeEvents(level, edge, plans, graph);
+
+            // Trigger node-event placement on adjacent nodes that haven't been
+            // processed yet. We use first-edge-realisation as the node trigger
+            // because nodes don't have their own realisation hook.
+            for (java.util.UUID nodeId : List.of(edge.getNodeAId(), edge.getNodeBId())) {
+                tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode node =
+                        graph.getNode(nodeId);
+                if (node == null) continue;
+                if (!node.getEventIds().isEmpty()) continue; // already processed
+                List<EventSitePlanner.PlannedEvent> nodePlans =
+                        EventSitePlanner.planSitesForNode(node, graph, level);
+                placed += EventRealizer.realizeEvents(level, node, nodePlans, graph);
+            }
+
+            if (placed > 0) {
+                System.out.println("[EdgeRealizer] placed " + placed
+                        + " road event(s) on edge " + shortId);
+            }
+        } catch (Exception e) {
+            // Event placement must never abort road realisation.
+            System.err.println("[EdgeRealizer] event placement threw on edge "
+                    + shortId + ": " + e);
+        }
     }
 
     // =========================================================================

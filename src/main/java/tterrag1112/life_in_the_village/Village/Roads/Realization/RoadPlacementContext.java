@@ -35,4 +35,20 @@ public final class RoadPlacementContext {
     public static boolean isSuppressed() {
         return SUPPRESS.get();
     }
+
+    /**
+     * Same semantics as {@link #withSuppression(Runnable)} but allows the
+     * supplied work to return a value. Used by Phase 10 event realisation,
+     * where a factory call produces a {@code RoadEvent} that needs to be
+     * passed back to the caller.
+     */
+    public static <T> T withSuppressionReturning(java.util.function.Supplier<T> s) {
+        boolean prev = SUPPRESS.get();
+        SUPPRESS.set(true);
+        try {
+            return s.get();
+        } finally {
+            SUPPRESS.set(prev);
+        }
+    }
 }

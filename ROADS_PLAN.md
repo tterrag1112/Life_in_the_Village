@@ -1,6 +1,6 @@
 # Roads System — Canonical Plan
 
-**Status:** Phase 9 complete. Next in plan: Phase 10 — events (travelers, lone structures, landmarks).
+**Status:** Phase 10 infrastructure complete (no real event types yet). Next in plan: Phase 11 — player-initiated road construction.
 **Owner:** Human-managed. Claude Code reads; does not edit without explicit permission.
 **Last updated:** 2026-04-24
 
@@ -401,22 +401,26 @@ Two simulation mechanics that wire population change to the road network: dead e
 
 **Exit criteria:** ✓ A village removed via `village_death` causes its connectors to be marked dead within one in-game day. Forcing a phase via `force_death_phase` makes the visual progression observable end-to-end. New villages within an existing kingdom score higher when placed near great roads (+0.4 max contribution). Great roads remain unchanged (invariant 3 preserved).
 
-### Phase 10 — Event system expansion
+### Phase 10 — Event system infrastructure ✓ COMPLETE (infrastructure)
 
-#### Phase 10a — Structures along roads
-- Lone buildings at edge creation: inns, shrines, ruined watchtowers (Old Realm), toll houses, caravanserais
-- Real `Building` entries, no village parent, can host `TownspersonMob`s
-- Roadside village tags: `ROADSIDE_INN`, `ROADSIDE_WAYSTATION`; placement prefers trunk-adjacent cells at biome boundaries or major river crossings
+Phase 10 ships the framework for road events without bundling specific event content. Individual event types (travellers, lone roadside structures, junction events, landmarks) are added as small additions later, after the NPC rework. Two placeholder types ship behind `-Dlitv.testEvents=true` for regression testing the pipeline.
 
-#### Phase 10b — Travelling groups
-- Additional `TravellingGroup` types: pilgrims, migrants, kingdom messengers, refugees
-- New `RoadEvent` types: `MERCHANT_CONVOY`, `ROYAL_PROCESSION`, `DESERTER_BAND` (cross-kingdom only), `PILGRIMAGE`
-- Bandit event density modulated by maintenance (low = more) and cross-kingdom flag
+**Deliverables (implemented):**
+1. `Village/Roads/Events/RoadEvent` — record `(eventId, typeId, position, containingEdgeId, containingNodeId, placedTick, expiresAtTick, properties, historyRefId)` with Codec. Property bag is `Map<String,String>` for cheap codec + extensibility. ✓
+2. `Village/Roads/Events/RoadEventType` — record + enums (`EventCategory`, `EventPermanence`, `EventRarity`); the `EventFactory` interface and `EventPlacementContext` carrier record. ✓
+3. `Village/Roads/Events/RoadEventRegistry` — static `LinkedHashMap` registry; lookups by typeId / category / edge / node applicability + worldUnique types. ✓
+4. `Village/Roads/Events/EventSitePlanner` — deterministic per-edge / per-node planner. Edge planner walks `blockPath` by XZ distance, applies biome filter via `WorldAtlas.getCellAtBlock`, rolls per-slot via rarity-scaled probability seeded from `edgeId XOR worldSeed XOR typeIdHash XOR slotIndex`, and enforces same-type spacing. Node planner is a single deterministic roll per (node, type). ✓
+5. `Village/Roads/Events/EventRealizer` — calls each factory inside `RoadPlacementContext.withSuppressionReturning(...)` (new helper), registers the result, threads the event UUID into the owner's `eventIds`, and flips world-unique flags. Idempotent: re-realising an edge skips sites whose type is already placed within `minSpacingBlocks`. ✓
+6. Graph attachments: `RoadEdge` and `RoadNode` gained `List<UUID> eventIds`. RoadEdge's slot lives in the existing `ExtrasTuple` half so the codec stays under DFU's 16-field arity ceiling. ✓
+7. `WorldRoadSavedData` — gained `Map<UUID, RoadEvent> events` and `Set<String> worldUniqueTypesPlaced`, both `optionalFieldOf` so pre-Phase-10 saves load cleanly. Snapshot codec is now 8 fields. ✓
+8. `Village/Roads/Events/EventLifecycleSystem` — once-per-day expiration sweep wired into `KingdomTaxEvent` alongside the Phase 9 dead-edge sweep. Despawn calls each factory's `despawn`, removes the event from owner edges/nodes, removes from saved data, and unmarks world-unique flags so the slot reopens. ✓
+9. `HistoryTextGenerator.recordEventInHistory(typeId, description, kingdomId, tick) -> UUID` — Phase 10 hook only; no event factories invoke it yet. ✓
+10. Two placeholder types behind `-Dlitv.testEvents=true`: `test_marker` (COMMON, PERMANENT, LONE_STRUCTURE, polished_andesite + redstone_torch every 2000 blocks on CONNECTOR/TRUNK) and `test_ephemeral` (UNCOMMON, EPHEMERAL, JUNCTION, 2x2 leaves cluster with 5-day lifespan). Registered in `Life_in_the_village.commonSetup` via `PlaceholderEvents.registerIfEnabled()`. ✓
+11. Debug commands under `/liv road debug`: `events <targetId>`, `events_near <radius>`, `spawn_event <typeId>`, `despawn_event <eventId>`, `event_registry`, `event_stats`. ✓
 
-#### Phase 10c — Landmarks and junction activity
-- Named bridge landmarks: wide river crossings (4+ block span) promoted to named POIs
-- Events bound to `TRUNK_JUNCTION` nodes (scuffle, camp, market day)
-- Caravan rerouting on blocked segments
+**Future content (not implemented):** specific event types (inns, shrines, ruined watchtowers, toll houses, caravanserais, merchant convoys, royal processions, deserter bands, pilgrimages, named bridge landmarks, junction scuffles / market days, bandit-density modulation, caravan rerouting). These plug into the Phase 10 infrastructure as new `RoadEventType` registrations + factories.
+
+**Exit criteria:** ✓ Code compiles with the codec arity split. Registry, planner, realiser, persistence, lifecycle, despawn pipeline, and debug commands are all in place. Placeholder events demonstrate end-to-end placement → expiry → despawn.
 
 ### Phase 11 — Player-initiated road construction
 
@@ -459,7 +463,7 @@ Two simulation mechanics that wire population change to the road network: dead e
 17. Phase 7g — lighting + culture palettes
 18. Phase 8a–d — player-facing gameplay
 19. Phase 9 — network evolution (✓ complete)
-20. Phase 10a–c — events, travelers, landmarks
+20. Phase 10 — event system infrastructure (✓ complete; content arrives later)
 21. Phase 11 — player construction
 22. Phase 12 — POI subroads (deferred)
 23. Phase 13 — sea unification (optional)

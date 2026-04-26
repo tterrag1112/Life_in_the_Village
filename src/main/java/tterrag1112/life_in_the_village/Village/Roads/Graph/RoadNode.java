@@ -81,16 +81,21 @@ public class RoadNode {
                     .optionalFieldOf("decorationPositions", new ArrayList<>())
                     .forGetter(n -> n.decorationPositions),
             GatewayLink.CODEC.optionalFieldOf("gatewayLink")
-                    .forGetter(n -> n.gatewayLink)
+                    .forGetter(n -> n.gatewayLink),
+            UUID_CODEC.listOf()
+                    .optionalFieldOf("eventIds", new ArrayList<>())
+                    .forGetter(n -> n.eventIds)
     ).apply(i, RoadNode::fromCodec));
 
     private static RoadNode fromCodec(UUID nodeId, BlockPos position, NodeType type,
                                       Optional<UUID> kingdomAffinity,
                                       List<BlockPos> decorationPositions,
-                                      Optional<GatewayLink> gatewayLink) {
+                                      Optional<GatewayLink> gatewayLink,
+                                      List<UUID> eventIds) {
         RoadNode n = new RoadNode(nodeId, position, type, kingdomAffinity);
         n.decorationPositions = new ArrayList<>(decorationPositions);
         n.gatewayLink = gatewayLink;
+        n.eventIds = new ArrayList<>(eventIds);
         return n;
     }
 
@@ -109,6 +114,14 @@ public class RoadNode {
      * Always {@link Optional#empty()} until Phase 7f Slice 3.
      */
     private Optional<GatewayLink> gatewayLink = Optional.empty();
+
+    /**
+     * Phase 10 — UUIDs of road events ({@link
+     * tterrag1112.life_in_the_village.Village.Roads.Events.RoadEvent}) attached
+     * to this node (junction or landmark events). Mutated by the event realiser
+     * and lifecycle system.
+     */
+    private List<UUID> eventIds = new ArrayList<>();
 
     // ── Constructor ──────────────────────────────────────────────────────────
 
@@ -142,6 +155,13 @@ public class RoadNode {
     }
 
     public void clearDecorationPositions() { decorationPositions.clear(); }
+
+    // ── Event attachments (Phase 10) ─────────────────────────────────────────
+
+    public List<UUID> getEventIds()           { return eventIds; }
+    public void addEventId(UUID id)           { eventIds.add(id); }
+    public boolean removeEventId(UUID id)     { return eventIds.remove(id); }
+    public void clearEventIds()               { eventIds.clear(); }
 
     // ── Standard object methods ──────────────────────────────────────────────
 
