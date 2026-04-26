@@ -990,3 +990,25 @@ class LawDecisionTickSystem implements TickSubsystem {
         tterrag1112.life_in_the_village.Npc.Laws.LawDecisionEngine.dailyTick(ctx.level());
     }
 }
+
+// =============================================================================
+// CRIME TRIAL (once per in-game day, interval = 24000, priority = 198)
+// =============================================================================
+
+/**
+ * Phase 3 doc 19 trial-execution + cold-report sweep. Runs every
+ * scheduled trial whose tick has passed and ages stale FILED reports
+ * to COLD after 30 days. Priority 198 — just after law decisions
+ * (197), so a same-day enacted DOUBLE_PUNISHMENT is read by the trial
+ * that fires immediately afterward.
+ */
+class CrimeTrialTickSystem implements TickSubsystem {
+    @Override public String name()     { return "crime_trial"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 198; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Crime.TrialExecutor.runDue(ctx.level());
+    }
+}

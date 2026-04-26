@@ -98,6 +98,12 @@ public class ModModEvents {
         tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
                 .registerLeaveListener(tterrag1112.life_in_the_village.Npc.BusinessFront
                         .GreeterAssignment::onPlayerLeft);
+        // Phase 3 task 19: trespassing detection on the same enter
+        // listener. CrimeDetectionHooks decides whether the entry is
+        // criminal (RESIDENCE owned by another player).
+        tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
+                .registerEnterListener(tterrag1112.life_in_the_village.Npc.Crime
+                        .CrimeDetectionHooks::onPlayerEnteredBuilding);
 
         System.out.println("Loading village types...");
         manager.listResources("village_types",
@@ -261,6 +267,7 @@ public class ModModEvents {
         EconomyDebugCommand.register(event.getDispatcher());
         LawDebugCommand.register(event.getDispatcher());
         BusinessDebugCommand.register(event.getDispatcher());
+        CrimeDebugCommand.register(event.getDispatcher());
 
     }
 
@@ -450,8 +457,49 @@ public class ModModEvents {
                                             + village.getName() + "!")
                             .withStyle(net.minecraft.ChatFormatting.RED),
                     false);
+
+            // Phase 3 task 19: file a CrimeReport so the constable can
+            // investigate and a trial can follow. THEFT_MINOR vs.
+            // THEFT_MAJOR uses an item-value heuristic: estimate the
+            // total stolen value from the snapshot/current diff.
+            long totalValue = estimateStolenValue(snapshot, menu);
+            tterrag1112.life_in_the_village.Npc.Crime.CrimeType crimeType =
+                    totalValue >= 20L
+                            ? tterrag1112.life_in_the_village.Npc.Crime.CrimeType.THEFT_MAJOR
+                            : tterrag1112.life_in_the_village.Npc.Crime.CrimeType.THEFT_MINOR;
+            tterrag1112.life_in_the_village.Npc.Crime.CrimeReporter
+                    .builder(crimeType, level)
+                    .perpetrator(player.getUUID())
+                    .reportedBy(witness.getUUID())
+                    .location(containerPos)
+                    .village(village.getId())
+                    .note("Container theft (~" + totalValue + " bronze)")
+                    .commit();
         }
         // No witness — theft succeeds silently, no reputation change
+    }
+
+    /**
+     * Estimates total bronze value of items removed from the snapshot.
+     * Uses {@link tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelper#getBaseSellPrice}
+     * which always returns a non-zero value.
+     */
+    private static long estimateStolenValue(java.util.Map<Integer, ItemStack> snapshot,
+                                            net.minecraft.world.inventory.AbstractContainerMenu menu) {
+        long total = 0L;
+        for (int i = 0; i < menu.slots.size(); i++) {
+            net.minecraft.world.inventory.Slot slot = menu.slots.get(i);
+            if (snapshot == null) continue;
+            ItemStack before = snapshot.getOrDefault(i, ItemStack.EMPTY);
+            if (before.isEmpty()) continue;
+            ItemStack now = slot.getItem();
+            int removed = before.getCount() - now.getCount();
+            if (removed <= 0) continue;
+            long perUnit = tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelper
+                    .getBaseSellPrice(before.getItem());
+            total += perUnit * removed;
+        }
+        return total;
     }
     @SubscribeEvent
     public static void onTownspersonDeath(LivingDeathEvent event) {

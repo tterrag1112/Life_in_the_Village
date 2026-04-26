@@ -357,13 +357,39 @@ markets.
     - [ ] Player leader Laws UI panel — deferred (the proper Office
       tab GUI is itself a Phase 3 follow-up; `/law enact|repeal`
       stands in until then)
-- [ ] **19** Crime & justice
-    - [ ] CrimeType, CrimeReport, Trial, Punishment
-    - [ ] Detection hooks (theft, assault, vandalism, trespass, seal,
-      contract breach)
-    - [ ] Constable investigation goal
-    - [ ] Trial scheduling and execution
-    - [ ] Punishment executor
+- [x] **19** Crime & justice
+    - [x] `CrimeType` (13), `CrimeReport`, `Trial`, `Punishment` records
+      with codecs; `CrimeSavedData` indexed by village + accused + with
+      conviction counter
+    - [x] Detection hooks: theft (extends existing `onContainerClose`),
+      assault (LivingIncomingDamageEvent), murder (LivingDeathEvent),
+      vandalism (BlockEvent.BreakEvent), trespassing (presence-tracker
+      enter listener), seal violation (entry point), fraud (entry
+      point); CONTRACT_BREACH stub deferred to Phase 2 task 16
+      apprenticeship
+    - [x] `CrimeReporter` Builder — witness scan (16-block radius +
+      line-of-sight via AABB containment), `WITNESSED_CRIME_BY` /
+      `VICTIM_OF_CRIME_BY` memory writes, relationship -60, mood
+      shock, reputation drop
+    - [x] `ConstableInvestigationGoal` — picks highest-severity oldest
+      FILED report, walks to scene, validates witnesses via memory,
+      builds `TrialEvidence` weighted per spec, transitions to
+      TRIAL_SCHEDULED or DISMISSED
+    - [x] `TrialExecutor` daily tick (`crime_trial`, priority 198) —
+      runs due trials, picks bailiff/leader presider, computes
+      verdict via spec-line-215 credibility + judge skill +
+      Compassion bias, ages stale FILED → COLD after 30 days
+    - [x] `PunishmentSelector` reads `VillagePolicy` (DOUBLE_PUNISHMENT,
+      PARDON_FIRST_OFFENSE, BAN_EXECUTION) + repeat-offender ≥3
+      escalation
+    - [x] `PunishmentExecutor` — WARNING / FINE / RESTITUTION /
+      COMMUNITY_LABOR / DETENTION / EXILE / EXECUTION /
+      ITEM_CONFISCATION / OFFICE_BAR; SERIOUS+CAPITAL guilty record
+      kingdom history
+    - [x] `accuse_of_crime` player verb
+    - [x] Dialogue trees: `constable.investigation`, `trial.testimony`,
+      `trial.verdict-announcement`
+    - [x] `/crime list|report|trial|punish|convict` debug commands
 - [ ] **20** Religion & priest
     - [ ] 4 religion records, PRIEST profession
     - [ ] `PietyComponent`, temple treasury
@@ -828,5 +854,73 @@ Spec deviations:
 - `BusinessFrontScreen` is a compact custom Screen, not a re-skin of
   `NpcProfileScreen`. v1 prioritises functional flow over visual
   polish — Phase 5 may align styling with the profile screen.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 3 progress (next session)**: task 19 (crime & justice) complete.
+New package `Npc.Crime`:
+
+- 8 enums + 5 records (`CrimeType`, `CrimeSeverity`, `ReportStatus`,
+  `EvidenceType`, `TrialVerdict`, `PunishmentType`, `Punishment`,
+  `TrialEvidence`, `TrialTestimony`, `CrimeReport`, `Trial`).
+- `CrimeSavedData extends SavedData` — keyed by reportId + indexed by
+  village + accused + conviction counter; codec persists every
+  report and trial.
+- `CrimeReporter` Builder — single entry point for "a crime
+  happened"; runs witness scan (16-block AABB), writes
+  `WITNESSED_CRIME_BY` / `VICTIM_OF_CRIME_BY` memories, applies
+  relationship -60 + mood shock + reputation drop.
+- `CrimeDetectionHooks` (`@EventBusSubscriber`) — wires
+  LivingIncomingDamageEvent (ASSAULT), LivingDeathEvent (MURDER),
+  BlockEvent.BreakEvent (VANDALISM), presence-tracker enter listener
+  (TRESPASSING), entry-point methods for SEAL_VIOLATION + FRAUD that
+  Phase 5 / Phase 2-task-16 fill in.
+- `ConstableInvestigationGoal` (registered at `P_WORK_PRIMARY` via
+  `ProfessionGoalFactory`) — gated by INVESTIGATE_CRIME power; walks
+  scene, validates witness memories, builds evidence list,
+  transitions to TRIAL_SCHEDULED (≥2 corroborating witnesses OR
+  physical-item note) or DISMISSED.
+- `TrialExecutor` daily tick subsystem (`crime_trial`, priority 198)
+  — runs due trials per spec line 215 credibility + judge skill +
+  Compassion bias formula; ages stale FILED → COLD after 30 days.
+- `PunishmentSelector` reads `VillagePolicy.hasLaw` for
+  DOUBLE_PUNISHMENT (severity bump), PARDON_FIRST_OFFENSE (downgrade
+  to WARNING), BAN_EXECUTION (substitute EXILE); repeat-offender ≥3
+  priors swaps to the spec table's repeat row.
+- `PunishmentExecutor` applies all 9 PunishmentTypes; SERIOUS /
+  CAPITAL guilty verdicts record `DECREE_ISSUED` kingdom history.
+- `accuse_of_crime` player verb; 3 dialogue trees
+  (`constable.investigation`, `trial.testimony`,
+  `trial.verdict-announcement`).
+- `/crime list|report|trial|punish|convict` debug commands.
+
+Existing theft hook (`ModModEvents.onContainerClose`) extended:
+witnessed theft now files a CrimeReport with THEFT_MINOR /
+THEFT_MAJOR based on a per-stack value estimate via
+`MarketPriceHelper.getBaseSellPrice`.
+
+Spec deviations + deferrals (logged in 19 Revision Notes):
+- Self-defense exemption checks `getLastHurtByMob() != null` rather
+  than a tick-window timestamp (no public timestamp accessor in
+  this Minecraft version).
+- DETENTION ships as a `setCurrentActivity` + chat warning; the
+  movement-tether implementation (spec "Things to flag" #3) lands
+  with the Phase 4 jobs/AI refactor.
+- ITEM_CONFISCATION + COMMUNITY_LABOR are flag-only; the actual
+  inventory removal + JobPosting wiring lands with the dependent
+  subsystems (Phase 4 jobs).
+- CONTRACT_BREACH detection deferred until Phase 2 task 16
+  (apprenticeship) ships.
+- PERJURY detection is a stub; full check in Phase 5.
+- Repeat-offender threshold counts lifetime convictions; rolling-
+  window counting deferred per spec "Things to flag" #5.
+
+Audit-discovered fixes: `LivingEntity.getLastHurtByMobTimestamp()`
+doesn't exist on this Minecraft version (switched to
+`getLastHurtByMob() != null`); `Player.hasPermissions(int)` doesn't
+either (switched to `isCreative() || isSpectator()` for the
+vandalism-bypass check).
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

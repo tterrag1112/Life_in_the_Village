@@ -374,3 +374,105 @@ Phase 3 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### 2026-04-26 — Phase 3 wiring session (task 19)
+
+Implementation in `tterrag1112.life_in_the_village.Npc.Crime` (8 enums
++ 5 records + Builder reporter + detection hooks +
+ConstableInvestigationGoal + TrialExecutor + PunishmentSelector +
+PunishmentExecutor) plus an extension to the existing
+`ModModEvents.onContainerClose` hook and a daily `crime_trial` tick
+subsystem.
+
+**Self-defense detection (spec "Things to flag" #1).** v1's
+`CrimeReporter.isSelfDefense` checks `attacker.getLastHurtByMob() !=
+null` — non-null means the vanilla LivingEntity tracker still
+considers the attacker under attack, so a swing back is treated as
+defensive and skips the report. The original timestamp-based check
+relied on `getLastHurtByMobTimestamp()` which isn't public in this
+Minecraft version (audit-caught). Phase 5 may refine.
+
+**Witness validation (spec "Things to flag" #2).** Investigation
+walks each witness's memory log via
+`hasMemoryOf(WITNESSED_CRIME_BY, perpetratorId)`. Memories that
+fall below the eviction threshold (5) are removed entirely by the
+daily decay sweep (Phase 0 task 02), so they disappear from the
+corroboration count automatically. There's no "low-fidelity but
+still present" case in the current decay model. Witness weight
+(0.2 / 0.5 / 0.8 band) maps from the spec line 215 credibility
+formula to discrete weights so the conviction-threshold math stays
+predictable.
+
+**Player evasion of punishment (spec "Things to flag" #3).** v1
+DETENTION is a `setCurrentActivity` flag + chat warning; players
+are not teleport-tethered. The spec's area-tether vs. movement-
+constraint question is left for the Phase 4 jobs / AI pass that
+adds the actual `DetentionGoal`. The Punishment record's
+`durationTicks` field is the data-side commitment so the future
+goal has nothing to retrofit.
+
+**Trial as scheduled event (spec "Things to flag" #4).** v1 fires
+trials from a daily TickSubsystem (`crime_trial`, priority 198) —
+not the Phase 5 `EventScheduler` because that doesn't ship until
+doc 32. The `Trial` record's `scheduledTick` field is read directly
+by `CrimeSavedData.dueTrials(now)`. When events expanded lands, the
+EventScheduler can wrap the trial without changing the Trial codec.
+
+**Repeat-offender threshold (spec "Things to flag" #5).** v1 counts
+lifetime convictions via `CrimeSavedData.priorConvictions(uuid)`,
+incremented every time `putTrial` lands a GUILTY verdict. Rolling-
+window counting (e.g. convictions within the last in-game year)
+lands as a follow-up.
+
+**Detection coverage:**
+- THEFT — extended `ModModEvents.onContainerClose`. Per-stack value
+  computed via `MarketPriceHelper.getBaseSellPrice`; total ≥20
+  bronze → THEFT_MAJOR, else THEFT_MINOR.
+- ASSAULT — `LivingIncomingDamageEvent`, NPC victim only; self-
+  defense exempts.
+- MURDER — `LivingDeathEvent`, same victim filter.
+- VANDALISM — `BlockEvent.BreakEvent` for any tracked
+  building-other-than-HOUSE; creative/spectator bypass.
+- TRESPASSING — `BuildingPresenceTracker` enter listener; only
+  fires for RESIDENCE-flagged buildings the player doesn't own.
+- SEAL_VIOLATION — `CrimeDetectionHooks.onSealViolation(...)` entry
+  point; the Phase 2 task 18 letter system calls in a follow-up.
+- FRAUD — `CrimeDetectionHooks.onFraudulentTrade(...)` entry point;
+  the Phase 5 trade-UI fairness pass calls it.
+- CONTRACT_BREACH — deferred until Phase 2 task 16 (apprenticeship)
+  ships.
+- PERJURY — stub; full Phase 5 check.
+
+**Punishment coverage:**
+- WARNING / FINE / RESTITUTION / OFFICE_BAR / EXILE / EXECUTION —
+  full execution. EXECUTION uses `entity.discard()` so the existing
+  `LivingDeathEvent` chain (farmer succession, assault detection)
+  isn't re-triggered for a court-ordered execution.
+- DETENTION — flag-only (movement tether is Phase 4).
+- COMMUNITY_LABOR — flag-only (JobPosting wiring is Phase 4).
+- ITEM_CONFISCATION — flag-only (inventory removal is Phase 4).
+
+**Kingdom history.** SERIOUS / CAPITAL guilty verdicts record a
+`DECREE_ISSUED` event ("Trial in {village}: {crime} → {punishment}").
+Reusing DECREE_ISSUED rather than adding a CRIME-specific
+HistoryEventType because the existing enum already covers the rough
+surface and adding a new entry would need codec migration testing
+the Phase 5 pass does anyway.
+
+**Constable goal priority.** Slotted at `P_WORK_PRIMARY` (8) — the
+goal's `canUse` short-circuits when the NPC doesn't currently hold
+INVESTIGATE_CRIME power, so non-constables pay only the
+goal-list-walking overhead.
+
+**Audit-discovered fixes** (during code-review audit pre-commit):
+- `LivingEntity.getLastHurtByMobTimestamp()` → `getLastHurtByMob() != null`.
+- `Player.hasPermissions(int)` → `isCreative() || isSpectator()`
+  for the vandalism creative-bypass.
+
+**Build verification deferred.** Sandbox can't reach
+`maven.neoforged.net` (HTTP 403 `host_not_allowed`). Code review
+covered imports / signatures / lambda captures / record codec arity.
+Exit-criteria scenarios (player commits witnessed theft → trial →
+punishment; DOUBLE_PUNISHMENT escalation; BAN_EXECUTION → EXILE;
+vacant constable + COLD after 30 days; save/reload preserves
+reports + trials) need a dev-box build to validate.
