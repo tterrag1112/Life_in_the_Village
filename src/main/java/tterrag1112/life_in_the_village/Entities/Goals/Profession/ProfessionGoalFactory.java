@@ -129,6 +129,12 @@ public final class ProfessionGoalFactory {
         // of milling around at home.
         npc.goalSelector.addGoal(P_SOCIAL_LOW,
                 new tterrag1112.life_in_the_village.Npc.Hobby.HobbyGoal(npc));
+        // Phase 3 task 24: greet players who enter the NPC's assigned
+        // business-front building. Slots between combat and work so
+        // greeting pre-empts production. Stays no-op until external
+        // GreeterAssignment.assign() seats a target player.
+        npc.goalSelector.addGoal(P_SOCIAL_HIGH,
+                new tterrag1112.life_in_the_village.Npc.BusinessFront.GreetPlayerGoal(npc));
         npc.goalSelector.addGoal(P_IDLE,      new WanderInBuildingGoal(npc));
         npc.goalSelector.addGoal(P_AMBIENT,   new LookAtPlayerGoal(npc, Player.class, 8.0f));
         npc.goalSelector.addGoal(P_AMBIENT,   new RandomLookAroundGoal(npc));

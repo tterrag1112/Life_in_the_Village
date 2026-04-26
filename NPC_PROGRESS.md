@@ -309,11 +309,30 @@ markets.
       - `BuyFromMarketGoal` → `BuyGoodsGoal` (renamed, routed)
     - [x] `VillagePolicy` Phase-3-doc-22 stub wired at quote time
     - [x] `/economy quote|channels|migrate-status` debug commands
-- [ ] **24** Business greeting
-    - [ ] `BuildingPresenceTracker` per-player
-    - [ ] `GreetPlayerGoal` assignment
-    - [ ] `BusinessFrontScreen` with profile as secondary
-    - [ ] Greeter dialogue trees (6 trees)
+- [x] **24** Business greeting
+    - [x] `BuildingPresenceTracker` per-player (player-tick driven,
+      enter/leave listeners, logout cleanup)
+    - [x] `BuildingTypeFlags` static lookup — BUSINESS_FRONT /
+      SERVICE_FRONT / RESIDENCE per spec table (separate class because
+      `BuildingType` is bare-entry; spec deviation logged in 24
+      Revision Notes)
+    - [x] `GreetPlayerGoal` slotted at `P_SOCIAL_HIGH` via
+      `ProfessionGoalFactory.registerUniversal`; externally seated by
+      `GreeterAssignment`; bark on APPROACH; auto-DISMISS after 600
+      ticks
+    - [x] `GreeterAssignment` selector — SERVICE_FACING > master >
+      first; 60-second re-greet cooldown
+    - [x] `BusinessFrontScreen` (compact functional layout: title +
+      type-aware primary action button + 4 verb buttons + View Profile
+      + Close)
+    - [x] `OpenBusinessFrontPacket` + `NpcProfileActionPacket.Action.OPEN_PROFILE`
+      back-route
+    - [x] `NpcInteractionHandler.tryRouteBusinessFront` — opens
+      BusinessFrontScreen during work hours; off-hours sends
+      "We're closed" + 3-strike mood penalty
+    - [x] 6 greeter dialogue trees + `greeting.business` fallback
+      registered in `StarterTrees.registerAll`
+    - [x] `/business presence|greeter|flags` debug commands
 - [x] **22** Village laws (before 19, since crime reads laws)
     - [x] `VillageLaw` enum (22 entries across 4 categories),
       `VillagePolicy` per village with codec
@@ -748,5 +767,66 @@ ship as registered no-ops awaiting their dependent subsystems
 (profession enum + guild refactor). Player Laws UI panel deferred
 behind the Office tab GUI follow-up; `/law` commands serve as the v1
 surface.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 3 progress (next session)**: task 24 (business greeting) complete.
+New package `Npc.BusinessFront`:
+
+- `BuildingPresence` record + `BuildingPresenceTracker` (player-tick
+  driven; enter/leave listener registry; logout cleanup).
+- `BuildingTypeFlags` (separate static lookup, not enum body) — BUSINESS_FRONT
+  / SERVICE_FRONT / RESIDENCE per the spec table.
+- `BusinessFrontStatus` enum + `BusinessFrontState` record + `BusinessFrontTracker`
+  (transient state map + closed-refusal counter).
+- `GreetPlayerGoal` (APPROACH / ATTENDING / FOLLOW_UP / DISMISS phases;
+  externally seated; bark on approach; 30s auto-dismiss).
+- `GreeterAssignment` (priority ranking — service-facing → master → first;
+  60s re-greet cooldown).
+
+GUI / packet wiring:
+- `OpenBusinessFrontPacket` (server→client, minimal payload).
+- `BusinessFrontScreen` (compact: title, type-aware primary action,
+  4 verb buttons, View Profile, Close).
+- `NpcProfileActionPacket.Action.OPEN_PROFILE` lets the View Profile
+  button bounce back through `NpcProfileHub.open`.
+
+Routing:
+- `NpcInteractionHandler.tryRouteBusinessFront` opens the new screen
+  during work hours iff player is in a BUSINESS_FRONT/SERVICE_FRONT
+  building AND the NPC works there. Off-hours sends "We're closed"
+  + INSULT_RECEIVED mood penalty (-2) on the third refusal in a visit.
+- Outside any business-front / in a residence: falls through to the
+  existing `NpcProfileHub.open` path.
+
+Tick + listeners:
+- `PlayerEventProximityHandler.onPlayerTick` calls
+  `BuildingPresenceTracker.onPlayerTick(player)` every tick (cheap —
+  one `getBuildingAt` per player).
+- `ServerStartingEvent` registers `GreeterAssignment::onPlayerEntered`
+  and `onPlayerLeft` as enter/leave listeners.
+- `PlayerLoggedOutEvent` clears the player's tracker entry.
+
+Goal wiring:
+- `GreetPlayerGoal` added at `P_SOCIAL_HIGH` (between combat and work)
+  via `ProfessionGoalFactory.registerUniversal`. Stays no-op until
+  `GreeterAssignment.assign()` seats a target.
+
+Dialogue:
+- 6 greeter trees + `greeting.business` fallback registered in
+  `StarterTrees.registerAll`. Phase 5 polishes the content.
+
+Debug: `/business presence|greeter <npc>|flags <type>`.
+
+Spec deviations:
+- `BuildingTypeFlags` is a separate static lookup rather than a
+  constructor-arg field on `BuildingType` because the enum has no
+  body and adding constructor args would touch every existing line.
+  Same surface (`hasBusinessFront`, `hasServiceFront`, `isResidence`).
+- `BusinessFrontScreen` is a compact custom Screen, not a re-skin of
+  `NpcProfileScreen`. v1 prioritises functional flow over visual
+  polish — Phase 5 may align styling with the profile screen.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

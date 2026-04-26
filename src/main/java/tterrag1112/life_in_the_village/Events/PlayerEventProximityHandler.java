@@ -24,6 +24,14 @@ public class PlayerEventProximityHandler {
     public static void onPlayerTick(PlayerTickEvent.Post event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         if (!(player.level() instanceof ServerLevel level)) return;
+
+        // Phase 3 task 24: building presence tracker — runs every tick
+        // so building enter/leave fires reliably for greeter assignment
+        // (and next session's TRESPASSING crime detection). Cheap: one
+        // getBuildingAt per player per tick.
+        tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
+                .onPlayerTick(player);
+
         if (level.getGameTime() % 100 != 0) return; // check every 5s
 
         VillageSavedData data = VillageSavedData.get(level);

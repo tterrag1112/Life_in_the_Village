@@ -77,6 +77,17 @@ public final class StarterTrees {
         DialogueRegistry.register(jobRefuse());
         DialogueRegistry.register(jobDeliver());
         DialogueRegistry.register(jobFire());
+
+        // ── Phase 3 task 24: business-front greeter trees (6 + fallback)
+        // Spec lines 198-204. Phase 5 polishes; v1 ships functional
+        // placeholders so the trees resolve by id.
+        DialogueRegistry.register(greetingBusinessShopkeeper());
+        DialogueRegistry.register(greetingBusinessCraftsman());
+        DialogueRegistry.register(greetingBusinessInnkeeper());
+        DialogueRegistry.register(greetingBusinessScribe());
+        DialogueRegistry.register(greetingBusinessHealer());
+        DialogueRegistry.register(greetingBusinessLibrarian());
+        DialogueRegistry.register(greetingBusinessFallback());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -369,5 +380,86 @@ public final class StarterTrees {
                 pool("That's it, then. We're done.",
                         "Take your tools and go.",
                         "I'll need you to move along."));
+    }
+
+    // ── Business-front greeter trees (Phase 3 task 24) ───────────────────
+
+    /**
+     * Greeter trees fire once when GreetPlayerGoal reaches ATTENDING.
+     * Subsequent right-clicks fall through to the normal greeting flow
+     * (greeting.player.* trees) per spec line 209.
+     */
+    private static DialogueTree greetingBusinessShopkeeper() {
+        return new DialogueTree("greeting.business.shopkeeper.work",
+                branch(relationshipAtLeast(40),
+                        pool("Welcome back, {listener.name}! Same as last time?",
+                                "Always good to see you. Browse — I'll be here.",
+                                "Coin first, then we'll talk."),
+                        pool("Welcome to {village.name}. What can I get you?",
+                                "Looking for something specific?",
+                                "Browse if you like. Prices are firm.")));
+    }
+
+    private static DialogueTree greetingBusinessCraftsman() {
+        return new DialogueTree("greeting.business.craftsman.work",
+                branch(relationshipAtLeast(40),
+                        pool("Need something made, {listener.name}?",
+                                "Back for more work? I've a few pieces ready.",
+                                "Tell me what you need and I'll see what I can do."),
+                        pool("Welcome to my workshop. Browse the racks; commissions on request.",
+                                "Looking for a particular piece?",
+                                "I take orders. Tell me what you need.")));
+    }
+
+    private static DialogueTree greetingBusinessInnkeeper() {
+        return new DialogueTree("greeting.business.innkeeper.work",
+                branch(relationshipAtLeast(40),
+                        pool("Take your usual seat, {listener.name}.",
+                                "Ah, you again! What'll it be?",
+                                "Stew's hot, ale's cold. Sit yourself down."),
+                        pool("Welcome to my inn. Hungry?",
+                                "Stew, bread, or ale — that's the menu tonight.",
+                                "Take a seat anywhere. I'll be over.")));
+    }
+
+    private static DialogueTree greetingBusinessScribe() {
+        return new DialogueTree("greeting.business.scribe.work",
+                branch(relationshipAtLeast(40),
+                        pool("A letter or a contract today, {listener.name}?",
+                                "Ink's wet — what shall I write?",
+                                "Back so soon? Tell me what you need."),
+                        pool("Welcome. A letter, a contract, or a copy?",
+                                "I write letters and copy books. Quietly.",
+                                "What do you need put to parchment?")));
+    }
+
+    private static DialogueTree greetingBusinessHealer() {
+        return new DialogueTree("greeting.business.healer.work",
+                branch(relationshipAtLeast(40),
+                        pool("You don't look well, {listener.name}. Sit.",
+                                "Ah, you. What hurts this time?",
+                                "Let me see — what brings you in?"),
+                        pool("Be welcome. Are you ill, or shopping for remedies?",
+                                "I keep poultices, tinctures, and a few rare draughts.",
+                                "Speak plainly — what's the trouble?")));
+    }
+
+    private static DialogueTree greetingBusinessLibrarian() {
+        return new DialogueTree("greeting.business.librarian.work",
+                branch(relationshipAtLeast(40),
+                        pool("Back to read, {listener.name}? Quietly, please.",
+                                "I've kept your last interest in mind.",
+                                "We just received a few new volumes."),
+                        pool("Welcome. Quietly, please. What are you looking for?",
+                                "The catalogue's by the door. Help yourself.",
+                                "I can lend; commissions for new copies on request.")));
+    }
+
+    /** Fallback for business-front greeting when no profession-specific tree resolves. */
+    private static DialogueTree greetingBusinessFallback() {
+        return new DialogueTree("greeting.business",
+                pool("Welcome. How may I help?",
+                        "What brings you in today?",
+                        "Be welcome. Take your time."));
     }
 }

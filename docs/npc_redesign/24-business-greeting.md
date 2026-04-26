@@ -318,3 +318,105 @@ Phase 3 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### 2026-04-26 — Phase 3 wiring session (task 24)
+
+Implementation in `tterrag1112.life_in_the_village.Npc.BusinessFront`
+plus the new packet, screen, debug command, and routing patch. Six
+greeter trees + fallback added to `StarterTrees`.
+
+**`BuildingType` flag mapping (spec "Things to flag" #1).**
+`BuildingType` is a bare-entry enum (every constant on one line, no
+body). Adding constructor args would touch every existing line. v1
+ships `BuildingTypeFlags` as a static lookup with the same surface
+(`hasBusinessFront(BuildingType)`, `hasServiceFront`, `isResidence`).
+Per spec table:
+- BUSINESS_FRONT only: MARKET, BLACKSMITH, CARPENTRY, BAKERY, INN,
+  SCRIBE_WORKSHOP, LIBRARY, STOCKPILE, STONEMASON, WEAVER,
+  CANDLEMAKER, MILLER, APOTHECARY, SCHOLARS_RETREAT, STABLE,
+  WAREHOUSE, WINERY, ARMORER, TOOLSMITH, ATELIER, DOCKS, FISHERY,
+  WOODCUTTER.
+- SERVICE_FRONT only: TEMPLE, CHAPEL, SHRINE, TOWN_HALL, CHANCELLERY,
+  GUILD_HALL.
+- BUSINESS_FRONT + RESIDENCE: FARMHOUSE.
+- RESIDENCE only: HOUSE, NOBLE_MANOR.
+- Unflagged (no greeter logic): everything else (CASTLE, BARRACKS,
+  GUARD_TOWER, etc. — civic / military spaces with no customer-facing
+  surface).
+
+**Greeter cooldown (spec "Things to flag" #2).** v1 ships the spec's
+proposed 60-second gap as
+`GreetPlayerGoal.RE_GREET_COOLDOWN_TICKS = 1200`.
+`GreeterAssignment.assignFor` checks
+`now - existing.attendingSinceTick() < cooldown` before re-triggering
+for the same player.
+
+**Bark vs. screen (spec "Things to flag" #3).** Bark fires on
+`GreetPlayerGoal.tickApproach`'s first tick via
+`player.displayClientMessage(..., actionBar=true)` — server-side, so
+no extra packet or particle plumbing. Screen opens only on right-click
+via `NpcInteractionHandler.tryRouteBusinessFront`.
+
+**Multi-player (spec "Things to flag" #4).** v1 first-come-first-serve:
+when a second player enters, the per-building `BusinessFrontTracker`
+state is overwritten if the same greeter would be selected. The spec
+suggests "each gets own greeter if available; else first-come-first-
+serve" — v1 implements the fallback case but skips the per-player
+greeter pool because workshops average 1-2 workers in practice.
+Documented for follow-up.
+
+**`BusinessFrontScreen` layout.** Spec line 178 calls for a screen
+"derived from profile but reorganized". v1 ships a compact custom
+Screen (240×160) with: title row, large primary action button, four
+secondary verb buttons (Gift / Ask Life / Compliment / Greet), small
+"View Profile" + "Close" buttons. The screen uses the existing
+`StyledButton` parchment-palette widget so it visually matches the
+profile screen without duplicating its panel/sidebar infrastructure.
+Phase 5 may align further; v1 prioritises the routing change over
+visual polish.
+
+**`OPEN_PROFILE` action.** Added to `NpcProfileActionPacket.Action`
+so the "View Profile" button can bounce back through
+`NpcProfileHub.open`. Backwards-compatible — old saves don't see the
+new enum value.
+
+**Off-hours behaviour.** Spec line 213: "We're closed" response on
+right-click + minor mood penalty on repeat. v1 wires the message via
+`displayClientMessage(actionBar=true)` and tracks per-(player,
+building) refusal counts in `BusinessFrontTracker.recordRefusal`.
+Hitting 3 refusals in a single visit applies
+`MoodTrigger.INSULT_RECEIVED` with raw magnitude -2. The counter
+clears when the player leaves the building, so "rapidly visit-leave-
+visit" doesn't accumulate.
+
+**Greeter-priority service-facing list.** Spec line 122:
+"MARKET_SELLER / SERVICE_FACING role first." v1 codifies via
+`GreeterAssignment.serviceFacingRank` — MERCHANT / INNKEEPER / SCRIBE
+/ LIBRARIAN / PRIEST / HERALD = rank 3; craftsmen + SCHOLAR = 2;
+STOCKPILE_KEEPER = 1; everything else = 0.
+
+**`GreetPlayerGoal` priority.** Spec line 147 wants "between combat
+and regular production". `P_SOCIAL_HIGH` (4) sits between
+`P_COMBAT` (2) and `P_WORK_PRIMARY` (8) — production pauses while
+the greeter attends; combat / survival still pre-empts.
+
+**Dialogue trees.** 6 greeter trees + `greeting.business` fallback.
+Tree IDs match the spec exactly so the dialogue lookup falls back
+correctly when a profession-specific tree isn't appropriate (e.g.
+`greeting.business.healer.work` falls back to `greeting.business`
+via the registry's dotted-suffix walk).
+
+**Audit-discovered fixes (during code-review audit pre-commit).**
+- `Player.hasDisconnected()` doesn't exist on this NeoForge / Minecraft
+  version — switched to `target.isRemoved()` (covers logout +
+  entity-removal alike).
+- `PlayerVerbInvokePacket` is a 3-field record `(UUID, String, Map)`
+  — `BusinessFrontScreen.sendVerb` now passes `Map.of()` for the
+  args slot.
+
+**Build verification deferred.** Sandbox can't reach
+`maven.neoforged.net` (HTTP 403 `host_not_allowed`). Code review
+covered imports / signatures / lambda captures. Exit-criteria
+scenarios (walk in → bark; right-click greeter → screen; off-hours
+refusal; tracker handles transitions / logouts) need a dev-box build
+to validate.
