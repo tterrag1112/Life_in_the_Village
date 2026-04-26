@@ -311,3 +311,110 @@ Phase 4 enables:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### 2026-04-26 — Phase 3 wiring session (task 23)
+
+Channels landed in `tterrag1112.life_in_the_village.Npc.Economy.Channels`
+plus `Npc.Economy.Channels.impl` for the six implementations. Router +
+debug commands wired; three legacy trade callers migrated (full list in
+`/economy migrate-status`).
+
+**Spec deviation — `isAvailable` signature.** Spec line 47 omits
+`ServerLevel`, but CARAVAN / VISITOR availability is keyed by saved
+data that lives on the level. The interface now takes
+`(Village, VillageSavedData, ServerLevel, long tick)`. Without it,
+`isAvailable` would always have to either return `true` (forcing every
+quote() to run) or hard-code `level == null` returns. Documented on
+the interface.
+
+**Score formula.** Implemented per spec line 95 with two extras:
+- `+5.0` PATIENT bias when the channel's price is in the lower half
+  of the intent's max-price band (BUY only). Spec hints "PATIENT →
+  cheapest" but doesn't formula it; this gives PATIENT a meaningful
+  effect without dominating priority.
+- Tiebreak chain (priority → travel → price) is already implicit in
+  the scalar score; no extra Comparable layer needed.
+
+**Channel-by-channel notes.**
+- **MarketChannel:** delegates execute to existing
+  `NpcEconomy.marketPurchase` so stall/merchant payment routing stays
+  byte-for-byte with the legacy path. Quote validity 24000 ticks.
+  10% village treasury slice preserved.
+- **DirectBusinessChannel:** workshop discovery uses a hard-coded
+  item → BuildingType map (v1 list covers ~30 common items; gaps fall
+  through and other channels win). Phase 4 production-tag pass
+  replaces this with a registry-backed lookup. Relationship modifier
+  is `±5%` from the seller's NPC↔NPC ledger entry, scaled linearly to
+  the −100..+100 range. Fires `NpcLifeEvent.Trade` per spec "Open
+  decisions" #3.
+- **CaravanChannel:** active when any caravan with `destVillageId ==
+  village.id` is in `DELIVERING` state. 10% discount vs. market
+  baseline per spec "Open decisions" #4. Decrements goods in place;
+  the caravan's tick handles state transitions normally. Quote
+  validity 6000 ticks (caravan presence window).
+- **StockpileChannel:** food-only, BUY-only. Near-cost ratio 0.7 per
+  spec line 149. Coin flows to the stockpile keeper rather than the
+  village treasury — keepers are paid producers, not collectors.
+- **GuildRequestChannel / VisitorChannel:** registered with correct
+  priorities + types but `isAvailable` always returns false so they
+  never win; Phase 4 swaps the impls.
+
+**Caller migration semantics.** Channels move source-side items + bronze
+but do NOT stash items in any destination container — the caller
+decides where the item lands (home chest, workshop input chest, NPC
+inventory) and reads `result.quantityTraded` to know how many to
+place. This is documented on `EconomicChannel.execute`. Each caller
+follows the same template:
+
+```
+1. Build TradeIntent
+2. ChannelRouter.findBestChannel
+3. (if affordable) channel.execute
+4. (on success) move qty into the destination container
+5. (on partial-fill / failure) refund any bridged bronze
+```
+
+**Workshop bridging pattern.** The workshop's `BuildingEconomy` wallet
+is bridged through the NPC's personal wallet so the channel's `execute`
+can spend on behalf of the buyer NPC: `bEconomy.withdraw(total) →
+entity.getWallet().receive(total) → channel.execute spends from wallet
+→ channel pays seller`. On failure or partial fill, the leftover is
+returned via `entity.getWallet().spend(leftover) →
+bEconomy.depositRevenue(leftover)`. Documented inline in
+`AbstractWorkstationProductionGoal.executeBuy`.
+
+**Workshop MARKET_VISIT trigger unchanged.** The `marketVisit` phase
+still requires `market != null` to enter — only the buy *path* inside
+that phase is migrated to the router. Workshops in market-less
+villages remain idle for input procurement; spec doesn't explicitly
+list "workshops function without a market" as Phase 3 scope, so this
+is held back as a follow-up.
+
+**Deleted / renamed:**
+- `Entities/Goals/Social/BuyFromMarketGoal.java` deleted.
+- `Entities/Goals/Social/BuyGoodsGoal.java` (new). Registered in
+  `ProfessionGoalFactory.registerLifeStage` for TEEN + ADULT NPCs.
+
+**Things-to-flag responses (from the brief).**
+1. **Stale-quote handling.** `ChannelQuote.isExpired(currentTick)`
+   returns true past `quoteValidUntilTick`. `BuyGoodsGoal` skips
+   expired quotes at execute time; the daily tick refreshes by
+   re-running `findBestChannel`. Channels also re-validate stock at
+   execute time (e.g. `MarketChannel.executeBuy` re-reads
+   `countItem`).
+2. **Partial-fill semantics.** Channels return
+   `result.quantityTraded` ≤ requested quantity when stock runs low,
+   never throw. The caller's `TradeResult.partial(intent)` helper
+   surfaces this; `BuyGoodsGoal` and `executeBuy` both refund any
+   leftover bronze on partial fills.
+3. **`NpcLifeEventBus.Trade` on DirectBusinessChannel.** Yes — fires
+   from `execute` whenever the buyer is an NPC. Matches the spec's
+   "Open decisions" #3.
+
+**Build verification deferred.** Sandbox can't reach
+`maven.neoforged.net` (HTTP 403 `host_not_allowed`). Code review
+covered imports / signatures / wallet flow / refund paths but the
+exit-criteria scenarios (no-market village; market-vs-caravan
+ranking; urgent food → stockpile; `/economy quote` listing; save
+preserves caravan window) need to run on a dev box before the wiring
+is considered validated.

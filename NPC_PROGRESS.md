@@ -297,11 +297,18 @@ markets.
       `appoint_to_office`, `resign_from_office`
     - [x] `/office` subcommands extended: `election`, `grant`,
       `vacate-and-elect`, `powers <uuid>`, `me`
-- [ ] **23** Economic channels
-    - [ ] `EconomicChannel`, `ChannelRouter`
-    - [ ] MARKET, DIRECT_BUSINESS, CARAVAN, STOCKPILE channels
-    - [ ] GUILD_REQUEST, VISITOR stubs
-    - [ ] Migrate existing market-only goals to router
+- [x] **23** Economic channels
+    - [x] `EconomicChannel`, `ChannelRouter` (new package
+      `Npc.Economy.Channels`)
+    - [x] MARKET, DIRECT_BUSINESS, CARAVAN, STOCKPILE channels
+    - [x] GUILD_REQUEST, VISITOR stubs (registered, always-unavailable
+      until Phase 4 docs 28/29 fill them in)
+    - [x] Migrate existing market-only goals to router:
+      - `HouseholdWealthManager.tickHouseholdSpending`
+      - `AbstractWorkstationProductionGoal.executeBuy`
+      - `BuyFromMarketGoal` → `BuyGoodsGoal` (renamed, routed)
+    - [x] `VillagePolicy` Phase-3-doc-22 stub wired at quote time
+    - [x] `/economy quote|channels|migrate-status` debug commands
 - [ ] **24** Business greeting
     - [ ] `BuildingPresenceTracker` per-player
     - [ ] `GreetPlayerGoal` assignment
@@ -629,3 +636,43 @@ Office Tab UI replaced with `/office me` text listing for this session
 — a full inventory tab is documented as a follow-up. Action buttons per
 power are deferred to the per-power UIs (constable/leader/healer
 sessions) per the brief's explicit Phase 3 scope cut.
+
+---
+
+**Phase 3 progress (next session)**: task 23 (economic channels) complete.
+New package `Npc.Economy.Channels`:
+
+- Core types: `TradeIntent`, `TradeDirection`, `Urgency`, `ChannelType`,
+  `ChannelQuote`, `TradeResult`, `EconomicChannel` interface.
+- 4 channel impls (`MarketChannel`, `DirectBusinessChannel`,
+  `CaravanChannel`, `StockpileChannel`) + 2 stubs
+  (`GuildRequestChannel`, `VisitorChannel`) registered.
+- `ChannelRouter.findBestChannel` / `rankAllChannels` with the spec's
+  scoring formula (priority − price penalty − travel penalty +
+  urgency bonus).
+- `VillagePolicy` Phase-3-doc-22 stub at the law-aware-pricing call
+  site so doc 22 (next session) only has to populate the resolver.
+
+Legacy trade-caller migrations:
+- `Entities/HouseholdWealthManager.tickHouseholdSpending` — household
+  daily shopping now routes via `ChannelRouter`; villages without a
+  market fall through to `DirectBusinessChannel`.
+- `Entities/Goals/Profession/Workshop/AbstractWorkstationProductionGoal.executeBuy`
+  — workshops bridge `BuildingEconomy` → NPC wallet → channel →
+  seller, with refund on partial fills.
+- `Entities/Goals/Social/BuyFromMarketGoal` deleted; replaced by
+  `Entities/Goals/Social/BuyGoodsGoal`. Registered in
+  `ProfessionGoalFactory`.
+
+Workshop production goals still gate the MARKET_VISIT phase on a
+present `MARKET` building — the buy *path* is migrated, but the goal's
+trigger is unchanged. A follow-up may unlock workshop-to-workshop
+input sourcing without a market; flagged in 23 Revision Notes.
+
+Debug commands: `/economy quote <actor> <buy|sell> <item> <qty>
+[urgency]`, `/economy channels`, `/economy migrate-status`.
+
+Spec deviation (signature): `EconomicChannel.isAvailable` adds a
+`ServerLevel` parameter that the spec omits — needed so `CaravanChannel`
+/ `VisitorChannel` can read level-scoped saved data without a second
+quote round-trip. Logged in 23 Revision Notes.

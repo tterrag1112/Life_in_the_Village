@@ -146,7 +146,7 @@ public final class ProfessionGoalFactory {
             case TEEN, ADULT -> {
                 npc.goalSelector.addGoal(P_SOCIAL_MID, new SocializeGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
-                npc.goalSelector.addGoal(P_SOCIAL_LOW, new BuyFromMarketGoal(npc));
+                npc.goalSelector.addGoal(P_SOCIAL_LOW, new BuyGoodsGoal(npc));
                 if (npc.getLifeStage() == LifeStage.ADULT) {
                     npc.goalSelector.addGoal(P_SOCIAL_LOW, new CourtingGoal(npc));
                 }
