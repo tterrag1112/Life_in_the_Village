@@ -855,12 +855,24 @@ class NpcMemoryDecayTickSystem implements TickSubsystem {
                                         npc, change.otherId(),
                                         change.from(), change.to()));
             }
+
+            // Rumor seed (Phase 2 task 12): chance to promote a recent
+            // high-value memory into a knowledge entry the NPC will
+            // gossip about. Sociability-scaled.
+            tterrag1112.life_in_the_village.Npc.Gossip.RumorSeeder.rollDaily(npc, currentTick);
         }
 
         // SOCIAL-phase proximity sweep (Phase 2 task 11). Single sample
         // per day per NPC currently in SOCIAL phase — see 11 Revision
         // Notes for the simplified-vs-spec discussion.
         runSocialProximitySweep(ctx);
+
+        // Gossip topic-heat daily decay (Phase 2 task 12). One pass
+        // across every village's tracker so old topics fade.
+        for (var heat : ctx.villageData().getAllGossipHeat().values()) {
+            heat.decay(1f);
+        }
+        ctx.villageData().setDirty();
     }
 
     /**
@@ -890,6 +902,28 @@ class NpcMemoryDecayTickSystem implements TickSubsystem {
                 b.getNpcRelationships().adjustFromProximity(a.getUUID(), 1, now);
             }
         }
+    }
+}
+
+// =============================================================================
+// GOSSIP SCHEDULER (interval = 20, priority = 195)
+// =============================================================================
+
+/**
+ * Drives {@link tterrag1112.life_in_the_village.Npc.Gossip.GossipScheduler}
+ * once per second: ages active channels, runs exchanges, and rolls new
+ * channels for SOCIAL-phase NPC pairs in proximity. Spec
+ * {@code 12-gossip-rumor.md} line 70.
+ */
+class GossipSchedulerTickSystem implements TickSubsystem {
+    @Override public String name()     { return "gossip_scheduler"; }
+    @Override public int    interval() { return 20; }
+    @Override public int    priority() { return 195; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Gossip.GossipScheduler
+                .tick(ctx.level(), ctx.tick());
     }
 }
 

@@ -10,6 +10,8 @@ import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.GiveGiftVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.GreetVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.InsultVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ListenInVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TellRumorVerb;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -85,5 +87,7 @@ public final class PlayerVerbRegistry {
         register(new CommissionVerb());
         register(new ChallengeVerb());
         register(new InsultVerb());
+        register(new ListenInVerb());
+        register(new TellRumorVerb());
     }
 }

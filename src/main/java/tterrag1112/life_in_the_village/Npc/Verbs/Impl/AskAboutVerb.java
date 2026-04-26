@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Npc.Verbs.Impl;
 
 import net.minecraft.network.chat.Component;
+import tterrag1112.life_in_the_village.Npc.Gossip.RumorFabricator;
 import tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.VerbContext;
 import tterrag1112.life_in_the_village.Npc.Verbs.VerbResult;
@@ -48,6 +49,14 @@ public final class AskAboutVerb implements PlayerVerb {
         UUID subject = parseUuid(args.get("subjectId"));
         if (subject != null && subject.equals(ctx.npc().getUUID())) {
             return VerbResult.failure("Asking them about themselves doesn't make sense.");
+        }
+        // Phase 2 task 12: low-honesty / high-sociability NPCs may
+        // fabricate a rumor when asked about an unknown topic. Spec
+        // {@code 12-gossip-rumor.md} line 187. The fabricated entry
+        // lands on the NPC's own ledger and propagates via gossip.
+        String topic = args.get("topic");
+        if (topic != null && !topic.isEmpty()) {
+            RumorFabricator.maybeFabricate(ctx.npc(), topic, subject, ctx.tick());
         }
         return VerbResult.success("ask_about.other.default");
     }

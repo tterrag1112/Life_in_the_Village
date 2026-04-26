@@ -375,3 +375,66 @@ Phase 2 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 2 implementation notes
+
+- **Slant templates shipped: 13.** Spec line 151 calls for 10–15.
+  `SlantTemplates` ships 7 negative + 6 positive token-replace
+  patterns (saving→hoarding etc.) plus 3 negative + 3 positive
+  fallback prefix frames used when no literal match. Total =
+  13 substantive transforms; Phase 5 content pass expands.
+- **World-event seeders deferred.** Spec line 174 lists four
+  ambient seeders: festival end, caravan arrival, building
+  burn / build, office change. None of those fire as
+  `NpcLifeEvent` records yet. `RumorSeeder` ships only the
+  daily memory→rumor promotion path; the world-event hooks
+  land when the corresponding events are introduced
+  (festival end is the obvious first candidate via the
+  existing event scheduler).
+- **GossipChannel transient registry.** Channels live in a
+  static map on `GossipScheduler` keyed by speaker UUID;
+  cleared on server restart per spec line 245. The
+  scheduler's per-tick exchange chance is gated at 25% so
+  context.maxExchanges happens over a few seconds rather
+  than instantly, matching the in-world feel of a back-and-
+  forth conversation.
+- **Context-by-location is coarse.** Phase 2 ships
+  `AT_WORKPLACE` for assigned-building NPCs and
+  `CASUAL_MEETING` otherwise. Inn / market / festival /
+  rite contexts wire in when the corresponding goals call
+  `GossipScheduler.startChannel` directly.
+- **Listen-in surfacing.** `ListenInVerb.invoke` returns the
+  overheard line in `VerbResult.statusText` rather than
+  opening a dialogue tree — the host (action-bar UI or
+  debug command) decides whether to show it as chat. The
+  channel is marked interrupted; spec line 209 calls for the
+  next exchange to switch to a guarded topic, but Phase 2
+  treats the flag as advisory and Phase 5 wires the
+  topic-switch behaviour.
+- **Tell-rumor menu.** Spec line 350 prefers a menu over
+  free-form text. v1 takes `topic` and `content` string args
+  on `TellRumorVerb.invoke(ctx, args)`; the GUI-side picker
+  isn't authored yet — debug invocations or a future panel
+  populate the args.
+- **Topic-heat persistence.** `GossipTopicHeat` is an
+  unbounded float map keyed by topic string per village.
+  Decay multiplicatively per day at 0.85 with a 0.05 cull
+  floor so dead topics don't accumulate. `IsTopicHot`
+  predicate fires at heat ≥ 0.40.
+- **Fabrication thresholds.** Per spec line 188:
+  `honesty < -0.4 && sociability > +0.4`.
+  `RumorFabricator` enforces those exactly; the resulting
+  entry is FABRICATED at fidelity 0.3.
+- **Topic-key convention for memory promotion.**
+  `RumorSeeder.topicFromMemory` builds keys of the form
+  `memory.<TYPE>.<participantUuid>.<tickHex>`. This is a
+  Phase 2 placeholder — Phase 5 content pass replaces with
+  a human-readable key scheme tied to the dialogue
+  `ask_about` topic registry.
+- **Mood polarity routing.** `RUMOR_NEGATIVE_ABOUT_SELF`
+  fires for slanted-negative or low-fidelity rumors;
+  `RUMOR_POSITIVE_ABOUT_SELF` for everything else when the
+  topic's subject is the listener. Spec line 110 doesn't
+  prescribe the exact threshold; chosen value
+  (`fidelity < 0.5` ≈ "vague") is open to retuning during
+  the Phase 5 tuning pass.

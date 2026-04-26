@@ -152,11 +152,26 @@ Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
     - [ ] 15 starter hobbies, trait-weighted selection
     - [ ] `HobbyGoal` registered for LEISURE/day-off
     - [ ] Location resolution
-- [ ] **12** Gossip/rumor
-    - [ ] Gossip channels during SOCIAL
-    - [ ] Content mutation, slant templates (15 starter)
-    - [ ] Rumor seeding from memories and world events
-    - [ ] Per-village topic heat tracker
+- [x] **12** Gossip/rumor
+    - [x] Gossip channels during SOCIAL (transient
+      `GossipChannel` + `GossipScheduler` 20-tick poll)
+    - [x] Content mutation via existing RumorMutator + 13 starter
+      slant templates (7 negative + 6 positive)
+    - [x] Rumor seeding from memories (daily `RumorSeeder.rollDaily`
+      promotion); world-event seeders deferred (see 12 Revision
+      Notes — needs new NpcLifeEvent records for festival end /
+      caravan arrival / building burn / office change)
+    - [x] Per-village topic heat tracker (`GossipTopicHeat`
+      attached to `VillageSavedData` as `gossipData`; daily decay
+      in `npc_daily_decay`)
+    - [x] Player verbs `listen_in` and `tell_rumor` registered
+    - [x] AskAboutVerb fabrication path (low-honesty +
+      high-sociability synthesises a FABRICATED entry on unknown
+      topic)
+    - [x] 3 new dialogue predicates: `KnowledgeSourceIs`,
+      `IsTopicHot`, `HasHeardRumor`
+    - [x] `/gossip {list,trace,seed,force-exchange,channels,clear}`
+      Brigadier debug commands
 - [ ] **15** Child/elderly arcs
     - [ ] `ChildhoodState`, `RetirementState`
     - [ ] Child play, attachment, schooling
@@ -379,10 +394,10 @@ yet. Its seed formula (splitmix64 finaliser of each of
 `topic.hashCode()`, `acquiredTick`, UUID msb, UUID lsb, XORed) is
 locked for stability — future Phase 2 work depends on it.
 
-**Phase 2 progress:** Tasks 13 (weekly schedule) and 11
-(relationship ledger) complete; tasks 14 (hobby), 12 (gossip),
-15 (child/elderly arcs), 17 (scribal), 18 (letters/books), 16
-(apprenticeship) remaining.
+**Phase 2 progress:** Tasks 13 (weekly schedule), 11
+(relationship ledger), and 12 (gossip/rumor) complete; tasks 14
+(hobby), 15 (child/elderly arcs), 17 (scribal), 18
+(letters/books), 16 (apprenticeship) remaining.
 
 Schedule landed first because gossip and hobbies need the new
 SOCIAL/LEISURE phase distinction, and the child/elderly arc

@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Npc.Dialogue;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Entities.custom.NpcRelationshipComponent;
+import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeSource;
 import tterrag1112.life_in_the_village.Npc.Memory.MemoryType;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodCategory;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
@@ -32,6 +33,9 @@ public sealed interface DialoguePredicate
                 DialoguePredicate.HasMemoryOf,
                 DialoguePredicate.RelationshipAtLeast,
                 DialoguePredicate.KnowsTopic,
+                DialoguePredicate.KnowledgeSourceIs,
+                DialoguePredicate.IsTopicHot,
+                DialoguePredicate.HasHeardRumor,
                 DialoguePredicate.HasGoal,
                 DialoguePredicate.SkillAtLeast,
                 DialoguePredicate.IsDayPhase,
@@ -99,6 +103,54 @@ public sealed interface DialoguePredicate
         @Override public boolean test(DialogueContext ctx) {
             if (ctx.speaker() == null) return false;
             return ctx.speaker().getKnowledge().knows(topic);
+        }
+    }
+
+    /**
+     * True when the speaker knows {@code topic} and the entry's
+     * {@link KnowledgeSource} matches. Used by gossip-aware dialogue
+     * branches to pick "I saw it myself" vs "I heard it from..." vs
+     * "Some say..." intro phrasing (spec line 217).
+     */
+    record KnowledgeSourceIs(String topic, KnowledgeSource source) implements DialoguePredicate {
+        @Override public boolean test(DialogueContext ctx) {
+            if (ctx.speaker() == null) return false;
+            return ctx.speaker().getKnowledge().get(topic)
+                    .map(e -> e.source() == source)
+                    .orElse(false);
+        }
+    }
+
+    /**
+     * True when {@code topic} is currently "hot" in the speaker's
+     * village topic-heat tracker (Phase 2 task 12). Returns
+     * {@code false} for NPCs without an assigned village.
+     */
+    record IsTopicHot(String topic) implements DialoguePredicate {
+        @Override public boolean test(DialogueContext ctx) {
+            var s = ctx.speaker();
+            if (s == null || ctx.level() == null) return false;
+            var data = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(ctx.level());
+            return s.getAssignedVillageName()
+                    .flatMap(data::getVillageByName)
+                    .flatMap(v -> data.getGossipHeat(v.getId()))
+                    .map(h -> h.isHot(topic))
+                    .orElse(false);
+        }
+    }
+
+    /**
+     * True when the speaker has any rumor-sourced entry (RUMOR_HEARD
+     * or RUMOR_RETOLD) about {@code topic}. Tighter than KnowsTopic +
+     * KnowledgeSourceIs — accepts either rumor source.
+     */
+    record HasHeardRumor(String topic) implements DialoguePredicate {
+        @Override public boolean test(DialogueContext ctx) {
+            if (ctx.speaker() == null) return false;
+            return ctx.speaker().getKnowledge().get(topic)
+                    .map(e -> e.source() == KnowledgeSource.RUMOR_HEARD
+                            || e.source() == KnowledgeSource.RUMOR_RETOLD)
+                    .orElse(false);
         }
     }
 

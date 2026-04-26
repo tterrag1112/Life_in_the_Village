@@ -108,6 +108,7 @@ public final class TickSubsystemRegistry {
         register(new RoadUpkeepTickSystem());
         register(new TierReconciliationTickSystem());
         register(new NpcMemoryDecayTickSystem());
+        register(new GossipSchedulerTickSystem());
 
         // ── Travel incentives ─────────────────────────────────────────────────
         register(new PlayerRoadSpeedSystem());
