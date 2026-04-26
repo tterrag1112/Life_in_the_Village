@@ -288,6 +288,9 @@ public final class VillageSimEngine {
                     * VillageTreasury.GUARD_WAGE * finalDaysUnloaded);
             long propertyTax = (long)(sim.getFarmhouseCount()
                     * VillageTreasury.PROPERTY_TAX_PER_HOUSE * finalDaysUnloaded);
+            // Doc 22 wired: PROPERTY_TAX_DOUBLE / PROPERTY_TAX_WAIVED.
+            propertyTax = Math.round(propertyTax
+                    * tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks.propertyTaxMultiplier(village));
 
             treasury.deposit(taxIncome + propertyTax);
             treasury.withdraw(wageDrain);

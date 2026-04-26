@@ -966,3 +966,27 @@ class OfficeElectionTickSystem implements TickSubsystem {
         tterrag1112.life_in_the_village.Npc.Office.OfficeElection.dailyTick(ctx.level());
     }
 }
+
+// =============================================================================
+// LAW DECISION (once per in-game day, interval = 24000, priority = 197)
+// =============================================================================
+
+/**
+ * NPC-leader autonomy. Per spec doc 22 line 99, every village whose
+ * {@code village_leader} is held by an NPC gets a daily roll on the
+ * {@link tterrag1112.life_in_the_village.Npc.Laws.LawDecisionEngine}.
+ *
+ * <p>Priority 197 places this just after office elections (195) — a
+ * leader who was just installed gets a chance to enact something the
+ * same day.</p>
+ */
+class LawDecisionTickSystem implements TickSubsystem {
+    @Override public String name()     { return "law_decision"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 197; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Laws.LawDecisionEngine.dailyTick(ctx.level());
+    }
+}

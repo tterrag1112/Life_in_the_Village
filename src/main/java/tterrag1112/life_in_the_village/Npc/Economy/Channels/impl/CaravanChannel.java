@@ -52,6 +52,8 @@ public final class CaravanChannel implements EconomicChannel {
     @Override
     public boolean isAvailable(Village village, VillageSavedData data, ServerLevel level, long tick) {
         if (village == null || level == null) return false;
+        // Doc 22 wired: FOREIGN_TRADER_BAN closes the channel.
+        if (tterrag1112.life_in_the_village.Npc.Laws.LawPriceHooks.caravanBlocked(village)) return false;
         return !caravansAt(village, CaravanSavedData.get(level)).isEmpty();
     }
 

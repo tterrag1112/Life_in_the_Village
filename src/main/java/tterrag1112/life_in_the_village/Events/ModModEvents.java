@@ -241,6 +241,7 @@ public class ModModEvents {
         ScribalDebugCommand.register(event.getDispatcher());
         LetterBookDebugCommand.register(event.getDispatcher());
         EconomyDebugCommand.register(event.getDispatcher());
+        LawDebugCommand.register(event.getDispatcher());
 
     }
 

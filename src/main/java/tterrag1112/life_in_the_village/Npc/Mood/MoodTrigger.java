@@ -56,7 +56,18 @@ public enum MoodTrigger {
     LETTER_RECEIVED          (+6,  0.2f),
     LETTER_FROM_FRIEND       (+12, 0.2f),
     RUMOR_POSITIVE_ABOUT_SELF(+6,  0.15f),
-    RUMOR_NEGATIVE_ABOUT_SELF(-10, 0.15f);
+    RUMOR_NEGATIVE_ABOUT_SELF(-10, 0.15f),
+
+    // ── Law system (Phase 3 doc 22) ──────────────────────────────────────────
+    /**
+     * Fired on enact / repeal lifecycle for villagers within the
+     * affected village. Magnitude is supplied per-NPC by the law's
+     * announcement helper (signed: supporters get +5, opponents −5
+     * per spec line 197). Daily-stack cap allows the mood shock to
+     * accumulate across multiple enactments in a tumultuous month
+     * but caps the per-day swing at ±25.
+     */
+    LAW_TRANSITION           (+5,  0.25f);
 
     private final int defaultMagnitude;
     private final float dailyStackCap;

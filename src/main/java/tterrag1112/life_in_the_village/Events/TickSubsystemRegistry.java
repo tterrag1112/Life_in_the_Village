@@ -110,6 +110,7 @@ public final class TickSubsystemRegistry {
         register(new NpcMemoryDecayTickSystem());
         register(new GossipSchedulerTickSystem());
         register(new OfficeElectionTickSystem());
+        register(new LawDecisionTickSystem());
 
         // ── Travel incentives ─────────────────────────────────────────────────
         register(new PlayerRoadSpeedSystem());

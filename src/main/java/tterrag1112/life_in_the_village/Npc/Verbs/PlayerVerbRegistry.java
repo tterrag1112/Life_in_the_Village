@@ -109,5 +109,7 @@ public final class PlayerVerbRegistry {
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.PetitionForOfficeVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.AppointToOfficeVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.ResignFromOfficeVerb());
+        // Phase 3 task 22: village laws verb.
+        register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.PetitionLeaderVerb());
     }
 }

@@ -12,7 +12,7 @@ import tterrag1112.life_in_the_village.Npc.Economy.Channels.EconomicChannel;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeDirection;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult;
-import tterrag1112.life_in_the_village.Npc.Economy.Channels.VillagePolicy;
+import tterrag1112.life_in_the_village.Npc.Laws.LawPriceHooks;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -70,8 +70,13 @@ public final class DirectBusinessChannel implements EconomicChannel {
         long base = MarketPriceHelper.getDynamicSellPrice(level, village, intent.item());
         TownspersonMob buyer = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
         double relMod = relationshipModifier(match.producer, buyer);
-        long policied = Math.round(base * (1.0 + relMod * 0.05)
-                * VillagePolicy.sellMultiplier(village, ChannelType.DIRECT_BUSINESS, intent.item()));
+        long raw = Math.round(base * (1.0 + relMod * 0.05)
+                * LawPriceHooks.sellMultiplier(village, ChannelType.DIRECT_BUSINESS, intent.item()));
+        long floor = LawPriceHooks.priceFloor(village, ChannelType.DIRECT_BUSINESS, intent.item());
+        long withFloor = floor > 0 ? Math.max(floor, raw) : raw;
+        long policied = LawPriceHooks.priceCeiling(village, ChannelType.DIRECT_BUSINESS, intent.item())
+                .map(cap -> Math.min(cap, withFloor))
+                .orElse(withFloor);
         if (policied > intent.maxPrice()) return Optional.empty();
 
         int travelTicks = estimateTravelTicks(buyer, match.location);

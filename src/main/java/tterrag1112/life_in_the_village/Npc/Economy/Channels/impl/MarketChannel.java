@@ -11,7 +11,7 @@ import tterrag1112.life_in_the_village.Npc.Economy.Channels.EconomicChannel;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeDirection;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult;
-import tterrag1112.life_in_the_village.Npc.Economy.Channels.VillagePolicy;
+import tterrag1112.life_in_the_village.Npc.Laws.LawPriceHooks;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -135,13 +135,15 @@ public final class MarketChannel implements EconomicChannel {
             // path). Keep the items moved for the caller to receive.
         }
 
-        // Village treasury 10% slice — matches the legacy market tax.
-        long tax = total / 10;
-        if (tax > 0) {
-            data.getVillageById(intent.villageId()).ifPresent(v -> {
-                v.depositToTreasury(tax);
-                data.markDirty();
-            });
+        // Village treasury slice — legacy 10%, scaled by doc 22's
+        // MARKET_TAX_DOUBLE / MARKET_TAX_REDUCED multiplier.
+        Village v = data.getVillageById(intent.villageId()).orElse(null);
+        double mult = v == null ? 1.0
+                : tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks.marketTaxMultiplier(v);
+        long tax = Math.round((total / 10.0) * mult);
+        if (tax > 0 && v != null) {
+            v.depositToTreasury(tax);
+            data.markDirty();
         }
         return TradeResult.ok(qty, total);
     }
@@ -196,16 +198,18 @@ public final class MarketChannel implements EconomicChannel {
     }
 
     private static long applyPolicy(TradeIntent intent, Village village, long base) {
-        // Policy stub: current return is 1.0 + 0; this is the call site
-        // doc 22 (next session) populates.
+        // Doc 22 wired: tax multipliers + food price ceiling / floor +
+        // direct subsidies via channel.
         double mult = intent.direction() == TradeDirection.BUY
-                ? VillagePolicy.sellMultiplier(village, ChannelType.MARKET, intent.item())
-                : VillagePolicy.buyMultiplier(village, ChannelType.MARKET, intent.item());
+                ? LawPriceHooks.sellMultiplier(village, ChannelType.MARKET, intent.item())
+                : LawPriceHooks.buyMultiplier(village, ChannelType.MARKET, intent.item());
         long subsidy = intent.direction() == TradeDirection.SELL
-                ? VillagePolicy.subsidyBonus(village, ChannelType.MARKET, intent.item())
+                ? LawPriceHooks.subsidyBonus(village, ChannelType.MARKET, intent.item())
                 : 0L;
         long policied = Math.round(base * mult) + subsidy;
-        return VillagePolicy.priceCeiling(village, ChannelType.MARKET, intent.item())
+        long floor = LawPriceHooks.priceFloor(village, ChannelType.MARKET, intent.item());
+        if (floor > 0) policied = Math.max(floor, policied);
+        return LawPriceHooks.priceCeiling(village, ChannelType.MARKET, intent.item())
                 .map(cap -> Math.min(cap, policied))
                 .orElse(policied);
     }

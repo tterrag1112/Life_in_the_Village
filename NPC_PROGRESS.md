@@ -314,11 +314,30 @@ markets.
     - [ ] `GreetPlayerGoal` assignment
     - [ ] `BusinessFrontScreen` with profile as secondary
     - [ ] Greeter dialogue trees (6 trees)
-- [ ] **22** Village laws (before 19, since crime reads laws)
-    - [ ] `VillageLaw` enum, `VillagePolicy` per village
-    - [ ] `LawEffect` implementations wired into subsystem hooks
-    - [ ] NPC leader decision engine
-    - [ ] Player leader laws UI panel
+- [x] **22** Village laws (before 19, since crime reads laws)
+    - [x] `VillageLaw` enum (22 entries across 4 categories),
+      `VillagePolicy` per village with codec
+    - [x] `LawEffect` interface + 22 impls; registry covers every law
+    - [x] NPC leader decision engine + daily tick subsystem
+      (`law_decision`, priority 197)
+    - [x] Tax/wage/treasury hooks (`LawTaxHooks` — property tax mult,
+      market tax mult, daily subsidies w/ overdraft suspend, profits
+      to treasury fraction)
+    - [x] Channel hooks (`LawPriceHooks` — replaces last-session
+      stub; food price ceiling/floor + caravan-ban + market multipliers)
+    - [x] Schedule hooks (`LawScheduleHooks` — CURFEW shifts phase;
+      FESTIVAL_MANDATORY + COMPULSORY_SCHOOLING flag for downstream
+      systems)
+    - [x] Lifecycle: `LawAnnouncement` (gossip seed via topic-heat
+      bump, mood shock via new MoodTrigger.LAW_TRANSITION, leader rep
+      delta for player-leaders)
+    - [x] Player verb: `petition_leader` (rel ≥ +20 gate, picks
+      highest-scoring law via the same engine the NPC leader uses)
+    - [x] `/law` debug subcommands: list, enact, repeal, popularity,
+      audit
+    - [ ] Player leader Laws UI panel — deferred (the proper Office
+      tab GUI is itself a Phase 3 follow-up; `/law enact|repeal`
+      stands in until then)
 - [ ] **19** Crime & justice
     - [ ] CrimeType, CrimeReport, Trial, Punishment
     - [ ] Detection hooks (theft, assault, vandalism, trespass, seal,
@@ -676,3 +695,58 @@ Spec deviation (signature): `EconomicChannel.isAvailable` adds a
 `ServerLevel` parameter that the spec omits — needed so `CaravanChannel`
 / `VisitorChannel` can read level-scoped saved data without a second
 quote round-trip. Logged in 23 Revision Notes.
+
+---
+
+**Phase 3 progress (next session)**: task 22 (village laws) complete.
+New package `Npc.Laws`:
+
+- 22 `VillageLaw` enum entries across 4 categories (10 economy / 4 crime
+  / 5 social / 3 economic restriction).
+- `VillagePolicy` per-village state class with codec on `Village` (15-
+  field codec group, still under the 16-arity limit).
+- `LawEffect` interface + 22 small impls in `Npc.Laws.effects`.
+- `LawEffectRegistry` static map.
+- 3 hook facades: `LawPriceHooks` (replaces last session's
+  channels-side stub), `LawTaxHooks`, `LawScheduleHooks`.
+- `LawPopularity` calculator (per-villager trait fit + benefits/affected
+  bias); `LawAnnouncement` lifecycle (gossip seed + mood shock + leader
+  rep delta); `LawEnactment` orchestrator.
+- `LawDecisionEngine` daily autonomy for NPC leaders; new tick
+  subsystem `law_decision` (interval 24000, priority 197).
+- `petition_leader` verb (rel ≥ +20 gate).
+- `/law list|enact|repeal|popularity|audit` debug commands.
+
+Hook wiring:
+- `VillageSimEngine` property tax now multiplies by
+  `LawTaxHooks.propertyTaxMultiplier`.
+- `TreasuryTickHandler` resumes suspended subsidies, then pays daily
+  subsidies via `applySubsidyOrSuspend`.
+- `MarketChannel` market-tax slice scales by law multiplier; food
+  ceiling / floor applied to all three concrete sell-side channels.
+- `CaravanChannel.isAvailable` honours FOREIGN_TRADER_BAN.
+- `ScheduleResolver.phaseAt` runs results through
+  `LawScheduleHooks.applyLaws` so CURFEW forces HOME after daytick
+  12000.
+
+`MoodTrigger.LAW_TRANSITION` added (signed magnitude per-NPC, ±25 cap)
+so enactment / repeal mood shocks reuse the existing daily-stack
+infrastructure.
+
+Spec deviations: `LawEffect` defines small primitive accessors per
+hook surface rather than the spec's monolithic `modifyTax /
+modifyToll / modifyWage / modifyPunishment / blocksAction` shape —
+keeps the hook-facade classes (`LawPriceHooks`, `LawTaxHooks`,
+`LawScheduleHooks`) thin and lets crime / visitor / festival sessions
+add their own facade classes for their hook surfaces. Logged in 22
+Revision Notes.
+
+NPC-leader daily reputation drift skipped in v1 (no player ledger to
+consult for an NPC leader); player-leader rep delta still applies at
+enact / repeal time. SUBSIDIZE_HEALER and GUILD_MEMBERSHIP_REQUIRED
+ship as registered no-ops awaiting their dependent subsystems
+(profession enum + guild refactor). Player Laws UI panel deferred
+behind the Office tab GUI follow-up; `/law` commands serve as the v1
+surface.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).

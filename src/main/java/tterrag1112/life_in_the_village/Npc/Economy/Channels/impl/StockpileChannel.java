@@ -13,7 +13,7 @@ import tterrag1112.life_in_the_village.Npc.Economy.Channels.EconomicChannel;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeDirection;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult;
-import tterrag1112.life_in_the_village.Npc.Economy.Channels.VillagePolicy;
+import tterrag1112.life_in_the_village.Npc.Laws.LawPriceHooks;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -68,8 +68,13 @@ public final class StockpileChannel implements EconomicChannel {
         if (stock <= 0) return Optional.empty();
 
         long base = MarketPriceHelper.getDynamicSellPrice(level, village, intent.item());
-        long policied = Math.round(base * NEAR_COST_RATIO
-                * VillagePolicy.sellMultiplier(village, ChannelType.STOCKPILE, intent.item()));
+        long raw = Math.round(base * NEAR_COST_RATIO
+                * LawPriceHooks.sellMultiplier(village, ChannelType.STOCKPILE, intent.item()));
+        long floor = LawPriceHooks.priceFloor(village, ChannelType.STOCKPILE, intent.item());
+        long withFloor = floor > 0 ? Math.max(floor, raw) : raw;
+        long policied = LawPriceHooks.priceCeiling(village, ChannelType.STOCKPILE, intent.item())
+                .map(cap -> Math.min(cap, withFloor))
+                .orElse(withFloor);
         if (policied > intent.maxPrice()) return Optional.empty();
 
         int qty = Math.min(intent.quantity(), stock);

@@ -36,6 +36,12 @@ public final class TreasuryTickHandler {
                         .map(n -> n.equals(village.getName()))
                         .orElse(false));
 
+        // Doc 22: SUBSIDIZE_* laws auto-suspend on overdraft and
+        // resume when funds recover. Resume gates first so a tick that
+        // restored funds via wages/sales doesn't keep subsidies idle.
+        tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks
+                .resumeSubsidiesIfFunded(village);
+
         for (TownspersonMob npc : npcs) {
             long wage = wageForProfession(npc.getProfession());
             if (wage > 0) {
@@ -53,6 +59,21 @@ public final class TreasuryTickHandler {
                 // Contribute a fraction to household pool after receiving
                 tterrag1112.life_in_the_village.Entities.HouseholdWealthManager
                         .contributeToPool(npc, CurrencyValue.of(wage), data);
+            }
+
+            // Doc 22: SUBSIDIZE_* laws pay an extra daily stipend on top
+            // of wages, drawn from the village treasury. Auto-suspends
+            // on overdraft (spec edge case + things-to-flag #2).
+            long subsidy = tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks
+                    .dailySubsidyForProfession(village, npc.getProfession());
+            if (subsidy > 0) {
+                long paid = tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks
+                        .applySubsidyOrSuspend(village, subsidy);
+                if (paid > 0) {
+                    npc.getWallet().receive(CurrencyValue.of(paid));
+                    tterrag1112.life_in_the_village.Entities.HouseholdWealthManager
+                            .contributeToPool(npc, CurrencyValue.of(paid), data);
+                }
             }
 
             // Merchant debt maintenance
