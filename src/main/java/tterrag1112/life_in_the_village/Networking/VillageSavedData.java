@@ -234,6 +234,32 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillageGossipData::new));
     }
 
+    // ── 9. Scribal (Phase 2 task 17) ─────────────────────────────────────────
+
+    /**
+     * Scribal data: per-SCRIBE_WORKSHOP commission queues and per-LIBRARY
+     * book catalogues, both keyed by building UUID. Spec line 336–337.
+     */
+    public record VillageScribalData(
+            Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue> commissionQueues,
+            Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue> libraryCatalogues
+    ) {
+        private static final Codec<UUID> UUID_STRING =
+                Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
+        public static final Codec<VillageScribalData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        Codec.unboundedMap(UUID_STRING,
+                                        tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue.CODEC)
+                                .optionalFieldOf("commissionQueues", new LinkedHashMap<>())
+                                .forGetter(VillageScribalData::commissionQueues),
+                        Codec.unboundedMap(UUID_STRING,
+                                        tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue.CODEC)
+                                .optionalFieldOf("libraryCatalogues", new LinkedHashMap<>())
+                                .forGetter(VillageScribalData::libraryCatalogues)
+                ).apply(i, VillageScribalData::new));
+    }
+
     // ── 7. Property ───────────────────────────────────────────────────────────
 
     public record VillagePropertyData(
@@ -301,7 +327,13 @@ public class VillageSavedData extends SavedData implements
                     VillageGossipData.CODEC
                             .optionalFieldOf("gossipData", new VillageGossipData(new LinkedHashMap<>()))
                             .forGetter(d -> new VillageGossipData(
-                                    new LinkedHashMap<>(d.gossipTopicHeat)))
+                                    new LinkedHashMap<>(d.gossipTopicHeat))),
+                    VillageScribalData.CODEC
+                            .optionalFieldOf("scribalData",
+                                    new VillageScribalData(new LinkedHashMap<>(), new LinkedHashMap<>()))
+                            .forGetter(d -> new VillageScribalData(
+                                    new LinkedHashMap<>(d.commissionQueues),
+                                    new LinkedHashMap<>(d.libraryCatalogues)))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -316,7 +348,8 @@ public class VillageSavedData extends SavedData implements
             VillageHousingData    housingData,
             VillageEconomyData    economyData,
             VillagePropertyData   propertyData,
-            VillageGossipData     gossipData) {
+            VillageGossipData     gossipData,
+            VillageScribalData    scribalData) {
 
         VillageSavedData data = new VillageSavedData();
 
@@ -366,6 +399,12 @@ public class VillageSavedData extends SavedData implements
         // Gossip
         if (gossipData != null) {
             data.gossipTopicHeat.putAll(gossipData.topicHeat());
+        }
+
+        // Scribal (Phase 2 task 17)
+        if (scribalData != null) {
+            data.commissionQueues.putAll(scribalData.commissionQueues());
+            data.libraryCatalogues.putAll(scribalData.libraryCatalogues());
         }
 
         // Rebuild indices
@@ -436,6 +475,12 @@ public class VillageSavedData extends SavedData implements
 
     // Gossip (Phase 2 task 12)
     private final Map<UUID, GossipTopicHeat> gossipTopicHeat = new LinkedHashMap<>();
+
+    // Scribal (Phase 2 task 17)
+    private final Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue>
+            commissionQueues = new LinkedHashMap<>();
+    private final Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue>
+            libraryCatalogues = new LinkedHashMap<>();
 
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
@@ -1122,6 +1167,46 @@ public class VillageSavedData extends SavedData implements
 
     public Map<UUID, GossipTopicHeat> getAllGossipHeat() {
         return Collections.unmodifiableMap(gossipTopicHeat);
+    }
+
+    // =========================================================================
+    // Scribal (Phase 2 task 17)
+    // =========================================================================
+
+    public tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue
+            getOrCreateCommissionQueue(UUID workshopBuildingId) {
+        return commissionQueues.computeIfAbsent(workshopBuildingId, id -> {
+            setDirty();
+            return new tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue(id);
+        });
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue>
+            getCommissionQueue(UUID workshopBuildingId) {
+        return Optional.ofNullable(commissionQueues.get(workshopBuildingId));
+    }
+
+    public Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.CommissionQueue>
+            getAllCommissionQueues() {
+        return Collections.unmodifiableMap(commissionQueues);
+    }
+
+    public tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue
+            getOrCreateLibraryCatalogue(UUID libraryBuildingId) {
+        return libraryCatalogues.computeIfAbsent(libraryBuildingId, id -> {
+            setDirty();
+            return new tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue(id);
+        });
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue>
+            getLibraryCatalogue(UUID libraryBuildingId) {
+        return Optional.ofNullable(libraryCatalogues.get(libraryBuildingId));
+    }
+
+    public Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue>
+            getAllLibraryCatalogues() {
+        return Collections.unmodifiableMap(libraryCatalogues);
     }
 
     /**

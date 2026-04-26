@@ -190,11 +190,39 @@ Goal: NPC-NPC relationships, village rhythm, apprenticeship arcs.
     - [ ] Child play, attachment, schooling
     - [ ] Elderly retirement, mentor role, unfinished business
     - [ ] Coming-of-age transition hook
-- [ ] **17** Scribal professions (before 16 and 18 — they depend on
+- [x] **17** Scribal professions (before 16 and 18 — they depend on
   scribes)
-    - [ ] SCRIBE, LIBRARIAN, SCHOLAR professions
-    - [ ] SCRIBE_WORKSHOP, LIBRARY, SCHOLARS_RETREAT building types
-    - [ ] Work goals, commission queue, library catalogue
+    - [x] SCRIBE + LIBRARIAN added to Profession enum (SCHOLAR
+      already existed; rewired to SCHOLARS_RETREAT). LIBRARY now
+      maps to LIBRARIAN; SCRIBE_WORKSHOP → SCRIBE;
+      SCHOLARS_RETREAT → SCHOLAR via `professionFor`
+    - [x] SCRIBE_WORKSHOP + SCHOLARS_RETREAT added to BuildingType
+      (LIBRARY already existed). Both registered in
+      BuildingProfileRegistry (workshop civic-adjacent,
+      retreat landmark civic)
+    - [x] ProfessionSkills mappings: SCRIBE = LITERACY/COMMERCE,
+      LIBRARIAN = LITERACY/SOCIAL, SCHOLAR = LITERACY/MEDICINE
+    - [x] Weekly schedule: late-rising SCHOLAR_DAY for the trio,
+      WEEKEND_OFF
+    - [x] ProfessionRequirements helper enforces LITERACY ≥
+      50/60/80 hire gates; populator bumps bootstrap NPCs to the
+      required minimum so spawn-time literacy meets the bar
+    - [x] ScribeCommission / ScribeProductType / CommissionStatus
+      / CommissionQueue with persistence per workshop UUID on
+      VillageSavedData (9th codec field `scribalData`)
+    - [x] BookRecord / LibraryLending / LibraryCatalogue with
+      per-LIBRARY persistence on VillageSavedData
+    - [x] AuthorStatus + ScholarProgress components on
+      TownspersonMob with codec/save/load
+    - [x] ScribalItems helper produces placeholder
+      WRITTEN_BOOK / PAPER items with content data; doc 18 swaps
+      for real letter/book item types
+    - [x] ScribeWorkGoal / LibrarianWorkGoal / ScholarWorkGoal
+      registered via ProfessionGoalFactory at P_WORK_PRIMARY
+    - [x] 4 new player verbs: commission_letter,
+      commission_book_copy, borrow_book, take_lesson
+    - [x] /scribe commissions, /library catalogue,
+      /scholar books debug commands
 - [ ] **18** Letters and books
     - [ ] `WrittenLetterItem`, `ExtendedBookContent`
     - [ ] Delivery paths (self, courier, postal)
@@ -408,10 +436,10 @@ yet. Its seed formula (splitmix64 finaliser of each of
 locked for stability — future Phase 2 work depends on it.
 
 **Phase 2 progress:** Tasks 13 (weekly schedule), 11
-(relationship ledger), 12 (gossip/rumor), and 14 (hobby
-activities) complete; tasks 15 (child/elderly arcs), 17
-(scribal), 18 (letters/books), 16 (apprenticeship)
-remaining.
+(relationship ledger), 12 (gossip/rumor), 14 (hobby
+activities), and 17 (scribal professions) complete; tasks
+15 (child/elderly arcs), 18 (letters/books), 16
+(apprenticeship) remaining.
 
 Schedule landed first because gossip and hobbies need the new
 SOCIAL/LEISURE phase distinction, and the child/elderly arc

@@ -8,9 +8,13 @@ import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ChallengeVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ComplimentVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.GiveGiftVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.BorrowBookVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionBookCopyVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.CommissionLetterVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.GreetVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.InsultVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.ListenInVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TakeLessonVerb;
 import tterrag1112.life_in_the_village.Npc.Verbs.Impl.TellRumorVerb;
 
 import java.util.ArrayList;
@@ -89,5 +93,10 @@ public final class PlayerVerbRegistry {
         register(new InsultVerb());
         register(new ListenInVerb());
         register(new TellRumorVerb());
+        // Phase 2 task 17: scribal verbs.
+        register(new CommissionLetterVerb());
+        register(new CommissionBookCopyVerb());
+        register(new BorrowBookVerb());
+        register(new TakeLessonVerb());
     }
 }

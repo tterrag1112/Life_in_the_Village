@@ -316,6 +316,14 @@ public final class ProfessionGoalFactory {
         // ── Unemployed ───────────────────────────────────────────────────────
         REGISTRARS.put(Profession.NONE, npc ->
                 npc.goalSelector.addGoal(P_WORK_PRIMARY, new SeekJobGoal(npc)));
+
+        // ── Scribal (Phase 2 task 17) ────────────────────────────────────────
+        REGISTRARS.put(Profession.SCRIBE, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
+                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScribeWorkGoal(npc)));
+        REGISTRARS.put(Profession.LIBRARIAN, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
+                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.LibrarianWorkGoal(npc)));
+        REGISTRARS.put(Profession.SCHOLAR, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
+                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScholarWorkGoal(npc)));
     }
 
     /**

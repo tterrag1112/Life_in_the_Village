@@ -438,3 +438,91 @@ degradable feature (works without written contracts).
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 2 implementation notes
+
+- **SCHOLAR was already in the Profession enum** (left over from
+  an earlier flavor pass). The spec's three-profession set ships
+  by adding SCRIBE + LIBRARIAN; SCHOLAR is rewired to the new
+  `SCHOLARS_RETREAT` building rather than `LIBRARY`. The
+  `professionFor(BuildingType)` mapping changed accordingly:
+  LIBRARY → LIBRARIAN, SCRIBE_WORKSHOP → SCRIBE,
+  SCHOLARS_RETREAT → SCHOLAR. Existing villages with a LIBRARY
+  will now spawn a librarian on next populate; old SCHOLAR NPCs
+  still load fine and execute the new ScholarWorkGoal (which
+  falls back to the village library if no retreat is assigned —
+  spec line 244).
+- **LIBRARY already existed in BuildingType**, so only
+  SCRIBE_WORKSHOP + SCHOLARS_RETREAT were added. Both got
+  explicit `BuildingProfileRegistry` entries (workshop
+  civic-adjacent, retreat landmark civic). `BuildingType.LIBRARY`
+  was already landmark-civic from before.
+- **Hire gate + bootstrap top-up.** `ProfessionRequirements.literacyRequired`
+  returns 50/60/80 for the three professions per spec lines
+  286-291. The populator now calls `ensureLiteracyForBootstrap`
+  after `setProfession`, bumping bootstrap NPCs to the gate so
+  spawn-time literacy already meets the bar. Player-facing hire
+  paths (future verb / mid-game re-profession) consult
+  `ProfessionRequirements.meets(npc, target)`.
+- **Workspace lookup falls back to village LIBRARY for
+  scholars.** Spec line 244 says "Scholars may work out of the
+  library if no retreat exists." `ScholarWorkGoal.canUse` first
+  checks the assigned building (must be SCHOLARS_RETREAT or
+  LIBRARY), then falls back to scanning the assigned village
+  for any LIBRARY. No half-rate throttle yet — Phase 5 polish
+  could add the spec's "research throughput halved" effect.
+- **Item layer: placeholders via `ScribalItems`.** Spec line
+  410-411 calls out doc 18 as the canonical letter/book item
+  spec. Phase 2 ships `ScribalItems` as a single-swap-point
+  factory: letter/contract/decree wrap vanilla `Items.PAPER`
+  with content in `DataComponents.ITEM_NAME`; book wraps
+  `Items.WRITTEN_BOOK` with `WrittenBookContent`. Doc 18
+  replaces the factory bodies; every caller stays put.
+- **Custom scribe-workshop / writing-desk blocks.** Spec line
+  431-432 notes "reuses existing placeholders". Phase 2 doesn't
+  add a custom block; the desk is the building's
+  `getShape().getOrigin()`, the held item during writing is
+  vanilla `Items.FEATHER`. Phase 5 polish replaces with a
+  proper desk model.
+- **Lending one-copy rule.** Spec line 213 says "one copy at a
+  time". `LibraryCatalogue` keys loans by `(bookId, borrowerId)`
+  composite — same book lent serially to different borrowers
+  works; the same borrower trying to re-borrow the same book
+  replaces the prior loan record (effectively a "renew"). Per
+  spec the cap is per copy: `isAvailableForLending` checks
+  `outstanding < copyCount`, so a 3-copy book can be out to 3
+  different borrowers concurrently.
+- **Late fines and lost books.** `LibraryLending.lateFineFor`
+  returns 1 bronze/day late per spec line 216. `LOST_BOOK_FINE`
+  is set to 25 bronze; the spec says "larger" without a number,
+  so this is open to retuning.
+- **Overdue sweep auto-recovers.** v1 `LibrarianWorkGoal`
+  sweeps overdue loans every 1200 ticks and force-returns the
+  book; the recovered-loan path doesn't yet send a "return your
+  book" letter (that's a doc 18 letter-system follow-up).
+- **Scholar publish cycle.** `ScholarProgress.PUBLISH_THRESHOLD
+  = 30` research points + a 30-day cooldown between books.
+  `ScholarWorkGoal` adds 1 research point per 1200-tick
+  research interval, so a scholar at the desk through normal
+  work hours produces a book roughly once per in-game month.
+  Open to retuning.
+- **Schooling stub.** `LibrarianWorkGoal.grantSchoolingTrickle`
+  hands +1 LITERACY to nearby children every 24000 ticks per
+  spec line 305; the proper schooling system (doc 15) when it
+  lands will replace this with structured lesson sessions.
+- **Letters as PAPER.** `ScribalItems.letter` ships as
+  `Items.PAPER` with the body in `DataComponents.ITEM_NAME` —
+  vanilla doesn't have a "letter" item, so paper is the
+  closest stand-in. Doc 18's `WrittenLetterItem` will be the
+  proper home; this is the explicit swap point.
+- **Decree path stubbed.** `ScribeProductType.DECREE` is fully
+  carried through ScribeWorkGoal but no production code calls
+  the verb path yet — Phase 3 office wiring (Village Scribe
+  office, Phase 3 task) creates decrees from the leader's
+  side. The plumbing is ready.
+- **Children-only "Take a lesson"** is loose in v1 — the verb
+  is available against any SCHOLAR or LIBRARIAN, and the
+  player's "lesson" awards the NPC a SOCIAL tick + nearby
+  children a LITERACY tick. The spec's children-only gate is
+  doc 15 territory; tightening this verb to children-only
+  lands when child arcs do.

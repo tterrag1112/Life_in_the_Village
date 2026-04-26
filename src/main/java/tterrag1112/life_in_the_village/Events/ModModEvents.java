@@ -238,6 +238,7 @@ public class ModModEvents {
         DialogueDebugCommand.register(event.getDispatcher());
         VerbDebugCommand.register(event.getDispatcher());
         GossipDebugCommand.register(event.getDispatcher());
+        ScribalDebugCommand.register(event.getDispatcher());
 
     }
 

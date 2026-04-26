@@ -20,6 +20,9 @@ public enum BuildingType {
     // Tier 4
     NOBLE_MANOR, WINERY, ARMORER, TOOLSMITH, ATELIER, DOCKS,
 
+    // Scribal (Phase 2 task 17)
+    SCRIBE_WORKSHOP, SCHOLARS_RETREAT,
+
     // ── Capital-exclusive ─────────────────────────────────────────────────────
 
     /**

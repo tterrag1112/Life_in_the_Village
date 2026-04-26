@@ -82,6 +82,19 @@ public final class WeeklyScheduleLibrary {
             new TimeWindow(12000, 14000),
             new TimeWindow(14000, 0));
 
+    /**
+     * Scribal day (scribe / librarian / scholar) — late riser, full
+     * indoor day with social dusk hours and an extended evening to
+     * wind down with reading.
+     */
+    private static final DailySchedule SCHOLAR_DAY = DailySchedule.legacy(
+            new TimeWindow(1000, 2000),
+            new TimeWindow(2000, 5500),
+            new TimeWindow(5500, 6500),
+            new TimeWindow(6500, 13000),
+            new TimeWindow(13000, 15000),
+            new TimeWindow(15000, 1000));
+
     // ── Day-off patterns (sets of weekday indices) ─────────────────────────
 
     private static final Set<Integer> SUNDAY_OFF = Set.of(6);
@@ -122,6 +135,8 @@ public final class WeeklyScheduleLibrary {
             case MERCHANT, WANDERING_TRADER -> MERCHANT_DAY;
             case GUARD, ADVENTURER -> GUARD_DAY;
             case INNKEEPER -> INNKEEPER_DAY;
+            // Scribal trio: late-rising indoor day (Phase 2 task 17).
+            case SCRIBE, LIBRARIAN, SCHOLAR -> SCHOLAR_DAY;
             default -> DEFAULT_DAY;
         };
     }
@@ -139,6 +154,8 @@ public final class WeeklyScheduleLibrary {
             // Guards: shift rotation handles coverage; each guard still
             // takes Sunday off in the default case.
             case GUARD, ADVENTURER -> SUNDAY_OFF;
+            // Scribal trio: weekend off — civic-rhythm (closed Sat/Sun).
+            case SCRIBE, LIBRARIAN, SCHOLAR -> WEEKEND_OFF;
             default -> SUNDAY_OFF;
         };
     }

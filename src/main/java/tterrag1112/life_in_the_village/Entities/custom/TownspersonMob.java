@@ -138,6 +138,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final NpcRelationshipLedger npcRelationships = new NpcRelationshipLedger();
     private final tterrag1112.life_in_the_village.Npc.Hobby.NpcHobbyPreference hobbyPreference =
             new tterrag1112.life_in_the_village.Npc.Hobby.NpcHobbyPreference();
+    private final tterrag1112.life_in_the_village.Npc.Scribal.AuthorStatus authorStatus =
+            new tterrag1112.life_in_the_village.Npc.Scribal.AuthorStatus();
+    private final tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress scholarProgress =
+            new tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -503,6 +507,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      */
     public tterrag1112.life_in_the_village.Npc.Hobby.NpcHobbyPreference getHobbyPreference() {
         return hobbyPreference;
+    }
+
+    /** Author publication record (Phase 2 task 17). */
+    public tterrag1112.life_in_the_village.Npc.Scribal.AuthorStatus getAuthorStatus() {
+        return authorStatus;
+    }
+
+    /** Scholar in-progress research (Phase 2 task 17). */
+    public tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress getScholarProgress() {
+        return scholarProgress;
     }
 
     public void clearTraits() {
@@ -1212,6 +1226,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Hobby preferences (Phase 2 task 14) ─────────────────────────────
         hobbyPreference.save(output);
+
+        // ── Author + scholar progress (Phase 2 task 17) ─────────────────────
+        authorStatus.save(output);
+        scholarProgress.save(output);
     }
 
     // =========================================================================
@@ -1352,6 +1370,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Hobby preferences (Phase 2 task 14) ─────────────────────────────
         hobbyPreference.load(input);
+
+        // ── Author + scholar progress (Phase 2 task 17) ─────────────────────
+        authorStatus.load(input);
+        scholarProgress.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {
