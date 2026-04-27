@@ -531,12 +531,20 @@ authored content.
       apprenticeship (office, law, hobby, visitor, religion,
       trait-bias wired; schedule layering + economic norms +
       apprenticeship deferred — see Revision Notes)
-- [ ] **32** Events expanded
-    - [ ] Full `EventType` enum (~35 types)
-    - [ ] `EventScheduler` with all sources (calendar/life-event/
-      crisis/player/visitor)
-    - [ ] Type-specific handlers
-    - [ ] Attendance logic
+- [x] **32** Events expanded
+    - [x] Full `EventType` enum (~33 types) + `EventCategory`
+    - [x] `EventScheduler` with calendar / life-event / crisis sources
+      (player + visitor sources via existing UI/visitor hooks; richer
+      player-host UI deferred — see Revision Notes)
+    - [x] Type-specific handlers (`EventHandlerRegistry` — functional
+      but content-thin per spec; flavor pass is doc 34)
+    - [x] Attendance logic (`EventAttendance`) with required + invited
+      decision + per-attendee `eventOverride` apply / clear
+    - [x] 365-day archival via `pruneOldCompletedEvents`
+    - [x] PLAGUE_OUTBREAK migrated from Phase 3 to schedule a
+      first-class event in addition to the health record
+    - [x] `/event list / schedule / start / complete / cancel`
+      debug commands
 - [ ] **33** Appearance Layer 1
     - [ ] `AppearanceComponent` extended
     - [ ] `AppearanceLayerRegistry`
@@ -1930,5 +1938,146 @@ Audit-discovered fix:
   Refactored to defer the apply to a one-time
   `applyVillageCulture` call inside `assignToBuilding`,
   guarded by a persisted `cultureApplied` flag.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 5 progress (current session)**: task 32 (events
+expanded) shipped. The pre-existing 5-type Phase-3 event
+system (`Village.Event.VillageEvent` + `VillageEventScheduler`
++ `EventEffects`) is extended in place — no parallel
+infrastructure — to satisfy the spec's ~33-type catalogue
+and 5-source scheduler.
+
+Data layer:
+- `VillageEvent.EventType` extended from 5 → 33 values
+  spanning 8 categories. New `EventCategory` enum + per-
+  type `category()` helper. `EventStatus` keeps
+  `ANNOUNCED` / `ACTIVE` / `ENDED` for save compat
+  (aliased to spec's SCHEDULED / ACTIVE / COMPLETED) and
+  adds `CANCELLED` + `DISRUPTED`.
+- `VillageEvent` gains `location`, `primarySubjectId`,
+  `requiredAttendees`, `invitedAttendees`,
+  `actualAttendees`, `eventData (Map<String,String>)`,
+  and `completedTick`. Codec is 14 fields total — every
+  Phase-5 addition is `optionalFieldOf` so pre-Phase-5
+  saves still load.
+
+Handlers:
+- `Village.Event.EventHandler` interface + `EventHandlerRegistry`
+  ship 28 handlers covering every Phase-5 type. Phase-3
+  originals (HARVEST_FESTIVAL / MARKET_DAY /
+  FESTIVAL_OF_LIGHTS / TRAINING_DAY / VILLAGE_FAIR) keep
+  their bespoke logic in `EventEffects`; the registry
+  takes over for everything new via a `default ->`
+  routing branch.
+- Per spec "functional but content-thin" — each handler
+  on completion writes a SHARED_FESTIVAL memory to each
+  actual attendee, fires
+  `NpcLifeEvent.SharedFestival` on the bus per
+  attendee, and records one village-history entry.
+  Religious-rite events also fire the matching
+  `Rite` via `RiteScheduler.schedule` at start.
+  Per-type rumor flavor + dialogue hooks are deferred to
+  the doc 34 content pass.
+
+Sources wired:
+- **Calendar** — annual season-transition events
+  (HARVEST_FESTIVAL, FESTIVAL_OF_LIGHTS) are inherited
+  from Phase 3. New `checkCulturalHolyDay` runs once per
+  in-game day and schedules a culture-specific religious
+  event (Plainfolk → SUNSTEAD_EQUINOX, Highmarch →
+  FORGE_CREED_KINGDOM_DAY, Silkwood → LOOM_THREADING,
+  Tidereach → TIDECALL_FULL_MOON) every
+  `culture.schedule().holyDayInterval()` days.
+- **Life-event** — `EventLifeEventProducer` subscribes to
+  the bus and schedules WEDDING (on `Married`),
+  NAMING_CEREMONY (`BirthInFamily`), FUNERAL
+  (`FamilyDeath`, deduped by deceased UUID), COMING_OF_AGE
+  (`LifeStageAdvanced` TEEN→ADULT), OFFICE_INAUGURATION
+  (`OfficeChange`). Required = primary subject(s);
+  invited = household. Lead-in is 1 day.
+- **Crisis** — `checkCrises` polls village state once per
+  day. FAMINE fires when `village.isCritical()` (food)
+  with a 7-day re-trigger lockout. FIRE rolls 0.5%/day
+  with the same lockout. PLAGUE_OUTBREAK is now scheduled
+  by `PlagueScheduler.start` in addition to the existing
+  health record (single source of truth for the disease,
+  but the event subsystem now sees it for archival /
+  attendance / history).
+- **Player + visitor** — Phase-3 player notice and visitor
+  hooks already exist; Phase 5 leaves the existing UI
+  path in place. A richer "Schedule Event" office UI is
+  deferred to a polish pass (see Revision Notes).
+
+New life event:
+- `NpcLifeEvent.OfficeChange(subject, officeId, previousHolder)`
+  — the office-election system doesn't yet fire this; the
+  producer is in place to consume it as soon as the
+  election layer wires it (one-line hook).
+
+Attendance:
+- `EventAttendance.applyOverrides` runs from `onEventStart`
+  for every event. Required attendees always show up if
+  alive + on-world; invited go through the spec
+  attendance algorithm (base + relationship-to-primary +
+  mood penalty + schedule conflict). Each attendee gets
+  `setEventOverride(type)` so the AI pulls them off
+  schedule for the duration. `clearOverrides` runs on
+  ENDED + CANCELLED.
+
+Persistence + archival:
+- `VillageSavedData.pruneOldCompletedEvents(currentTick)`
+  drops ENDED / CANCELLED / DISRUPTED events 365 in-game
+  days after their `completedTick`. The existing
+  `removeEndedEvents` is left in place as a hard-delete
+  utility.
+- The event sub-system writes a single
+  `VillageHistoryLog.record` per completed event (per
+  type's mapped HistoryEventType), so the village
+  history retains a permanent summary even after the
+  365-day prune.
+
+Debug:
+- `/event list <village>` — every event with status,
+  type, category, ticks, attendance, primary subject.
+- `/event schedule <village> <type>` — force-schedule for
+  start in 1 minute, with the whole village as invited.
+- `/event start <eventId>` — flip ANNOUNCED → ACTIVE.
+- `/event complete <eventId>` — flip ACTIVE → ENDED with
+  full attendance teardown.
+- `/event cancel <eventId>` — set CANCELLED + clear
+  overrides.
+
+Spec deviations + deferrals (logged in 32 Revision Notes):
+- **EventStatus naming** — kept ANNOUNCED / ENDED instead
+  of the spec's SCHEDULED / COMPLETED to preserve save
+  compatibility. Documented as aliases.
+- **Player "Schedule Event" UI** — spec § 332 calls for an
+  office-holder picker UI. v1 ships only the
+  `/event schedule` command; UI is a polish pass.
+- **UpcomingEventsScreen** — spec § 322 client-side
+  panel deferred; `/event list` covers the read path.
+- **1-day-before greeting reminder** — spec open-decision
+  proposes a "don't forget the wedding tomorrow"
+  greeting branch; deferred to dialogue polish.
+- **Failed-attendance penalty** — spec § 422 proposes
+  -15 relationship for required attendees who miss; not
+  enforced in v1 (required always attend if alive).
+- **Crisis event disrupts active event** — spec § 397
+  suggests crisis takes priority. v1 lets concurrent
+  events coexist; DISRUPTED status is plumbed but not
+  yet applied automatically.
+- **Visitor-driven scheduling** — spec § 178 lists
+  CARAVAN_ARRIVAL / ENVOY_RECEPTION / SCHOLAR_EXCHANGE
+  as visitor-spawn triggers. The event types and
+  handlers ship; the `VisitorFluxEngine.spawnVisitor`
+  → schedule hook is deferred (one call per spawn type).
+- **GUILD_FAIR / CRAFT_CONTEST player-host trigger** —
+  data shape ships; UI is the polish pass.
+- **Event-duration scaling for small villages** — spec
+  open-decision proposes scaling. v1 uses the per-type
+  flat `getDurationTicks`.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

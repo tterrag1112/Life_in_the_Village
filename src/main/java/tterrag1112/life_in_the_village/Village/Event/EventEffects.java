@@ -40,7 +40,16 @@ public class EventEffects {
                     level, event, village, data);
             case VILLAGE_FAIR       -> startVillageFair(
                     level, event, village, data);
+            // Phase 5 doc 32: every type added in Phase 5 routes to its
+            // EventHandler in the registry. Phase-3 types keep their
+            // bespoke logic above.
+            default                 -> EventHandlerRegistry.dispatchStart(
+                    event, level, village, data);
         }
+        // Apply attendance-based eventOverride for Phase-5 types that
+        // populate required/invited lists. Phase-3 types apply the
+        // override per-NPC inside their dedicated start handlers.
+        EventAttendance.applyOverrides(level, event, village, data);
 
         // Announce to nearby players
         announceEvent(level, event, village, data, true);
@@ -58,6 +67,11 @@ public class EventEffects {
 
         // Remove NPC effects
         removeNpcEffects(level, village, data);
+
+        // Phase 5 doc 32: per-type completion hooks (memory + mood + gossip
+        // seeds). The registry handles every Phase-5 type; the original 5
+        // Phase-3 types are no-ops in the registry, so they fall through.
+        EventHandlerRegistry.dispatchComplete(event, level, village, data);
 
         // Announce end
         announceEvent(level, event, village, data, false);
@@ -533,6 +547,10 @@ public class EventEffects {
                 player.addEffect(new MobEffectInstance(
                         MobEffects.JUMP_BOOST, 6000, 0));
             }
+            // Phase 5 doc 32: every type added in Phase 5 has no
+            // dedicated player buff for v1. The flavor / message
+            // still fires below so the player gets a notification.
+            default -> {}
         }
         player.displayClientMessage(
                 net.minecraft.network.chat.Component.literal(
@@ -573,7 +591,21 @@ public class EventEffects {
             case FESTIVAL_OF_LIGHTS -> "Festival of Lights";
             case TRAINING_DAY       -> "Training Day";
             case VILLAGE_FAIR       -> "Village Fair";
+            // Phase 5 doc 32: title-case the enum name for new event types.
+            // Per-type display names belong to a content pass (Phase 5 doc 34).
+            default                 -> defaultDisplayName(type);
         };
+    }
+
+    static String defaultDisplayName(VillageEvent.EventType type) {
+        String[] parts = type.name().toLowerCase(java.util.Locale.ROOT).split("_");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) sb.append(' ');
+            sb.append(Character.toUpperCase(parts[i].charAt(0)))
+              .append(parts[i].substring(1));
+        }
+        return sb.toString();
     }
 
     private static List<TownspersonMob> getVillageNpcs(

@@ -63,6 +63,22 @@ public final class PlagueScheduler {
         }
         hdata.putPlague(plague);
         LOGGER.info("[Plague] Outbreak started in village {}", village.getName());
+
+        // Phase 5 doc 32: also schedule a PLAGUE_OUTBREAK event so the
+        // event subsystem (history, mood, gossip, eventOverride on
+        // affected NPCs) treats this as a first-class crisis event.
+        // Best-effort — health subsystem still owns the simulation.
+        try {
+            java.util.List<java.util.UUID> requiredIds = new java.util.ArrayList<>();
+            if (!carriers.isEmpty()) requiredIds.add(carriers.get(0).getUUID());
+            tterrag1112.life_in_the_village.Village.Event.VillageEventScheduler
+                    .scheduleLifeEvent(level, village,
+                            tterrag1112.life_in_the_village.Village.Event.VillageEvent.EventType.PLAGUE_OUTBREAK,
+                            now, null, requiredIds, java.util.List.of());
+        } catch (RuntimeException ex) {
+            LOGGER.warn("[Plague] failed to schedule PLAGUE_OUTBREAK event: {}", ex.getMessage());
+        }
+
         // Phase 4 doc 30 archival hook.
         java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
         details.put("village_name", village.getName());

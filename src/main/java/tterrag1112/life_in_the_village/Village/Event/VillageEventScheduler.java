@@ -2,6 +2,8 @@
 package tterrag1112.life_in_the_village.Village.Event;
 
 import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Cultures.Culture;
+import tterrag1112.life_in_the_village.Cultures.CultureResolver;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
@@ -42,7 +44,15 @@ public class VillageEventScheduler {
     public static void tick(ServerLevel level, Village village,
                             VillageSavedData data, long currentTick) {
 
-        // Don't pile up events — wait until the current one finishes
+        // Phase 5 doc 32 calendar / crisis sources fire BEFORE the
+        // single-active-event guard; they're triggered (not rolled) and
+        // the scheduler tolerates concurrent events of different
+        // categories from Phase 5 onward.
+        checkCulturalHolyDay(level, village, data, currentTick);
+        checkCrises(level, village, data, currentTick);
+
+        // Don't pile up Phase-3-style ambient events — wait until the
+        // current one finishes before random-rolling another.
         boolean hasActive = data.getActiveEventsForVillage(village.getId())
                 .stream()
                 .anyMatch(e -> e.isActive() || e.isAnnounced());
@@ -83,9 +93,143 @@ public class VillageEventScheduler {
             if (prosperity < type.minProsperity()) continue;
             if (level.getRandom().nextFloat() < type.randomChance()) {
                 scheduleEvent(level, village, data, type, currentTick);
-                return; // Only one event at a time
+                return; // Only one ambient event at a time
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Phase 5 doc 32: cultural holy days
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Schedules a culture-specific religious event whenever today's
+     * day-of-year is a multiple of the culture's
+     * {@code holyDayInterval}. Each culture maps to one holy-day
+     * EventType; cultures with no interval fire nothing.
+     */
+    private static void checkCulturalHolyDay(ServerLevel level, Village village,
+                                             VillageSavedData data, long currentTick) {
+        // Only run on the first tick of a day to avoid scheduling
+        // multiple holy-day events per day.
+        if ((currentTick % 24000L) != 0L) return;
+
+        Culture culture;
+        try { culture = CultureResolver.of(level, village); }
+        catch (RuntimeException ex) { return; }
+        if (culture == null) return;
+
+        Optional<Integer> intervalOpt = culture.schedule().holyDayInterval();
+        if (intervalOpt.isEmpty()) return;
+        int interval = intervalOpt.get();
+        if (interval <= 0) return;
+
+        int day = SeasonTracker.dayOfYear(currentTick);
+        if (day % interval != 0) return;
+
+        VillageEvent.EventType type = holyDayTypeFor(culture.id());
+        if (type == null) return;
+
+        // De-dupe: skip if today already has a holy-day event for this
+        // village.
+        boolean already = data.getAllEvents().stream()
+                .filter(e -> e.getVillageId().equals(village.getId()))
+                .anyMatch(e -> e.getType() == type
+                        && currentTick - e.getStartTick() < 24000L);
+        if (already) return;
+
+        scheduleEvent(level, village, data, type, currentTick);
+    }
+
+    private static VillageEvent.EventType holyDayTypeFor(String cultureId) {
+        if (cultureId == null) return null;
+        return switch (cultureId.toLowerCase(java.util.Locale.ROOT)) {
+            case "plainfolk" -> VillageEvent.EventType.SUNSTEAD_EQUINOX;
+            case "highmarch" -> VillageEvent.EventType.FORGE_CREED_KINGDOM_DAY;
+            case "silkwood"  -> VillageEvent.EventType.LOOM_THREADING;
+            case "tidereach" -> VillageEvent.EventType.TIDECALL_FULL_MOON;
+            default          -> null;
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Phase 5 doc 32: crisis polling (FAMINE, FIRE)
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Polls the village state once per day for crisis triggers.
+     * FAMINE fires when the village's food need has been CRITICAL for
+     * the past few days (we approximate "for N days" with a single
+     * critical reading + a 7-day re-trigger lockout). FIRE is a low-
+     * probability random roll.
+     */
+    private static void checkCrises(ServerLevel level, Village village,
+                                    VillageSavedData data, long currentTick) {
+        if ((currentTick % 24000L) != 0L) return;
+        long lockout = 7L * 24000L;
+
+        // FAMINE
+        try {
+            if (village.isCritical()) {
+                boolean recent = data.getAllEvents().stream()
+                        .filter(e -> e.getVillageId().equals(village.getId()))
+                        .anyMatch(e -> e.getType() == VillageEvent.EventType.FAMINE
+                                && currentTick - e.getStartTick() < lockout);
+                if (!recent) {
+                    scheduleEvent(level, village, data,
+                            VillageEvent.EventType.FAMINE, currentTick);
+                }
+            }
+        } catch (RuntimeException ignored) {}
+
+        // FIRE — 0.5% per day, lockout 7 days. Building density is a
+        // future refinement (spec line 161).
+        if (level.getRandom().nextFloat() < 0.005f) {
+            boolean recent = data.getAllEvents().stream()
+                    .filter(e -> e.getVillageId().equals(village.getId()))
+                    .anyMatch(e -> e.getType() == VillageEvent.EventType.FIRE
+                            && currentTick - e.getStartTick() < lockout);
+            if (!recent) {
+                scheduleEvent(level, village, data,
+                        VillageEvent.EventType.FIRE, currentTick);
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Phase 5 doc 32: public scheduling API for life events / crises
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Schedule an event with explicit attendees. Used by
+     * {@link EventLifeEventProducer}, the plague subsystem, and the
+     * {@code /event} debug commands. Returns the new event so callers
+     * can mutate type-specific {@code eventData} before persistence.
+     */
+    public static VillageEvent scheduleLifeEvent(ServerLevel level, Village village,
+                                                  VillageEvent.EventType type,
+                                                  long scheduledTick,
+                                                  UUID primarySubjectId,
+                                                  List<UUID> requiredAttendees,
+                                                  List<UUID> invitedAttendees) {
+        if (level == null || village == null || type == null) return null;
+        VillageEvent event = VillageEvent.create(village.getId(), type,
+                scheduledTick, primarySubjectId,
+                requiredAttendees == null ? List.of() : requiredAttendees,
+                invitedAttendees  == null ? List.of() : invitedAttendees);
+        VillageSavedData.get(level).addEvent(event);
+        return event;
+    }
+
+    /** Public no-attendees overload for crises and the random-roll path. */
+    public static VillageEvent scheduleSimple(ServerLevel level, Village village,
+                                              VillageSavedData data,
+                                              VillageEvent.EventType type,
+                                              long currentTick) {
+        scheduleEvent(level, village, data, type, currentTick);
+        return data.getActiveEventsForVillage(village.getId()).stream()
+                .filter(e -> e.getType() == type)
+                .findFirst().orElse(null);
     }
 
     // =========================================================================
@@ -112,12 +256,18 @@ public class VillageEventScheduler {
                 data.setDirty();
             } else if (event.shouldEnd(currentTick)) {
                 event.setStatus(VillageEvent.EventStatus.ENDED);
+                event.setCompletedTick(currentTick);
+                EventAttendance.clearOverrides(level, event);
                 EventEffects.onEventEnd(level, event, village, data);
                 data.setDirty();
             }
         }
 
-        data.removeEndedEvents();
+        // Phase 5 doc 32: keep ENDED / CANCELLED / DISRUPTED events for
+        // 365 in-game days so they remain visible in /event list and
+        // reachable for debug. After that they're dropped — the
+        // village-history archive keeps their summary indefinitely.
+        data.pruneOldCompletedEvents(currentTick);
     }
 
     // =========================================================================

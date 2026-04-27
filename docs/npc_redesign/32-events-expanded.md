@@ -433,3 +433,115 @@ Phase 5 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 5 implementation (2026-04-27, branch `claude/npc-office-framework-behavior-qBdJn`)
+
+#### Things to flag
+
+- **Existing `VillageEvent` extended in place rather than replaced.**
+  Phase 3 already shipped a 5-type `VillageEvent` enum + scheduler +
+  `EventEffects` triad, and `TownspersonMob.eventOverride` references
+  `VillageEvent.EventType` directly. Building a parallel "Event"
+  class would have created a half-wired second hook, so Phase 5 grew
+  the existing class to ~33 EventType values and added new optional
+  fields. Spec says `Event` (generic name); implementation says
+  `VillageEvent` (existing name kept).
+- **EventStatus naming kept for save compatibility.** Spec asks for
+  SCHEDULED / ACTIVE / COMPLETED / CANCELLED / DISRUPTED. The
+  existing enum uses ANNOUNCED / ACTIVE / ENDED. ANNOUNCED ≡
+  SCHEDULED and ENDED ≡ COMPLETED — same semantics, kept the older
+  names so pre-Phase-5 saves load without a migration. CANCELLED
+  and DISRUPTED are added.
+- **Codec backward compatibility.** Every Phase-5 field on
+  `VillageEvent` (location, primarySubjectId, attendee lists,
+  eventData, completedTick) wraps in `optionalFieldOf` with sensible
+  defaults so events serialised by Phase 3 still deserialise. Total
+  arity 14 fields — under DFU's 16-field cap.
+- **`EventHandlerRegistry` is the dispatch path for Phase-5 types
+  only.** The 5 Phase-3 originals keep their bespoke logic in
+  `EventEffects` (decorations, profession buffs, wandering trader
+  spawn). Adding a `default ->` branch to the existing switch routes
+  every new type to the registry. No double-handling.
+- **Two same-named classes coexist** — `Cultures.CultureResolver`
+  (Phase 5-31 behavior resolver) and `Village.CultureResolver`
+  (structure-template path resolver). Phase 5-32 reads only the
+  former; no file imports both.
+
+#### Spec deviations
+
+- **`/event set` and player Schedule-Event UI not shipped.** Spec §
+  332 calls for an office-holder UI that picks event type, scheduled
+  tick, invitees, and special options. v1 ships only the
+  `/event schedule` command; the GUI is a polish pass.
+- **`UpcomingEventsScreen` not shipped.** Spec § 322 client-side
+  panel deferred. `/event list` covers the read path.
+- **Event reminders to player not shipped.** Spec open-decision
+  proposes a "don't forget the wedding tomorrow" greeting branch;
+  deferred to dialogue polish (doc 34).
+- **Failed-attendance penalty not enforced.** Spec § 422 proposes
+  -15 relationship for required attendees who miss. v1 keeps
+  required attendees as guaranteed-present (only filtered by
+  alive + on-world); the relationship hit + the attendance-failure
+  bookkeeping are future work.
+- **Crisis events do not auto-disrupt active events.** Spec § 397
+  says active event becomes DISRUPTED if a crisis fires. v1
+  permits concurrent events; the DISRUPTED status is plumbed
+  through the codec / commands but not yet applied automatically.
+- **Visitor-driven event scheduling not yet wired.** Spec § 178
+  lists CARAVAN_ARRIVAL / ENVOY_RECEPTION / SCHOLAR_EXCHANGE as
+  visitor-spawn triggers. The event types and handlers ship; the
+  `VisitorFluxEngine.spawnVisitor` → schedule hook is a one-call
+  follow-up per visitor type.
+- **GUILD_FAIR / CRAFT_CONTEST player-host trigger.** Data shape +
+  handlers ship. The guild-master UI to schedule them is the polish
+  pass. `/event schedule` works as the test path.
+- **Event-duration scaling for small villages not implemented.**
+  Spec open-decision proposes scaling with population; v1 uses the
+  per-type flat `getDurationTicks` on every village.
+- **Per-type `defaultDuration()` consolidated on `EventType`.**
+  Spec proposes a method on the handler interface
+  (`EventHandler.defaultDuration()`); v1 keeps duration on the
+  enum (`EventType.getDurationTicks`) since that's where it
+  already lives, and the handler can override per-event by
+  setting a custom endTick at schedule time.
+- **`OfficeChange` life event not yet fired.** The producer
+  subscribes for it and will schedule OFFICE_INAUGURATION
+  correctly, but the office-election system doesn't yet emit
+  the event. One-line hook in `OfficeElection` finalisation —
+  deferred to the next office pass.
+- **`Map<String, Object> eventData` → `Map<String, String>`.**
+  Spec line 101 types the payload as `Object`, but `Object` has
+  no codec. v1 uses `Map<String, String>`; handlers parse as
+  needed. This is sufficient for the data Phase 5 handlers
+  carry (officeId, funeralHeld flag).
+
+#### Functional-but-thin handlers
+
+Per spec § "Phase 5 ships handlers as functional but content-thin"
+(Phase 5 doc 34 expands flavor text), every Phase-5 handler:
+
+1. On start: applies a focused effect (currently: religious-rite
+   handlers schedule the matching Rite; others are no-op).
+2. On complete: writes a SHARED_FESTIVAL memory to each actual
+   attendee, fires `NpcLifeEvent.SharedFestival` per attendee,
+   and records one `VillageHistoryLog` entry of an appropriate
+   `HistoryEventType`.
+
+Per-type rumor templates, mood-delta tuning, dialogue branches,
+and rich reward tables are all the doc 34 content pass.
+
+#### Future-phase deferrals
+
+- JSON-driven custom event types (Phase 6).
+- Multi-village simultaneous events (festivals shared between
+  villages).
+- Procedural story arcs spanning multiple events.
+- Event ticketing or paid attendance.
+- Cultural-mandate "FESTIVAL_MANDATORY" law that forces
+  attendance — referenced in `EventAttendance.decideAttendance`
+  pseudocode but not yet wired (no `VillageLaw` value of that
+  name exists).
+- Player active roles beyond presence-counts (speaking at
+  TOWN_MEETING, submitting to CRAFT_CONTEST).
+- Event priority table for two-events-same-tick conflict
+  resolution.
