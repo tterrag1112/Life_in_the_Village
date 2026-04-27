@@ -292,6 +292,22 @@ public class VillageSpawner {
                 tterrag1112.life_in_the_village.Village.History.HistoryEventType.VILLAGE_FOUNDED,
                 now, foundingDetails, java.util.List.of());
 
+        // Phase 5 doc 31 — enact the village culture's initial laws.
+        // CultureResolver.of walks village → kingdom → registry default
+        // so a village created outside any kingdom gets the empty
+        // default law set rather than throwing.
+        var villageCulture = tterrag1112.life_in_the_village.Cultures.CultureResolver
+                .of(level, village);
+        for (String lawName : villageCulture.lawDefaults().initialLaws()) {
+            try {
+                var law = tterrag1112.life_in_the_village.Npc.Laws.VillageLaw.valueOf(lawName);
+                tterrag1112.life_in_the_village.Npc.Laws.LawEnactment.enact(
+                        village, law, /* params */ null, level, /* actor */ null);
+            } catch (IllegalArgumentException e) {
+                System.out.println("[CultureBoot] Unknown initial law: " + lawName);
+            }
+        }
+
         System.out.println("VillageSpawner: '" + villageName
                 + "' spawned — buildings=" + village.getBuildingIds().size()
                 + " farms=" + layout.farmPlots().size());

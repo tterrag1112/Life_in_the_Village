@@ -129,6 +129,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      *  bundle. Persisted; flipped by {@link #setProfession} on the
      *  first non-NONE assignment so re-assignment doesn't re-pay. */
     private boolean professionStarterPaid;
+    /** True once the NPC has had culture biases + religion applied
+     *  via {@link #applyVillageCulture}. The application is deferred
+     *  to the first {@code assignToBuilding(non-null villageName)}
+     *  call because {@code finalizeSpawn} runs before village
+     *  assignment in the populator path. Persisted so reloads
+     *  don't double-apply. */
+    private boolean cultureApplied;
     /** Game tick at which the NPC's CURRENT profession was assigned.
      *  Reset on every profession change; used by Phase 4 doc 26 to
      *  gate the merchant → trading-company promotion (365 days
@@ -814,6 +821,47 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public void assignToBuilding(UUID buildingId, String villageName) {
         this.assignedBuildingId = buildingId;
         this.assignedVillageName = villageName;
+        // Phase 5 doc 31: apply culture biases the first time the NPC
+        // gets a village assignment. The audit caught that finalizeSpawn
+        // runs before assignToBuilding in the populator flow, so the
+        // culture-derived trait bias + religion seed never landed
+        // unless deferred to here.
+        if (!cultureApplied && villageName != null
+                && level() instanceof net.minecraft.server.level.ServerLevel sl) {
+            applyVillageCulture(sl);
+        }
+    }
+
+    /**
+     * Phase 5 doc 31 — applies the village's culture to this NPC:
+     * additive trait nudges per {@code culture.traitBias()} and a
+     * culture-specific religion seed (overwriting the default
+     * {@code sunstead} seeded at finalizeSpawn). Idempotent via
+     * {@link #cultureApplied}.
+     */
+    private void applyVillageCulture(net.minecraft.server.level.ServerLevel level) {
+        var culture = tterrag1112.life_in_the_village.Cultures.CultureResolver
+                .of(this);
+        if (culture == null) return;
+        // Trait biases.
+        for (var axis : tterrag1112.life_in_the_village.Npc.Traits.TraitAxis.values()) {
+            float bias = culture.traitBias().bias(axis);
+            if (bias != 0f) traits.set(axis, traits.get(axis) + bias);
+        }
+        // Religion overwrite (replaces the default sunstead seed). The
+        // default-religion entry is removed first so dual-faith
+        // syncretism doesn't accidentally show up at PietyTier scoring.
+        String defaultReligion = tterrag1112.life_in_the_village.Cultures
+                .CultureResolver.religionFor(
+                        tterrag1112.life_in_the_village.Cultures.CultureRegistry
+                                .getOrDefault(null));
+        String cultureReligion = tterrag1112.life_in_the_village.Cultures
+                .CultureResolver.religionFor(culture);
+        if (!cultureReligion.equals(defaultReligion)) {
+            piety.setBelief(defaultReligion, 0f);
+        }
+        piety.setBelief(cultureReligion, 0.3f);
+        cultureApplied = true;
     }
 
     public Optional<Building> getAssignedBuilding(ServerLevel level) {
@@ -1257,29 +1305,20 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         traits.randomize(random);
         // Mood baseline derives from traits; init after traits are set.
         mood.initializeFromTraits(traits);
-        // Skills depend on profession (which is set elsewhere on assignment);
-        // at spawn the profession is typically NONE/CITIZEN, so this just
-        // randomizes the "others in [0..10]" tail per spec. When the NPC is
-        // later assigned a real profession, callers may re-init.
         skills.initializeFromProfession(getProfession(), random, level.getLevel().getGameTime());
-        // Phase 3 doc 20: seed belief in the village's dominant religion
-        // at strength 0.3 per spec line 64. The dominance lookup uses
-        // the kingdom culture when available; outside any kingdom we
-        // fall back to "default" → SUNSTEAD. Foreign-religion + low-
-        // local-religion syncretism (spec line 64) lands when the
-        // visitor flux pass ships in Phase 4.
-        String culture = "default";
-        if (level.getLevel() instanceof net.minecraft.server.level.ServerLevel sl) {
-            var data = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(sl);
-            culture = getAssignedVillageName()
-                    .flatMap(data::getVillageByName)
-                    .flatMap(v -> data.getKingdomForVillage(v.getId()))
-                    .map(tterrag1112.life_in_the_village.Kingdom.Kingdom::getCulture)
-                    .orElse("default");
-        }
-        String religionId = tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry
-                .dominantReligionFor(culture);
-        piety.setBelief(religionId, 0.3f);
+
+        // Phase 3 doc 20: seed default religion at strength 0.3.
+        // Phase 5 doc 31 — at this point the NPC has no village
+        // assigned yet (the populator's flow is finalizeSpawn →
+        // setProfession → assignToBuilding), so the culture-aware
+        // overwrite happens later in {@link #applyVillageCulture}
+        // when the village name is set. The default seed here keeps
+        // /summon-spawned NPCs from carrying an empty piety map.
+        String defaultReligionId = tterrag1112.life_in_the_village.Cultures
+                .CultureResolver.religionFor(
+                        tterrag1112.life_in_the_village.Cultures.CultureRegistry
+                                .getOrDefault(null));
+        piety.setBelief(defaultReligionId, 0.3f);
 
         // Seed constitution per spec line 53 — 50..90 with mild bias
         // toward higher values; CHILD spawns underweighted, ELDERLY
@@ -1366,6 +1405,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // pre-fix saves come back as empty wallets (no migration risk).
         output.putLong("walletBronze", economy.getWallet().toBronze());
         output.putBoolean("professionStarterPaid", professionStarterPaid);
+        output.putBoolean("cultureApplied", cultureApplied);
         output.putLong("professionStartedTick", professionStartedTick);
 
         // ── Relationships ────────────────────────────────────────────────────
@@ -1531,6 +1571,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         long bronze = input.read("walletBronze", Codec.LONG).orElse(0L);
         if (bronze > 0L) economy.getWallet().receive(bronze);
         professionStarterPaid = input.read("professionStarterPaid", Codec.BOOL).orElse(false);
+        cultureApplied        = input.read("cultureApplied",        Codec.BOOL).orElse(false);
         professionStartedTick = input.read("professionStartedTick", Codec.LONG).orElse(0L);
 
         // ── Relationships ────────────────────────────────────────────────────

@@ -113,8 +113,24 @@ public record VillageVisitorCapacity(
                 default -> {}
             }
         }
+        // Phase 5 doc 31 — apply the village's culture-side affinity
+        // multiplier on top of the per-building base weights. Reads
+        // through CultureRegistry directly (no ServerLevel needed) by
+        // looking up the village's kingdom-derived culture id.
+        String cultureId = data.getKingdomForVillage(village.getId())
+                .map(tterrag1112.life_in_the_village.Kingdom.Kingdom::getCulture)
+                .orElse(null);
+        var culture = tterrag1112.life_in_the_village.Cultures.CultureRegistry
+                .getOrDefault(cultureId);
+        var affinity = culture.visitorAffinity();
+        EnumMap<VisitorType, Float> adjusted = new EnumMap<>(VisitorType.class);
+        weights.forEach((type, w) -> {
+            float mult = affinity.multiplierFor(type);
+            adjusted.put(type, w * mult);
+        });
+
         // Hard ceiling per spec line 263.
         if (concurrent > MAX_CONCURRENT_CAP) concurrent = MAX_CONCURRENT_CAP;
-        return new VillageVisitorCapacity(concurrent, arrival, weights);
+        return new VillageVisitorCapacity(concurrent, arrival, adjusted);
     }
 }
