@@ -279,6 +279,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     }
 
     public void setProfession(Profession profession) {
+        Profession previous = getProfession();
         entityData.set(PROFESSION, profession.name());
         ProfessionGoalFactory.register(this);
         if (appearance.getName() != null && !appearance.getName().isEmpty()) {
@@ -292,6 +293,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         if (!professionStarterPaid && profession != Profession.NONE) {
             applyStarterFor(profession);
             professionStarterPaid = true;
+        }
+        // Phase 4 doc 27: route the change through the implicit-guild
+        // bootstrap so the NPC auto-(un)joins matching guild clusters.
+        if (level() instanceof net.minecraft.server.level.ServerLevel sl
+                && previous != profession) {
+            tterrag1112.life_in_the_village.Guilds.Common.GuildBootstrap
+                    .onProfessionChanged(sl, this, previous, profession, sl.getGameTime());
         }
     }
 

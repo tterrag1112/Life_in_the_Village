@@ -142,6 +142,21 @@ public record BuildingResourceProfile(
         m.put(BuildingType.GUILD_HALL, new BuildingResourceProfile(
                 m1(ResourceCategory.COIN_INFLUX, 2f),
                 m1(ResourceCategory.PAPER, 0.3f)));
+
+        // Phase 4 doc 27 — guild hall variants share the adventurer
+        // shape for v1; type-specific economic flavour (e.g. CRAFTSMEN
+        // consumes more BUILDING_MATERIALS, MERCHANTS produces more
+        // COIN_INFLUX) is a Phase 5 tuning concern.
+        for (BuildingType hall : new BuildingType[] {
+                BuildingType.GUILD_HALL_CRAFTSMEN,
+                BuildingType.GUILD_HALL_MERCHANTS,
+                BuildingType.GUILD_HALL_AGRICULTURAL,
+                BuildingType.GUILD_HALL_RELIGIOUS,
+                BuildingType.GUILD_HALL_SCHOLARLY }) {
+            m.put(hall, new BuildingResourceProfile(
+                    m1(ResourceCategory.COIN_INFLUX, 2f),
+                    m1(ResourceCategory.PAPER, 0.3f)));
+        }
         m.put(BuildingType.GUARD_TOWER, new BuildingResourceProfile(
                 m1(),
                 m1(ResourceCategory.WEAPONS, 0.3f, ResourceCategory.FOOD, 1f)));

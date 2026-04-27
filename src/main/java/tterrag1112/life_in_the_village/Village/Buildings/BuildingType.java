@@ -24,6 +24,23 @@ public enum BuildingType {
     // Scribal (Phase 2 task 17)
     SCRIBE_WORKSHOP, SCHOLARS_RETREAT,
 
+    // ── Guild halls (Phase 4 doc 27) ──────────────────────────────────────
+    /**
+     * Craftsmen's guild hall. Upgrades the village's implicit Craftsmen
+     * guild to L1 on construction; offices populate via
+     * {@code OfficeFramework}. Members are blacksmiths, carpenters,
+     * weavers, stonemasons, candlemakers, and millers.
+     */
+    GUILD_HALL_CRAFTSMEN,
+    /** Merchants' guild hall — merchants, innkeepers, stockpile keepers. */
+    GUILD_HALL_MERCHANTS,
+    /** Agricultural guild hall — farmers, bakers, millers (overlap). */
+    GUILD_HALL_AGRICULTURAL,
+    /** Religious guild hall — priests + religiously-aligned scholars. */
+    GUILD_HALL_RELIGIOUS,
+    /** Scholarly guild hall — scholars, scribes, librarians. */
+    GUILD_HALL_SCHOLARLY,
+
     // ── Capital-exclusive ─────────────────────────────────────────────────────
 
     /**

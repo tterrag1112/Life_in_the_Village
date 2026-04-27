@@ -51,6 +51,11 @@ public final class BuildingProfileRegistry {
 
         // Landmark civic — spread out
         landmarkCivic(BuildingType.GUILD_HALL);
+        landmarkCivic(BuildingType.GUILD_HALL_CRAFTSMEN);
+        landmarkCivic(BuildingType.GUILD_HALL_MERCHANTS);
+        landmarkCivic(BuildingType.GUILD_HALL_AGRICULTURAL);
+        landmarkCivic(BuildingType.GUILD_HALL_RELIGIOUS);
+        landmarkCivic(BuildingType.GUILD_HALL_SCHOLARLY);
         landmarkCivic(BuildingType.INN);
         landmarkCivic(BuildingType.MARKET);
         landmarkCivic(BuildingType.TEMPLE);

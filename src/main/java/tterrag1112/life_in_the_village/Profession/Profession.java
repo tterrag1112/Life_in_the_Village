@@ -86,7 +86,12 @@ public enum Profession {
             case STOCKPILE       -> Profession.STOCKPILE_KEEPER;
             case GUARD_TOWER     -> Profession.GUARD;
             case CARPENTRY       -> Profession.CARPENTER;
-            case GUILD_HALL      -> Profession.GUILDWORKER;
+            case GUILD_HALL,
+                 GUILD_HALL_CRAFTSMEN,
+                 GUILD_HALL_MERCHANTS,
+                 GUILD_HALL_AGRICULTURAL,
+                 GUILD_HALL_RELIGIOUS,
+                 GUILD_HALL_SCHOLARLY -> Profession.GUILDWORKER;
             case TOWN_HALL       -> Profession.VILLAGE_LEADER;
             case CASTLE          -> Profession.KINGDOM_RULER;
             case CHANCELLERY     -> Profession.CHANCELLOR;

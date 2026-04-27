@@ -29,7 +29,12 @@ public class ZoneRegistry {
         // ── Civic ──────────────────────────────────────────────────────────────
         reg(BuildingType.TOWN_HALL,    BuildingZone.CIVIC,       0, false, StreetTier.PRIMARY);
         reg(BuildingType.CHANCELLERY,  BuildingZone.CIVIC,       1, false, StreetTier.PRIMARY);  // NEW
-        reg(BuildingType.GUILD_HALL,   BuildingZone.CIVIC,       2, true,  StreetTier.PRIMARY);
+        reg(BuildingType.GUILD_HALL,            BuildingZone.CIVIC, 2, true, StreetTier.PRIMARY);
+        reg(BuildingType.GUILD_HALL_CRAFTSMEN,    BuildingZone.CIVIC, 2, true, StreetTier.PRIMARY);
+        reg(BuildingType.GUILD_HALL_MERCHANTS,    BuildingZone.CIVIC, 2, true, StreetTier.PRIMARY);
+        reg(BuildingType.GUILD_HALL_AGRICULTURAL, BuildingZone.CIVIC, 2, true, StreetTier.PRIMARY);
+        reg(BuildingType.GUILD_HALL_RELIGIOUS,    BuildingZone.CIVIC, 2, true, StreetTier.PRIMARY);
+        reg(BuildingType.GUILD_HALL_SCHOLARLY,    BuildingZone.CIVIC, 2, true, StreetTier.PRIMARY);
         reg(BuildingType.INN,          BuildingZone.CIVIC,       3, true,  StreetTier.PRIMARY);
         reg(BuildingType.MARKET,       BuildingZone.CIVIC,       4, true,  StreetTier.PRIMARY);
         reg(BuildingType.BELL_TOWER,   BuildingZone.CIVIC,       5, true,  StreetTier.PRIMARY);

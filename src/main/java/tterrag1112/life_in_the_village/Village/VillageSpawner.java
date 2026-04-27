@@ -266,6 +266,23 @@ public class VillageSpawner {
         }
         VillageSimEngine.buildBaseline(village, data, level.getGameTime());
 
+        // Phase 4 doc 27: scan for implicit guild clusters, then promote
+        // any matching cluster whose hall building was placed in this
+        // pass. Adventurer guilds keep their legacy GuildData path —
+        // the new abstract layer is additive.
+        long now = level.getGameTime();
+        tterrag1112.life_in_the_village.Guilds.Common.GuildBootstrap
+                .scanAndCreateImplicit(level, village, data, now);
+        for (var bid : village.getBuildingIds()) {
+            data.getBuildingById(bid).ifPresent(b -> {
+                if (tterrag1112.life_in_the_village.Guilds.Common.GuildHallTypes
+                        .isGuildHall(b.getType())) {
+                    tterrag1112.life_in_the_village.Guilds.Common.GuildBootstrap
+                            .onHallConstructed(level, b, village, now);
+                }
+            });
+        }
+
         System.out.println("VillageSpawner: '" + villageName
                 + "' spawned — buildings=" + village.getBuildingIds().size()
                 + " farms=" + layout.farmPlots().size());

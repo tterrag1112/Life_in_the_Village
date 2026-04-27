@@ -418,12 +418,14 @@ companies and guilds have structure; visitors bring coin.
     - [x] `BuildingResourceProfile.TABLE` populated
     - [x] `VillageSimData` refactor to category maps
     - [x] Save migration
-- [ ] **27** Guild refactor (before 26 and 28 — they depend on
+- [x] **27** Guild refactor (before 26 and 28 — they depend on
   abstract guild)
-    - [ ] `AbstractGuild` base + 6 subclasses
-    - [ ] Implicit L0 guilds, L1+ upgrade on guild hall
-    - [ ] 6 guild hall building types
-    - [ ] Migrate existing `GuildData` to `AdventurerGuild`
+    - [x] `AbstractGuild` base + 6 subclasses
+    - [x] Implicit L0 guilds, L1+ upgrade on guild hall
+    - [x] 6 guild hall building types
+    - [~] Migrate existing `GuildData` to `AdventurerGuild`
+      (deferred — `GuildData` left intact alongside; the new
+      abstract layer is additive per spec "Open decisions" #1)
 - [ ] **28** Request board
     - [ ] `Request` + `RequestBoard` per scope
     - [ ] Posting, acceptance, fulfillment, escalation
@@ -1243,5 +1245,90 @@ Spec deviations + deferrals (logged in 25 Revision Notes):
   per-tick blend clamps inputs ≥ 0 via `clamp` in
   `blendReal`); spec line 217 calls for clamping which is
   honoured at the blend step rather than the table step.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 27 (guild refactor)
+shipped as an additive abstract layer per spec "Open decisions"
+#1.
+
+New package `Guilds.Common`:
+- `GuildType` (ADVENTURER / CRAFTSMEN / MERCHANTS /
+  AGRICULTURAL / RELIGIOUS / SCHOLARLY) with profession
+  membership tables and `primaryFor(Profession)` resolver.
+- `GuildLevel` (IMPLICIT / ESTABLISHED / RECOGNIZED /
+  PROMINENT) with `canPostRequests` /
+  `canAcceptRemoteRequests` gates.
+- `GuildRankTier` (APPLICANT / BRONZE / SILVER / GOLD /
+  PLATINUM / ELDER) — distinct from the legacy adventurer
+  `GuildRank` (BRONZE..DIAMOND, XP-driven).
+- `GuildMemberRef` record + `GuildTreasury` (200-bronze L1
+  starting balance) + `GuildHallTypes` bidirectional
+  hall-type lookup.
+- `AbstractGuild` — single concrete class for all six
+  categories; the polymorphic codec is a tagged record
+  with `GuildType` as the discriminator.
+- `GuildSavedData` (`SavedDataType`
+  "life_in_the_village_guilds_v2") storing the abstract
+  guilds keyed by guildId.
+- `GuildBootstrap` — `scanAndCreateImplicit` (cluster ≥ 2
+  spawns implicit guilds), `onProfessionChanged` (auto-
+  drop / auto-join on profession swaps), `onHallConstructed`
+  (L0 → ESTABLISHED on hall placement).
+
+Building system:
+- 5 new `BuildingType` entries: `GUILD_HALL_CRAFTSMEN`,
+  `GUILD_HALL_MERCHANTS`, `GUILD_HALL_AGRICULTURAL`,
+  `GUILD_HALL_RELIGIOUS`, `GUILD_HALL_SCHOLARLY`. The
+  existing `GUILD_HALL` keeps its meaning as the adventurer
+  hall — no rename, preserves save compat for the 25-file
+  consumer surface that references `BuildingType.GUILD_HALL`.
+- 6 registry locations updated for the 5 new halls:
+  ZoneRegistry, BuildingProfileRegistry,
+  BuildingInhabitantRegistry, BuildingTypeFlags,
+  BuildingResourceProfile, and `Profession.professionFor`.
+
+Hooks:
+- `TownspersonMob.setProfession` records the previous
+  profession and routes through
+  `GuildBootstrap.onProfessionChanged` on every change.
+- `VillageSpawner` ends each spawn with a
+  `scanAndCreateImplicit` pass and an `onHallConstructed`
+  loop over each placed hall.
+
+Debug:
+- `/guilds list / info / members / promote / upgrade /
+  create / contribute` — abstract layer parallel to the
+  legacy `/guild` adventurer commands.
+
+Spec deviations + deferrals (logged in 27 Revision Notes):
+- Big-bang `GuildData → AdventurerGuild` rename
+  **deferred**. Spec "Open decisions" #1 already proposed
+  the additive path; v1 follows it. The legacy `GuildData`
+  record stays intact alongside the new abstract layer.
+  An adapter pass migrates the 25 consumer files
+  incrementally.
+- Single concrete `AbstractGuild` class instead of six
+  thin subclasses. Spec line 63 already calls them "thin
+  extensions"; v1 collapses to a tagged class. Phase 5
+  can split when type-specific behaviour diverges
+  (masterpiece certification, trade-volume tracker, etc.).
+- `master_of_apprentices` office wiring deferred —
+  apprenticeship (Phase 2 task 16) hasn't shipped.
+- Treasury L1 starting balance set at 200 bronze.
+  Documented as a tuning candidate per "Things to flag" #2.
+- Member skill minimum gating ("Things to flag" #3) not
+  enforced in v1 — belongs on a future explicit-join
+  verb (Phase 5 polish).
+- `/guilds` plural literal instead of extending `/guild`
+  to avoid stomping the existing `GuildCommands` tree.
+  Both literals coexist.
+- Auto-spawn recipe for the new halls in `BuildingRegistry`
+  deferred — registering them now would force every new-
+  spawned village to ship one of each. Manual placement
+  via debug commands works; Phase 5 worldgen tuning
+  can register selective spawn rules.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).
