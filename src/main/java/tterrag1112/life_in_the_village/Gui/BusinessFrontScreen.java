@@ -4,6 +4,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Gui.Framework.Chrome;
 import tterrag1112.life_in_the_village.Gui.Framework.StyledButton;
@@ -79,7 +80,7 @@ public class BusinessFrontScreen extends Screen {
         // Corner profile shortcut — top-right inside the panel.
         var profileBtn = StyledButton.builder(Component.literal("i"),
                         b -> {
-                            PacketDistributor.sendToServer(
+                            ClientPacketDistributor.sendToServer(
                                     new NpcProfileActionPacket(data.npcId(),
                                             NpcProfileActionPacket.Action.OPEN_PROFILE));
                             this.onClose();
@@ -147,13 +148,13 @@ public class BusinessFrontScreen extends Screen {
         // resolves the actual UI per profession (trade screen for
         // merchant/smith, borrow screen for library, commission for
         // scribe, request-treatment for healer, etc).
-        PacketDistributor.sendToServer(new NpcProfileActionPacket(
+        ClientPacketDistributor.sendToServer(new NpcProfileActionPacket(
                 data.npcId(), NpcProfileActionPacket.Action.TRADE));
         this.onClose();
     }
 
     private void sendVerb(String verbId) {
-        PacketDistributor.sendToServer(new PlayerVerbInvokePacket(
+        ClientPacketDistributor.sendToServer(new PlayerVerbInvokePacket(
                 data.npcId(), verbId, java.util.Map.of()));
         // Some verbs open follow-up screens; close this one so they
         // aren't stacked behind us.

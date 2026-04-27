@@ -75,17 +75,17 @@ public final class HealthDebugCommand {
         TownspersonMob npc = TownspersonMob.findByUUID(level, npcId).orElse(null);
         if (npc == null) { src.sendFailure(Component.literal("No NPC " + npcId)); return 0; }
         StringBuilder sb = new StringBuilder("§e=== Health for ");
-        sb.append(npc.getNpcName()).append(" §7(constitution=").append(npc.getHealth().constitution())
+        sb.append(npc.getNpcName()).append(" §7(constitution=").append(npc.getHealthComponent().constitution())
                 .append(", workMod=").append(String.format(Locale.ROOT, "%.2f",
-                        npc.getHealth().workEfficiencyModifier())).append(") ===");
-        for (ActiveCondition c : npc.getHealth().active()) {
+                        npc.getHealthComponent().workEfficiencyModifier())).append(") ===");
+        for (ActiveCondition c : npc.getHealthComponent().active()) {
             sb.append(String.format(Locale.ROOT,
                     "%n  §c%-22s§r sev §f%d§r %s expires §f%d",
                     c.type().name(), c.severity(),
                     c.treated() ? "§a[treated]§r" : "§7[untreated]§r",
                     c.resolutionTick()));
         }
-        if (npc.getHealth().active().isEmpty()) sb.append("\n  §a(healthy)");
+        if (npc.getHealthComponent().active().isEmpty()) sb.append("\n  §a(healthy)");
         src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
         return 1;
     }
@@ -107,8 +107,9 @@ public final class HealthDebugCommand {
         try { severity = IntegerArgumentType.getInteger(ctx, "severity"); }
         catch (IllegalArgumentException ignored) {}
         HealthTicker.addCondition(npc, type, severity, level.getGameTime());
+        int finalSeverity = severity;
         src.sendSuccess(() -> Component.literal(
-                "§aAdded §c" + type.name() + "§r sev §f" + severity
+                "§aAdded §c" + type.name() + "§r sev §f" + finalSeverity
                         + "§r to §f" + npc.getNpcName()), false);
         return 1;
     }
@@ -129,7 +130,7 @@ public final class HealthDebugCommand {
         UUID healerId = npcId;
         try { healerId = UuidArgument.getUuid(ctx, "healer"); }
         catch (IllegalArgumentException ignored) {}
-        boolean ok = npc.getHealth().markTreated(type, healerId, level.getGameTime());
+        boolean ok = npc.getHealthComponent().markTreated(type, healerId, level.getGameTime());
         if (!ok) { src.sendFailure(Component.literal("They don't have that condition.")); return 0; }
         src.sendSuccess(() -> Component.literal(
                 "§aTreated §c" + type.name() + "§r on §f" + npc.getNpcName()), false);
@@ -142,7 +143,7 @@ public final class HealthDebugCommand {
         UUID npcId = UuidArgument.getUuid(ctx, "npc");
         TownspersonMob npc = TownspersonMob.findByUUID(level, npcId).orElse(null);
         if (npc == null) { src.sendFailure(Component.literal("No NPC " + npcId)); return 0; }
-        for (HealthCondition c : HealthCondition.values()) npc.getHealth().remove(c);
+        for (HealthCondition c : HealthCondition.values()) npc.getHealthComponent().remove(c);
         src.sendSuccess(() -> Component.literal(
                 "§aCleared all conditions on §f" + npc.getNpcName()), false);
         return 1;

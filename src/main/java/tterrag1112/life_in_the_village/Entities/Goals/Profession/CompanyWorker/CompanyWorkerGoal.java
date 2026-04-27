@@ -16,6 +16,7 @@ import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeListing;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
@@ -185,6 +186,7 @@ public class CompanyWorkerGoal extends Goal {
                 case PRODUCER -> Phase.WORKING;
                 case SELLER   -> Phase.SELLING;
                 case COURIER  -> Phase.COURIERING;
+                case CARAVAN_ATTENDANT -> null;
             };
             workTimer = 0;
         }
@@ -273,7 +275,7 @@ public class CompanyWorkerGoal extends Goal {
 
         // Find market building in the same village
         Building market = findBuildingOfType(level, vdata,
-                tterrag1112.life_in_the_village.Village.Buildings.BuildingType.MARKET);
+                BuildingType.MARKET);
 
         if (market == null) {
             // No market — deposit items in assigned building and idle
@@ -456,7 +458,7 @@ public class CompanyWorkerGoal extends Goal {
     }
 
     private Building findBuildingOfType(ServerLevel level, VillageSavedData vdata,
-                                        tterrag1112.life_in_the_village.Village.Buildings.BuildingType type) {
+                                        BuildingType type) {
         return entity.getAssignedVillageName()
                 .flatMap(vdata::getVillageByName)
                 .flatMap(village -> village.getBuildingIds().stream()
@@ -475,6 +477,7 @@ public class CompanyWorkerGoal extends Goal {
                     : "Waiting for task";
             case SELLER   -> "Managing sales";
             case COURIER  -> "Delivering goods";
+            case CARAVAN_ATTENDANT -> null;
         };
     }
 }

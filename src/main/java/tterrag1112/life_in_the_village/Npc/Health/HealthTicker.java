@@ -7,7 +7,7 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.AABB;
 import org.slf4j.Logger;
-import tterrag1112.life_in_the_village.Entities.custom.LifeStage;
+import tterrag1112.life_in_the_village.Entities.LifeStage;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Laws.VillageLaw;
@@ -92,7 +92,7 @@ public final class HealthTicker {
         int recovered = 0;
         int died = 0;
         for (TownspersonMob npc : villagers) {
-            HealthComponent h = npc.getHealth();
+            HealthComponent h = npc.getHealthComponent();
             List<HealthCondition> resolved = h.tickConditions(now, rng);
             for (HealthCondition c : resolved) {
                 npc.getMood().applyWithRawMagnitude(MoodTrigger.HEALED,
@@ -117,7 +117,7 @@ public final class HealthTicker {
         boolean isWinter = isWinter(level);
         boolean isSummer = isSummer(level);
         for (TownspersonMob npc : villagers) {
-            HealthComponent h = npc.getHealth();
+            HealthComponent h = npc.getHealthComponent();
 
             if (isWinter && rng.nextFloat() < WINTER_RESPIRATORY_BASE
                     * constitutionMultiplier(h.constitution())) {
@@ -181,18 +181,18 @@ public final class HealthTicker {
                                        boolean quarantined, long now, RandomSource rng) {
         float reduction = quarantined ? QUARANTINE_REDUCTION : 1f;
         for (TownspersonMob carrier : villagers) {
-            if (!carrier.getHealth().isContagious()) continue;
+            if (!carrier.getHealthComponent().isContagious()) continue;
             AABB box = new AABB(carrier.blockPosition()).inflate(CONTAGION_RADIUS);
             List<TownspersonMob> nearby = level.getEntitiesOfClass(
                     TownspersonMob.class, box, t -> t != carrier && t.isAlive());
             for (TownspersonMob other : nearby) {
-                HealthComponent oh = other.getHealth();
+                HealthComponent oh = other.getHealthComponent();
                 if (oh.hasCondition(HealthCondition.PLAGUE_CARRIER)) continue;
                 float chance = 0.05f * reduction
                         * constitutionMultiplier(oh.constitution());
                 if (rng.nextFloat() >= chance) continue;
                 // Infect with the carrier's specific condition.
-                for (ActiveCondition c : carrier.getHealth().active()) {
+                for (ActiveCondition c : carrier.getHealthComponent().active()) {
                     if (!c.type().isContagious()) continue;
                     addCondition(other, c.type(), now);
                     break;
@@ -212,7 +212,7 @@ public final class HealthTicker {
         float reduction = quarantined ? QUARANTINE_REDUCTION : 1f;
         int newInfections = 0;
         for (TownspersonMob npc : villagers) {
-            HealthComponent h = npc.getHealth();
+            HealthComponent h = npc.getHealthComponent();
             if (h.hasCondition(HealthCondition.PLAGUE_CARRIER)) continue;
             float chance = PLAGUE_INFECTION_RATE * reduction
                     * constitutionMultiplier(h.constitution());
@@ -228,7 +228,7 @@ public final class HealthTicker {
         }
         // Resolution check — zero infections remaining.
         long remaining = villagers.stream()
-                .filter(n -> n.getHealth().hasCondition(HealthCondition.PLAGUE_CARRIER))
+                .filter(n -> n.getHealthComponent().hasCondition(HealthCondition.PLAGUE_CARRIER))
                 .count();
         if (remaining <= 0) {
             hdata.putPlague(plague.resolve(now));
@@ -278,7 +278,7 @@ public final class HealthTicker {
         long dur = HealthDurations.durationFor(type, severity);
         ActiveCondition ac = new ActiveCondition(type, now, dur, severity, false,
                 java.util.Optional.empty());
-        boolean changed = npc.getHealth().add(ac);
+        boolean changed = npc.getHealthComponent().add(ac);
         if (changed) {
             npc.getMood().applyWithRawMagnitude(MoodTrigger.INJURY_SUSTAINED,
                     MoodTrigger.INJURY_SUSTAINED.defaultMagnitude(), now);

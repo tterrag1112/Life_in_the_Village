@@ -126,7 +126,7 @@ public final class CaravanChannel implements EconomicChannel {
             TownspersonMob principal = TownspersonMob.findByUUID(level, principalId).orElse(null);
             if (principal != null) principal.getWallet().receive(CurrencyValue.of(total));
         }
-        cdata.markDirty();
+        cdata.setDirty();
         return TradeResult.ok(qty, total);
     }
 

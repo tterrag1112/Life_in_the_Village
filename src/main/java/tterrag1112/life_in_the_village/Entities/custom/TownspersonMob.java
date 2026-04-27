@@ -43,6 +43,7 @@ import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Health.HealthComponent;
 import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
 import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSet;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
@@ -626,7 +627,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     }
 
     /** Per-NPC health state (Phase 3 doc 21). Never null. */
-    public tterrag1112.life_in_the_village.Npc.Health.HealthComponent getHealth() {
+    public HealthComponent getHealthComponent() {
         return health;
     }
 
@@ -1283,7 +1284,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // Seed constitution per spec line 53 — 50..90 with mild bias
         // toward higher values; CHILD spawns underweighted, ELDERLY
         // already in decline.
-        java.util.Random rng = level.getRandom();
+        RandomSource rng = level.getRandom();
         int rawConstitution = 60 + rng.nextInt(31);
         if (isChild())   rawConstitution -= 15;
         if (isElderly()) rawConstitution -= 25;

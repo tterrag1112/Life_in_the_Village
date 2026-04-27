@@ -313,7 +313,6 @@ public final class NpcDebugCommand {
                                         .executes(NpcDebugCommand::handleSetUnfinished)
                                         .then(Commands.argument("target", UuidArgument.uuid())
                                                 .executes(NpcDebugCommand::handleSetUnfinishedWithTarget)))))
-        );
         ));
     }
 

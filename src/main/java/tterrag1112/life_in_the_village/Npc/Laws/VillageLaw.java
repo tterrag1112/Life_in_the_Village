@@ -181,6 +181,7 @@ public enum VillageLaw {
             case DOUBLE_PUNISHMENT         -> "All criminal punishments are increased.";
             case PARDON_FIRST_OFFENSE      -> "First-time minor offenders are pardoned.";
             case BAN_EXECUTION             -> "Capital punishment is forbidden.";
+            case QUARANTINE_VILLAGE -> null;
             case FOREIGN_TRADER_BAN        -> "Caravans from outside this village may not trade here.";
             case PILGRIM_WELCOME_BONUS     -> "Pilgrim visitors gain reputation faster.";
             case COMPULSORY_SCHOOLING      -> "Children must attend daily lessons.";

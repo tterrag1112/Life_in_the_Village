@@ -68,7 +68,7 @@ public class HealerWorkGoal extends Goal {
     public boolean canUse() {
         if (entity.getProfession() != Profession.HEALER) return false;
         if (!entity.isWorkTime() && !isPlagueOverride()) return false;
-        if (!entity.getHealth().canWork()) return false;
+        if (!entity.getHealthComponent().canWork()) return false;
         if (!(entity.level() instanceof ServerLevel level)) return false;
 
         hut = entity.getAssignedBuildingId()
@@ -98,7 +98,7 @@ public class HealerWorkGoal extends Goal {
         return switch (phase) {
             case IDLE -> false;
             case WALKING, TREATING -> patient != null && patient.isAlive()
-                    && patient.getHealth().hasCondition(targetCondition);
+                    && patient.getHealthComponent().hasCondition(targetCondition);
             case PRODUCING -> !entity.getHealerInventory().isFull()
                     && (entity.isWorkTime() || isPlagueOverride());
         };
@@ -185,7 +185,7 @@ public class HealerWorkGoal extends Goal {
         // Treatment complete.
         UUID healerId = entity.getUUID();
         long now = level.getGameTime();
-        patient.getHealth().markTreated(targetCondition, healerId, now);
+        patient.getHealthComponent().markTreated(targetCondition, healerId, now);
         patient.getMood().applyWithRawMagnitude(MoodTrigger.HEALED,
                 MoodTrigger.HEALED.defaultMagnitude(), now);
         entity.getSkills().addXp(Skill.MEDICINE, XP_PER_TREATMENT, now);
@@ -232,14 +232,14 @@ public class HealerWorkGoal extends Goal {
         // Plague triage: prioritise PLAGUE_CARRIER patients.
         return nearby.stream()
                 .max(Comparator.<TownspersonMob>comparingInt(npc ->
-                        npc.getHealth().hasCondition(HealthCondition.PLAGUE_CARRIER) ? 100 : 0)
+                        npc.getHealthComponent().hasCondition(HealthCondition.PLAGUE_CARRIER) ? 100 : 0)
                         .thenComparingInt(npc -> highestSeverity(npc).severity())
-                        .thenComparingInt(npc -> npc.getHealth().constitution()))
+                        .thenComparingInt(npc -> npc.getHealthComponent().constitution()))
                 .orElse(null);
     }
 
     private static boolean hasTreatableCondition(TownspersonMob npc) {
-        for (ActiveCondition c : npc.getHealth().active()) {
+        for (ActiveCondition c : npc.getHealthComponent().active()) {
             if (c.type().requiresMedicine() && !c.treated()) return true;
         }
         return false;
@@ -247,7 +247,7 @@ public class HealerWorkGoal extends Goal {
 
     private static ActiveCondition highestSeverity(TownspersonMob npc) {
         ActiveCondition best = null;
-        for (ActiveCondition c : npc.getHealth().active()) {
+        for (ActiveCondition c : npc.getHealthComponent().active()) {
             if (!c.type().requiresMedicine() || c.treated()) continue;
             if (best == null || c.severity() > best.severity()) best = c;
         }

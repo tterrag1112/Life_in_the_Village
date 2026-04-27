@@ -209,8 +209,9 @@ public final class MarketChannel implements EconomicChannel {
         long policied = Math.round(base * mult) + subsidy;
         long floor = LawPriceHooks.priceFloor(village, ChannelType.MARKET, intent.item());
         if (floor > 0) policied = Math.max(floor, policied);
+        long finalPolicied = policied;
         return LawPriceHooks.priceCeiling(village, ChannelType.MARKET, intent.item())
-                .map(cap -> Math.min(cap, policied))
+                .map(cap -> Math.min(cap, finalPolicied))
                 .orElse(policied);
     }
 
