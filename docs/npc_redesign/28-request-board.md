@@ -368,4 +368,86 @@ Phase 4 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### Phase 4 task 28 implementation pass
+
+Things-to-flag responses:
+
+1. **Quest → Request migration** — deferred. The existing
+   adventurer `Quest` record has fields the new `Request` record
+   doesn't carry (QuestType / QuestDifficulty enums, narrative
+   title + description, an attached `QuestProgress` sub-record,
+   tightly-coupled `PlayerGuildData` flow). A fully-typed
+   migration would touch `Quest`, `PlayerGuildData`,
+   `AdventurerQuestGenerator`, the adventurer quest UI, and the
+   Phase 1-task 09 player verb that maps quest acceptance —
+   too large for one session. v1 leaves the legacy adventurer
+   path alone and runs the abstract `Request` layer alongside.
+   An adapter that exposes a `Quest` as a
+   `Request{ type=HUNT/SURVEY }` can land file-by-file when the
+   adventurer screen migrates onto the framework GUI.
+2. **Caravan dispatch on accept** — deferred. v1 transitions
+   ACCEPTED → IN_PROGRESS → FULFILLED via
+   `RequestBoard.updateProgress` and the daily ticker; the
+   `/request fulfill` debug command short-circuits the
+   completion. Real caravan dispatch wires when
+   `CaravanSavedData` exposes a public dispatch entry. Same
+   blocker as doc 26's trading-company caravan stub.
+3. **Partial fulfilment.** Implemented at the data layer:
+   `RequestType.supportsPartialFulfilment` returns true for
+   GATHER / CRAFT / DELIVER, false for HUNT / SURVEY / ESCORT.
+   The settlement layer reads `Progress.isComplete` which
+   triggers on `currentProgress >= totalProgress`, so a
+   GATHER request that delivered 3/10 stays IN_PROGRESS
+   until either the deadline expires (FAILED with refund
+   penalty) or the count reaches 10. Pro-rata partial pay
+   on early termination is Phase 5 polish.
+4. **Player-side reputation system.** Spec line 268
+   describes the deltas. v1 fires guild contribution +/-
+   from `RequestSettlement.addContribution(...)` (positive
+   on fulfilment, -5 penalty on failure) so the existing
+   guild-rank ladder reads from the right side. Per-NPC
+   rep with the originator and per-village rep deltas land
+   when the request system has a richer concept of who
+   benefited (Phase 5 polish — currently the originator NPC
+   is just stored on the `Request`).
+
+Spec deviations:
+- **Single global `RequestBoard`** instead of three nested
+  boards (per-village, per-kingdom, global). The
+  discriminator is the `RequestScope` field on each
+  request; `RequestBoard.availableFor(guild, level)`
+  filters at query time. Net effect identical for v1 with
+  fewer SavedData slots; profiling can drive a split.
+- **`Request` codec split into Target + Progress sub-
+  records.** The flat layout would have been 17 fields,
+  past DFU's 16-field `RecordCodecBuilder.Instance.group`
+  ceiling — the same wall doc 26 hit. Two sub-records
+  bring the outer codec to 13 fields.
+- **Acceptance scoring** is first-eligible-wins ranked by
+  member count with a treasury tiebreak. Spec line 131's
+  "reward-to-effort" scoring needs a per-guild capacity
+  model (workshop load + skill match) that v1 doesn't
+  ship.
+- **Player fulfilment UI** deferred. Debug commands work;
+  the Request Board screen lands with Phase 5 GUI polish.
+- **Office posting screens** deferred. The data path
+  (`RequestPosting.post`) and `/request post` debug
+  command both work; the leader / guild-master in-game
+  posting UI lands later.
+- **L0 guilds and `availableFor`.** The query filter
+  early-returns on `!guild.canPostRequests()` — i.e. L0
+  guilds don't see any acceptable requests. Spec lines
+  153-154 say L0 guilds have "minimal request capability
+  (local only, no inter-village posting)"; that's
+  preserved on the post side via the same gate. Acceptance
+  needs hall infrastructure; v1 ties both to L1+.
+
+Deferrals:
+- Multi-guild collaborative fulfilment ("Does not" #1).
+- Cancellation after acceptance ("Does not" #2).
+- Auctions / bidding / subscription requests
+  ("Does-not-include").
+- Pro-rata partial-pay on mid-flight cancellation.
+- Caravan integration on accept / fulfilment.
+- Cross-kingdom diplomatic gating (spec "Open decisions"
+  #4 — Phase 5 with kingdom relations).

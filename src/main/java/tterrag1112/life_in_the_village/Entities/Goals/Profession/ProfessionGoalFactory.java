@@ -141,6 +141,11 @@ public final class ProfessionGoalFactory {
         // overhead.
         npc.goalSelector.addGoal(P_WORK_PRIMARY,
                 new tterrag1112.life_in_the_village.Npc.Crime.ConstableInvestigationGoal(npc));
+        // Phase 4 task 29: ephemeral visitors. canUse short-circuits
+        // when the NPC isn't flagged as a visitor, so residents pay
+        // only the Goal-list overhead.
+        npc.goalSelector.addGoal(P_SOCIAL_HIGH,
+                new tterrag1112.life_in_the_village.Entities.Goals.Visitor.VisitorGoal(npc));
         npc.goalSelector.addGoal(P_IDLE,      new WanderInBuildingGoal(npc));
         npc.goalSelector.addGoal(P_AMBIENT,   new LookAtPlayerGoal(npc, Player.class, 8.0f));
         npc.goalSelector.addGoal(P_AMBIENT,   new RandomLookAroundGoal(npc));

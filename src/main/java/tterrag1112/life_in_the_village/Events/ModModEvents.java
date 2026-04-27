@@ -275,6 +275,8 @@ public class ModModEvents {
         GuildAbstractDebugCommand.register(event.getDispatcher());
         CompanyDebugCommand.register(event.getDispatcher());
         ApprenticeDebugCommand.register(event.getDispatcher());
+        RequestDebugCommand.register(event.getDispatcher());
+        VisitorDebugCommand.register(event.getDispatcher());
 
     }
 

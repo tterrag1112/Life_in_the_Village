@@ -1104,3 +1104,41 @@ class CompanyAiTickSystem implements TickSubsystem {
                 .dailyTick(ctx.level());
     }
 }
+
+/**
+ * Phase 4 doc 28 — daily request-board maintenance: completes ready
+ * fulfilments, expires stale requests, escalates scope, runs the
+ * acceptance pass, and prunes terminal records. Priority 203 —
+ * after company AI so companies get a chance to post / accept on
+ * their own first.
+ */
+class RequestBoardTickSystem implements TickSubsystem {
+    @Override public String name()     { return "request_board"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 203; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Guilds.Common.Requests.RequestBoardTicker
+                .dailyTick(ctx.level());
+    }
+}
+
+/**
+ * Phase 4 doc 29 — daily visitor flux. Despawns expired visitors,
+ * computes per-village capacity, and rolls new arrivals weighted by
+ * the village's infrastructure mix. Priority 204 — after request
+ * board so a village's same-day economic state has settled before
+ * we decide who's interested in showing up.
+ */
+class VisitorFluxTickSystem implements TickSubsystem {
+    @Override public String name()     { return "visitor_flux"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 204; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Visitor.VisitorFluxEngine
+                .dailyTick(ctx.level());
+    }
+}

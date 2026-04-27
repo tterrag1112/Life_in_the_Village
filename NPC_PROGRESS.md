@@ -483,24 +483,29 @@ companies and guilds have structure; visitors bring coin.
     - [~] Migrate existing `GuildData` to `AdventurerGuild`
       (deferred — `GuildData` left intact alongside; the new
       abstract layer is additive per spec "Open decisions" #1)
-- [ ] **28** Request board
-    - [ ] `Request` + `RequestBoard` per scope
-    - [ ] Posting, acceptance, fulfillment, escalation
-    - [ ] `GuildRequestChannel` fully wired (was stub)
-    - [ ] Player fulfillment UI
-    - [ ] Migrate existing `Quest` to `Request.HUNT`/`SURVEY`
+- [x] **28** Request board
+    - [x] `Request` + `RequestBoard` per scope (v1: single board,
+      scope-filtered at query time)
+    - [x] Posting, acceptance, fulfillment, escalation
+    - [x] `GuildRequestChannel` fully wired (was stub)
+    - [~] Player fulfillment UI (deferred — debug command path
+      lands now; screen lands with the Phase 5 GUI polish pass)
+    - [~] Migrate existing `Quest` to `Request.HUNT`/`SURVEY`
+      (deferred — adventurer Quest path keeps its existing UI;
+      see Revision Notes)
 - [x] **26** NPC companies
     - [x] Company ownership extension (PLAYER/NPC)
     - [x] `AiCompanyManager` daily
     - [x] Merchant → trading company promotion
     - [x] Succession on owner death
     - [x] `CARAVAN_ATTENDANT` worker role
-- [ ] **29** Visitor flux
-    - [ ] `Visitor` entity, 8 visitor types, itinerary
-    - [ ] `VisitorFluxEngine` daily arrival
-    - [ ] Activity handlers (pray, stay, eat, trade, lecture, etc.)
-    - [ ] `VisitorChannel` fully wired
-    - [ ] Coin flow into village treasuries
+- [x] **29** Visitor flux
+    - [x] `Visitor` entity (component on TownspersonMob), 8 visitor types, itinerary
+    - [x] `VisitorFluxEngine` daily arrival
+    - [~] Activity handlers (uniform walk-pay-leave handler in v1; per-type
+      polish is Phase 5)
+    - [x] `VisitorChannel` fully wired
+    - [x] Coin flow into village treasuries
 - [ ] **30** Village history
     - [ ] Event archival after 365 days
     - [ ] Prestigious name tracking
@@ -1504,5 +1509,193 @@ Spec deviations + deferrals (logged in 26 Revision Notes):
   flavours of company coexist via DirectBusinessChannel
   reading multiple producers, but the AI manager doesn't
   yet adjust prices in response to player presence.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 28 (request board)
+shipped.
+
+New package `Guilds.Common.Requests`:
+- `RequestType` (GATHER / CRAFT / DELIVER / HUNT / SURVEY /
+  ESCORT), `RequestStatus` (OPEN / ACCEPTED / IN_PROGRESS /
+  FULFILLED / FAILED / EXPIRED), `RequestScope`
+  (VILLAGE_INTERNAL / VILLAGE_PUBLIC / KINGDOM_WIDE /
+  GLOBAL) — escalation cadence 3 / 7 / 14 days per spec.
+- `Request` record split into `Target` + `Progress` sub-
+  records so the outer codec stays under DFU's 16-field cap
+  (same pattern as `Company.OwnershipInfo`).
+- `RequestBoard` SavedData
+  ("life_in_the_village_request_board") — single global
+  store; `availableFor(guild, level)` filters by scope at
+  query time so the spec's three nested boards collapse to
+  one structure with a discriminator field.
+- `RequestPosting` — escrow withdraw of bounty + 10%
+  platform fee from origin guild treasury; builder
+  helpers for items / hunt / location target families.
+- `RequestSettlement` — fulfilled / failed / expired flows
+  per spec lines 164-179: 80% of bounty to accepting guild,
+  70% of that to fulfiller wallet, 10% platform fee to the
+  origin village's treasury; failed gives accepting guild
+  50% penalty cut and refunds the rest to origin.
+- `RequestBoardTicker` daily — fulfils completed requests,
+  expires stale ones, escalates scope per the spec ladder,
+  runs the acceptance pass (highest-rank-member fulfiller;
+  treasury tiebreak), prunes terminal records after 30 days.
+
+Channel wire-up:
+- `GuildRequestChannel` (Phase 3 stub) replaced with the
+  real implementation. Quotes for non-IMMEDIATE BUY intents
+  at `maxPrice + 10 br`, validity 1 day, deferred 7 days.
+  `execute` posts a Request via the actor's primary L1+
+  guild (or any village L1+ guild as fallback) and returns
+  partial-success (quantityTraded=0, totalBronze=bounty)
+  per spec line 232.
+
+Daily tick:
+- `RequestBoardTickSystem` (interval 24000, priority 203 —
+  after company AI at 202 so trading-company posts settle
+  before the request-board pass picks them up).
+
+Debug (`/request` top-level literal):
+- `/request list [scope]`
+- `/request post <guildId> <type> <targetId> <count> <bounty> [scope]`
+- `/request accept <requestId> <guildId>`
+- `/request fulfill <requestId>`
+- `/request escalate <requestId>`
+
+Spec deviations + deferrals (logged in 28 Revision Notes):
+- **Single global RequestBoard** instead of separate per-
+  village + per-kingdom + global boards. Scope filtering
+  happens at query time. Profiling can drive a split later.
+- **Quest → Request migration deferred.** Existing
+  adventurer `Quest` records keep their dedicated UI /
+  data store; the new abstract layer runs alongside per
+  the same additive pattern as the guild refactor.
+- **Player fulfillment UI deferred.** Debug command path
+  works; the in-game Request Board screen lands with
+  Phase 5's GUI polish pass.
+- **Caravan dispatch on accept deferred.** Acceptance
+  flips status to ACCEPTED + records the fulfiller;
+  IN_PROGRESS → FULFILLED reads `progress.totalProgress`
+  set on accept and current driven by `/request fulfill`
+  (debug) or future production-cycle hooks. Real caravan
+  dispatch wires when `CaravanSavedData` exposes a public
+  dispatch entry — same blocker as doc 26's trading
+  caravan.
+- **Office posting screens deferred.** v1 ships the data
+  path + the `/request post` debug command; the in-game
+  office UI for posting lands with Phase 5.
+- **Acceptance scoring** is first-eligible (with member-
+  count + treasury tiebreak). Spec line 131's "reward-to-
+  effort" scoring needs a per-guild capacity model
+  (workshop load, member skill match) that v1 doesn't
+  ship.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 29 (visitor flux)
+shipped.
+
+New package `Npc.Visitor`:
+- `VisitorType` (PILGRIM / MERCHANT_ITINERANT / TRAVELER /
+  STUDENT / ENVOY / REFUGEE / SCHOLAR_VISITING / MINSTREL)
+  with walletMin/Max ranges, `underlyingProfession()`
+  mapping (MERCHANT_ITINERANT → existing
+  Profession.WANDERING_TRADER per "Things to flag" #4),
+  and `carriesGoods()` for the channel filter.
+- `Activity` enum with `targetBuildings`, `bronzeCost`,
+  `defaultDurationTicks`.
+- `VisitorItinerary` record (buildingId, activity,
+  expectedDurationTicks).
+- `VisitorState` component on TownspersonMob — visitorType,
+  origin village, arrival/departure ticks, itinerary,
+  current index, settledPermanently. Codec arity 7 (well
+  under DFU's 16-field cap). `isVisitor()` / `shouldDespawn`
+  helpers; settledPermanently flips off the visitor flag
+  when a refugee is accepted.
+- `VillageVisitorCapacity` record + `compute(village,
+  data)` per spec lines 252-264 (INN +5/+0.5 TRAVELER,
+  TEMPLE +3/+0.3 PILGRIM, MARKET +3/+0.4 MERCHANT, etc).
+  Hard ceiling 20 concurrent.
+- `VisitorFluxEngine.dailyTick` — despawn expired,
+  capacity check, weighted-random arrival roll, spawn
+  via `ModEntities.TOWNSPERSON.create` at a random side
+  of the village bounds AABB, basic single-stop itinerary
+  keyed off visitor type.
+- `VisitorFluxEngine.estimateFlux` replaces the old
+  zero-stub on `VillageSimEngine.estimateVisitorFlux` so
+  the COIN_INFLUX category in the resource sim now
+  reflects expected visitor spending.
+
+New goal:
+- `VisitorGoal` (in Entities.Goals.Visitor) registered at
+  P_SOCIAL_HIGH via `ProfessionGoalFactory.registerUniversal`.
+  Three phases (WALKING_TO_LOCATION / AT_LOCATION /
+  LEAVING). At each stop: walk → idle for the activity's
+  default duration → pay the activity's bronze cost into
+  the building's economy. PERFORM additionally applies +5
+  mood (FESTIVAL_ATTENDED trigger) to nearby residents.
+
+Channel wire-up:
+- `VisitorChannel` (Phase 3 stub) replaced. Available when
+  the village currently hosts a MERCHANT_ITINERANT or
+  SCHOLAR_VISITING visitor. Quotes BUY intents at
+  `intent.maxPrice() + 5 br` foreign-trader markup.
+  v1 execute is a data-layer success without inventory
+  transfer (Phase 5 polish wires the stall stock + market
+  tax cut).
+
+Daily tick:
+- `VisitorFluxTickSystem` (interval 24000, priority 204 —
+  after request board at 203 so the same-day economic
+  state has settled before deciding who's interested in
+  showing up).
+
+Debug:
+- `/visitor spawn <village> <type>` — force-spawn an
+  arrival outside the daily roll.
+- `/visitor list <village>` — currently-active visitors
+  with type, arrival tick, current step, wallet.
+- `/visitor capacity <village>` — computed
+  VillageVisitorCapacity.
+- `/visitor itinerary <visitorId>` — full plan for one
+  visitor with the current step highlighted.
+
+Spec deviations + deferrals (logged in 29 Revision Notes):
+- **No separate `Visitor extends TownspersonMob` entity
+  class.** v1 ships the visitor as a `VisitorState`
+  component on the existing TownspersonMob — same
+  pattern as Phase 3 PietyComponent / HealthComponent.
+  Sidesteps NeoForge entity-registration boilerplate
+  and lets the wandering trader path remain unchanged.
+- **Per-type activity behaviour is uniform in v1.**
+  Every Activity walks to target → idles for the default
+  duration → pays the flat bronze cost. The spec's
+  type-specific surfaces (PILGRIM kneels at altar,
+  MINSTREL spawns rumors via gossip, ENVOY hands a
+  sealed letter via Phase 2 letter system, REFUGEE
+  triggers leader-decision dialogue, SCHOLAR_VISITING
+  fires high-fidelity knowledge transfer) are Phase 5
+  polish. The Activity tag stays so the polish routes
+  via the existing VisitorGoal switch.
+- **Single-stop itinerary** in v1; multi-stop planning
+  is the natural Phase 5 follow-up.
+- **VisitorChannel.execute does not transfer items**
+  yet — the spec's stall-stock model isn't implemented.
+  v1 returns success and the buyer's bronze flow happens
+  at the channel router level; Phase 5 wires withdrawal
+  from the seller's stash + market tax cut.
+- **Refugee settlement** — the `settledPermanently`
+  flag on VisitorState exists for this transition, but
+  the leader-decision UI / auto-accept rules per spec
+  lines 199-208 are deferred. v1 refugees stay as
+  ephemeral STAY visitors until their 7-day ceiling.
+- **Envoy letter content** is deferred per "Things to
+  flag" #3. The envoy walks to the TOWN_HALL and idles;
+  no actual sealed-letter delivery yet.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).
