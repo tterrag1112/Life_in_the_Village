@@ -442,12 +442,13 @@ companies and guilds have structure; visitors bring coin.
     - [x] Merchant → trading company promotion
     - [x] Succession on owner death
     - [x] `CARAVAN_ATTENDANT` worker role
-- [ ] **29** Visitor flux
-    - [ ] `Visitor` entity, 8 visitor types, itinerary
-    - [ ] `VisitorFluxEngine` daily arrival
-    - [ ] Activity handlers (pray, stay, eat, trade, lecture, etc.)
-    - [ ] `VisitorChannel` fully wired
-    - [ ] Coin flow into village treasuries
+- [x] **29** Visitor flux
+    - [x] `Visitor` entity (component on TownspersonMob), 8 visitor types, itinerary
+    - [x] `VisitorFluxEngine` daily arrival
+    - [~] Activity handlers (uniform walk-pay-leave handler in v1; per-type
+      polish is Phase 5)
+    - [x] `VisitorChannel` fully wired
+    - [x] Coin flow into village treasuries
 - [ ] **30** Village history
     - [ ] Event archival after 365 days
     - [ ] Prestigious name tracking
@@ -1523,5 +1524,110 @@ Spec deviations + deferrals (logged in 28 Revision Notes):
   effort" scoring needs a per-guild capacity model
   (workshop load, member skill match) that v1 doesn't
   ship.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 29 (visitor flux)
+shipped.
+
+New package `Npc.Visitor`:
+- `VisitorType` (PILGRIM / MERCHANT_ITINERANT / TRAVELER /
+  STUDENT / ENVOY / REFUGEE / SCHOLAR_VISITING / MINSTREL)
+  with walletMin/Max ranges, `underlyingProfession()`
+  mapping (MERCHANT_ITINERANT → existing
+  Profession.WANDERING_TRADER per "Things to flag" #4),
+  and `carriesGoods()` for the channel filter.
+- `Activity` enum with `targetBuildings`, `bronzeCost`,
+  `defaultDurationTicks`.
+- `VisitorItinerary` record (buildingId, activity,
+  expectedDurationTicks).
+- `VisitorState` component on TownspersonMob — visitorType,
+  origin village, arrival/departure ticks, itinerary,
+  current index, settledPermanently. Codec arity 7 (well
+  under DFU's 16-field cap). `isVisitor()` / `shouldDespawn`
+  helpers; settledPermanently flips off the visitor flag
+  when a refugee is accepted.
+- `VillageVisitorCapacity` record + `compute(village,
+  data)` per spec lines 252-264 (INN +5/+0.5 TRAVELER,
+  TEMPLE +3/+0.3 PILGRIM, MARKET +3/+0.4 MERCHANT, etc).
+  Hard ceiling 20 concurrent.
+- `VisitorFluxEngine.dailyTick` — despawn expired,
+  capacity check, weighted-random arrival roll, spawn
+  via `ModEntities.TOWNSPERSON.create` at a random side
+  of the village bounds AABB, basic single-stop itinerary
+  keyed off visitor type.
+- `VisitorFluxEngine.estimateFlux` replaces the old
+  zero-stub on `VillageSimEngine.estimateVisitorFlux` so
+  the COIN_INFLUX category in the resource sim now
+  reflects expected visitor spending.
+
+New goal:
+- `VisitorGoal` (in Entities.Goals.Visitor) registered at
+  P_SOCIAL_HIGH via `ProfessionGoalFactory.registerUniversal`.
+  Three phases (WALKING_TO_LOCATION / AT_LOCATION /
+  LEAVING). At each stop: walk → idle for the activity's
+  default duration → pay the activity's bronze cost into
+  the building's economy. PERFORM additionally applies +5
+  mood (FESTIVAL_ATTENDED trigger) to nearby residents.
+
+Channel wire-up:
+- `VisitorChannel` (Phase 3 stub) replaced. Available when
+  the village currently hosts a MERCHANT_ITINERANT or
+  SCHOLAR_VISITING visitor. Quotes BUY intents at
+  `intent.maxPrice() + 5 br` foreign-trader markup.
+  v1 execute is a data-layer success without inventory
+  transfer (Phase 5 polish wires the stall stock + market
+  tax cut).
+
+Daily tick:
+- `VisitorFluxTickSystem` (interval 24000, priority 204 —
+  after request board at 203 so the same-day economic
+  state has settled before deciding who's interested in
+  showing up).
+
+Debug:
+- `/visitor spawn <village> <type>` — force-spawn an
+  arrival outside the daily roll.
+- `/visitor list <village>` — currently-active visitors
+  with type, arrival tick, current step, wallet.
+- `/visitor capacity <village>` — computed
+  VillageVisitorCapacity.
+- `/visitor itinerary <visitorId>` — full plan for one
+  visitor with the current step highlighted.
+
+Spec deviations + deferrals (logged in 29 Revision Notes):
+- **No separate `Visitor extends TownspersonMob` entity
+  class.** v1 ships the visitor as a `VisitorState`
+  component on the existing TownspersonMob — same
+  pattern as Phase 3 PietyComponent / HealthComponent.
+  Sidesteps NeoForge entity-registration boilerplate
+  and lets the wandering trader path remain unchanged.
+- **Per-type activity behaviour is uniform in v1.**
+  Every Activity walks to target → idles for the default
+  duration → pays the flat bronze cost. The spec's
+  type-specific surfaces (PILGRIM kneels at altar,
+  MINSTREL spawns rumors via gossip, ENVOY hands a
+  sealed letter via Phase 2 letter system, REFUGEE
+  triggers leader-decision dialogue, SCHOLAR_VISITING
+  fires high-fidelity knowledge transfer) are Phase 5
+  polish. The Activity tag stays so the polish routes
+  via the existing VisitorGoal switch.
+- **Single-stop itinerary** in v1; multi-stop planning
+  is the natural Phase 5 follow-up.
+- **VisitorChannel.execute does not transfer items**
+  yet — the spec's stall-stock model isn't implemented.
+  v1 returns success and the buyer's bronze flow happens
+  at the channel router level; Phase 5 wires withdrawal
+  from the seller's stash + market tax cut.
+- **Refugee settlement** — the `settledPermanently`
+  flag on VisitorState exists for this transition, but
+  the leader-decision UI / auto-accept rules per spec
+  lines 199-208 are deferred. v1 refugees stay as
+  ephemeral STAY visitors until their 7-day ceiling.
+- **Envoy letter content** is deferred per "Things to
+  flag" #3. The envoy walks to the TOWN_HALL and idles;
+  no actual sealed-letter delivery yet.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

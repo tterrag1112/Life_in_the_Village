@@ -282,12 +282,14 @@ public final class VillageSimEngine {
         return total;
     }
 
-    /** Phase 4 doc 29 stub — returns 0 until visitor flux integration
-     *  ships. The COIN_INFLUX category exists in the sim today so any
-     *  caller that asks for it gets a coherent zero rather than a
-     *  fabricated value. */
+    /** Phase 4 doc 29 — daily COIN_INFLUX from visiting NPCs. Reads
+     *  the village's visitor capacity and multiplies by an average
+     *  per-visitor spend; see
+     *  {@link tterrag1112.life_in_the_village.Npc.Visitor.VisitorFluxEngine#estimateFlux}
+     *  for the formula. Replaced the 0-stub when doc 29 landed. */
     private static float estimateVisitorFlux(Village village, VillageSavedData data) {
-        return 0f;
+        return tterrag1112.life_in_the_village.Npc.Visitor.VisitorFluxEngine
+                .estimateFlux(village, data);
     }
 
     private static boolean isVillageLoaded(ServerLevel level, Village village) {

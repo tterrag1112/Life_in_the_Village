@@ -174,6 +174,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      */
     private final tterrag1112.life_in_the_village.Npc.Health.HealerInventory healerInventory =
             new tterrag1112.life_in_the_village.Npc.Health.HealerInventory();
+    /**
+     * Phase 4 doc 29 — visitor metadata. Empty (visitorType=null)
+     * for regular residents; populated when the
+     * {@code VisitorFluxEngine} spawns this NPC as a visitor. The
+     * settled-permanently flag flips on for refugees who get
+     * accepted and stay (spec lines 199-208).
+     */
+    private final tterrag1112.life_in_the_village.Npc.Visitor.VisitorState visitorState =
+            new tterrag1112.life_in_the_village.Npc.Visitor.VisitorState();
 
     // =========================================================================
     // IDENTITY — age, gender, life stage
@@ -619,6 +628,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public tterrag1112.life_in_the_village.Npc.Health.HealerInventory getHealerInventory() {
         return healerInventory;
     }
+
+    /** Visitor metadata (Phase 4 doc 29). Always non-null; check
+     *  {@link tterrag1112.life_in_the_village.Npc.Visitor.VisitorState#isVisitor}
+     *  before treating an NPC as ephemeral. */
+    public tterrag1112.life_in_the_village.Npc.Visitor.VisitorState getVisitorState() {
+        return visitorState;
+    }
+
+    /** Convenience — true iff the NPC is currently flagged as an
+     *  ephemeral visitor (not a settled refugee). */
+    public boolean isVisitor() { return visitorState.isVisitor(); }
 
     public void clearTraits() {
         appearance.clearTraits();
@@ -1374,6 +1394,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Health + remedy stash (Phase 3 task 21) ─────────────────────────
         health.save(output);
         healerInventory.save(output);
+
+        // ── Visitor metadata (Phase 4 task 29) ──────────────────────────────
+        visitorState.save(output);
     }
 
     // =========================================================================
@@ -1531,6 +1554,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Health + remedy stash (Phase 3 task 21) ─────────────────────────
         health.load(input);
         healerInventory.load(input);
+
+        // ── Visitor metadata (Phase 4 task 29) ──────────────────────────────
+        visitorState.load(input);
 
         // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
         if (!skills.load(input)) {

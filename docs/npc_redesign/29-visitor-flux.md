@@ -357,4 +357,83 @@ Phase 4 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### Phase 4 task 29 implementation pass
+
+Things-to-flag responses:
+
+1. **Despawn safety with player nearby.** v1 keeps despawn
+   driven by `VisitorState.shouldDespawn` (itinerary complete OR
+   7-day ceiling reached). The standard Minecraft mob-despawn-
+   when-player-far-away rules continue to apply at the
+   {@code TownspersonMob} layer; the visitor flux engine doesn't
+   add extra distance gating. If a player is mid-watch when the
+   ceiling fires, the visitor still discards — Phase 5 polish
+   may add a soft "wait for the player to leave" guard.
+2. **Refugee settlement decision.** Deferred. The
+   `VisitorState.settledPermanently` flag exists for this
+   transition (set via {@code settlePermanently()}) and the
+   `isVisitor()` predicate flips false once flipped, so once the
+   leader-decision UI lands the data path will work end-to-end.
+   v1 refugees stay as ephemeral STAY visitors until the 7-day
+   ceiling.
+3. **Envoy letter content generation.** Deferred. The envoy
+   walks to the TOWN_HALL and idles for the activity duration;
+   no actual sealed-letter delivery yet. Wires when Phase 2's
+   letter / contract surface gains a programmatic compose API.
+4. **MERCHANT_ITINERANT vs. wandering trader.** Confirmed unified.
+   `VisitorType.underlyingProfession()` returns
+   `Profession.WANDERING_TRADER` for MERCHANT_ITINERANT, so the
+   spawned NPC inherits the existing wandering-trader goal /
+   dialogue / interaction surface. The visitor flux engine just
+   adds the temporary-visit metadata on top via VisitorState.
+
+Spec deviations:
+- **No separate `Visitor extends TownspersonMob` entity class.**
+  v1 ships visitors as a `VisitorState` component on the
+  existing TownspersonMob — same pattern as Phase 3's
+  PietyComponent / HealthComponent. Sidesteps NeoForge entity
+  registration and keeps existing TownspersonMob-aware code
+  (gossip scan, schedule, dialogue, profile screen) working
+  unchanged.
+- **Per-type Activity behaviour collapsed to a uniform
+  walk-pay-leave handler.** Spec lists nine type-specific
+  activity surfaces (PRAY kneels at altar, MINSTREL injects
+  rumors via gossip, ENVOY hands a sealed letter, etc.). v1
+  walks to the target, idles for the activity's
+  defaultDurationTicks, and pays the activity's flat
+  bronzeCost into the building's economy. PERFORM additionally
+  fires +5 mood (FESTIVAL_ATTENDED) on nearby residents — the
+  one type-specific arm v1 ships. The Activity tag stays so
+  Phase 5 polish routes through the same goal switch.
+- **Single-stop itinerary** in v1; multi-stop planning per
+  spec lines 148-164 is deferred. Each visitor's plan reads
+  off the type's primary activity → first matching building
+  via `Activity.targetBuildings`.
+- **VisitorChannel.execute does not transfer items yet.** v1
+  returns success at the data layer so the channel router
+  records the trade; the seller-side stash withdrawal +
+  village market-tax cut land when the spec's stall-stock
+  model ships in Phase 5.
+- **Capacity ceiling = 20** per spec line 263; encoded as
+  `VillageVisitorCapacity.MAX_CONCURRENT_CAP`.
+- **VisitorGoal registered universally** at P_SOCIAL_HIGH via
+  `ProfessionGoalFactory.registerUniversal`. The goal's
+  `canUse()` short-circuits when the NPC isn't a visitor, so
+  residents pay only the Goal-list overhead.
+
+Audit-discovered fixes:
+- `VisitorFluxEngine.dailyTick` originally despawned visitors
+  in one pass and then re-counted survivors via a second
+  `stream().filter(shouldDespawn).count()` over the same
+  snapshot list. The discarded mobs still returned true from
+  `shouldDespawn`, so survivors were under-counted by the
+  number of just-discarded entities. Collapsed to a single
+  pass that increments `currentCount` only for survivors.
+
+Deferrals:
+- Visitor permanent loyalty / repeat visits (per Does-not-include).
+- Multi-village journeys.
+- Visitor-initiated long-term quests.
+- Tourist-style visitors.
+- Refugee inheritance of personality / memory (spec "Open
+  decisions" #1 — confirmed: refugees spawn fresh).

@@ -117,6 +117,7 @@ public final class TickSubsystemRegistry {
         register(new PlagueRollTickSystem());
         register(new CompanyAiTickSystem());
         register(new RequestBoardTickSystem());
+        register(new VisitorFluxTickSystem());
 
         // ── Travel incentives ─────────────────────────────────────────────────
         register(new PlayerRoadSpeedSystem());
