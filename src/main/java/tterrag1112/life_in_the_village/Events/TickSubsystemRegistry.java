@@ -119,6 +119,7 @@ public final class TickSubsystemRegistry {
         register(new ApprenticeshipWeeklyTickSystem());
         register(new RequestBoardTickSystem());
         register(new VisitorFluxTickSystem());
+        register(new HistoryPruneTickSystem());
 
         // ── Travel incentives ─────────────────────────────────────────────────
         register(new PlayerRoadSpeedSystem());

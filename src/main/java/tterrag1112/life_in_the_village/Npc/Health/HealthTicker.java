@@ -207,6 +207,7 @@ public final class HealthTicker {
                                        boolean quarantined, long now, RandomSource rng) {
         if (plague.isExpired(now)) {
             hdata.putPlague(plague.resolve(now));
+            archivePlagueResolved(level, village, plague, now);
             return;
         }
         float reduction = quarantined ? QUARANTINE_REDUCTION : 1f;
@@ -231,8 +232,25 @@ public final class HealthTicker {
                 .filter(n -> n.getHealthComponent().hasCondition(HealthCondition.PLAGUE_CARRIER))
                 .count();
         if (remaining <= 0) {
-            hdata.putPlague(plague.resolve(now));
+            Plague resolved = plague.resolve(now);
+            hdata.putPlague(resolved);
+            archivePlagueResolved(level, village, resolved, now);
         }
+    }
+
+    /** Phase 4 doc 30 archival hook for the auto-resolve paths. The
+     *  manual {@code PlagueScheduler.resolve} fires its own copy. */
+    private static void archivePlagueResolved(ServerLevel level, Village village,
+                                              Plague plague, long now) {
+        long durationDays = Math.max(0L, (now - plague.startTick()) / 24000L);
+        java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+        details.put("village_name", village.getName());
+        details.put("duration_days", Long.toString(durationDays));
+        details.put("death_count", Integer.toString(plague.diedCount()));
+        tterrag1112.life_in_the_village.Village.History.HistoryProducer
+                .record(level, village,
+                        tterrag1112.life_in_the_village.Village.History.HistoryEventType.PLAGUE_RESOLVED,
+                        now, details, java.util.List.of());
     }
 
     private static void applyHealerOverwork(ServerLevel level, HealthSavedData hdata,

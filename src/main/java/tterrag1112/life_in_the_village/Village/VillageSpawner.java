@@ -283,6 +283,15 @@ public class VillageSpawner {
             });
         }
 
+        // Phase 4 doc 30 — first entry on the brand-new village's
+        // history log marks the founding (LEGENDARY tier).
+        java.util.Map<String, String> foundingDetails = new java.util.LinkedHashMap<>();
+        foundingDetails.put("village_name", village.getName());
+        tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
+                level, village,
+                tterrag1112.life_in_the_village.Village.History.HistoryEventType.VILLAGE_FOUNDED,
+                now, foundingDetails, java.util.List.of());
+
         System.out.println("VillageSpawner: '" + villageName
                 + "' spawned — buildings=" + village.getBuildingIds().size()
                 + " farms=" + layout.farmPlots().size());

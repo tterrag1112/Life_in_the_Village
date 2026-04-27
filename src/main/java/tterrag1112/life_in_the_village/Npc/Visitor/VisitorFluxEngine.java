@@ -182,6 +182,27 @@ public final class VisitorFluxEngine {
         level.addFreshEntity(npc);
         LOGGER.info("[VisitorFluxEngine] Spawned {} at {} in {} ({} br, {} stops)",
                 type, edge, village.getName(), bronze, itin.size());
+        // Phase 4 doc 30 archival hook — only the spec's "notable
+        // visitor" categories produce a history entry. Routine
+        // travelers / pilgrims / merchants don't bloat the log.
+        if (type == VisitorType.ENVOY) {
+            java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+            details.put("village_name", village.getName());
+            details.put("origin_village", "(unknown)");
+            tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
+                    level, village,
+                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.ENVOY_RECEIVED,
+                    now, details, java.util.List.of(npc.getUUID()));
+        } else if (type == VisitorType.SCHOLAR_VISITING || type == VisitorType.MINSTREL) {
+            java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+            details.put("village_name", village.getName());
+            details.put("visitor_role", type.name().toLowerCase().replace('_', ' '));
+            details.put("visitor_name", npc.getNpcName());
+            tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
+                    level, village,
+                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.FAMOUS_VISITOR,
+                    now, details, java.util.List.of(npc.getUUID()));
+        }
         return npc;
     }
 

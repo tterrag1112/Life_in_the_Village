@@ -1142,3 +1142,23 @@ class VisitorFluxTickSystem implements TickSubsystem {
                 .dailyTick(ctx.level());
     }
 }
+
+/**
+ * Phase 4 doc 30 — daily prune of village history logs. Drops
+ * entries past their importance retention window and enforces the
+ * per-village cap. Priority 205 — runs last so producers fired by
+ * the same daily wave land in the log first, then the prune sees
+ * the latest state.
+ */
+class HistoryPruneTickSystem implements TickSubsystem {
+    @Override public String name()     { return "history_prune"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 205; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Village.History.VillageHistoryLog
+                .get(ctx.level())
+                .prune(ctx.tick());
+    }
+}

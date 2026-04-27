@@ -506,10 +506,10 @@ companies and guilds have structure; visitors bring coin.
       polish is Phase 5)
     - [x] `VisitorChannel` fully wired
     - [x] Coin flow into village treasuries
-- [ ] **30** Village history
-    - [ ] Event archival after 365 days
-    - [ ] Prestigious name tracking
-    - [ ] Kingdom history compilation
+- [x] **30** Village history
+    - [x] Event archival after 365 days (per-importance retention)
+    - [x] Prestigious name tracking (NotablePersonRegistry)
+    - [x] Kingdom history compilation (`kingdomCompilation` query)
 - [ ] **Exit criteria**: 3 specialized villages (agricultural,
   craft, scholar) running 30+ days in a kingdom trade together
   via requests/caravans; visitors arrive at appropriate rates;
@@ -1697,5 +1697,122 @@ Spec deviations + deferrals (logged in 29 Revision Notes):
 - **Envoy letter content** is deferred per "Things to
   flag" #3. The envoy walks to the TOWN_HALL and idles;
   no actual sealed-letter delivery yet.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 30 (village history)
+shipped. **Phase 4 closes here.**
+
+New package `Village.History`:
+- `HistoryImportance` (MINOR / NOTABLE / MAJOR / LEGENDARY)
+  with `retentionTicks` per spec lines 138-145 (1y / 2y / never
+  / never).
+- `HistoryEventType` — ~40 entries spanning every Phase 1-4
+  system. Each carries a `defaultImportance` and a
+  `propagatesToKingdom` flag for the kingdom-history feed.
+- `HistoryEntry` record (10 fields, codec arity well under
+  DFU's 16-field cap) with `create` / `of` factories that
+  route through the template registry.
+- `HistorySummaryTemplates` registry — string templates per
+  event type with `{placeholder}` substitution. Missing keys
+  leave the literal placeholder so producers that forget a
+  detail key produce a slightly ugly entry instead of a crash.
+- `VillageHistoryLog` SavedData
+  ("life_in_the_village_history") — single per-world store
+  with a `byVillage` map. Spec's per-village log shape
+  preserved without one SavedData slot per village.
+  Queries: all / recent / byType / byImportance / byNpc /
+  inRange / kingdomCompilation. `prune` enforces the
+  retention windows + 200 MINOR cap + 1000 total cap per
+  village.
+- `NotablePerson` record + `NotablePersonRegistry` SavedData
+  ("life_in_the_village_notable_persons") — kingdom-keyed
+  store of NPCs who reached legendary status. Cached
+  npcName so old entries resolve after the NPC's own data
+  is evicted (spec line 345).
+- `HistoryProducer` — `EventDispatcher` registered on
+  `NpcLifeEventBus` for the four lifecycle archival hooks
+  (BIRTH, MARRIAGE, DEATH_NATURAL, COMING_OF_AGE) plus
+  static `record` / `recordIn` helpers used by the
+  non-lifecycle producers.
+
+Producer hooks wired:
+- `VillageSpawner` → VILLAGE_FOUNDED (LEGENDARY) on every
+  new village.
+- `NpcLifeEventBus` → BIRTH / MARRIAGE / DEATH_NATURAL /
+  COMING_OF_AGE via the HistoryProducer dispatcher.
+- `PlagueScheduler.start` + `HealthTicker` auto-resolve
+  paths → PLAGUE_OUTBREAK + PLAGUE_RESOLVED (with duration
+  + death-count details).
+- `LawEnactment.enact / repeal` → LAW_ENACTED / LAW_REPEALED.
+- `MerchantPromotion.promoteUnchecked` → COMPANY_FOUNDED.
+- `AiCompanyManager.dissolve` → COMPANY_DISSOLVED.
+- `VisitorFluxEngine.spawnVisitor` → ENVOY_RECEIVED for
+  ENVOY, FAMOUS_VISITOR for SCHOLAR_VISITING / MINSTREL.
+  Routine traveler / pilgrim / merchant arrivals don't
+  bloat the log.
+- `TrialExecutor` verdict path → TRIAL_HELD; bumped to
+  LEGENDARY when the punishment is EXECUTION or EXILE.
+
+Daily tick:
+- `HistoryPruneTickSystem` (interval 24000, priority 205 —
+  runs last so producers fired during the same wave land
+  in the log first).
+
+Debug:
+- `/history list <village> [importance]`
+- `/history recent <village> <count>`
+- `/history legendary <village>`
+- `/history add <village> <type> <summary>`
+- `/history prune <village>`
+- `/history notable [count]`
+
+Spec deviations + deferrals (logged in 30 Revision Notes):
+- **Single per-world `VillageHistoryLog`** instead of one
+  SavedData per village. The byVillage map gives the same
+  shape with one less slot per village; queries filter by
+  villageId at the API surface.
+- **No history viewer / chronicle UI screen** (spec lines
+  230-233) — debug commands cover the query surface;
+  Phase 5 GUI polish ships the screen.
+- **No "Read village history" player verb** (spec line 11
+  in the brief) — same UI deferral.
+- **No procedural ledger book authoring** by the village
+  scribe (spec lines 192-208). Phase 2's scribal-book
+  authoring path didn't ship a finished generator;
+  hooking it requires landing the production-cycle wire
+  first.
+- **Lifecycle-event archival uses NpcLifeEventBus events**
+  rather than firing dedicated history-only events. The
+  spec's "births / deaths / marriages / coming-of-age"
+  table (line 159) maps to existing
+  Married / BirthInFamily / FamilyDeath / LifeStageAdvanced
+  events.
+- **No archival hooks for masterpiece, festival, famine,
+  caravan-loss, harvest, building construction.** The
+  source events don't fire today (Phase 2 apprenticeship,
+  Phase 5 festivals + famine, doc 26 caravan failure
+  events all unimplemented). The HistoryEventType slots
+  exist so the eventual producers route via the same
+  archival API.
+- **Kingdom-history compilation** is a query-side
+  aggregator (`VillageHistoryLog.kingdomCompilation`)
+  that walks village logs and filters by
+  `propagatesToKingdom`. No separate `KingdomHistoryData`
+  store; every entry stays village-scoped.
+- **NotablePerson auto-population** is opt-in by
+  producers — the registry exists and the archival hooks
+  fire, but the spec's "prestige >= 40 author" /
+  "10-year leader" / "master craftsman with multiple
+  certified masterpieces" criteria need their source
+  systems (Phase 2 author prestige tracking, masterpiece
+  certification) to ship before the auto-promotion rules
+  can run.
+
+**Phase 4 closes here.** Next session opens Phase 5 per
+NPC_PLAN.md: culture across all subsystems, ~35-event
+expansion, appearance Layer 1, and the content/tuning pass.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

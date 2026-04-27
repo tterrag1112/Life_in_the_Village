@@ -63,13 +63,35 @@ public final class PlagueScheduler {
         }
         hdata.putPlague(plague);
         LOGGER.info("[Plague] Outbreak started in village {}", village.getName());
+        // Phase 4 doc 30 archival hook.
+        java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+        details.put("village_name", village.getName());
+        tterrag1112.life_in_the_village.Village.History.HistoryProducer
+                .record(level, village,
+                        tterrag1112.life_in_the_village.Village.History.HistoryEventType.PLAGUE_OUTBREAK,
+                        now, details, java.util.List.of());
         return plague;
     }
 
     /** Manual stop. */
     public static void resolve(ServerLevel level, java.util.UUID villageId) {
         HealthSavedData hdata = HealthSavedData.get(level);
-        hdata.getActivePlague(villageId).ifPresent(p ->
-                hdata.putPlague(p.resolve(level.getGameTime())));
+        long now = level.getGameTime();
+        hdata.getActivePlague(villageId).ifPresent(p -> {
+            hdata.putPlague(p.resolve(now));
+            // Phase 4 doc 30 archival hook.
+            Village village = VillageSavedData.get(level).getVillageById(villageId).orElse(null);
+            if (village != null) {
+                long durationDays = Math.max(0L, (now - p.startTick()) / 24000L);
+                java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+                details.put("village_name", village.getName());
+                details.put("duration_days", Long.toString(durationDays));
+                details.put("death_count", Integer.toString(p.diedCount()));
+                tterrag1112.life_in_the_village.Village.History.HistoryProducer
+                        .record(level, village,
+                                tterrag1112.life_in_the_village.Village.History.HistoryEventType.PLAGUE_RESOLVED,
+                                now, details, java.util.List.of());
+            }
+        });
     }
 }

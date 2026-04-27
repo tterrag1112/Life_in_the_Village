@@ -72,6 +72,8 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.Aging.ChildhoodInitializer());
         register(new tterrag1112.life_in_the_village.Npc.Aging.ComingOfAgeHandler());
         register(new tterrag1112.life_in_the_village.Npc.Aging.RetirementHandler());
+        // Phase 4 task 30: archive lifecycle events into village history.
+        register(new tterrag1112.life_in_the_village.Village.History.HistoryProducer());
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }
