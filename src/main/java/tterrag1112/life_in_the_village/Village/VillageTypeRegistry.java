@@ -135,6 +135,9 @@ public class VillageTypeRegistry
                         shapeProfile, farmPlotConfig, strategy, townSquareCapacity,
                         manualTags);
                 typeData.setShapeRules(shapeRules);
+                if (json.has("style")) {
+                    typeData.setStyle(json.get("style").getAsString());
+                }
 
                 loaded.put(type, typeData);
                 LOGGER.info("Loaded village type '{}' ({} buildings, shape={}, strategy={}, tags={})",

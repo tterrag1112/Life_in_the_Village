@@ -541,3 +541,58 @@ Codec extends Building with three optional `DyeColor` fields and a
   authored variant going missing for a culture is loud once but
   not noisy. Step 7 (no NBT anywhere) is a logged error listing
   all six tried paths.
+
+### P0a-06 / P0a-07 / P0a-19 — variant scoring + style auto + diversity bonus
+
+- `VillageTypeData.style` is a free-form `String` (default
+  `"auto"`) rather than an enum. Doc 15 lists `"rural"` /
+  `"urban"` / `"auto"` today but the auto-derivation rules already
+  reference layout categories that may grow new style folders
+  before the enum does. The consumer (`StyleAutoDeriver`) lower-
+  cases and switches; unknown values fall through to `"auto"`.
+- `StyleSelection` is a sealed interface with `Fixed` and
+  `UrbanLeaning` variants. The doc describes the URBAN-leaning
+  case as a per-building dice roll, so the resolution can't
+  collapse to a single `Style` at the village level. The
+  per-slot roll happens in `PlacementMatcher.applyVariantSelection`
+  via `StyleSelection.pickStyle(rng)`.
+- **Determinism preserved for the current pack.** Two RNG calls
+  could leak into the existing villages' planning stream and
+  shift downstream rolls (terrain jitter, etc.):
+  - `StyleSelection.pickStyle` for `UrbanLeaning`
+  - `VariantSelector.select`'s weighted-random roll
+  Both are short-circuited when only one style or one variant is
+  authored for the type — exactly the situation today, since
+  P0a-15 / P0a-16 (variant pack authoring) hasn't shipped.
+  `StyleAutoDeriver.pickStyleForType` and `VariantSelector`'s
+  single-candidate fast path encode this. Once additional
+  variants are authored, the RNG stream will diverge from the
+  pre-P0a-06 stream — that's expected and acceptable per the
+  task brief.
+- **Recipe-direct commits keep the default variant.** Layout
+  primitives that bypass `PlacementMatcher` and call
+  `tryCommitWithRetries` themselves (most shape recipes do this
+  for the town hall and a few feature placements) end up with
+  the `LayoutSlot` constructor's default-variant + RURAL.
+  That's fine while only RURAL content exists — the seven-step
+  resolver handles the path lookup either way. P0a-15 / P0a-16
+  authoring will need to revisit this and either route those
+  commits through the selector or add a recipe-side variant
+  pick, depending on how much variation the recipe wants.
+- **Placement counter scope.** The counter lives on a
+  `VariantSelector` instance owned by `PlanContext` (lazily
+  constructed). One `PlanContext` per `VillagePlanner.plan` call
+  → one matcher run → one counter. A second village in the same
+  matcher pass starts fresh because each call gets its own
+  `PlanContext`. The counter is keyed by full `VariantKey`
+  (culture + style folder + type + variantId) so two cultures
+  that happen to share a variantId don't share a counter.
+- **`AgeCategory` is wired through `VillageAgeCategoryHook`** —
+  a single static method returning `FRESH` until NPC Phase 4
+  doc 30 lands. Swap the implementation there to turn on
+  weighted age selection.
+- **Village preferred tags are reserved for P0a-14.** The
+  scoring formula reads them via the `VariantSelector.select`
+  parameter, but the matcher passes an empty set today. P0a-14
+  (VillageTypeData colour-palette work) is the natural place to
+  land the field.

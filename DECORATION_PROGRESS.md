@@ -20,8 +20,8 @@ variants-and-colors.md` before any other Phase 0 doc.
 | P0a-03 | `BuildingVariant` record + `VariantRegistry` | 15-building-variants-and-colors | Implemented | `BuildingVariant` adds `culture`/`style`/`type` fields and uses a nested `Footprint(int x, int z)` record (see doc 15 revision notes); `VariantRegistry.INSTANCE` rebuilds from `VariantManifestLoader` each reload. `eligibleFor` filters by folder style + tier window only — scoring lands in P0a-06. |
 | P0a-04 | `CultureResolver` extended fallback chain | 15-building-variants-and-colors | Implemented | Seven-step chain implemented in `resolveInternal`; legacy `resolve(culture, type, level, world)` and `resolveFromPath` retained as thin wrappers. One-time warning per `(type, variantId)` on default-variant fallback; hard-fail logs all six attempted paths on miss. |
 | P0a-05 | `StructureSizeCache` keying by `(culture, style, type, variant)` | 15-building-variants-and-colors | Implemented | Cache rekeyed to a `CacheKey(culture, style, type, variantId, level, rotation)` record. Manifest footprint declarations override the NBT measurement when present. Legacy `get(structurePath, rotation)` kept as a temporary bridge for planning callers (defaults: `culture=default`, `style=RURAL`, `variantId=type-default`). |
-| P0a-06 | Variant scoring algorithm in matcher | 15-building-variants-and-colors | Not-Started | Depends P0a-03 |
-| P0a-07 | Style auto-derivation from layout + tier | 15-building-variants-and-colors | Not-Started | Depends P0a-04 |
+| P0a-06 | Variant scoring algorithm in matcher | 15-building-variants-and-colors | Implemented | `VariantSelector` (per-matcher-run, holds the placement counter) called from `PlacementMatcher.commitBest` after each successful slot commit. Stamps `variantId` + `style` onto the `LayoutSlot`; `VillageSpawner` reads them to drive the seven-step resolver. Single-candidate fast path skips RNG to preserve placement determinism for the current pack. |
+| P0a-07 | Style auto-derivation from layout + tier | 15-building-variants-and-colors | Implemented | `VillageTypeData.style` field added (default `"auto"`); `StyleAutoDeriver` returns `Fixed` / `UrbanLeaning` per doc 15 §"Style determination". Per-slot pick goes through `pickStyleForType` which skips the RNG roll when only one style has authored content for the type. |
 | P0a-08 | `Building` record fields: variantId, primaryColor, accentColor, roofColor | 15-building-variants-and-colors | Not-Started | |
 | P0a-09 | `ColorPalette` + `ColorPaletteRegistry` with named presets | 15-building-variants-and-colors | Not-Started | |
 | P0a-10 | Tint pass: white-block → DyeColor swap on placement | 15-building-variants-and-colors | Not-Started | Depends P0a-08, P0a-09 |
@@ -33,7 +33,7 @@ variants-and-colors.md` before any other Phase 0 doc.
 | P0a-16 | Default culture URBAN variant pack (townhouse, tenement, etc.) | 15-building-variants-and-colors | Not-Started | Authoring task |
 | P0a-17 | Zoning: layouts 2–16 conversion to slot/matcher pattern | 15-building-variants-and-colors | Not-Started | Absorbed from prior zoning rework |
 | P0a-18 | Zoning: `ZoneRegistry` deletion | 15-building-variants-and-colors | Not-Started | Depends P0a-17 |
-| P0a-19 | Diversity-bonus diminishing returns in matcher | 15-building-variants-and-colors | Not-Started | Depends P0a-06 |
+| P0a-19 | Diversity-bonus diminishing returns in matcher | 15-building-variants-and-colors | Implemented | Score multiplier `× pow(0.7, alreadyPlacedCount)` lives in `VariantSelector.score`; the placement counter is keyed by full `VariantKey` so same-id variants from different cultures don't share a counter. Per-village isolation is automatic — each `PlacementMatcher` instance gets a fresh `VariantSelector`. |
 | P0a-20 | Codec migration for Building record | 15-building-variants-and-colors | Not-Started | Depends P0a-08 |
 
 ### Phase 0b — Decoration framework

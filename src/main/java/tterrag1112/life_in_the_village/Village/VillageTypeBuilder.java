@@ -74,6 +74,13 @@ public final class VillageTypeBuilder {
         return this;
     }
 
+    /** Sets the variant style profile: {@code "rural"}, {@code "urban"},
+     *  or {@code "auto"} (the default when omitted). */
+    public VillageTypeBuilder style(String style) {
+        root.addProperty("style", style);
+        return this;
+    }
+
     // ─── Top-level fields ──────────────────────────────────────────────────
 
     public VillageTypeBuilder terrainStrategy(TerrainStrategy strategy) {

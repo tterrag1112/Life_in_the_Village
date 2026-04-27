@@ -113,6 +113,14 @@ public class VillageTypeData {
     private final int townSquareCapacity;
     private List<ShapeRule> shapeRules = List.of();
     private final Set<VillageTag> tags;
+    /**
+     * Doc 15 — variant style profile. One of {@code "rural"},
+     * {@code "urban"}, or {@code "auto"} (the default). When
+     * {@code "auto"}, the matcher derives the style from layout +
+     * tier per the rules in §"Style determination". The full preset
+     * enum and per-village colour palette land in P0a-14.
+     */
+    private String style = "auto";
 
 
     // =========================================================================
@@ -186,4 +194,16 @@ public class VillageTypeData {
         this.shapeRules = List.copyOf(rules);
     }
     public Set<VillageTag> getTags() { return tags;}
+
+    /** Raw style declaration: {@code "rural"}, {@code "urban"}, or
+     *  {@code "auto"}. Default is {@code "auto"}. */
+    public String getStyle() { return style; }
+
+    /** Sets the style declaration. Unknown values are accepted (the
+     *  consumer logs and falls back to {@code "auto"}); validation is
+     *  consumer-side so that future style folders don't require a
+     *  schema bump here. */
+    public void setStyle(String style) {
+        this.style = style != null ? style : "auto";
+    }
 }

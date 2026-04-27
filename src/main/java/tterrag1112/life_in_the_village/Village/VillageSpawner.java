@@ -13,6 +13,8 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.VillageInhabitantPopulator;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
@@ -218,8 +220,21 @@ public class VillageSpawner {
             String buildingName = villageName + "_"
                     + buildingType.name().toLowerCase() + "_" + typeIndex;
 
-            Identifier structId = CultureResolver.resolveFromPath(
-                    typeData.getCulture(), slot.getStructurePath(), level);
+            // Variant-aware path: the matcher picks variant id + style
+            // per slot during P0a-06; fall back to the type-default for
+            // slots created on legacy code paths that haven't been
+            // routed through the matcher yet.
+            String variantId = slot.getVariantId() != null
+                    ? slot.getVariantId()
+                    : BuildingVariant.defaultVariantId(buildingType);
+            Style variantStyle = slot.getStyle() != null
+                    ? slot.getStyle() : Style.RURAL;
+            CultureResolver.LegacyTypeLevel parsed = CultureResolver
+                    .parseLegacyTypeLevel(slot.getStructurePath());
+            int buildingLevel = parsed != null ? parsed.level() : 1;
+            Identifier structId = CultureResolver.resolve(
+                    typeData.getCulture(), variantStyle, buildingType,
+                    variantId, buildingLevel, level);
 
             try {
                 Optional<Building> placed = BuildingPlacer.placeAndRegister(
