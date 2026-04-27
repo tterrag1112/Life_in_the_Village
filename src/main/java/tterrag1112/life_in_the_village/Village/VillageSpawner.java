@@ -15,6 +15,10 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.VillageInhabitantPopulator;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantRegistry;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantSelector;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillagePaletteResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
@@ -236,9 +240,28 @@ public class VillageSpawner {
                     typeData.getCulture(), variantStyle, buildingType,
                     variantId, buildingLevel, level);
 
+            // P0a-10: build a TintPass.Plan from the variant's
+            // colorSlots + the village's palette (hardcoded
+            // MUTED_EARTH for default culture in this prompt; P0a-14
+            // wires up VillageTypeData.colorPalette).
+            BuildingVariant variant = VariantRegistry.INSTANCE
+                    .find(typeData.getCulture(), variantStyle,
+                            buildingType, variantId)
+                    .or(() -> VariantRegistry.INSTANCE
+                            .defaultVariant(buildingType,
+                                    typeData.getCulture(), variantStyle))
+                    .or(() -> VariantRegistry.INSTANCE
+                            .defaultVariant(buildingType,
+                                    "default", variantStyle))
+                    .orElseGet(() -> VariantSelector.Fallback
+                            .syntheticDefault(buildingType, variantStyle));
+            TintPass.Plan tintPlan = VillagePaletteResolver
+                    .planFor(typeData, variant, rng);
+
             try {
                 Optional<Building> placed = BuildingPlacer.placeAndRegister(
-                        level, buildPos, structId, buildingName, buildingType, rotation);
+                        level, buildPos, structId, buildingName, buildingType,
+                        rotation, variantId, tintPlan);
                 if (placed.isEmpty()) continue;
 
                 Building newBuilding = placed.get();

@@ -596,3 +596,51 @@ Codec extends Building with three optional `DyeColor` fields and a
   parameter, but the matcher passes an empty set today. P0a-14
   (VillageTypeData colour-palette work) is the natural place to
   land the field.
+
+### P0a-08 / P0a-09 / P0a-10 — colour data model + tint pass
+
+- **`white_glazed_terracotta` slot decision.** Doc 15 lists this
+  block under both `ACCENT` and `ROOF` ("when on a roof slope").
+  The P0a-10 brief says the slot is decided by block type, not
+  position. Treating glazed terracotta as `ACCENT` only matches
+  the brief; authors who want a roof-glazed effect should use
+  `white_carpet` or `white_candle` (both already on the `ROOF`
+  list). If we ever need glazed-terracotta roof tinting, we'll
+  need a position-aware second-look path.
+- **Palette colour names.** Two doc 15 colour names don't have
+  exact `DyeColor` matches. The presets use the closest
+  available substitute and flag the choice here:
+  - `BERGEN_FJORD` lists "mustard" — uses `ORANGE` as the
+    nearest dye proxy. (`YELLOW` reads too bright; `ORANGE`
+    sits closer to the historical mustard pigment.)
+  - `MUTED_EARTH` lists "light_brown_(hex)" — uses `YELLOW`
+    as the proxy at low weight. The note in doc 15 implies a
+    custom hex value, which `DyeColor` can't represent.
+- **Tint pass insertion point.** Runs inside
+  `BuildingPlacer.placeAndRegister`, sandwiched between
+  `template.placeInWorld(...)` and `applyBiomeSwap(...)`. The
+  loop walks the same rotated footprint extents that the biome
+  swap walks so the two passes visit the same world cells.
+- **Forced colour overrides (TEMPLE / TOWN_HALL / guild halls)
+  are P0a-12.** Marked with a `TODO P0a-12` comment in
+  `VillagePaletteResolver.planFor` — the override branch should
+  short-circuit before sampling and is the natural place to
+  consult `GuildData` and `VillageTypeData`'s eventual
+  signature-colour field.
+- **Building codec migration.** P0a-08 adds four new
+  `optionalFieldOf` fields, so pre-P0a-08 saves load cleanly
+  with `variantId = type-default` and all colours `null`. The
+  full save-data migration pass (rewriting old records to carry
+  the new fields explicitly) is P0a-20.
+- **Per-building RNG.** Colour sampling uses the village's
+  existing deterministic RNG (`new Random((long) origin.hashCode()
+  * 31L + villageName.hashCode())`) which `VillageSpawner`
+  already creates and threads through farm plots and inhabitant
+  population. Same seed + village → same colour assignments.
+  Note: this is distinct from the planning RNG (which lives on
+  `PlanContext`); the spawn-time stream and the planning stream
+  diverge by design — colours don't affect layout, layout
+  doesn't affect colours.
+- **Village→palette is hardcoded for now.** Default culture
+  → `MUTED_EARTH`; everything else → `NONE` (no tint). P0a-14
+  replaces this with `VillageTypeData.colorPalette` parsing.

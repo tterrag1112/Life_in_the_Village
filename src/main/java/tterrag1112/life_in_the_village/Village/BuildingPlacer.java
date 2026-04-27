@@ -19,6 +19,8 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 
 import java.util.Comparator;
@@ -49,6 +51,27 @@ public class BuildingPlacer {
             Rotation rotation
 
     ) {
+        return placeAndRegister(level, pos, structureId, name, type, rotation,
+                BuildingVariant.defaultVariantId(type), TintPass.Plan.NONE);
+    }
+
+    /**
+     * P0a-08 / P0a-10 overload: variant id is recorded on the
+     * resulting {@link Building} record and the {@link TintPass}
+     * runs between NBT stamp and biome substitution. Existing
+     * callers without variant context use the legacy overload above
+     * which fills in the type-default variant and a no-op tint plan.
+     */
+    public static Optional<Building> placeAndRegister(
+            ServerLevel level,
+            BlockPos pos,
+            Identifier structureId,
+            String name,
+            BuildingType type,
+            Rotation rotation,
+            String variantId,
+            TintPass.Plan tintPlan
+    ) {
 
         Optional<StructureTemplate> templateOpt = loadTemplate(level, structureId);
         if (templateOpt.isEmpty()) {
@@ -59,6 +82,14 @@ public class BuildingPlacer {
 
         StructurePlaceSettings settings = new StructurePlaceSettings().setRotation(rotation);
         boolean placed = template.placeInWorld(level, pos, BlockPos.ZERO, settings, level.random, 2);
+
+        // P0a-10: tint pass runs between NBT stamp and biome
+        // substitution. Order matters — biome substitution can rewrite
+        // white_terracotta into a biome-appropriate variant which would
+        // hide it from this pass.
+        TintPass.apply(level, pos, template, rotation,
+                tintPlan != null ? tintPlan : TintPass.Plan.NONE);
+
         VillageBiomeStyle style = VillageBiomeStyle.detect(level, pos);
         if (style != VillageBiomeStyle.PLAINS) {
             applyBiomeSwap(level, pos, template, rotation, style);
@@ -106,6 +137,12 @@ public class BuildingPlacer {
         );
 
         Building building = new Building(name, type, shape, structureId, rotation, 1);
+        building.setVariantId(variantId);
+        if (tintPlan != null) {
+            building.setPrimaryColor(tintPlan.primaryColor());
+            building.setAccentColor(tintPlan.accentColor());
+            building.setRoofColor(tintPlan.roofColor());
+        }
         VillageSavedData data = VillageSavedData.get(level);
 
         data.addBuilding(building);
