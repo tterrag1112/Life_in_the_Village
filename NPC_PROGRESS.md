@@ -466,12 +466,14 @@ Goal: visual differentiation, cultural character, event richness,
 authored content.
 
 - [ ] Read Phase 5 specs (31–34) end-to-end
-- [ ] **31** Cultures wired
-    - [ ] Extended `Culture` record with all sub-bundles
-    - [ ] 4 starter cultures fully specified
-    - [ ] `CultureResolver` utility
-    - [ ] Wiring in schedule/office/law/economy/hobby/visitor/
-      apprenticeship
+- [x] **31** Cultures wired
+    - [x] Extended `Culture` record with all sub-bundles
+    - [x] 4 starter cultures fully specified
+    - [x] `CultureResolver` utility
+    - [~] Wiring in schedule/office/law/economy/hobby/visitor/
+      apprenticeship (office, law, hobby, visitor, religion,
+      trait-bias wired; schedule layering + economic norms +
+      apprenticeship deferred — see Revision Notes)
 - [ ] **32** Events expanded
     - [ ] Full `EventType` enum (~35 types)
     - [ ] `EventScheduler` with all sources (calendar/life-event/
@@ -1746,5 +1748,119 @@ Spec deviations + deferrals (logged in 30 Revision Notes):
 **Phase 4 closes here.** Next session opens Phase 5 per
 NPC_PLAN.md: culture across all subsystems, ~35-event
 expansion, appearance Layer 1, and the content/tuning pass.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 5 progress (next session)**: task 31 (cultures wired)
+shipped. Phase 5 opens here.
+
+Data layer:
+- `Cultures.Culture` rewritten as a 13-field record with codec
+  (well under DFU's 16-field cap). The prior empty-stub
+  `Culture` class + unused `AxolotlingCulture` subclass are
+  removed — no production code consumed them.
+- `Cultures.CultureBundles` packs nine focused sub-records
+  (Schedule / OfficeRules / LawDefaults / EconomicNorms /
+  HobbyWeights / VisitorAffinity / ApprenticeshipNorms /
+  AestheticTokens / Religion). Each carries its own codec.
+- `Cultures.CultureNaming` + `Cultures.CultureTraitBias` —
+  carried over from the existing partial spec at the top
+  level.
+- `Cultures.CultureRegistry` — registers `default` plus the
+  four spec starter cultures (Plainfolk / Highmarch /
+  Silkwood / Tidereach) fully populated per spec lines
+  137-247.
+- `Cultures.CultureResolver` — single behavior-resolver entry
+  point. Lives in the `Cultures` package so it doesn't
+  collide with the unrelated `Village.CultureResolver` (which
+  is the structure-template path resolver — different concept,
+  same name).
+
+Hooks wired:
+- **Religion + trait bias** — `TownspersonMob.assignToBuilding`
+  fires `applyVillageCulture` once per NPC the first time a
+  village name is set. The audit caught that finalizeSpawn
+  runs before assignToBuilding in the populator flow, so the
+  culture-aware overwrite has to defer. Persisted via a new
+  `cultureApplied` boolean field.
+- **Office selection** — `Npc/Office/CultureSelectionResolver`
+  (Phase 3 stub) now delegates to
+  `CultureResolver.selectionFor`. Highmarch leader becomes
+  HEREDITARY, Silkwood scribe COUNCIL, Tidereach bailiff
+  ELECTIVE, Plainfolk leader MERITOCRATIC.
+- **Visitor affinity** — `VillageVisitorCapacity.compute`
+  reads the village's culture and multiplies the per-building
+  base type-weights by the affinity table. Silkwood attracts
+  more STUDENT / SCHOLAR_VISITING; Tidereach more
+  MERCHANT_ITINERANT / TRAVELER; Highmarch more ENVOY.
+- **Hobby weights** — `NpcHobbyPreference.generate`
+  multiplies trait-derived score by
+  `CultureResolver.hobbyWeightFor`. Highmarch sword_practice
+  +80%; Plainfolk sword_practice -60%; etc.
+- **Law defaults at founding** — `VillageSpawner` enacts each
+  `culture.lawDefaults().initialLaws()` entry after the
+  history archival step. Plainfolk village → SUBSIDIZE_FARMER;
+  Highmarch → DOUBLE_PUNISHMENT + MARKET_TAX_REDUCED; Silkwood
+  → COMPULSORY_SCHOOLING + BAN_EXECUTION + SUBSIDIZE_SCHOLAR;
+  Tidereach → PILGRIM_WELCOME_BONUS + BAN_EXECUTION.
+
+Debug:
+- `/culture list` — every registered culture.
+- `/culture info <id>` — full sub-record dump.
+- `/culture resolve npc <uuid> <hook>` — invoke a resolver
+  hook for one NPC and print the result.
+- `/culture resolve village <name> <hook>`.
+
+Spec deviations + deferrals (logged in 31 Revision Notes):
+- **No `/culture set <village> <id>` debug.** A village's
+  culture is derived from its kingdom's culture (the
+  canonical source); to "change" a village's culture you
+  change the kingdom's culture. Documented in 31 Revision
+  Notes.
+- **Schedule layering deferred.** Spec line 273 calls for
+  inserting CULTURE between EVENT and WEEKLY in the
+  ScheduleResolver layer stack. The data shape ships
+  (`CultureSchedule.professionDayOffs` carried), but
+  `ScheduleResolver.phaseAt` isn't yet refactored to query
+  the layer. Phase 5 follow-up.
+- **Economic norms wiring deferred.** `CultureEconomicNorms`
+  ships with full data + a resolver accessor, but
+  `ChannelRouter.score` doesn't yet read `hagglingTendency`
+  and `VillageSimEngine.syncFromReal` doesn't yet apply
+  `consumptionBias`. Phase 5 follow-up.
+- **Apprenticeship norms deferred.** Phase 2 task 16
+  (apprenticeship) hasn't shipped, so
+  `CultureApprenticeshipNorms` has no consumer. The data
+  + resolver accessor are in place for the eventual wire.
+- **Aesthetic tokens deferred** — next session implements
+  appearance Layer 1 per spec doc 33.
+- **NpcProfileSnapshot culture tag deferred** — Phase 5
+  GUI polish.
+- **Village-culture resolution** — currently reads
+  village → kingdom → registry default. The "founding NPC
+  determines initial dominant" / "majority wins" rules
+  aren't yet implemented; the kingdom-culture acts as
+  the village's culture for v1. Documented as a known
+  simplification.
+- **Mixed-culture village dominant** ambiguity ("Things
+  to flag" #1) — n/a in v1 since culture follows the
+  kingdom, not the population.
+- **Big-bang culture-id casing** — `CultureRegistry`
+  normalises ids to lowercase on lookup so existing
+  mixed-case `Kingdom.getCulture()` strings continue to
+  resolve.
+
+Audit-discovered fix:
+- `TownspersonMob.finalizeSpawn` originally tried to apply
+  culture biases + religion at spawn time, but the
+  populator flow calls `finalizeSpawn` BEFORE
+  `assignToBuilding` — so `getAssignedVillageName()` was
+  always empty and the lookup degraded to "default" for
+  every populator-spawned NPC, making culture inert.
+  Refactored to defer the apply to a one-time
+  `applyVillageCulture` call inside `assignToBuilding`,
+  guarded by a persisted `cultureApplied` flag.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

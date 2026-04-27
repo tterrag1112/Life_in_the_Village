@@ -24,8 +24,11 @@ public final class CultureSelectionResolver {
 
     /**
      * Returns the culture's preferred selection method for the office,
-     * or empty when no override applies. Phase 3 stub returns empty
-     * unconditionally.
+     * or empty when no override applies. Phase 5 doc 31 wires this to
+     * {@code CultureResolver.selectionFor}; the Phase 3 stub returned
+     * empty unconditionally so existing callers fall back to
+     * {@link OfficeDefinition#defaultSelection} when the culture has
+     * no preference for this office.
      *
      * @param culture  the org's culture identifier (kingdom culture for
      *                 kingdom-typed offices; village culture otherwise).
@@ -34,6 +37,7 @@ public final class CultureSelectionResolver {
      * @param officeId the office id being filled
      */
     public static Optional<SelectionMethod> cultureSelectionFor(String culture, String officeId) {
-        return Optional.empty();
+        return tterrag1112.life_in_the_village.Cultures.CultureResolver
+                .selectionFor(culture, officeId);
     }
 }

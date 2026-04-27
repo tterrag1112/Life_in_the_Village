@@ -104,7 +104,10 @@ public final class NpcHobbyPreference {
             topHobbies.clear();
             return;
         }
-        // Score each candidate.
+        // Score each candidate. Phase 5 doc 31: multiply the
+        // trait-derived score by the culture's per-hobby weight
+        // (default 1.0 when the culture has no opinion).
+        var culture = tterrag1112.life_in_the_village.Cultures.CultureResolver.of(npc);
         record Scored(HobbyDefinition def, float score) {}
         List<Scored> scored = new ArrayList<>();
         for (HobbyDefinition def : candidates) {
@@ -112,7 +115,9 @@ public final class NpcHobbyPreference {
             if (def.skillGain().isPresent() && def.skillGain().get() == primary) {
                 s += SKILL_INTEREST_BONUS;
             }
-            // Phase 5 plugs cultureBonus here.
+            float cultureMultiplier = tterrag1112.life_in_the_village.Cultures
+                    .CultureResolver.hobbyWeightFor(culture, def.id());
+            s *= cultureMultiplier;
             scored.add(new Scored(def, s));
         }
         scored.sort((a, b) -> Float.compare(b.score(), a.score()));

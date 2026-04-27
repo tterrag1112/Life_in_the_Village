@@ -418,3 +418,88 @@ Phase 5 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 5 implementation (2026-04-27, branch `claude/npc-office-framework-behavior-qBdJn`)
+
+#### Things to flag
+
+- **`Culture` was a stub class, not a record.** The pre-existing
+  `Cultures/Culture.java` was a one-field `(String key)` placeholder
+  with a `static List<Culture> ListCultures` collection and a single
+  unused subclass `AxolotlingCulture`. Phase 5 rewrites it as a 13-field
+  record matching the spec. The stub class and `AxolotlingCulture` are
+  deleted; nothing referenced them outside the file itself.
+- **Two `CultureResolver` classes coexist in different packages.**
+  `Village/CultureResolver` is the structure-template path resolver
+  (different concept — predates this work). The new behavior resolver
+  lives at `Cultures/CultureResolver`. No file imports both, so the
+  short-name collision is harmless. Renaming the older one was not
+  attempted in this phase.
+- **Codec arity packed into nine sub-records (`CultureBundles.java`).**
+  DFU `RecordCodecBuilder.Instance.group(...)` caps at 16 fields. Even
+  the 13-field `Culture` record stays under the cap, but each of the
+  inner bundles (laws, economic norms, etc.) gets its own focused codec
+  for readability.
+- **`CultureLawDefaults` references laws by enum value (not by string).**
+  `VillageLaw` is an enum so the default codec works; preferred /
+  forbidden / initial all serialize via `Codec.STRING.xmap` to enum.
+- **`CultureNaming` is a v1 placeholder.** The four starter registry
+  entries leave name pools empty; spec § "Phase 6 future" handles
+  per-culture name lists. NPC naming today still uses the global pool.
+
+#### Spec deviations
+
+- **`/culture set <village> <id>` is NOT shipped.** The spec lists this
+  as a phase-5 debug command. Village culture is *derived* from kingdom
+  culture (the canonical source) rather than stored on the village, so
+  there is no field to set. To migrate a village's culture for testing,
+  change its kingdom's culture via `/kingdom` data manipulation. The
+  read-only commands `/culture list`, `/culture info`, and the new
+  `/culture resolve npc|village <hook>` cover the inspection use cases.
+- **`CultureSchedule` is plumbed into the record but not yet read.**
+  `WeeklyScheduleLibrary` does not have an event/cultural override
+  layer in this codebase. The schedule field is populated on the four
+  starter cultures with `professionOverrides = empty, weekLength = 7,
+  cultureDayOffs = [], holyDayInterval = empty` so the codec
+  round-trips. Wiring schedules requires extending the schedule
+  library — flagged for the next pass.
+- **Dialogue / appearance / consumption-bias hooks are not yet wired.**
+  Spec calls out `ChannelRouter.score` haggling adjustment, gift verb
+  mood effects, `VillageSimEngine` consumption derivation, appearance
+  Layer 1 aesthetic tokens, and `NpcProfileSnapshot` culture labels.
+  All of those subsystems exist but were left alone — the spec
+  treats this phase as the wiring pass for "behavior", not for UI or
+  the simulator's economic loop. The data is now available on
+  `Culture.economicNorms()` and `aesthetics()` for the consumers to
+  read whenever they're updated.
+- **Religion piety is overwritten on first culture apply.** Villagers
+  born into a culture get `cultureReligionPiety = 0.6` (above the
+  spec-suggested 0.3 starter to make cultural identity more legible
+  in early playtest). Conversion drift later in life is unchanged.
+
+#### Audit-discovered fix
+
+- **finalizeSpawn timing bug.** The first wiring put culture lookup
+  in `finalizeSpawn`, which the populator path calls *before*
+  `assignToBuilding`, so `getAssignedVillageName()` always returned
+  empty and culture resolved to the registry default — making the
+  trait-bias and religion application inert for production villagers.
+  Fixed by:
+  1. Reverting `finalizeSpawn` to seed the default Sunstead religion
+     (cheap, no culture lookup).
+  2. Adding a private `applyVillageCulture(ServerLevel)` method that
+     reads culture, applies trait biases additively, and overwrites
+     religion piety.
+  3. Calling `applyVillageCulture` from `assignToBuilding` once,
+     gated by a persisted `cultureApplied` boolean (NBT-stored so
+     the apply is exactly-once across saves).
+
+#### Future-phase deferrals
+
+- JSON-driven custom cultures (Phase 6).
+- Mixed-culture village resolution (currently village = kingdom
+  culture, no per-village override).
+- Culture drift / auto-blend.
+- Holy-day calendar generation from `holyDayInterval`.
+- Per-culture name pools.
+- Kingdom-level cultural rivalry mechanics.

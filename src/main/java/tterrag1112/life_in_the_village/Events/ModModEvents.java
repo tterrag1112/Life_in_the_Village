@@ -277,6 +277,7 @@ public class ModModEvents {
         RequestDebugCommand.register(event.getDispatcher());
         VisitorDebugCommand.register(event.getDispatcher());
         HistoryDebugCommand.register(event.getDispatcher());
+        CultureDebugCommand.register(event.getDispatcher());
 
     }
 
