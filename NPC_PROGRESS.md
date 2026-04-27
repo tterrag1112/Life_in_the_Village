@@ -545,13 +545,24 @@ authored content.
       first-class event in addition to the health record
     - [x] `/event list / schedule / start / complete / cancel`
       debug commands
-- [ ] **33** Appearance Layer 1
-    - [ ] `AppearanceComponent` extended
-    - [ ] `AppearanceLayerRegistry`
-    - [ ] Culture base textures authored (4 × 3-4 variants)
-    - [ ] Office mark overlays authored
-    - [ ] Cultural accessory models authored
-    - [ ] Rebuild hooks on state change
+- [~] **33** Appearance Layer 1 — infrastructure only
+    - [x] `AppearanceComponent` extended (cultureBaseId, skinToneVariant,
+      officeMarks, accessoryIds, lifeStageDecoration, lastRebuildTick;
+      additive NBT save/load)
+    - [x] `AppearanceLayerRegistry` with 4 cultures, ~17 office marks,
+      ~10 accessories — every entry carries the canonical resource
+      path the renderer will read once art lands
+    - [ ] Culture base textures authored (4 × 3-4 variants) — DEFERRED
+      to art pass
+    - [ ] Office mark overlays authored — DEFERRED to art pass
+    - [ ] Cultural accessory models authored — DEFERRED to art pass
+    - [x] Rebuild hooks on state change (LifeStageAdvanced /
+      OfficeChange / Hired / Fired / Promoted / Demoted via
+      `AppearanceLifeEventProducer`; profession change inline in
+      `setProfession`; spawn-time generation in
+      `applyVillageCulture`)
+    - [x] `/appearance show / rebuild / set culture / set variant /
+      gift` debug commands
 - [ ] **34** Content pass
     - [ ] Dialogue trees: expand 25 → 80
     - [ ] Rumor slant templates: 15 → 60
@@ -2079,5 +2090,113 @@ Spec deviations + deferrals (logged in 32 Revision Notes):
 - **Event-duration scaling for small villages** — spec
   open-decision proposes scaling. v1 uses the per-type
   flat `getDurationTicks`.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 5 progress (current session)**: task 33 (appearance
+Layer 1) — **infrastructure only, by user direction**. The
+Java data + wiring layer ships in full; texture / model
+assets are deferred entirely to a future art pass. The
+renderer is left untouched; it will read the new fields once
+the art lands.
+
+Data layer:
+- New `Entities.custom.Appearance` package with five types:
+  `AccessorySlot` (HEAD/SHOULDER/BELT/BACK enum),
+  `CultureBase` (cultureId + base + variant texture list),
+  `OfficeMark` (officeId + overlay + optional model
+  attachment + priority + short label),
+  `AccessoryDefinition` (id + texture + slot + optional
+  model + label), `LifeStageDecoration` (postureOffset +
+  limbProportion + usesCane).
+- `AppearanceLayerRegistry` ships defaults: 5 culture bases
+  (4 spec cultures + a `default` fallback) each with 3-4
+  registered skin-tone variant paths; ~17 office marks
+  matching every `OfficeRegistry.*` constant; ~10
+  accessories covering the four cultures plus
+  gift-circlet / gift-pendant. Resource paths follow
+  `lifeinthevillage:textures/entity/townsperson/{culture
+  |office|accessory}/...`.
+- `AppearanceComponent` extended: cultureBaseId,
+  skinToneVariant, officeMarks list, accessoryIds list,
+  lifeStageDecoration, lastRebuildTick. Additive NBT
+  save/load so pre-Phase-5 saves load cleanly. New
+  `generateLayer1` (spawn) and `rebuild` (state-change)
+  methods. `describeAppearance()` returns a single-line
+  summary. Office-mark visual cap = top 3 by priority via
+  `visibleOfficeMarks`.
+
+Rebuild triggers:
+- Spawn-time: `applyVillageCulture` (which already runs
+  once per NPC after village assignment) calls
+  `appearance.generateLayer1` with the resolved culture,
+  current life-stage, and a stable UUID-derived seed.
+- Profession change: inline rebuild call in
+  `TownspersonMob.setProfession`.
+- Bus-driven: `AppearanceLifeEventProducer`
+  (registered in `NpcLifeEventBus.registerDefaults`)
+  rebuilds on `LifeStageAdvanced`, `OfficeChange`,
+  `Hired`, `Fired`, `Promoted`, `Demoted`.
+- `AppearanceRebuilder.rebuild(npc)` walks every village /
+  guild / company / kingdom on the level, collects the
+  offices the NPC currently holds, then forwards to
+  `AppearanceComponent.rebuild` so office-mark state
+  always matches actual office-holdership.
+
+Debug:
+- `/appearance show <npc>` — culture + variant + accessory
+  list with labels + office marks with priorities +
+  life-stage decoration + lastRebuildTick + the resolved
+  culture for cross-check.
+- `/appearance rebuild <npc>` — force a fresh rebuild.
+- `/appearance set culture <npc> <id>` — debug-override the
+  base culture.
+- `/appearance set variant <npc> <int>` — debug-override
+  the skin-tone variant.
+- `/appearance gift <npc> <accessoryId>` — debug-add a
+  persistent accessory.
+
+Asset deferral (deliberate):
+- **No PNG textures and no JSON model attachments are
+  authored in this session.** The user explicitly chose
+  option (b): infrastructure only, no resource files. The
+  registry stores canonical paths; Minecraft will render
+  the missing-texture magenta-checker pattern for any
+  layer whose texture file is absent until art lands.
+- Per-culture base PNGs (4 cultures × 3-4 skin-tone
+  variants ≈ 16 files), office overlay PNGs (~17), office
+  attachment models (~5 .json), accessory PNGs (~10), and
+  accessory attachment models — all deferred.
+- The renderer integration itself is also deferred — Layer
+  1 fields are persisted, syncable, and queryable, but the
+  existing `TownspersonRenderer` is unchanged.
+
+Spec deviations + deferrals (logged in 33 Revision Notes):
+- **No client-server sync packet.** Spec § 215 calls for
+  server-authoritative sync via entity data serializer or
+  custom packet. Fields persist server-side and the
+  rebuilder runs on the server tick; client-side
+  visibility waits on the renderer integration.
+- **No `NpcProfileSnapshot.appearance` field.** Spec § 253
+  asks for a "Wearing: ..." line on the profile screen.
+  Adding a field to the snapshot record requires touching
+  StreamCodec + builder + screen — invasive for an
+  invisible feature in v1. `describeAppearance()` is in
+  place; the snapshot wire is a one-line addition.
+- **No render pipeline composite pass.**
+- **OfficeChange not yet fired.** Phase 5-32 added the
+  life event and the appearance producer subscribes;
+  `OfficeElection` finalisation doesn't yet emit it.
+  Other rebuild triggers cover the gap eventually.
+- **Multi-office cap visual** — top 3 by priority is
+  enforced in `visibleOfficeMarks()`; the cap matters
+  only at render time, which is deferred.
+- **Culture migration appearance shift speed** — spec
+  open-decision says "slowly". v1 rebuilds instantly on
+  culture change.
+- **Layer 2/3 (hair, face, wear, damage)** — Phase 6 per
+  spec.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).

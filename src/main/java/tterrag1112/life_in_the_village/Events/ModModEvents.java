@@ -280,6 +280,7 @@ public class ModModEvents {
         HistoryDebugCommand.register(event.getDispatcher());
         CultureDebugCommand.register(event.getDispatcher());
         EventDebugCommand.register(event.getDispatcher());
+        AppearanceDebugCommand.register(event.getDispatcher());
 
     }
 
