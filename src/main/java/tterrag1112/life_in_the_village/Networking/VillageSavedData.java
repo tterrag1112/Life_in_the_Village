@@ -768,6 +768,27 @@ public class VillageSavedData extends SavedData implements
         setDirty();
     }
 
+    /**
+     * Phase 5 doc 32 archival: drop ENDED / CANCELLED / DISRUPTED events
+     * once they're older than 365 in-game days (8.76M ticks). Earlier
+     * Phase-3 events (which never recorded {@code completedTick}) fall
+     * back to {@code endTick} so legacy data still gets pruned.
+     */
+    public void pruneOldCompletedEvents(long currentTick) {
+        long maxAge = 365L * 24000L;
+        boolean changed = events.removeIf(e -> {
+            if (e.getStatus() == VillageEvent.EventStatus.ACTIVE) return false;
+            if (e.getStatus() == VillageEvent.EventStatus.ANNOUNCED) return false;
+            long doneAt = e.getCompletedTick() > 0 ? e.getCompletedTick() : e.getEndTick();
+            return currentTick - doneAt > maxAge;
+        });
+        if (changed) setDirty();
+    }
+
+    public Optional<VillageEvent> getEventById(UUID eventId) {
+        return events.stream().filter(e -> e.getId().equals(eventId)).findFirst();
+    }
+
     // =========================================================================
     // Guilds
     // =========================================================================

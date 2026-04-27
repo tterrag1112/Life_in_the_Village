@@ -117,6 +117,19 @@ public sealed interface NpcLifeEvent {
     record LifeStageAdvanced(TownspersonMob subject, String oldStage,
                              String newStage) implements NpcLifeEvent {}
 
+    /**
+     * Office holder swapped out (election result, hereditary succession,
+     * appointment). Phase 5 doc 32 schedules an OFFICE_INAUGURATION
+     * event off this signal.
+     *
+     * @param subject  the NPC who now holds the office
+     * @param officeId the office's string id
+     * @param previousHolder the prior occupant, or null if the office
+     *                       was vacant
+     */
+    record OfficeChange(TownspersonMob subject, String officeId,
+                        UUID previousHolder) implements NpcLifeEvent {}
+
     // ── Goals (life goals from doc 07) ────────────────────────────────────
 
     /** Goal completed; producers route memory + mood per importance. */
