@@ -498,3 +498,46 @@ Codec extends Building with three optional `DyeColor` fields and a
   fixtures under `default/castle/test/...` are kit pieces (not
   building level NBTs) and stay where they are. Non-default
   cultures had no authored buildings and so had nothing to move.
+
+### P0a-03 / P0a-04 / P0a-05 — variants + 7-step resolver + size cache rekey
+
+- `BuildingVariant` deviates from the doc's "Data structures"
+  snippet in two ways:
+    - Adds `String culture`, `Style style`, and `BuildingType type`
+      to the record. The doc's flat
+      `Map<BuildingType, List<BuildingVariant>>` doesn't carry
+      culture/style any other way, and downstream callers
+      (`CultureResolver`, the planner) need them on the variant
+      itself rather than via a parallel index map.
+    - Uses a nested `Footprint(int x, int z)` record instead of
+      `BoundingBox`. The manifest is XZ-only; synthesizing a Y
+      just to wrap in a 3D box would be lossy and would force
+      every reader (size cache, scoring) to re-extract XZ.
+- A new `Style` enum (`RURAL`, `URBAN`) and `AgeCategory` enum
+  (`FRESH`, `WEATHERED`, `ANCIENT`) were added alongside the
+  existing `StylePreference` / `AgePreference`. The doc's
+  `eligibleFor(BuildingType, Style, VillageSizeTier, AgeCategory)`
+  signature implies these as concrete (no `ANY` member) sibling
+  types to the `*Preference` bias enums.
+- Per the P0a-05 task brief, an explicit manifest `footprint`
+  takes precedence over the NBT-measured size. When a variant has
+  no override (i.e. all migrated buildings, since their minimal
+  manifests omit `footprint`), the cache loads the NBT through
+  the same seven-step resolver the placer uses, so size and
+  geometry stay in sync.
+- `StructureSizeCache` keeps a legacy `get(structurePath,
+  rotation)` overload as a one-step bridge for planning-layer
+  callers (`LayoutPrimitive`, `PlanContext`) that still pass
+  `"{type}/level_{n}"` strings. Defaults: `culture=default`,
+  `style=RURAL`, `variantId=type-default`. P0a-06 upgrades these
+  callers when the matcher learns variant selection.
+- The interim `CultureResolver.toVariantAwarePath` helper added
+  in P0a-01 / P0a-02 was deleted — the seven-step resolver
+  constructs paths directly and there is no longer any string-
+  level rewriting. `parseLegacyTypeLevel` replaces it as the
+  one-line bridge used by the size cache and `resolveFromPath`.
+- The default-of-default fallback (steps 5–6) emits a one-time
+  warning per `(BuildingType, variantId)` combination so an
+  authored variant going missing for a culture is loud once but
+  not noisy. Step 7 (no NBT anywhere) is a logged error listing
+  all six tried paths.

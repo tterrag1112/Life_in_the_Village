@@ -116,6 +116,8 @@ public final class VariantManifestLoader
 
         LOGGER.info("VariantManifestLoader: loaded {} manifest(s)",
                 result.size());
+
+        VariantRegistry.INSTANCE.rebuild(this.loaded);
     }
 
     // ── Public API ────────────────────────────────────────────────────────
