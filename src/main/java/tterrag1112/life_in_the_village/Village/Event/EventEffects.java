@@ -547,6 +547,10 @@ public class EventEffects {
                 player.addEffect(new MobEffectInstance(
                         MobEffects.JUMP_BOOST, 6000, 0));
             }
+            // Phase 5 doc 32: every type added in Phase 5 has no
+            // dedicated player buff for v1. The flavor / message
+            // still fires below so the player gets a notification.
+            default -> {}
         }
         player.displayClientMessage(
                 net.minecraft.network.chat.Component.literal(
