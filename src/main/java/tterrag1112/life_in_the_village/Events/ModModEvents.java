@@ -274,6 +274,7 @@ public class ModModEvents {
         SimDebugCommand.register(event.getDispatcher());
         GuildAbstractDebugCommand.register(event.getDispatcher());
         CompanyDebugCommand.register(event.getDispatcher());
+        RequestDebugCommand.register(event.getDispatcher());
 
     }
 

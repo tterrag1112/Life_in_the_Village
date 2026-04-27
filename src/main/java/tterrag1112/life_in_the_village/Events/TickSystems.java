@@ -1084,3 +1084,22 @@ class CompanyAiTickSystem implements TickSubsystem {
                 .dailyTick(ctx.level());
     }
 }
+
+/**
+ * Phase 4 doc 28 — daily request-board maintenance: completes ready
+ * fulfilments, expires stale requests, escalates scope, runs the
+ * acceptance pass, and prunes terminal records. Priority 203 —
+ * after company AI so companies get a chance to post / accept on
+ * their own first.
+ */
+class RequestBoardTickSystem implements TickSubsystem {
+    @Override public String name()     { return "request_board"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 203; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Guilds.Common.Requests.RequestBoardTicker
+                .dailyTick(ctx.level());
+    }
+}
