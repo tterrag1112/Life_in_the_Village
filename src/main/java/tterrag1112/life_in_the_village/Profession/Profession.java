@@ -98,7 +98,7 @@ public enum Profession {
             case LIBRARY         -> Profession.LIBRARIAN;
             case SCRIBE_WORKSHOP -> Profession.SCRIBE;
             case SCHOLARS_RETREAT-> Profession.SCHOLAR;
-            case TEMPLE          -> Profession.PRIEST;
+            case TEMPLE, CHAPEL, SHRINE -> Profession.PRIEST;
             case HEALER_HUT      -> Profession.HEALER;
             case TREASURY        -> Profession.GUARD;   // guarded, not staffed
             case HOUSE           -> Profession.NONE;
