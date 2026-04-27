@@ -115,6 +115,7 @@ public final class TickSubsystemRegistry {
         register(new ReligionRiteTickSystem());
         register(new HealthDailyTickSystem());
         register(new PlagueRollTickSystem());
+        register(new CompanyAiTickSystem());
 
         // ── Travel incentives ─────────────────────────────────────────────────
         register(new PlayerRoadSpeedSystem());

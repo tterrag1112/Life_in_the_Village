@@ -1065,3 +1065,22 @@ class PlagueRollTickSystem implements TickSubsystem {
         tterrag1112.life_in_the_village.Npc.Health.PlagueScheduler.weeklyRoll(ctx.level());
     }
 }
+
+/**
+ * Phase 4 doc 26 — daily decision loop for NPC-owned companies.
+ * Runs the bankruptcy clock, succession on owner death, and the
+ * eligibility scan that promotes long-tenured merchants to trading
+ * companies. Priority 202 — after religion (199), health (200),
+ * plague (201) so per-day economic outcomes feed the decision.
+ */
+class CompanyAiTickSystem implements TickSubsystem {
+    @Override public String name()     { return "company_ai"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 202; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Guilds.Companies.Ai.AiCompanyManager
+                .dailyTick(ctx.level());
+    }
+}

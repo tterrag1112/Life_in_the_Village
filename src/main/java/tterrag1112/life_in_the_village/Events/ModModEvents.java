@@ -273,6 +273,7 @@ public class ModModEvents {
         PlagueDebugCommand.register(event.getDispatcher());
         SimDebugCommand.register(event.getDispatcher());
         GuildAbstractDebugCommand.register(event.getDispatcher());
+        CompanyDebugCommand.register(event.getDispatcher());
 
     }
 

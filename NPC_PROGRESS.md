@@ -432,12 +432,12 @@ companies and guilds have structure; visitors bring coin.
     - [ ] `GuildRequestChannel` fully wired (was stub)
     - [ ] Player fulfillment UI
     - [ ] Migrate existing `Quest` to `Request.HUNT`/`SURVEY`
-- [ ] **26** NPC companies
-    - [ ] Company ownership extension (PLAYER/NPC)
-    - [ ] `AiCompanyManager` daily
-    - [ ] Merchant → trading company promotion
-    - [ ] Succession on owner death
-    - [ ] `CARAVAN_ATTENDANT` worker role
+- [x] **26** NPC companies
+    - [x] Company ownership extension (PLAYER/NPC)
+    - [x] `AiCompanyManager` daily
+    - [x] Merchant → trading company promotion
+    - [x] Succession on owner death
+    - [x] `CARAVAN_ATTENDANT` worker role
 - [ ] **29** Visitor flux
     - [ ] `Visitor` entity, 8 visitor types, itinerary
     - [ ] `VisitorFluxEngine` daily arrival
@@ -1330,5 +1330,111 @@ Spec deviations + deferrals (logged in 27 Revision Notes):
   spawned village to ship one of each. Manual placement
   via debug commands works; Phase 5 worldgen tuning
   can register selective spawn rules.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 26 (NPC-owned companies)
+shipped.
+
+Company extension:
+- `OwnerType` (PLAYER / NPC), `CompanyType` (STANDARD /
+  TRADING_COMPANY), `SuccessionState` (ACTIVE / UNDECIDED /
+  DISSOLVED) inner enums on Company.
+- `CARAVAN_ATTENDANT` added to `Company.WorkerRole`.
+- 8 new fields: ownerType, ownerId, heirs, companyType,
+  successionState, foundedTick, dissolutionWarningTick,
+  undecidedSinceTick. All persisted via the codec's
+  optionalFieldOf so v1 saves migrate cleanly: ownerType
+  defaults PLAYER, ownerId.orElse(ownerPlayerId), companyType
+  STANDARD, successionState ACTIVE, all timestamps 0.
+- `setNpcOwner(UUID)` flips ownership and replaces the
+  company_owner office holding (previously seeded by the
+  legacy player path).
+
+Promotion path:
+- `MerchantPromotion.isEligible` enforces COMMERCE >= 70,
+  wallet >= 500 br, MARKET assignment, and 365-day continuous
+  merchant tenure via the new `professionStartedTick` field
+  on TownspersonMob (resets on every setProfession change).
+- `MerchantPromotion.promote` creates a TRADING_COMPANY
+  named "Elara's Trading House" (NPC name + " 's Trading
+  House"), transfers 100 br from NPC wallet to company
+  treasury, makes the NPC owner-as-PRODUCER worker, registers
+  via CompanySavedData. forcePromote skips eligibility for
+  /company promote testing.
+
+AI manager:
+- `AiCompanyManager.dailyTick` registered as
+  `CompanyAiTickSystem` (interval 24000, priority 202 — after
+  health/plague subsystems). Per company:
+  - Owner liveness check; dead/demoted owner triggers
+    handleSuccession.
+  - Bankruptcy clock — 14-day warning at treasury <
+    expenses + 50 br, 30 more days dissolves.
+  - UNDECIDED grace window — 30 days to resolve heirs;
+    failing dissolves.
+  - Promotion scan iterates loaded merchants per village.
+- `handleSuccession` walks the heir chain; first living
+  adult heir takes over; otherwise UNDECIDED for 30 days.
+- `dissolve` distributes treasury as severance to remaining
+  workers and marks DISSOLVED + isActive=false (record
+  preserved for historical lookups).
+- `OwnerBias` snapshot reads owner traits (ambition /
+  industry / temperance / compassion) for caravan dispatch +
+  wage decisions; surfaced now, consumed by Phase 5 polish.
+
+Caravan dispatch (stub):
+- `dispatchTradingCaravan` deposits a fixed 50 br profit so
+  the trading-company branch is verifiable end-to-end via
+  /company dispatch. Real wiring into CaravanSavedData /
+  CaravanGoodsSelector deferred — those classes don't yet
+  expose a public dispatch API. Spec line 144 (3x
+  village-merchant range = 9000 blocks) is encoded as
+  `TRADING_RANGE_MULTIPLIER = 3.0` on the manager so the
+  follow-up wire-up reads it.
+
+TownspersonMob:
+- `professionStartedTick` field — reset to current tick on
+  every profession change in setProfession; persisted via
+  NBT key "professionStartedTick"; getter
+  `getProfessionStartedTick()`. Backed off to 0 on legacy
+  saves.
+
+Debug:
+- `/company list-npc <village>` — all NPC-owned companies
+  in the village with type, state, treasury, worker count.
+- `/company promote <npc>` — force-promote (bypasses
+  eligibility checks).
+- `/company owner <companyId>` — owner type / id / state /
+  heirs / treasury / dissolution clocks.
+- `/company succeed <companyId>` — force succession run.
+- `/company dispatch <companyId>` — trigger the trading-
+  caravan stub.
+
+Spec deviations + deferrals (logged in 26 Revision Notes):
+- Caravan goods selection / actual travel deferred —
+  `dispatchTradingCaravan` is a treasury-deposit stub. Phase
+  5 wire-up reads ResourceCategory surplus / deficit per
+  destination once CaravanSavedData exposes a dispatch API.
+- Bankruptcy floor set at 50 br + 14-day warning + 30-day
+  grace per spec "Open decisions"; tunable.
+- Will-overridable heir designation deferred — succession
+  defaults to the static heir list (initialised empty;
+  caller adds via addHeir / setHeirs). Spec line 134 calls
+  for a scribe-produced will via the letter / contract path,
+  which doesn't ship until Phase 4 doc 28+ wires the
+  contract surface.
+- CARAVAN_ATTENDANT role enum added but the existing
+  caravan crew assignment (CaravanGuardGoal etc.) doesn't
+  yet read it — wires when the caravan dispatch lands.
+- company_foreman / company_bookkeeper office population
+  deferred — owner-appointed offices belong on the office
+  selection extension that Phase 5 ships.
+- Player-NPC competition pricing pressure deferred — both
+  flavours of company coexist via DirectBusinessChannel
+  reading multiple producers, but the AI manager doesn't
+  yet adjust prices in response to player presence.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).
