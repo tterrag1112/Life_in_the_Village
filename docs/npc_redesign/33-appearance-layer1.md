@@ -326,3 +326,108 @@ Phase 5 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 5 implementation (2026-04-27, branch `claude/npc-office-framework-behavior-qBdJn`)
+
+#### Scope decision — infrastructure only
+
+The user explicitly chose "option (b)" at session start: ship the
+full Java infrastructure layer in this session, defer all texture /
+model assets and the renderer integration to a future art pass. The
+Layer-1 spec is therefore implemented as **data + wiring + debug
+surface**. Visual differentiation is not yet visible in-world.
+
+#### Things to flag
+
+- **`AppearanceComponent` uses NBT, not Codec.** The spec sketch
+  declares `public static final Codec<AppearanceComponent> CODEC`,
+  but the existing `AppearanceComponent` already persists via a
+  `CompoundTag`-based `save(tag)` / `load(tag)` pair (matching the
+  rest of the entity). Phase 5 adds the new fields to the existing
+  NBT pattern — every new key is optional on load so pre-Phase-5
+  saves still work. A Codec migration would be a separate
+  refactor.
+- **No `OfficeId` enum.** Spec data model uses `OfficeId` as a
+  parameter type. The existing codebase uses `String` constants on
+  `OfficeRegistry` (`VILLAGE_LEADER = "village_leader"` etc.) and
+  every consumer reads office ids as strings. Phase 5 follows the
+  established convention: `OfficeMark.officeId()` is `String`.
+- **`AccessorySlot` is informational at v1.** The slot drives the
+  `describeAppearance` output and the gift-circlet vs
+  culture-shoulder conflict rule in `rebuild`, but it has no
+  render-time effect (no renderer integration in this session).
+- **Office mark priorities are seeded by hand.** The spec doesn't
+  provide a priority table; v1 weights kingdom marks (KING / chain
+  ≥ 150) above village leader (100) above lesser offices (50-90).
+  Spec edge case "5 offices simultaneously" → top 3 visible is
+  enforced via `AppearanceComponent.visibleOfficeMarks()`.
+
+#### Spec deviations
+
+- **No client-server sync packet.** Spec § Client-server sync calls
+  for entity-data-serializer or custom-packet sync on rebuild.
+  Fields persist server-side and the rebuilder runs on the server
+  tick; the client-side visual layer is a future-art-pass concern.
+- **No `NpcProfileSnapshot.appearance` field.** Spec § 253 calls for
+  a "Wearing: ..." line on the profile screen. Adding a field to
+  the snapshot record is invasive (record + StreamCodec encoder +
+  decoder + builder + screen). `AppearanceComponent
+  .describeAppearance()` produces the summary string; the snapshot
+  wire is a one-line addition once visual differentiation lands.
+- **No render pipeline composite pass.** Spec § Rendering pipeline
+  describes the layer compositing the renderer should perform. The
+  existing `TownspersonRenderer` is unchanged in this session. The
+  registry exposes the read API the renderer will use
+  (`AppearanceLayerRegistry.getCultureBase` / `getOfficeMark` /
+  `getAccessory`).
+- **No texture or model assets.** Per the user's "option (b)"
+  choice, v1 ships **zero PNG textures and zero JSON model
+  attachments**. The registry stores canonical paths; once the art
+  pass lands, dropping files at those paths makes them
+  immediately visible (no further wiring needed).
+- **`OfficeChange` not yet fired.** Phase 5-32 added the life event
+  and Phase 5-33's `AppearanceLifeEventProducer` subscribes for
+  it; the office-election finalisation path doesn't yet emit it.
+  The other rebuild triggers (profession change, life-stage
+  advance, hire/fire/promote/demote) cover the gap.
+- **Culture migration appearance shift speed.** Spec open-decision
+  proposes "slowly" (months). v1 rebuilds instantly when culture
+  changes; staged migration is a Phase 6 culture-drift concern.
+- **Multi-office cap visual.** `visibleOfficeMarks()` enforces the
+  spec's top-3 cap by registered priority. The cap matters only at
+  render time, which is deferred.
+- **5% rare-accessory roll uses the same culture pool.** Spec says
+  "minor variants" generated at spawn. v1 picks a second entry
+  from the per-culture accessory pool (entries 1+ are the
+  variants). Cross-culture rare accessories aren't supported.
+
+#### Future-phase deferrals (per spec)
+
+- Layer 2: hairstyle variation, beard / face variation, body shape
+  (Phase 6).
+- Layer 3: damage / wear (armor chips, apron stains), seasonal
+  clothing (Phase 6).
+- Procedural detailed garment variants (Phase 6).
+- JSON-driven custom culture aesthetics (Phase 6).
+- Player-model appearance changes (out of scope).
+
+#### Asset gap (the actionable list for the future art pass)
+
+The renderer will read from these registry paths once art lands:
+
+- `lifeinthevillage:textures/entity/townsperson/culture/{culture}/base.png`
+- `lifeinthevillage:textures/entity/townsperson/culture/{culture}/skin_{0..N}.png`
+  (4 cultures + `default`, 3-4 variants each ≈ 16-20 files)
+- `lifeinthevillage:textures/entity/townsperson/office/{officeId}_{role-suffix}.png`
+  (~17 overlay files, one per registered `OfficeMark`)
+- `lifeinthevillage:textures/entity/townsperson/accessory/{accessoryId}.png`
+  (~10 files, one per registered `AccessoryDefinition`)
+- `lifeinthevillage:models/entity/townsperson/attachment/{name}.json`
+  (~5 files for staff / quill / crown / chain / pouch — the marks
+  registered with `OfficeMark.withAttachment`)
+
+The `AppearanceLayerRegistry` ships with the canonical resource
+paths already pointing at these locations. The rendering hookup
+itself is a separate task: the existing `TownspersonRenderer`
+needs a layer pass that reads `npc.getAppearance()` and looks up
+each id through the registry.

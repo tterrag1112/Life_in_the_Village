@@ -71,6 +71,12 @@ public final class NpcLifeEventBus {
         // Phase 5 task 32: schedule WEDDING / FUNERAL / NAMING_CEREMONY /
         // COMING_OF_AGE / OFFICE_INAUGURATION events off life-event triggers.
         register(new tterrag1112.life_in_the_village.Village.Event.EventLifeEventProducer());
+        // Phase 5 task 33: rebuild Layer-1 appearance on life-stage /
+        // office / hire / fire / promotion events.
+        register(new tterrag1112.life_in_the_village.Entities.custom.Appearance.AppearanceLifeEventProducer());
+        // Lazy-load the appearance registry as a side-effect — keeps the
+        // /appearance debug command and rebuilder cheap on first use.
+        tterrag1112.life_in_the_village.Entities.custom.Appearance.AppearanceLayerRegistry.ensureInit();
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }

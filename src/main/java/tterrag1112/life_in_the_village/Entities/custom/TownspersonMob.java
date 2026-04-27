@@ -336,6 +336,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             tterrag1112.life_in_the_village.Guilds.Common.GuildBootstrap
                     .onProfessionChanged(sl, this, previous, profession, sl.getGameTime());
         }
+        // Phase 5 doc 33: profession changes can affect the visible
+        // accessory set (e.g. scribe's quill comes via the office mark
+        // path, but the rebuild is cheap and the AppearanceComponent
+        // takes care of the diff).
+        if (level() instanceof net.minecraft.server.level.ServerLevel
+                && previous != profession) {
+            try {
+                tterrag1112.life_in_the_village.Entities.custom.Appearance
+                        .AppearanceRebuilder.rebuild(this);
+            } catch (RuntimeException ignored) {}
+        }
     }
 
     /** Pays bronze via {@link tterrag1112.life_in_the_village.Village.Economy.Currency.NpcStartingWealth}
@@ -510,6 +521,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     // =========================================================================
     // APPEARANCE — delegated to AppearanceComponent
     // =========================================================================
+
+    /** Direct access to the appearance component for Phase 5 doc 33 layer
+     *  callers (rebuilder, debug commands). Most callers should use the
+     *  delegated accessors below. */
+    public AppearanceComponent getAppearance() { return appearance; }
 
     public int getSkinTone()  { return entityData.get(SKIN_TONE); }
     public int getHairStyle() { return entityData.get(HAIR_STYLE); }
@@ -840,6 +856,18 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             piety.setBelief(defaultReligion, 0f);
         }
         piety.setBelief(cultureReligion, 0.3f);
+        // Phase 5 doc 33: seed Layer-1 appearance now that culture is
+        // resolved. Skin tone variant uses a stable seed derived from
+        // the entity UUID so the value persists across reloads.
+        try {
+            String stage = getLifeStage() == null ? "" : getLifeStage().name();
+            long seed = getUUID().getMostSignificantBits()
+                    ^ getUUID().getLeastSignificantBits();
+            appearance.generateLayer1(culture.id(), stage, seed, level.getRandom());
+        } catch (RuntimeException ex) {
+            // Layer-1 seeding is best-effort; a missing texture / culture
+            // still leaves the NPC functional with the default base.
+        }
         cultureApplied = true;
     }
 
