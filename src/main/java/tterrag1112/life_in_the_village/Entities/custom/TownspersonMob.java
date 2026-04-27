@@ -128,6 +128,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      *  bundle. Persisted; flipped by {@link #setProfession} on the
      *  first non-NONE assignment so re-assignment doesn't re-pay. */
     private boolean professionStarterPaid;
+    /** Game tick at which the NPC's CURRENT profession was assigned.
+     *  Reset on every profession change; used by Phase 4 doc 26 to
+     *  gate the merchant → trading-company promotion (365 days
+     *  continuously merchant). 0 means never assigned a real
+     *  profession. */
+    private long professionStartedTick;
     private final AppearanceComponent appearance = new AppearanceComponent();
     private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
     private final TraitVector traits = new TraitVector();
@@ -278,11 +284,25 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         }
     }
 
+    /** Game tick when the NPC's current profession was assigned.
+     *  Resets on every {@link #setProfession} change. Returns 0 if
+     *  the NPC has never been assigned a real profession. Phase 4
+     *  doc 26 reads this for the merchant tenure check. */
+    public long getProfessionStartedTick() { return professionStartedTick; }
+
     public void setProfession(Profession profession) {
+        Profession previous = getProfession();
         entityData.set(PROFESSION, profession.name());
         ProfessionGoalFactory.register(this);
         if (appearance.getName() != null && !appearance.getName().isEmpty()) {
             updateDisplayName();
+        }
+        // Reset the profession tenure clock on every change so
+        // promotions like merchant → trading company that gate on
+        // continuous-employment days can read a clean baseline.
+        if (previous != profession
+                && level() instanceof net.minecraft.server.level.ServerLevel sl) {
+            this.professionStartedTick = sl.getGameTime();
         }
         // First-ever real-profession assignment pays the starter pouch
         // (bronze via NpcStartingWealth + items via ProfessionStarterTable).
@@ -292,6 +312,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         if (!professionStarterPaid && profession != Profession.NONE) {
             applyStarterFor(profession);
             professionStarterPaid = true;
+        }
+        // Phase 4 doc 27: route the change through the implicit-guild
+        // bootstrap so the NPC auto-(un)joins matching guild clusters.
+        if (level() instanceof net.minecraft.server.level.ServerLevel sl
+                && previous != profession) {
+            tterrag1112.life_in_the_village.Guilds.Common.GuildBootstrap
+                    .onProfessionChanged(sl, this, previous, profession, sl.getGameTime());
         }
     }
 
@@ -1298,6 +1325,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // pre-fix saves come back as empty wallets (no migration risk).
         output.putLong("walletBronze", economy.getWallet().toBronze());
         output.putBoolean("professionStarterPaid", professionStarterPaid);
+        output.putLong("professionStartedTick", professionStartedTick);
 
         // ── Relationships ────────────────────────────────────────────────────
         String rel = relationships.encode();
@@ -1455,6 +1483,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         long bronze = input.read("walletBronze", Codec.LONG).orElse(0L);
         if (bronze > 0L) economy.getWallet().receive(bronze);
         professionStarterPaid = input.read("professionStarterPaid", Codec.BOOL).orElse(false);
+        professionStartedTick = input.read("professionStartedTick", Codec.LONG).orElse(0L);
 
         // ── Relationships ────────────────────────────────────────────────────
         input.read("npcRelationships", Codec.STRING).ifPresent(relationships::decode);

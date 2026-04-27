@@ -14,12 +14,55 @@ public class Company {
     // -------------------------------------------------------------------------
 
     public enum WorkerRole {
-        PRODUCER,    // crafts or grows items
-        SELLER,      // mans a market stall, sells goods
-        COURIER;     // moves items between company buildings
+        PRODUCER,           // crafts or grows items
+        SELLER,             // mans a market stall, sells goods
+        COURIER,            // moves items between company buildings
+        CARAVAN_ATTENDANT;  // travels with trading-company caravans (Phase 4 doc 26)
 
         public static final Codec<WorkerRole> CODEC =
                 Codec.STRING.xmap(WorkerRole::valueOf, WorkerRole::name);
+    }
+
+    /**
+     * Phase 4 doc 26 — distinguishes a player-owned company from an
+     * NPC-owned one. Existing player-only saves migrate to PLAYER at
+     * load time via the codec's optionalFieldOf default.
+     */
+    public enum OwnerType {
+        PLAYER,
+        NPC;
+
+        public static final Codec<OwnerType> CODEC =
+                Codec.STRING.xmap(OwnerType::valueOf, OwnerType::name);
+    }
+
+    /**
+     * Phase 4 doc 26 — trading companies unlock long-haul caravans
+     * (3x village-merchant range), CARAVAN_ATTENDANT hires, and
+     * inter-village request-board posts.
+     */
+    public enum CompanyType {
+        STANDARD,
+        TRADING_COMPANY;
+
+        public static final Codec<CompanyType> CODEC =
+                Codec.STRING.xmap(CompanyType::valueOf, CompanyType::name);
+    }
+
+    /**
+     * Phase 4 doc 26 — owner-succession state machine. Most companies
+     * sit in {@link #ACTIVE}; on owner death without an heir or with
+     * a profession-loss demotion, they transition to {@link #UNDECIDED}
+     * for 30 days while family members can claim. Failure to resolve
+     * dissolves the company.
+     */
+    public enum SuccessionState {
+        ACTIVE,
+        UNDECIDED,
+        DISSOLVED;
+
+        public static final Codec<SuccessionState> CODEC =
+                Codec.STRING.xmap(SuccessionState::valueOf, SuccessionState::name);
     }
 
     public enum ProducerType {
@@ -154,7 +197,6 @@ public class Company {
                             .forGetter(Company::getOwnerPlayerId),
                     UUIDUtil.CODEC.fieldOf("homeVillageId")
                             .forGetter(Company::getHomeVillageId),
-                    // Buildings this company operates in (may span villages)
                     UUIDUtil.CODEC.listOf()
                             .optionalFieldOf("buildingIds", new ArrayList<>())
                             .forGetter(c -> new ArrayList<>(c.buildingIds)),
@@ -172,7 +214,27 @@ public class Company {
                             .forGetter(Company::isActive),
                     tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                             .optionalFieldOf("offices")
-                            .forGetter(c -> java.util.Optional.ofNullable(c.offices))
+                            .forGetter(c -> java.util.Optional.ofNullable(c.offices)),
+                    // ── Phase 4 doc 26 additions ─────────────────────────
+                    // All optional with defaults so v1 saves migrate
+                    // cleanly: ownerType=PLAYER, ownerId=ownerPlayerId,
+                    // empty heirs, type=STANDARD, succession=ACTIVE.
+                    OwnerType.CODEC.optionalFieldOf("ownerType", OwnerType.PLAYER)
+                            .forGetter(c -> c.ownerType),
+                    UUIDUtil.CODEC.optionalFieldOf("ownerId")
+                            .forGetter(c -> java.util.Optional.ofNullable(c.ownerId)),
+                    UUIDUtil.CODEC.listOf().optionalFieldOf("heirs", new ArrayList<>())
+                            .forGetter(c -> new ArrayList<>(c.heirs)),
+                    CompanyType.CODEC.optionalFieldOf("companyType", CompanyType.STANDARD)
+                            .forGetter(c -> c.companyType),
+                    SuccessionState.CODEC.optionalFieldOf("successionState", SuccessionState.ACTIVE)
+                            .forGetter(c -> c.successionState),
+                    Codec.LONG.optionalFieldOf("foundedTick", 0L)
+                            .forGetter(c -> c.foundedTick),
+                    Codec.LONG.optionalFieldOf("dissolutionWarningTick", 0L)
+                            .forGetter(c -> c.dissolutionWarningTick),
+                    Codec.LONG.optionalFieldOf("undecidedSinceTick", 0L)
+                            .forGetter(c -> c.undecidedSinceTick)
             ).apply(i, Company::fromCodec));
 
     private static Company fromCodec(UUID companyId, String name,
@@ -180,7 +242,15 @@ public class Company {
                                      List<UUID> buildingIds, List<CompanyWorker> workers,
                                      WorkSchedule schedule, List<PriceOverride> prices,
                                      long treasury, boolean active,
-                                     java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices) {
+                                     java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
+                                     OwnerType ownerType,
+                                     java.util.Optional<UUID> ownerId,
+                                     List<UUID> heirs,
+                                     CompanyType companyType,
+                                     SuccessionState successionState,
+                                     long foundedTick,
+                                     long dissolutionWarningTick,
+                                     long undecidedSinceTick) {
         Company c = new Company(companyId, name, ownerPlayerId,
                 homeVillageId, schedule);
         c.buildingIds.addAll(buildingIds);
@@ -188,8 +258,17 @@ public class Company {
         prices.forEach(p -> c.priceOverrides.put(p.itemId(), p));
         c.treasuryBronze = treasury;
         c.isActive = active;
-        // Stored offices win over the constructor-seeded migration state.
         offices.ifPresent(s -> c.offices = s);
+        // Phase 4 doc 26 fields. ownerId migrates to ownerPlayerId
+        // when absent so v1 saves keep their owner identity.
+        c.ownerType       = ownerType != null ? ownerType : OwnerType.PLAYER;
+        c.ownerId         = ownerId.orElse(ownerPlayerId);
+        c.heirs.addAll(heirs);
+        c.companyType     = companyType != null ? companyType : CompanyType.STANDARD;
+        c.successionState = successionState != null ? successionState : SuccessionState.ACTIVE;
+        c.foundedTick            = foundedTick;
+        c.dissolutionWarningTick = dissolutionWarningTick;
+        c.undecidedSinceTick     = undecidedSinceTick;
         return c;
     }
 
@@ -207,6 +286,34 @@ public class Company {
     private final Map<String, PriceOverride> priceOverrides = new LinkedHashMap<>();
     private long treasuryBronze = 0L;
     private boolean isActive = true;
+
+    // ── Phase 4 doc 26 — ownership extension ─────────────────────────────
+    /**
+     * Whether the {@link #ownerId} field refers to a player or an NPC.
+     * Existing saves migrate to PLAYER on load (codec default).
+     */
+    private OwnerType ownerType = OwnerType.PLAYER;
+    /**
+     * UUID of the actual owner — player or NPC. Decoupled from
+     * {@link #ownerPlayerId} so NPC-owned companies can flag
+     * the player getter as the sentinel zero-UUID without
+     * dropping the legacy save key.
+     */
+    private UUID ownerId;
+    /** Ordered succession chain. Defaults to oldest-adult-child of the
+     *  owner; spec line 132. Empty for player-owned companies. */
+    private final List<UUID> heirs = new ArrayList<>();
+    private CompanyType companyType = CompanyType.STANDARD;
+    private SuccessionState successionState = SuccessionState.ACTIVE;
+    /** When the company was founded — used for "founder of X" history
+     *  lines and to gate certain spec-line-256 edge cases. */
+    private long foundedTick = 0L;
+    /** Tick at which the bankruptcy warning first fired. 0 means no
+     *  warning active. Spec "Open decisions" — 14 days below 50 br
+     *  warns; 30 more days dissolves. */
+    private long dissolutionWarningTick = 0L;
+    /** Tick at which the company entered UNDECIDED. 0 when ACTIVE. */
+    private long undecidedSinceTick = 0L;
     /**
      * Office state for this company. Phase 0 storage only — see
      * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
@@ -225,6 +332,9 @@ public class Company {
         this.companyId     = companyId;
         this.name          = name;
         this.ownerPlayerId = ownerPlayerId;
+        // Default ownership is PLAYER with ownerId = ownerPlayerId.
+        // The NPC promotion path overwrites both via setNpcOwner().
+        this.ownerId       = ownerPlayerId;
         this.homeVillageId = homeVillageId;
         this.workSchedule  = schedule;
         this.offices       = tterrag1112.life_in_the_village.Npc.Office.OfficeState
@@ -388,5 +498,62 @@ public class Company {
         priceOverrides.remove(itemId);
     }
 
+    // -------------------------------------------------------------------------
+    // Phase 4 doc 26 — NPC ownership / company type / succession
+    // -------------------------------------------------------------------------
 
+    public OwnerType getOwnerType()              { return ownerType; }
+    public UUID      getOwnerId()                { return ownerId; }
+    public CompanyType getCompanyType()          { return companyType; }
+    public SuccessionState getSuccessionState()  { return successionState; }
+    public long getFoundedTick()                 { return foundedTick; }
+    public long getDissolutionWarningTick()      { return dissolutionWarningTick; }
+    public long getUndecidedSinceTick()          { return undecidedSinceTick; }
+    public List<UUID> getHeirs() { return Collections.unmodifiableList(heirs); }
+
+    public boolean isNpcOwned()    { return ownerType == OwnerType.NPC; }
+    public boolean isPlayerOwned() { return ownerType == OwnerType.PLAYER; }
+    public boolean isTradingCompany() { return companyType == CompanyType.TRADING_COMPANY; }
+
+    public void setCompanyType(CompanyType type) { if (type != null) this.companyType = type; }
+    public void setSuccessionState(SuccessionState state) {
+        if (state != null) this.successionState = state;
+    }
+    public void setDissolutionWarningTick(long tick) { this.dissolutionWarningTick = tick; }
+    public void setUndecidedSinceTick(long tick)     { this.undecidedSinceTick = tick; }
+    public void setFoundedTick(long tick)            { this.foundedTick = tick; }
+
+    /**
+     * Promotes the company to NPC ownership. Called by the
+     * merchant-promotion path; overwrites {@link #ownerId} with the
+     * NPC UUID and replaces the company_owner office entry. The
+     * {@link #ownerPlayerId} legacy field stays at its prior value
+     * (typically the zero-UUID) so existing player-only consumers
+     * read it as "no player owner".
+     */
+    public void setNpcOwner(UUID npcId) {
+        if (npcId == null) return;
+        this.ownerType = OwnerType.NPC;
+        this.ownerId   = npcId;
+        // Replace the company_owner office holding (legacy seed put a
+        // player-held entry; npc-held wins).
+        this.offices.set(
+                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
+                tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByNpc(
+                        tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
+                        this.companyId, npcId, 0L, 0L,
+                        tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
+    }
+
+    public void addHeir(UUID heirId) {
+        if (heirId == null || heirs.contains(heirId)) return;
+        heirs.add(heirId);
+    }
+
+    public void removeHeir(UUID heirId) { heirs.remove(heirId); }
+
+    public void setHeirs(List<UUID> newHeirs) {
+        heirs.clear();
+        if (newHeirs != null) heirs.addAll(newHeirs);
+    }
 }

@@ -368,4 +368,84 @@ Phase 4 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### Phase 4 task 27 implementation pass
+
+Things-to-flag responses:
+
+1. **AdventurerGuild migration deferred** — the user's most-flagged
+   risk. The existing `GuildData` record has 25+ consumer files
+   plus a separate {@code GuildRank} enum (BRONZE..DIAMOND, XP-
+   driven). A big-bang rename + rank-enum substitution within one
+   session would risk silent data loss across multiple save flows
+   and break the legacy adventurer-specific surfaces (quest
+   tracking, party state, reputation tiers). Per spec "Open
+   decisions" #1, v1 ships the abstract layer **additively**.
+   Existing {@code GuildData} stays intact; the new
+   {@link AbstractGuild} hierarchy lives in
+   {@code Guilds.Common} alongside. Adventurer guilds are
+   intentionally skipped by {@code GuildBootstrap.scanAndCreateImplicit}
+   so the legacy path remains the source of truth for them. An
+   adapter that exposes a {@code GuildData} as an
+   {@link AbstractGuild} is the next step — it can land
+   incrementally, file by file, without a single migration day.
+2. **L1 treasury starting balance** = 200 bronze (constant
+   {@link GuildTreasury#L1_STARTING_BALANCE}). Spec didn't pin a
+   number; chosen so a small guild can fund a request bounty in
+   its first week. Phase 5 tuning candidate.
+3. **Member skill minimums** not enforced. {@code addMember}
+   accepts any UUID; the spec's "craftsmen primary skill ≥ 20"
+   gate belongs on a future explicit-join verb (apply to guild),
+   not on the underlying data model. Phase 5 polish.
+4. **Multiple sequential hall builds** — confirmed independent.
+   {@link GuildBootstrap#onHallConstructed} keys on
+   {@code (villageId, GuildType)}, so building a craftsmen hall
+   then a merchants hall years later upgrades each guild
+   independently. The hook is idempotent — repeated calls with
+   the same hall id are no-ops via
+   {@link AbstractGuild#promoteToEstablished} returning false
+   when {@code guildHallBuildingId} is already set.
+
+Spec deviations:
+- **Single concrete `AbstractGuild` class** instead of six thin
+  subclasses (Adventurer / Craftsmen / Merchants / Agricultural /
+  Religious / Scholarly). Spec line 63 already says "thin
+  extensions" and the v1 type-specific behaviour is empty — every
+  subclass would just override {@code type()}. The polymorphic
+  codec the spec calls for at line 46 ships as a tagged record
+  codec keyed off {@code GuildType}. Phase 5 can split into a
+  sealed hierarchy when behaviour genuinely diverges.
+- **`/guilds` plural literal** instead of extending the existing
+  `/guild` dispatcher tree. The legacy `GuildCommands.onRegisterCommands`
+  registers `/guild` with adventurer-specific subcommands
+  (spawncaravan, setrank, setrep, status, accept, complete,
+  quests, find, clear). Adding to that tree from outside risks
+  Brigadier registration replacement; v1 keeps both literals.
+- **`SCHOLAR` is exclusive to `SCHOLARLY`** in the membership
+  table, not in `RELIGIOUS` as the spec line 55 mentions in
+  passing. Spec "Open decisions" #3 says "primary profession
+  decides" and `primaryFor` returns the first match in
+  declaration order — SCHOLARLY before RELIGIOUS — so a
+  scholar lands in scholarly. The "overlap" language in line 55
+  is informational rather than mechanical.
+- **`master_of_apprentices` office wiring** deferred —
+  apprenticeship (Phase 2 task 16) hasn't shipped. The office
+  framework already has the constant; only the L1-upgrade
+  population path needs the extra wire. Lands when the consumer
+  arrives.
+
+Deferrals:
+- Auto-spawn recipe in `BuildingRegistry` for the 5 new halls.
+  Registering them now forces every new village to ship one of
+  each. Phase 5 worldgen tuning will add selective rules.
+- Type-specific subclass behaviour (CRAFTSMEN masterpiece
+  certification, MERCHANTS trade-volume tracker, AGRICULTURAL
+  harvest-share, RELIGIOUS pilgrim hosting, SCHOLARLY library
+  curation). The hooks belong on the eventual sealed-hierarchy
+  split.
+- L2 / L3 promotions. The {@link GuildLevel} enum + capability
+  gates ship; the actual promotion criteria (multi-village
+  membership, kingdom-influencing reputation thresholds) land
+  with the request board (doc 28) and Phase 5 politics.
+- Expulsion criteria. {@link AbstractGuild#removeMember} works;
+  the rule layer (no-show on requests, severe crime conviction,
+  rule violation) is Phase 5.

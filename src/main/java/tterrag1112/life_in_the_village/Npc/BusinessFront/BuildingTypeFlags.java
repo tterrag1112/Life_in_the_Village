@@ -61,7 +61,12 @@ public final class BuildingTypeFlags {
         m.put(BuildingType.SHRINE,           EnumSet.of(Flag.SERVICE_FRONT));
         m.put(BuildingType.TOWN_HALL,        EnumSet.of(Flag.SERVICE_FRONT));
         m.put(BuildingType.CHANCELLERY,      EnumSet.of(Flag.SERVICE_FRONT));
-        m.put(BuildingType.GUILD_HALL,       EnumSet.of(Flag.SERVICE_FRONT));
+        m.put(BuildingType.GUILD_HALL,                EnumSet.of(Flag.SERVICE_FRONT));
+        m.put(BuildingType.GUILD_HALL_CRAFTSMEN,      EnumSet.of(Flag.SERVICE_FRONT));
+        m.put(BuildingType.GUILD_HALL_MERCHANTS,      EnumSet.of(Flag.SERVICE_FRONT));
+        m.put(BuildingType.GUILD_HALL_AGRICULTURAL,   EnumSet.of(Flag.SERVICE_FRONT));
+        m.put(BuildingType.GUILD_HALL_RELIGIOUS,      EnumSet.of(Flag.SERVICE_FRONT));
+        m.put(BuildingType.GUILD_HALL_SCHOLARLY,      EnumSet.of(Flag.SERVICE_FRONT));
 
         // ── BUSINESS_FRONT + RESIDENCE (live-where-you-work) ──────────────
         m.put(BuildingType.FARMHOUSE,        EnumSet.of(Flag.BUSINESS_FRONT, Flag.RESIDENCE));

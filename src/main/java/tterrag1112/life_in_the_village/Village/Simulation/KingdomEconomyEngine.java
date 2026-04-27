@@ -1,83 +1,66 @@
-// src/main/java/tterrag1112/life_in_the_village/Kingdom/KingdomEconomyEngine.java
 package tterrag1112.life_in_the_village.Village.Simulation;
 
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
-import tterrag1112.life_in_the_village.Village.Simulation.VillageSimData;
-import tterrag1112.life_in_the_village.Village.Simulation.VillageSimEngine;
 import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.*;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * Evaluates the economic health of a kingdom by aggregating
- * {@link VillageSimData} snapshots, then takes corrective action when needs
- * are not met.
+ * Evaluates kingdom-level economic health by aggregating
+ * {@link VillageSimData} snapshots, then takes corrective action when
+ * needs are unmet.
  *
- * <h3>What it does</h3>
- * <ol>
- *   <li>Aggregates food and material net rates across all villages.</li>
- *   <li>If the kingdom has a food deficit, requests inter-kingdom trade with
- *       the nearest kingdom that has a surplus (via {@link TradeRouteManager}).</li>
- *   <li>If the kingdom has a material deficit, attempts the same for
- *       materials.</li>
- *   <li>Logs a summary once per in-game day so operators can see the economy
- *       without needing in-game UI.</li>
- * </ol>
+ * <h3>Phase 4 doc 25 refactor</h3>
+ * Generalised from food / material to an arbitrary
+ * {@link ResourceCategory}. {@link #findExportPartner} now takes a
+ * category parameter; {@link #evaluate} loops the categories the
+ * spec calls out (FOOD, BUILDING_MATERIALS, plus any future expansion
+ * with a positive {@link #defaultExportThreshold}).
  *
  * <h3>Performance contract</h3>
- * This engine is called once per in-game day from {@code ServerTickDispatcher}.
- * It reads only from {@code VillageSavedData} (no chunk queries) and makes at
- * most two {@link TradeRouteManager} calls per kingdom per day. It is O(V) in
- * the number of villages and O(K) in the number of kingdoms.
+ * O(V) per call; runs once per in-game day from the dispatcher.
  */
 public final class KingdomEconomyEngine {
 
-    /** Minimum food surplus (nutrition/day) before a kingdom offers food export. */
-    private static final float EXPORT_THRESHOLD_FOOD  = 200f;
-    /** Minimum material surplus before a kingdom offers material export. */
-    private static final float EXPORT_THRESHOLD_MATS  = 32f;
+    /** Per-category surplus thresholds that gate export-partner search.
+     *  Values below these are treated as "not enough surplus to spare." */
+    private static final Map<ResourceCategory, Float> EXPORT_THRESHOLDS = buildThresholds();
     /** Max distance to search for a trade partner (blocks). */
-    private static final double MAX_PARTNER_DISTANCE  = 6000.0;
+    private static final double MAX_PARTNER_DISTANCE = 6000.0;
 
     private KingdomEconomyEngine() {}
 
-    // =========================================================================
-    // Entry point
-    // =========================================================================
-
-    /**
-     * Evaluates and acts on the kingdom's economic state.
-     * Call once per in-game day from {@code ServerTickDispatcher}.
-     */
     public static void evaluate(ServerLevel level,
                                 Kingdom kingdom,
                                 VillageSavedData data) {
-        List<VillageSimData> simSnapshots = collectSimData(kingdom, data);
-        if (simSnapshots.isEmpty()) return;
+        List<VillageSimData> sims = collectSimData(kingdom, data);
+        if (sims.isEmpty()) return;
 
-        float totalFoodNet  = (float) simSnapshots.stream()
-                .mapToDouble(VillageSimData::foodNetPerDay).sum();
-        float totalMatNet   = (float) simSnapshots.stream()
-                .mapToDouble(VillageSimData::materialNetPerDay).sum();
-        int   totalPop      = simSnapshots.stream()
-                .mapToInt(VillageSimData::getSimulatedPopulation).sum();
+        int totalPop = sims.stream().mapToInt(VillageSimData::getSimulatedPopulation).sum();
 
-        System.out.printf("[KingdomEconomy] %s — pop=%d, foodNet=%.0f/day, matNet=%.0f/day%n",
-                kingdom.getName(), totalPop, totalFoodNet, totalMatNet);
+        StringBuilder log = new StringBuilder();
+        log.append("[KingdomEconomy] ").append(kingdom.getName())
+                .append(" — pop=").append(totalPop);
 
-        // ── Food deficit — seek import trade ─────────────────────────────────
-        if (totalFoodNet < 0) {
-            handleDeficit(level, kingdom, data, simSnapshots, true);
+        for (Map.Entry<ResourceCategory, Float> e : EXPORT_THRESHOLDS.entrySet()) {
+            ResourceCategory cat = e.getKey();
+            float totalNet = (float) sims.stream()
+                    .mapToDouble(s -> s.net(cat)).sum();
+            log.append(", ").append(cat.name().toLowerCase())
+                    .append("Net=").append(String.format("%.0f", totalNet));
+            if (totalNet < 0f) {
+                handleDeficit(level, kingdom, data, cat);
+            }
         }
-
-        // ── Material deficit — seek import trade ──────────────────────────────
-        if (totalMatNet < 0) {
-            handleDeficit(level, kingdom, data, simSnapshots, false);
-        }
+        System.out.println(log);
     }
 
     // =========================================================================
@@ -87,28 +70,20 @@ public final class KingdomEconomyEngine {
     private static void handleDeficit(ServerLevel level,
                                       Kingdom kingdom,
                                       VillageSavedData data,
-                                      List<VillageSimData> ownSims,
-                                      boolean isFood) {
-        // Find the kingdom's most central village to use as the trade hub
+                                      ResourceCategory category) {
         Village hub = findBestTradeHub(kingdom, data);
         if (hub == null) return;
-
-        // Find another kingdom or standalone village with a surplus
-        Village exportVillage = findExportPartner(
-                level, kingdom, hub, data, isFood);
-
+        Village exportVillage = findExportPartner(kingdom, hub, data, category).orElse(null);
         if (exportVillage == null) {
             System.out.println("[KingdomEconomy] " + kingdom.getName()
-                    + (isFood ? " food" : " material")
-                    + " deficit — no export partner found within range");
+                    + " " + category.name().toLowerCase()
+                    + " deficit — no export partner within range");
             return;
         }
-
-        // Establish a trade route if one doesn't exist yet
         if (data.getRouteBetween(hub.getId(), exportVillage.getId()).isEmpty()) {
             System.out.println("[KingdomEconomy] " + kingdom.getName()
                     + " requesting trade route to " + exportVillage.getName()
-                    + " for " + (isFood ? "food" : "materials"));
+                    + " for " + category.name().toLowerCase());
             TradeRouteManager.establishRoutes(level, hub, data);
         }
     }
@@ -117,45 +92,56 @@ public final class KingdomEconomyEngine {
     // Partner search
     // =========================================================================
 
-    private static Village findExportPartner(ServerLevel level,
-                                             Kingdom seekingKingdom,
-                                             Village hub,
-                                             VillageSavedData data,
-                                             boolean isFood) {
-        // Candidate: any village NOT in this kingdom with a surplus
+    /**
+     * Finds the closest non-kingdom village whose net per-day for
+     * {@code category} exceeds the export threshold for that category.
+     * Returns empty if no village qualifies within
+     * {@link #MAX_PARTNER_DISTANCE}.
+     */
+    public static Optional<Village> findExportPartner(Kingdom seekingKingdom,
+                                                      Village importer,
+                                                      VillageSavedData data,
+                                                      ResourceCategory category) {
+        float threshold = EXPORT_THRESHOLDS.getOrDefault(category, defaultExportThreshold(category));
         return data.getAllVillages().stream()
                 .filter(v -> !seekingKingdom.containsVillage(v.getId()))
                 .filter(v -> {
                     Optional<VillageSimData> sim = data.getSimData(v.getId());
                     if (sim.isEmpty()) return false;
-                    return isFood
-                            ? sim.get().foodNetPerDay()     > EXPORT_THRESHOLD_FOOD
-                            : sim.get().materialNetPerDay() > EXPORT_THRESHOLD_MATS;
+                    return sim.get().net(category) > threshold;
                 })
-                .filter(v -> {
-                    // Distance check using village centres
-                    var hubBounds = hub.getBounds(data);
-                    var vBounds   = v.getBounds(data);
-                    if (hubBounds.isEmpty() || vBounds.isEmpty()) return false;
-                    double dx = hubBounds.get().getCenter().x - vBounds.get().getCenter().x;
-                    double dz = hubBounds.get().getCenter().z - vBounds.get().getCenter().z;
-                    return Math.sqrt(dx*dx + dz*dz) <= MAX_PARTNER_DISTANCE;
-                })
-                // Prefer the closest surplus village
-                .min(Comparator.comparingDouble(v -> {
-                    var hubBounds = hub.getBounds(data);
-                    var vBounds   = v.getBounds(data);
-                    if (hubBounds.isEmpty() || vBounds.isEmpty()) return Double.MAX_VALUE;
-                    double dx = hubBounds.get().getCenter().x - vBounds.get().getCenter().x;
-                    double dz = hubBounds.get().getCenter().z - vBounds.get().getCenter().z;
-                    return dx*dx + dz*dz;
-                }))
-                .orElse(null);
+                .filter(v -> distanceTo(importer, v, data) <= MAX_PARTNER_DISTANCE)
+                .min(Comparator.comparingDouble(v -> distanceTo(importer, v, data)));
     }
 
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    private static Map<ResourceCategory, Float> buildThresholds() {
+        EnumMap<ResourceCategory, Float> m = new EnumMap<>(ResourceCategory.class);
+        m.put(ResourceCategory.FOOD, 200f);
+        m.put(ResourceCategory.BUILDING_MATERIALS, 32f);
+        return Map.copyOf(m);
+    }
+
+    /** Phase 4 doc 26+ may grow this list. For categories the spec
+     *  hasn't gated, use a generic fallback so the partner search is
+     *  always callable. */
+    private static float defaultExportThreshold(ResourceCategory category) {
+        if (category == null) return Float.POSITIVE_INFINITY;
+        if (!category.isPhysical()) return 5f; // COIN_INFLUX
+        return 8f;
+    }
+
+    private static double distanceTo(Village a, Village b, VillageSavedData data) {
+        var aB = a.getBounds(data);
+        var bB = b.getBounds(data);
+        if (aB.isEmpty() || bB.isEmpty()) return Double.MAX_VALUE;
+        double dx = aB.get().getCenter().x - bB.get().getCenter().x;
+        double dz = aB.get().getCenter().z - bB.get().getCenter().z;
+        return Math.sqrt(dx * dx + dz * dz);
+    }
 
     private static List<VillageSimData> collectSimData(Kingdom kingdom,
                                                        VillageSavedData data) {
@@ -166,9 +152,7 @@ public final class KingdomEconomyEngine {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Finds the village most central to the kingdom (closest to mean position).
-     */
+    /** Returns the village most central to the kingdom (closest to mean position). */
     private static Village findBestTradeHub(Kingdom kingdom, VillageSavedData data) {
         List<Village> villages = kingdom.getVillageIds().stream()
                 .map(data::getVillageById)
@@ -177,14 +161,11 @@ public final class KingdomEconomyEngine {
                 .toList();
         if (villages.isEmpty()) return null;
 
-        // Mean position
         double meanX = villages.stream()
-                .mapToDouble(v -> v.getBounds(data)
-                        .map(b -> b.getCenter().x).orElse(0.0))
+                .mapToDouble(v -> v.getBounds(data).map(b -> b.getCenter().x).orElse(0.0))
                 .average().orElse(0);
         double meanZ = villages.stream()
-                .mapToDouble(v -> v.getBounds(data)
-                        .map(b -> b.getCenter().z).orElse(0.0))
+                .mapToDouble(v -> v.getBounds(data).map(b -> b.getCenter().z).orElse(0.0))
                 .average().orElse(0);
 
         return villages.stream()
@@ -193,7 +174,7 @@ public final class KingdomEconomyEngine {
                     if (bounds.isEmpty()) return Double.MAX_VALUE;
                     double dx = bounds.get().getCenter().x - meanX;
                     double dz = bounds.get().getCenter().z - meanZ;
-                    return dx*dx + dz*dz;
+                    return dx * dx + dz * dz;
                 }))
                 .orElse(null);
     }

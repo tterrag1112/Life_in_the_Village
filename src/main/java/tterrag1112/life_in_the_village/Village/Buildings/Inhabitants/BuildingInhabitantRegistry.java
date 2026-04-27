@@ -94,6 +94,22 @@ public final class BuildingInhabitantRegistry {
                 .worker(Profession.GUILDWORKER)
                 .build());
 
+        // Phase 4 doc 27 — guild hall variants share the master+worker
+        // shape; type-specific specialisation (e.g. CRAFTSMEN's master
+        // of apprentices) lands when the corresponding office wires
+        // are populated by the L0→L1 upgrade hook.
+        for (BuildingType hall : new BuildingType[] {
+                BuildingType.GUILD_HALL_CRAFTSMEN,
+                BuildingType.GUILD_HALL_MERCHANTS,
+                BuildingType.GUILD_HALL_AGRICULTURAL,
+                BuildingType.GUILD_HALL_RELIGIOUS,
+                BuildingType.GUILD_HALL_SCHOLARLY }) {
+            register(hall, BuildingInhabitantSpec.builder()
+                    .resident(Profession.GUILDMASTER)
+                    .worker(Profession.GUILDWORKER)
+                    .build());
+        }
+
         register(BuildingType.LIBRARY, BuildingInhabitantSpec.builder()
                 .worker(Profession.SCHOLAR)
                 .build());

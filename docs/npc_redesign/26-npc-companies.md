@@ -292,4 +292,76 @@ Phase 4 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### Phase 4 task 26 implementation pass
+
+Things-to-flag responses:
+
+1. **Trading company caravan range.** Encoded as
+   `AiCompanyManager.TRADING_RANGE_MULTIPLIER = 3.0` on top of
+   `TradeRouteManager.MAX_ROUTE_DISTANCE = 3000.0` blocks → 9000
+   blocks for trading caravans. The actual range gate lands when
+   the dispatch wire-up uses `CaravanSavedData`; v1 ships the
+   multiplier as a constant so Phase 5 reads a single source of
+   truth.
+2. **Eligibility window — does retraining reset?** Yes.
+   `TownspersonMob.setProfession` resets `professionStartedTick`
+   on every change so retraining naturally restarts the 365-day
+   merchant-tenure clock. The reset is unconditional (any
+   previous != current swap), so even a brief NONE pass-through
+   wipes the tenure.
+3. **Will overridability.** Deferred. Spec line 134 calls for a
+   scribe-produced will via the letter/contract surface, which
+   doesn't exist yet. v1 succession reads the static
+   `Company.heirs` list which can be populated programmatically
+   (e.g. from family ties at the moment of promotion) but has no
+   in-game authoring path. Phase 4 doc 28+ wires contracts; the
+   will path can hang off that.
+4. **Bankruptcy threshold.** Implemented per spec "Open
+   decisions": 50 br below daily expenses for 14+ days fires
+   the warning (`AiCompanyManager.WARNING_THRESHOLD_DAYS`); 30
+   more days dissolves (`DISSOLUTION_GRACE_DAYS`). The recovery
+   path resets `dissolutionWarningTick` to 0 on the first day
+   the company is back above the floor.
+
+Spec deviations:
+- **Big-bang Company rename avoided.** The legacy
+  `ownerPlayerId` field stays as a required codec key for
+  back-compat. The new `ownerId` is a separate optional field
+  that defaults to `ownerPlayerId` on first read. NPC-owned
+  companies leave `ownerPlayerId` at the zero-UUID sentinel
+  (already accepted as "no player owner" by every existing
+  caller of `getOwnerPlayerId`). New code reads
+  `getOwnerType()` + `getOwnerId()` instead.
+- **Caravan dispatch stubbed.** Spec line 109 calls for
+  `CaravanSavedData.dispatch(... isTradingCompany = true)`.
+  CaravanSavedData has `addCaravan` but no public `dispatch`
+  method, and a full integration would need the caravan
+  goods-selector to read `ResourceCategory` surplus per
+  destination. v1 ships
+  `AiCompanyManager.dispatchTradingCaravan` as a 50 br
+  treasury-deposit stub so the trading-company branch is
+  verifiable via `/company dispatch`. Phase 5 wire-up replaces
+  with the real travel.
+- **CARAVAN_ATTENDANT** role enum added but the existing crew
+  goals (CaravanGuardGoal, CaravanMerchantGoal) don't yet
+  read it. The role is a placeholder slot; the worker-pick path
+  in the eventual dispatch will route attendants there.
+- **`company_foreman` / `company_bookkeeper`** office
+  population deferred. The office framework already exposes
+  the constants; the owner-appointed selection runs when a
+  Phase 5 polish session adds the appointment verb /
+  command.
+- **Player-NPC company competition pricing pressure** —
+  spec lines 191-198 want price-undercutting + worker-choice
+  by relationship/wage/reputation. v1 lets both flavours of
+  company coexist via the existing DirectBusinessChannel
+  multi-producer logic, but the AI manager doesn't yet
+  read the player company's prices to adjust its own.
+  Phase 5 polish.
+
+Deferrals:
+- Multi-village outposts.
+- Hostile takeovers / mergers.
+- Heir disputes resolved by family vote (single child auto;
+  multiple children resolved manually via /company commands
+  for v1).

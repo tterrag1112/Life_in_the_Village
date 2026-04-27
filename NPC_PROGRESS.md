@@ -413,29 +413,31 @@ Goal: specialized villages exist and trade with each other;
 companies and guilds have structure; visitors bring coin.
 
 - [ ] Read Phase 4 specs (25–30) end-to-end
-- [ ] **25** Resource categories
-    - [ ] Expanded `ResourceCategory` enum
-    - [ ] `BuildingResourceProfile.TABLE` populated
-    - [ ] `VillageSimData` refactor to category maps
-    - [ ] Save migration
-- [ ] **27** Guild refactor (before 26 and 28 — they depend on
+- [x] **25** Resource categories
+    - [x] Expanded `ResourceCategory` enum
+    - [x] `BuildingResourceProfile.TABLE` populated
+    - [x] `VillageSimData` refactor to category maps
+    - [x] Save migration
+- [x] **27** Guild refactor (before 26 and 28 — they depend on
   abstract guild)
-    - [ ] `AbstractGuild` base + 6 subclasses
-    - [ ] Implicit L0 guilds, L1+ upgrade on guild hall
-    - [ ] 6 guild hall building types
-    - [ ] Migrate existing `GuildData` to `AdventurerGuild`
+    - [x] `AbstractGuild` base + 6 subclasses
+    - [x] Implicit L0 guilds, L1+ upgrade on guild hall
+    - [x] 6 guild hall building types
+    - [~] Migrate existing `GuildData` to `AdventurerGuild`
+      (deferred — `GuildData` left intact alongside; the new
+      abstract layer is additive per spec "Open decisions" #1)
 - [ ] **28** Request board
     - [ ] `Request` + `RequestBoard` per scope
     - [ ] Posting, acceptance, fulfillment, escalation
     - [ ] `GuildRequestChannel` fully wired (was stub)
     - [ ] Player fulfillment UI
     - [ ] Migrate existing `Quest` to `Request.HUNT`/`SURVEY`
-- [ ] **26** NPC companies
-    - [ ] Company ownership extension (PLAYER/NPC)
-    - [ ] `AiCompanyManager` daily
-    - [ ] Merchant → trading company promotion
-    - [ ] Succession on owner death
-    - [ ] `CARAVAN_ATTENDANT` worker role
+- [x] **26** NPC companies
+    - [x] Company ownership extension (PLAYER/NPC)
+    - [x] `AiCompanyManager` daily
+    - [x] Merchant → trading company promotion
+    - [x] Succession on owner death
+    - [x] `CARAVAN_ATTENDANT` worker role
 - [ ] **29** Visitor flux
     - [ ] `Visitor` entity, 8 visitor types, itinerary
     - [ ] `VisitorFluxEngine` daily arrival
@@ -1150,5 +1152,289 @@ Audit-discovered fixes:
   result: the stash could keep the highest-potency entry while
   the player got a lower-potency duplicate. Now uses the
   `takeFor` return value directly.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 25 (resource
+categories) complete. Phase 4 opens here.
+
+New types in `Village.Simulation`:
+- `ResourceCategory` (12 entries: FOOD, BUILDING_MATERIALS,
+  SEEDS, TOOLS, WEAPONS, CLOTH, LUXURY, PAPER, LITURGICAL,
+  MEDICINE, LIVESTOCK, COIN_INFLUX) with `isPhysical()` helper
+  (false only for COIN_INFLUX) and a STRING xmap codec.
+- `BuildingResourceProfile` record (production / consumption
+  enum-keyed maps) + static `TABLE` populated for ~30 building
+  types per the spec's first-pass numbers. Buildings with no
+  entry contribute neutrally per spec line 214.
+
+`VillageSimData` refactor:
+- `Map<ResourceCategory, Float>` for production / consumption,
+  replacing the four flat float fields. Queries `production(c)`,
+  `consumption(c)`, `net(c)`, `isExporterOf(c)`,
+  `isImporterOf(c)`. Read-only views via `productionView()` /
+  `consumptionView()`.
+- Backward-compat codec: legacy `foodProductionPerDay`,
+  `materialProductionPerDay`, `foodConsumptionPerDay`,
+  `materialConsumptionPerDay` still read with `optionalFieldOf`
+  default 0f and merged into the maps in `fromCodec`. Writes
+  always emit zero for those fields, which DFU's optional codec
+  elides — so a v1 save migrates cleanly and the next save
+  drops the legacy keys.
+- `blendReal(realProd, realCons, pop, tick)` — 80/20 blend per
+  category, with a `putOrRemove` floor that drops categories
+  whose blended value decays to 0.
+- `advanceSim(seasonFoodMult, genericMult)` — multiplicative
+  drift on FOOD via merge with delta `current * (mult - 1)`.
+
+`VillageSimEngine` rewrite:
+- `syncFromReal` walks village buildings, sums each
+  `BuildingResourceProfile` entry into per-category EnumMaps,
+  adds population-driven FOOD consumption with seasonal
+  multiplier, adds direct FOOD production from STOCKPILE
+  nutrition counts, and stubs COIN_INFLUX visitor flux at 0
+  pending Phase 4 doc 29.
+- `buildBaseline` — same accumulation but no real measurement,
+  used at village spawn and as the orElseGet path in tick.
+- `reconcileOnLoad` deduped (the old file shipped two copies);
+  uses `sim.net(FOOD)` and `sim.net(BUILDING_MATERIALS)` for
+  bread / log / cobblestone materialisation.
+- `advanceSim` delegates to `VillageSimData.advanceSim` with
+  the season's food multiplier.
+
+`KingdomEconomyEngine.findExportPartner` generalised to take a
+`ResourceCategory`. Per-category surplus thresholds in
+`EXPORT_THRESHOLDS` (FOOD ≥ 200, BUILDING_MATERIALS ≥ 32) with
+a fallback `defaultExportThreshold` for any other category.
+`evaluate` loops the registered thresholds and calls
+`handleDeficit` per category in negative net.
+
+Debug:
+- `/sim resources <village>` — table of every category's
+  production / consumption / net per day with sign-coloured
+  net column.
+- `/sim category <village> <category>` — single-category
+  detail.
+- `/sim profile <buildingType>` — print the
+  `BuildingResourceProfile.TABLE` entry.
+
+Audit-discovered fixes:
+- `reconcileOnLoad` re-blend was passing
+  `new EnumMap<>(unmodifiableViewOfEnumMap)` which throws
+  IllegalArgumentException when the view is empty (brand-new
+  village in its first day). Switched to
+  `new EnumMap<>(ResourceCategory.class)` + `putAll(view)` so
+  the empty-map path is safe.
+- FARMHOUSE consumption table listed SEEDS twice via the 3-arg
+  `m1` helper, doubling the seed-consumption rate. Trimmed to
+  one SEEDS entry.
+
+Spec deviations + deferrals (logged in 25 Revision Notes):
+- `NeedCategory` left intact rather than aliased — it's a spot-
+  state stockpile query (`village.getNeeds().get(...)`),
+  semantically separate from the rolling-average sim. The
+  shared FOOD / BUILDING_MATERIALS / SEEDS naming makes a
+  future unification mechanical.
+- COIN_INFLUX visitor-flux source is a 0 stub — Phase 4 doc 29
+  wires the real estimate.
+- `BuildingResourceProfile.TABLE` numbers are first-pass per
+  spec line 118; Phase 5 content tuning revisits.
+- Negative production in a profile is preserved as-given (the
+  per-tick blend clamps inputs ≥ 0 via `clamp` in
+  `blendReal`); spec line 217 calls for clamping which is
+  honoured at the blend step rather than the table step.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 27 (guild refactor)
+shipped as an additive abstract layer per spec "Open decisions"
+#1.
+
+New package `Guilds.Common`:
+- `GuildType` (ADVENTURER / CRAFTSMEN / MERCHANTS /
+  AGRICULTURAL / RELIGIOUS / SCHOLARLY) with profession
+  membership tables and `primaryFor(Profession)` resolver.
+- `GuildLevel` (IMPLICIT / ESTABLISHED / RECOGNIZED /
+  PROMINENT) with `canPostRequests` /
+  `canAcceptRemoteRequests` gates.
+- `GuildRankTier` (APPLICANT / BRONZE / SILVER / GOLD /
+  PLATINUM / ELDER) — distinct from the legacy adventurer
+  `GuildRank` (BRONZE..DIAMOND, XP-driven).
+- `GuildMemberRef` record + `GuildTreasury` (200-bronze L1
+  starting balance) + `GuildHallTypes` bidirectional
+  hall-type lookup.
+- `AbstractGuild` — single concrete class for all six
+  categories; the polymorphic codec is a tagged record
+  with `GuildType` as the discriminator.
+- `GuildSavedData` (`SavedDataType`
+  "life_in_the_village_guilds_v2") storing the abstract
+  guilds keyed by guildId.
+- `GuildBootstrap` — `scanAndCreateImplicit` (cluster ≥ 2
+  spawns implicit guilds), `onProfessionChanged` (auto-
+  drop / auto-join on profession swaps), `onHallConstructed`
+  (L0 → ESTABLISHED on hall placement).
+
+Building system:
+- 5 new `BuildingType` entries: `GUILD_HALL_CRAFTSMEN`,
+  `GUILD_HALL_MERCHANTS`, `GUILD_HALL_AGRICULTURAL`,
+  `GUILD_HALL_RELIGIOUS`, `GUILD_HALL_SCHOLARLY`. The
+  existing `GUILD_HALL` keeps its meaning as the adventurer
+  hall — no rename, preserves save compat for the 25-file
+  consumer surface that references `BuildingType.GUILD_HALL`.
+- 6 registry locations updated for the 5 new halls:
+  ZoneRegistry, BuildingProfileRegistry,
+  BuildingInhabitantRegistry, BuildingTypeFlags,
+  BuildingResourceProfile, and `Profession.professionFor`.
+
+Hooks:
+- `TownspersonMob.setProfession` records the previous
+  profession and routes through
+  `GuildBootstrap.onProfessionChanged` on every change.
+- `VillageSpawner` ends each spawn with a
+  `scanAndCreateImplicit` pass and an `onHallConstructed`
+  loop over each placed hall.
+
+Debug:
+- `/guilds list / info / members / promote / upgrade /
+  create / contribute` — abstract layer parallel to the
+  legacy `/guild` adventurer commands.
+
+Spec deviations + deferrals (logged in 27 Revision Notes):
+- Big-bang `GuildData → AdventurerGuild` rename
+  **deferred**. Spec "Open decisions" #1 already proposed
+  the additive path; v1 follows it. The legacy `GuildData`
+  record stays intact alongside the new abstract layer.
+  An adapter pass migrates the 25 consumer files
+  incrementally.
+- Single concrete `AbstractGuild` class instead of six
+  thin subclasses. Spec line 63 already calls them "thin
+  extensions"; v1 collapses to a tagged class. Phase 5
+  can split when type-specific behaviour diverges
+  (masterpiece certification, trade-volume tracker, etc.).
+- `master_of_apprentices` office wiring deferred —
+  apprenticeship (Phase 2 task 16) hasn't shipped.
+- Treasury L1 starting balance set at 200 bronze.
+  Documented as a tuning candidate per "Things to flag" #2.
+- Member skill minimum gating ("Things to flag" #3) not
+  enforced in v1 — belongs on a future explicit-join
+  verb (Phase 5 polish).
+- `/guilds` plural literal instead of extending `/guild`
+  to avoid stomping the existing `GuildCommands` tree.
+  Both literals coexist.
+- Auto-spawn recipe for the new halls in `BuildingRegistry`
+  deferred — registering them now would force every new-
+  spawned village to ship one of each. Manual placement
+  via debug commands works; Phase 5 worldgen tuning
+  can register selective spawn rules.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+
+---
+
+**Phase 4 progress (next session)**: task 26 (NPC-owned companies)
+shipped.
+
+Company extension:
+- `OwnerType` (PLAYER / NPC), `CompanyType` (STANDARD /
+  TRADING_COMPANY), `SuccessionState` (ACTIVE / UNDECIDED /
+  DISSOLVED) inner enums on Company.
+- `CARAVAN_ATTENDANT` added to `Company.WorkerRole`.
+- 8 new fields: ownerType, ownerId, heirs, companyType,
+  successionState, foundedTick, dissolutionWarningTick,
+  undecidedSinceTick. All persisted via the codec's
+  optionalFieldOf so v1 saves migrate cleanly: ownerType
+  defaults PLAYER, ownerId.orElse(ownerPlayerId), companyType
+  STANDARD, successionState ACTIVE, all timestamps 0.
+- `setNpcOwner(UUID)` flips ownership and replaces the
+  company_owner office holding (previously seeded by the
+  legacy player path).
+
+Promotion path:
+- `MerchantPromotion.isEligible` enforces COMMERCE >= 70,
+  wallet >= 500 br, MARKET assignment, and 365-day continuous
+  merchant tenure via the new `professionStartedTick` field
+  on TownspersonMob (resets on every setProfession change).
+- `MerchantPromotion.promote` creates a TRADING_COMPANY
+  named "Elara's Trading House" (NPC name + " 's Trading
+  House"), transfers 100 br from NPC wallet to company
+  treasury, makes the NPC owner-as-PRODUCER worker, registers
+  via CompanySavedData. forcePromote skips eligibility for
+  /company promote testing.
+
+AI manager:
+- `AiCompanyManager.dailyTick` registered as
+  `CompanyAiTickSystem` (interval 24000, priority 202 — after
+  health/plague subsystems). Per company:
+  - Owner liveness check; dead/demoted owner triggers
+    handleSuccession.
+  - Bankruptcy clock — 14-day warning at treasury <
+    expenses + 50 br, 30 more days dissolves.
+  - UNDECIDED grace window — 30 days to resolve heirs;
+    failing dissolves.
+  - Promotion scan iterates loaded merchants per village.
+- `handleSuccession` walks the heir chain; first living
+  adult heir takes over; otherwise UNDECIDED for 30 days.
+- `dissolve` distributes treasury as severance to remaining
+  workers and marks DISSOLVED + isActive=false (record
+  preserved for historical lookups).
+- `OwnerBias` snapshot reads owner traits (ambition /
+  industry / temperance / compassion) for caravan dispatch +
+  wage decisions; surfaced now, consumed by Phase 5 polish.
+
+Caravan dispatch (stub):
+- `dispatchTradingCaravan` deposits a fixed 50 br profit so
+  the trading-company branch is verifiable end-to-end via
+  /company dispatch. Real wiring into CaravanSavedData /
+  CaravanGoodsSelector deferred — those classes don't yet
+  expose a public dispatch API. Spec line 144 (3x
+  village-merchant range = 9000 blocks) is encoded as
+  `TRADING_RANGE_MULTIPLIER = 3.0` on the manager so the
+  follow-up wire-up reads it.
+
+TownspersonMob:
+- `professionStartedTick` field — reset to current tick on
+  every profession change in setProfession; persisted via
+  NBT key "professionStartedTick"; getter
+  `getProfessionStartedTick()`. Backed off to 0 on legacy
+  saves.
+
+Debug:
+- `/company list-npc <village>` — all NPC-owned companies
+  in the village with type, state, treasury, worker count.
+- `/company promote <npc>` — force-promote (bypasses
+  eligibility checks).
+- `/company owner <companyId>` — owner type / id / state /
+  heirs / treasury / dissolution clocks.
+- `/company succeed <companyId>` — force succession run.
+- `/company dispatch <companyId>` — trigger the trading-
+  caravan stub.
+
+Spec deviations + deferrals (logged in 26 Revision Notes):
+- Caravan goods selection / actual travel deferred —
+  `dispatchTradingCaravan` is a treasury-deposit stub. Phase
+  5 wire-up reads ResourceCategory surplus / deficit per
+  destination once CaravanSavedData exposes a dispatch API.
+- Bankruptcy floor set at 50 br + 14-day warning + 30-day
+  grace per spec "Open decisions"; tunable.
+- Will-overridable heir designation deferred — succession
+  defaults to the static heir list (initialised empty;
+  caller adds via addHeir / setHeirs). Spec line 134 calls
+  for a scribe-produced will via the letter / contract path,
+  which doesn't ship until Phase 4 doc 28+ wires the
+  contract surface.
+- CARAVAN_ATTENDANT role enum added but the existing
+  caravan crew assignment (CaravanGuardGoal etc.) doesn't
+  yet read it — wires when the caravan dispatch lands.
+- company_foreman / company_bookkeeper office population
+  deferred — owner-appointed offices belong on the office
+  selection extension that Phase 5 ships.
+- Player-NPC competition pricing pressure deferred — both
+  flavours of company coexist via DirectBusinessChannel
+  reading multiple producers, but the AI manager doesn't
+  yet adjust prices in response to player presence.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).
