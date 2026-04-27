@@ -406,3 +406,96 @@ Phase 2 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 2 implementation notes
+
+- **Masterpiece state lives on the contract record, not on a
+  new CraftingOrder type.** Spec line 158 describes the
+  masterpiece as "a special CraftingOrder with
+  COMMISSION_MASTERPIECE type". The existing
+  `CraftingOrder` ships without a type field; adding one is a
+  larger surface change than this task warrants. Phase 2 rolls
+  the masterpiece-phase fields (target item id, deadline,
+  attempts) directly into `ApprenticeshipContract`. The
+  user-visible mechanics are identical; if the type-on-CraftingOrder
+  framing becomes important in Phase 3 (e.g. for player-quest
+  surfacing), the data is already populated and a thin
+  CraftingOrder wrapper can be added without re-doing the
+  contract record.
+- **`preferredProfession` field doesn't exist yet.** Spec line
+  94 reads from a candidate's `preferredProfession`; that
+  field has no implementation in the NPC data model.
+  `ApprenticeshipMatcher.preferredProfessionFor` proxies via
+  the candidate's current profession (when non-NONE) or by
+  reverse-mapping from their highest-XP skill via
+  `ProfessionSkills`. Phase 5 culture pass adds the proper
+  preferredProfession field; this proxy keeps the discovery
+  path working until then.
+- **Master-side dialogue evaluation is loose.** Spec line 243
+  calls for an "acceptance dialogue" when the player asks to
+  apprentice. v1's `ApprenticeUnderMeVerb` always accepts
+  (provided the master meets capacity / skill / building gates);
+  the Phase 5 dialogue tree replaces this with the spec's
+  full evaluation flow.
+- **Apprentice profession + workplace inheritance.** When a
+  contract starts, the apprentice's profession is set to the
+  master's, and `assignedBuildingId` is rerouted to the
+  master's workshop. This means the apprentice's existing
+  profession work-goal automatically targets the right
+  building — no apprentice-only work-goal is needed.
+- **Mentorship bonus surface.** Spec line 130's "+50% XP from
+  production cycles when master is at workshop" is exposed
+  via `ApprenticeshipManager.mentorshipMultiplierFor` for
+  NPCs (16-block co-location) and via
+  `MentorshipBonus.scalePlayerXp` for players (32-block radius
+  per spec line 248). The helper exists and is callable; the
+  systematic deployment to every existing `addXp` call site
+  is a Phase 5 polish wave. Production-cycle XP grants in the
+  current goals are reachable, and starter wiring lands here.
+- **Wage halving applies to player-as-apprentice path.** The
+  visible wage-paying surface is `WorkplaceAssignmentManager.tickWeeklyPay`
+  (player path). NPC wages are accounting-only via household
+  wealth; halving for NPC apprentices doesn't surface
+  anywhere user-visible in v1. The halving is applied to
+  player wages when they're an active apprentice; NPC-side
+  halving lands when there's a visible NPC wage surface.
+- **Master-death triggers BROKEN cleanup.**
+  `ApprenticeshipManager.onMasterDeath` is called from
+  `TownspersonMob.onNpcDeath`. Apprentices left behind are
+  not auto-rematched in v1 (spec line 204); they sit in
+  BROKEN state until a future tick or debug command finds
+  them a new master.
+- **Contract document via existing scribe path.** Contracts
+  produce a `WrittenLetterItem` with `LetterSpecial.CONTRACT`
+  via `ScribalItems.contract`. When a `SCRIBE_WORKSHOP`
+  exists in the village, the contract is queued via the
+  scribe's `CommissionQueue` so the actual writing routes
+  through the existing `ScribeWorkGoal` flow. When no scribe
+  is in the village, the contract is direct-minted and dropped
+  at the master's feet (spec line 222 fallback).
+- **Inheritance / shop transfer on master death** — explicitly
+  deferred per spec line 200-206. v1 marks contracts BROKEN
+  and stops there; the spec leaves shop transfer to a later
+  phase.
+- **`NpcProfileSnapshot` apprenticeship status field deferred.**
+  Spec line 315 mentions adding it; not added in v1 to avoid
+  expanding the codec for a field whose UI panel isn't
+  authored. Active contracts are visible via
+  `/apprentice list` and `/apprentice info` for now; the
+  profile-panel surfacing lands with the Phase 5 polish wave.
+- **Masterpiece pass is skill-driven rather than item-submitted.**
+  Spec line 169 says "On submission: master evaluates based on
+  material quality, apprentice's current skill level vs.
+  commission difficulty, master's own quality expectation,
+  small random roll." v1 abstracts the submission step: when
+  the apprentice's primary skill reaches
+  `MASTERPIECE_PASS_SKILL`, the contract auto-completes as
+  MASTER. Hard-fail after 2 retries → JOURNEYMAN. This keeps
+  the v1 mechanic predictable without a full submission UI;
+  the dialogue trees `apprentice.masterpiece.assign / .submit
+  / .pass / .fail` surface in Phase 5 content pass.
+- **Mentorship-presence radius confirmed at 32 blocks** (spec
+  line 248) for the player path; NPC-NPC uses 16 blocks as a
+  building-bounds approximation since the spec phrasing is
+  "at the same building" rather than a hard radius. Both
+  values are constants and easy to retune.

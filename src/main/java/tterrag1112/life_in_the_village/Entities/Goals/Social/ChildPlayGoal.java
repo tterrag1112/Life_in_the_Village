@@ -124,9 +124,32 @@ public class ChildPlayGoal extends Goal {
                     SoundEvents.VILLAGER_YES,
                     SoundSource.NEUTRAL, 0.5f,
                     1.5f + entity.getRandom().nextFloat() * 0.5f);
+            // Phase 2 task 15: shared-interest XP trickle. Spec line
+            // 112 — children with overlapping interestedSkills gain
+            // a small XP bump when they play together. Both sides
+            // receive the bump.
+            grantSharedInterestXp(level, chaseTarget);
             chaseTarget = null;
             mode = PlayMode.RESTING;
             timer = 0;
+        }
+    }
+
+    /**
+     * Grants +1 XP in any shared {@code interestedSkill} between
+     * {@code entity} and {@code other}. Spec line 112 calls for
+     * "+0.5 per session"; rounded to +1 since SkillComponent.addXp
+     * takes integer-friendly floats.
+     */
+    private void grantSharedInterestXp(ServerLevel level, TownspersonMob other) {
+        var selfSkills = entity.getChildhoodState().interestedSkills();
+        var otherState = other.getChildhoodState();
+        long now = level.getGameTime();
+        for (var s : selfSkills) {
+            if (otherState.hasInterestIn(s.skill())) {
+                entity.getSkills().addXp(s.skill(), 1f, now);
+                other.getSkills().addXp(s.skill(), 1f, now);
+            }
         }
     }
 

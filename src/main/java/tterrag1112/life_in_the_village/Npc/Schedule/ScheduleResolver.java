@@ -109,7 +109,60 @@ public final class ScheduleResolver {
         if (override != null && !override.phaseShifts().isEmpty()) {
             daily = applyPhaseShifts(daily, override);
         }
+
+        // Elderly slowdown overlay (Phase 2 task 15). Stretches LEISURE,
+        // shortens WORK_PRIMARY, brings HOME_PREP earlier. Only applies
+        // when the NPC is ELDERLY and not already a day-off.
+        if (npc.isElderly() && !dayOff) {
+            daily = applyElderlySlowdown(daily);
+        }
         return daily;
+    }
+
+    /**
+     * Spec line 187. Pulls WAKE_UP earlier, halves WORK_PRIMARY,
+     * extends LEISURE, brings HOME_PREP earlier.
+     */
+    private static DailySchedule applyElderlySlowdown(DailySchedule base) {
+        return new DailySchedule(
+                shrinkWindow(base.wakeUp(), -500, 0),
+                base.commute(),
+                halveWindow(base.workPrimary()),
+                base.workErrand(),
+                base.meal(),
+                base.workSecondary(),
+                base.marketRun(),
+                base.social(),
+                extendWindow(base.leisure(), 0.6f),
+                shrinkWindow(base.homePrep(), -1000, 0),
+                base.home());
+    }
+
+    private static TimeWindow halveWindow(TimeWindow w) {
+        if (w == null || w.isEmpty()) return w;
+        int start = w.startTick();
+        int end = w.endTick();
+        int span = end >= start ? end - start : 24000 - (start - end);
+        int shorter = Math.max(0, span / 2);
+        int newEnd = (start + shorter) % 24000;
+        return new TimeWindow(start, newEnd);
+    }
+
+    private static TimeWindow extendWindow(TimeWindow w, float factor) {
+        if (w == null || w.isEmpty()) return w;
+        int start = w.startTick();
+        int end = w.endTick();
+        int span = end >= start ? end - start : 24000 - (start - end);
+        int extra = (int) (span * factor);
+        int newEnd = (end + extra) % 24000;
+        return new TimeWindow(start, newEnd);
+    }
+
+    private static TimeWindow shrinkWindow(TimeWindow w, int startDelta, int endDelta) {
+        if (w == null || w.isEmpty()) return w;
+        int start = (w.startTick() + startDelta + 24000) % 24000;
+        int end = (w.endTick() + endDelta + 24000) % 24000;
+        return new TimeWindow(start, end);
     }
 
     private static WeeklySchedule weeklyFor(TownspersonMob npc) {

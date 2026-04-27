@@ -66,6 +66,12 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.Hobby.HobbyPreferenceGenerator());
         // Phase 3 task 20: schedule religious rites on lifecycle events.
         register(new tterrag1112.life_in_the_village.Npc.Religion.RiteLifeEventProducer());
+        // Phase 2 task 16: apprenticeship discovery on ADULT transition.
+        register(new tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipDispatcher());
+        // Phase 2 task 15: child / coming-of-age / retirement arcs.
+        register(new tterrag1112.life_in_the_village.Npc.Aging.ChildhoodInitializer());
+        register(new tterrag1112.life_in_the_village.Npc.Aging.ComingOfAgeHandler());
+        register(new tterrag1112.life_in_the_village.Npc.Aging.RetirementHandler());
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }

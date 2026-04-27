@@ -152,6 +152,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             new tterrag1112.life_in_the_village.Npc.Scribal.AuthorStatus();
     private final tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress scholarProgress =
             new tterrag1112.life_in_the_village.Npc.Scribal.ScholarProgress();
+    private final tterrag1112.life_in_the_village.Npc.Aging.ChildhoodState childhoodState =
+            new tterrag1112.life_in_the_village.Npc.Aging.ChildhoodState();
+    private final tterrag1112.life_in_the_village.Npc.Aging.RetirementState retirementState =
+            new tterrag1112.life_in_the_village.Npc.Aging.RetirementState();
+    /** Phase 2 task 15: distinguishes age-natural deaths for memory/gossip routing. */
+    private boolean dyingNatural = false;
     /**
      * Per-NPC religious belief state (Phase 3 doc 20). Phase 0
      * accessors leave the field empty; the spawn pass in
@@ -619,6 +625,20 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public tterrag1112.life_in_the_village.Npc.Health.HealerInventory getHealerInventory() {
         return healerInventory;
     }
+
+    /** Childhood state (Phase 2 task 15). Populated for CHILD/TEEN. */
+    public tterrag1112.life_in_the_village.Npc.Aging.ChildhoodState getChildhoodState() {
+        return childhoodState;
+    }
+
+    /** Retirement state (Phase 2 task 15). Populated for ELDERLY. */
+    public tterrag1112.life_in_the_village.Npc.Aging.RetirementState getRetirementState() {
+        return retirementState;
+    }
+
+    /** True when an age-natural death is in progress (vs combat). */
+    public boolean isDyingNatural() { return dyingNatural; }
+    public void markDyingNatural()  { this.dyingNatural = true; }
 
     public void clearTraits() {
         appearance.clearTraits();
@@ -1374,6 +1394,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Health + remedy stash (Phase 3 task 21) ─────────────────────────
         health.save(output);
         healerInventory.save(output);
+
+        // ── Child / elderly arc state (Phase 2 task 15) ─────────────────────
+        childhoodState.save(output);
+        retirementState.save(output);
     }
 
     // =========================================================================
@@ -1525,6 +1549,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         authorStatus.load(input);
         scholarProgress.load(input);
 
+        // ── Child / elderly arc state (Phase 2 task 15) ─────────────────────
+        childhoodState.load(input);
+        retirementState.load(input);
+
         // ── Religious belief state (Phase 3 task 20) ────────────────────────
         piety.load(input);
 
@@ -1561,6 +1589,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         VillageSavedData data = VillageSavedData.get(level);
         HouseholdManager.onNpcDied(npc.getUUID(), data);
+
+        // Phase 2 task 16: BROKEN any active apprenticeship contracts
+        // where this NPC was the master.
+        tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipManager
+                .onMasterDeath(level, npc.getUUID());
+
+        // Phase 2 task 15: age-natural funeral stub + DIE_WITH_REGRET
+        // gossip seed when the deceased died with unfinished business.
+        tterrag1112.life_in_the_village.Npc.Aging.DeathArc
+                .onNpcDeath(npc, level);
 
         // ── Phase 1: fire WitnessedDeath for every nearby NPC, FamilyDeath
         //    for every household member of the deceased.
