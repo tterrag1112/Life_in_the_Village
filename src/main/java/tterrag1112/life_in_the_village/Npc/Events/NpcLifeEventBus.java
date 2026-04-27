@@ -66,6 +66,8 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.Hobby.HobbyPreferenceGenerator());
         // Phase 3 task 20: schedule religious rites on lifecycle events.
         register(new tterrag1112.life_in_the_village.Npc.Religion.RiteLifeEventProducer());
+        // Phase 4 task 30: archive lifecycle events into village history.
+        register(new tterrag1112.life_in_the_village.Village.History.HistoryProducer());
         defaultsRegistered = true;
         LOGGER.info("[NpcLifeEventBus] Registered {} default dispatchers", DISPATCHERS.size());
     }

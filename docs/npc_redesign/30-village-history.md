@@ -383,4 +383,84 @@ Phase 4 depends on:
 
 ## Revision Notes
 
-(changes recorded here as the spec evolves after testing)
+### Phase 4 task 30 implementation pass
+
+Things-to-flag responses:
+
+1. **Importance assignment per event type.** Defaults
+   live on `HistoryEventType.defaultImportance` and match
+   the spec's stated examples (PLAGUE_OUTBREAK = MAJOR,
+   LAW_ENACTED = NOTABLE, VILLAGE_FOUNDED = LEGENDARY).
+   Producers can override per-instance — TrialExecutor
+   bumps TRIAL_HELD to LEGENDARY when the punishment is
+   EXECUTION or EXILE. The remaining ambiguous types
+   (FEAST_DAY_CELEBRATED MINOR, BUILDING_CONSTRUCTED
+   MINOR) lean light to keep the log lean; Phase 5
+   tuning may adjust.
+2. **NotablePerson criteria.** v1 ships the registry +
+   API but **not** the auto-promotion rules. The spec's
+   "prestige ≥ 40 author" / "10-year leader" / "master
+   craftsman with multiple masterpieces" each depend on
+   source systems that haven't fully shipped (Phase 2
+   AuthorStatus prestige + apprenticeship masterpiece
+   certification). Producers call
+   `NotablePersonRegistry.recordNotable` directly when
+   they identify a candidate; auto-promotion lands when
+   the source signals are reliable.
+3. **Pruning on legendary entries.** Confirmed never
+   pruned. `HistoryImportance.LEGENDARY.retentionTicks`
+   = `Long.MAX_VALUE`; `isPrunable()` returns false; the
+   prune loop short-circuits.
+4. **Cross-village query performance.**
+   `VillageHistoryLog.kingdomCompilation` walks every
+   village's list once and filters by
+   `propagatesToKingdom`. At v1 scale (≤ 30 villages,
+   ≤ 1000 entries each) this is fine. The 1000-entry
+   per-village cap (spec line 144) keeps the worst-case
+   bounded; profiling can drive a per-kingdom mirror
+   index later.
+
+Spec deviations:
+- **Single per-world `VillageHistoryLog` SavedData**
+  with a `byVillage` map instead of one SavedData per
+  village. The shape is identical from the API surface
+  (queries take a village UUID); fewer save slots
+  = simpler load path.
+- **History viewer screen + "Read village history"
+  player verb deferred** to Phase 5 GUI polish. Debug
+  commands cover the query surface today.
+- **Procedural ledger book authoring** (spec lines
+  192-208) deferred. Phase 2 didn't ship a finished
+  scribal-book generator path, so the village_scribe's
+  ledger-write goal needs that wire first.
+- **Lifecycle archival uses existing NpcLifeEvent
+  records** instead of firing dedicated history-only
+  events. The Married / BirthInFamily / FamilyDeath /
+  LifeStageAdvanced events on `NpcLifeEventBus` already
+  carry the right participants; HistoryProducer
+  translates them on the bus.
+- **No archival hooks for masterpiece, festival, famine,
+  caravan-loss, harvest, building construction.** Source
+  events don't fire today (Phase 2 apprenticeship not
+  shipped; Phase 5 festivals / famine; doc 26 caravan
+  failure deferred). HistoryEventType slots exist so the
+  eventual producers route via the same API.
+- **Kingdom-history compilation** is a query-side
+  aggregator (`VillageHistoryLog.kingdomCompilation(villageIds)`)
+  that walks the supplied villages' logs. No separate
+  `KingdomHistoryData` SavedData; entries stay village-
+  scoped and the kingdom view is computed on demand.
+
+Deferrals:
+- History viewer / chronicle screen.
+- "Read village history" player verb.
+- Scribal ledger-book auto-authoring.
+- Auto-promotion of NotablePerson based on prestige /
+  tenure / masterpiece criteria.
+- Dialogue predicate extensions for history references
+  (`HasWitnessedHistoryEvent`, `KnewPerson`, etc.).
+- Festival / masterpiece / famine / harvest / caravan-loss
+  / building-construction archival hooks (source events
+  not shipped).
+- Cross-kingdom history correlation (per Does-not-include).
+- Translatable templates (Phase 5 culture pass).

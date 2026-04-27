@@ -138,6 +138,19 @@ public final class MerchantPromotion {
         CompanySavedData.get(level).addCompany(company);
         LOGGER.info("[MerchantPromotion] {} ({}) promoted to TRADING_COMPANY '{}' (treasury={})",
                 npc.getNpcName(), npc.getUUID(), companyName, company.getTreasuryBronze());
+        // Phase 4 doc 30 archival hook.
+        Village v = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level)
+                .getVillageById(villageId).orElse(null);
+        if (v != null) {
+            java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+            details.put("village_name", v.getName());
+            details.put("npc_name", npc.getNpcName());
+            details.put("company_name", companyName);
+            tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
+                    level, v,
+                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.COMPANY_FOUNDED,
+                    now, details, java.util.List.of(npc.getUUID()));
+        }
         return company;
     }
 }

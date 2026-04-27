@@ -132,6 +132,43 @@ public final class TrialExecutor {
         if (verdict == TrialVerdict.GUILTY && punishment != null) {
             PunishmentExecutor.execute(punishment, report, level);
         }
+        // Phase 4 doc 30 archival hook — every trial gets one entry,
+        // SERIOUS+ verdicts bumped to LEGENDARY when the punishment
+        // is execution / exile.
+        if (village != null) {
+            archiveTrial(level, village, report, completed, punishment);
+        }
+    }
+
+    private static void archiveTrial(net.minecraft.server.level.ServerLevel level,
+                                     Village village, CrimeReport report,
+                                     Trial trial, Punishment punishment) {
+        java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+        details.put("village_name", village.getName());
+        details.put("crime_type", report.type().name());
+        details.put("verdict", trial.verdict() != null ? trial.verdict().name() : "PENDING");
+        String accusedName = report.perpetratorId()
+                .flatMap(id -> tterrag1112.life_in_the_village.Entities.custom.TownspersonMob
+                        .findByUUID(level, id)
+                        .map(tterrag1112.life_in_the_village.Entities.custom.TownspersonMob::getNpcName))
+                .orElse("(unknown)");
+        details.put("accused_name", accusedName);
+        java.util.List<UUID> related = report.perpetratorId()
+                .map(java.util.List::of).orElse(java.util.List.of());
+        // SERIOUS+ severity → MAJOR (default) or LEGENDARY for capital
+        // punishment.
+        tterrag1112.life_in_the_village.Village.History.HistoryImportance importance =
+                tterrag1112.life_in_the_village.Village.History.HistoryEventType.TRIAL_HELD
+                        .defaultImportance();
+        if (punishment != null
+                && (punishment.type() == PunishmentType.EXECUTION
+                    || punishment.type() == PunishmentType.EXILE)) {
+            importance = tterrag1112.life_in_the_village.Village.History.HistoryImportance.LEGENDARY;
+        }
+        tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
+                level, village,
+                tterrag1112.life_in_the_village.Village.History.HistoryEventType.TRIAL_HELD,
+                level.getGameTime(), details, related, importance);
     }
 
     private static UUID pickPresider(Village village, CrimeReport report) {

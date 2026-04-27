@@ -175,6 +175,19 @@ public final class AiCompanyManager {
         company.setActive(false);
         LOGGER.info("[AiCompanyManager] {} ({}) dissolved — {} br severance",
                 company.getName(), company.getCompanyId(), treasury);
+        // Phase 4 doc 30 archival hook.
+        tterrag1112.life_in_the_village.Village.Village v =
+                tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level)
+                        .getVillageById(company.getHomeVillageId()).orElse(null);
+        if (v != null) {
+            java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
+            details.put("village_name", v.getName());
+            details.put("company_name", company.getName());
+            tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
+                    level, v,
+                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.COMPANY_DISSOLVED,
+                    now, details, java.util.List.of());
+        }
     }
 
     // ── Promotion scan ───────────────────────────────────────────────────

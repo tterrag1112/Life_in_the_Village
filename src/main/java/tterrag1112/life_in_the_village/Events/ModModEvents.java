@@ -276,6 +276,7 @@ public class ModModEvents {
         CompanyDebugCommand.register(event.getDispatcher());
         RequestDebugCommand.register(event.getDispatcher());
         VisitorDebugCommand.register(event.getDispatcher());
+        HistoryDebugCommand.register(event.getDispatcher());
 
     }
 
