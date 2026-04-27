@@ -65,6 +65,64 @@ public class Company {
                 Codec.STRING.xmap(SuccessionState::valueOf, SuccessionState::name);
     }
 
+    /**
+     * Phase 4 doc 26 — packs the eight ownership / type / succession
+     * fields into a single sub-record so the main {@link Company}
+     * codec stays under DFU's 16-field {@code RecordCodecBuilder} cap.
+     * The previous flat layout pushed the codec to 19 fields and the
+     * lambda type inference fell back to {@code Object}, breaking
+     * every getter on the inner builder.
+     *
+     * <p>Backward-compat: v1 saves without an {@code ownership} entry
+     * read {@link #DEFAULT}; {@link #ownerId} stays {@code Optional.empty()}
+     * and the {@code Company.fromCodec} path falls back to
+     * {@code ownerPlayerId} so existing player owners keep their
+     * identity.</p>
+     */
+    public record OwnershipInfo(
+            OwnerType ownerType,
+            java.util.Optional<UUID> ownerId,
+            List<UUID> heirs,
+            CompanyType companyType,
+            SuccessionState successionState,
+            long foundedTick,
+            long dissolutionWarningTick,
+            long undecidedSinceTick
+    ) {
+        public OwnershipInfo {
+            if (ownerType == null) ownerType = OwnerType.PLAYER;
+            if (ownerId == null)   ownerId   = java.util.Optional.empty();
+            if (heirs == null)     heirs     = List.of();
+            else                   heirs     = List.copyOf(heirs);
+            if (companyType == null)     companyType     = CompanyType.STANDARD;
+            if (successionState == null) successionState = SuccessionState.ACTIVE;
+        }
+
+        public static final OwnershipInfo DEFAULT = new OwnershipInfo(
+                OwnerType.PLAYER, java.util.Optional.empty(), List.of(),
+                CompanyType.STANDARD, SuccessionState.ACTIVE, 0L, 0L, 0L);
+
+        public static final Codec<OwnershipInfo> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        OwnerType.CODEC.optionalFieldOf("ownerType", OwnerType.PLAYER)
+                                .forGetter(OwnershipInfo::ownerType),
+                        UUIDUtil.CODEC.optionalFieldOf("ownerId")
+                                .forGetter(OwnershipInfo::ownerId),
+                        UUIDUtil.CODEC.listOf().optionalFieldOf("heirs", List.of())
+                                .forGetter(OwnershipInfo::heirs),
+                        CompanyType.CODEC.optionalFieldOf("companyType", CompanyType.STANDARD)
+                                .forGetter(OwnershipInfo::companyType),
+                        SuccessionState.CODEC.optionalFieldOf("successionState", SuccessionState.ACTIVE)
+                                .forGetter(OwnershipInfo::successionState),
+                        Codec.LONG.optionalFieldOf("foundedTick", 0L)
+                                .forGetter(OwnershipInfo::foundedTick),
+                        Codec.LONG.optionalFieldOf("dissolutionWarningTick", 0L)
+                                .forGetter(OwnershipInfo::dissolutionWarningTick),
+                        Codec.LONG.optionalFieldOf("undecidedSinceTick", 0L)
+                                .forGetter(OwnershipInfo::undecidedSinceTick)
+                ).apply(i, OwnershipInfo::new));
+    }
+
     public enum ProducerType {
         GENERIC,     // no specific role — hand-produces items
         FARMER,      // requires company farmhouse — follows FarmerGoal pattern
@@ -216,25 +274,13 @@ public class Company {
                             .optionalFieldOf("offices")
                             .forGetter(c -> java.util.Optional.ofNullable(c.offices)),
                     // ── Phase 4 doc 26 additions ─────────────────────────
-                    // All optional with defaults so v1 saves migrate
-                    // cleanly: ownerType=PLAYER, ownerId=ownerPlayerId,
-                    // empty heirs, type=STANDARD, succession=ACTIVE.
-                    OwnerType.CODEC.optionalFieldOf("ownerType", OwnerType.PLAYER)
-                            .forGetter(c -> c.ownerType),
-                    UUIDUtil.CODEC.optionalFieldOf("ownerId")
-                            .forGetter(c -> java.util.Optional.ofNullable(c.ownerId)),
-                    UUIDUtil.CODEC.listOf().optionalFieldOf("heirs", new ArrayList<>())
-                            .forGetter(c -> new ArrayList<>(c.heirs)),
-                    CompanyType.CODEC.optionalFieldOf("companyType", CompanyType.STANDARD)
-                            .forGetter(c -> c.companyType),
-                    SuccessionState.CODEC.optionalFieldOf("successionState", SuccessionState.ACTIVE)
-                            .forGetter(c -> c.successionState),
-                    Codec.LONG.optionalFieldOf("foundedTick", 0L)
-                            .forGetter(c -> c.foundedTick),
-                    Codec.LONG.optionalFieldOf("dissolutionWarningTick", 0L)
-                            .forGetter(c -> c.dissolutionWarningTick),
-                    Codec.LONG.optionalFieldOf("undecidedSinceTick", 0L)
-                            .forGetter(c -> c.undecidedSinceTick)
+                    // Packed into a single sub-record to keep the main
+                    // codec under DFU's 16-field RecordCodecBuilder cap.
+                    // v1 saves with no "ownership" entry read DEFAULT
+                    // and the fromCodec fallback resolves ownerId to
+                    // ownerPlayerId for backward compat.
+                    OwnershipInfo.CODEC.optionalFieldOf("ownership", OwnershipInfo.DEFAULT)
+                            .forGetter(Company::snapshotOwnership)
             ).apply(i, Company::fromCodec));
 
     private static Company fromCodec(UUID companyId, String name,
@@ -243,14 +289,7 @@ public class Company {
                                      WorkSchedule schedule, List<PriceOverride> prices,
                                      long treasury, boolean active,
                                      java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
-                                     OwnerType ownerType,
-                                     java.util.Optional<UUID> ownerId,
-                                     List<UUID> heirs,
-                                     CompanyType companyType,
-                                     SuccessionState successionState,
-                                     long foundedTick,
-                                     long dissolutionWarningTick,
-                                     long undecidedSinceTick) {
+                                     OwnershipInfo ownership) {
         Company c = new Company(companyId, name, ownerPlayerId,
                 homeVillageId, schedule);
         c.buildingIds.addAll(buildingIds);
@@ -259,17 +298,33 @@ public class Company {
         c.treasuryBronze = treasury;
         c.isActive = active;
         offices.ifPresent(s -> c.offices = s);
-        // Phase 4 doc 26 fields. ownerId migrates to ownerPlayerId
-        // when absent so v1 saves keep their owner identity.
-        c.ownerType       = ownerType != null ? ownerType : OwnerType.PLAYER;
-        c.ownerId         = ownerId.orElse(ownerPlayerId);
-        c.heirs.addAll(heirs);
-        c.companyType     = companyType != null ? companyType : CompanyType.STANDARD;
-        c.successionState = successionState != null ? successionState : SuccessionState.ACTIVE;
-        c.foundedTick            = foundedTick;
-        c.dissolutionWarningTick = dissolutionWarningTick;
-        c.undecidedSinceTick     = undecidedSinceTick;
+        // Phase 4 doc 26 — apply the ownership sub-record. ownerId
+        // falls back to the legacy ownerPlayerId when absent so v1
+        // player-only saves keep their owner identity intact.
+        OwnershipInfo info = ownership != null ? ownership : OwnershipInfo.DEFAULT;
+        c.ownerType       = info.ownerType();
+        c.ownerId         = info.ownerId().orElse(ownerPlayerId);
+        c.heirs.addAll(info.heirs());
+        c.companyType     = info.companyType();
+        c.successionState = info.successionState();
+        c.foundedTick            = info.foundedTick();
+        c.dissolutionWarningTick = info.dissolutionWarningTick();
+        c.undecidedSinceTick     = info.undecidedSinceTick();
         return c;
+    }
+
+    /** Builds an {@link OwnershipInfo} reflecting the current Company
+     *  state for the codec write path. */
+    private OwnershipInfo snapshotOwnership() {
+        return new OwnershipInfo(
+                ownerType,
+                java.util.Optional.ofNullable(ownerId),
+                List.copyOf(heirs),
+                companyType,
+                successionState,
+                foundedTick,
+                dissolutionWarningTick,
+                undecidedSinceTick);
     }
 
     // -------------------------------------------------------------------------
