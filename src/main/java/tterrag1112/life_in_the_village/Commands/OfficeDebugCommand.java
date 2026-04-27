@@ -282,7 +282,7 @@ public final class OfficeDebugCommand {
                                 + result.holderUuid().orElseThrow()
                                 + " (" + result.actualSelection() + ", "
                                 + (result.daysRemaining(now) < 0 ? "indefinite"
-                                    : result.daysRemaining(now) + "d)")), false);
+                                    : result.daysRemaining(now) + "d)"))), false);
         return 1;
     }
 

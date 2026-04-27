@@ -142,6 +142,7 @@ public final class LawDecisionEngine {
             case CURFEW, DOUBLE_PUNISHMENT -> 5f; // Phase 3 doc 19 will replace with crime metric
             case PARDON_FIRST_OFFENSE, BAN_EXECUTION -> 5f;
             case TOLL_ENTRY -> isTreasuryLow(village) ? 8f : 0f;
+            case QUARANTINE_VILLAGE -> 0.0F;
             case FOREIGN_TRADER_BAN -> 0f;
             case PILGRIM_WELCOME_BONUS, FESTIVAL_MANDATORY, COMPULSORY_SCHOOLING,
                  TEMPLE_ATTENDANCE_EXPECTED -> 4f;

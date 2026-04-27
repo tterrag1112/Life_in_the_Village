@@ -290,6 +290,29 @@ public final class NpcDebugCommand {
                         .then(Commands.literal("regenerate")
                                 .then(Commands.argument("uuid", UuidArgument.uuid())
                                         .executes(NpcDebugCommand::handleHobbyRegenerate))))
+
+                // ── /npc children <village> ──────────────────────────────────
+                .then(Commands.literal("children")
+                        .then(Commands.argument("village", StringArgumentType.greedyString())
+                                .executes(NpcDebugCommand::handleChildrenList)))
+
+                // ── /npc elderly <village> ───────────────────────────────────
+                .then(Commands.literal("elderly")
+                        .then(Commands.argument("village", StringArgumentType.greedyString())
+                                .executes(NpcDebugCommand::handleElderlyList)))
+
+                // ── /npc force-coming-of-age <uuid> ──────────────────────────
+                .then(Commands.literal("force-coming-of-age")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .executes(NpcDebugCommand::handleForceComingOfAge)))
+
+                // ── /npc set-unfinished <uuid> <type> [target] ───────────────
+                .then(Commands.literal("set-unfinished")
+                        .then(Commands.argument("uuid", UuidArgument.uuid())
+                                .then(Commands.argument("type", StringArgumentType.word())
+                                        .executes(NpcDebugCommand::handleSetUnfinished)
+                                        .then(Commands.argument("target", UuidArgument.uuid())
+                                                .executes(NpcDebugCommand::handleSetUnfinishedWithTarget)))))
         ));
     }
 
@@ -1304,5 +1327,132 @@ public final class NpcDebugCommand {
                 "Re-rolled hobbies for " + displayName(npc) + ": "
                         + (top.isEmpty() ? "(none available)" : String.join(", ", top))), true);
         return 1;
+    }
+
+    // =========================================================================
+    // Child / Elderly arc (Phase 2 task 15)
+    // =========================================================================
+
+    private static int handleChildrenList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String villageName = StringArgumentType.getString(ctx, "village");
+        ServerLevel level = src.getLevel();
+        var data = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+        var villageOpt = data.getVillageByName(villageName);
+        if (villageOpt.isEmpty()) {
+            src.sendFailure(Component.literal("No village named '" + villageName + "'."));
+            return 0;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Children in ").append(villageName).append(" ===\n");
+        int count = 0;
+        for (var entity : level.getEntities().getAll()) {
+            if (!(entity instanceof TownspersonMob mob)) continue;
+            if (!mob.isChild() && mob.getLifeStage() != tterrag1112.life_in_the_village.Entities.LifeStage.TEEN) continue;
+            if (mob.getAssignedVillageName().filter(n -> n.equals(villageName)).isEmpty()) continue;
+            count++;
+            var cs = mob.getChildhoodState();
+            sb.append(String.format(Locale.ROOT,
+                    "  %-22s stage=%-7s caregiver=%-8s schooling=%-5s preferred=%s%n",
+                    truncate(mob.getNpcName(), 22),
+                    mob.getLifeStage().name(),
+                    cs.primaryCaregiverId().map(id -> id.toString().substring(0, 8)).orElse("none"),
+                    cs.schoolingActive(),
+                    cs.preferredProfession().preferred().name()));
+        }
+        if (count == 0) sb.append("  §7(no children)\n");
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleElderlyList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String villageName = StringArgumentType.getString(ctx, "village");
+        ServerLevel level = src.getLevel();
+        var data = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+        if (data.getVillageByName(villageName).isEmpty()) {
+            src.sendFailure(Component.literal("No village named '" + villageName + "'."));
+            return 0;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== Elderly in ").append(villageName).append(" ===\n");
+        int count = 0;
+        for (var entity : level.getEntities().getAll()) {
+            if (!(entity instanceof TownspersonMob mob)) continue;
+            if (!mob.isElderly()) continue;
+            if (mob.getAssignedVillageName().filter(n -> n.equals(villageName)).isEmpty()) continue;
+            count++;
+            var rs = mob.getRetirementState();
+            sb.append(String.format(Locale.ROOT,
+                    "  %-22s retired=%-5s mentor=%-8s unfinished=%s%n",
+                    truncate(mob.getNpcName(), 22),
+                    rs.fullyRetired(),
+                    rs.mentorTargetId().map(id -> id.toString().substring(0, 8)).orElse("none"),
+                    rs.unfinished().map(u -> u.type().name()
+                            + (u.resolved() ? "[resolved]" : "")).orElse("none")));
+        }
+        if (count == 0) sb.append("  §7(no elderly)\n");
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleForceComingOfAge(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        ServerLevel level = src.getLevel();
+        TownspersonMob npc = TownspersonMob.findByUUID(level, id).orElse(null);
+        if (npc == null) {
+            src.sendFailure(Component.literal("No NPC with UUID " + id));
+            return 0;
+        }
+        // Manually fire the LifeStageAdvanced(ADULT) event so the bus
+        // dispatchers (ComingOfAgeHandler / ApprenticeshipDispatcher
+        // / LifeGoalSelector / etc.) all run.
+        tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
+                new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent
+                        .LifeStageAdvanced(npc, "TEEN", "ADULT"));
+        src.sendSuccess(() -> Component.literal(
+                "Coming-of-age fired for " + displayName(npc)), true);
+        return 1;
+    }
+
+    private static int handleSetUnfinished(CommandContext<CommandSourceStack> ctx) {
+        return setUnfinishedImpl(ctx, null);
+    }
+
+    private static int handleSetUnfinishedWithTarget(CommandContext<CommandSourceStack> ctx) {
+        return setUnfinishedImpl(ctx, UuidArgument.getUuid(ctx, "target"));
+    }
+
+    private static int setUnfinishedImpl(CommandContext<CommandSourceStack> ctx, UUID target) {
+        CommandSourceStack src = ctx.getSource();
+        UUID id = UuidArgument.getUuid(ctx, "uuid");
+        String typeStr = StringArgumentType.getString(ctx, "type");
+        ServerLevel level = src.getLevel();
+        TownspersonMob npc = TownspersonMob.findByUUID(level, id).orElse(null);
+        if (npc == null) {
+            src.sendFailure(Component.literal("No NPC with UUID " + id));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Npc.Aging.UnfinishedBusinessType type;
+        try {
+            type = tterrag1112.life_in_the_village.Npc.Aging.UnfinishedBusinessType
+                    .valueOf(typeStr.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Unknown type: " + typeStr));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Npc.Aging.RetirementHandler
+                .setUnfinishedDirect(npc, type, target, level);
+        src.sendSuccess(() -> Component.literal(
+                "Unfinished business for " + displayName(npc) + ": " + type.name()), true);
+        return 1;
+    }
+
+    private static String truncate(String s, int n) {
+        if (s == null) return "";
+        return s.length() <= n ? s : s.substring(0, n - 1) + "…";
     }
 }

@@ -2236,3 +2236,416 @@ returns 403. Static inspection confirms:
 **Phase 10 — events (travelers, lone structures, junctions, landmarks)**.
 Phase 9's `EdgeDeathEvent` and `VillagePlacementEvent` hooks are available
 for Phase 10 lore generators / event spawners to subscribe to.
+
+---
+
+## Phase 10 — Event system infrastructure
+
+**Date:** 2026-04-24
+
+### Summary
+
+Lays the groundwork for four categories of road events (TRAVELER /
+LONE_STRUCTURE / JUNCTION / LANDMARK) without shipping any real event
+content. Event types are registered at mod init via a static
+`RoadEventRegistry`, planned deterministically along an edge or at a node by
+`EventSitePlanner`, materialised by per-type `EventFactory`s through
+`EventRealizer`, persisted alongside the road graph in `WorldRoadSavedData`,
+and despawned on expiry by `EventLifecycleSystem` (running daily from
+`KingdomTaxEvent` alongside the Phase 9 dead-edge sweep).
+
+Two placeholder event types — `test_marker` (COMMON, PERMANENT,
+LONE_STRUCTURE — polished andesite + redstone torch every 2000 blocks on
+CONNECTOR/TRUNK) and `test_ephemeral` (UNCOMMON, EPHEMERAL, JUNCTION —
+2x2 leaves cluster with a 5-day lifespan) — register only when the JVM is
+launched with `-Dlitv.testEvents=true`. They exist for regression testing
+of the registry, planning, realisation, persistence, and expiry paths.
+
+### Files created (new package: `Village/Roads/Events/`)
+
+**`RoadEvent.java`**
+- Record `(eventId, typeId, position, containingEdgeId, containingNodeId,
+  placedTick, expiresAtTick, properties, historyRefId)` with Codec.
+- Helpers: `isPermanent()`, `hasExpired(currentTick)`, `withProperty`,
+  `withHistoryRef`. Properties bag is `Map<String,String>` for cheap codec
+  + extensibility.
+- Codec uses `optionalFieldOf` for every nullable / optional field so old
+  saves with no events load cleanly.
+
+**`RoadEventType.java`**
+- Record `(typeId, category, permanence, rarity, minSpacingBlocks,
+  applicableTiers, applicableBiomes, worldUnique, factory)`.
+- Enums: `EventCategory` (TRAVELER / LONE_STRUCTURE / JUNCTION / LANDMARK),
+  `EventPermanence` (PERMANENT / EPHEMERAL / MIXED),
+  `EventRarity` (COMMON 1.0× / UNCOMMON 0.5× / RARE 0.1× / WORLD_UNIQUE).
+- The factory and predicates are code-only — only `typeId` is persisted on
+  events; the type is re-resolved through the registry on load.
+
+**`EventFactory.java`**
+- Interface `(create(EventPlacementContext) -> RoadEvent | null,
+  despawn(level, event))`.
+
+**`EventPlacementContext.java`**
+- Record `(level, edge, node, sitePosition, currentTick, rng)` passed to
+  `create`.
+
+**`RoadEventRegistry.java`**
+- Static `LinkedHashMap<String, RoadEventType>` with `register`, `get`,
+  `all`, `byCategory`, `applicableTo(edge|node)`, `worldUniqueTypes`.
+- JUNCTION-only types are filtered out of the edge applicability list;
+  edge-only categories are filtered out of node applicability.
+
+**`EventSitePlanner.java`**
+- `planSitesForEdge(edge, graph, level)` walks `edge.blockPath()` by XZ
+  block distance, steps every `minSpacingBlocks`, applies biome filter via
+  `WorldAtlas.getCellAtBlock`, and rolls a deterministic per-slot float
+  against `rarity.targetDensityMultiplier()` seeded by
+  `edgeId XOR worldSeed XOR typeIdHash XOR slotIndex`.
+- A second pass enforces same-type spacing along path order.
+- `planSitesForNode(node, graph, level)` is a single deterministic roll
+  per (node, type) with rarity-mapped probabilities (COMMON 0.30 →
+  WORLD_UNIQUE 1.0).
+
+**`EventRealizer.java`**
+- `realizeEvents(level, edge|node, plans, graph)` iterates planned sites,
+  invokes each factory inside
+  `RoadPlacementContext.withSuppressionReturning(...)` (new helper),
+  registers the result in `WorldRoadSavedData`, threads the new event UUID
+  into the owner's `eventIds` list, and marks world-unique types placed.
+- Idempotency: re-realising an edge skips planned sites whose type already
+  has an event within `minSpacingBlocks` on the same owner.
+- Factory exceptions are caught + logged; bad factories don't abort the
+  rest of the plan.
+
+**`EventLifecycleSystem.java`**
+- `maybeTickExpirations(level)` self-throttles to once per game day.
+- `tickExpirations` collects expired events, calls each factory's
+  `despawn` (catching exceptions), removes the event from owner edge/node
+  `eventIds`, removes from `WorldRoadSavedData.events`, and unmarks the
+  world-unique flag if applicable so the type can re-place later.
+- `despawnEvent(level, saved, graph, event)` is exposed for the
+  `despawn_event` debug command.
+
+**`PlaceholderEvents.java`**
+- `test_marker`: polished_andesite at offset (+3X, ground) with a
+  redstone_torch on top. PERMANENT.
+- `test_ephemeral`: 2x2 persistent oak_leaves block at node.above().
+  EPHEMERAL with `currentTick + 5 days` expiry.
+- `registerIfEnabled()` only registers when `-Dlitv.testEvents=true`;
+  `register()` is a force-on entry point used by tests.
+
+### Files modified
+
+**`Village/Roads/Graph/RoadEdge.java`**
+- Added `List<UUID> eventIds` field; codec slot lives in the `ExtrasTuple`
+  half (now 3 fields, still under the 16-arity ceiling). Accessors:
+  `getEventIds`, `addEventId`, `removeEventId`, `clearEventIds`.
+
+**`Village/Roads/Graph/RoadNode.java`**
+- Added `List<UUID> eventIds` field; codec is now 7 fields. Same accessors
+  as RoadEdge.
+
+**`Networking/WorldRoadSavedData.java`**
+- `Snapshot` record gained `Map<UUID, RoadEvent> events` and
+  `List<String> worldUniqueTypesPlaced` (codec is now 8 fields). Both
+  `optionalFieldOf` so pre-Phase-10 saves load cleanly.
+- Added accessor methods: `getEvent`, `registerEvent`, `updateEvent`,
+  `removeEvent`, `allEvents`, `eventsForEdge`, `eventsForNode`,
+  `isWorldUniquePlaced`, `markWorldUniquePlaced`,
+  `unmarkWorldUniquePlaced`, `getWorldUniqueTypesPlaced`.
+
+**`Village/Roads/Realization/RoadPlacementContext.java`**
+- Added `withSuppressionReturning(Supplier<T>)` that mirrors the existing
+  `Runnable` flavour but allows the work to return a value. Used by
+  `EventRealizer` to capture the factory's `RoadEvent` while keeping
+  terrain-change suppression active.
+
+**`Village/Roads/Realization/EdgeRealizer.java`**
+- After shelter placement, calls `EventSitePlanner.planSitesForEdge` and
+  `EventRealizer.realizeEvents`. Then for each unprocessed adjacent node
+  (by empty `eventIds`) plans + realises node events. Whole event block
+  is wrapped in try/catch so an event-placement bug never aborts road
+  realisation.
+
+**`Events/KingdomTaxEvent.java`**
+- After the Phase 9 lifecycle calls, invokes
+  `EventLifecycleSystem.maybeTickExpirations(level)`.
+
+**`Lore/HistoryTextGenerator.java`**
+- Added `recordEventInHistory(typeId, description, relatedKingdomId, tick)
+  -> UUID`. Phase 10 hook only — no event factories invoke it yet. Logs
+  the description and returns a generated UUID.
+
+**`Life_in_the_village.java`**
+- `commonSetup` calls `PlaceholderEvents.registerIfEnabled()` so the test
+  types appear when launched with `-Dlitv.testEvents=true`.
+
+**`Commands/RoadGraphDebugCommand.java`**
+- Six new subcommands under `/liv road debug`:
+  - `events <targetId>` — argument is matched against edge then node UUIDs
+    by prefix. Prints type, position, placed tick, expiry delta.
+  - `events_near <radius>` — sorts saved events by distance from the
+    player; useful for "what's around me?" inspection.
+  - `spawn_event <typeId>` — calls the type's factory at the player's
+    position with no edge/node owner. Refuses if `worldUnique` is already
+    placed. Marks `WorldRoadSavedData` dirty.
+  - `despawn_event <eventId>` — prefix-matches an event UUID and routes
+    through `EventLifecycleSystem.despawnEvent` so factory teardown,
+    owner-list cleanup, and saved-data removal all run.
+  - `event_registry` — lists every registered type with category /
+    permanence / rarity / spacing / tiers.
+  - `event_stats` — total events, by category, by type, plus the
+    world-unique-placed set.
+
+### Design decisions
+
+**Property bag uses `Map<String,String>` rather than typed records.**
+Phase 10 doesn't yet know what data future events will store; a string
+map is the cheapest way to keep the codec stable across future event
+types without adding a `Codec.dispatch` for properties. Specific event
+types that need richer state can encode multiple keys.
+
+**Re-planning is deterministic, realisation is idempotent.** Re-realising
+an edge calls the planner again; the planner produces the same site
+positions; the realiser drops any planned site that already has an event
+of the same type within `minSpacingBlocks`. The combined effect is
+equivalent to "place once, never again", but without needing a separate
+"events placed" persistent flag.
+
+**Node events trigger from the first adjacent edge's realisation.** Nodes
+don't have their own realise hook. The first edge to be realised that
+touches a node with empty `eventIds` runs the node planner. Re-running
+the planner on a later edge realisation no-ops because `eventIds` is
+non-empty. If a node has no realised edges, its events stay deferred —
+acceptable, since unrealised nodes aren't visible anyway.
+
+**`isCapital`-style filter is not used here.** Unlike Phase 9's
+network-alignment scoring, Phase 10 events apply uniformly across edges
+of the eligible tier. Specific event types can constrain themselves
+through `applicableTiers` and `applicableBiomes`.
+
+**World-unique gates run twice.** The planner skips a world-unique type
+already placed (cheap pre-filter); the realiser re-checks immediately
+before invoking the factory (race-safe in case two edges realise the
+same tick). The factory is responsible for its own internal
+race-tolerance — only one of the two callers will end up registering the
+event in `WorldRoadSavedData`.
+
+**`unmarkWorldUniquePlaced` on despawn.** When the only world-unique
+event of its type expires, the slot opens up again. Future placements of
+the same type are eligible. This avoids permanent lockout if a temporary
+landmark expires mid-world-life.
+
+### Known tuning candidates
+
+- **Density multipliers** are guesses (`COMMON 1.0 / UNCOMMON 0.5 /
+  RARE 0.1`). They scale the per-slot probability so a long edge gets
+  more sites; a short edge gets fewer. Likely too dense at COMMON for
+  some types — worth checking once real types ship.
+- **Node-event probabilities** (COMMON 0.30 → RARE 0.05) are picks; if
+  junction events feel rare in playtest the COMMON bucket can rise.
+- **`test_marker` offset** is hardcoded `+3X` rather than perpendicular to
+  the road direction. Real events should compute perpendicular like
+  `RoadLightingPlacer`. Acceptable for placeholder.
+- **Event-event spacing across types** is unenforced. Two different
+  COMMON types can stack on the same block. If clutter becomes an issue,
+  add a global-spacing pass to the planner.
+
+### Observations
+
+The build can't be verified in this sandbox (NeoForge maven returns 403).
+Static inspection confirms:
+- All five new codec sites stay within DFU's 16-field arity ceiling
+  (BaseTuple 16, ExtrasTuple 3, RoadNode 7, Snapshot 8, RoadEvent 9).
+- The `ExtrasTuple` slot is the only place RoadEdge can grow without
+  breaking the 16-field limit; future road-edge fields should bundle here
+  too.
+- `Codec.unboundedMap(UUID_CODEC, RoadEvent.CODEC)` mirrors the existing
+  `edgeShelters` codec pattern; persistence behaviour should match.
+
+### Carryovers
+
+- No real event types yet. Spec says they come after the NPC rework.
+- History integration is a hook only; nothing invokes it.
+- `EventSitePlanner.planSitesForNode` does not honour `minSpacingBlocks`
+  across types yet — single roll per (node, type). Add if needed.
+- Test placeholder events default off; flip `-Dlitv.testEvents=true` to
+  exercise them.
+
+### Next
+
+**Phase 11 — player-initiated road construction**. Real event types will
+arrive as small additions in later phases; Phase 11 takes precedence per
+the road plan.
+
+---
+
+## Session B5 — bugfix pass: gateway selection, lighting, signs, great-road junctioning
+
+**Date:** 2026-04-24
+**Phase:** Bugfix (post-Phase-10)
+
+### Summary
+
+Four defects investigated. Three confirmed and fixed; the fourth (Defect 3,
+spurious road crossings) is deferred for re-test because it is a likely
+downstream symptom of Defect 1.
+
+### Defect 1 — gateway selection backward — FIXED
+
+**Root cause:** `VillageRoadNode.OutwardDirection.fromAngle(...)` computes a
+sector index `(int)(r/(π/4) + 0.5) % 8` where sector 0 corresponds to angle 0
+(EAST in Minecraft +x convention), then returns `values()[sector]`. But the
+enum is declared in the order `NORTH, NORTHEAST, EAST, SOUTHEAST, SOUTH,
+SOUTHWEST, WEST, NORTHWEST`, so `values()[0]` is NORTH, not EAST. Every
+gateway's `outwardDirection` was therefore wrong by two sectors. In
+`ConnectorPlanner.selectGateway`, every alignment dot product collapsed to ~0
+(a perpendicular outward vs. an east-pointing approach), and the
+PRIMARY-vs-SIDE role priority became the tiebreaker — selecting whichever
+gateway happened to be PRIMARY regardless of approach direction. The user's
+report ("eastern connector ends at the western gateway") matches this
+exactly when the western gate was the layout's primary.
+
+**Fix:** explicit `switch (sector)` mapping in `OutwardDirection.fromAngle`.
+The selection logic was correct; only the direction lookup was broken. The
+codec persists the enum by `name`, so existing saves are unaffected.
+
+**Files modified:** `Village/Roads/Graph/VillageRoadNode.java`.
+
+**Verification:** trace through with east gate at (+50, 0) and a connector
+at (+300, 0): old code returned NORTH for the east gate, new code returns
+EAST; alignment becomes +1.0 instead of 0; east gate selected.
+`/litv road debug test_gateway_selection` should now report the correct
+gateway for any external position.
+
+### Defect 2 — road lighting has no visible pattern — FIXED
+
+**Root cause:** `RoadLightingPlacer.placeLighting` iterated over
+`edge.getBlockPath()`, but post-Phase-5 that field is the **full-width
+placed-block list** returned by `OrganicRoadPlacer.PlacementResult.placedBlocks`
+— every block placed across the road's core/inner/edge zones, not the
+centerline. The lighting placer's accumulator advanced 1 per step, but
+"steps" were perpendicular siblings of the same centerline position, so
+spacing math broke and the perpendicular calculation derived from
+consecutive-block deltas pointed in nonsensical directions. Result: lights
+scattered everywhere, sometimes on the road, sometimes off it, with no
+visible cadence.
+
+**Fix:** `EdgeRealizer.realizeEdgeImpl` now accumulates a `centerlinePath`
+in parallel with `fullPath`, by appending each primitive's `computeCenterline`
+output (with the same first-block-skip dedup as `fullPath`).
+`RoadLightingPlacer` gains a 6-arg overload that accepts an explicit
+centerline; the 5-arg legacy overload still falls back to
+`edge.getBlockPath()` for any external caller (debug `force_lighting`),
+but the realisation pipeline always uses the new overload.
+
+**Files modified:**
+- `Village/Roads/Realization/EdgeRealizer.java` — accumulate centerlinePath,
+  pass to lighting placer.
+- `Village/Roads/Lighting/RoadLightingPlacer.java` — new
+  `placeLighting(level, edge, centerline, palette, profile, graph)` overload;
+  legacy 5-arg variant delegates with `edge.getBlockPath()`.
+
+**Verification:** with the centerline path, the accumulator's
+`blockDistXZ(prev, cur)` is consistently 1 per step, so spacing
+(SPARSE 24 / MODERATE 16 / DENSE 8) is enforced; `computePerp` derives a
+real road-direction perpendicular; offset `halfWidth + 1` lands lights
+clearly off the road; strategy (BOTH_SIDES / ALTERNATING_SIDES /
+SINGLE_SIDE_*) behaves as designed.
+
+### Defect 2b — junction signs on road surface — FIXED
+
+**Root cause:** `JunctionDecorator.placeRoadSigns` computed sign position as
+`nodePos + (dx/dist, dz/dist)` — i.e. one block forward along the outgoing
+road direction. That landed the sign on the road centerline.
+`isRoadMaterial` skipped placement when the road was already realised but
+let the sign through when the sign decorator ran first.
+
+**Fix:** sign position is now computed as
+`nodePos + forward + perpendicular * (halfWidth + 1)` — one block forward
+plus a perpendicular offset using `RoadClearanceValidator.minimumDecorationOffset(tier)`,
+mirroring the milestone / lighting offset convention. Added an explicit
+`RoadClearanceValidator.isClearOfRoads(signBase, graph, 1)` guard before
+placement.
+
+**Files modified:** `Village/Roads/Decoration/JunctionDecorator.java`.
+
+### Defect 3 — new roads cross over older roads — DEFERRED
+
+**Hypothesis:** likely a downstream symptom of Defect 1. With the wrong
+gateway selected, connector A* targets a destination on the wrong side of
+the village, so the route detours backward and crosses any existing road
+that lies between start and the wrong-side gateway. Once the gateway
+selection picks the correct (near-side) gateway, the route should be
+direct and the spurious crossing should disappear.
+
+**Action:** no code change in B5. Re-test after the Defect 1 fix is in.
+If perpendicular crossings still appear in playtest, add the perpendicular-
+crossing penalty to `AtlasRouteRouter` per the spec: query
+`EdgeGridIndex` for any edge in the cell, compute the angle between the
+proposed move and the edge direction; apply the existing road-cell
+discount only when the move is within ~30° of the edge direction;
+otherwise apply a `COST_ROAD_CROSSING ≈ 4.0f` penalty.
+
+### Defect 4 — great roads don't junction with each other — FIXED
+
+**Root cause:** `GreatRoadGenerationQueue.CommitEdgeTask.process` checked
+only for an exact-endpoint duplicate; it never asked "does my path overlap
+an existing GREAT_ROAD edge's cellPath?" Two trunks routed independently
+through the same area would both commit and both place blocks, producing
+the visual "weaving / looping" the user reported, with no
+TRUNK_JUNCTION node ever inserted.
+
+**Fix:** before committing the new trunk, the task now walks
+`trunk.cellPath()` and queries `graph.edgesInCell(cellKey)` for each cell.
+The first cell that is also in any existing GREAT_ROAD edge's cellPath
+becomes the convergence cell. If the new trunk shares more than 2 cells
+with that existing edge, the new trunk is treated as a duplicate route
+and dropped (with a warning). Otherwise the existing edge is split at the
+convergence cell via `WorldRoadGraph.splitEdgeAtCell` (creating a
+TRUNK_JUNCTION node), and the new trunk is committed as **two** edges
+(`anchorA → junction` and `junction → anchorB`) that share the new junction
+node. `splitEdgeAtCell` already handles preservation of meanderProfile,
+maintenance, maintainerVillageIds, staleCells, and realized blockPath.
+
+The MAX_SHARED_FOR_JUNCTION threshold is 2 cells (~128 world blocks), per
+the spec's guideline that 1–2 cells = junction, more = duplicate route.
+Junction surface-snap uses
+`level.getHeight(MOTION_BLOCKING_NO_LEAVES, x, z)` so the inserted node
+sits at the surface.
+
+**Files modified:**
+- `Events/GreatRoadGenerationQueue.java` — pre-commit overlap detection +
+  conditional split-and-rejoin or duplicate-skip in `CommitEdgeTask.process`.
+  Added imports for `AtlasRouteRouter` and `Heightmap`.
+
+### Open questions / follow-ups
+
+- **Multi-cell overlap divergence point:** the current fix splits at the
+  *first* shared cell only. If a new trunk has 2 shared cells (within the
+  junction-allowed range), the second shared cell is silently un-junctioned —
+  the new trunk's halfB segment passes through it but doesn't insert a
+  matching node. Acceptable for now because the visual artifact is
+  vastly reduced; the second cell is short and the rendered overlap is
+  small. If it shows up in playtest, extend the split logic to also
+  insert a divergence junction.
+- **Multiple simultaneous overlaps with different edges:** the current fix
+  handles overlap with the *first* existing edge encountered. If the new
+  trunk crosses two different existing trunks, the second crossing falls
+  through to the normal commit path and visually overlaps. Rare in
+  practice (worldgen anchor spacing is wide enough that triple-overlaps
+  are unusual). Tracked for follow-up if observed.
+- **Defect 3 retest:** required after Defect 1 lands. Add to next
+  playtest checklist.
+- **Pre-B5 saved worlds with broken outwardDirections:** village graphs
+  stored before this session have stale (NORTH-instead-of-EAST etc.)
+  gateway directions. They will reload with the wrong directions because
+  the field is persisted by name. Re-spawning a village or manually
+  editing the value would fix individual cases. No automatic migration
+  shipped — the symptom is "wrong gateway sometimes selected on a
+  village created in a pre-B5 session"; new villages from B5 onward are
+  correct.
+
+### Next
+
+Per-user direction.

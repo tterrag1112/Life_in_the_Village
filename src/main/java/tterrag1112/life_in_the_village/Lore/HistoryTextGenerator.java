@@ -1152,4 +1152,42 @@ public class HistoryTextGenerator {
             HistoryPageType type,
             String text,
             String title) {}
+
+    // -------------------------------------------------------------------------
+    // Phase 10 — road event integration hook
+    // -------------------------------------------------------------------------
+
+    /**
+     * Phase 10 — records a road-event placement in the world history. Returns
+     * a stable UUID that the calling factory can store on its
+     * {@link tterrag1112.life_in_the_village.Village.Roads.Events.RoadEvent#historyRefId}
+     * for later cross-reference.
+     *
+     * <p>This is a hook only. No event factories invoke it in Phase 10 —
+     * specific event types added later (lore landmarks, royal processions,
+     * etc.) will call it during their {@code create}.
+     *
+     * @param eventTypeId       the {@link
+     *     tterrag1112.life_in_the_village.Village.Roads.Events.RoadEventType#typeId()}
+     *     of the placed event
+     * @param description       free-form lore-text describing the event
+     * @param relatedKingdomId  optional kingdom whose history the entry is
+     *                          attached to; if empty the entry is "world-wide"
+     * @param tick              game-time when the event was placed
+     * @return UUID identifying the history entry
+     */
+    public static UUID recordEventInHistory(String eventTypeId,
+                                             String description,
+                                             Optional<UUID> relatedKingdomId,
+                                             long tick) {
+        UUID id = UUID.randomUUID();
+        // No persistence yet — log so debug commands can confirm the hook fired.
+        System.out.println("[HistoryTextGenerator] recordEventInHistory id="
+                + id.toString().substring(0, 8)
+                + " typeId=" + eventTypeId
+                + " kingdom=" + relatedKingdomId.map(k -> k.toString().substring(0, 8)).orElse("-")
+                + " tick=" + tick
+                + " desc=\"" + description + "\"");
+        return id;
+    }
 }

@@ -10,7 +10,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.UuidArgument;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -248,9 +248,9 @@ public final class RequestDebugCommand {
 
     private static Item resolveItem(String id) {
         try {
-            ResourceLocation rl = id.contains(":")
-                    ? ResourceLocation.parse(id)
-                    : ResourceLocation.parse("minecraft:" + id);
+            Identifier rl = id.contains(":")
+                    ? Identifier.parse(id)
+                    : Identifier.parse("minecraft:" + id);
             return BuiltInRegistries.ITEM.getValue(rl);
         } catch (Exception e) {
             return Items.AIR;

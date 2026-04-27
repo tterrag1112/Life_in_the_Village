@@ -13,6 +13,13 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.VillageInhabitantPopulator;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.NeighborColorIndex;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantRegistry;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantSelector;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillagePaletteResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
@@ -159,6 +166,11 @@ public class VillageSpawner {
         Map<BuildingType, Building> placedBuildings = new LinkedHashMap<>();
         Map<BuildingType, List<Building>> placedBuildingsAll = new LinkedHashMap<>();
         Map<BuildingType, Integer> typeCounters = new HashMap<>();
+        // P0a-11: per-village running index of placed primary colours.
+        // Built incrementally as each placement completes — placement
+        // order (the matcher's iteration order) is the source of truth
+        // for which buildings are "already placed" at sample time.
+        NeighborColorIndex neighborIndex = new NeighborColorIndex();
 
         for (LayoutSlot slot : layout.buildings()) {
             BuildingType buildingType = slot.getBuildingType();
@@ -218,12 +230,49 @@ public class VillageSpawner {
             String buildingName = villageName + "_"
                     + buildingType.name().toLowerCase() + "_" + typeIndex;
 
-            Identifier structId = CultureResolver.resolveFromPath(
-                    typeData.getCulture(), slot.getStructurePath(), level);
+            // Variant-aware path: the matcher picks variant id + style
+            // per slot during P0a-06; fall back to the type-default for
+            // slots created on legacy code paths that haven't been
+            // routed through the matcher yet.
+            String variantId = slot.getVariantId() != null
+                    ? slot.getVariantId()
+                    : BuildingVariant.defaultVariantId(buildingType);
+            Style variantStyle = slot.getStyle() != null
+                    ? slot.getStyle() : Style.RURAL;
+            CultureResolver.LegacyTypeLevel parsed = CultureResolver
+                    .parseLegacyTypeLevel(slot.getStructurePath());
+            int buildingLevel = parsed != null ? parsed.level() : 1;
+            Identifier structId = CultureResolver.resolve(
+                    typeData.getCulture(), variantStyle, buildingType,
+                    variantId, buildingLevel, level);
+
+            // P0a-10/11: build the TintPass.Plan.
+            //   * Variant drives which colour slots are populated.
+            //   * Palette comes from VillagePaletteResolver's resolution
+            //     chain (village colorPalette → culture default → NONE).
+            //   * Neighbour index supplies the soft-exclusion set so a
+            //     row of houses doesn't all roll the same primary colour.
+            BuildingVariant variant = VariantRegistry.INSTANCE
+                    .find(typeData.getCulture(), variantStyle,
+                            buildingType, variantId)
+                    .or(() -> VariantRegistry.INSTANCE
+                            .defaultVariant(buildingType,
+                                    typeData.getCulture(), variantStyle))
+                    .or(() -> VariantRegistry.INSTANCE
+                            .defaultVariant(buildingType,
+                                    "default", variantStyle))
+                    .orElseGet(() -> VariantSelector.Fallback
+                            .syntheticDefault(buildingType, variantStyle));
+            java.util.Set<net.minecraft.world.item.DyeColor> neighborColors =
+                    neighborIndex.colorsWithin(slotCentre,
+                            VillagePaletteResolver.NEIGHBOUR_RADIUS);
+            TintPass.Plan tintPlan = VillagePaletteResolver
+                    .planFor(typeData, variant, rng, neighborColors);
 
             try {
                 Optional<Building> placed = BuildingPlacer.placeAndRegister(
-                        level, buildPos, structId, buildingName, buildingType, rotation);
+                        level, buildPos, structId, buildingName, buildingType,
+                        rotation, variantId, tintPlan);
                 if (placed.isEmpty()) continue;
 
                 Building newBuilding = placed.get();
@@ -232,6 +281,10 @@ public class VillageSpawner {
                 placedBuildingsAll
                         .computeIfAbsent(buildingType, k -> new ArrayList<>())
                         .add(newBuilding);
+
+                // P0a-11: feed the running neighbour index so the next
+                // placement's primary sample sees this building.
+                neighborIndex.add(slotCentre, newBuilding.getPrimaryColor());
 
                 footprint.occupyBuilding(newBuilding, BuildingFootprint.DEFAULT_BUFFER);
                 data.setDirty();

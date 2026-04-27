@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Roads.Events.EventLifecycleSystem;
 import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.DeadEdgeDetector;
 import tterrag1112.life_in_the_village.Village.Roads.Lifecycle.ReclaimedEdgeCleanup;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -50,6 +51,9 @@ public class KingdomTaxEvent {
         // Both operations self-throttle and no-op on intermediate ticks.
         DeadEdgeDetector.maybeScan(level);
         ReclaimedEdgeCleanup.maybeCleanup(level);
+
+        // Phase 10 — once-per-day expiration sweep for ephemeral road events.
+        EventLifecycleSystem.maybeTickExpirations(level);
 
         VillageSavedData data = VillageSavedData.get(level);
 

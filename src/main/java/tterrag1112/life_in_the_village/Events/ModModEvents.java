@@ -75,6 +75,9 @@ public class ModModEvents {
     public static void onAddServerReloadListeners(AddServerReloadListenersEvent event){
         event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "castle_styles"),
                 CastleStyleLoader.INSTANCE);
+        event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "variant_manifests"),
+                tterrag1112.life_in_the_village.Village.Decoration.Variants
+                        .VariantManifestLoader.INSTANCE);
 
 
     }
@@ -274,6 +277,7 @@ public class ModModEvents {
         SimDebugCommand.register(event.getDispatcher());
         GuildAbstractDebugCommand.register(event.getDispatcher());
         CompanyDebugCommand.register(event.getDispatcher());
+        ApprenticeDebugCommand.register(event.getDispatcher());
         RequestDebugCommand.register(event.getDispatcher());
         VisitorDebugCommand.register(event.getDispatcher());
         HistoryDebugCommand.register(event.getDispatcher());

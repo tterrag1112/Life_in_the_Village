@@ -201,7 +201,7 @@ public final class RiteExecutor {
         // Phase 3 doc 21 — confession resolves MELANCHOLY directly per
         // spec "Open decisions" #4. NERVOUS_BREAKDOWN is too severe
         // to clear via confession alone (needs healer + time).
-        if (confessor.getHealth().remove(
+        if (confessor.getHealthComponent().remove(
                 tterrag1112.life_in_the_village.Npc.Health.HealthCondition.MELANCHOLY)) {
             confessor.getMood().applyWithRawMagnitude(
                     tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger.HEALED,

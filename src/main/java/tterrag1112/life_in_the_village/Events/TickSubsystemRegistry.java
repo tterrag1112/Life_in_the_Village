@@ -116,6 +116,7 @@ public final class TickSubsystemRegistry {
         register(new HealthDailyTickSystem());
         register(new PlagueRollTickSystem());
         register(new CompanyAiTickSystem());
+        register(new ApprenticeshipWeeklyTickSystem());
         register(new RequestBoardTickSystem());
         register(new VisitorFluxTickSystem());
         register(new HistoryPruneTickSystem());

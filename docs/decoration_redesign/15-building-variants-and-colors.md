@@ -468,3 +468,235 @@ Codec extends Building with three optional `DyeColor` fields and a
 ## Revision notes
 
 (Changes recorded here as the spec evolves.)
+
+### P0a-01 / P0a-02 — initial migration + manifest plumbing
+
+- The minimal manifests written for each migrated building omit
+  `footprint`. The spec example shows an explicit footprint, but
+  the "Missing manifest defaults" entry omits it too. Treating an
+  absent `footprint` as "ask the NBT" keeps `StructureSizeCache`
+  as the source of truth and avoids hand-typed dimensions
+  drifting from the actual NBT geometry. Authored variant packs
+  (P0a-15 / P0a-16) can declare `footprint` explicitly when
+  overriding NBT geometry.
+- `CultureResolver` keeps the (culture → default) two-level
+  fallback chain it had before, just rewritten onto the new
+  `{culture}/rural/{type}/{type}/level_{n}` shape. The richer
+  variant-aware chain in §"CultureResolver fallback chain" lands
+  in P0a-04 as planned; the interim shape is documented in the
+  resolver's javadoc.
+- A small helper `CultureResolver.toVariantAwarePath` translates
+  the legacy `{type}/level_{n}` path (still emitted by
+  `BuildingRegistry` and `VillageTypeBuilder`) into the new
+  `rural/{type}/{type}/level_{n}` layout. Reused from
+  `StructureSizeCache` so both code paths agree on the
+  translation. Non-canonical paths (e.g. the market-stall
+  `default/market/stall/stall_1`) pass through unchanged so the
+  market subsystem is unaffected.
+- Migration only touches the default-culture building NBTs at
+  the `{type}/level_{n}.nbt` shape. The kingdom-castle test
+  fixtures under `default/castle/test/...` are kit pieces (not
+  building level NBTs) and stay where they are. Non-default
+  cultures had no authored buildings and so had nothing to move.
+
+### P0a-03 / P0a-04 / P0a-05 — variants + 7-step resolver + size cache rekey
+
+- `BuildingVariant` deviates from the doc's "Data structures"
+  snippet in two ways:
+    - Adds `String culture`, `Style style`, and `BuildingType type`
+      to the record. The doc's flat
+      `Map<BuildingType, List<BuildingVariant>>` doesn't carry
+      culture/style any other way, and downstream callers
+      (`CultureResolver`, the planner) need them on the variant
+      itself rather than via a parallel index map.
+    - Uses a nested `Footprint(int x, int z)` record instead of
+      `BoundingBox`. The manifest is XZ-only; synthesizing a Y
+      just to wrap in a 3D box would be lossy and would force
+      every reader (size cache, scoring) to re-extract XZ.
+- A new `Style` enum (`RURAL`, `URBAN`) and `AgeCategory` enum
+  (`FRESH`, `WEATHERED`, `ANCIENT`) were added alongside the
+  existing `StylePreference` / `AgePreference`. The doc's
+  `eligibleFor(BuildingType, Style, VillageSizeTier, AgeCategory)`
+  signature implies these as concrete (no `ANY` member) sibling
+  types to the `*Preference` bias enums.
+- Per the P0a-05 task brief, an explicit manifest `footprint`
+  takes precedence over the NBT-measured size. When a variant has
+  no override (i.e. all migrated buildings, since their minimal
+  manifests omit `footprint`), the cache loads the NBT through
+  the same seven-step resolver the placer uses, so size and
+  geometry stay in sync.
+- `StructureSizeCache` keeps a legacy `get(structurePath,
+  rotation)` overload as a one-step bridge for planning-layer
+  callers (`LayoutPrimitive`, `PlanContext`) that still pass
+  `"{type}/level_{n}"` strings. Defaults: `culture=default`,
+  `style=RURAL`, `variantId=type-default`. P0a-06 upgrades these
+  callers when the matcher learns variant selection.
+- The interim `CultureResolver.toVariantAwarePath` helper added
+  in P0a-01 / P0a-02 was deleted — the seven-step resolver
+  constructs paths directly and there is no longer any string-
+  level rewriting. `parseLegacyTypeLevel` replaces it as the
+  one-line bridge used by the size cache and `resolveFromPath`.
+- The default-of-default fallback (steps 5–6) emits a one-time
+  warning per `(BuildingType, variantId)` combination so an
+  authored variant going missing for a culture is loud once but
+  not noisy. Step 7 (no NBT anywhere) is a logged error listing
+  all six tried paths.
+
+### P0a-06 / P0a-07 / P0a-19 — variant scoring + style auto + diversity bonus
+
+- `VillageTypeData.style` is a free-form `String` (default
+  `"auto"`) rather than an enum. Doc 15 lists `"rural"` /
+  `"urban"` / `"auto"` today but the auto-derivation rules already
+  reference layout categories that may grow new style folders
+  before the enum does. The consumer (`StyleAutoDeriver`) lower-
+  cases and switches; unknown values fall through to `"auto"`.
+- `StyleSelection` is a sealed interface with `Fixed` and
+  `UrbanLeaning` variants. The doc describes the URBAN-leaning
+  case as a per-building dice roll, so the resolution can't
+  collapse to a single `Style` at the village level. The
+  per-slot roll happens in `PlacementMatcher.applyVariantSelection`
+  via `StyleSelection.pickStyle(rng)`.
+- **Determinism preserved for the current pack.** Two RNG calls
+  could leak into the existing villages' planning stream and
+  shift downstream rolls (terrain jitter, etc.):
+  - `StyleSelection.pickStyle` for `UrbanLeaning`
+  - `VariantSelector.select`'s weighted-random roll
+  Both are short-circuited when only one style or one variant is
+  authored for the type — exactly the situation today, since
+  P0a-15 / P0a-16 (variant pack authoring) hasn't shipped.
+  `StyleAutoDeriver.pickStyleForType` and `VariantSelector`'s
+  single-candidate fast path encode this. Once additional
+  variants are authored, the RNG stream will diverge from the
+  pre-P0a-06 stream — that's expected and acceptable per the
+  task brief.
+- **Recipe-direct commits keep the default variant.** Layout
+  primitives that bypass `PlacementMatcher` and call
+  `tryCommitWithRetries` themselves (most shape recipes do this
+  for the town hall and a few feature placements) end up with
+  the `LayoutSlot` constructor's default-variant + RURAL.
+  That's fine while only RURAL content exists — the seven-step
+  resolver handles the path lookup either way. P0a-15 / P0a-16
+  authoring will need to revisit this and either route those
+  commits through the selector or add a recipe-side variant
+  pick, depending on how much variation the recipe wants.
+- **Placement counter scope.** The counter lives on a
+  `VariantSelector` instance owned by `PlanContext` (lazily
+  constructed). One `PlanContext` per `VillagePlanner.plan` call
+  → one matcher run → one counter. A second village in the same
+  matcher pass starts fresh because each call gets its own
+  `PlanContext`. The counter is keyed by full `VariantKey`
+  (culture + style folder + type + variantId) so two cultures
+  that happen to share a variantId don't share a counter.
+- **`AgeCategory` is wired through `VillageAgeCategoryHook`** —
+  a single static method returning `FRESH` until NPC Phase 4
+  doc 30 lands. Swap the implementation there to turn on
+  weighted age selection.
+- **Village preferred tags are reserved for P0a-14.** The
+  scoring formula reads them via the `VariantSelector.select`
+  parameter, but the matcher passes an empty set today. P0a-14
+  (VillageTypeData colour-palette work) is the natural place to
+  land the field.
+
+### P0a-08 / P0a-09 / P0a-10 — colour data model + tint pass
+
+- **`white_glazed_terracotta` slot decision.** Doc 15 lists this
+  block under both `ACCENT` and `ROOF` ("when on a roof slope").
+  The P0a-10 brief says the slot is decided by block type, not
+  position. Treating glazed terracotta as `ACCENT` only matches
+  the brief; authors who want a roof-glazed effect should use
+  `white_carpet` or `white_candle` (both already on the `ROOF`
+  list). If we ever need glazed-terracotta roof tinting, we'll
+  need a position-aware second-look path.
+- **Palette colour names.** Two doc 15 colour names don't have
+  exact `DyeColor` matches. The presets use the closest
+  available substitute and flag the choice here:
+  - `BERGEN_FJORD` lists "mustard" — uses `ORANGE` as the
+    nearest dye proxy. (`YELLOW` reads too bright; `ORANGE`
+    sits closer to the historical mustard pigment.)
+  - `MUTED_EARTH` lists "light_brown_(hex)" — uses `YELLOW`
+    as the proxy at low weight. The note in doc 15 implies a
+    custom hex value, which `DyeColor` can't represent.
+- **Tint pass insertion point.** Runs inside
+  `BuildingPlacer.placeAndRegister`, sandwiched between
+  `template.placeInWorld(...)` and `applyBiomeSwap(...)`. The
+  loop walks the same rotated footprint extents that the biome
+  swap walks so the two passes visit the same world cells.
+- **Forced colour overrides (TEMPLE / TOWN_HALL / guild halls)
+  are P0a-12.** Marked with a `TODO P0a-12` comment in
+  `VillagePaletteResolver.planFor` — the override branch should
+  short-circuit before sampling and is the natural place to
+  consult `GuildData` and `VillageTypeData`'s eventual
+  signature-colour field.
+- **Building codec migration.** P0a-08 adds four new
+  `optionalFieldOf` fields, so pre-P0a-08 saves load cleanly
+  with `variantId = type-default` and all colours `null`. The
+  full save-data migration pass (rewriting old records to carry
+  the new fields explicitly) is P0a-20.
+- **Per-building RNG.** Colour sampling uses the village's
+  existing deterministic RNG (`new Random((long) origin.hashCode()
+  * 31L + villageName.hashCode())`) which `VillageSpawner`
+  already creates and threads through farm plots and inhabitant
+  population. Same seed + village → same colour assignments.
+  Note: this is distinct from the planning RNG (which lives on
+  `PlanContext`); the spawn-time stream and the planning stream
+  diverge by design — colours don't affect layout, layout
+  doesn't affect colours.
+- **Village→palette is hardcoded for now.** Default culture
+  → `MUTED_EARTH`; everything else → `NONE` (no tint). P0a-14
+  replaces this with `VillageTypeData.colorPalette` parsing.
+
+### P0a-11 / P0a-12 / P0a-14 — palette resolution + neighbour exclusion + forced overrides
+
+- **`VillageTypeData.colorPalette` storage.** Pre-parsed at type-
+  load time into a `ColorPalette` record (or `null` to fall
+  through). Both shapes from doc 15 (string preset id and inline
+  `{primary,accent,roof}` object) go through
+  `ColorPaletteRegistry.parse` so the on-disk format and the
+  in-memory representation stay consistent.
+- **`CultureDefaultPalettes`.** Holds the culture → default
+  palette mapping. Currently `default → MUTED_EARTH`; future
+  cultures register defaults here. Replaces the hardcoded P0a-10
+  bridge in `VillagePaletteResolver.paletteFor`. Unknown
+  cultures fall through to `NONE`.
+- **TEMPLE override is unconditional.** Applies even when the
+  village's resolved palette is `NONE`, because the spec frames
+  TEMPLE → WHITE as a culture-agnostic constant. TOWN_HALL with
+  a non-null `signatureColor` follows the same rule for the
+  same reason — when explicit colour is declared, it shouldn't
+  be silently dropped just because the rest of the village is
+  un-tinted.
+- **Guild-hall override is partial.** `GuildData` (the existing
+  record under `Guilds.Adventurer`) has no colour fields today.
+  The override falls through to palette sampling and emits a
+  one-time warning per guild type. Adding `guildColor`/
+  `guildAccent` to `GuildData` is a separate task — when those
+  fields land, the override resolution in
+  `VillagePaletteResolver.planFor` is the only call site that
+  needs an update. The matching block in the resolver lives
+  immediately after the TOWN_HALL branch, marked with the
+  one-time warning logic.
+- **Neighbour exclusion implementation.** `NeighborColorIndex`
+  is a per-village list of `(centre, primaryColor)` tuples
+  built up during `VillageSpawner`'s placement loop. Lookup is
+  a linear scan within an XZ Euclidean radius of 12 blocks. With
+  current villages capped at ~30 buildings, scan cost stays in
+  the low hundreds of comparisons per village. Flagged for a
+  future spatial-index pass if village sizes climb. The index is
+  fed only successful placements with non-null primary colour,
+  so untintable buildings (NONE palette, variants without
+  PRIMARY in `colorSlots`, TEMPLE not contributing because it
+  forces WHITE — actually TEMPLE *does* contribute since its
+  primary is WHITE) don't poison subsequent samples.
+- **Soft-exclusion fallback.** `VillagePaletteResolver` retries
+  primary sampling without the soft set when the first call
+  collapses to `null` (only happens when the soft multiplier
+  zeroes every weight, which the doc calls "pathological"). The
+  retry is hard-exclusion-free as well, so the building always
+  gets *some* primary colour rather than silently going un-
+  tinted.
+- **Determinism preserved.** The neighbour index reads the
+  matcher's placement order via `layout.buildings()` iteration
+  in `VillageSpawner`. No separate ordering for colour purposes;
+  same `(worldSeed, origin, villageName)` produces the same
+  building order, the same neighbour sets at sample time, and
+  therefore the same colours.

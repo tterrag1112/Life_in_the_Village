@@ -6,6 +6,11 @@ import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.BuildingInhabitantRegistry;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.AgeCategory;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleSelection;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantSelector;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillageAgeCategoryHook;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.*;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
@@ -44,6 +49,22 @@ public final class PlanContext {
     public final List<VillageTypeData.StarterBuilding> remaining;
     public boolean rejectWaterForAll = false;
     public boolean allowRidgePlacement = false;
+
+    /**
+     * Variant-selection inputs (P0a-06 / P0a-07). Set by
+     * {@link tterrag1112.life_in_the_village.Village.Planning
+     * .VillagePlanner} once it has the {@link VillageTypeData}; the
+     * matcher reads these to pick variants per slot. All four are
+     * left null for legacy / test paths that bypass VillagePlanner —
+     * the matcher then falls back to "default variant, RURAL style".
+     */
+    private VillageTypeData typeData;
+    private StyleSelection styleSelection;
+    private VillageSizeTier sizeTier;
+    private AgeCategory ageCategory;
+
+    /** One {@link VariantSelector} per matcher run (per village). */
+    private VariantSelector variantSelector;
 
     private final List<PlacementSlot> offeredSlots = new java.util.ArrayList<>();
 
@@ -108,6 +129,39 @@ public final class PlanContext {
     public static BuildingType parseType(VillageTypeData.StarterBuilding sb) {
         try { return BuildingType.valueOf(sb.type()); }
         catch (IllegalArgumentException e) { return null; }
+    }
+
+    // =========================================================================
+    // Variant context (P0a-06 / P0a-07)
+    // =========================================================================
+
+    /**
+     * Sets the variant-selection inputs. Called by VillagePlanner
+     * once it has the {@link VillageTypeData}; the matcher reads
+     * these via {@link #variantSelector()} and the related getters.
+     */
+    public void setVariantContext(VillageTypeData typeData,
+                                  StyleSelection styleSelection,
+                                  VillageSizeTier sizeTier,
+                                  AgeCategory ageCategory) {
+        this.typeData = typeData;
+        this.styleSelection = styleSelection;
+        this.sizeTier = sizeTier;
+        this.ageCategory = ageCategory;
+    }
+
+    public VillageTypeData typeData() { return typeData; }
+    public StyleSelection styleSelection() { return styleSelection; }
+    public VillageSizeTier sizeTier() { return sizeTier; }
+    public AgeCategory ageCategory() {
+        return ageCategory != null ? ageCategory
+                : VillageAgeCategoryHook.forNewVillage();
+    }
+
+    /** Lazy-constructed {@link VariantSelector} for this matcher run. */
+    public VariantSelector variantSelector() {
+        if (variantSelector == null) variantSelector = new VariantSelector();
+        return variantSelector;
     }
 
     // =========================================================================

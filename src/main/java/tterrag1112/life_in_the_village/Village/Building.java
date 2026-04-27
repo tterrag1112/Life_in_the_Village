@@ -7,15 +7,18 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.phys.AABB;
+import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingCondition;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
 
 import java.util.*;
 
@@ -34,6 +37,23 @@ public class Building {
     // ── New field: tracks maintenance/decay state ────────────────────────────
     private BuildingCondition condition = BuildingCondition.NEW;
 
+    // ── P0a-08: variant + color fields ──────────────────────────────────────
+    /**
+     * Doc 15 — which authored variant was placed at this site. Defaults
+     * to {@code type.name().toLowerCase()} (the type-default variant)
+     * for any building constructed without an explicit variant id; the
+     * matcher writes the chosen variant via {@link #setVariantId} at
+     * placement time.
+     */
+    private String variantId;
+
+    /** Doc 15 — primary tint colour. Null = no tint (current behaviour). */
+    @Nullable private DyeColor primaryColor = null;
+    /** Doc 15 — accent tint colour. */
+    @Nullable private DyeColor accentColor  = null;
+    /** Doc 15 — roof tint colour. */
+    @Nullable private DyeColor roofColor    = null;
+
     // =========================================================================
     // UUID codec helper
     // =========================================================================
@@ -45,6 +65,17 @@ public class Building {
     // =========================================================================
     // Codec
     // =========================================================================
+
+    /**
+     * DyeColor codec. Stored as the lowercase enum name so JSON
+     * inspection in saves stays readable. Optional fields use the
+     * {@link Codec#STRING} → {@link DyeColor} mapping wrapped in
+     * {@code optionalFieldOf} for forward-compat.
+     */
+    public static final Codec<DyeColor> DYE_COLOR_CODEC = Codec.STRING.xmap(
+            s -> DyeColor.valueOf(s.toUpperCase()),
+            d -> d.name().toLowerCase()
+    );
 
     public static final Codec<Building> CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
@@ -69,7 +100,20 @@ public class Building {
                     // BuildingCondition — optional so existing saves load with WEATHERED default
                     BuildingCondition.CODEC
                             .optionalFieldOf("condition", BuildingCondition.WEATHERED)
-                            .forGetter(Building::getCondition)
+                            .forGetter(Building::getCondition),
+                    // P0a-08 additions — all optional so pre-P0a-08
+                    // saves load cleanly. variantId defaults to the
+                    // type-default variant (folder named identically
+                    // to the type); the three colour fields default
+                    // to absent (no tint).
+                    Codec.STRING.optionalFieldOf("variantId")
+                            .forGetter(b -> Optional.ofNullable(b.variantId)),
+                    DYE_COLOR_CODEC.optionalFieldOf("primaryColor")
+                            .forGetter(b -> Optional.ofNullable(b.primaryColor)),
+                    DYE_COLOR_CODEC.optionalFieldOf("accentColor")
+                            .forGetter(b -> Optional.ofNullable(b.accentColor)),
+                    DYE_COLOR_CODEC.optionalFieldOf("roofColor")
+                            .forGetter(b -> Optional.ofNullable(b.roofColor))
             ).apply(instance, Building::fromCodec)
     );
 
@@ -77,9 +121,17 @@ public class Building {
                                       BuildingShape shape, Identifier structureId,
                                       int buildingLevel,
                                       Rotation rotation,
-                                      BuildingCondition condition) {
+                                      BuildingCondition condition,
+                                      Optional<String> variantId,
+                                      Optional<DyeColor> primaryColor,
+                                      Optional<DyeColor> accentColor,
+                                      Optional<DyeColor> roofColor) {
         Building b = new Building(id, name, type, shape, structureId, buildingLevel, rotation);
         b.condition = condition;
+        b.variantId = variantId.orElse(BuildingVariant.defaultVariantId(type));
+        b.primaryColor = primaryColor.orElse(null);
+        b.accentColor  = accentColor.orElse(null);
+        b.roofColor    = roofColor.orElse(null);
         return b;
     }
 
@@ -100,6 +152,7 @@ public class Building {
         this.buildingLevel = level;
         this.id            = UUID.randomUUID();
         this.condition     = BuildingCondition.NEW;
+        this.variantId     = BuildingVariant.defaultVariantId(type);
     }
 
     /** Private constructor — used by codec (preserves persisted UUID). */
@@ -114,6 +167,7 @@ public class Building {
         this.buildingLevel = buildingLevel;
         this.rotation      = rotation;
         this.condition     = BuildingCondition.WEATHERED; // safe default for loaded buildings
+        this.variantId     = BuildingVariant.defaultVariantId(type);
     }
 
     // =========================================================================
@@ -134,6 +188,21 @@ public class Building {
     public void setUpgradeLevel(int level)       { this.buildingLevel = level; }
     public void setLevel(int level)              { this.buildingLevel = level; }
     public void setCondition(BuildingCondition c){ this.condition     = c; }
+
+    public String getVariantId() { return variantId; }
+    public void   setVariantId(String variantId) {
+        this.variantId = variantId != null
+                ? variantId
+                : BuildingVariant.defaultVariantId(buildingType);
+    }
+
+    @Nullable public DyeColor getPrimaryColor() { return primaryColor; }
+    @Nullable public DyeColor getAccentColor()  { return accentColor; }
+    @Nullable public DyeColor getRoofColor()    { return roofColor; }
+
+    public void setPrimaryColor(@Nullable DyeColor c) { this.primaryColor = c; }
+    public void setAccentColor(@Nullable DyeColor c)  { this.accentColor  = c; }
+    public void setRoofColor(@Nullable DyeColor c)    { this.roofColor    = c; }
 
     // =========================================================================
     // Legacy NBT save/load (used by old code paths, kept for compatibility)

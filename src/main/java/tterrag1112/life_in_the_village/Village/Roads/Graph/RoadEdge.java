@@ -93,7 +93,8 @@ public class RoadEdge {
      */
     private record ExtrasTuple(
             Optional<RoadLightingProfile> lightingOverride,
-            Optional<DeadEdgeState> deadState) {}
+            Optional<DeadEdgeState> deadState,
+            List<UUID> eventIds) {}
 
     private static final MapCodec<BaseTuple> BASE_MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
             UUID_CODEC.fieldOf("edgeId")
@@ -140,7 +141,10 @@ public class RoadEdge {
             RoadLightingProfile.CODEC.optionalFieldOf("lightingOverride")
                     .forGetter(ExtrasTuple::lightingOverride),
             DeadEdgeState.CODEC.optionalFieldOf("deadState")
-                    .forGetter(ExtrasTuple::deadState)
+                    .forGetter(ExtrasTuple::deadState),
+            UUID_CODEC.listOf()
+                    .optionalFieldOf("eventIds", new ArrayList<>())
+                    .forGetter(ExtrasTuple::eventIds)
     ).apply(i, ExtrasTuple::new));
 
     public static final Codec<RoadEdge> CODEC =
@@ -162,6 +166,7 @@ public class RoadEdge {
         e.character = base.character();
         e.lightingOverride = extras.lightingOverride();
         e.deadState = extras.deadState();
+        e.eventIds = new ArrayList<>(extras.eventIds());
         return e;
     }
 
@@ -179,7 +184,7 @@ public class RoadEdge {
     }
 
     private static ExtrasTuple toExtrasTuple(RoadEdge e) {
-        return new ExtrasTuple(e.lightingOverride, e.deadState);
+        return new ExtrasTuple(e.lightingOverride, e.deadState, new ArrayList<>(e.eventIds));
     }
 
     // ── Fields ───────────────────────────────────────────────────────────────
@@ -221,6 +226,13 @@ public class RoadEdge {
      * GREAT_ROAD edges never have this set (invariant 3).
      */
     Optional<DeadEdgeState> deadState = Optional.empty();
+
+    /**
+     * Phase 10 — UUIDs of road events ({@link
+     * tterrag1112.life_in_the_village.Village.Roads.Events.RoadEvent}) attached
+     * to this edge. Mutated by the event realiser and lifecycle system.
+     */
+    List<UUID> eventIds = new ArrayList<>();
 
     /**
      * Transient flag: maintenance crossed a Phase 6b band boundary this upkeep
@@ -343,6 +355,13 @@ public class RoadEdge {
     public Optional<RoadLightingProfile> getLightingOverride()       { return lightingOverride; }
     public void setLightingOverride(RoadLightingProfile p)           { this.lightingOverride = Optional.of(p); }
     public void clearLightingOverride()                              { this.lightingOverride = Optional.empty(); }
+
+    // ── Event attachments (Phase 10) ─────────────────────────────────────────
+
+    public List<UUID> getEventIds()                                  { return eventIds; }
+    public void addEventId(UUID id)                                  { eventIds.add(id); }
+    public boolean removeEventId(UUID id)                            { return eventIds.remove(id); }
+    public void clearEventIds()                                      { eventIds.clear(); }
 
     // ── Dead-edge state (Phase 9) ────────────────────────────────────────────
 

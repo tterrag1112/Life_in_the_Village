@@ -4,6 +4,8 @@ package tterrag1112.life_in_the_village.Village.Planning;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Rotation;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 
 /**
  * A single planned position in a {@link VillageLayout}.
@@ -67,6 +69,25 @@ public class LayoutSlot {
     private int footprintWidth  = 0;
     private int footprintLength = 0;
 
+    /**
+     * Chosen variant identifier (P0a-06). Defaults to the type's
+     * default variant id ({@code type.name().toLowerCase()}); the
+     * matcher overwrites it when {@link
+     * tterrag1112.life_in_the_village.Village.Decoration.Variants
+     * .VariantSelector} picks a non-default variant. Persistence on
+     * the {@link tterrag1112.life_in_the_village.Village.Building}
+     * record is P0a-08; the field lives on the slot for now so the
+     * matcher → spawner handoff is local.
+     */
+    private String variantId;
+
+    /**
+     * Chosen variant style folder. Defaults to {@link Style#RURAL}
+     * to match the post-P0a-01 layout for slots constructed before
+     * variant selection runs.
+     */
+    private Style style = Style.RURAL;
+
     /** Gap added outside the footprint before considering overlap. */
     private static final int GAP = StructureSizeCache.MIN_GAP;
 
@@ -83,6 +104,8 @@ public class LayoutSlot {
         this.structurePath = structurePath;
         this.halfW         = radius;
         this.halfL         = radius;
+        this.variantId     = buildingType != null
+                ? BuildingVariant.defaultVariantId(buildingType) : null;
     }
 
     /** Building slot with an explicit rotation. */
@@ -170,6 +193,13 @@ public class LayoutSlot {
 
     public void setRotation(Rotation rotation) {
         this.rotation = rotation != null ? rotation : Rotation.NONE;
+    }
+
+    public String  getVariantId() { return variantId; }
+    public void    setVariantId(String variantId) { this.variantId = variantId; }
+    public Style   getStyle()     { return style; }
+    public void    setStyle(Style style) {
+        this.style = style != null ? style : Style.RURAL;
     }
 
     /**

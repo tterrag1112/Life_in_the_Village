@@ -413,18 +413,33 @@ public final class JunctionDecorator {
             String destName = resolveDestination(otherId, node.nodeId(), graph, villageData, SIGN_MAX_HOPS);
             if (destName == null) continue; // no interesting destination in range
 
-            // Sign post position: 1 block in the edge direction from the junction corner
+            // Session B5 fix — sign position is offset PERPENDICULAR to the
+            // outgoing road, not 1 block along it (which kept the sign on the
+            // road centerline). Step `halfWidth + 1` blocks sideways from the
+            // junction corner so the sign clearly sits beside the road.
             int dx = other.position().getX() - node.position().getX();
             int dz = other.position().getZ() - node.position().getZ();
             double dist = Math.max(1.0, Math.sqrt((double) dx * dx + (double) dz * dz));
-            int nx = nodePos.getX() + (int) Math.round(dx / dist);
-            int nz = nodePos.getZ() + (int) Math.round(dz / dist);
+            // Forward unit vector (along the outgoing road)
+            double fdx = dx / dist;
+            double fdz = dz / dist;
+            // Perpendicular unit vector (right-hand of forward in MC XZ space)
+            double pdx = -fdz;
+            double pdz =  fdx;
+            int perpOffset = RoadClearanceValidator.minimumDecorationOffset(edge.getTier());
+            int nx = nodePos.getX()
+                    + (int) Math.round(fdx)         // step 1 block past the corner along the road
+                    + (int) Math.round(pdx * perpOffset);
+            int nz = nodePos.getZ()
+                    + (int) Math.round(fdz)
+                    + (int) Math.round(pdz * perpOffset);
             int ny = surfaceY(level, nx, nz);
 
             // Skip if the sign position overlaps another road block
             BlockPos signBase = new BlockPos(nx, ny, nz);
             if (!level.isLoaded(signBase)) continue;
             if (isRoadMaterial(level.getBlockState(signBase))) continue;
+            if (!RoadClearanceValidator.isClearOfRoads(signBase, graph, 1)) continue;
 
             Block fenceBlock = cultureFenceBlock(culture);
             Block signBlock  = cultureSignBlock(culture);

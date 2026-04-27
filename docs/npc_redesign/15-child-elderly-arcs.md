@@ -378,3 +378,108 @@ Phase 2 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### Phase 2 implementation notes
+
+- **Coming-of-age rite without priest** (spec line 144).
+  Phase 2 v1 treats VILLAGE_LEADER, PRIEST, or HERALD as
+  ceremony-eligible; the rite seeds `OFFICIATED_BY` /
+  `OFFICIATED_FOR` memories on both parties. Phase 3 task 20
+  (religion + priest) layers in proper rite content; the
+  hook is `ComingOfAgeHandler.findRiteOfficiant` — narrowing
+  the search to PRIEST first lands then.
+
+- **Schedule layering for child variant** (spec line 290) is
+  done at goal-priority level, not at the resolver layer.
+  The existing `ChildPlayGoal` is high-priority and active
+  whenever the NPC is a child + not at home, hijacking the
+  WORK_* phase windows in practice. Adding new
+  CHILD_SCHOOLING / AFTERNOON_HELP `DayPhase` enum values
+  would have rippled through every existing schedule
+  consumer for marginal benefit. Documented as a deviation.
+
+- **Elderly schedule slowdown** is a true resolver-layer
+  overlay: `ScheduleResolver.applyElderlySlowdown` runs
+  after personal phase-shifts when the NPC is ELDERLY and
+  not on a day-off. Halves WORK_PRIMARY span, brings
+  WAKE_UP / HOME_PREP earlier by ~500-1000 ticks, extends
+  LEISURE by 60%. Spec line 196 says "magnitude scales with
+  age past threshold"; Phase 2 ships flat magnitudes per
+  spec's example numbers. Age-scaling lands as Phase 5
+  polish.
+
+- **Death-with-regret hook contract.** Spec line 217 names
+  the side effects: kingdom history, nearby mood drop,
+  gossip seed. The hook is `DeathArc.onNpcDeath` — called
+  from `TownspersonMob.onNpcDeath`. v1 fires the gossip
+  seed and the mood drop. The kingdom-history note is
+  Phase 4 territory (no `KingdomHistoryData` write surface
+  in Phase 2); the hook position is documented so the
+  Phase 4 wiring slots in cleanly.
+
+- **Funeral as full event** is a Phase 3 priest concern
+  (spec line 226). Phase 2 ships only the data hook —
+  `WITNESSED_DEATH_OF` memories on attendees within 32
+  blocks distinguish age-natural deaths from combat by the
+  `dyingNatural` flag on `TownspersonMob`. The flag is
+  currently never set automatically (no age-cap simulation
+  yet); debug commands or a future age-tick can set it.
+
+- **MentorGoal vs ApprenticeshipManager mentorship.** The
+  apprenticeship manager already had a 16-block-radius
+  master-presence multiplier. Task 15 adds an elderly
+  mentor path through the same `MentorshipBonus.npcMentorshipFor`
+  helper: when an elderly NPC's `RetirementState.mentorTargetId`
+  points at a co-located NPC, that target gets the +50% XP
+  multiplier just like an apprentice would. The two
+  pathways union (max-multiplier wins) so the mentee
+  doesn't get double bonuses if they're an apprentice with
+  an elderly mentor at the same workplace.
+
+- **UnfinishedBusiness → LifeGoal proxy.** Spec line 215
+  calls the unfinished business "a soft life-goal with
+  elevated priority". Each `UnfinishedBusinessType` carries
+  a `proxyGoal()` mapping to an existing `LifeGoalType` so
+  the existing life-goal pipeline picks it up without a
+  new soft-goal surface. The retirement state owns the
+  unfinished business directly so resolution / un-resolution
+  can be inspected via `/npc elderly`. Promoting the proxy
+  to a real `LifeGoalSet.add` with bumped priority is a
+  Phase 5 polish step — the scaffolding here is ready.
+
+- **Child-only DayPhase enum values not added.** Spec
+  mentions MORNING_PLAY, AFTERNOON_HELP, SCHOOLING. Adding
+  them would force every existing schedule consumer to add
+  new cases. v1 keeps the existing 11-phase enum and lets
+  `ChildPlayGoal` + the librarian's schooling stub
+  interpret existing phases. Documented as deviation.
+
+- **`preferredProfession` derivation.** ChildhoodInitializer
+  seeds the field at birth (50% chance to inherit
+  caregiver's profession). At coming-of-age,
+  `ChildhoodInitializer.recomputePreference` falls back to
+  trait-based selection if no preference is set: high
+  Honesty → SCRIBE, high Sociability → INNKEEPER, high
+  Industry → FARMER. Phase 5 culture pass replaces this
+  with the spec's culture-weighted preference.
+
+- **Forced retirement age** explicitly deferred per spec
+  line 365. v1 lets Industry trait keep elderly indefinitely
+  in non-physical professions; physical professions
+  (MINER/GUARD/FARMER/CARPENTER/STONEMASON/BUILDER/FARMHAND)
+  with Industry < 0.5 fully retire on ELDERLY entry. No
+  hard cap.
+
+- **ChildhoodInitializer relies on entity-loaded child.**
+  `BirthInFamily` carries the child UUID; the initialiser
+  looks the entity up in the level. If the entity isn't
+  loaded yet (rare with current spawn flows), the seed step
+  is skipped — a follow-up dispatch on the next birth roll
+  catches it. Documented as a known sharp edge.
+
+### Phase 2 close-out
+
+This task closes Phase 2. All eight Phase 2 tasks (11, 12,
+13, 14, 15, 16, 17, 18) are implemented. The
+exit-criteria scenario per NPC_PLAN.md is reachable
+in-game — verification waits on a local build run.

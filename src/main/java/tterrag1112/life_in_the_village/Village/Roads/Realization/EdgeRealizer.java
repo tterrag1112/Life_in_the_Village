@@ -18,6 +18,8 @@ import tterrag1112.life_in_the_village.Village.Roads.Decoration.ShelterPlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Events.EventRealizer;
+import tterrag1112.life_in_the_village.Village.Roads.Events.EventSitePlanner;
 import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingPlacer;
 import tterrag1112.life_in_the_village.Village.Roads.Lighting.RoadLightingProfile;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -112,6 +114,11 @@ public final class EdgeRealizer {
         }
 
         List<BlockPos> fullPath = new ArrayList<>();
+        // Session B5 fix — Phase 7g lighting needs the road centerline (one block
+        // per forward step), not the full-width placed-block list. Without this,
+        // lighting iterated over perpendicular siblings and accumulated distance
+        // wrongly, producing scattered lights everywhere instead of cadenced ones.
+        List<BlockPos> centerlinePath = new ArrayList<>();
         RoadShape.RoadTier edgeTier = PrimitiveChainBuilder.edgeTierToRoadTier(edge.getTier());
 
         for (RoadPrimitive primitive : primitives) {
@@ -129,10 +136,12 @@ public final class EdgeRealizer {
 
             if (fullPath.isEmpty()) {
                 fullPath.addAll(placed.isEmpty() ? centerline : placed);
+                centerlinePath.addAll(centerline);
             } else {
                 // Skip first block of each successive primitive to avoid duplicates at joins
                 List<BlockPos> src = placed.isEmpty() ? centerline : placed;
                 if (src.size() > 1) fullPath.addAll(src.subList(1, src.size()));
+                if (centerline.size() > 1) centerlinePath.addAll(centerline.subList(1, centerline.size()));
             }
         }
 
@@ -150,11 +159,14 @@ public final class EdgeRealizer {
         // Phase 7g lighting pass — place fixtures based on the edge's resolved
         // profile (override first, else palette default). Runs before milestones
         // so later decorators can read light positions from decorationPositions.
+        // Session B5 fix — pass the centerline path explicitly. The edge's stored
+        // blockPath is the full-width placed-block list and is unsuitable for
+        // step-wise iteration along the road direction.
         RoadLightingProfile lightingProfile = edge.getLightingOverride()
                 .orElse(edgePalette.defaultLighting());
         RoadLightingPlacer.PlacementResult lightingResult =
                 RoadLightingPlacer.placeLighting(
-                        level, edge, edgePalette, lightingProfile, graph);
+                        level, edge, centerlinePath, edgePalette, lightingProfile, graph);
         if (lightingResult.lightsPlaced() > 0) {
             System.out.println("[EdgeRealizer] Placed " + lightingResult.lightsPlaced()
                     + " light(s) on edge " + shortId
@@ -168,6 +180,37 @@ public final class EdgeRealizer {
 
         // Shelter planning — only for long GREAT_ROAD and TRUNK edges, only on first realization
         placeSheltersIfAbsent(level, edge, graph, roadData, culture);
+
+        // Phase 10 — road events. Plan deterministic sites and run each type's
+        // factory. Re-realisation is idempotent because planning is deterministic
+        // and the realiser dedupes by spacing.
+        try {
+            List<EventSitePlanner.PlannedEvent> plans =
+                    EventSitePlanner.planSitesForEdge(edge, graph, level);
+            int placed = EventRealizer.realizeEvents(level, edge, plans, graph);
+
+            // Trigger node-event placement on adjacent nodes that haven't been
+            // processed yet. We use first-edge-realisation as the node trigger
+            // because nodes don't have their own realisation hook.
+            for (java.util.UUID nodeId : List.of(edge.getNodeAId(), edge.getNodeBId())) {
+                tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode node =
+                        graph.getNode(nodeId);
+                if (node == null) continue;
+                if (!node.getEventIds().isEmpty()) continue; // already processed
+                List<EventSitePlanner.PlannedEvent> nodePlans =
+                        EventSitePlanner.planSitesForNode(node, graph, level);
+                placed += EventRealizer.realizeEvents(level, node, nodePlans, graph);
+            }
+
+            if (placed > 0) {
+                System.out.println("[EdgeRealizer] placed " + placed
+                        + " road event(s) on edge " + shortId);
+            }
+        } catch (Exception e) {
+            // Event placement must never abort road realisation.
+            System.err.println("[EdgeRealizer] event placement threw on edge "
+                    + shortId + ": " + e);
+        }
     }
 
     // =========================================================================

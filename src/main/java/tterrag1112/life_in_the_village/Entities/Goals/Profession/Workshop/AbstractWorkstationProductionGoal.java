@@ -31,6 +31,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Profession.NpcProfessionXp;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import javax.annotation.Nullable;
 import java.util.*;

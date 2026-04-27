@@ -5,6 +5,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder;
 import tterrag1112.life_in_the_village.Village.Decoration.TownSquarePlacer;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleAutoDeriver;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleSelection;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillageAgeCategoryHook;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
@@ -128,6 +132,14 @@ public class VillagePlanner {
         long worldSeed = ctx.seed();
         PlanContext pctx = new PlanContext(
                 level, layout, sizeCache, rng, ctx, density, worldSeed, remaining);
+
+        // Variant context — derived once per village from the type
+        // data + the resolved tier. The matcher reads this when
+        // picking variants per slot (P0a-06).
+        VillageSizeTier tier = VillageSizeTier.fromBuildingCount(expanded.size());
+        StyleSelection styleSel = StyleAutoDeriver.resolve(typeData, tier);
+        pctx.setVariantContext(typeData, styleSel, tier,
+                VillageAgeCategoryHook.forNewVillage());
 
         // 6. Dispatch to the recipe
         try {
