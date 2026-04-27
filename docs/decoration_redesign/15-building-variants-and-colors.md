@@ -468,3 +468,33 @@ Codec extends Building with three optional `DyeColor` fields and a
 ## Revision notes
 
 (Changes recorded here as the spec evolves.)
+
+### P0a-01 / P0a-02 — initial migration + manifest plumbing
+
+- The minimal manifests written for each migrated building omit
+  `footprint`. The spec example shows an explicit footprint, but
+  the "Missing manifest defaults" entry omits it too. Treating an
+  absent `footprint` as "ask the NBT" keeps `StructureSizeCache`
+  as the source of truth and avoids hand-typed dimensions
+  drifting from the actual NBT geometry. Authored variant packs
+  (P0a-15 / P0a-16) can declare `footprint` explicitly when
+  overriding NBT geometry.
+- `CultureResolver` keeps the (culture → default) two-level
+  fallback chain it had before, just rewritten onto the new
+  `{culture}/rural/{type}/{type}/level_{n}` shape. The richer
+  variant-aware chain in §"CultureResolver fallback chain" lands
+  in P0a-04 as planned; the interim shape is documented in the
+  resolver's javadoc.
+- A small helper `CultureResolver.toVariantAwarePath` translates
+  the legacy `{type}/level_{n}` path (still emitted by
+  `BuildingRegistry` and `VillageTypeBuilder`) into the new
+  `rural/{type}/{type}/level_{n}` layout. Reused from
+  `StructureSizeCache` so both code paths agree on the
+  translation. Non-canonical paths (e.g. the market-stall
+  `default/market/stall/stall_1`) pass through unchanged so the
+  market subsystem is unaffected.
+- Migration only touches the default-culture building NBTs at
+  the `{type}/level_{n}.nbt` shape. The kingdom-castle test
+  fixtures under `default/castle/test/...` are kit pieces (not
+  building level NBTs) and stay where they are. Non-default
+  cultures had no authored buildings and so had nothing to move.

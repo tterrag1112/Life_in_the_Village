@@ -6,6 +6,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Rotation;
 import tterrag1112.life_in_the_village.Village.BuildingPlacer;
+import tterrag1112.life_in_the_village.Village.CultureResolver;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -70,11 +71,16 @@ public class StructureSizeCache {
     // =========================================================================
 
     private FootprintInfo load(String structurePath, Rotation rotation) {
+        // Translate legacy {type}/level_{n} paths into the new variant-
+        // aware layout. P0a-04 will replace this with full
+        // (culture, style, type, variant) keying.
         var id = Identifier
                 .fromNamespaceAndPath(
                         tterrag1112.life_in_the_village
                                 .Life_in_the_village.MODID,
-                        "default/"+structurePath);
+                        "default/"
+                                + CultureResolver.toVariantAwarePath(
+                                        structurePath));
 
         var templateOpt = BuildingPlacer.loadTemplate(level, id);
         if (templateOpt.isEmpty()) {

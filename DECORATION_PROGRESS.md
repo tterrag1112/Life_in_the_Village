@@ -15,8 +15,8 @@ variants-and-colors.md` before any other Phase 0 doc.
 
 | ID | Task | Subsystem | Status | Notes |
 |---|---|---|---|---|
-| P0a-01 | Folder migration: existing NBTs → `{culture}/{style}/{type}/{variant}/` | 15-building-variants-and-colors | Not-Started | One-shot migration |
-| P0a-02 | `manifest.json` schema + loader | 15-building-variants-and-colors | Not-Started | |
+| P0a-01 | Folder migration: existing NBTs → `{culture}/{style}/{type}/{variant}/` | 15-building-variants-and-colors | Implemented | One-shot migration; resolver + StructureSizeCache rewrite legacy `{type}/level_{n}` paths via `CultureResolver.toVariantAwarePath`. Full fallback chain still pending P0a-04. |
+| P0a-02 | `manifest.json` schema + loader | 15-building-variants-and-colors | Implemented | `VariantManifest` record + `VariantManifestLoader` reload listener under `Village/Decoration/Variants`; minimal manifests written for each migrated building. |
 | P0a-03 | `BuildingVariant` record + `VariantRegistry` | 15-building-variants-and-colors | Not-Started | Depends P0a-02 |
 | P0a-04 | `CultureResolver` extended fallback chain | 15-building-variants-and-colors | Not-Started | Depends P0a-03 |
 | P0a-05 | `StructureSizeCache` keying by `(culture, style, type, variant)` | 15-building-variants-and-colors | Not-Started | Depends P0a-03 |

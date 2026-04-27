@@ -75,6 +75,9 @@ public class ModModEvents {
     public static void onAddServerReloadListeners(AddServerReloadListenersEvent event){
         event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "castle_styles"),
                 CastleStyleLoader.INSTANCE);
+        event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "variant_manifests"),
+                tterrag1112.life_in_the_village.Village.Decoration.Variants
+                        .VariantManifestLoader.INSTANCE);
 
 
     }

@@ -28,23 +28,28 @@ import java.util.*;
  *
  * <h3>Template path convention</h3>
  * <pre>
- *   structures/{culture}/{building_type}/level_{n}.nbt
+ *   structures/{culture}/{style}/{building_type}/{variant}/level_{n}.nbt
  *
  *   Examples:
- *     structures/default/blacksmith/stall_1.nbt
- *     structures/default/house/stall_1.nbt
- *     structures/nordic/blacksmith/stall_1.nbt
- *     structures/highland/guard_tower/level_1.nbt
+ *     structures/default/rural/blacksmith/blacksmith/level_1.nbt
+ *     structures/default/rural/house/house/level_1.nbt
+ *     structures/default/rural/guard_tower/guard_tower/level_1.nbt
  * </pre>
  *
- * <h3>Fallback chain</h3>
+ * <p>This path layout is the post-P0a-01 migration form. The full
+ * variant-aware fallback chain (separate {@code {culture}/{style}/
+ * {type}/{variant}/} resolution with cross-style and cross-culture
+ * fallbacks) is added in P0a-04. For now this resolver only constructs
+ * the default-variant path of the form {@code
+ * {culture}/rural/{type}/{type}/level_{n}}.</p>
+ *
+ * <h3>Fallback chain (interim — pre-P0a-04)</h3>
  * If a culture doesn't have a template for a specific building/level:
  * <ol>
- *   <li>Try {@code {culture}/{type}/level_{n}.nbt}</li>
- *   <li>Try {@code {culture}/{type}/stall_1.nbt} (downgrade level)</li>
- *   <li>Try {@code default/{type}/level_{n}.nbt} (fallback culture)</li>
- *   <li>Try {@code default/{type}/stall_1.nbt} (fallback both)</li>
- *   <li>Try legacy path {@code {type}/level_{n}.nbt} (no culture prefix)</li>
+ *   <li>Try {@code {culture}/rural/{type}/{type}/level_{n}.nbt}</li>
+ *   <li>Try {@code {culture}/rural/{type}/{type}/level_1.nbt} (downgrade level)</li>
+ *   <li>Try {@code default/rural/{type}/{type}/level_{n}.nbt} (fallback culture)</li>
+ *   <li>Try {@code default/rural/{type}/{type}/level_1.nbt} (fallback both)</li>
  * </ol>
  *
  * <h3>Registration</h3>
@@ -121,6 +126,13 @@ public final class CultureResolver {
      * Returns the structure path that a building's starter_buildings
      * JSON entry maps to, respecting the culture prefix.
      *
+     * <p>Inputs are still in the legacy {@code {type}/level_{n}} shape
+     * (BuildingRegistry / VillageTypeBuilder use that form). This
+     * method translates them into the new variant-aware physical
+     * layout {@code {culture}/rural/{type}/{type}/level_{n}} before
+     * resolving. The richer variant-aware resolution happens in
+     * P0a-04.</p>
+     *
      * @param culture       culture id
      * @param structurePath raw path from JSON (e.g. "blacksmith/level_1")
      * @param world         server level
@@ -129,28 +141,45 @@ public final class CultureResolver {
     public static Identifier resolveFromPath(String culture,
                                              String structurePath,
                                              ServerLevel world) {
-        // If path already has a culture prefix, use as-is
-        if (structurePath.contains("/") && !structurePath.startsWith(culture + "/")) {
-            // Try with culture prefix first
-            Identifier withCulture = buildId(culture + "/" + structurePath);
-            if (templateExists(world, withCulture)) return withCulture;
-        }
+        String variantAwarePath = toVariantAwarePath(structurePath);
 
-        // Try direct path (legacy)
-        Identifier direct = buildId(structurePath);
-        if (templateExists(world, direct)) return direct;
-
-        // Try with culture prefix
-        Identifier withCulture = buildId(culture + "/" + structurePath);
+        // Try requested culture
+        Identifier withCulture = buildId(culture + "/" + variantAwarePath);
         if (templateExists(world, withCulture)) return withCulture;
 
-        // Try default culture
-        Identifier withDefault = buildId(DEFAULT_CULTURE + "/" + structurePath);
+        // Try default culture fallback
+        Identifier withDefault = buildId(DEFAULT_CULTURE + "/" + variantAwarePath);
         if (templateExists(world, withDefault)) return withDefault;
 
-        // Fallback to direct path even if it doesn't exist —
+        // Return the requested-culture path even if it doesn't exist —
         // BuildingPlacer will log the error
-        return direct;
+        return withCulture;
+    }
+
+    /**
+     * Converts a legacy {@code {type}/level_{n}} path into the new
+     * variant-aware {@code rural/{type}/{type}/level_{n}} layout. Paths
+     * that don't match the legacy shape pass through unchanged so
+     * already-rewritten or non-building paths (e.g. market sub-pieces)
+     * keep working.
+     *
+     * <p>Public so {@link tterrag1112.life_in_the_village.Village.Planning
+     * .StructureSizeCache} can reuse the same translation.</p>
+     */
+    public static String toVariantAwarePath(String legacyPath) {
+        if (legacyPath == null || legacyPath.isEmpty()) return legacyPath;
+        if (legacyPath.startsWith("rural/") || legacyPath.startsWith("urban/")) {
+            return legacyPath;
+        }
+        int slash = legacyPath.indexOf('/');
+        if (slash <= 0) return legacyPath;
+        String firstSeg = legacyPath.substring(0, slash);
+        // Only rewrite the canonical {type}/level_{n} shape; leave
+        // anything more complex (e.g. market/stall/stall_1) untouched.
+        String remainder = legacyPath.substring(slash + 1);
+        if (remainder.contains("/")) return legacyPath;
+        if (!remainder.startsWith("level_")) return legacyPath;
+        return "rural/" + firstSeg + "/" + legacyPath;
     }
 
     /**
@@ -170,37 +199,28 @@ public final class CultureResolver {
                                               int level,
                                               ServerLevel world) {
         String typePath = type.name().toLowerCase();
+        String variantTail = "rural/" + typePath + "/" + typePath;
 
-        // 1. Exact: {culture}/{type}/level_{n}
-        Identifier exact = buildId(culture + "/" + typePath + "/level_" + level);
+        // 1. Exact: {culture}/rural/{type}/{type}/level_{n}
+        Identifier exact = buildId(culture + "/" + variantTail + "/level_" + level);
         if (templateExists(world, exact)) return exact;
 
-        // 2. Downgrade level: {culture}/{type}/level_1
+        // 2. Downgrade level: {culture}/rural/{type}/{type}/level_1
         if (level > 1) {
-            Identifier downgrade = buildId(culture + "/" + typePath + "/level_1");
+            Identifier downgrade = buildId(culture + "/" + variantTail + "/level_1");
             if (templateExists(world, downgrade)) return downgrade;
         }
 
-        // 3. Fallback culture: default/{type}/level_{n}
+        // 3. Fallback culture: default/rural/{type}/{type}/level_{n}
         if (!DEFAULT_CULTURE.equals(culture)) {
-            Identifier fallback = buildId(DEFAULT_CULTURE + "/" + typePath + "/level_" + level);
+            Identifier fallback = buildId(DEFAULT_CULTURE + "/" + variantTail + "/level_" + level);
             if (templateExists(world, fallback)) return fallback;
 
-            // 4. Fallback both: default/{type}/level_1
+            // 4. Fallback both: default/rural/{type}/{type}/level_1
             if (level > 1) {
-                Identifier fallbackDown = buildId(DEFAULT_CULTURE + "/" + typePath + "/level_1");
+                Identifier fallbackDown = buildId(DEFAULT_CULTURE + "/" + variantTail + "/level_1");
                 if (templateExists(world, fallbackDown)) return fallbackDown;
             }
-        }
-
-        // 5. Legacy path (no culture prefix): {type}/level_{n}
-        Identifier legacy = buildId(typePath + "/level_" + level);
-        if (templateExists(world, legacy)) return legacy;
-
-        // 6. Legacy level 1
-        if (level > 1) {
-            Identifier legacyDown = buildId(typePath + "/level_1");
-            if (templateExists(world, legacyDown)) return legacyDown;
         }
 
         // Return the exact path even if it doesn't exist — let the
@@ -248,8 +268,9 @@ public final class CultureResolver {
 
         List<String> found = new ArrayList<>();
         for (String culture : candidates) {
-            // A culture "exists" if it has at least a town_hall/level_1
-            Identifier probe = buildId(culture + "/town_hall/level_1");
+            // A culture "exists" if it has at least a default-variant
+            // town_hall in the rural style.
+            Identifier probe = buildId(culture + "/rural/town_hall/town_hall/level_1");
             if (templateExists(world, probe)) {
                 found.add(culture);
             }
