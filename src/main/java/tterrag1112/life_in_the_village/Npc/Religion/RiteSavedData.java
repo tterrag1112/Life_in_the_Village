@@ -19,6 +19,19 @@ import java.util.UUID;
  */
 public class RiteSavedData extends SavedData {
 
+    /**
+     * String-form UUID codec for use as map keys.
+     *
+     * <p>{@code UUIDUtil.CODEC} produces an int-array NBT tag (4 ints).
+     * That works fine when a UUID is a record FIELD (nested inside a
+     * CompoundTag), but it crashes when used as a {@code Codec.unboundedMap}
+     * KEY because CompoundTag keys must be strings — the encoder pulls the
+     * key tag through {@code getStringValue}, which rejects IntArrayTag
+     * with the error "Not a string". Use the string form for map keys.</p>
+     */
+    private static final com.mojang.serialization.Codec<UUID> UUID_STRING_KEY =
+            com.mojang.serialization.Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
     public static final SavedDataType<RiteSavedData> TYPE = new SavedDataType<>(
             "life_in_the_village_rites",
             RiteSavedData::new,
@@ -26,7 +39,7 @@ public class RiteSavedData extends SavedData {
                     RiteExecution.CODEC.listOf().optionalFieldOf("rites", List.of())
                             .forGetter(d -> new ArrayList<>(d.rites.values())),
                     com.mojang.serialization.Codec.unboundedMap(
-                                    net.minecraft.core.UUIDUtil.CODEC,
+                                    UUID_STRING_KEY,
                                     PietyComponent.CODEC)
                             .optionalFieldOf("playerPiety", Map.of())
                             .forGetter(d -> Map.copyOf(d.playerPiety))
