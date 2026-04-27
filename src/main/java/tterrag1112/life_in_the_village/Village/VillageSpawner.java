@@ -14,6 +14,7 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.VillageInhabitantPopulator;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.NeighborColorIndex;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantRegistry;
@@ -165,6 +166,11 @@ public class VillageSpawner {
         Map<BuildingType, Building> placedBuildings = new LinkedHashMap<>();
         Map<BuildingType, List<Building>> placedBuildingsAll = new LinkedHashMap<>();
         Map<BuildingType, Integer> typeCounters = new HashMap<>();
+        // P0a-11: per-village running index of placed primary colours.
+        // Built incrementally as each placement completes — placement
+        // order (the matcher's iteration order) is the source of truth
+        // for which buildings are "already placed" at sample time.
+        NeighborColorIndex neighborIndex = new NeighborColorIndex();
 
         for (LayoutSlot slot : layout.buildings()) {
             BuildingType buildingType = slot.getBuildingType();
@@ -240,10 +246,12 @@ public class VillageSpawner {
                     typeData.getCulture(), variantStyle, buildingType,
                     variantId, buildingLevel, level);
 
-            // P0a-10: build a TintPass.Plan from the variant's
-            // colorSlots + the village's palette (hardcoded
-            // MUTED_EARTH for default culture in this prompt; P0a-14
-            // wires up VillageTypeData.colorPalette).
+            // P0a-10/11: build the TintPass.Plan.
+            //   * Variant drives which colour slots are populated.
+            //   * Palette comes from VillagePaletteResolver's resolution
+            //     chain (village colorPalette → culture default → NONE).
+            //   * Neighbour index supplies the soft-exclusion set so a
+            //     row of houses doesn't all roll the same primary colour.
             BuildingVariant variant = VariantRegistry.INSTANCE
                     .find(typeData.getCulture(), variantStyle,
                             buildingType, variantId)
@@ -255,8 +263,11 @@ public class VillageSpawner {
                                     "default", variantStyle))
                     .orElseGet(() -> VariantSelector.Fallback
                             .syntheticDefault(buildingType, variantStyle));
+            java.util.Set<net.minecraft.world.item.DyeColor> neighborColors =
+                    neighborIndex.colorsWithin(slotCentre,
+                            VillagePaletteResolver.NEIGHBOUR_RADIUS);
             TintPass.Plan tintPlan = VillagePaletteResolver
-                    .planFor(typeData, variant, rng);
+                    .planFor(typeData, variant, rng, neighborColors);
 
             try {
                 Optional<Building> placed = BuildingPlacer.placeAndRegister(
@@ -270,6 +281,10 @@ public class VillageSpawner {
                 placedBuildingsAll
                         .computeIfAbsent(buildingType, k -> new ArrayList<>())
                         .add(newBuilding);
+
+                // P0a-11: feed the running neighbour index so the next
+                // placement's primary sample sees this building.
+                neighborIndex.add(slotCentre, newBuilding.getPrimaryColor());
 
                 footprint.occupyBuilding(newBuilding, BuildingFootprint.DEFAULT_BUFFER);
                 data.setDirty();

@@ -81,6 +81,27 @@ public final class VillageTypeBuilder {
         return this;
     }
 
+    /** Doc 15 — sets the named colour palette by id (registered in
+     *  {@code ColorPaletteRegistry}). Use {@link #colorPalette(JsonObject)}
+     *  to write an inline weight table instead. */
+    public VillageTypeBuilder colorPalette(String paletteId) {
+        root.addProperty("colorPalette", paletteId);
+        return this;
+    }
+
+    /** Doc 15 — sets an inline colour palette of the form
+     *  {@code { "primary": {...}, "accent": {...}, "roof": {...} }}. */
+    public VillageTypeBuilder colorPalette(JsonObject inline) {
+        root.add("colorPalette", inline);
+        return this;
+    }
+
+    /** Doc 15 §"Forced overrides" — TOWN_HALL signature colour. */
+    public VillageTypeBuilder signatureColor(net.minecraft.world.item.DyeColor color) {
+        root.addProperty("signatureColor", color.name());
+        return this;
+    }
+
     // ─── Top-level fields ──────────────────────────────────────────────────
 
     public VillageTypeBuilder terrainStrategy(TerrainStrategy strategy) {

@@ -1,6 +1,9 @@
 // FILE: src/main/java/tterrag1112/life_in_the_village/Village/VillageTypeData.java
 package tterrag1112.life_in_the_village.Village;
 
+import net.minecraft.world.item.DyeColor;
+import org.jetbrains.annotations.Nullable;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.ColorPalette;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRule;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 
@@ -117,10 +120,32 @@ public class VillageTypeData {
      * Doc 15 — variant style profile. One of {@code "rural"},
      * {@code "urban"}, or {@code "auto"} (the default). When
      * {@code "auto"}, the matcher derives the style from layout +
-     * tier per the rules in §"Style determination". The full preset
-     * enum and per-village colour palette land in P0a-14.
+     * tier per the rules in §"Style determination".
      */
     private String style = "auto";
+
+    /**
+     * Doc 15 — the village's colour palette. Resolution order at
+     * placement (see {@code VillagePaletteResolver}):
+     * <ol>
+     *   <li>this field, when non-null;</li>
+     *   <li>the culture's default palette
+     *       ({@code CultureDefaultPalettes});</li>
+     *   <li>{@code ColorPaletteRegistry.NONE} (no tint).</li>
+     * </ol>
+     * Either a named preset id or an inline weight table from the
+     * type JSON parses through {@code ColorPaletteRegistry.parse}
+     * before being stored here.
+     */
+    @Nullable private ColorPalette colorPalette = null;
+
+    /**
+     * Doc 15 §"Forced overrides" — village's signature colour. When
+     * non-null, {@code TOWN_HALL}'s primary tint is forced to this
+     * value rather than rolling from the palette. Null means the
+     * town hall samples like any other building.
+     */
+    @Nullable private DyeColor signatureColor = null;
 
 
     // =========================================================================
@@ -205,5 +230,18 @@ public class VillageTypeData {
      *  schema bump here. */
     public void setStyle(String style) {
         this.style = style != null ? style : "auto";
+    }
+
+    /** Doc 15 — village colour palette, or {@code null} to fall
+     *  through to the culture default. */
+    @Nullable public ColorPalette getColorPalette() { return colorPalette; }
+    public void setColorPalette(@Nullable ColorPalette palette) {
+        this.colorPalette = palette;
+    }
+
+    /** Doc 15 §"Forced overrides" — TOWN_HALL signature colour. */
+    @Nullable public DyeColor getSignatureColor() { return signatureColor; }
+    public void setSignatureColor(@Nullable DyeColor color) {
+        this.signatureColor = color;
     }
 }

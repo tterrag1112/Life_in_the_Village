@@ -138,6 +138,29 @@ public class VillageTypeRegistry
                 if (json.has("style")) {
                     typeData.setStyle(json.get("style").getAsString());
                 }
+                // P0a-14: colorPalette accepts either a string id or
+                // an inline {primary,accent,roof} object — both shapes
+                // route through ColorPaletteRegistry.parse.
+                if (json.has("colorPalette")) {
+                    typeData.setColorPalette(
+                            tterrag1112.life_in_the_village.Village.Decoration
+                                    .Variants.ColorPaletteRegistry
+                                    .parse(json.get("colorPalette")));
+                }
+                // P0a-12: signatureColor — DyeColor name, optional.
+                if (json.has("signatureColor")
+                        && json.get("signatureColor").isJsonPrimitive()) {
+                    String name = json.get("signatureColor").getAsString();
+                    try {
+                        typeData.setSignatureColor(
+                                net.minecraft.world.item.DyeColor.valueOf(
+                                        name.toUpperCase(java.util.Locale.ROOT)));
+                    } catch (IllegalArgumentException e) {
+                        LOGGER.warn("Unknown signatureColor '{}' in {} — "
+                                + "falling back to no override",
+                                name, location);
+                    }
+                }
 
                 loaded.put(type, typeData);
                 LOGGER.info("Loaded village type '{}' ({} buildings, shape={}, strategy={}, tags={})",

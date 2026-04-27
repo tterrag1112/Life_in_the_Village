@@ -644,3 +644,59 @@ Codec extends Building with three optional `DyeColor` fields and a
 - **Village→palette is hardcoded for now.** Default culture
   → `MUTED_EARTH`; everything else → `NONE` (no tint). P0a-14
   replaces this with `VillageTypeData.colorPalette` parsing.
+
+### P0a-11 / P0a-12 / P0a-14 — palette resolution + neighbour exclusion + forced overrides
+
+- **`VillageTypeData.colorPalette` storage.** Pre-parsed at type-
+  load time into a `ColorPalette` record (or `null` to fall
+  through). Both shapes from doc 15 (string preset id and inline
+  `{primary,accent,roof}` object) go through
+  `ColorPaletteRegistry.parse` so the on-disk format and the
+  in-memory representation stay consistent.
+- **`CultureDefaultPalettes`.** Holds the culture → default
+  palette mapping. Currently `default → MUTED_EARTH`; future
+  cultures register defaults here. Replaces the hardcoded P0a-10
+  bridge in `VillagePaletteResolver.paletteFor`. Unknown
+  cultures fall through to `NONE`.
+- **TEMPLE override is unconditional.** Applies even when the
+  village's resolved palette is `NONE`, because the spec frames
+  TEMPLE → WHITE as a culture-agnostic constant. TOWN_HALL with
+  a non-null `signatureColor` follows the same rule for the
+  same reason — when explicit colour is declared, it shouldn't
+  be silently dropped just because the rest of the village is
+  un-tinted.
+- **Guild-hall override is partial.** `GuildData` (the existing
+  record under `Guilds.Adventurer`) has no colour fields today.
+  The override falls through to palette sampling and emits a
+  one-time warning per guild type. Adding `guildColor`/
+  `guildAccent` to `GuildData` is a separate task — when those
+  fields land, the override resolution in
+  `VillagePaletteResolver.planFor` is the only call site that
+  needs an update. The matching block in the resolver lives
+  immediately after the TOWN_HALL branch, marked with the
+  one-time warning logic.
+- **Neighbour exclusion implementation.** `NeighborColorIndex`
+  is a per-village list of `(centre, primaryColor)` tuples
+  built up during `VillageSpawner`'s placement loop. Lookup is
+  a linear scan within an XZ Euclidean radius of 12 blocks. With
+  current villages capped at ~30 buildings, scan cost stays in
+  the low hundreds of comparisons per village. Flagged for a
+  future spatial-index pass if village sizes climb. The index is
+  fed only successful placements with non-null primary colour,
+  so untintable buildings (NONE palette, variants without
+  PRIMARY in `colorSlots`, TEMPLE not contributing because it
+  forces WHITE — actually TEMPLE *does* contribute since its
+  primary is WHITE) don't poison subsequent samples.
+- **Soft-exclusion fallback.** `VillagePaletteResolver` retries
+  primary sampling without the soft set when the first call
+  collapses to `null` (only happens when the soft multiplier
+  zeroes every weight, which the doc calls "pathological"). The
+  retry is hard-exclusion-free as well, so the building always
+  gets *some* primary colour rather than silently going un-
+  tinted.
+- **Determinism preserved.** The neighbour index reads the
+  matcher's placement order via `layout.buildings()` iteration
+  in `VillageSpawner`. No separate ordering for colour purposes;
+  same `(worldSeed, origin, villageName)` produces the same
+  building order, the same neighbour sets at sample time, and
+  therefore the same colours.
