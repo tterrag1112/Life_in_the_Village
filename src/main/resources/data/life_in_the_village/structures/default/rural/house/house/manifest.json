@@ -1,4 +1,13 @@
 {
   "id": "house",
-  "stylePreference": "RURAL"
+  "displayName": "House",
+  "minTier": "HAMLET",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "RURAL",
+  "agePreference": "ANY",
+  "tags": ["single_family"],
+  "preferredTags": [],
+  "colorSlots": ["PRIMARY"],
+  "maxPerVillage": 999
 }

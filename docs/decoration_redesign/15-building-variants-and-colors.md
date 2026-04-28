@@ -748,3 +748,26 @@ Codec extends Building with three optional `DyeColor` fields and a
   table in `RepaintScreen.rgbOf` mirrors the standard Minecraft
   dye palette and avoids tying the screen to a specific
   Mojang/NeoForge accessor that has shifted between versions.
+
+### P0a-15 — HOUSE pilot manifests + missing-NBT regression
+
+- The pilot manifests for `cottage`, `house`, and `large_house`
+  were authored verbatim from doc 16 §3 (with the spec's
+  `big_house` renamed to `large_house` to match the actual
+  folder name).
+- The migrated `house` variant's manifest was set to
+  `colorSlots: ["PRIMARY"]` conservatively. Doc 16 says the
+  slot list should be "derived from existing NBT's white-block
+  usage", but the NBT was deleted from main before this pass
+  could inspect it (see below). When the NBT returns, run a
+  block-content scan to upgrade the slot list if the NBT also
+  uses `white_concrete` / `white_carpet` / etc.
+- **Missing NBT regression in `043db2a "Current State"`.** That
+  commit added the three HOUSE manifests but also deleted
+  `default/rural/house/house/level_1.nbt` (the migrated
+  variant) without adding `cottage/level_1.nbt` or
+  `large_house/level_1.nbt`. Every HOUSE placement in main
+  now hits the resolver's step-7 hard fail. The pilot can't be
+  meaningfully tested until those NBT files land. P0a-15 is
+  flagged Partially-Implemented in the tracker rather than
+  Implemented.
