@@ -309,6 +309,14 @@ public class VillageSpawner {
         VillageInhabitantPopulator.populate(level, village, data, placedBuildingsAll, rng);
         setupMerchantStalls(level, village, data, placedBuildingsAll, rng);
         VillageDecorator.decorateVillage(level, village, data, layout, footprint);
+        // Phase 0b doc 01 — uniform decoration pass. Runs after
+        // building placement, terrain, farm plots, and the legacy
+        // decorator pass; before TradeRouteManager (which doesn't
+        // change the village footprint). Phase 0c (AdjunctPlot) and
+        // 0d (Subbuilding) realisers will land between the legacy
+        // decorator and this pass when they ship.
+        tterrag1112.life_in_the_village.Village.Decoration.Framework
+                .DecorationPass.run(level, village, data, layout);
         TradeRouteManager.establishRoutes(level, village, data); // no-op for useGraphConnector villages
         if (village.useGraphConnector()) {
             WorldRoadSavedData roadData = WorldRoadSavedData.get(level);

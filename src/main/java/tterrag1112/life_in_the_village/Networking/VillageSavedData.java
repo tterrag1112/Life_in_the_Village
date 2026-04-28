@@ -280,8 +280,30 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillagePropertyData::new));
     }
 
+    // ── 8. Decoration ─────────────────────────────────────────────────────────
+
+    /**
+     * Doc 01 — durable decoration placements per village. Flat list;
+     * each {@link tterrag1112.life_in_the_village.Village.Decoration
+     * .Framework.DecorationPlacement} carries its owning villageId
+     * for filtering. Empty until {@code DecorationPass} runs (and
+     * stays empty until profiles are registered).
+     */
+    public record VillageDecorationData(
+            List<tterrag1112.life_in_the_village.Village.Decoration
+                    .Framework.DecorationPlacement> placements
+    ) {
+        public static final Codec<VillageDecorationData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        tterrag1112.life_in_the_village.Village.Decoration
+                                .Framework.DecorationPlacement.CODEC.listOf()
+                                .optionalFieldOf("placements", List.of())
+                                .forGetter(VillageDecorationData::placements)
+                ).apply(i, VillageDecorationData::new));
+    }
+
     // =========================================================================
-    // Top-level codec — 8 fields
+    // Top-level codec — 9 sub-records (added VillageDecorationData)
     // =========================================================================
 
     public static final Codec<VillageSavedData> CODEC =
@@ -333,7 +355,12 @@ public class VillageSavedData extends SavedData implements
                                     new VillageScribalData(new LinkedHashMap<>(), new LinkedHashMap<>()))
                             .forGetter(d -> new VillageScribalData(
                                     new LinkedHashMap<>(d.commissionQueues),
-                                    new LinkedHashMap<>(d.libraryCatalogues)))
+                                    new LinkedHashMap<>(d.libraryCatalogues))),
+                    VillageDecorationData.CODEC
+                            .optionalFieldOf("decorationData",
+                                    new VillageDecorationData(List.of()))
+                            .forGetter(d -> new VillageDecorationData(
+                                    List.copyOf(d.decorationPlacements)))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -349,7 +376,8 @@ public class VillageSavedData extends SavedData implements
             VillageEconomyData    economyData,
             VillagePropertyData   propertyData,
             VillageGossipData     gossipData,
-            VillageScribalData    scribalData) {
+            VillageScribalData    scribalData,
+            VillageDecorationData decorationData) {
 
         VillageSavedData data = new VillageSavedData();
 
@@ -405,6 +433,11 @@ public class VillageSavedData extends SavedData implements
         if (scribalData != null) {
             data.commissionQueues.putAll(scribalData.commissionQueues());
             data.libraryCatalogues.putAll(scribalData.libraryCatalogues());
+        }
+
+        // Decoration (Phase 0b doc 01)
+        if (decorationData != null) {
+            data.decorationPlacements.addAll(decorationData.placements());
         }
 
         // Rebuild indices
@@ -481,6 +514,14 @@ public class VillageSavedData extends SavedData implements
             commissionQueues = new LinkedHashMap<>();
     private final Map<UUID, tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue>
             libraryCatalogues = new LinkedHashMap<>();
+
+    // Decoration placements (Phase 0b — doc 01 §"DecorationPass").
+    // Flat list keyed by villageId in each record; queried per-village
+    // via getDecorationsForVillage. Persisted alongside the rest of
+    // VillageSavedData so a village's decorative content survives
+    // save/load.
+    private final List<tterrag1112.life_in_the_village.Village.Decoration
+            .Framework.DecorationPlacement> decorationPlacements = new ArrayList<>();
 
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
@@ -655,6 +696,45 @@ public class VillageSavedData extends SavedData implements
     }
 
     public List<FarmPlot> getAllFarmPlots() { return Collections.unmodifiableList(farmPlots); }
+
+    // ── Decoration placements (Phase 0b doc 01) ──────────────────────────
+
+    /** All decoration placements for {@code villageId}. Returns an
+     *  unmodifiable view; callers use
+     *  {@link #addDecorationPlacement} / {@link
+     *  #removeDecorationsForVillage} to mutate. */
+    public List<tterrag1112.life_in_the_village.Village.Decoration.Framework
+            .DecorationPlacement> getDecorationsForVillage(UUID villageId) {
+        if (villageId == null) return List.of();
+        List<tterrag1112.life_in_the_village.Village.Decoration.Framework
+                .DecorationPlacement> out = new ArrayList<>();
+        for (var p : decorationPlacements) {
+            if (villageId.equals(p.villageId())) out.add(p);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    public void addDecorationPlacement(
+            tterrag1112.life_in_the_village.Village.Decoration.Framework
+                    .DecorationPlacement placement) {
+        if (placement == null) return;
+        decorationPlacements.add(placement);
+        markDirty();
+    }
+
+    /** Removes every placement belonging to {@code villageId}. Used
+     *  when a village is despawned or its decoration pass re-runs. */
+    public void removeDecorationsForVillage(UUID villageId) {
+        if (villageId == null) return;
+        boolean removed = decorationPlacements.removeIf(
+                p -> villageId.equals(p.villageId()));
+        if (removed) markDirty();
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration.Framework
+            .DecorationPlacement> getAllDecorationPlacements() {
+        return Collections.unmodifiableList(decorationPlacements);
+    }
 
     // =========================================================================
     // Job postings

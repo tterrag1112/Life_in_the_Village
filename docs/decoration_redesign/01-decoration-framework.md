@@ -244,3 +244,65 @@ class DecorationPass               // orchestrates emit → match → place
   profiles; if none, the matcher falls through to `"default"`
   culture; otherwise empty. There is no further legacy fallback —
   doc 01 §"Open decisions" already settled on this two-step chain.
+
+### P0b-03 / P0b-04 — emitter + matcher + pass landed
+
+- **Slot UUIDs are deterministic.** Doc 01 mandates "same seed →
+  same decorations". `UUID.randomUUID()` would break that, so the
+  emitter derives slot ids via `UUID.nameUUIDFromBytes(villageId
+  + algorithm + key + pos)`. Re-running the emitter on the same
+  village produces the same slot list with the same ids.
+- **Trade-road endpoint detection.** Doc 01 §A.6 says "for each
+  trade road that connects to this village" but post-realisation
+  the codebase doesn't yet expose a first-class `TradeRoad → Village`
+  endpoint accessor. The emitter approximates via `Village
+  .getMainGateEndpoint()` + `getCapitalGatePositions()` — every
+  gate is the intersection of an inbound road with the built
+  area, which is what the doc cares about. When a proper
+  trade-road endpoint accessor lands the emitter swaps over with
+  no algorithm change.
+- **No concave-hull computation.** Doc 01 §A.5 mentioned a hull
+  but the v1 emitter sidesteps the algorithm: for each angular
+  step (15°), it finds the outermost building dot-producting in
+  that direction and emits a marker just beyond it. Cheap,
+  deterministic, doesn't need a hull library; produces a result
+  visually equivalent to "ring of markers around the village
+  perimeter" for any reasonable building distribution.
+- **Building-gap / corner / facade rely on rotation convention.**
+  The emitter assumes the placer's `Rotation.NONE → SOUTH-facing`
+  convention. If a recipe ever places buildings whose recorded
+  rotation doesn't reflect the structure's authored front face,
+  facade slots will project from the wrong wall. Worth flagging
+  in the next prompt's validation.
+- **`Building` geometry is rotation-only.** Doc 01 talks about
+  "facade angle" being arbitrary, but the codebase only carries
+  cardinal rotations (NONE / 90 / 180 / 270). Corner-accent
+  detection therefore uses a 90-degree facing-difference
+  threshold derived from rotation rather than a true angular
+  measure. Adequate for cardinally-rotated buildings; imprecise
+  for any future free-rotation work.
+- **Slot occupancy not checked at emit time.** Doc 01 §"Behavior
+  contract" says "Honor existing protected surfaces (paved
+  plazas, road blocks)" but the v1 emitter doesn't query the
+  world during emission — it stays a pure geometric pass. Slots
+  that overlap protected surfaces fall through the matcher's
+  burn-the-slot policy when the NBT stamp can't actually place
+  there. Worth revisiting once we have profiles registered and
+  can observe the failure rate.
+- **`DecorationPass` insertion point.** `VillageSpawner.java` line
+  ~317, after `VillageDecorator.decorateVillage(...)` and before
+  `TradeRouteManager.establishRoutes(...)`. Phase 0c (AdjunctPlot)
+  and 0d (Subbuilding) realisers will land between the legacy
+  decorator and the new pass when they ship.
+- **Placements ARE persisted; slots are NOT.** The pass clears
+  prior placements for the village id at start-of-run so re-runs
+  from the eventual debug command produce a fresh placement list
+  rather than accumulating duplicates. Slot UUIDs being
+  deterministic means a re-run produces identical slotId values
+  — even though slots themselves are ephemeral, the placements'
+  `slotId` field round-trips meaningfully.
+- **Per-village culture lookup is a TODO.** `DecorationPass`
+  currently passes `DEFAULT_CULTURE` because `VillageSavedData`
+  doesn't expose a per-village culture accessor. When such an
+  accessor lands (via `VillageTypeData` lookup or a per-village
+  cached field), `cultureFor(village)` becomes a one-line edit.
