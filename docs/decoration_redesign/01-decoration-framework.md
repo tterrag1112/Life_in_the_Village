@@ -216,3 +216,31 @@ class DecorationPass               // orchestrates emit → match → place
 ## Revision notes
 
 (Changes recorded here as the spec evolves.)
+
+### P0b-01 / P0b-02 / P0b-05 — data model landed
+
+- `DecorationTag` ships with 13 values per the §"DecorationTag enum"
+  list (the data-structures sketch said "15" but only 13 names
+  appear in the spec; matched the named list).
+- `DecorationSlot.qualityScore` is clamped to 0..100 in the
+  canonical constructor rather than rejecting out-of-range values.
+  Emitters that compute scores probabilistically may overshoot
+  slightly; clamping is more forgiving than throwing.
+- `DecorationProfile.biomeConstraint` uses
+  `Optional<net.minecraft.resources.Identifier>` instead of the
+  spec's `Optional<Biome>`. Vanilla `Biome` doesn't have a
+  stand-alone codec (it requires registry context), and storing the
+  resource location works for the matcher's "is this slot's biome
+  the constrained one?" check without needing a registry-bound
+  `Holder<Biome>` lookup at registration time. The matcher resolves
+  via `level.getBiome(pos).unwrapKey()` and compares.
+- `DecorationProfileRegistry.eligibleFor` returns the empty list
+  when the slot carries zero tags. Doc 01 §"DecorationSlot" frames
+  tags as the "what kind of decoration fits here" signal; an empty
+  set carries no signal, so nothing matches and the matcher's
+  burn-the-slot policy kicks in.
+- The registry's culture fallback mirrors `CultureResolver` (and
+  `VariantSelector`): a same-culture hit returns only same-culture
+  profiles; if none, the matcher falls through to `"default"`
+  culture; otherwise empty. There is no further legacy fallback —
+  doc 01 §"Open decisions" already settled on this two-step chain.

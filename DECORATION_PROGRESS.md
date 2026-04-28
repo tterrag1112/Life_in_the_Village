@@ -40,11 +40,11 @@ variants-and-colors.md` before any other Phase 0 doc.
 
 | ID | Task | Subsystem | Status | Notes |
 |---|---|---|---|---|
-| P0b-01 | `DecorationTag` enum + skeleton | 01-decoration-framework | Not-Started | |
-| P0b-02 | `DecorationSlot` record + codec | 01-decoration-framework | Not-Started | Depends P0b-01 |
+| P0b-01 | `DecorationTag` enum + skeleton | 01-decoration-framework | Implemented | 13 values per doc 01 §"DecorationTag enum"; `StringRepresentable` codec (`DecorationTag.CODEC`) for stable on-disk encoding by name. Lives in `Village/Decoration/Framework/`. |
+| P0b-02 | `DecorationSlot` record + codec | 01-decoration-framework | Implemented | Record with `RecordCodecBuilder` codec. Tags stored as `EnumSet`; `parentId` optional; `contextRoad` defaults to empty. `qualityScore` clamped to 0..100. Reusable `TAG_SET_CODEC` exported for `DecorationProfile`. Ephemeral — no `VillageSavedData` persistence path. |
 | P0b-03 | `DecorationMatcher` second-pass runner | 01-decoration-framework | Not-Started | Depends P0b-02 |
 | P0b-04 | Uniform decoration slot emitter | 01-decoration-framework | Not-Started | Depends P0b-02 |
-| P0b-05 | `DecorationProfile` registry | 01-decoration-framework | Not-Started | Depends P0b-01 |
+| P0b-05 | `DecorationProfile` registry | 01-decoration-framework | Implemented | `DecorationProfile` record + `AnchorRule` enum + `DecorationProfileRegistry.INSTANCE` (singleton; `register` / `resolve` / `eligibleFor` / `clear` / `all`). Culture fallback chain: same-culture profiles take precedence, otherwise fall through to `default` culture, otherwise empty. Slot with zero tags → empty result (no signal). Registry empty until later subsystems (P1-06 onward) populate it. |
 | P0b-06 | `/liv decoration` debug command | 01-decoration-framework | Not-Started | Depends P0b-03 |
 
 ### Phase 0c — AdjunctPlot framework
