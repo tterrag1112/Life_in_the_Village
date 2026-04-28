@@ -1,7 +1,6 @@
 {
   "id": "large_house",
   "displayName": "Big House",
-  "footprint": { "x": 9, "z": 7 },
   "minTier": "VILLAGE",
   "maxTier": "CITY",
   "weight": 0.6,

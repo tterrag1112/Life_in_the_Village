@@ -48,7 +48,6 @@ Each variant directory contains `manifest.json`:
 {
   "id": "big_house",
   "displayName": "Big House",
-  "footprint": { "x": 9, "z": 7 },
   "minTier": "VILLAGE",
   "maxTier": "CITY",
   "weight": 1.0,
@@ -63,8 +62,6 @@ Each variant directory contains `manifest.json`:
 
 **Field semantics:**
 - `id` — variant identifier, matches folder name
-- `footprint` — declared bounding box at Rotation.NONE; override for
-  StructureSizeCache
 - `minTier`/`maxTier` — village tier gating
 - `weight` — base placement weight (1.0 default)
 - `preferredTags` — SlotTag bonus list; matcher gives this variant
@@ -84,6 +81,18 @@ Missing manifest defaults to:
 { "id": "{folder_name}", "weight": 1.0, "stylePreference": "ANY",
   "agePreference": "ANY", "tags": [], "colorSlots": ["PRIMARY"] }
 ```
+
+### Footprint resolution
+
+The variant's footprint is measured by `StructureSizeCache` from
+the NBT and is **not** declared in the manifest. The cache is the
+single source of truth for variant geometry.
+
+Authors target a footprint while building the NBT (see doc 16
+authoring guidance for spec'd footprints per variant), but the
+manifest never restates it. Loaders ignore any legacy `footprint`
+field that appears in older manifests; callers that need the
+footprint at runtime go through `StructureSizeCache.get(...)`.
 
 ### CultureResolver fallback chain
 
@@ -319,7 +328,6 @@ the slot for future use.
 public record BuildingVariant(
     String id,
     String displayName,
-    BoundingBox footprint,
     VillageSizeTier minTier, VillageSizeTier maxTier,
     float weight,
     Set<SlotTag> preferredTags,
@@ -330,6 +338,7 @@ public record BuildingVariant(
     Set<ColorSlot> colorSlots,
     float ruinationLevel
 ) {}
+// Footprint is queried via StructureSizeCache, never carried on the variant.
 
 public enum StylePreference { RURAL, URBAN, ANY }
 public enum AgePreference { FRESH, WEATHERED, ANCIENT, ANY }
@@ -771,3 +780,22 @@ Codec extends Building with three optional `DyeColor` fields and a
   meaningfully tested until those NBT files land. P0a-15 is
   flagged Partially-Implemented in the tracker rather than
   Implemented.
+
+### Schema correction — manifest `footprint` removed
+
+- The `footprint` field has been removed from the manifest
+  schema and from the `BuildingVariant` record. The NBT is the
+  single source of truth for variant geometry;
+  `StructureSizeCache` reads dimensions from it on first load
+  and caches them. Carrying a parallel value on the manifest
+  created a sync burden during authoring and gave authors a
+  way to disagree silently with the actual NBT.
+- The change is non-breaking. The loader still parses
+  manifests that carry a stale `footprint` field — JSON
+  unknown-field tolerance is unchanged — and any cached value
+  is simply ignored. Per-variant authoring spec footprints
+  remain in doc 16 §3 / §4 as authoring targets for the NBT,
+  not manifest fields.
+- The "manifest footprint as authoritative override" branch in
+  `StructureSizeCache.load(CacheKey)` has been removed; the
+  cache always measures from the NBT now.

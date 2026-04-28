@@ -1,7 +1,6 @@
 {
   "id": "cottage",
   "displayName": "Cottage",
-  "footprint": { "x": 5, "z": 5 },
   "minTier": "HAMLET",
   "maxTier": "CITY",
   "weight": 1.2,

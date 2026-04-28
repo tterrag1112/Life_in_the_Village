@@ -13,7 +13,6 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.CultureResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
-import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantRegistry;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -38,12 +37,12 @@ import java.util.Map;
  * {@code (culture=default, style=RURAL, variantId=type-default)}
  * defaults. P0a-06 upgrades them when the matcher learns variants.
  *
- * <h3>Footprint override</h3>
- * When a variant's manifest declares an explicit
- * {@code footprint: {x, z}} the cache trusts the override and skips
- * NBT loading entirely. When the manifest omits {@code footprint}
- * (or its registry entry is missing), the cache falls back to the
- * NBT-measured size as before.
+ * <h3>Footprint resolution</h3>
+ * The NBT is the single source of truth for variant geometry (doc
+ * 15 §"Footprint resolution"). The cache always loads the resolved
+ * NBT and reads its declared size; manifests do not carry a
+ * footprint field, and any legacy {@code footprint} block in older
+ * manifests is silently ignored.
  *
  * <h3>Thread safety</h3>
  * Populated once during the planning phase on the server thread.
@@ -124,17 +123,10 @@ public class StructureSizeCache {
     // =========================================================================
 
     private FootprintInfo load(CacheKey k) {
-        // Manifest override first — the registry is authoritative when
-        // an author has declared explicit dimensions.
-        var variantOpt = VariantRegistry.INSTANCE.find(
-                k.culture(), k.style(), k.type(), k.variantId());
-        if (variantOpt.isPresent() && variantOpt.get().hasFootprintOverride()) {
-            BuildingVariant.Footprint fp = variantOpt.get().footprint();
-            return rotated(fp.x(), fp.z(), k.rotation());
-        }
-
-        // Otherwise measure the NBT via the seven-step resolver so
-        // the size cache and the placer agree on which file is loaded.
+        // Doc 15 §"Footprint resolution": the NBT is the single
+        // source of truth. Always measure via the seven-step resolver
+        // so the size cache and the placer agree on which file is
+        // loaded.
         Identifier id = CultureResolver.resolve(
                 k.culture(), k.style(), k.type(), k.variantId(),
                 k.level(), level);
