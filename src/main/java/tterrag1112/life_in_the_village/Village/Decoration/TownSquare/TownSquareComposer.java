@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
@@ -14,6 +15,7 @@ import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.TerrainSmoother;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
@@ -88,7 +90,7 @@ public final class TownSquareComposer {
         int targetY = medianGroundY(level, center, radius);
         BlockPos flatCenter = new BlockPos(center.getX(), targetY, center.getZ());
 
-        Set<BlockPos> pavedBlocks = pavePlaza(level, flatCenter, radius, style);
+        Set<BlockPos> pavedBlocks = pavePlaza(level, flatCenter, radius, style, village);
 
         registerAsBuilding(level, flatCenter, radius, village, data);
 
@@ -126,17 +128,42 @@ public final class TownSquareComposer {
     // ── Paving ──────────────────────────────────────────────────────────
 
     /**
-     * Programmatic paving lifted from the legacy {@code
-     * TownSquarePlacer.place} body, parameterised on {@code radius}.
-     * Border blocks are stone, the inner border is slabs, and the
-     * field is the biome path block. Vegetation above is cleared.
+     * Plaza paving — palette-continuous with surrounding roads.
+     *
+     * <p>Prompt 16 §"Task A" surgical fix: the legacy paving used
+     * {@code style.stone} (outer border), {@code style.stoneSlab}
+     * (inner slab ring), and {@code style.pathState} (interior).
+     * Roads use {@link PathMaterial}, which is a different palette
+     * source — that's why the plaza read as a "stamped square on top
+     * of unaware roads." This rewrite resolves the road's
+     * {@code PathMaterial} for this village (same source the road
+     * realiser uses) and samples interior blocks from
+     * {@link PathMaterial#sampleCore} and the outer ring from
+     * {@link PathMaterial#sampleEdge}, so the plaza palette matches
+     * the surrounding road palette exactly.</p>
+     *
+     * <p>The legacy "inner slab ring" is dropped intentionally —
+     * roads don't have a slab ring, so keeping it would re-introduce
+     * the visual "this is a stamped square, not a paved area" cue
+     * the prompt 15 diagnostic identified. The plaza now reads as a
+     * wide patch of the same paving the village's roads use; the
+     * polygon-shape work in prompt 17 will give it shape variation
+     * per layout.</p>
      */
     private static Set<BlockPos> pavePlaza(ServerLevel level,
                                            BlockPos flatCenter,
                                            int radius,
-                                           VillageBiomeStyle style) {
+                                           VillageBiomeStyle style,
+                                           Village village) {
         int targetY = flatCenter.getY();
         Set<BlockPos> paved = new HashSet<>();
+
+        // Resolve the same PathMaterial the road realiser would use
+        // for this village. Same source (biome + village's path
+        // tier) — same palette — no visual seam.
+        PathMaterial material = PathMaterial.forBiomeAndTier(
+                style, village.getPathTier());
+        RandomSource random = level.getRandom();
 
         TerrainSmoother.levelPad(level,
                 flatCenter.getX() - radius, flatCenter.getZ() - radius,
@@ -175,15 +202,18 @@ public final class TownSquareComposer {
                     }
                 }
 
+                // Outer ring uses the road palette's edge mix (same
+                // blocks the road realiser stamps at perpendicular
+                // distance == halfWidth); interior uses the core mix.
+                // Note that no edge-noise placement is applied — the
+                // plaza is a deterministic flat pad, not an organic
+                // strip. Polygon-shape work in prompt 17 will revisit
+                // edge softening.
                 boolean isBorder = Math.abs(dx) == radius
                         || Math.abs(dz) == radius;
-                boolean isInnerBorder = !isBorder
-                        && (Math.abs(dx) == radius - 1
-                        || Math.abs(dz) == radius - 1);
-
                 BlockState pave = isBorder
-                        ? style.stone.defaultBlockState()
-                        : isInnerBorder ? style.stoneSlab() : style.pathState();
+                        ? material.sampleEdge(random)
+                        : material.sampleCore(random);
                 level.setBlock(pavePos, pave, 3);
 
                 BlockPos above = pavePos.above();

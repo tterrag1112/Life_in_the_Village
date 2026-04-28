@@ -72,6 +72,17 @@ public final class PlanContext {
 
     private final List<PlacementSlot> offeredSlots = new java.util.ArrayList<>();
 
+    /**
+     * Doc 04 §"Core concepts" — plaza polygon registrations.
+     * Populated by recipe compose() for VILLAGE+ tiers (prompt 17);
+     * empty list means HAMLET, expansion path, or pre-prompt-17
+     * planning. {@link #setVillageCenter} is the HAMLET counterpart.
+     */
+    private final List<tterrag1112.life_in_the_village.Village
+            .Decoration.Plaza.PlazaRegion> plazaRegions = new java.util.ArrayList<>();
+    private tterrag1112.life_in_the_village.Village.Decoration
+            .Plaza.VillageCenterMarker villageCenter;
+
 
     private static final int MAX_TERRAIN_ATTEMPTS = 32;
 
@@ -160,6 +171,64 @@ public final class PlanContext {
     public AgeCategory ageCategory() {
         return ageCategory != null ? ageCategory
                 : VillageAgeCategoryHook.forNewVillage();
+    }
+
+    // ── Plaza accessors (Phase 16 doc 04 scaffolding) ──────────────────
+    // No code populates these yet — prompt 17's polygon generator
+    // is the producer; building matcher / decoration emitter
+    // (prompt 18) are consumers. Accessors exist now so subsequent
+    // prompts have stable integration points.
+
+    public void addPlazaRegion(
+            tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.PlazaRegion p) {
+        if (p != null) plazaRegions.add(p);
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Plaza.PlazaRegion> getPlazaRegions() {
+        return java.util.Collections.unmodifiableList(plazaRegions);
+    }
+
+    public java.util.Optional<tterrag1112.life_in_the_village.Village
+            .Decoration.Plaza.PlazaRegion> getPlazaRegionContaining(
+                    BlockPos pos) {
+        if (pos == null) return java.util.Optional.empty();
+        for (var r : plazaRegions) {
+            if (tterrag1112.life_in_the_village.Utilities.Geometry
+                    .Polygon.contains(r.footprint(), pos)) {
+                return java.util.Optional.of(r);
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
+    public java.util.Optional<tterrag1112.life_in_the_village.Village
+            .Decoration.Plaza.PlazaRegion> getPlazaRegionNear(
+                    BlockPos pos, int distance) {
+        if (pos == null) return java.util.Optional.empty();
+        tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion best = null;
+        double bestD = Double.POSITIVE_INFINITY;
+        for (var r : plazaRegions) {
+            double d = tterrag1112.life_in_the_village.Utilities.Geometry
+                    .Polygon.distanceToEdge(r.footprint(), pos);
+            if (d <= distance && d < bestD) {
+                bestD = d;
+                best = r;
+            }
+        }
+        return java.util.Optional.ofNullable(best);
+    }
+
+    public void setVillageCenter(
+            tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.VillageCenterMarker m) {
+        this.villageCenter = m;
+    }
+
+    public java.util.Optional<tterrag1112.life_in_the_village.Village
+            .Decoration.Plaza.VillageCenterMarker> getVillageCenter() {
+        return java.util.Optional.ofNullable(villageCenter);
     }
 
     /** Lazy-constructed {@link VariantSelector} for this matcher run. */

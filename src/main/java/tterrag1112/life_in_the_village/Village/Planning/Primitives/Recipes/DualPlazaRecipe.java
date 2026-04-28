@@ -56,6 +56,15 @@ public final class DualPlazaRecipe implements ShapeRecipe {
 
         // Now place sq2 — it'll set its own civicRingRadius, overwriting sq1's
         // value on the layout. We saved sq1Ring above for any further use.
+        //
+        // TODO(prompt 17): the second TownSquare overwriting
+        // civicRingRadius is brittle — once the polygon-based plaza
+        // model lands (prompt 17), DUAL_PLAZA registers two
+        // PlazaRegions with different purposes (CIVIC primary,
+        // MARKET secondary) on PlanContext, and civic / market
+        // building placement reads from the per-region radius
+        // instead of from the layout's single civicRingRadius
+        // field. The local sq1Ring workaround goes away then.
         new LayoutPrimitive.TownSquare(sq2, secondaryCap, connector).place(pctx);
 
         // Outward gate roads from each square

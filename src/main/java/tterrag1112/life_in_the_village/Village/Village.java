@@ -143,6 +143,23 @@ public class Village {
     private final List<tterrag1112.life_in_the_village.Village.Decoration
             .TownSquare.GatheringPoint> gatheringPoints = new ArrayList<>();
 
+    /**
+     * Doc 04 §"Core concepts" — polygon-based plaza registrations.
+     * Empty until prompt 17's polygon generator runs; after that,
+     * VILLAGE+ tier villages carry one or more PlazaRegions
+     * persisted via the Village codec.
+     */
+    private final List<tterrag1112.life_in_the_village.Village
+            .Decoration.Plaza.PlazaRegion> plazaRegions = new ArrayList<>();
+
+    /**
+     * Doc 04 §"Tier-based sizing" — HAMLET counterpart to a plaza
+     * polygon. {@code null} for VILLAGE+ tier villages and for
+     * pre-prompt-16 saves.
+     */
+    @Nullable private tterrag1112.life_in_the_village.Village
+            .Decoration.Plaza.VillageCenterMarker villageCenterMarker;
+
     /** Inner ring radius used by the planner. 0 = not yet set. */
     private int ring1Radius = 0;
 
@@ -305,6 +322,49 @@ public class Village {
         }
     }
 
+    /**
+     * Doc 04 §"Core concepts" — plaza data sub-record. Lives on its
+     * own (not inside {@link VillageLayoutMeta}) because that record
+     * is at its codec field-count ceiling (14 fields out of 16) and
+     * keeping plaza data separate gives prompts 17/18 room to add
+     * fields here without disturbing layout meta.
+     */
+    private record VillagePlazaMeta(
+            List<tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.PlazaRegion> plazaRegions,
+            Optional<tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.VillageCenterMarker> villageCenterMarker
+    ) {
+        static final Codec<VillagePlazaMeta> CODEC = RecordCodecBuilder.create(i -> i.group(
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaRegion.CODEC.listOf()
+                        .optionalFieldOf("plazaRegions", new ArrayList<>())
+                        .forGetter(VillagePlazaMeta::plazaRegions),
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.VillageCenterMarker.CODEC
+                        .optionalFieldOf("villageCenterMarker")
+                        .forGetter(VillagePlazaMeta::villageCenterMarker)
+        ).apply(i, VillagePlazaMeta::new));
+
+        static VillagePlazaMeta empty() {
+            return new VillagePlazaMeta(new ArrayList<>(), Optional.empty());
+        }
+
+        static VillagePlazaMeta from(Village v) {
+            return new VillagePlazaMeta(
+                    new ArrayList<>(v.plazaRegions),
+                    Optional.ofNullable(v.villageCenterMarker));
+        }
+
+        void applyTo(Village v) {
+            if (!plazaRegions.isEmpty()) {
+                v.plazaRegions.clear();
+                v.plazaRegions.addAll(plazaRegions);
+            }
+            v.villageCenterMarker = villageCenterMarker.orElse(null);
+        }
+    }
+
     // =========================================================================
     // CONSTRUCTORS
     // =========================================================================
@@ -396,12 +456,19 @@ public class Village {
                             .optionalFieldOf("villageLaws", new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy())
                             .forGetter(v -> v.policy != null
                                     ? v.policy
-                                    : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy())
+                                    : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy()),
+                    // Phase 16 doc 04 — plaza polygon data. Empty for
+                    // pre-prompt-16 saves; populated by prompt 17's
+                    // polygon generator.
+                    VillagePlazaMeta.CODEC
+                            .optionalFieldOf("plazaMeta", VillagePlazaMeta.empty())
+                            .forGetter(VillagePlazaMeta::from)
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
                                layoutMeta, villageType, dockNodeId,
-                               useGraphConnector, offices, policy) -> {
+                               useGraphConnector, offices, policy,
+                               plazaMeta) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -430,6 +497,7 @@ public class Village {
                     }
                 }
                 v.policy = policy != null ? policy : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy();
+                if (plazaMeta != null) plazaMeta.applyTo(v);
                 return v;
             })
     );
@@ -525,6 +593,34 @@ public class Village {
     }
 
     public void clearGatheringPoints() { gatheringPoints.clear(); }
+
+    // ── Plaza accessors (Phase 16 doc 04 scaffolding) ───────────────────
+    // Nothing populates these yet — prompt 17's polygon generator is
+    // the producer. Accessors exist so subsequent prompts have stable
+    // integration points and saves persist round-trip.
+
+    public void addPlazaRegion(tterrag1112.life_in_the_village.Village
+                                       .Decoration.Plaza.PlazaRegion p) {
+        if (p != null) plazaRegions.add(p);
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Plaza.PlazaRegion> getPlazaRegions() {
+        return Collections.unmodifiableList(plazaRegions);
+    }
+
+    public void clearPlazaRegions() { plazaRegions.clear(); }
+
+    public void setVillageCenterMarker(@Nullable tterrag1112.life_in_the_village
+            .Village.Decoration.Plaza.VillageCenterMarker m) {
+        this.villageCenterMarker = m;
+    }
+
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Decoration
+            .Plaza.VillageCenterMarker getVillageCenterMarker() {
+        return villageCenterMarker;
+    }
 
     public Optional<UUID> getDockNodeId() { return Optional.ofNullable(dockNodeId); }
     public void setDockNodeId(UUID id) { this.dockNodeId = id; }

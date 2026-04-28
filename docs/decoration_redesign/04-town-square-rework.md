@@ -1,290 +1,288 @@
-# 04 — Town Square Rework
+# 04 — Town Square Rework (polygon-based plaza)
 
 ## Purpose
 
-Replace the current `TownSquarePlacer` (reduced to a 1-block-radius well
-during the zoning rework) with a `TownSquareComposer` that produces a
-real civic hub. The square should feel like a destination: paved, sized
-to village tier, populated by NPCs during social time, and visually
-coordinated with the surrounding civic ring.
+Replace the legacy `TownSquarePlacer` / prompt-14 `TownSquareComposer`
+"stamp a paved square at the center" model with a **plaza-as-region**
+model: the plaza is a polygonal piece of the road network, paved with
+the same `PathMaterial` palette as surrounding roads, with decoration
+content placed in voids inside the polygon. The plaza reads as a
+widened part of the road network rather than as a separately authored
+structure.
 
-## Design
+The visible failure mode this fixes — "the plaza looks stamped on top
+of unaware roads" — has two underlying causes diagnosed by the
+prompt-15 audit:
 
-### Composition model
+1. **Palette mismatch.** The legacy paving used
+   `VillageBiomeStyle.stone` / `stoneSlab` / `pathState`; roads use
+   `PathMaterial`. Different blocks meeting at the plaza-road boundary
+   creates a visible seam.
+2. **Shape mismatch.** A square plaza in a layout that organically
+   wants a different shape (RADIAL → circle, RIVERINE → linear, etc.)
+   reads as a separate authored object.
 
-The square is no longer a single placed structure. It is a
-**composition** of sub-features drawn from a culture-specific kit:
+The redesign addresses (1) immediately and (2) over a multi-prompt
+rollout.
 
-```
-Core kit
-  paving            (biome-style material, specific pattern per culture)
-  central feature   (well / fountain / statue / monument)
-  perimeter edging  (optional raised border)
+## Multi-prompt rollout plan
 
-Furniture kit
-  benches           (2-4 per square, oriented inward)
-  planters          (corner positions, scaled with tier)
-  notice board      (one per square)
-  gazebo / pavilion (town+ tier only)
-  monument / obelisk (city tier only)
-  vendor zone       (reserved flat space; activated by MARKET_DAY event)
+The audit confirmed that fully replacing the architecture in one
+prompt would require either substantial refactoring of
+`OrganicRoadPlacer` or a half-baked integration. The redesign is
+therefore split:
 
-Lighting kit
-  lampposts         (perimeter, tier-dependent density)
-  corner lanterns   (city tier)
-```
+| Prompt | Scope | Visible result |
+|---|---|---|
+| **16 (this)** | Surgical palette switch + polygon data model + `PLAZA_ADJACENT` slot tag + doc | Plaza pavement matches surrounding road palette; no visible seam. Plaza is still a stamped axis-aligned square. Data model exists but is unpopulated. |
+| **17** | Polygon plaza generator (CIRCLE/SQUARE/LINEAR/IRREGULAR), `PlazaPaver` running alongside the road network with the same `PathMaterial` source, recipe integration, sub-slot emission inside polygon | Plaza shape varies per layout; pavement still continuous because it shares the `PathMaterial` source. |
+| **18** | Civic placement migration: `PLAZA_ADJACENT` slot tag emission from polygon edges, building rotation override, removal of the ring-road-as-civic-placement mechanism | Civic buildings cluster around the polygon naturally; legacy ring road retired. |
 
-### Tier scaling
+After this prompt, existing villages look noticeably better (palette
+continuity), and the data structures prompts 17/18 build on are in
+place.
 
-Each `VillageSizeTier` picks a different subset:
-
-| Tier    | Diameter | Central Feature  | Benches | Gazebo | Monument |
-|---------|----------|------------------|---------|--------|----------|
-| HAMLET  | 7×7      | well             | 0       | no     | no       |
-| VILLAGE | 11×11    | well             | 2       | no     | no       |
-| TOWN    | 17×17    | fountain         | 4       | yes    | no       |
-| CITY    | 25×25    | fountain + monument | 4    | yes    | yes      |
-
-Diameter drives the outer ring road geometry already in place from the
-zoning rework — `placementRing = civicInnerEdge + maxCivicFrontFace/2`.
-The composer sets `plazaRadius` accordingly and the existing ring road
-primitive handles the rest.
-
-### Sub-slot emission
-
-The composer emits its own decoration slots inside the plaza interior:
-
-```
-FOUNTAIN_CENTER     one slot, center of plaza, quality 100
-MONUMENT_ACCENT     city tier only, slightly offset from center
-GAZEBO_SPOT         town+ tier, off-axis to avoid blocking view
-BENCH_PERIMETER     N slots (2-4) at fixed angles, facing inward
-NOTICE_BOARD        one slot, along the road-facing edge
-LAMP_CORNER         4 slots, corners of the plaza
-FLOWERBED_EDGE      perimeter slots between benches (tier-gated)
-VENDOR_ZONE         reserved flat slot, stays empty until MARKET_DAY
-```
-
-These slots are `DecorationTag.PARK_FEATURE` slots with additional
-piece-specific sub-tags. `DecorationMatcher` consumes them the same way
-it consumes road-side or building-adjacent slots.
-
-### NPC gathering points
-
-Each placed sub-feature registers a **gathering point** on the `Village`
-record. Gathering points are named positions that NPC social goals
-(NPC Phase 2 hobby activities + weekly schedule) can target:
+## Core concepts
 
 ```java
-village.addGatheringPoint(
-    new GatheringPoint(
-        id,
-        locationPos,
-        GatheringPointKind.BENCH,       // or FOUNTAIN, GAZEBO, NOTICE_BOARD, VENDOR_ZONE
-        capacity))                      // how many NPCs can occupy at once
-```
+public record PlazaRegion(
+    UUID plazaId,
+    PlazaPurpose purpose,
+    PlazaShape shape,
+    Polygon footprint,            // 2D outline at floor Y
+    BlockPos centroid,
+    int floorY,
+    Set<UUID> connectedRoadIds,   // road segments treated as
+                                   // plaza-internal by the paver
+    float orientationRadians       // 0 for cardinal-aligned shapes
+)
 
-Kinds the NPC layer is expected to consume:
+public enum PlazaPurpose { CIVIC, MARKET, RELIGIOUS_COURTYARD }
+public enum PlazaShape   { CIRCLE, SQUARE, LINEAR, IRREGULAR }
 
-- `BENCH` — sit-and-chat, 1 NPC per bench (animation pending NPC rework)
-- `FOUNTAIN` — edge-stand, 2-3 NPCs
-- `GAZEBO` — small-group gather, 3-5 NPCs
-- `NOTICE_BOARD` — read-posts, 1 NPC at a time
-- `VENDOR_ZONE` — stall-run, used by merchants during market day
-
-This plan registers the points; the NPC plan's hobby system consumes
-them. The decoration rework does not own the NPC behavior.
-
-### Existing plaza geometry — migration
-
-The zoning rework already uses:
-- `plazaRadius = TownSquarePlacer.RADIUS + 2`
-- `ringRoadRadius = plazaRadius + 3`
-- `civicInnerEdge = ringRoadRadius + 3 + 2`
-- `placementRing = civicInnerEdge + maxCivicFrontFace/2`
-
-The composer replaces `TownSquarePlacer.RADIUS` with a tier-derived
-value (3, 5, 8, 12 for hamlet/village/town/city). Everything downstream
-of `plazaRadius` updates automatically.
-
-## Data structures
-
-```java
-public enum TownSquareTier { HAMLET, VILLAGE, TOWN, CITY }
-
-public record TownSquareKit(
-    String culture,
-    TownSquareTier tier,
-    Identifier pavingNbtOrNull,
-    Identifier centralFeatureNbt,
-    List<Identifier> benchVariants,
-    Identifier gazeboNbtOrNull,
-    Identifier monumentNbtOrNull,
-    Identifier noticeBoardNbt,
-    Identifier lampNbt,
-    Identifier flowerbedNbtOrNull
-) {}
-
-public record GatheringPoint(
-    UUID id,
+public record VillageCenterMarker(
     BlockPos pos,
-    GatheringPointKind kind,
-    int capacity
-) {}
-
-public enum GatheringPointKind {
-    BENCH, FOUNTAIN, GAZEBO, NOTICE_BOARD, VENDOR_ZONE
-}
+    int floorY,
+    String culture
+)  // HAMLET tier alternative — no plaza polygon, just a center
+   // marker for a future "well + signpost" decoration
 ```
 
-Gathering points live on the `Village` record as
-`List<GatheringPoint>`, persisted via codec.
+`PlazaContent` is intentionally not a separate concept — what fills
+the polygon interior is just standard `DecorationProfile`s emitted by
+the slot emitter into `PARK_FEATURE` + `PLAZA_*` sub-tag slots inside
+the polygon. The plaza-content authoring lands as ordinary
+`DecorationProfile` registrations; no per-tier kit registry.
 
-## Integration points
+## Layout-to-shape mapping (prompt 17 implements)
 
-- **Replaces `TownSquarePlacer`**. All existing callers updated to
-  `TownSquareComposer.place(...)` with the same signature.
-- **Reuses zoning geometry** — `plazaRadius`, `ringRoadRadius`,
-  `placementRing`, `civicRingRadius` fields remain, driven by tier.
-- **Emits DecorationSlots** via the decoration framework (subsystem 01).
-  Sub-feature placement happens through DecorationMatcher.
-- **Registers GatheringPoints on Village** — consumed by NPC Phase 2
-  hobby activities.
-- **Interacts with MARKET_DAY event** — vendor zone reserves space that
-  the event effects system activates with stalls.
-- **Kits per culture** resolve via CultureResolver fallback chain:
-  `{culture}/town_square/{tier}/*` → `default/town_square/{tier}/*`.
+| Layout | Plaza shape |
+|---|---|
+| `RADIAL`, `PLAZA`, `CROSSROADS_RADIAL` | `CIRCLE` |
+| `CROSSROADS`, `GRID`, `ENCLAVE`, `HILLTOP` | `SQUARE` |
+| `RIVERINE`, `COASTAL`, `RIDGE`, `TERRACED` | `LINEAR` |
+| `CLUSTERED`, `SPRAWL`, `GROVE` | `IRREGULAR` |
+| `DUAL_PLAZA` | `CIRCLE` primary + `SQUARE` secondary |
+| anything else | `IRREGULAR` (default) |
+
+## Tier-based sizing (prompt 17 implements)
+
+| Tier | Plaza | Target area |
+|---|---|---|
+| `HAMLET`  | none — register a `VillageCenterMarker` instead | n/a |
+| `VILLAGE` | small  | ~50 blocks² |
+| `TOWN`    | medium | ~150 blocks² |
+| `CITY`    | large  | ~300 blocks² |
+
+## Plaza generation algorithm (prompt 17)
+
+Sketch — full implementation in prompt 17:
+
+1. Resolve `floorY` from the heightmap at the target center.
+2. Generate the shape per `PlazaShape`:
+   - `CIRCLE`: regular ~16-gon at radius `sqrt(targetArea / π)`.
+   - `SQUARE`: 4-corner polygon at `side = sqrt(targetArea)`,
+     rotation 0° or 45° from a deterministic seed.
+   - `LINEAR`: rectangle whose long axis follows the layout's
+     `majorAxis` hint, area-matched.
+   - `IRREGULAR`: sample expanding rings from the target center,
+     accept flat / unoccupied positions, simplify the boundary
+     via Douglas-Peucker (the `Polygon.simplify` helper landed in
+     prompt 16).
+3. Terrain accommodation: deform the polygon away from water,
+   committed buildings, and slopes outside tolerance. Up to ~30%
+   shrink is acceptable; below 60% of target area, log warning and
+   accept the smaller plaza.
+4. Identify connected roads — endpoints inside the polygon land in
+   `connectedRoadIds`; the paver treats those segments as
+   plaza-internal.
+5. Emit decoration sub-slots inside the polygon (`PARK_FEATURE` +
+   `PLAZA_*` sub-tags). Position rules per the doc 04
+   "Sub-slot emission" section.
+6. Emit `SlotTag.PLAZA_ADJACENT` building slots just outside the
+   polygon edge (the slot tag landed in prompt 16; emission lands
+   in prompt 18 alongside the civic ring removal).
+
+## Plaza-road integration
+
+In prompt 17, plaza paving runs in a new `PlazaPaver` class that
+sits alongside `VillageRoadNetwork.buildInitialNetwork`. It uses
+the same `PathMaterial` source the road realiser uses. Because the
+palette matches, the road realiser overwriting plaza interior
+blocks (or vice versa) at the polygon edges produces no visible
+seam. No changes to `OrganicRoadPlacer` are required —
+prompt-15 audit's strict "extend the road realiser" path was
+classified substantial; the parallel-pass approach is moderate and
+visually equivalent.
+
+## Plaza-adjacent buildings (prompt 18)
+
+`SlotTag.PLAZA_ADJACENT` is appended in prompt 16 (no emitters
+yet). Prompt 18 wires:
+- The polygon generator emits PLAZA_ADJACENT-tagged slots along
+  the polygon edge during compose().
+- `PlanContext.tryCommitBuilding` adds a rotation override: if a
+  slot is within ~8 blocks of a `PlazaRegion` polygon edge, the
+  building rotates to face the polygon centroid instead of the
+  feeding road. Layered on top of the existing rotation logic;
+  slots not near a plaza fall through to the existing
+  `rotationFacingRoad` behaviour.
+
+## Multi-plaza support (DUAL_PLAZA)
+
+Prompt 16 leaves DUAL_PLAZA's existing brittle workaround in
+place — the second `LayoutPrimitive.TownSquare` overwrites
+`civicRingRadius`, which the recipe compensates for by saving
+`sq1Ring` locally. Prompt 17 fixes this by registering two
+`PlazaRegion`s with different purposes (CIVIC + MARKET) on
+`PlanContext` and reading per-region geometry; the workaround
+goes away then. Comment marker added to
+`DualPlazaRecipe.compose()` pointing at prompt 17.
+
+## Sub-slot emission
+
+The plaza sub-slot emission added in prompt 14 (
+`DecorationSlotEmitter.emitPlazaSubSlots` reading
+`village.getTownSquareRadius()`) carries forward unchanged in
+prompt 16. Prompt 17 will replace its radius-based footprint
+calculation with polygon-aware position sampling, but the
+mechanism (PARK_FEATURE + sub-role tag, deterministic UUIDs,
+gathering-point parity) stays.
+
+## Open-air market integration
+
+`PlazaPurpose.MARKET` regions reserve a vendor sub-region inside
+the polygon. The decoration framework leaves the sub-region empty;
+the festival decorator (subsystem 13) populates it with stalls
+during MARKET_DAY events. The reservation lives on the polygon
+itself — interior sub-slot positions for stalls are sampled
+during MARKET_DAY effects rather than persisted on the plaza.
 
 ## Behavior contract
 
 ### Does
 
-- Scale size and feature set by village tier.
-- Use biome-and-culture-specific paving and furniture.
-- Register named gathering points for the NPC social layer.
-- Emit sub-slots for internal decoration through the standard matcher.
-- Preserve the existing zoning ring geometry.
+- Pave the plaza with the village's road palette (prompt 16
+  surgical fix).
+- Define a polygon-based geometry that prompts 17/18 populate.
+- Provide a `PLAZA_ADJACENT` slot tag for prompt-18 civic
+  placement.
+- Persist plaza data on `Village` so saves round-trip.
 
 ### Does not
 
-- Place buildings. Civic buildings still placed by the building matcher
-  at `placementRing` distance.
-- Own NPC behavior. Goals belong to the NPC plan.
-- Decorate for events directly. Events consume the VENDOR_ZONE and
-  FESTIVAL_GROUND (subsystem 13) reserved space.
-- Retry composition. If a sub-feature can't place (terrain, overlap),
-  it drops silently.
+- Generate polygon plazas yet (prompt 17).
+- Replace civic-building placement around the plaza (prompt 18).
+- Modify `OrganicRoadPlacer` or any other road realiser logic.
+- Touch the legacy `LayoutPrimitive.TownSquare` ring-road or
+  `civicRingRadius` mechanism — that's prompt 18.
 
-## Edge cases
+## Replaces
 
-- **Plaza overlaps a ridge or terrain fault.** The composer uses the
-  existing `medianGroundY` to pick a single pad Y. Steep terrain is
-  rejected at the recipe level, not handled here.
-- **Plaza on water.** Recipes already reject this. If it slips through,
-  the composer places the central feature on a small pad and the
-  decoration fails at the sub-feature level.
-- **City-tier square in a walled enclave layout.** The enclave layout
-  explicitly overrides town square radius; the composer honors that
-  override and uses the smallest tier-matching kit.
-- **Very small hamlet (1–3 buildings).** Composer uses HAMLET kit;
-  gazebo and monument slots are skipped; only the well + notice board.
+Eventually (across prompts 16–18):
+- `TownSquarePlacer` (the legacy 1-radius well placer; mostly
+  dead code now, retained for event-decoration helpers).
+- `TownSquareComposer` (prompt 14's stamped-square model;
+  retained in prompt 16 with palette switch, removed in prompt
+  17).
+- `TownSquareKit` / `TownSquareKitRegistry` /
+  `DefaultTownSquareKits` (replaced by direct
+  `DecorationProfile` registrations in prompt 17).
+- `LayoutPrimitive.TownSquare`'s ring road and
+  `civicRingRadius` (replaced by `PLAZA_ADJACENT` slot tag in
+  prompt 18).
 
-## Ordering dependencies
-
-- Runs during `ShapeRecipe.compose` at the town square placement step,
-  same position as `TownSquarePlacer` today.
-- Must run before `DecorationSlotEmitter` sweep so that PARK_FEATURE
-  sub-slots are already in place when the uniform emitter runs.
-- Gathering point registration requires the `Village` record to exist,
-  which it always does by this point.
+Already kept by prompt 16:
+- `DecorationTag.PLAZA_*` sub-role values (extended enum from
+  prompt 14).
+- `GatheringPoint` / `GatheringPointKind` (prompt 14).
+- `DecorationSlotEmitter.emitPlazaSubSlots` (prompt 14).
 
 ## Open decisions
 
-- **Tier override hook.** Should individual layouts (ENCLAVE, GROVE)
-  be allowed to force a smaller-than-default tier? Proposed: yes,
-  via `TownSquareComposer.placeForced(tier, ...)`. Enclave already
-  needs this.
-- **GatheringPoint capacity tuning.** Proposed starting values:
-  BENCH=1, FOUNTAIN=3, GAZEBO=5, NOTICE_BOARD=1, VENDOR_ZONE=4. Adjust
-  after NPC hobby activities are tested.
-- **Culture kit completeness.** If a culture has no town_square kit at
-  any tier, fall to `default`. If default is missing a TIER entry,
-  downgrade to the next tier up with content. Confirm this fallback
-  logic is acceptable.
+- **Polygon edge softening.** Should the polygon's outermost
+  ring use `sampleEdge` (with no per-block noise, since the plaza
+  is deterministically flat) or apply organic noise like
+  `OrganicRoadPlacer.shouldPlaceEdge`? Proposed: `sampleEdge`
+  without noise for now; revisit during prompt 17 visual
+  validation.
+- **DUAL_PLAZA primary purpose.** CIVIC is the natural pick;
+  the secondary plaza could be MARKET or `RELIGIOUS_COURTYARD`
+  depending on village type. Proposed: MARKET as the default;
+  village-type rules override.
+- **Polygon simplification tolerance.** Default 1.5 blocks for
+  IRREGULAR plaza simplification — drops vertices collinear
+  within ~1 block of neighbours, keeping the polygon recognisable
+  but not jagged.
 
 ## Does-not-include
 
-- NPC animations for sitting on benches — NPC plan work.
-- Dynamic plaza expansion as a village grows — the plaza is tier-
-  locked at realisation.
-- Player-customizable squares — procedural only.
-- Festival-specific decorations — subsystem 13. The VENDOR_ZONE is
-  the only reservation for events.
+- NPC behaviour at gathering points — NPC Phase 2 work.
+- Festival activation of `MARKET` vendor sub-regions — subsystem
+  13 work.
+- Cross-village plaza-to-plaza road styling — Trade Route
+  subsystem.
 
 ## Revision notes
 
-(Changes recorded here as the spec evolves.)
+### Prompt 16 — palette fix + data model + slot tag
 
-### P1-01 / P1-02 / P1-03 / P1-04 / P1-05 — composer + sub-slots + kits + gathering points landed
-
-- **Plaza sub-role mechanism — extended `DecorationTag`, not a new
-  field.** Doc 04 originally proposed adding an optional
-  `PlazaSubSlot` field to `DecorationSlot` (and a parallel filter on
-  `DecorationProfile`). Instead, we appended `PLAZA_*` values to the
-  existing `DecorationTag` enum. The matcher already does set-
-  containment filtering on tags, so a slot tagged
-  `{PARK_FEATURE, PLAZA_FOUNTAIN}` plus a profile requiring the same
-  pair Just Works with no framework changes. Codec stability holds
-  because `DecorationTag` is `StringRepresentable` and we appended
-  rather than reordered.
-- **Paving stays programmatic.** Doc 04's data structure included a
-  `pavingNbtOrNull` field for per-tier paving NBTs. We omitted it
-  because the existing `VillageBiomeStyle` already produces biome-and-
-  culture-styled paving programmatically, and authoring tiers × cultures
-  × biomes of paving NBTs is unwieldy compared to scaling the
-  programmatic algorithm. `TownSquareComposer` carries forward the
-  legacy paving algorithm parameterised on `radius`. Future cultures
-  that need a fundamentally different paving aesthetic can add a
-  `paveOverride` hook later without redesigning the framework.
-- **`TownSquareTier` folds onto `VillageSizeTier`.** Doc 04 proposed a
-  separate `TownSquareTier` enum. Since `VillageSizeTier` already has
-  the four canonical values (HAMLET/VILLAGE/TOWN/CITY) and is the
-  mod-wide tier source, the new file
-  `TownSquareTier` is a static helper holding the
-  tier→radius / tier→bench-count / tier-gate predicates rather than a
-  duplicate enum.
-- **LayoutPrimitive plazaRadius migration.** Two hardcoded reads of
-  `TownSquarePlacer.RADIUS + 2` in `LayoutPrimitive.TownSquare` were
-  replaced with `TownSquareTier.plazaRadiusFor(pctx.sizeTier())`.
-  `VillagePlanner`'s fallback path (recipe-didn't-set-square) now
-  hardcodes `TownSquareTier.RADIUS_HAMLET` (=3, equal to the legacy
-  value) so HAMLET seeds still reproduce byte-for-byte.
-- **Plaza sub-slot emission lives in `DecorationSlotEmitter`, not the
-  composer.** Doc 04 implies the composer emits slots itself. Since
-  decoration slots are documented as ephemeral (alive only during a
-  `DecorationPass` run, never persisted) and the emitter is the
-  uniform pass that produces them, plaza sub-slots ride along as a
-  7th sub-algorithm on the emitter. The composer's job is reduced to
-  paving + building-registration + gathering-point registration +
-  setting the village's `townSquareRadius`. Functionally identical;
-  cleaner pipeline.
-- **VENDOR_ZONE moved to NE diagonal.** Doc 04's "reserved flat slot"
-  doesn't specify a position. The legacy
-  `TownSquarePlacer.decorateForEvent` (still in place for events)
-  hardcodes MARKET_DAY stalls at `±4` along the cardinal axes; the
-  composer's VENDOR_ZONE sits on the NE diagonal at
-  `(centre + (radius-2), centre - (radius-2))` so the two systems
-  don't collide spatially. MARKET_DAY behaviour is otherwise
-  unchanged in this prompt.
-- **TownSquarePlacer reduced to event helpers.** The class no longer
-  has a `place()` method; it retains only `decorateForEvent` and the
-  per-event helpers (`placeFairDecorations`, `placeMarketDecorations`,
-  …). The `RADIUS` constant remains as the offset basis those helpers
-  use; new readers should use `Village.getTownSquareRadius()` instead.
-- **NBT authoring is the user's responsibility.** The framework
-  registers profiles pointing at canonical paths under
-  `data/life_in_the_village/structures/default/decoration/town_square/`.
-  Until the user authors those NBTs, `DecorationPass.stamp` logs a
-  warning and burns the slot. Plaza pavement and gathering points
-  still appear; only the matcher-stamped sub-features (fountain,
-  benches, etc.) are absent.
+- **Plaza paving palette switched to `PathMaterial`.** The legacy
+  paving used `VillageBiomeStyle.stone`/`stoneSlab`/`pathState` —
+  a different palette than the road realiser's `PathMaterial`,
+  which created the visible plaza-road seam the prompt-15 audit
+  identified. `TownSquareComposer.pavePlaza` now resolves the
+  same `PathMaterial.forBiomeAndTier(style, village.getPathTier())`
+  the road realiser uses, samples the interior from
+  `material.sampleCore(random)` and the outer ring from
+  `material.sampleEdge(random)`, and **drops the legacy slab
+  ring** so the plaza no longer reads as a separately authored
+  square pattern.
+- **Polygon utility added** at
+  `Utilities/Geometry/Polygon.java` — minimal API
+  (`contains` / `distanceToEdge` / `area` / `boundingBox` /
+  `simplify` via Douglas-Peucker / `centroid`) sized for plaza
+  polygons (4-32 vertices). 2D in XZ; Y handled by callers.
+- **Plaza data model** in `Village/Decoration/Plaza/`:
+  `PlazaPurpose`, `PlazaShape` (both StringRepresentable, codec-
+  stable), `PlazaRegion` (RecordCodecBuilder + UUID +
+  Polygon-valued footprint), `VillageCenterMarker` (HAMLET
+  alternative).
+- **PlanContext extension** — `addPlazaRegion`,
+  `getPlazaRegions`, `getPlazaRegionContaining`,
+  `getPlazaRegionNear`, `setVillageCenter`, `getVillageCenter`.
+  No producers yet (prompt 17); accessors exist so subsequent
+  prompts have stable integration points.
+- **Village codec extension** — new `VillagePlazaMeta` sub-record
+  added as the 16th group field on `Village.CODEC` (the existing
+  `VillageLayoutMeta` was already at 14 of 16 fields after
+  prompt 14). `optionalFieldOf` defaults so pre-prompt-16 saves
+  load with empty plaza state.
+- **`PLAZA_ADJACENT` slot tag** appended to `SlotTag` (plain
+  Java enum, no codec).
+- **DUAL_PLAZA workaround flagged**, not fixed —
+  `DualPlazaRecipe.compose` gains a `TODO(prompt 17)` comment
+  pointing at the polygon-based fix.
+- **Civic ring NOT touched.** Prompt 18 work.
+- **Polygon NOT generated.** Prompt 17 work — plaza is still a
+  stamped square, but the palette is now continuous with roads.

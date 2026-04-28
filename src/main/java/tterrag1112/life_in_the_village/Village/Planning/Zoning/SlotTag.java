@@ -24,5 +24,13 @@ public enum SlotTag {
     SHORE, PIER_ADJACENT, TERRACE_EDGE, FOREST_EDGE,
     RIVER_BANK, HILLTOP_PEAK,
     // Generic fallback
-    ROAD_ADJACENT, BACKFILL
+    ROAD_ADJACENT, BACKFILL,
+    // Plaza-relative (Phase 16 doc 04). Emitted by prompt 17's
+    // polygon plaza generator for slots that lie within ~8 blocks
+    // of a PlazaRegion's polygon edge. Building profiles for
+    // civic / market / temple buildings can prefer this tag to
+    // cluster around the plaza without recipes hardcoding ring
+    // geometry. No layout emits this tag in prompt 16; the value
+    // is appended ahead of time so consumer code can rely on it.
+    PLAZA_ADJACENT
 }
