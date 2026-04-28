@@ -32,12 +32,25 @@ import java.util.UUID;
  */
 public class VillageHistoryLog extends SavedData {
 
+    /**
+     * String-form UUID codec for use as map keys.
+     *
+     * <p>{@code UUIDUtil.CODEC} produces an int-array NBT tag (4 ints).
+     * That works fine when a UUID is a record FIELD (nested inside a
+     * CompoundTag), but it crashes when used as a {@code Codec.unboundedMap}
+     * KEY because CompoundTag keys must be strings — the encoder pulls the
+     * key tag through {@code getStringValue}, which rejects IntArrayTag
+     * with the error "Not a string". Use the string form for map keys.</p>
+     */
+    private static final com.mojang.serialization.Codec<UUID> UUID_STRING_KEY =
+            com.mojang.serialization.Codec.STRING.xmap(UUID::fromString, UUID::toString);
+
     public static final SavedDataType<VillageHistoryLog> TYPE = new SavedDataType<>(
             "life_in_the_village_history",
             VillageHistoryLog::new,
             RecordCodecBuilder.create(i -> i.group(
                     com.mojang.serialization.Codec.unboundedMap(
-                                    net.minecraft.core.UUIDUtil.CODEC,
+                                    UUID_STRING_KEY,
                                     HistoryEntry.CODEC.listOf())
                             .optionalFieldOf("byVillage", Map.of())
                             .forGetter(d -> snapshot(d.byVillage))

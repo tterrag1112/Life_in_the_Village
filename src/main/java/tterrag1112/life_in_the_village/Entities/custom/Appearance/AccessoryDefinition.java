@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Entities.custom.Appearance;
 
-import net.minecraft.resources.ResourceLocation;
+
+import net.minecraft.resources.Identifier;
 
 import java.util.Optional;
 
@@ -20,9 +21,9 @@ import java.util.Optional;
  */
 public record AccessoryDefinition(
         String id,
-        ResourceLocation texture,
+        Identifier texture,
         AccessorySlot slot,
-        Optional<ResourceLocation> model,
+        Optional<Identifier> model,
         String shortLabel
 ) {
     public AccessoryDefinition {
@@ -30,14 +31,14 @@ public record AccessoryDefinition(
         if (shortLabel == null) shortLabel = id;
     }
 
-    public static AccessoryDefinition textureOnly(String id, ResourceLocation texture,
+    public static AccessoryDefinition textureOnly(String id, Identifier texture,
                                                   AccessorySlot slot, String label) {
         return new AccessoryDefinition(id, texture, slot, Optional.empty(), label);
     }
 
-    public static AccessoryDefinition withModel(String id, ResourceLocation texture,
+    public static AccessoryDefinition withModel(String id, Identifier texture,
                                                 AccessorySlot slot,
-                                                ResourceLocation model, String label) {
+                                                Identifier model, String label) {
         return new AccessoryDefinition(id, texture, slot, Optional.of(model), label);
     }
 }

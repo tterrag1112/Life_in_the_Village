@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Entities.custom.Appearance;
 
-import net.minecraft.resources.ResourceLocation;
+
+import net.minecraft.resources.Identifier;
 
 import java.util.Optional;
 
@@ -20,8 +21,8 @@ import java.util.Optional;
  */
 public record OfficeMark(
         String officeId,
-        ResourceLocation overlayTexture,
-        Optional<ResourceLocation> attachmentModel,
+        Identifier overlayTexture,
+        Optional<Identifier> attachmentModel,
         int priority,
         String shortLabel
 ) {
@@ -30,13 +31,13 @@ public record OfficeMark(
         if (shortLabel == null) shortLabel = officeId;
     }
 
-    public static OfficeMark overlayOnly(String officeId, ResourceLocation overlay,
+    public static OfficeMark overlayOnly(String officeId, Identifier overlay,
                                           int priority, String shortLabel) {
         return new OfficeMark(officeId, overlay, Optional.empty(), priority, shortLabel);
     }
 
-    public static OfficeMark withAttachment(String officeId, ResourceLocation overlay,
-                                             ResourceLocation attachment, int priority,
+    public static OfficeMark withAttachment(String officeId, Identifier overlay,
+                                             Identifier attachment, int priority,
                                              String shortLabel) {
         return new OfficeMark(officeId, overlay, Optional.of(attachment), priority, shortLabel);
     }

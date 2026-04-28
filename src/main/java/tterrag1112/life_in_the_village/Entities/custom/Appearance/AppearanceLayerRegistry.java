@@ -1,6 +1,6 @@
 package tterrag1112.life_in_the_village.Entities.custom.Appearance;
 
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
 
@@ -125,8 +125,8 @@ public final class AppearanceLayerRegistry {
     }
 
     private static CultureBase culture(String id, int variantCount) {
-        ResourceLocation base = textureOf("entity/townsperson/culture/" + id + "/base");
-        List<ResourceLocation> variants = new ArrayList<>();
+        Identifier base = textureOf("entity/townsperson/culture/" + id + "/base");
+        List<Identifier> variants = new ArrayList<>();
         for (int i = 0; i < variantCount; i++) {
             variants.add(textureOf("entity/townsperson/culture/" + id + "/skin_" + i));
         }
@@ -211,20 +211,20 @@ public final class AppearanceLayerRegistry {
 
     // ── Path conventions ────────────────────────────────────────────
 
-    private static ResourceLocation textureOf(String relPath) {
-        return ResourceLocation.fromNamespaceAndPath(NS, "textures/" + relPath + ".png");
+    private static Identifier textureOf(String relPath) {
+        return Identifier.fromNamespaceAndPath(NS, "textures/" + relPath + ".png");
     }
 
-    private static ResourceLocation officeOverlay(String name) {
+    private static Identifier officeOverlay(String name) {
         return textureOf("entity/townsperson/office/" + name);
     }
 
-    private static ResourceLocation accessoryTexture(String name) {
+    private static Identifier accessoryTexture(String name) {
         return textureOf("entity/townsperson/accessory/" + name);
     }
 
-    private static ResourceLocation attachmentOf(String name) {
-        return ResourceLocation.fromNamespaceAndPath(NS,
+    private static Identifier attachmentOf(String name) {
+        return Identifier.fromNamespaceAndPath(NS,
                 "models/entity/townsperson/attachment/" + name + ".json");
     }
 }
