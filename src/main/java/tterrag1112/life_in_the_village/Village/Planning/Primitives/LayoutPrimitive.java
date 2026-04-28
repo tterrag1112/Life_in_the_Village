@@ -2,7 +2,6 @@ package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Decoration.TownSquarePlacer;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 import tterrag1112.life_in_the_village.Village.Planning.StructureSizeCache;
@@ -91,9 +90,21 @@ public sealed interface LayoutPrimitive
             return max;
         }
 
+        /** Doc 04 §"Tier scaling" — derive plaza half-extent from the
+         *  village's planned tier. Resolved via {@code pctx.sizeTier()}
+         *  which {@code VillagePlanner} sets before primitives run; the
+         *  null fallback (legacy / test paths that bypass
+         *  VillagePlanner) lands on HAMLET (radius 3, the legacy
+         *  {@code TownSquarePlacer.RADIUS + 2} value). */
+        private static int resolvePlazaRadius(PlanContext pctx) {
+            return tterrag1112.life_in_the_village.Village.Decoration
+                    .TownSquare.TownSquareTier
+                    .plazaRadiusFor(pctx.sizeTier());
+        }
+
         @Override
         public void place(PlanContext pctx) {
-            int plazaRadius = TownSquarePlacer.RADIUS + 2;
+            int plazaRadius = resolvePlazaRadius(pctx);
             int maxCivicFrontFace = scanMaxCivicFrontFace(pctx);
             int placementRing = computePlacementRing(plazaRadius, maxCivicFrontFace,
                     buildingCapacity);
@@ -122,7 +133,7 @@ public sealed interface LayoutPrimitive
 
         @Override
         public void emitSlots(PlanContext pctx) {
-            int plazaRadius = TownSquarePlacer.RADIUS + 2;
+            int plazaRadius = resolvePlazaRadius(pctx);
             int maxCivicFrontFace = scanMaxCivicFrontFace(pctx);
             int placementRing = computePlacementRing(plazaRadius, maxCivicFrontFace,
                     buildingCapacity);

@@ -56,16 +56,26 @@ public class VillageDecorator {
 
         // ── Step 1: Town square ───────────────────────────────────────────────
         BlockPos squareCenter = resolveSquareCenter(level, layout, buildings);
-        Set<BlockPos> squarePavement = TownSquarePlacer.place(
-                level, squareCenter, style, tier, village, data);
+        // Phase 1 doc 04 — TownSquareComposer is the drop-in replacement
+        // for the legacy TownSquarePlacer. Same signature, same return
+        // type. The composer paves the plaza, registers a TOWN_SQUARE
+        // building, sets the tier-scaled radius on the village, and
+        // registers gathering points. Sub-feature NBTs are stamped
+        // later by DecorationPass via DecorationProfile registrations.
+        Set<BlockPos> squarePavement =
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .TownSquare.TownSquareComposer.compose(
+                                level, squareCenter, style, tier, village, data);
+        int plazaRadius = village.getTownSquareRadius() > 0
+                ? village.getTownSquareRadius()
+                : tterrag1112.life_in_the_village.Village.Decoration
+                        .TownSquare.TownSquareTier.plazaRadiusFor(tier);
 
-        // Add square to footprint
+        // Add square to footprint — sized to the tier-scaled radius.
         if (footprint != null) {
             footprint.occupyRect(
-                    squareCenter.offset(-TownSquarePlacer.RADIUS, 0,
-                            -TownSquarePlacer.RADIUS),
-                    TownSquarePlacer.RADIUS * 2,
-                    TownSquarePlacer.RADIUS * 2, 1);
+                    squareCenter.offset(-plazaRadius, 0, -plazaRadius),
+                    plazaRadius * 2, plazaRadius * 2, 1);
         }
 
         // ── Step 2: Road network ──────────────────────────────────────────────

@@ -58,7 +58,34 @@ public enum DecorationTag implements StringRepresentable {
     /** Attached to the face of a production building. */
     TRADE_SIGN,
     /** Cemetery grave slot. */
-    HEADSTONE;
+    HEADSTONE,
+
+    // ── Plaza sub-roles (doc 04 §"Sub-slot emission") ────────────────────
+    // Always emitted alongside {@link #PARK_FEATURE}; profiles for these
+    // require both. Doc 04 originally proposed a {@code PlazaSubSlot}
+    // field on {@link DecorationSlot}; we instead extend the tag enum so
+    // the existing tag-filter machinery handles sub-role matching with
+    // no new field. Codec stability: append-only.
+
+    /** Plaza centre — well / fountain / monument core. */
+    PLAZA_FOUNTAIN,
+    /** City-tier-only accent next to the central feature. */
+    PLAZA_MONUMENT,
+    /** Town+ tier off-axis pavilion. */
+    PLAZA_GAZEBO,
+    /** Perimeter bench (one slot per bench, facing inward). */
+    PLAZA_BENCH,
+    /** Road-facing edge notice board. */
+    PLAZA_NOTICE_BOARD,
+    /** Plaza corner lamppost. */
+    PLAZA_LAMP,
+    /** Perimeter flowerbed slot between benches. */
+    PLAZA_FLOWERBED,
+    /** Reserved flat slot — stays empty until the MARKET_DAY event
+     *  decorator activates it. No profile is registered for this tag
+     *  in Phase 1; the slot exists so events can find a deterministic
+     *  position to stamp stalls into. */
+    PLAZA_VENDOR_ZONE;
 
     public static final Codec<DecorationTag> CODEC =
             StringRepresentable.fromEnum(DecorationTag::values);

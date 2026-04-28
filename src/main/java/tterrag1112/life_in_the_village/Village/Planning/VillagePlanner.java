@@ -4,7 +4,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder;
-import tterrag1112.life_in_the_village.Village.Decoration.TownSquarePlacer;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleAutoDeriver;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleSelection;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillageAgeCategoryHook;
@@ -178,11 +177,17 @@ public class VillagePlanner {
             return Optional.empty();
         }
 
-        // Ensure town square has SOMETHING marked if recipe didn't
+        // Ensure town square has SOMETHING marked if recipe didn't.
+        // Doc 04 §"Tier scaling" — the fallback uses HAMLET radius
+        // (3) since this branch only runs when the recipe never
+        // committed a plaza, which is a degenerate path that
+        // shouldn't host larger tiers anyway.
         if (layout.getTownSquarePos() == null) {
             BlockPos sq = solidSurface(level, centre);
             layout.addForced(new LayoutSlot(
-                    LayoutSlot.SlotType.DECORATION, sq, TownSquarePlacer.RADIUS + 2));
+                    LayoutSlot.SlotType.DECORATION, sq,
+                    tterrag1112.life_in_the_village.Village.Decoration
+                            .TownSquare.TownSquareTier.RADIUS_HAMLET));
             layout.setTownSquarePos(sq);
         }
 

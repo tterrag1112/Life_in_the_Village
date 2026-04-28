@@ -2,20 +2,13 @@
 package tterrag1112.life_in_the_village.Village.Decoration;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.levelgen.Heightmap;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
-import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Procedurally constructs the TOWN_SQUARE and all of its decorations.
@@ -39,129 +32,25 @@ import java.util.*;
  * {@link BuildingType#TOWN_SQUARE} so the path router and trade road
  * manager can connect to it.
  */
+/**
+ * Phase 1 doc 04 — placement responsibilities migrated to
+ * {@link tterrag1112.life_in_the_village.Village.Decoration.TownSquare
+ * .TownSquareComposer}. This class is reduced to event-time
+ * redecoration helpers (MARKET_DAY stalls, harvest festival props,
+ * etc.) called from {@code EventEffects}. The {@link #RADIUS}
+ * constant remains as the offset basis for those helpers; tier-
+ * scaled plaza geometry is held on the {@link
+ * tterrag1112.life_in_the_village.Village.Village} record.
+ */
 public class TownSquarePlacer {
 
-    // Half-size of the town square in blocks (full side = 2*RADIUS+1)
+    /** Legacy half-extent referenced by the event-decoration helpers
+     *  for offset positioning. The plaza's real half-extent now lives
+     *  on {@code Village.getTownSquareRadius()} and is tier-scaled
+     *  via {@link tterrag1112.life_in_the_village.Village.Decoration
+     *  .TownSquare.TownSquareTier}. Don't add new readers of this
+     *  constant — read the village's stored radius instead. */
     public static final int RADIUS = 1;
-
-    // -------------------------------------------------------------------------
-    // Entry point
-    // -------------------------------------------------------------------------
-
-    /**
-     * Places the town square centred at {@code center}, registers it as
-     * a building, and returns the set of block positions that make up the
-     * paved surface (used to protect them from terrain smoothing).
-     */
-    public static Set<BlockPos> place(ServerLevel level,
-                                      BlockPos center,
-                                      VillageBiomeStyle style,
-                                      VillageSizeTier tier,
-                                      Village village,
-                                      VillageSavedData data) {
-        // Find the median ground Y across the square footprint to pick
-        // a single flat target Y for the whole pad
-        int targetY = medianGroundY(level, center, RADIUS);
-        BlockPos flatCenter = new BlockPos(center.getX(), targetY, center.getZ());
-
-        Set<BlockPos> pavedBlocks = new HashSet<>();
-
-        // levelPad fills columns UP TO targetY - 1 (inclusive), leaving
-        // targetY as the surface the paving block will replace.
-        // Filling to targetY itself would push the pave block one too high.
-        TerrainSmoother.levelPad(level,
-                flatCenter.getX() - RADIUS, flatCenter.getZ() - RADIUS,
-                flatCenter.getX() + RADIUS, flatCenter.getZ() + RADIUS,
-                targetY - 1,                // ← fill to one below pave surface
-                Collections.emptySet());
-
-        // Pave at targetY — replacing whatever solid block is there.
-        // targetY is MOTION_BLOCKING_NO_LEAVES result = the solid surface block.
-        for (int dx = -RADIUS; dx <= RADIUS; dx++) {
-            for (int dz = -RADIUS; dz <= RADIUS; dz++) {
-                BlockPos pavePos = new BlockPos(
-                        flatCenter.getX() + dx,
-                        targetY,
-                        flatCenter.getZ() + dz);
-
-                // Re-verify surface at this specific column — slope means
-                // not every column is exactly targetY
-                int colSurfY = level.getHeight(
-                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                        pavePos.getX(), pavePos.getZ());
-
-                // If this column is lower than targetY, fill up to targetY - 1
-                // then pave at targetY
-                if (colSurfY < targetY) {
-                    for (int y = colSurfY + 1; y < targetY; y++) {
-                        BlockPos fill = new BlockPos(pavePos.getX(), y, pavePos.getZ());
-                        if (level.getBlockState(fill).isAir()
-                                || level.getBlockState(fill).is(BlockTags.REPLACEABLE)) {
-                            level.setBlock(fill, Blocks.DIRT.defaultBlockState(), 3);
-                        }
-                    }
-                } else if (colSurfY > targetY) {
-                    // Carve down to targetY
-                    for (int y = colSurfY; y > targetY; y--) {
-                        BlockPos carve = new BlockPos(pavePos.getX(), y, pavePos.getZ());
-                        BlockState cs = level.getBlockState(carve);
-                        if (cs.is(Blocks.GRASS_BLOCK) || cs.is(Blocks.DIRT)
-                                || cs.is(Blocks.COARSE_DIRT)
-                                || cs.is(BlockTags.REPLACEABLE)) {
-                            level.setBlock(carve, Blocks.AIR.defaultBlockState(), 3);
-                        } else break;
-                    }
-                }
-
-                // Place paving at targetY (the solid surface level)
-                boolean isBorder = Math.abs(dx) == RADIUS
-                        || Math.abs(dz) == RADIUS;
-                boolean isInnerBorder = !isBorder
-                        && (Math.abs(dx) == RADIUS - 1
-                        || Math.abs(dz) == RADIUS - 1);
-
-                BlockState pave = isBorder      ? style.stone.defaultBlockState()
-                        : isInnerBorder  ? style.stoneSlab()
-                        : style.pathState();
-
-                level.setBlock(pavePos, pave, 3);
-
-                // Clear vegetation above
-                BlockPos above = pavePos.above();
-                BlockState aboveState = level.getBlockState(above);
-                if (!aboveState.isAir()
-                        && (aboveState.is(BlockTags.REPLACEABLE)
-                        || aboveState.is(BlockTags.FLOWERS)
-                        || aboveState.is(BlockTags.SMALL_FLOWERS)
-                        || aboveState.is(BlockTags.LEAVES))) {
-                    level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
-                }
-
-                // pavedBlocks stores the SOLID pave block position (not air above)
-                // so that protectedXZ checks in VillageDecorator use the correct Y
-                pavedBlocks.add(pavePos);
-            }
-        }
-        // ── Central feature ──────────────────────────────────────────────────
-        placeCenter(level, flatCenter, targetY, style, tier);
-
-        // ── Corner lampposts ─────────────────────────────────────────────────
-        placeCornerLampposts(level, flatCenter, targetY, style);
-
-        // ── Benches and planters ─────────────────────────────────────────────
-        placeBenchesAndPlanters(level, flatCenter, targetY, style, tier);
-
-        // ── Notice board ─────────────────────────────────────────────────────
-        placeNoticeBoard(level, flatCenter, targetY, style);
-
-        // ── Register as a building ───────────────────────────────────────────
-        registerAsBuilding(level, flatCenter, village, data);
-
-        System.out.println("TownSquarePlacer: placed town square at "
-                + flatCenter + " (Y=" + targetY + ")");
-
-        return pavedBlocks;
-    }
 
     // -------------------------------------------------------------------------
     // Event-driven redecoration
@@ -188,97 +77,6 @@ public class TownSquarePlacer {
             default               -> {} // no change for other events
         }
         return placed;
-    }
-
-    // -------------------------------------------------------------------------
-    // Central feature
-    // -------------------------------------------------------------------------
-
-    private static void placeCenter(ServerLevel level, BlockPos flatCenter,
-                                    int targetY,
-                                    VillageBiomeStyle style,
-                                    VillageSizeTier tier) {
-        BlockPos base = new BlockPos(
-                flatCenter.getX(), targetY, flatCenter.getZ());
-
-        if (tier.hasWell) {
-            // Decorative well with full stone surround
-            level.setBlock(base, Blocks.WATER.defaultBlockState(), 3);
-            level.setBlock(base.above(), style.stoneWallState(), 3);
-            // Cardinal walls
-            for (BlockPos side : List.of(
-                    base.north(), base.south(),
-                    base.east(), base.west())) {
-                level.setBlock(side, style.stone.defaultBlockState(), 3);
-                level.setBlock(side.above(), style.fenceState(), 3);
-            }
-            // Diagonal slabs
-            for (int[] d : new int[][]{{1,1},{1,-1},{-1,1},{-1,-1}}) {
-                level.setBlock(
-                        base.offset(d[0], 0, d[1]),
-                        style.stoneSlab(), 3);
-            }
-            level.setBlock(base.above(2), style.lanternState(), 3);
-        } else {
-            // Small obelisk for hamlets
-            level.setBlock(base, style.stone.defaultBlockState(), 3);
-            level.setBlock(base.above(), style.stone.defaultBlockState(), 3);
-            level.setBlock(base.above(2), style.stoneSlab(), 3);
-            level.setBlock(base.above(3), style.lanternState(), 3);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Corner lampposts
-    // -------------------------------------------------------------------------
-
-    private static void placeCornerLampposts(ServerLevel level,
-                                             BlockPos center, int y,
-                                             VillageBiomeStyle style) {
-        int inner = RADIUS - 2;
-        for (int[] corner : new int[][]{{inner,inner},{inner,-inner},{-inner,inner},{-inner,-inner}}) {
-            BlockPos base = new BlockPos(
-                    center.getX() + corner[0], y,
-                    center.getZ() + corner[1]);
-            level.setBlock(base,         style.fenceState(),   3);
-            level.setBlock(base.above(), style.fenceState(),   3);
-            level.setBlock(base.above(2),style.lanternState(), 3);
-        }
-    }
-
-    private static void placeBenchesAndPlanters(ServerLevel level,
-                                                BlockPos center, int y,
-                                                VillageBiomeStyle style,
-                                                VillageSizeTier tier) {
-        int bench = RADIUS - 3;
-        int[][] benchDirs = {{bench,0},{-bench,0},{0,bench},{0,-bench}};
-        for (int[] bd : benchDirs) {
-            BlockPos bpos = new BlockPos(
-                    center.getX() + bd[0], y,
-                    center.getZ() + bd[1]);
-            level.setBlock(bpos, style.woodSlab(), 3);
-            level.setBlock(bpos.offset(
-                            bd[0] == 0 ? 1 : 0, 0, bd[1] == 0 ? 1 : 0),
-                    style.woodSlab(), 3);
-        }
-        if (tier.flowerAttempts > 0) {
-            int planter = RADIUS - 4;
-            for (int[] corner : new int[][]{{planter,planter},{planter,-planter},{-planter,planter},{-planter,-planter}}) {
-                BlockPos pos = new BlockPos(
-                        center.getX() + corner[0], y,
-                        center.getZ() + corner[1]);
-                level.setBlock(pos,         Blocks.COMPOSTER.defaultBlockState(), 3);
-                level.setBlock(pos.above(), style.flowerState(),                  3);
-            }
-        }
-    }
-
-    private static void placeNoticeBoard(ServerLevel level,
-                                         BlockPos center, int y,
-                                         VillageBiomeStyle style) {
-        BlockPos pos = new BlockPos(
-                center.getX() + RADIUS - 3, y, center.getZ());
-        level.setBlock(pos, Blocks.LECTERN.defaultBlockState(), 3);
     }
 
     // -------------------------------------------------------------------------
@@ -399,71 +197,4 @@ public class TownSquarePlacer {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Building registration
-    // -------------------------------------------------------------------------
-
-    // In TownSquarePlacer.java — replace the registerAsBuilding method entirely
-
-    private static void registerAsBuilding(ServerLevel level,
-                                           BlockPos center,
-                                           Village village,
-                                           VillageSavedData data) {
-        int side   = RADIUS * 2 + 1;
-        // Origin at the SW corner, one block below the paved surface.
-        BlockPos origin = new BlockPos(
-                center.getX() - RADIUS,
-                center.getY() ,
-                center.getZ() - RADIUS);
-
-        // Height of 64 ensures getBuildingAt() finds the square regardless
-        // of whether the player is standing on the pavement or nearby.
-        Building.BuildingShape shape = new Building.BuildingShape(
-                origin,
-                side,   // width  (X)
-                64,     // height (Y) — covers ground to roof generously
-                side    // length (Z)
-        );
-
-        Identifier structId = Identifier.fromNamespaceAndPath(
-                tterrag1112.life_in_the_village.Life_in_the_village.MODID,
-                "town_square");
-
-        Building square = new Building(
-                "town_square",
-                BuildingType.TOWN_SQUARE,
-                shape,
-                structId,
-                net.minecraft.world.level.block.Rotation.NONE,
-                0);
-
-        data.addBuilding(square);
-        village.addBuilding(square);
-        village.checkAndFireTierChangeHook(level);
-        data.setDirty();
-
-        System.out.println("TownSquarePlacer: registered town square "
-                + square.getId() + " at " + origin
-                + " (side=" + side + ", h=64)");
-    }
-
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    private static int medianGroundY(ServerLevel level,
-                                     BlockPos center, int radius) {
-        List<Integer> ys = new ArrayList<>();
-        for (int dx = -radius; dx <= radius; dx += 2) {
-            for (int dz = -radius; dz <= radius; dz += 2) {
-                ys.add(level.getHeight(
-                        net.minecraft.world.level.levelgen.Heightmap.Types
-                                .MOTION_BLOCKING_NO_LEAVES,
-                        center.getX() + dx,
-                        center.getZ() + dz));
-            }
-        }
-        Collections.sort(ys);
-        return ys.get(ys.size() / 2);
-    }
 }

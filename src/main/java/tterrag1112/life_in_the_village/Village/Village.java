@@ -122,6 +122,27 @@ public class Village {
      */
     @Nullable private BlockPos pathHubPos;
 
+    /**
+     * Doc 04 §"Tier scaling" — the plaza's half-extent (so the actual
+     * plaza is {@code 2 * townSquareRadius + 1} blocks per side). Set
+     * by {@code TownSquareComposer} at decoration time. 0 means the
+     * plaza geometry hasn't been resolved yet (legacy saves loaded
+     * before Phase 1 land here). Consumers that need the radius
+     * should fall through to {@link tterrag1112.life_in_the_village
+     * .Village.Decoration.TownSquare.TownSquareTier#RADIUS_HAMLET}
+     * when the field reads 0.
+     */
+    private int townSquareRadius = 0;
+
+    /**
+     * Doc 04 §"NPC gathering points" — durable named positions
+     * registered by {@code TownSquareComposer} at plaza time and
+     * consumed by NPC Phase 2 hobby goals. Empty for legacy saves
+     * and for villages whose plaza hasn't been composed yet.
+     */
+    private final List<tterrag1112.life_in_the_village.Village.Decoration
+            .TownSquare.GatheringPoint> gatheringPoints = new ArrayList<>();
+
     /** Inner ring radius used by the planner. 0 = not yet set. */
     private int ring1Radius = 0;
 
@@ -177,7 +198,10 @@ public class Village {
             List<BlockPos> capitalGatePositions,
             boolean realised,
             Optional<BlockPos> plannedOrigin,
-            Optional<BlockPos> mainGateEndpoint
+            Optional<BlockPos> mainGateEndpoint,
+            int townSquareRadius,
+            List<tterrag1112.life_in_the_village.Village.Decoration
+                    .TownSquare.GatheringPoint> gatheringPoints
     ) {
         static final Codec<VillageLayoutMeta> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -218,7 +242,15 @@ public class Village {
                                 .forGetter(VillageLayoutMeta::plannedOrigin),
                         BlockPos.CODEC
                                 .optionalFieldOf("mainGateEndpoint")
-                                .forGetter(VillageLayoutMeta::mainGateEndpoint)
+                                .forGetter(VillageLayoutMeta::mainGateEndpoint),
+                        Codec.INT
+                                .optionalFieldOf("townSquareRadius", 0)
+                                .forGetter(VillageLayoutMeta::townSquareRadius),
+                        tterrag1112.life_in_the_village.Village.Decoration
+                                .TownSquare.GatheringPoint.CODEC.listOf()
+                                .optionalFieldOf("gatheringPoints",
+                                        new ArrayList<>())
+                                .forGetter(VillageLayoutMeta::gatheringPoints)
                 ).apply(i, VillageLayoutMeta::new));
 
         static VillageLayoutMeta empty() {
@@ -226,7 +258,8 @@ public class Village {
                     Optional.empty(), Optional.empty(), Optional.empty(),
                     0, 0, 1,
                     new ArrayList<>(), 0L, new ArrayList<>(),
-                    true, Optional.empty(), Optional.empty());
+                    true, Optional.empty(), Optional.empty(),
+                    0, new ArrayList<>());
         }
 
         static VillageLayoutMeta from(Village v) {
@@ -242,7 +275,9 @@ public class Village {
                     new ArrayList<>(v.capitalGatePositions),
                     v.realised,
                     Optional.ofNullable(v.plannedOrigin),
-                    Optional.ofNullable(v.mainGateEndpoint));
+                    Optional.ofNullable(v.mainGateEndpoint),
+                    v.townSquareRadius,
+                    new ArrayList<>(v.gatheringPoints));
         }
 
         void applyTo(Village v) {
@@ -262,6 +297,11 @@ public class Village {
             v.realised      = realised;
             v.plannedOrigin = plannedOrigin.orElse(null);
             mainGateEndpoint.ifPresent(p -> v.mainGateEndpoint = p);
+            v.townSquareRadius = townSquareRadius;
+            if (!gatheringPoints.isEmpty()) {
+                v.gatheringPoints.clear();
+                v.gatheringPoints.addAll(gatheringPoints);
+            }
         }
     }
 
@@ -450,6 +490,42 @@ public class Village {
     @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
     public void setMainGateEndpoint(@Nullable BlockPos pos) { this.mainGateEndpoint = pos; }
 
+    // ── Plaza geometry + gathering points (Phase 1 doc 04) ──────────────
+
+    public int getTownSquareRadius() { return townSquareRadius; }
+    public void setTownSquareRadius(int r) { this.townSquareRadius = r; }
+
+    public void addGatheringPoint(tterrag1112.life_in_the_village.Village
+                                          .Decoration.TownSquare.GatheringPoint gp) {
+        if (gp == null) return;
+        gatheringPoints.add(gp);
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .TownSquare.GatheringPoint> getGatheringPoints() {
+        return Collections.unmodifiableList(gatheringPoints);
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .TownSquare.GatheringPoint> getGatheringPointsByKind(
+                    tterrag1112.life_in_the_village.Village.Decoration
+                            .TownSquare.GatheringPointKind kind) {
+        if (kind == null) return List.of();
+        List<tterrag1112.life_in_the_village.Village.Decoration
+                .TownSquare.GatheringPoint> out = new ArrayList<>();
+        for (var gp : gatheringPoints) {
+            if (gp.kind() == kind) out.add(gp);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    public boolean removeGatheringPoint(UUID id) {
+        if (id == null) return false;
+        return gatheringPoints.removeIf(gp -> gp.id().equals(id));
+    }
+
+    public void clearGatheringPoints() { gatheringPoints.clear(); }
+
     public Optional<UUID> getDockNodeId() { return Optional.ofNullable(dockNodeId); }
     public void setDockNodeId(UUID id) { this.dockNodeId = id; }
 
@@ -484,6 +560,11 @@ public class Village {
         this.ring2Radius   = layout.getDensity().getRing2Radius();
         this.currentLevel  = villageLevel;
         this.mainGateEndpoint = layout.getMainGateEndpoint();
+        // Doc 04 §"Tier scaling" — carry the layout-time plaza
+        // half-extent onto the persisted Village so DecorationPass
+        // can size sub-slots without round-tripping through
+        // VillageLayout.
+        this.townSquareRadius = layout.getTownSquareRadius();
         for (BlockPos gp : layout.getGatePositions()) {
             if (!capitalGatePositions.contains(gp)) {
                 capitalGatePositions.add(gp);

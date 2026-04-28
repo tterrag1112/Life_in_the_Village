@@ -224,3 +224,67 @@ Gathering points live on the `Village` record as
 ## Revision notes
 
 (Changes recorded here as the spec evolves.)
+
+### P1-01 / P1-02 / P1-03 / P1-04 / P1-05 — composer + sub-slots + kits + gathering points landed
+
+- **Plaza sub-role mechanism — extended `DecorationTag`, not a new
+  field.** Doc 04 originally proposed adding an optional
+  `PlazaSubSlot` field to `DecorationSlot` (and a parallel filter on
+  `DecorationProfile`). Instead, we appended `PLAZA_*` values to the
+  existing `DecorationTag` enum. The matcher already does set-
+  containment filtering on tags, so a slot tagged
+  `{PARK_FEATURE, PLAZA_FOUNTAIN}` plus a profile requiring the same
+  pair Just Works with no framework changes. Codec stability holds
+  because `DecorationTag` is `StringRepresentable` and we appended
+  rather than reordered.
+- **Paving stays programmatic.** Doc 04's data structure included a
+  `pavingNbtOrNull` field for per-tier paving NBTs. We omitted it
+  because the existing `VillageBiomeStyle` already produces biome-and-
+  culture-styled paving programmatically, and authoring tiers × cultures
+  × biomes of paving NBTs is unwieldy compared to scaling the
+  programmatic algorithm. `TownSquareComposer` carries forward the
+  legacy paving algorithm parameterised on `radius`. Future cultures
+  that need a fundamentally different paving aesthetic can add a
+  `paveOverride` hook later without redesigning the framework.
+- **`TownSquareTier` folds onto `VillageSizeTier`.** Doc 04 proposed a
+  separate `TownSquareTier` enum. Since `VillageSizeTier` already has
+  the four canonical values (HAMLET/VILLAGE/TOWN/CITY) and is the
+  mod-wide tier source, the new file
+  `TownSquareTier` is a static helper holding the
+  tier→radius / tier→bench-count / tier-gate predicates rather than a
+  duplicate enum.
+- **LayoutPrimitive plazaRadius migration.** Two hardcoded reads of
+  `TownSquarePlacer.RADIUS + 2` in `LayoutPrimitive.TownSquare` were
+  replaced with `TownSquareTier.plazaRadiusFor(pctx.sizeTier())`.
+  `VillagePlanner`'s fallback path (recipe-didn't-set-square) now
+  hardcodes `TownSquareTier.RADIUS_HAMLET` (=3, equal to the legacy
+  value) so HAMLET seeds still reproduce byte-for-byte.
+- **Plaza sub-slot emission lives in `DecorationSlotEmitter`, not the
+  composer.** Doc 04 implies the composer emits slots itself. Since
+  decoration slots are documented as ephemeral (alive only during a
+  `DecorationPass` run, never persisted) and the emitter is the
+  uniform pass that produces them, plaza sub-slots ride along as a
+  7th sub-algorithm on the emitter. The composer's job is reduced to
+  paving + building-registration + gathering-point registration +
+  setting the village's `townSquareRadius`. Functionally identical;
+  cleaner pipeline.
+- **VENDOR_ZONE moved to NE diagonal.** Doc 04's "reserved flat slot"
+  doesn't specify a position. The legacy
+  `TownSquarePlacer.decorateForEvent` (still in place for events)
+  hardcodes MARKET_DAY stalls at `±4` along the cardinal axes; the
+  composer's VENDOR_ZONE sits on the NE diagonal at
+  `(centre + (radius-2), centre - (radius-2))` so the two systems
+  don't collide spatially. MARKET_DAY behaviour is otherwise
+  unchanged in this prompt.
+- **TownSquarePlacer reduced to event helpers.** The class no longer
+  has a `place()` method; it retains only `decorateForEvent` and the
+  per-event helpers (`placeFairDecorations`, `placeMarketDecorations`,
+  …). The `RADIUS` constant remains as the offset basis those helpers
+  use; new readers should use `Village.getTownSquareRadius()` instead.
+- **NBT authoring is the user's responsibility.** The framework
+  registers profiles pointing at canonical paths under
+  `data/life_in_the_village/structures/default/decoration/town_square/`.
+  Until the user authors those NBTs, `DecorationPass.stamp` logs a
+  warning and burns the slot. Plaza pavement and gathering points
+  still appear; only the matcher-stamped sub-features (fountain,
+  benches, etc.) are absent.

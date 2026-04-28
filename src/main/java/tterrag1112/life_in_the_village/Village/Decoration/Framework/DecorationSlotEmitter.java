@@ -5,6 +5,8 @@ import net.minecraft.core.Direction;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Decoration.TownSquare.TownSquareComposer;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -99,6 +101,7 @@ public final class DecorationSlotEmitter {
         emitFacadeOrnaments(ctx, buildings, out);
         emitVillageBoundaryMarkers(ctx, buildings, centre, out);
         emitTradeRoadEndpoints(ctx, centre, out);
+        emitPlazaSubSlots(ctx, out);
 
         return out;
     }
@@ -481,6 +484,172 @@ public final class DecorationSlotEmitter {
                 new BlockPos(min.getX(), y, max.getZ()),
                 new BlockPos(max.getX(), y, max.getZ()),
         };
+    }
+
+    // ── A.7 Plaza sub-slots (Phase 1 doc 04) ─────────────────────────────
+
+    /**
+     * Doc 04 §"Sub-slot emission" — emits one
+     * {@link DecorationSlot} per plaza sub-feature (fountain centre,
+     * benches, gazebo, etc.) at the deterministic position given by
+     * {@code TownSquareComposer}'s position helpers. Each slot is
+     * tagged {@code PARK_FEATURE} plus the piece-specific sub-role
+     * tag (e.g. {@code PLAZA_FOUNTAIN}); profiles registered by
+     * {@code DefaultTownSquareKits} require both, so the matcher
+     * places the right NBT into the right sub-slot.
+     *
+     * <p>Reads {@code village.getTownSquareRadius()} — the
+     * {@code TownSquareComposer} sets this at decoration time. If the
+     * radius is 0 the plaza geometry hasn't been resolved (legacy
+     * save / expansion path); the sub-pass exits silently.</p>
+     *
+     * <p>Quality scores: fountain centre 100, monument / gazebo 90,
+     * benches 80, notice board 70, lamps 60, flowerbeds 55, vendor
+     * zone 50. The matcher uses these to break ties when a profile
+     * could match multiple slots; in practice each plaza sub-tag is
+     * uniquely targeted by one profile so the score is mostly
+     * informational.</p>
+     */
+    private static void emitPlazaSubSlots(Context ctx, List<DecorationSlot> out) {
+        Village v = ctx.village();
+        BlockPos centre = v.getTownSquarePos();
+        int radius = v.getTownSquareRadius();
+        if (centre == null || radius <= 0) return;
+
+        // Reverse-derive tier from radius so VILLAGE+ gates work even
+        // when sizeTier isn't reachable here. Match the canonical
+        // values from TownSquareTier (HAMLET=3, VILLAGE=5, TOWN=8,
+        // CITY=12) using thresholds for robustness against off-canonical
+        // radii (e.g. enclave-overridden plazas).
+        boolean hasBenches      = radius >= 5;
+        boolean hasGazebo       = radius >= 8;
+        boolean hasMonument     = radius >= 12;
+        boolean hasFlowerbeds   = radius >= 5;
+        boolean hasVendorZone   = radius >= 5;
+
+        UUID parentId = v.getId();
+
+        // FOUNTAIN_CENTER — always present.
+        out.add(plazaSlot(parentId, centre, Direction.SOUTH,
+                EnumSet.of(DecorationTag.PARK_FEATURE,
+                        DecorationTag.PLAZA_FOUNTAIN),
+                /* footprint */ Math.max(1, radius - 1),
+                /* quality */ 100));
+
+        // LAMP_CORNER — four corners regardless of tier.
+        BlockPos[] lamps = TownSquareComposer.lampCornerPositions(centre, radius);
+        for (BlockPos lp : lamps) {
+            out.add(plazaSlot(parentId, lp, facingTowardCentre(centre, lp),
+                    EnumSet.of(DecorationTag.PARK_FEATURE,
+                            DecorationTag.PLAZA_LAMP),
+                    /* footprint */ 1,
+                    /* quality */ 60));
+        }
+
+        // NOTICE_BOARD on the south edge (road-facing).
+        BlockPos notice = TownSquareComposer.noticeBoardPosition(centre, radius);
+        out.add(plazaSlot(parentId, notice, Direction.NORTH,
+                EnumSet.of(DecorationTag.PARK_FEATURE,
+                        DecorationTag.PLAZA_NOTICE_BOARD),
+                /* footprint */ 1,
+                /* quality */ 70));
+
+        // BENCH_PERIMETER — VILLAGE+. Up to 4 benches.
+        if (hasBenches) {
+            BlockPos[] benches = TownSquareComposer.benchPositions(centre, radius, 4);
+            for (BlockPos bp : benches) {
+                out.add(plazaSlot(parentId, bp, facingTowardCentre(centre, bp),
+                        EnumSet.of(DecorationTag.PARK_FEATURE,
+                                DecorationTag.PLAZA_BENCH),
+                        /* footprint */ 2,
+                        /* quality */ 80));
+            }
+        }
+
+        // FLOWERBED_EDGE — VILLAGE+. Diagonals between benches.
+        if (hasFlowerbeds) {
+            // Use placeholder tier resolution from radius for the
+            // composer call; the helper ignores tier when called via
+            // hasFlowerbeds path.
+            BlockPos[] beds = TownSquareComposer.flowerbedPositions(
+                    centre, radius, VillageSizeTier.VILLAGE);
+            for (BlockPos fp : beds) {
+                out.add(plazaSlot(parentId, fp, facingTowardCentre(centre, fp),
+                        EnumSet.of(DecorationTag.PARK_FEATURE,
+                                DecorationTag.PLAZA_FLOWERBED),
+                        /* footprint */ 2,
+                        /* quality */ 55));
+            }
+        }
+
+        // GAZEBO_SPOT — TOWN+ only.
+        if (hasGazebo) {
+            BlockPos gazebo = TownSquareComposer.gazeboPosition(centre, radius);
+            out.add(plazaSlot(parentId, gazebo, facingTowardCentre(centre, gazebo),
+                    EnumSet.of(DecorationTag.PARK_FEATURE,
+                            DecorationTag.PLAZA_GAZEBO),
+                    /* footprint */ 5,
+                    /* quality */ 90));
+        }
+
+        // MONUMENT_ACCENT — CITY only.
+        if (hasMonument) {
+            BlockPos monument = TownSquareComposer.monumentPosition(centre, radius);
+            out.add(plazaSlot(parentId, monument, Direction.SOUTH,
+                    EnumSet.of(DecorationTag.PARK_FEATURE,
+                            DecorationTag.PLAZA_MONUMENT),
+                    /* footprint */ 3,
+                    /* quality */ 90));
+        }
+
+        // VENDOR_ZONE — VILLAGE+. Reserved; no profile in Phase 1.
+        if (hasVendorZone) {
+            BlockPos vendor = TownSquareComposer.vendorZonePosition(centre, radius);
+            out.add(plazaSlot(parentId, vendor, Direction.SOUTH,
+                    EnumSet.of(DecorationTag.PARK_FEATURE,
+                            DecorationTag.PLAZA_VENDOR_ZONE),
+                    /* footprint */ 3,
+                    /* quality */ 50));
+        }
+    }
+
+    private static DecorationSlot plazaSlot(UUID parentId, BlockPos pos,
+                                            Direction facing,
+                                            EnumSet<DecorationTag> tags,
+                                            int footprint, int quality) {
+        // Deterministic UUID derived from parent + tag-set + pos so
+        // re-emissions for the same plaza yield the same slot ids.
+        String seed = parentId.toString() + "/plaza/"
+                + tagSetKey(tags) + "/"
+                + pos.getX() + "," + pos.getY() + "," + pos.getZ();
+        UUID id = UUID.nameUUIDFromBytes(
+                seed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return new DecorationSlot(id, pos, facing, tags, footprint, quality,
+                parentId, List.of());
+    }
+
+    private static String tagSetKey(EnumSet<DecorationTag> tags) {
+        // Sort by ordinal for stable string regardless of EnumSet
+        // iteration order across runs.
+        List<DecorationTag> sorted = new ArrayList<>(tags);
+        sorted.sort(java.util.Comparator.comparingInt(Enum::ordinal));
+        StringBuilder sb = new StringBuilder();
+        for (DecorationTag t : sorted) {
+            if (sb.length() > 0) sb.append('+');
+            sb.append(t.name());
+        }
+        return sb.toString();
+    }
+
+    /** Returns the cardinal direction from {@code from} toward
+     *  {@code centre}. Used to orient lamps / benches inward. */
+    private static Direction facingTowardCentre(BlockPos centre, BlockPos from) {
+        int dx = centre.getX() - from.getX();
+        int dz = centre.getZ() - from.getZ();
+        if (Math.abs(dx) >= Math.abs(dz)) {
+            return dx >= 0 ? Direction.EAST : Direction.WEST;
+        }
+        return dz >= 0 ? Direction.SOUTH : Direction.NORTH;
     }
 
     /** Returns the radius (from {@code centre}) of the outermost
