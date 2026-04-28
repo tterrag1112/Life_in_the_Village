@@ -93,6 +93,15 @@ public final class NpcInteractionHandler {
             return handleWanderingTrader(npc, sp, level);
         }
 
+        // P0a-13: builders open the repaint screen on plain right-click;
+        // shift-click falls through to the profile (kept accessible for
+        // reputation, hobbies, etc.).
+        if (npc.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.BUILDER
+                && !player.isShiftKeyDown()) {
+            return tterrag1112.life_in_the_village.Village.Decoration.Variants
+                    .RepaintRequestDispatch.handle(npc, sp, level);
+        }
+
         // Phase 3 task 24: business-front routing. If the player is
         // currently inside a BUSINESS_FRONT building during work hours
         // and the NPC works there, open the BusinessFrontScreen instead
