@@ -5,12 +5,6 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
-import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
-import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleAutoDeriver;
-import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleSelection;
-import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantSelector;
-import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.StarterBuilding;
@@ -234,10 +228,14 @@ public final class PlacementMatcher {
 
 
         for (Scored c : candidates) {
+            // Variant-aware overload: thread the slot tags through so
+            // PlanContext.applyVariantSelection (called inside
+            // tryCommitBuilding) gives them the slot-tag scoring
+            // bonus. Recipe-direct callers use the no-tag overload.
             LayoutSlot committed = pctx.tryCommitWithRetries(
-                    c.slot.pos(), sb, bt, c.slot.feedingRoad(), 8);
+                    c.slot.pos(), sb, bt, c.slot.feedingRoad(), 8,
+                    c.slot.tags());
             if (committed != null) {
-                applyVariantSelection(committed, bt, c.slot);
                 slots.remove(c.slot);
                 placed.add(new PlacedRecord(bt, committed.getPos()));
                 return true;
@@ -246,48 +244,6 @@ public final class PlacementMatcher {
             slots.remove(c.slot);
         }
         return false;
-    }
-
-    // ── Variant selection (P0a-06 / P0a-19) ──────────────────────────────
-
-    /**
-     * After a slot is committed, picks the variant that will fill it.
-     * Stamps the chosen {@code style} and {@code variantId} onto the
-     * {@link LayoutSlot} so {@link
-     * tterrag1112.life_in_the_village.Village.VillageSpawner} can route
-     * the placement through {@link
-     * tterrag1112.life_in_the_village.Village.CultureResolver}'s
-     * variant-aware resolver.
-     *
-     * <p>If {@link PlanContext#typeData()} is null (legacy / test paths
-     * that don't run via {@code VillagePlanner}) the slot keeps the
-     * default-variant + RURAL it picked up at construction.</p>
-     */
-    private void applyVariantSelection(LayoutSlot committed,
-                                       BuildingType bt,
-                                       PlacementSlot slot) {
-        if (pctx.typeData() == null) return;
-        StyleSelection styleSel = pctx.styleSelection();
-        VillageSizeTier tier = pctx.sizeTier();
-        if (styleSel == null || tier == null) return;
-
-        // Per-slot style pick. Skips the RNG roll when only one style
-        // has authored content for this type — keeps determinism with
-        // pre-P0a-06 placements where no URBAN content exists yet.
-        Style style = StyleAutoDeriver.pickStyleForType(styleSel, bt, pctx.rng);
-
-        VariantSelector selector = pctx.variantSelector();
-        String culture = pctx.typeData().getCulture() != null
-                ? pctx.typeData().getCulture() : "default";
-        BuildingVariant chosen = selector.select(
-                culture, bt, style, tier, pctx.ageCategory(),
-                slot.tags(),
-                java.util.Set.of(), // village preferred tags reserved
-                                    // for P0a-14 colour-palette wiring
-                pctx.rng);
-
-        committed.setStyle(chosen.style());
-        committed.setVariantId(chosen.id());
     }
 
     private int scoreSlot(PlacementSlot slot, BuildingType bt,

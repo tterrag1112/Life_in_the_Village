@@ -7,6 +7,9 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.BuildingInhabitantRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.AgeCategory;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleAutoDeriver;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleSelection;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantSelector;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillageAgeCategoryHook;
@@ -15,6 +18,7 @@ import tterrag1112.life_in_the_village.Village.Planning.*;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.BiomeCategory;
@@ -214,6 +218,22 @@ public final class PlanContext {
                                         VillageTypeData.StarterBuilding sb,
                                         BuildingType bt,
                                         List<BlockPos> feedingRoad) {
+        return tryCommitBuilding(target, sb, bt, feedingRoad, java.util.Set.of());
+    }
+
+    /**
+     * Variant-aware overload — same as {@link #tryCommitBuilding(BlockPos,
+     * VillageTypeData.StarterBuilding, BuildingType, List)} but takes
+     * the originating {@link PlacementSlot}'s tag set so variant
+     * scoring can apply slot-tag bonuses. Recipe-direct callers that
+     * don't have a {@link PlacementSlot} should pass an empty set
+     * (the no-tag overload above does that automatically).
+     */
+    public LayoutSlot tryCommitBuilding(BlockPos target,
+                                        VillageTypeData.StarterBuilding sb,
+                                        BuildingType bt,
+                                        List<BlockPos> feedingRoad,
+                                        java.util.Set<SlotTag> slotTags) {
         // TEMP DIAG — remove after this test
         boolean diag = "TOWN_HALL".equals(sb.type());
         if (diag) System.out.println("[TH] trying " + target
@@ -282,8 +302,71 @@ public final class PlanContext {
             if (diag) System.out.println("[TH]   FAIL layout.tryAdd (overlap with existing forced/building slot)");
             return null;
         }
+
+        // Variant selection runs once per successful placement,
+        // regardless of whether the matcher or a recipe-direct
+        // primitive committed the slot. The slot has been fully
+        // validated (adjacency, terrain, footprint, road overlap,
+        // civic-ring guard, layout overlap) by this point.
+        applyVariantSelection(slot, bt, slotTags);
+
         if (diag) System.out.println("[TH]   OK committed");
         return slot;
+    }
+
+    // =========================================================================
+    // Variant selection (runs at the placement chokepoint)
+    // =========================================================================
+
+    /**
+     * Picks the {@link BuildingVariant} that will fill {@code slot}
+     * and stamps the chosen {@code style} + {@code variantId} onto
+     * it. Doc 15 §"Variant selection algorithm".
+     *
+     * <p>Called from {@link #tryCommitBuilding} after a slot is
+     * confirmed committable but before {@code VillageSpawner} reads
+     * the variant id to drive the resolver. Centralising the call
+     * here means every successful placement — matcher-driven via
+     * {@code PlacementMatcher.commitBest} OR recipe-direct via
+     * {@link tterrag1112.life_in_the_village.Village.Planning
+     * .Primitives.LayoutPrimitive#tryCommitWithRetries
+     * LayoutPrimitive} — gets variant scoring exactly once.</p>
+     *
+     * <p>If {@link #typeData} is null (legacy / test paths that
+     * bypass {@code VillagePlanner}) the slot keeps the type-default
+     * variant + RURAL it picked up at construction.</p>
+     *
+     * @param committed the just-committed slot
+     * @param bt        building type (carried out of band so we don't
+     *                  re-derive from {@code committed})
+     * @param slotTags  the originating {@link PlacementSlot}'s tags,
+     *                  or empty set when the call site doesn't have
+     *                  a {@link PlacementSlot} (every recipe-direct
+     *                  path)
+     */
+    private void applyVariantSelection(LayoutSlot committed,
+                                       BuildingType bt,
+                                       java.util.Set<SlotTag> slotTags) {
+        if (typeData == null) return;
+        if (styleSelection == null || sizeTier == null) return;
+
+        // Per-slot style pick. Skips the RNG roll when only one style
+        // has authored content for this type — keeps determinism
+        // with placements where only one style is authored.
+        Style style = StyleAutoDeriver.pickStyleForType(styleSelection, bt, rng);
+
+        VariantSelector selector = variantSelector();
+        String culture = typeData.getCulture() != null
+                ? typeData.getCulture() : "default";
+        BuildingVariant chosen = selector.select(
+                culture, bt, style, sizeTier, ageCategory(),
+                slotTags != null ? slotTags : java.util.Set.of(),
+                java.util.Set.of(), // village preferred tags reserved
+                                    // for P0a-14 colour-palette wiring
+                rng);
+
+        committed.setStyle(chosen.style());
+        committed.setVariantId(chosen.id());
     }
 
 
@@ -292,13 +375,37 @@ public final class PlanContext {
      * target, then small shifts along the road direction, then shifts
      * perpendicular to it. Used when a primitive wants to place a
      * building near an ideal spot but has some flexibility.
+     *
+     * <p>Recipe-direct call sites use this overload; variant
+     * selection runs inside {@link #tryCommitBuilding} with empty
+     * slot tags. The matcher uses
+     * {@link #tryCommitWithRetries(BlockPos, VillageTypeData
+     * .StarterBuilding, BuildingType, List, int, java.util.Set)} so
+     * its {@link PlacementSlot} tags reach the variant scorer.</p>
      */
     public LayoutSlot tryCommitWithRetries(BlockPos target,
                                            VillageTypeData.StarterBuilding sb,
                                            BuildingType bt,
                                            List<BlockPos> feedingRoad,
                                            int maxShift) {
-        LayoutSlot s = tryCommitBuilding(target, sb, bt, feedingRoad);
+        return tryCommitWithRetries(target, sb, bt, feedingRoad, maxShift,
+                java.util.Set.of());
+    }
+
+    /**
+     * Variant-aware overload. Threads the originating
+     * {@link PlacementSlot}'s tags through to
+     * {@link #tryCommitBuilding} so variant scoring can apply
+     * slot-tag bonuses. Recipe-direct callers should use the no-tag
+     * overload above.
+     */
+    public LayoutSlot tryCommitWithRetries(BlockPos target,
+                                           VillageTypeData.StarterBuilding sb,
+                                           BuildingType bt,
+                                           List<BlockPos> feedingRoad,
+                                           int maxShift,
+                                           java.util.Set<SlotTag> slotTags) {
+        LayoutSlot s = tryCommitBuilding(target, sb, bt, feedingRoad, slotTags);
         if (s != null) return s;
 
         // Derive road direction for along/perpendicular shifts
@@ -319,12 +426,12 @@ public final class PlanContext {
         for (int d : offsets) {
             if (Math.abs(d) > maxShift) continue;
             BlockPos along = target.offset(headX * d, 0, headZ * d);
-            s = tryCommitBuilding(along, sb, bt, feedingRoad);
+            s = tryCommitBuilding(along, sb, bt, feedingRoad, slotTags);
             if (s != null) return s;
         }
         for (int d : new int[]{4, -4, 8, -8}) {
             BlockPos perp = target.offset(perpX * d, 0, perpZ * d);
-            s = tryCommitBuilding(perp, sb, bt, feedingRoad);
+            s = tryCommitBuilding(perp, sb, bt, feedingRoad, slotTags);
             if (s != null) return s;
         }
         return null;

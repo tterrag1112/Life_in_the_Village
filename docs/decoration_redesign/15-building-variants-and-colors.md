@@ -799,3 +799,32 @@ Codec extends Building with three optional `DyeColor` fields and a
 - The "manifest footprint as authoritative override" branch in
   `StructureSizeCache.load(CacheKey)` has been removed; the
   cache always measures from the NBT now.
+
+### Variant selection moved into the placement chokepoint
+
+- The doc 15 "Variant selection algorithm" section doesn't
+  mandate where the algorithm runs; the post-pilot diagnostic
+  surfaced that placing the call in `PlacementMatcher.commitBest`
+  missed every recipe-direct path. Shape recipes claim zoned
+  buildings via `pctx.claimByZone(...)` before the matcher runs
+  and place them through `LayoutPrimitive.tryCommitWithRetries`,
+  bypassing the matcher entirely. Result: every zoned building
+  type silently rendered as its type-default variant.
+- The fix lifts variant selection out of the matcher and into
+  `PlanContext.tryCommitBuilding` — the shared chokepoint that
+  every successful placement passes through. The selection
+  runs after all validation succeeds (adjacency, terrain,
+  footprint, road / civic-ring overlap, layout overlap) and
+  before `VillageSpawner` consults the slot for the final
+  resolver call. New tags-aware overloads of
+  `tryCommitBuilding` and `tryCommitWithRetries` thread the
+  originating `PlacementSlot.tags()` through; recipe-direct
+  callers use the existing tag-less overloads which pass
+  empty tags.
+- Determinism note: for variants where only one is authored,
+  the single-candidate fast path in `VariantSelector.select`
+  still skips the RNG roll, so non-pilot building types stream
+  the same RNG sequence as before. For pilot HOUSE (three
+  variants) the RNG sequence diverges from pre-fix output —
+  expected, since variant scoring previously didn't run for
+  those slots at all.
