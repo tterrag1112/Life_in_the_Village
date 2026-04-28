@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Npc.Events.Producers;
 
+import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Events.EventDispatcher;
 import tterrag1112.life_in_the_village.Npc.Events.GiftAppropriateness;
@@ -140,7 +141,7 @@ public final class MemoryProducer implements EventDispatcher {
                     // Treat as INSULTED_BY — it's the closest spec memory
                     // type for "this person let me down". Phase 5 may add
                     // a dedicated BREAKUP / FRIENDSHIP_LOST type.
-                    record(e.subject(), tterrag1112.life_in_the_village.Npc.Memory.MemoryType.INSULTED_BY,
+                    record(e.subject(), MemoryType.INSULTED_BY,
                             e.otherId(), 30, "Relationship breakup");
                 }
             }
@@ -156,9 +157,10 @@ public final class MemoryProducer implements EventDispatcher {
                     case CONTRACT, INTRODUCTION -> 40;
                 };
                 String summary = "Letter from " + e.content().authorName();
-                record(e.subject(), tterrag1112.life_in_the_village.Npc.Memory.MemoryType.RECEIVED_LETTER,
+                record(e.subject(), MemoryType.RECEIVED_LETTER,
                         e.content().authorId(), value, summary);
             }
+            default -> throw new IllegalStateException("Unexpected value: " + event);
         }
     }
 
@@ -190,7 +192,7 @@ public final class MemoryProducer implements EventDispatcher {
                                    List<UUID> participants, int baseValue,
                                    String summary) {
         if (npc == null || npc.level() == null) return null;
-        if (!(npc.level() instanceof net.minecraft.server.level.ServerLevel sl)) return null;
+        if (!(npc.level() instanceof ServerLevel sl)) return null;
         int modulated = modulate(type, baseValue, npc.getTraitVector());
         NpcMemory memory = NpcMemory.create(type, participants,
                 sl.getGameTime(), modulated, summary);

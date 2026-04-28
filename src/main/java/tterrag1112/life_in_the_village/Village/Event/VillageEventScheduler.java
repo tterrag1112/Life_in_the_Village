@@ -170,7 +170,7 @@ public class VillageEventScheduler {
 
         // FAMINE
         try {
-            if (village.isCritical()) {
+            if (village.isFoodCritical()) {
                 boolean recent = data.getAllEvents().stream()
                         .filter(e -> e.getVillageId().equals(village.getId()))
                         .anyMatch(e -> e.getType() == VillageEvent.EventType.FAMINE

@@ -1,16 +1,21 @@
 package tterrag1112.life_in_the_village.Npc.Events.Producers;
 
+import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Events.EventDispatcher;
 import tterrag1112.life_in_the_village.Npc.Events.GiftAppropriateness;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
 import tterrag1112.life_in_the_village.Npc.Events.RelationshipType;
+import tterrag1112.life_in_the_village.Npc.Letters.LetterSpecial;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
+import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Relations.RelationshipMode;
 
 /**
  * Phase 1 dispatcher that translates {@link NpcLifeEvent}s into mood
  * adjustments on the subject's
- * {@link tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState}. Trigger
+ * {@link NpcMoodState}. Trigger
  * choice follows the spec's table in
  * {@code 10-phase1-integration.md} ("Event source inventory" Mood
  * column); per-trigger trait modulation is owned by
@@ -126,8 +131,7 @@ public final class MoodProducer implements EventDispatcher {
                 // (FRIEND→NEUTRAL or worse). Negative→positive is silent —
                 // gradual recovery, not a single event.
                 if (e.oldMode().isPositive() && !e.newMode().isPositive()) {
-                    int mag = e.oldMode() == tterrag1112.life_in_the_village.Npc.Relations
-                            .RelationshipMode.CLOSE_FRIEND ? -15 : -8;
+                    int mag = e.oldMode() == RelationshipMode.CLOSE_FRIEND ? -15 : -8;
                     applyWithMagnitude(e.subject(), MoodTrigger.INSULT_RECEIVED, mag);
                 }
             }
@@ -138,7 +142,7 @@ public final class MoodProducer implements EventDispatcher {
             // LETTER_FROM_FRIEND, everything else uses LETTER_RECEIVED.
             case NpcLifeEvent.LetterReceived e -> {
                 var special = e.content().special().orElse(null);
-                if (special == tterrag1112.life_in_the_village.Npc.Letters.LetterSpecial.THREAT) {
+                if (special == LetterSpecial.THREAT) {
                     apply(e.subject(), MoodTrigger.INSULT_RECEIVED);
                 } else {
                     boolean fromFriend = e.subject().getNpcRelationships()
@@ -148,19 +152,20 @@ public final class MoodProducer implements EventDispatcher {
                                     : MoodTrigger.LETTER_RECEIVED);
                 }
             }
+            default -> throw new IllegalStateException("Unexpected value: " + event);
         }
     }
 
     private static boolean isChildRelation(
-            tterrag1112.life_in_the_village.Entities.FamilyRole relation) {
-        return relation == tterrag1112.life_in_the_village.Entities.FamilyRole.CHILD;
+            FamilyRole relation) {
+        return relation == FamilyRole.CHILD;
     }
 
     // ── Producer API (mirrors the spec section "Producer API") ─────────────
 
     public static void apply(TownspersonMob npc, MoodTrigger trigger) {
         if (npc == null) return;
-        if (!(npc.level() instanceof net.minecraft.server.level.ServerLevel sl)) return;
+        if (!(npc.level() instanceof ServerLevel sl)) return;
         npc.getMood().apply(trigger, npc.getTraitVector(), sl.getGameTime());
     }
 
@@ -172,7 +177,7 @@ public final class MoodProducer implements EventDispatcher {
     public static void applyWithMagnitude(TownspersonMob npc, MoodTrigger trigger,
                                           int overrideMagnitude) {
         if (npc == null) return;
-        if (!(npc.level() instanceof net.minecraft.server.level.ServerLevel sl)) return;
+        if (!(npc.level() instanceof ServerLevel sl)) return;
         float mult = trigger.traitMultiplier(npc.getTraitVector());
         int rawMag = Math.round(overrideMagnitude * mult);
         npc.getMood().applyWithRawMagnitude(trigger, rawMag, sl.getGameTime());

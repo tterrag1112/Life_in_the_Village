@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Npc.Events.Producers;
 
+import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Npc.Events.EventDispatcher;
@@ -117,6 +118,7 @@ public final class TraitDriftProducer implements EventDispatcher {
             // (Phase 5 polish could nudge LITERACY-adjacent traits on
             // sustained reading; out of scope here.)
             case NpcLifeEvent.LetterReceived ignored -> {}
+            default -> throw new IllegalStateException("Unexpected value: " + event);
         }
     }
 
@@ -186,7 +188,7 @@ public final class TraitDriftProducer implements EventDispatcher {
      */
     static boolean driftAndRecord(TownspersonMob npc, TraitAxis axis, float delta) {
         if (npc == null || axis == null) return false;
-        if (!(npc.level() instanceof net.minecraft.server.level.ServerLevel sl)) return false;
+        if (!(npc.level() instanceof ServerLevel sl)) return false;
         TraitDriftLog log = npc.getTraitDrift();
         float clamped = log.clampToCap(axis, delta);
         if (clamped == 0f) return false;

@@ -274,8 +274,9 @@ public final class EventHandlerRegistry {
         // Village-history entry — single per event.
         try {
             VillageHistoryLog log = VillageHistoryLog.get(level);
-            String details = displayName + " (" + attendees.size()
-                    + (attendees.size() == 1 ? " attendee" : " attendees") + ")";
+            Map<String, String> details = new java.util.LinkedHashMap<>();
+            details.put(displayName, "(" + attendees.size()
+                    + (attendees.size() == 1 ? " attendee" : " attendees") + ")");
             log.record(historyType, village.getId(), tick, details,
                     new ArrayList<>(attendees));
         } catch (RuntimeException ignored) {}

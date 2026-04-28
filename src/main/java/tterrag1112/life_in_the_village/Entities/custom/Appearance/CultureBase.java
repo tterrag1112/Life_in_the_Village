@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Entities.custom.Appearance;
 
-import net.minecraft.resources.ResourceLocation;
+
+import net.minecraft.resources.Identifier;
 
 import java.util.List;
 
@@ -20,14 +21,14 @@ import java.util.List;
  */
 public record CultureBase(
         String cultureId,
-        ResourceLocation baseTexture,
-        List<ResourceLocation> variants
+        Identifier baseTexture,
+        List<Identifier> variants
 ) {
     public CultureBase {
         variants = List.copyOf(variants == null ? List.of() : variants);
     }
 
-    public ResourceLocation variantFor(int variantIndex) {
+    public Identifier variantFor(int variantIndex) {
         if (variants.isEmpty()) return baseTexture;
         int safeIndex = ((variantIndex % variants.size()) + variants.size()) % variants.size();
         return variants.get(safeIndex);
