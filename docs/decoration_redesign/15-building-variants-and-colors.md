@@ -800,6 +800,43 @@ Codec extends Building with three optional `DyeColor` fields and a
   `StructureSizeCache.load(CacheKey)` has been removed; the
   cache always measures from the NBT now.
 
+### Phase 0a closeout — P0a-17 done, P0a-18 deferred, P0a-20 already in place
+
+- The slot/matcher absorption (P0a-17) was completed earlier in
+  the rework. All 18 shape recipes (every concrete `ShapeRecipe`
+  implementation in `Village/Planning/Primitives/Recipes/`) call
+  `pctx.claimByZone(...)` — most directly, four indirectly via
+  `RecipeHelpers.claimAndBucketProdResidential` — and route every
+  successful placement through `pctx.tryCommitWithRetries`. The
+  audit in the closeout prompt confirmed no recipe still uses
+  legacy direct placement.
+- ZoneRegistry deletion (P0a-18) is **blocked**, not done. The
+  doc 15 absorption note assumed the placement-pipeline rewrite
+  would remove every consumer; it didn't. ZoneRegistry now
+  serves as the per-`BuildingType` zone-tag store powering four
+  active production sites:
+  - `BuildSiteFinder.findSite` — runtime building expansion
+    (BuilderGoal) consults `ZoneRegistry.zoneOf(type).preferredRing`
+    and the angular sector table.
+  - `PlanContext.claimByZone` itself — the API every recipe uses,
+    keyed on `ZoneRegistry.zoneOf(bt)`.
+  - `PlanContext.tryCommitBuilding` — terrain reject-water gate
+    (`zoneOf(bt) == AGRICULTURAL`) and civic-ring exclusion
+    (`zoneOf(bt) != CIVIC`).
+  - `LayoutPrimitive` — civic-ring sizing checks
+    (`zoneOf(bt) == CIVIC`).
+  Deletion would require migrating those four call sites onto a
+  slimmer tag accessor or accepting a rename. Tracked as
+  follow-up; ZoneRegistry stays for now.
+- Building codec migration (P0a-20) was implicitly done at
+  P0a-08 — the four new fields use `optionalFieldOf` defaults
+  (`variantId` → `defaultVariantId(type)`, three colours →
+  `null`). Existing pre-P0a-08 saves load cleanly with the
+  type-default variant and untinted colours; subsequent saves
+  persist the new fields and round-trip correctly. No
+  migration script was needed because the optional-field
+  pattern handles backward compatibility automatically.
+
 ### Variant selection moved into the placement chokepoint
 
 - The doc 15 "Variant selection algorithm" section doesn't
