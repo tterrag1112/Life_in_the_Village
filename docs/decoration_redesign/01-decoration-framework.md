@@ -306,3 +306,37 @@ class DecorationPass               // orchestrates emit → match → place
   doesn't expose a per-village culture accessor. When such an
   accessor lands (via `VillageTypeData` lookup or a per-village
   cached field), `cultureFor(village)` becomes a one-line edit.
+
+### P0b-06 closeout — debug command + validation pass
+
+- **Determinism bug found and fixed.** The validation determinism
+  check (B.1) surfaced that
+  `VillageLayout.getAllCenterlines()` is backed by an
+  `IdentityHashMap`, whose iteration order varies across JVM
+  runs because `System.identityHashCode` isn't stable across
+  process restarts. The emitter's `emitRoadSide` now sorts the
+  centerlines by their first point's `(x, z, y)` before walking,
+  restoring cross-session determinism. P0b-04's emitter prompt
+  is the affected task.
+- **`/liv decoration replay` does not strip prior placement
+  blocks from the world.** The persisted records are cleared
+  and the pass re-runs, but any blocks from a prior pass stay
+  put. Doc 01's "burn the slot" policy already accepts mid-run
+  partial state; a full clear would need a per-piece footprint-
+  walk to restore the underlying surface, which is out of scope
+  while no piece NBTs are large enough to matter. When real
+  content lands and the post-replay residue becomes a real
+  visual issue, a clear-blocks step belongs alongside the
+  re-run.
+- **Slot-emission with no `VillageLayout` context (debug command
+  re-emit case).** `/liv decoration slots <village>` doesn't
+  have a planning-time layout to walk, so the road-side
+  algorithm sub-pass is skipped. Building-gap, corner, facade,
+  village-boundary, and trade-road endpoint algorithms all run
+  fine because they read from the persisted `Building` and
+  `Village` state, which is available at runtime.
+- **Validation Tasks B.1–B.6** are reasoned-static-only in the
+  current sandbox (no in-world execution available). Concrete
+  verification needs an in-world run; the framework is
+  structurally complete and behaves correctly under static
+  walk-through.

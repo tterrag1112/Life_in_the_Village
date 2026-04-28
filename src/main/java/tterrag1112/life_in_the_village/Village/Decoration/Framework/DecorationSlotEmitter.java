@@ -109,7 +109,24 @@ public final class DecorationSlotEmitter {
                                      List<DecorationSlot> out) {
         if (ctx.layout() == null) return; // no road centerlines reachable
         boolean alternate = false;
-        for (List<BlockPos> centerline : ctx.layout().getAllCenterlines()) {
+        // VillageLayout backs centerlines with an IdentityHashMap whose
+        // iteration order is JVM-dependent. Sort by the first point of
+        // each centerline so cross-session determinism holds (doc 01
+        // §"Behavior contract": "same seed → same decorations").
+        List<List<BlockPos>> centerlines = new ArrayList<>(
+                ctx.layout().getAllCenterlines());
+        centerlines.sort((a, b) -> {
+            if (a == null || a.isEmpty()) return b == null || b.isEmpty() ? 0 : -1;
+            if (b == null || b.isEmpty()) return 1;
+            BlockPos pa = a.get(0);
+            BlockPos pb = b.get(0);
+            int dx = Integer.compare(pa.getX(), pb.getX());
+            if (dx != 0) return dx;
+            int dz = Integer.compare(pa.getZ(), pb.getZ());
+            if (dz != 0) return dz;
+            return Integer.compare(pa.getY(), pb.getY());
+        });
+        for (List<BlockPos> centerline : centerlines) {
             if (centerline == null || centerline.size() < 2) continue;
             for (int i = ROAD_SIDE_SAMPLE_STEP;
                  i < centerline.size() - 1;
