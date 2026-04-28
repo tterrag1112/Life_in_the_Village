@@ -50,6 +50,14 @@ public final class TintBlockTable {
     public record TintEntry(ColorSlot slot, Map<DyeColor, Block> byColor) {}
 
     private static final Map<Block, TintEntry> TABLE;
+    /**
+     * Reverse index: every coloured variant of a tintable family
+     * (e.g. {@code red_terracotta}, {@code blue_wool}) → the
+     * {@link TintEntry} for that family. Used by the runtime
+     * repaint goal (P0a-13) to recognise already-tinted blocks and
+     * swap them to a new colour.
+     */
+    private static final Map<Block, TintEntry> ANY_COLOUR_TABLE;
 
     static {
         Map<Block, TintEntry> table = new LinkedHashMap<>();
@@ -71,6 +79,16 @@ public final class TintBlockTable {
         table.put(Blocks.WHITE_CANDLE, build(ColorSlot.ROOF, Family.CANDLE));
 
         TABLE = Map.copyOf(table);
+
+        // Build the any-colour reverse table from the same entries.
+        Map<Block, TintEntry> reverse = new LinkedHashMap<>();
+        for (TintEntry entry : TABLE.values()) {
+            for (Block coloured : entry.byColor().values()) {
+                reverse.putIfAbsent(coloured, entry);
+            }
+        }
+        ANY_COLOUR_TABLE = Map.copyOf(reverse);
+
         LOGGER.info("TintBlockTable: validated {} tintable bases × {} colours",
                 TABLE.size(), DyeColor.values().length);
     }
@@ -99,6 +117,20 @@ public final class TintBlockTable {
 
     /** Read-only diagnostic snapshot of the loaded table. */
     public static Map<Block, TintEntry> all() { return TABLE; }
+
+    /**
+     * Returns the tint entry for {@code source} treating <em>any</em>
+     * coloured variant of a tintable family as a match (e.g.
+     * {@code red_terracotta} resolves to the PRIMARY family entry).
+     * Used at repaint time to recognise already-tinted blocks; first-
+     * placement tinting still uses {@link #entryFor(Block)} which is
+     * white-only.
+     */
+    public static Optional<TintEntry> entryForAnyColour(Block source) {
+        TintEntry e = ANY_COLOUR_TABLE.get(source);
+        if (e != null) return Optional.of(e);
+        return entryFor(source);
+    }
 
     // ── Construction helpers ──────────────────────────────────────────────
 

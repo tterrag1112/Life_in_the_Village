@@ -700,3 +700,51 @@ Codec extends Building with three optional `DyeColor` fields and a
   same `(worldSeed, origin, villageName)` produces the same
   building order, the same neighbour sets at sample time, and
   therefore the same colours.
+
+### P0a-13 — repaint goal + UI
+
+- **Right-click flow uses a profession bypass, not the profile
+  action route.** `WANDERING_TRADER` already bypasses the unified
+  profile screen on plain right-click; builders now do the same
+  and open the repaint screen directly. Shift-right-click still
+  opens the profile so the rest of the verb framework (rep,
+  hobbies, etc.) remains accessible. This avoids the five-point
+  `NpcProfileActionPacket` wiring and matches the existing
+  precedent for direct-access professions.
+- **Persistence — repaint job lives on the builder NPC's NBT.**
+  Stored as flat `repaint.*` keys via the existing
+  `addAdditionalSaveData` / `readAdditionalSaveData` flow on
+  `TownspersonMob`. One job per builder; multi-job queues are a
+  future iteration. If the builder dies the job is dropped with
+  the entity — doc 15 mentions transferring jobs to another
+  builder, but with no current test for that scenario the
+  implementation skips it and flags it as a follow-up.
+- **Runtime tint pass recognises already-tinted blocks.** The
+  initial-placement `TintPass` only matches `white_*` markers;
+  the runtime path needs to swap RED → BLUE on a repaint, so
+  `TintBlockTable.entryForAnyColour` returns the family entry
+  for any colour of a tintable family. The placement path stays
+  white-only — accidentally tinting an authored grey-terracotta
+  block would be a regression, and authors deliberately use
+  `light_gray_*` as the opt-out.
+- **Per-visit batching.** Doc 15 says "footprint / 20 blocks
+  repainted per visit (rounded up)". The goal interprets that
+  as `totalVisits = ceil(area / 20)` with a per-visit block cap
+  derived from the same. Each in-game day the builder walks to
+  the building, plays a 30-second working animation, then
+  applies one batch. Building's `primaryColor` / `accentColor` /
+  `roofColor` fields update at confirm time so save-data is
+  always current; in-world blocks catch up over visits.
+- **Guild-hall colour override is still partial.** P0a-12 left
+  the override falling through to palette sampling because
+  `GuildData` carries no colour fields. The repaint screen
+  doesn't special-case guild halls either — players can repaint
+  a guild hall as if it were any other building (subject to the
+  same ownership rules). Once `GuildData` gains colour fields,
+  the placement-time and repaint-time paths both need updates;
+  marker remains in `VillagePaletteResolver.planFor`.
+- **DyeColor → RGB swatches in the UI** are hardcoded rather
+  than read from `DyeColor.getTextureDiffuseColor()`. The RGB
+  table in `RepaintScreen.rgbOf` mirrors the standard Minecraft
+  dye palette and avoids tying the screen to a specific
+  Mojang/NeoForge accessor that has shifted between versions.

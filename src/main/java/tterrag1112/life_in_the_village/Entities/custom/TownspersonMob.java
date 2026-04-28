@@ -246,6 +246,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Was AI disabled before the conversation started? (restore on unlock.) */
     private boolean conversationPrevNoAi = false;
 
+    /** P0a-13 — pending or in-progress repaint job for builder NPCs.
+     *  Null when no job is assigned. Persisted via the {@code repaint.*}
+     *  NBT keys on this entity's save data. */
+    @Nullable private tterrag1112.life_in_the_village.Village.Decoration
+            .Variants.RepaintJob repaintJob = null;
+
     // =========================================================================
     // CONSTRUCTOR
     // =========================================================================
@@ -1000,6 +1006,18 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     // safety timeout if the client fails to send a close packet.
     // =========================================================================
 
+    // ── P0a-13: repaint job accessors ────────────────────────────────────
+
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Decoration.Variants.RepaintJob
+            getRepaintJob() { return repaintJob; }
+
+    public void setRepaintJob(
+            @Nullable tterrag1112.life_in_the_village.Village.Decoration
+                    .Variants.RepaintJob job) {
+        this.repaintJob = job;
+    }
+
     /** True while a player is holding this NPC in a conversation. */
     public boolean isInConversation() { return conversationPartner != null; }
 
@@ -1490,6 +1508,29 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Visitor metadata (Phase 4 task 29) ──────────────────────────────
         visitorState.save(output);
+
+        // ── P0a-13: repaint job ─────────────────────────────────────────────
+        if (repaintJob != null) {
+            output.putString("repaint.buildingId",
+                    repaintJob.buildingId().toString());
+            output.putString("repaint.requesterId",
+                    repaintJob.requesterId().toString());
+            output.putString("repaint.slots",
+                    tterrag1112.life_in_the_village.Village.Decoration
+                            .Variants.RepaintJob.slotsCsv(repaintJob.slots()));
+            if (repaintJob.primary() != null) {
+                output.putString("repaint.primary", repaintJob.primary().name());
+            }
+            if (repaintJob.accent() != null) {
+                output.putString("repaint.accent", repaintJob.accent().name());
+            }
+            if (repaintJob.roof() != null) {
+                output.putString("repaint.roof", repaintJob.roof().name());
+            }
+            output.putString("repaint.state", repaintJob.state().name());
+            output.putInt("repaint.visits", repaintJob.visitsCompleted());
+            output.putLong("repaint.nextVisitTick", repaintJob.nextVisitTick());
+        }
     }
 
     // =========================================================================
@@ -1664,6 +1705,59 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             long now = level() instanceof net.minecraft.server.level.ServerLevel sl
                     ? sl.getGameTime() : 0L;
             skills.migrateLegacyProfessionXp(getProfession(), legacyXp, now);
+        }
+
+        // ── P0a-13: repaint job ─────────────────────────────────────────────
+        var repaintBuilding = input.read("repaint.buildingId", Codec.STRING);
+        if (repaintBuilding.isPresent()) {
+            try {
+                UUID bId = UUID.fromString(repaintBuilding.get());
+                UUID rId = input.read("repaint.requesterId", Codec.STRING)
+                        .map(UUID::fromString).orElse(new UUID(0L, 0L));
+                String slotsCsv = input.read("repaint.slots", Codec.STRING).orElse("");
+                var slots = tterrag1112.life_in_the_village.Village.Decoration
+                        .Variants.RepaintJob.parseSlotsCsv(slotsCsv);
+                net.minecraft.world.item.DyeColor primary =
+                        input.read("repaint.primary", Codec.STRING)
+                                .map(s -> {
+                                    try { return net.minecraft.world.item.DyeColor.valueOf(s); }
+                                    catch (IllegalArgumentException e) { return null; }
+                                }).orElse(null);
+                net.minecraft.world.item.DyeColor accent =
+                        input.read("repaint.accent", Codec.STRING)
+                                .map(s -> {
+                                    try { return net.minecraft.world.item.DyeColor.valueOf(s); }
+                                    catch (IllegalArgumentException e) { return null; }
+                                }).orElse(null);
+                net.minecraft.world.item.DyeColor roof =
+                        input.read("repaint.roof", Codec.STRING)
+                                .map(s -> {
+                                    try { return net.minecraft.world.item.DyeColor.valueOf(s); }
+                                    catch (IllegalArgumentException e) { return null; }
+                                }).orElse(null);
+                tterrag1112.life_in_the_village.Village.Decoration.Variants
+                        .RepaintJob.State state =
+                        input.read("repaint.state", Codec.STRING)
+                                .map(s -> {
+                                    try {
+                                        return tterrag1112.life_in_the_village.Village
+                                                .Decoration.Variants.RepaintJob.State.valueOf(s);
+                                    } catch (IllegalArgumentException e) {
+                                        return tterrag1112.life_in_the_village.Village
+                                                .Decoration.Variants.RepaintJob.State.PLANNED;
+                                    }
+                                })
+                                .orElse(tterrag1112.life_in_the_village.Village
+                                        .Decoration.Variants.RepaintJob.State.PLANNED);
+                int visits = input.read("repaint.visits", Codec.INT).orElse(0);
+                long nextTick = input.read("repaint.nextVisitTick", Codec.LONG).orElse(0L);
+                this.repaintJob = new tterrag1112.life_in_the_village.Village
+                        .Decoration.Variants.RepaintJob(
+                        bId, rId, slots, primary, accent, roof,
+                        state, visits, nextTick);
+            } catch (IllegalArgumentException ignored) {
+                this.repaintJob = null;
+            }
         }
 
         // ── Sync entity data from loaded state ───────────────────────────────

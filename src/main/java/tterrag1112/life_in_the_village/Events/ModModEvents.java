@@ -191,6 +191,16 @@ public class ModModEvents {
                 GuildActionPacket.CODEC,
                 GuildActionPacket::handle);
 
+        // P0a-13 — repaint UI
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Networking.OpenRepaintScreenPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.OpenRepaintScreenPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.OpenRepaintScreenPacket::handle);
+        registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.RepaintActionPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.RepaintActionPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.RepaintActionPacket::handle);
+
         registrar.playToServer(
                 RequestKingdomMapSyncPacket.TYPE,
                 RequestKingdomMapSyncPacket.CODEC,

@@ -7,6 +7,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Baker.BakerGoal
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith.BlacksmithGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderMaintenanceGoal;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderRepaintGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Candlemaker.CandlemakerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Carpenter.CarpenterGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
@@ -301,6 +302,10 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.BUILDER, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new BuilderGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderMaintenanceGoal(npc));
+            // P0a-13: player-requested repaints — runs alongside the
+            // primary build queue and the maintenance pass; canUse()
+            // gates on whether a job is attached to the NPC.
+            npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderRepaintGoal(npc));
         });
 
         // ── Leadership ───────────────────────────────────────────────────────
