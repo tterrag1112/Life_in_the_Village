@@ -280,6 +280,26 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillagePropertyData::new));
     }
 
+    // ── 9. Adjunct plots ──────────────────────────────────────────────────────
+
+    /**
+     * Doc 02 — durable adjunct plots keyed by plotId. The
+     * per-building denormalisation map is rebuilt on load from
+     * this list, so only the flat map is persisted.
+     */
+    public record VillageAdjunctData(
+            List<tterrag1112.life_in_the_village.Village.Decoration
+                    .Adjunct.AdjunctPlot> plots
+    ) {
+        public static final Codec<VillageAdjunctData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        tterrag1112.life_in_the_village.Village.Decoration
+                                .Adjunct.AdjunctPlot.CODEC.listOf()
+                                .optionalFieldOf("plots", List.of())
+                                .forGetter(VillageAdjunctData::plots)
+                ).apply(i, VillageAdjunctData::new));
+    }
+
     // ── 8. Decoration ─────────────────────────────────────────────────────────
 
     /**
@@ -360,7 +380,12 @@ public class VillageSavedData extends SavedData implements
                             .optionalFieldOf("decorationData",
                                     new VillageDecorationData(List.of()))
                             .forGetter(d -> new VillageDecorationData(
-                                    List.copyOf(d.decorationPlacements)))
+                                    List.copyOf(d.decorationPlacements))),
+                    VillageAdjunctData.CODEC
+                            .optionalFieldOf("adjunctData",
+                                    new VillageAdjunctData(List.of()))
+                            .forGetter(d -> new VillageAdjunctData(
+                                    List.copyOf(d.adjunctPlots.values())))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -377,7 +402,8 @@ public class VillageSavedData extends SavedData implements
             VillagePropertyData   propertyData,
             VillageGossipData     gossipData,
             VillageScribalData    scribalData,
-            VillageDecorationData decorationData) {
+            VillageDecorationData decorationData,
+            VillageAdjunctData    adjunctData) {
 
         VillageSavedData data = new VillageSavedData();
 
@@ -438,6 +464,18 @@ public class VillageSavedData extends SavedData implements
         // Decoration (Phase 0b doc 01)
         if (decorationData != null) {
             data.decorationPlacements.addAll(decorationData.placements());
+        }
+
+        // Adjunct plots (Phase 0c doc 02). Authoritative store +
+        // per-building denormalisation rebuilt from it.
+        if (adjunctData != null) {
+            for (var plot : adjunctData.plots()) {
+                data.adjunctPlots.put(plot.plotId(), plot);
+                data.adjunctPlotsByBuilding
+                        .computeIfAbsent(plot.parentBuildingId(),
+                                k -> new ArrayList<>())
+                        .add(plot.plotId());
+            }
         }
 
         // Rebuild indices
@@ -523,6 +561,13 @@ public class VillageSavedData extends SavedData implements
     private final List<tterrag1112.life_in_the_village.Village.Decoration
             .Framework.DecorationPlacement> decorationPlacements = new ArrayList<>();
 
+    // Adjunct plots (Phase 0c — doc 02). Authoritative store keyed
+    // by plotId; the per-building denormalisation map is rebuilt
+    // from this on load.
+    private final Map<UUID, tterrag1112.life_in_the_village.Village
+            .Decoration.Adjunct.AdjunctPlot> adjunctPlots = new LinkedHashMap<>();
+    private final Map<UUID, List<UUID>> adjunctPlotsByBuilding = new HashMap<>();
+
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
 
@@ -558,6 +603,9 @@ public class VillageSavedData extends SavedData implements
     public void removeBuilding(Building building) {
         buildings.remove(building);
         buildingIndex.remove(building.getId());
+        // Doc 02 §"Edge cases" — orphaned adjunct plots cleared
+        // when their parent building goes away.
+        removeAdjunctPlotsForBuilding(building.getId());
         setDirty();
     }
     public void removeVillage(UUID id) {
@@ -734,6 +782,67 @@ public class VillageSavedData extends SavedData implements
     public List<tterrag1112.life_in_the_village.Village.Decoration.Framework
             .DecorationPlacement> getAllDecorationPlacements() {
         return Collections.unmodifiableList(decorationPlacements);
+    }
+
+    // ── Adjunct plots (Phase 0c doc 02) ──────────────────────────────────
+
+    public void addAdjunctPlot(tterrag1112.life_in_the_village.Village
+                                       .Decoration.Adjunct.AdjunctPlot plot) {
+        if (plot == null) return;
+        adjunctPlots.put(plot.plotId(), plot);
+        adjunctPlotsByBuilding
+                .computeIfAbsent(plot.parentBuildingId(),
+                        k -> new ArrayList<>())
+                .add(plot.plotId());
+        markDirty();
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Village.Decoration
+            .Adjunct.AdjunctPlot> getAdjunctPlot(UUID plotId) {
+        if (plotId == null) return Optional.empty();
+        return Optional.ofNullable(adjunctPlots.get(plotId));
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Adjunct.AdjunctPlot> getAdjunctPlotsForBuilding(UUID buildingId) {
+        if (buildingId == null) return List.of();
+        List<UUID> ids = adjunctPlotsByBuilding.get(buildingId);
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<tterrag1112.life_in_the_village.Village.Decoration
+                .Adjunct.AdjunctPlot> out = new ArrayList<>(ids.size());
+        for (UUID id : ids) {
+            var plot = adjunctPlots.get(id);
+            if (plot != null) out.add(plot);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    public Collection<tterrag1112.life_in_the_village.Village.Decoration
+            .Adjunct.AdjunctPlot> getAllAdjunctPlots() {
+        return Collections.unmodifiableCollection(adjunctPlots.values());
+    }
+
+    public void removeAdjunctPlot(UUID plotId) {
+        if (plotId == null) return;
+        var removed = adjunctPlots.remove(plotId);
+        if (removed != null) {
+            List<UUID> ids = adjunctPlotsByBuilding.get(removed.parentBuildingId());
+            if (ids != null) {
+                ids.remove(plotId);
+                if (ids.isEmpty()) {
+                    adjunctPlotsByBuilding.remove(removed.parentBuildingId());
+                }
+            }
+            markDirty();
+        }
+    }
+
+    public void removeAdjunctPlotsForBuilding(UUID buildingId) {
+        if (buildingId == null) return;
+        List<UUID> ids = adjunctPlotsByBuilding.remove(buildingId);
+        if (ids == null || ids.isEmpty()) return;
+        for (UUID id : ids) adjunctPlots.remove(id);
+        markDirty();
     }
 
     // =========================================================================

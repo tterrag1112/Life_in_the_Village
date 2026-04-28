@@ -51,10 +51,10 @@ variants-and-colors.md` before any other Phase 0 doc.
 
 | ID | Task | Subsystem | Status | Notes |
 |---|---|---|---|---|
-| P0c-01 | `AdjunctPlot` record + codec | 02-adjunct-plot-framework | Not-Started | |
-| P0c-02 | `AdjunctPlotPlacer` | 02-adjunct-plot-framework | Not-Started | Depends P0c-01 |
-| P0c-03 | AdjunctPlot registry on VillageSavedData | 02-adjunct-plot-framework | Not-Started | Depends P0c-01 |
-| P0c-04 | Building → AdjunctPlot spec table | 02-adjunct-plot-framework | Not-Started | Depends P0c-01 |
+| P0c-01 | `AdjunctPlot` record + codec | 02-adjunct-plot-framework | Implemented | Record + `RecordCodecBuilder` codec under `Village/Decoration/Adjunct/`. `AdjunctPlotType` enum (14 values across industry / gardens / homestead categories) carries placer metadata: default footprint, `PlacementStrategy`, slope tolerance, `FaceProbeOrder`. Codec stability via `StringRepresentable`. |
+| P0c-02 | `AdjunctPlotPlacer` | 02-adjunct-plot-framework | Implemented | Single static `tryPlace(building, type, level, data)` entry point. Probes faces in `FaceProbeOrder` sequence (back / left / right; never front). Per-face checks: parent overlap, parent-front-extent guard, sibling building overlap, existing plot overlap, slope tolerance. Origin Y = median of sampled heightmap. Determinism: pure function of inputs. Silent drop with INFO log on all-faces-fail. |
+| P0c-03 | AdjunctPlot registry on VillageSavedData | 02-adjunct-plot-framework | Implemented | `VillageAdjunctData` sub-record + codec wired into the main `VillageSavedData.CODEC` chain (11th sub-record, `optionalFieldOf` default empty). Authoritative `Map<UUID, AdjunctPlot>` + denormalised per-building map rebuilt from it on load. Accessors: add, get, getForBuilding, getAll, remove, removeForBuilding. `removeBuilding(Building)` cleanup hook removes orphans automatically. |
+| P0c-04 | Building → AdjunctPlot spec table | 02-adjunct-plot-framework | Implemented | `AdjunctPlotRegistry` static spec table with the doc 02 §"Building → AdjunctPlot spec" skeleton: APOTHECARY→HERB_GARDEN, BLACKSMITH→FORGE_YARD, INN→KITCHEN_GARDEN, TEMPLE→MEDITATION_GARDEN, STABLE→PADDOCK, WEAVER/FISHERY→DRYING_RACK_YARD, CARPENTRY/WOODCUTTER/MILLER→LOG_YARD, STONEMASON/CANDLEMAKER→KILN_YARD, BAKERY→OVEN_SHED, NOBLE_MANOR→FORMAL_GARDEN+PADDOCK. Hard cap of 3 plots per building (`MAX_PLOTS_PER_BUILDING`). HOUSE → HOMESTEAD_* registrations deferred to subsystem 11; FARMER intentionally absent (FarmPlot system handles it). `AdjunctPlotRealiser` orchestrates per-village placement, wired into `VillageSpawner` between `VillageDecorator` and `DecorationPass`. |
 
 ### Phase 0d — Subbuildings
 

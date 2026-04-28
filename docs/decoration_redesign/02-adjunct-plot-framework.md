@@ -197,3 +197,63 @@ methods `addAdjunctPlot`, `getAdjunctPlotsForBuilding`,
 ## Revision notes
 
 (Changes recorded here as the spec evolves.)
+
+### P0c-01 / P0c-02 / P0c-03 / P0c-04 — framework data model + placer landed
+
+- **Front-direction convention.** The placer derives the parent
+  building's "front" from `Building.getRotation()` using the
+  same convention the building placer uses (NONE → SOUTH-facing).
+  Doc 02 §"Placement algorithm" doesn't specify how to read the
+  front; this is the existing in-codebase convention from the
+  decoration emitter and the building placer.
+- **Probe-order resolution.** `FaceProbeOrder.BACK_FIRST` returns
+  the face sequence `(back, left, right)` per doc 02
+  §"Open decisions". `SIDES_FIRST` returns `(left, right, back)`
+  for the rare case (currently only `HOMESTEAD_BEES`) where a
+  side face is preferred. Front is never returned — the placer
+  treats front-of-parent as off-limits per doc 02 §B.2.
+- **Plot half-extents are facing-matched.** The plot's
+  `defaultHalfWidthX` / `defaultHalfLengthZ` are declared in the
+  type's local frame. The placer swaps them when the chosen face
+  is on the parent's local X axis so the outward dimension is
+  always the plot's longer dimension. `AdjunctPlot.halfWidthX` /
+  `halfLengthZ` on the persisted record are in the world frame
+  after that swap, matching the `BlockPos` origin.
+- **Slope sampling uses the world heightmap.** The placer reads
+  `level.getHeight(MOTION_BLOCKING_NO_LEAVES, x, z)` over the
+  proposed footprint. Origin Y is the median sample, matching
+  the building placer's pad-Y convention. Slope tolerance is
+  per-type (1 for tight herb gardens, 4 for loose paddocks).
+- **No NBT stamping or piece-kit assembly happens at this
+  phase.** The placer materialises plot bounds only; subsystems
+  07 (industry), 08 (gardens), and 11 (homesteading) read the
+  persisted `AdjunctPlot` record and stamp content from their
+  own realisers when they ship. Each `AdjunctPlotType` carries
+  a `PlacementStrategy` enum (`NBT` or `PIECE_KIT`) so those
+  subsystems can route to the right materializer without
+  re-checking type IDs.
+- **HOUSE → HOMESTEAD_* not registered.** Doc 02 §"Building →
+  AdjunctPlot spec" calls those out as conditional (probability
+  + tier gate). The static registry doesn't model conditional
+  registrations, so subsystem 11 will register at realisation
+  time via a separate code path. The four `HOMESTEAD_*` enum
+  values are still authored on `AdjunctPlotType` so subsystem
+  11's plumbing only needs to add the conditional logic.
+- **FARMER intentionally has no spec.** FarmPlot (subsystem 10)
+  handles farm production at village-territory scale; AdjunctPlot
+  is building-scale. Documented in the registry's javadoc.
+- **Realiser pipeline insertion.** `VillageSpawner.java` line
+  ~315 (post-edit), between `VillageDecorator.decorateVillage(...)`
+  and the Phase 0b `DecorationPass.run(...)`. Doc 02
+  §"Ordering dependencies" specified "after BuildingRealiser /
+  BuildingFoundation, before DecorationPass" — this is the
+  closest fit in the current pipeline shape.
+- **Cleanup hook.** `VillageSavedData.removeBuilding(Building)`
+  now calls `removeAdjunctPlotsForBuilding(building.getId())`
+  before marking dirty, so orphaned plots can't outlive their
+  parent.
+- **`/liv adjunct list` debug command deferred.** Doc 00
+  §"Debug commands" spec'd it; the prompt deferred it to Phase
+  1 alongside content registration so the command has something
+  meaningful to show. The persistence layer is in place to
+  support it whenever it lands.
