@@ -6,6 +6,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.DyeColor;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Gui.Framework.Chrome;
@@ -150,7 +151,7 @@ public class RepaintScreen extends Screen {
 
     private void onConfirm() {
         if (selected == null || selected.hasJob()) return;
-        PacketDistributor.sendToServer(new RepaintActionPacket(
+        ClientPacketDistributor.sendToServer(new RepaintActionPacket(
                 data.npcId(),
                 selected.buildingId(),
                 dyeToByte(primaryPick),
