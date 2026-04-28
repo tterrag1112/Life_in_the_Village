@@ -37,6 +37,7 @@ public class ModModelProvider extends ModelProvider {
         itemModels.generateFlatItem(ModItems.WRITTEN_LETTER.get(), ModelTemplates.FLAT_ITEM);
 
         blockModels.createTrivialCube(ModBlocks.NOBLE_STONE.get());
+        blockModels.createTrivialCube(ModBlocks.SUBBUILDING_ANCHOR.get());
 
 
     }

@@ -159,6 +159,36 @@ source player via `sendSuccess` with `sendFailure` on errors.
 - No bypass of the matcher — every decoration piece goes through
   DecorationSlot → DecorationMatcher, never direct placement.
 
+## Authoring workflow for subbuilding anchors
+
+The subbuilding framework (subsystem 03) detects subbuilding regions by
+scanning for a single mod block — `life_in_the_village:subbuilding_anchor` —
+carrying a `SubBuildingAnchorBlockEntity`. The block entity records the
+`SubBuildingType` and optional overrides:
+
+```
+subBuildingType         (required)  STALL / APARTMENT / SHOP / ARCHIVE / ...
+explicitBounds          (optional)  override flood-fill bounds
+explicitDoorTarget      (optional)  override door-detection
+hints                   (optional)  free-form Map<String,String>
+```
+
+For Phase 0d v1, the authoring flow is:
+
+1. Place the anchor block inside the structure where you want the
+   subbuilding origin to land. The block has no creative-menu entry —
+   use `/give @s life_in_the_village:subbuilding_anchor` or NBT-only
+   placement during structure authoring.
+2. Save the structure to its `.nbt` file as usual.
+3. Edit the resulting `.nbt` using an NBT editor to set the block
+   entity's `subBuildingType` field (and any optional fields). Block
+   entities in saved structure templates are stamped back into the
+   world verbatim, so whatever fields you set will reach the scanner.
+
+A configurator item / GUI is deferred polish. The block entity codec
+is forward-compatible — new fields can be added with `optionalFieldOf`
+defaults without breaking existing structures.
+
 ## Out of scope (deferred polish)
 
 For reference, the following will be added in a later polish pass and

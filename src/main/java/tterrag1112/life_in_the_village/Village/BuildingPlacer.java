@@ -19,6 +19,8 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager;
+import tterrag1112.life_in_the_village.Village.Decoration.Subbuilding.SubBuilding;
+import tterrag1112.life_in_the_village.Village.Decoration.Subbuilding.SubBuildingScanner;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
@@ -83,19 +85,9 @@ public class BuildingPlacer {
         StructurePlaceSettings settings = new StructurePlaceSettings().setRotation(rotation);
         boolean placed = template.placeInWorld(level, pos, BlockPos.ZERO, settings, level.random, 2);
 
-        // P0a-10: tint pass runs between NBT stamp and biome
-        // substitution. Order matters — biome substitution can rewrite
-        // white_terracotta into a biome-appropriate variant which would
-        // hide it from this pass.
-        TintPass.apply(level, pos, template, rotation,
-                tintPlan != null ? tintPlan : TintPass.Plan.NONE);
-
-        VillageBiomeStyle style = VillageBiomeStyle.detect(level, pos);
-        if (style != VillageBiomeStyle.PLAINS) {
-            applyBiomeSwap(level, pos, template, rotation, style);
-        }
-        System.out.println("Place result: " + placed);
-
+        // Compute the building's shape from the rotated template size
+        // up-front so the SubBuilding scanner has a valid bbox before
+        // TintPass / biome substitution can mutate the placed blocks.
         Vec3i rawSize = template.getSize();
 
         int w = rawSize.getX();
@@ -143,9 +135,33 @@ public class BuildingPlacer {
             building.setAccentColor(tintPlan.accentColor());
             building.setRoofColor(tintPlan.roofColor());
         }
+
+        // Phase 0d doc 03 — scan AFTER the NBT stamp but BEFORE tint
+        // and biome swap so the scanner sees authored block entities
+        // unmodified. Anchor blocks are replaced with air during the
+        // scan so they never reach the later passes.
+        java.util.List<SubBuilding> scannedSubBuildings =
+                SubBuildingScanner.scan(building, level);
+
+        // P0a-10: tint pass runs between NBT stamp and biome
+        // substitution. Order matters — biome substitution can rewrite
+        // white_terracotta into a biome-appropriate variant which would
+        // hide it from this pass.
+        TintPass.apply(level, pos, template, rotation,
+                tintPlan != null ? tintPlan : TintPass.Plan.NONE);
+
+        VillageBiomeStyle style = VillageBiomeStyle.detect(level, pos);
+        if (style != VillageBiomeStyle.PLAINS) {
+            applyBiomeSwap(level, pos, template, rotation, style);
+        }
+        System.out.println("Place result: " + placed);
+
         VillageSavedData data = VillageSavedData.get(level);
 
         data.addBuilding(building);
+        for (SubBuilding sub : scannedSubBuildings) {
+            data.addSubBuilding(sub);
+        }
 
         if (type == BuildingType.GUILD_HALL) {
             // Check pos, origin, and center of the building shape

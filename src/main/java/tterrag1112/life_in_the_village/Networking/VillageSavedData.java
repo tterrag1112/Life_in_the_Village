@@ -280,6 +280,26 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillagePropertyData::new));
     }
 
+    // ── 10. Subbuildings ───────────────────────────────────────────────────────
+
+    /**
+     * Doc 03 — durable subbuilding records keyed by subBuildingId. The
+     * per-parent denormalisation map is rebuilt on load from this list,
+     * so only the flat list is persisted.
+     */
+    public record VillageSubBuildingData(
+            List<tterrag1112.life_in_the_village.Village.Decoration
+                    .Subbuilding.SubBuilding> subBuildings
+    ) {
+        public static final Codec<VillageSubBuildingData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        tterrag1112.life_in_the_village.Village.Decoration
+                                .Subbuilding.SubBuilding.CODEC.listOf()
+                                .optionalFieldOf("subBuildings", List.of())
+                                .forGetter(VillageSubBuildingData::subBuildings)
+                ).apply(i, VillageSubBuildingData::new));
+    }
+
     // ── 9. Adjunct plots ──────────────────────────────────────────────────────
 
     /**
@@ -385,7 +405,12 @@ public class VillageSavedData extends SavedData implements
                             .optionalFieldOf("adjunctData",
                                     new VillageAdjunctData(List.of()))
                             .forGetter(d -> new VillageAdjunctData(
-                                    List.copyOf(d.adjunctPlots.values())))
+                                    List.copyOf(d.adjunctPlots.values()))),
+                    VillageSubBuildingData.CODEC
+                            .optionalFieldOf("subBuildingData",
+                                    new VillageSubBuildingData(List.of()))
+                            .forGetter(d -> new VillageSubBuildingData(
+                                    List.copyOf(d.subBuildings.values())))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -403,7 +428,8 @@ public class VillageSavedData extends SavedData implements
             VillageGossipData     gossipData,
             VillageScribalData    scribalData,
             VillageDecorationData decorationData,
-            VillageAdjunctData    adjunctData) {
+            VillageAdjunctData    adjunctData,
+            VillageSubBuildingData subBuildingData) {
 
         VillageSavedData data = new VillageSavedData();
 
@@ -475,6 +501,18 @@ public class VillageSavedData extends SavedData implements
                         .computeIfAbsent(plot.parentBuildingId(),
                                 k -> new ArrayList<>())
                         .add(plot.plotId());
+            }
+        }
+
+        // Subbuildings (Phase 0d doc 03). Authoritative store +
+        // per-parent denormalisation rebuilt from it.
+        if (subBuildingData != null) {
+            for (var sub : subBuildingData.subBuildings()) {
+                data.subBuildings.put(sub.subBuildingId(), sub);
+                data.subBuildingsByParent
+                        .computeIfAbsent(sub.parentBuildingId(),
+                                k -> new ArrayList<>())
+                        .add(sub.subBuildingId());
             }
         }
 
@@ -568,6 +606,13 @@ public class VillageSavedData extends SavedData implements
             .Decoration.Adjunct.AdjunctPlot> adjunctPlots = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> adjunctPlotsByBuilding = new HashMap<>();
 
+    // Subbuildings (Phase 0d — doc 03). Authoritative store keyed by
+    // subBuildingId; the per-parent denormalisation map is rebuilt
+    // from this on load.
+    private final Map<UUID, tterrag1112.life_in_the_village.Village
+            .Decoration.Subbuilding.SubBuilding> subBuildings = new LinkedHashMap<>();
+    private final Map<UUID, List<UUID>> subBuildingsByParent = new HashMap<>();
+
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
 
@@ -606,6 +651,9 @@ public class VillageSavedData extends SavedData implements
         // Doc 02 §"Edge cases" — orphaned adjunct plots cleared
         // when their parent building goes away.
         removeAdjunctPlotsForBuilding(building.getId());
+        // Doc 03 §"Edge cases" — orphaned subbuildings cleared
+        // alongside their parent.
+        removeSubBuildingsForBuilding(building.getId());
         setDirty();
     }
     public void removeVillage(UUID id) {
@@ -842,6 +890,80 @@ public class VillageSavedData extends SavedData implements
         List<UUID> ids = adjunctPlotsByBuilding.remove(buildingId);
         if (ids == null || ids.isEmpty()) return;
         for (UUID id : ids) adjunctPlots.remove(id);
+        markDirty();
+    }
+
+    // ── Subbuildings (Phase 0d doc 03) ───────────────────────────────────
+
+    public void addSubBuilding(tterrag1112.life_in_the_village.Village
+                                       .Decoration.Subbuilding.SubBuilding sub) {
+        if (sub == null) return;
+        subBuildings.put(sub.subBuildingId(), sub);
+        subBuildingsByParent
+                .computeIfAbsent(sub.parentBuildingId(),
+                        k -> new ArrayList<>())
+                .add(sub.subBuildingId());
+        markDirty();
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Village.Decoration
+            .Subbuilding.SubBuilding> getSubBuilding(UUID subId) {
+        if (subId == null) return Optional.empty();
+        return Optional.ofNullable(subBuildings.get(subId));
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Subbuilding.SubBuilding> getSubBuildingsForBuilding(UUID parentId) {
+        if (parentId == null) return List.of();
+        List<UUID> ids = subBuildingsByParent.get(parentId);
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<tterrag1112.life_in_the_village.Village.Decoration
+                .Subbuilding.SubBuilding> out = new ArrayList<>(ids.size());
+        for (UUID id : ids) {
+            var sub = subBuildings.get(id);
+            if (sub != null) out.add(sub);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Subbuilding.SubBuilding> getSubBuildingsOfType(
+                    tterrag1112.life_in_the_village.Village.Decoration
+                            .Subbuilding.SubBuildingType type) {
+        if (type == null) return List.of();
+        List<tterrag1112.life_in_the_village.Village.Decoration
+                .Subbuilding.SubBuilding> out = new ArrayList<>();
+        for (var sub : subBuildings.values()) {
+            if (sub.type() == type) out.add(sub);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    public Collection<tterrag1112.life_in_the_village.Village.Decoration
+            .Subbuilding.SubBuilding> getAllSubBuildings() {
+        return Collections.unmodifiableCollection(subBuildings.values());
+    }
+
+    public void removeSubBuilding(UUID subId) {
+        if (subId == null) return;
+        var removed = subBuildings.remove(subId);
+        if (removed != null) {
+            List<UUID> ids = subBuildingsByParent.get(removed.parentBuildingId());
+            if (ids != null) {
+                ids.remove(subId);
+                if (ids.isEmpty()) {
+                    subBuildingsByParent.remove(removed.parentBuildingId());
+                }
+            }
+            markDirty();
+        }
+    }
+
+    public void removeSubBuildingsForBuilding(UUID parentId) {
+        if (parentId == null) return;
+        List<UUID> ids = subBuildingsByParent.remove(parentId);
+        if (ids == null || ids.isEmpty()) return;
+        for (UUID id : ids) subBuildings.remove(id);
         markDirty();
     }
 

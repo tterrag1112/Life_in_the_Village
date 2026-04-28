@@ -19,46 +19,49 @@ Market stalls migrate onto this framework as a special case.
 
 ## Design
 
-### Detection by anchor blocks
+### Detection by anchor block entities
 
-Building NBTs are authored with special anchor blocks marking subbuilding
-regions. The scanner sweeps the building's footprint at placement time,
-finds anchor blocks, resolves each one to a subbuilding, and registers
-the result.
+Building NBTs are authored with a single mod-defined **anchor block**
+(`life_in_the_village:subbuilding_anchor`) at every subbuilding origin.
+The block carries a block entity (`SubBuildingAnchorBlockEntity`) that
+records the subbuilding's `SubBuildingType` plus optional overrides
+(explicit bounds, explicit door target, free-form hints map).
 
-Two anchor block types:
+The scanner sweeps the parent building's footprint at placement time,
+collects every block entity that is a `SubBuildingAnchorBlockEntity`,
+resolves each one to a subbuilding, and registers the result.
 
-**Primary anchor** — marks the origin of a subbuilding. A distinct block
-for each SubBuildingType so one sweep resolves them all:
+A single block type (rather than one block per `SubBuildingType`) means:
 
-```
-CHISELED_STONE_BRICKS  → STALL           (existing convention, keep)
-CHISELED_DEEPSLATE     → APARTMENT
-CHISELED_QUARTZ_BLOCK  → SHOP
-CHISELED_NETHER_BRICKS → ARCHIVE
-CHISELED_POLISHED_BB   → INN_ROOM
-CHISELED_TUFF_BRICKS   → WORKSHOP
-CHISELED_RED_SANDSTONE → CHAPEL_ROOM
-CHISELED_SANDSTONE     → CELLAR
-```
+1. Authors only need one block in their palette.
+2. New `SubBuildingType` values never require a new block.
+3. There's no chance of a vanilla decorative block being mistaken for
+   an anchor — only the mod block triggers the scan.
 
-Anchor blocks are replaced with air on first scan so they don't persist
-in the final structure.
+Anchor blocks (and their block entities) are replaced with air on first
+scan so they don't persist in the final structure.
 
-**Corner markers (optional)** — wool blocks at each corner of the
-subbuilding region to give explicit bounds. If corners aren't present,
-the scanner infers bounds via connected-room flood-fill from the anchor,
-stopping at walls. Corner markers are preferred for deterministic bounds.
+**Bounds resolution.** If the block entity carries an `explicitBounds`
+override, that wins. Otherwise the scanner runs a connected-room
+flood-fill from the anchor position, walking air + transparent blocks
+until it hits walls or the parent footprint edge. Flood-fill is capped
+at 256 cubic blocks per anchor to bound runaway scans on accidentally
+under-walled rooms.
 
 ### Door target
 
-Each subbuilding needs a registered entrance for NPC pathing. The scanner
-looks for a door block (any DoorBlock) along the region's exterior
-walls and records its BlockPos. NPCs path to this door; in-building
-wander logic remains the existing building-wide pattern.
+Each subbuilding needs a registered entrance for NPC pathing. If the
+anchor block entity carries an `explicitDoorTarget` override, that
+position is used. Otherwise the scanner looks for any `DoorBlock`
+within or along the region's exterior walls and uses the closest one.
+`doorFacing` is the outward normal of that door (the side away from
+the room). NPCs path to this door; in-building wander logic remains
+the existing building-wide pattern.
 
-If no door is found (open-concept regions like market stalls), the
-door target is the anchor block's position itself.
+If no door is found (open-concept regions like market stalls, or the
+author forgot one) the door target is the anchor position and
+`doorFacing` falls back to the parent building's front-face direction.
+Logged once per (subBuildingType, parent) at INFO.
 
 ### Registry
 
@@ -166,10 +169,10 @@ public enum SubBuildingType {
 
 ## Open decisions
 
-- **Anchor palette rot.** The chiseled-block anchor scheme risks
-  collisions with player placement of the same blocks. Mitigation:
-  scan only at NBT stamp time (not runtime), so player-placed
-  chiseled blocks never trigger. Confirmed acceptable.
+- **Anchor palette rot.** Resolved by the block-entity approach (see
+  §"Detection by anchor block entities"). One mod block, no palette
+  collisions. The original chiseled-palette scheme is retained in the
+  revision notes for context.
 - **CELLAR underground detection.** Do we require CELLAR anchors to be
   below the building's ground floor? Proposed: yes, enforce via Y
   check against the building's floor plane.
@@ -193,3 +196,40 @@ public enum SubBuildingType {
 ## Revision notes
 
 (Changes recorded here as the spec evolves.)
+
+### P0d-01 / P0d-02 / P0d-03 / P0d-05 — framework data model + scanner landed
+
+- **Changed from chiseled-block palette to block-entity approach.**
+  The original spec used 8 distinct vanilla chiseled blocks (one per
+  `SubBuildingType`) as anchors. That scheme had two problems: vanilla
+  decorative chiseled blocks could be mistaken for anchors when authors
+  legitimately wanted those blocks in their palette, and adding a new
+  `SubBuildingType` required a new vanilla-block mapping. Replaced with
+  a single mod-defined block (`life_in_the_village:subbuilding_anchor`)
+  carrying a block entity that records the type and optional overrides.
+  Removes conflict risk with decorative chiseled blocks; allows authors
+  to specify explicit bounds, door target, or hints per anchor.
+- **Authoring workflow.** For Phase 0d v1, authors place the anchor
+  block in a structure and then edit the structure's NBT directly (or
+  via an external tool) to set the block entity's `subBuildingType`
+  and any overrides. A configurator item / GUI is deferred polish.
+  Documented in `00-conventions.md` §"Authoring workflow for
+  subbuilding anchors".
+- **Scanner pipeline order.** Runs inside `BuildingPlacer.placeAndRegister`
+  immediately after `template.placeInWorld(...)` returns and BEFORE
+  `TintPass.apply` and `applyBiomeSwap`. Anchor blocks are replaced
+  with air during the scan so they never reach the tint or biome
+  passes.
+- **Determinism.** Block-entity iteration order in chunks is not
+  guaranteed stable. The scanner sorts collected anchors by their
+  `BlockPos` (Y, then Z, then X) before processing, so subbuilding
+  UUIDs derive deterministically and registry order is stable across
+  re-runs.
+- **MarketStallPlacer migration deferred.** P0d-04 was scoped here
+  but the existing market stall lifecycle is fundamentally
+  runtime-claim (chiseled-stone-brick anchors are consumed by
+  `claimSlot()` lazily, not scanned at building placement) and
+  `MarketStall` is a mutable class rather than a record. Migration
+  requires either re-authoring binary market NBTs to use the new
+  anchor block or building a parallel placement-time stall registry.
+  Split into its own follow-on prompt; framework lands first.

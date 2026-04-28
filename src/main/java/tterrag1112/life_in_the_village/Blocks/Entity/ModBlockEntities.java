@@ -4,6 +4,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredRegister;
+import tterrag1112.life_in_the_village.Blocks.Entity.custom.SubBuildingAnchorBlockEntity;
 import tterrag1112.life_in_the_village.Blocks.Entity.custom.VillageFoundationBlockEntity;
 import tterrag1112.life_in_the_village.Blocks.ModBlocks;
 import tterrag1112.life_in_the_village.Blocks.custom.VillageFoundationBlock;
@@ -20,6 +21,12 @@ public class ModBlockEntities {
             () -> new BlockEntityType<>(
                     VillageFoundationBlockEntity::new,
                     ModBlocks.VILLAGE_FOUNDATION.get()));
+
+    public static final Supplier<BlockEntityType<SubBuildingAnchorBlockEntity>> SUBBUILDING_ANCHOR_BE = BLOCK_ENTITIES.register(
+            "subbuilding_anchor_be",
+            () -> new BlockEntityType<>(
+                    SubBuildingAnchorBlockEntity::new,
+                    ModBlocks.SUBBUILDING_ANCHOR.get()));
 
     public static void register(IEventBus eventBus){
         BLOCK_ENTITIES.register(eventBus);

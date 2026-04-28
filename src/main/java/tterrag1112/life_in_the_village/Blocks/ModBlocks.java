@@ -13,6 +13,7 @@ import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import tterrag1112.life_in_the_village.Blocks.custom.GuardPostBlock;
+import tterrag1112.life_in_the_village.Blocks.custom.SubBuildingAnchorBlock;
 import tterrag1112.life_in_the_village.Blocks.custom.VillageFoundationBlock;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Life_in_the_village;
@@ -34,6 +35,19 @@ public class ModBlocks {
     public static final DeferredBlock<Block> NOBLE_STONE = registerBlock("noble_stone",
             Block::new,
             BlockBehaviour.Properties.ofFullCopy(Blocks.REINFORCED_DEEPSLATE));
+
+    /**
+     * Doc 03 §"Detection by anchor block entities" — author-only
+     * marker. Lives inside building NBTs; consumed by
+     * {@code SubBuildingScanner} at building-placement time.
+     * No creative-menu entry; use {@code /give} or NBT tooling.
+     */
+    public static final DeferredBlock<SubBuildingAnchorBlock> SUBBUILDING_ANCHOR = registerBlock(
+            "subbuilding_anchor",
+            SubBuildingAnchorBlock::new,
+            BlockBehaviour.Properties.of()
+                    .strength(0.5f)
+                    .noOcclusion());
 
 
 
