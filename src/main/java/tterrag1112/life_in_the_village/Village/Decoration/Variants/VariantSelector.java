@@ -258,7 +258,6 @@ public final class VariantSelector {
                     type,
                     m.id(),
                     m.displayName(),
-                    new BuildingVariant.Footprint(m.footprintX(), m.footprintZ()),
                     m.minTier(),
                     m.maxTier(),
                     m.weight(),

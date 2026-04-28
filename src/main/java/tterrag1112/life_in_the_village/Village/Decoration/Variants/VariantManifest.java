@@ -26,7 +26,6 @@ import java.util.Set;
  * <ul>
  *   <li>{@code id} — defaults to the folder name passed in by the loader
  *   <li>{@code displayName} — defaults to {@code id}
- *   <li>{@code footprintX/Z} — {@code 0} means "use the NBT-declared size"
  *   <li>{@code minTier} — {@link VillageSizeTier#HAMLET}
  *   <li>{@code maxTier} — {@link VillageSizeTier#CITY}
  *   <li>{@code weight} — {@code 1.0}
@@ -38,12 +37,18 @@ import java.util.Set;
  *   <li>{@code colorSlots} — {@link ColorSlot#PRIMARY} only
  *   <li>{@code ruinationLevel} — {@code 0.0} (pristine)
  * </ul>
+ *
+ * <p><b>Footprint:</b> not parsed. Doc 15 §"Footprint resolution"
+ * makes the NBT the single source of truth for variant geometry;
+ * {@link tterrag1112.life_in_the_village.Village.Planning
+ * .StructureSizeCache} measures it from the file. Legacy manifests
+ * that still carry a {@code footprint} block load fine — JSON
+ * unknown-field tolerance is unchanged — and the value is
+ * silently ignored.</p>
  */
 public record VariantManifest(
         String id,
         String displayName,
-        int footprintX,
-        int footprintZ,
         VillageSizeTier minTier,
         VillageSizeTier maxTier,
         float weight,
@@ -66,7 +71,6 @@ public record VariantManifest(
         return new VariantManifest(
                 variantId,
                 variantId,
-                0, 0,
                 VillageSizeTier.HAMLET, VillageSizeTier.CITY,
                 1.0f,
                 EnumSet.noneOf(SlotTag.class),
@@ -91,14 +95,6 @@ public record VariantManifest(
 
         String id = optString(json, "id", d.id);
         String displayName = optString(json, "displayName", id);
-
-        int footprintX = d.footprintX;
-        int footprintZ = d.footprintZ;
-        if (json.has("footprint") && json.get("footprint").isJsonObject()) {
-            JsonObject f = json.getAsJsonObject("footprint");
-            footprintX = optInt(f, "x", d.footprintX);
-            footprintZ = optInt(f, "z", d.footprintZ);
-        }
 
         VillageSizeTier minTier = optEnum(json, "minTier",
                 VillageSizeTier.class, d.minTier);
@@ -132,7 +128,6 @@ public record VariantManifest(
 
         return new VariantManifest(
                 id, displayName,
-                footprintX, footprintZ,
                 minTier, maxTier,
                 weight,
                 preferredTags,

@@ -109,6 +109,11 @@ centered front-door placement and symmetric window layouts. Even-
 numbered footprints (4×6, 6×8) are acceptable for asymmetric or
 deliberately rectangular variants like coaching inns.
 
+The footprint is a property of the authored NBT, not a manifest
+field. Authors target the dimensions while building the NBT;
+`StructureSizeCache` reads them at load time. The manifest never
+restates the footprint — see doc 15 §"Footprint resolution".
+
 **Anchor block usage.** Buildings that contain subbuildings author
 anchor blocks per `03-subbuildings.md`:
 
@@ -140,6 +145,12 @@ A variant's manifest declares which slots it actually uses. Don't
 declare a slot the variant doesn't paint.
 
 ## Section 3 — RURAL variant specifications
+
+> **Note on footprints.** Footprint values in each variant entry
+> are authoring targets for the NBT, not manifest fields. The
+> manifest does not declare footprint; `StructureSizeCache` reads
+> it from the NBT at load time. See doc 15 §"Footprint
+> resolution".
 
 ### HOUSE — 3 variants
 
@@ -601,6 +612,12 @@ declare a slot the variant doesn't paint.
 ### BARRACKS — 1 variant (migrated existing)
 
 ## Section 4 — URBAN variant specifications
+
+> **Note on footprints.** Footprint values in each variant entry
+> are authoring targets for the NBT, not manifest fields. The
+> manifest does not declare footprint; `StructureSizeCache` reads
+> it from the NBT at load time. See doc 15 §"Footprint
+> resolution".
 
 URBAN variants share the consistency rules from Section 1: tile
 roofs in white_glazed_terracotta, plaster upper stories in
@@ -1209,3 +1226,14 @@ read from existing migrated NBT and infer slots.
 ## Revision notes
 
 (Recorded as authoring deviates from the spec.)
+
+### Schema correction — manifest `footprint` removed
+
+- The `footprint` field has been removed from the manifest
+  schema (see doc 15 §"Footprint resolution"). Per-variant
+  `Footprint:` lines in §3 / §4 are retained as authoring
+  guidance for the NBT itself; they no longer correspond to a
+  manifest field. Section 2's "Footprint grid" subsection and
+  the Section 3 / Section 4 headers carry a clarifying note.
+- Section 6's reference table never had a footprint column, so
+  no changes there.

@@ -1,4 +1,13 @@
 {
   "id": "large_house",
-  "stylePreference": "RURAL"
+  "displayName": "Big House",
+  "minTier": "VILLAGE",
+  "maxTier": "CITY",
+  "weight": 0.6,
+  "stylePreference": "RURAL",
+  "agePreference": "ANY",
+  "tags": ["multi_family", "wealthy"],
+  "preferredTags": ["RESIDENTIAL_CORE", "CIVIC_ADJACENT"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 4
 }

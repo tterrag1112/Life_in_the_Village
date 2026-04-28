@@ -1,4 +1,13 @@
 {
   "id": "cottage",
-  "stylePreference": "RURAL"
+  "displayName": "Cottage",
+  "minTier": "HAMLET",
+  "maxTier": "CITY",
+  "weight": 1.2,
+  "stylePreference": "RURAL",
+  "agePreference": "ANY",
+  "tags": ["compact", "cottage", "single_family"],
+  "preferredTags": [],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 999
 }
