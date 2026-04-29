@@ -270,6 +270,7 @@ public class ModModEvents {
         PlacementFailuresDebugCommand.register(event.getDispatcher());
         RoadDebugCommand.register(event.getDispatcher());
         RoadGraphDebugCommand.register(event.getDispatcher());
+        LayoutDebugCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());

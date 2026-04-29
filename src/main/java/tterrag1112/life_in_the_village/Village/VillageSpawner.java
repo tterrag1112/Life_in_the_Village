@@ -114,6 +114,7 @@ public class VillageSpawner {
         // ── Register village ────────────────────────────────────────────────
         Village village = new Village(villageName, typeData.getType());
         village.applyLayout(layout, villageLevel);
+        village.setDebugRoadGraph(layout.getRoadGraph());
         // Copy the main gate endpoint onto the persistent Village
         village.setMainGateEndpoint(layout.getMainGateEndpoint());
         data.addVillage(village);

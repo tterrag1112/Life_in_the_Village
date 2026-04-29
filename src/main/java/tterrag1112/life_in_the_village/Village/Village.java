@@ -67,6 +67,10 @@ public class Village {
     /** Transient: last computed size tier. Null until first access; recomputed after building count changes. */
     @Nullable private transient VillageSizeTier storedSizeTier = null;
 
+    // Transient — not persisted. Phase 19 replaces this with LayoutPlan's
+    // persisted graph. For now this is for debug visualization only.
+    @Nullable private transient tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph debugRoadGraph;
+
     // Needs — recomputed daily, only lastNeedsUpdate persisted
     private Map<NeedCategory, VillageNeed> needs = new EnumMap<>(NeedCategory.class);
     private long lastNeedsUpdate = -1L;
@@ -557,6 +561,16 @@ public class Village {
      */
     @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
     public void setMainGateEndpoint(@Nullable BlockPos pos) { this.mainGateEndpoint = pos; }
+
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph getDebugRoadGraph() {
+        return debugRoadGraph;
+    }
+
+    public void setDebugRoadGraph(
+            tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph g) {
+        this.debugRoadGraph = g;
+    }
 
     // ── Plaza geometry + gathering points (Phase 1 doc 04) ──────────────
 

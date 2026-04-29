@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Events;
 import com.mojang.logging.LogUtils;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadWeatheringSystem;
+import tterrag1112.life_in_the_village.Village.Planning.Debug.LayoutDebugVisualizer;
 import tterrag1112.life_in_the_village.Village.Roads.Debug.RoadDebugVisualizer;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasFillSystem;
 
@@ -126,6 +127,7 @@ public final class TickSubsystemRegistry {
 
         // ── Debug visualization (every-tick, low priority) ────────────────────
         register(RoadDebugVisualizer.INSTANCE);
+        register(LayoutDebugVisualizer.INSTANCE);
 
 
 
