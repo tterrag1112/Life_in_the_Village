@@ -3,6 +3,10 @@ package tterrag1112.life_in_the_village.Village.Planning;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import org.jetbrains.annotations.Nullable;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
@@ -32,9 +36,8 @@ public class VillageLayout {
     public void setCivicRingRadius(int r) { this.civicRingRadius = r; }
 
 
-    // ── Road primitives & cached centerlines ───────────────────────────────
-    private final List<RoadPrimitive> roadPrimitives = new ArrayList<>();
-    private final Map<RoadPrimitive, List<BlockPos>> centerlines = new IdentityHashMap<>();
+    // ── Road graph ─────────────────────────────────────────────────────────
+    private final RoadGraph roadGraph = new RoadGraph();
     /**
      * Footprint grid of road reservations accumulated as primitives are
      * added. Layout primitives consult this during placement so
@@ -75,34 +78,74 @@ public class VillageLayout {
     // Road management
     // =========================================================================
 
+    public RoadGraph getRoadGraph() { return roadGraph; }
+
+    public int addNode(BlockPos pos, NodeKind kind, RoadShape.RoadTier tier) {
+        return roadGraph.addNode(pos, kind, tier);
+    }
+
     /** Adds a road primitive and computes+caches its centerline. */
     public List<BlockPos> addRoad(RoadPrimitive primitive, ServerLevel level, long worldSeed) {
         List<BlockPos> cl = primitive.computeCenterline(level, worldSeed);
-        roadPrimitives.add(primitive);
-        centerlines.put(primitive, cl);
-        // Reserve the road's blocks so building primitives won't collide
-        roadFootprint.reserveRoad(cl, primitive.tier().reservedHalfWidth());
+        if (cl.isEmpty()) return cl;
+
+        BlockPos fromPos = cl.get(0);
+        BlockPos toPos   = cl.get(cl.size() - 1);
+        RoadShape.RoadTier tier = primitive.tier();
+
+        int fromId = roadGraph.addNode(fromPos, NodeKind.TERMINUS, tier);
+        int toId   = roadGraph.addNode(toPos,   NodeKind.TERMINUS, tier);
+
+        EdgeRole role = defaultRoleFor(primitive);
+        roadGraph.addEdge(fromId, toId, primitive, cl, role);
+
+        roadFootprint.reserveRoad(cl, tier.reservedHalfWidth());
         return cl;
     }
 
+    public int addEdge(int fromNodeId, int toNodeId,
+                       RoadPrimitive primitive,
+                       ServerLevel level,
+                       long worldSeed,
+                       EdgeRole role) {
+        List<BlockPos> cl = primitive.computeCenterline(level, worldSeed);
+        int edgeId = roadGraph.addEdge(fromNodeId, toNodeId, primitive, cl, role);
+        if (!cl.isEmpty()) {
+            roadFootprint.reserveRoad(cl, primitive.tier().reservedHalfWidth());
+        }
+        return edgeId;
+    }
+
+    private static EdgeRole defaultRoleFor(RoadPrimitive p) {
+        if (p instanceof RoadPrimitive.Spur) return EdgeRole.SPUR;
+        if (p instanceof RoadPrimitive.Ring || p instanceof RoadPrimitive.Arc) return EdgeRole.RING;
+        return EdgeRole.SPINE;
+    }
+
     public List<RoadPrimitive> getRoadPrimitives() {
-        return Collections.unmodifiableList(roadPrimitives);
+        List<RoadPrimitive> out = new ArrayList<>();
+        for (RoadGraph.Edge e : roadGraph.allEdges()) out.add(e.primitive());
+        return Collections.unmodifiableList(out);
     }
 
     public List<BlockPos> getCenterline(RoadPrimitive primitive) {
-        return centerlines.getOrDefault(primitive, List.of());
+        for (RoadGraph.Edge e : roadGraph.allEdges()) {
+            if (e.primitive() == primitive) return e.centerline();
+        }
+        return List.of();
     }
 
     public Collection<List<BlockPos>> getAllCenterlines() {
-        return centerlines.values();
+        List<List<BlockPos>> out = new ArrayList<>();
+        for (RoadGraph.Edge e : roadGraph.allEdges()) out.add(e.centerline());
+        return Collections.unmodifiableList(out);
     }
 
     /** Reserves all road centerlines in a footprint grid. */
     public void reserveRoads(BuildingFootprint footprint) {
-        for (RoadPrimitive rp : roadPrimitives) {
-            List<BlockPos> cl = centerlines.get(rp);
-            if (cl != null && !cl.isEmpty()) {
-                footprint.reserveRoad(cl, rp.tier().reservedHalfWidth());
+        for (RoadGraph.Edge e : roadGraph.allEdges()) {
+            if (!e.centerline().isEmpty()) {
+                footprint.reserveRoad(e.centerline(), e.primitive().tier().reservedHalfWidth());
             }
         }
     }
@@ -111,8 +154,8 @@ public class VillageLayout {
     public BlockPos nearestCenterlinePoint(BlockPos target) {
         BlockPos best = null;
         double bestSq = Double.MAX_VALUE;
-        for (List<BlockPos> cl : centerlines.values()) {
-            for (BlockPos p : cl) {
+        for (RoadGraph.Edge e : roadGraph.allEdges()) {
+            for (BlockPos p : e.centerline()) {
                 double d = p.distSqr(target);
                 if (d < bestSq) { bestSq = d; best = p; }
             }
@@ -272,7 +315,7 @@ public class VillageLayout {
     public String toString() {
         return "VillageLayout[buildings=" + buildings().size()
                 + ", farms=" + farmPlots().size()
-                + ", roads=" + roadPrimitives.size()
+                + ", roads=" + roadGraph.edgeCount()
                 + ", suitability=" + String.format("%.2f", terrain.suitability())
                 + ", density=" + density.label() + "]";
     }
