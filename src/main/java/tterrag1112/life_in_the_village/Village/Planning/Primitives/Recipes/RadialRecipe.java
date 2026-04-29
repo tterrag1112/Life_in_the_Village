@@ -49,27 +49,17 @@ public final class RadialRecipe implements ShapeRecipe {
         BlockPos centre = pctx.layout.getCenter();
         TerrainProfile terrain = pctx.layout.getTerrain();
 
-        // ── Town square: emit civic slots; the old place() is gone now ─────
-        // Town hall and all other civic buildings come from the matcher.
-        int totalBuildings = pctx.remaining.size();
-        int squareCapacity = Math.max(6, Math.min(10, totalBuildings / 4 + 3));
-        LayoutPrimitive.TownSquare square =
-                new LayoutPrimitive.TownSquare(centre, squareCapacity, null);
-        square.emitSlots(pctx);
-        // place() still needs to run for its side effects: it sets
-        // townSquarePos, townSquareRadius, civicRingRadius, adds the
-        // forced DECORATION reserve slot, and creates the ring road.
-        // But with Slice-5 removing claimByZone from TownSquare.place
-        // (see Change 3 below), it won't compete with the matcher for
-        // civic building placement — it just does the geometry work.
-        square.place(pctx);
-        BlockPos squarePos = pctx.layout.getTownSquarePos();
-
-        // Phase 17 doc 04 — register a polygon plaza alongside the
-        // legacy ring road. CIRCLE matches the radial layout's shape.
-        RecipeHelpers.installPlaza(pctx, squarePos,
+        // Phase 18 doc 04 — polygon plaza is now the single source of
+        // truth. installPlaza generates the polygon, emits PRIME_CIVIC
+        // / SECONDARY_CIVIC slots along the polygon edge for the
+        // matcher's prepass, registers gathering points, and sets
+        // townSquarePos / Radius / civicRingRadius for downstream
+        // consumers. The legacy LayoutPrimitive.TownSquare primitive
+        // is gone.
+        RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.CIRCLE);
+        BlockPos squarePos = pctx.layout.getTownSquarePos();
 
         // ── Main road (unchanged geometry) ─────────────────────────────────
         double terrainBias = directionRadOf(terrain.primaryOrientationDir());

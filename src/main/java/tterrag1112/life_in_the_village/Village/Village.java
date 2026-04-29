@@ -668,6 +668,13 @@ public class Village {
             this.plazaRegions.addAll(layout.getPlazaRegions());
         }
         this.villageCenterMarker = layout.getVillageCenterMarker();
+        // Phase 18 doc 04 — gathering points moved from TownSquareComposer
+        // (deleted) onto VillageLayout. Carry them onto the persisted
+        // Village the same way plazaRegions / villageCenterMarker do.
+        if (!layout.getGatheringPoints().isEmpty()) {
+            this.gatheringPoints.clear();
+            this.gatheringPoints.addAll(layout.getGatheringPoints());
+        }
         for (BlockPos gp : layout.getGatePositions()) {
             if (!capitalGatePositions.contains(gp)) {
                 capitalGatePositions.add(gp);

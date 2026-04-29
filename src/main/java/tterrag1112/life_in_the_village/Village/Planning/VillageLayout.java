@@ -232,6 +232,25 @@ public class VillageLayout {
         return villageCenterMarker;
     }
 
+    /**
+     * Phase 18 doc 04 §"NPC gathering points" — moved off
+     * TownSquareComposer (deleted) onto VillageLayout so the polygon
+     * generator can register here and applyLayout copies onto the
+     * persisted Village.
+     */
+    private final List<tterrag1112.life_in_the_village.Village.Decoration
+            .TownSquare.GatheringPoint> gatheringPoints = new ArrayList<>();
+
+    public void addGatheringPoint(tterrag1112.life_in_the_village.Village
+                                          .Decoration.TownSquare.GatheringPoint gp) {
+        if (gp != null) gatheringPoints.add(gp);
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .TownSquare.GatheringPoint> getGatheringPoints() {
+        return java.util.Collections.unmodifiableList(gatheringPoints);
+    }
+
     @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
     public void setMainGateEndpoint(@Nullable BlockPos pos) { mainGateEndpoint = pos; }
 

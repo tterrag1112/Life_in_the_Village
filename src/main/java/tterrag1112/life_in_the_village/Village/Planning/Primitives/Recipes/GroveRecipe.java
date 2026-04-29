@@ -36,13 +36,12 @@ public final class GroveRecipe implements ShapeRecipe {
         // Higher capacity → larger ring (arc-length scaling). The grove
         // center is bigger than RADIAL's by design.
         int civicCap = Math.max(4, Math.min(8, totalBuildings / 3));
-        new LayoutPrimitive.TownSquare(centre, civicCap, null).place(pctx);
-        BlockPos squarePos = pctx.layout.getTownSquarePos();
-        int civicRing = pctx.layout.getCivicRingRadius();
-        // Phase 17 doc 04 — IRREGULAR plaza for the organic grove layout.
-        RecipeHelpers.installPlaza(pctx, squarePos,
+        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
+        RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.IRREGULAR);
+        BlockPos squarePos = pctx.layout.getTownSquarePos();
+        int civicRing = pctx.layout.getCivicRingRadius();
 
         // Override the layout's civic ring to push buildings even further
         // out. The TownSquare primitive set it; we widen it after.

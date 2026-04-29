@@ -36,14 +36,9 @@ public final class DumbellRecipe implements ShapeRecipe {
         double mainDirRad = RecipeHelpers.directionRadOf(
                 pctx.layout.getTerrain().bestFlatDir());
 
-        // ── Ring A: civic end (TownSquare) ─────────────────────────────────
-        int capacity = Math.max(6, Math.min(10, pctx.remaining.size() / 4 + 3));
-        LayoutPrimitive.TownSquare square =
-                new LayoutPrimitive.TownSquare(centre, capacity, null);
-        square.emitSlots(pctx);
-        square.place(pctx);
-        // Phase 17 doc 04 — IRREGULAR polygon for the unusual dumbell layout.
-        RecipeHelpers.installPlaza(pctx, pctx.layout.getTownSquarePos(),
+        // ── Ring A: civic end (polygon plaza) ──────────────────────────────
+        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
+        RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.IRREGULAR);
 

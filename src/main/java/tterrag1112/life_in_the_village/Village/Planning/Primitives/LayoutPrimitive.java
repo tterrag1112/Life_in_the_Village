@@ -17,8 +17,7 @@ import java.util.List;
  * to commit slots. They do NOT paint road blocks — that's rendering.
  */
 public sealed interface LayoutPrimitive
-        permits LayoutPrimitive.TownSquare,
-        LayoutPrimitive.BuildingCircle,
+        permits LayoutPrimitive.BuildingCircle,
         LayoutPrimitive.LinearRow,
         LayoutPrimitive.RingBand {
 
@@ -26,160 +25,20 @@ public sealed interface LayoutPrimitive
     void place(PlanContext pctx);
 
     // =========================================================================
-    // TownSquare
-    // =========================================================================
-
-    /**
-     * Marks the town square as a DECORATION slot and places civic
-     * buildings tangent to it. The square's radius is sized to fit
-     * {@code buildingCapacity} buildings around its perimeter with
-     * breathing room.
-     *
-     * <p>Civic buildings are claimed from {@link PlanContext#remaining}
-     * by their {@link BuildingZone#CIVIC} classification. The town hall
-     * is always one of them if present, and is placed first at the
-     * north side of the square so it faces south across the plaza.
-     */
-    record TownSquare(
-            BlockPos centre,
-            int buildingCapacity,
-            List<BlockPos> feedingRoad
-    ) implements LayoutPrimitive {
-
-        // Geometry constants — the three concentric rings from inside out
-        private static final int RING_ROAD_GAP = 3;          // plaza edge → ring road center
-        private static final int RING_ROAD_HALFWIDTH = 3;    // half the ring road's reserved footprint
-        private static final int CIVIC_CLEARANCE = 2;        // ring road outer edge → civic inner edge
-
-        /**
-         * Computes the civic building center radius given the largest civic
-         * building's footprint. Derived outside-in: plaza → ring road →
-         * civic clearance → half the biggest building's footprint. Guarantees
-         * that a building of any size up to {@code maxCivicFrontFace} placed
-         * at this radius has its inner edge clear of the ring road.
-         */
-        private static int computePlacementRing(int plazaRadius, int maxCivicFrontFace,
-                                                int buildingCapacity) {
-            int ringRoadRadius = plazaRadius + RING_ROAD_GAP;
-            int civicInnerEdge = ringRoadRadius + RING_ROAD_HALFWIDTH + CIVIC_CLEARANCE;
-            int derived = civicInnerEdge + maxCivicFrontFace / 2;
-
-            // Verify the ring has enough circumference for buildingCapacity
-            // buildings of this size. If not, grow outward.
-            int minArcR = (int) Math.ceil(
-                    Math.max(1, buildingCapacity) * (maxCivicFrontFace + 3) / (2 * Math.PI));
-            return Math.max(derived, minArcR);
-        }
-
-        /** Scans remaining for the largest civic-building footprint. */
-        private static int scanMaxCivicFrontFace(PlanContext pctx) {
-            int max = 12;
-            for (VillageTypeData.StarterBuilding sb : pctx.remaining) {
-                BuildingType bt = PlanContext.parseType(sb);
-                if (bt == null) continue;
-                boolean isCivic = tterrag1112.life_in_the_village.Village.Planning
-                        .ZoneRegistry.zoneOf(bt) == BuildingZone.CIVIC
-                        || "TOWN_HALL".equals(sb.type());
-                if (!isCivic) continue;
-                StructureSizeCache.FootprintInfo info =
-                        pctx.sizes.get(sb.structure(),
-                                net.minecraft.world.level.block.Rotation.NONE);
-                int ff = info != null ? Math.max(info.width(), info.length()) : 12;
-                if (ff > max) max = ff;
-            }
-            return max;
-        }
-
-        /** Doc 04 §"Tier scaling" — derive plaza half-extent from the
-         *  village's planned tier. Resolved via {@code pctx.sizeTier()}
-         *  which {@code VillagePlanner} sets before primitives run; the
-         *  null fallback (legacy / test paths that bypass
-         *  VillagePlanner) lands on HAMLET (radius 3, the legacy
-         *  {@code TownSquarePlacer.RADIUS + 2} value). */
-        private static int resolvePlazaRadius(PlanContext pctx) {
-            return tterrag1112.life_in_the_village.Village.Decoration
-                    .TownSquare.TownSquareTier
-                    .plazaRadiusFor(pctx.sizeTier());
-        }
-
-        @Override
-        public void place(PlanContext pctx) {
-            int plazaRadius = resolvePlazaRadius(pctx);
-            int maxCivicFrontFace = scanMaxCivicFrontFace(pctx);
-            int placementRing = computePlacementRing(plazaRadius, maxCivicFrontFace,
-                    buildingCapacity);
-            int ringRoadRadius = Math.max(6, placementRing - 6);
-            BlockPos squarePos = pctx.solidSurface(centre);
-
-            // Reserve ONLY the plaza + ring road area. Civic buildings at
-            // placementRing have their inner edges at CIVIC_CLEARANCE blocks
-            // beyond the ring road footprint, so the reserve stops short.
-            int reserveRadius = ringRoadRadius - 2;  // plaza extends almost to ring road
-            pctx.layout.addForced(new LayoutSlot(
-                    LayoutSlot.SlotType.DECORATION, squarePos, reserveRadius));
-
-            pctx.layout.setTownSquarePos(squarePos);
-            pctx.layout.setTownSquareRadius(plazaRadius);
-            pctx.layout.setCivicRingRadius(placementRing);
-
-            // Ring road circles the plaza
-            var ringRoad = new tterrag1112.life_in_the_village.Village.Planning
-                    .Primitives.RoadPrimitive.Ring(
-                    squarePos, ringRoadRadius, 2.0,
-                    tterrag1112.life_in_the_village.Village.Decoration
-                            .Roads.RoadShape.RoadTier.VILLAGE_PATH);
-            pctx.layout.addRoad(ringRoad, pctx.level, pctx.worldSeed);
-        }
-
-        @Override
-        public void emitSlots(PlanContext pctx) {
-            int plazaRadius = resolvePlazaRadius(pctx);
-            int maxCivicFrontFace = scanMaxCivicFrontFace(pctx);
-            int placementRing = computePlacementRing(plazaRadius, maxCivicFrontFace,
-                    buildingCapacity);
-            BlockPos squarePos = pctx.solidSurface(centre);
-
-            int count = Math.max(1, buildingCapacity);
-            double startAngle = -Math.PI / 2;
-            double angleStep = (2 * Math.PI) / count;
-
-            for (int i = 0; i < count; i++) {
-                double angle = startAngle + i * angleStep;
-                BlockPos target = new BlockPos(
-                        squarePos.getX() + (int) Math.round(Math.cos(angle) * placementRing),
-                        squarePos.getY(),
-                        squarePos.getZ() + (int) Math.round(Math.sin(angle) * placementRing));
-
-                double tangentAngle = angle + Math.PI / 2;
-                BlockPos t1 = target.offset(
-                        (int)(Math.cos(tangentAngle) * 6), 0,
-                        (int)(Math.sin(tangentAngle) * 6));
-                BlockPos t2 = target.offset(
-                        (int)(-Math.cos(tangentAngle) * 6), 0,
-                        (int)(-Math.sin(tangentAngle) * 6));
-
-                java.util.Set<tterrag1112.life_in_the_village.Village.Planning
-                        .Zoning.SlotTag> tags = i == 0
-                        ? java.util.EnumSet.of(
-                        tterrag1112.life_in_the_village.Village.Planning
-                                .Zoning.SlotTag.PRIME_CIVIC,
-                        tterrag1112.life_in_the_village.Village.Planning
-                                .Zoning.SlotTag.ROAD_ADJACENT)
-                        : java.util.EnumSet.of(
-                        tterrag1112.life_in_the_village.Village.Planning
-                                .Zoning.SlotTag.SECONDARY_CIVIC,
-                        tterrag1112.life_in_the_village.Village.Planning
-                                .Zoning.SlotTag.ROAD_ADJACENT);
-                int quality = 90 - i * 2;
-
-                pctx.offerSlot(new tterrag1112.life_in_the_village.Village.Planning
-                        .Zoning.PlacementSlot(
-                        target, java.util.List.of(t1, t2),
-                        tags, maxCivicFrontFace + 4, quality));
-            }
-        }
-    }
-
+    // TownSquare — REMOVED in Phase 18 doc 04. The polygon-based plaza
+    // model (PlazaGenerator + PlazaPaver + RecipeHelpers.installPlaza)
+    // now handles every responsibility this primitive previously had:
+    //   - DECORATION reserve slot   → emitted by PlazaGenerator at the
+    //                                 polygon's bounding circle.
+    //   - townSquarePos / Radius    → set by PlazaGenerator from the
+    //                                 polygon centroid + sqrt(area/π).
+    //   - civicRingRadius           → set by PlazaGenerator as
+    //                                 polygonRadius + civic outset.
+    //   - PRIME_CIVIC / SECONDARY_CIVIC slot emission → PlazaGenerator
+    //                                 emits along polygon edges.
+    //   - Ring road                 → DELETED. Was purely decorative;
+    //                                 prompt-15 audit confirmed no
+    //                                 NPC / trade / pathing dependency.
     // =========================================================================
     // BuildingCircle
     // =========================================================================

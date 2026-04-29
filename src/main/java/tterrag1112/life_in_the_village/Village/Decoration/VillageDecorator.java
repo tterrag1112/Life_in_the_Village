@@ -56,22 +56,21 @@ public class VillageDecorator {
 
         // ── Step 1: Town square ───────────────────────────────────────────────
         BlockPos squareCenter = resolveSquareCenter(level, layout, buildings);
-        // Phase 1 doc 04 — TownSquareComposer is the drop-in replacement
-        // for the legacy TownSquarePlacer. Same signature, same return
-        // type. The composer paves the plaza, registers a TOWN_SQUARE
-        // building, sets the tier-scaled radius on the village, and
-        // registers gathering points. Sub-feature NBTs are stamped
-        // later by DecorationPass via DecorationProfile registrations.
-        Set<BlockPos> squarePavement =
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .TownSquare.TownSquareComposer.compose(
-                                level, squareCenter, style, tier, village, data);
+        // Phase 18 doc 04 — TownSquareComposer is gone. The polygon
+        // plaza generator (recipe compose-time) registers polygons +
+        // gathering points; the polygon paver (below, after road
+        // network) paves them. Empty set here so the road network's
+        // accumulator math stays the same; PlazaPaver appends its
+        // paved positions onto allPathXZ further down.
+        Set<BlockPos> squarePavement = java.util.Collections.emptySet();
         int plazaRadius = village.getTownSquareRadius() > 0
                 ? village.getTownSquareRadius()
-                : tterrag1112.life_in_the_village.Village.Decoration
-                        .TownSquare.TownSquareTier.plazaRadiusFor(tier);
+                : 3; // HAMLET-tier fallback
 
-        // Add square to footprint — sized to the tier-scaled radius.
+        // Add the plaza area to the footprint so non-civic buildings
+        // don't overlap. Polygon-based bbox would be more precise but
+        // an axis-aligned square at plazaRadius matches what the
+        // legacy code did and is sufficient for the footprint check.
         if (footprint != null) {
             footprint.occupyRect(
                     squareCenter.offset(-plazaRadius, 0, -plazaRadius),

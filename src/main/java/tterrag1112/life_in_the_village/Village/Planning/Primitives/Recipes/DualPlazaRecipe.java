@@ -42,16 +42,24 @@ public final class DualPlazaRecipe implements ShapeRecipe {
         int primaryCap = Math.max(2, Math.min(5, totalBuildings / 4));
         int secondaryCap = Math.max(1, primaryCap - 2);
 
-        new LayoutPrimitive.TownSquare(sq1, primaryCap, null).place(pctx);
-        BlockPos sq1Pos = pctx.layout.getTownSquarePos();
-        int sq1Ring = pctx.layout.getCivicRingRadius();
-        // Phase 17 doc 04 — primary plaza is CIRCLE / CIVIC.
-        RecipeHelpers.installPlaza(pctx, sq1Pos,
+        // Phase 18 doc 04 — primary plaza is CIRCLE / CIVIC. The
+        // legacy LayoutPrimitive.TownSquare is gone; the polygon
+        // generator handles all civic / layout setup. The brittle
+        // sq1Ring workaround (saving civicRingRadius locally because
+        // the second TownSquare call overwrote it) is no longer
+        // needed — each plaza is a separate PlazaRegion and the
+        // installPlaza helper sets the layout's civicRingRadius for
+        // the most-recently-installed plaza, which matches what
+        // we'd want anyway for the SECONDARY (MARKET) plaza's
+        // gate-road geometry below.
+        RecipeHelpers.installPlaza(pctx, sq1,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaPurpose.CIVIC,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.CIRCLE,
                 java.util.Optional.empty());
+        BlockPos sq1Pos = pctx.layout.getTownSquarePos();
+        int sq1Ring = pctx.layout.getCivicRingRadius();
 
         // Connecting road from sq1's far side to sq2's near side
         BlockPos roadStart = RecipeHelpers.offsetSnapped(pctx, sq1Pos, mainDirRad + Math.PI, sq1Ring);
@@ -61,26 +69,14 @@ public final class DualPlazaRecipe implements ShapeRecipe {
                         RoadShape.RoadTier.VILLAGE_ROAD),
                 pctx.level, pctx.worldSeed);
 
-        // Now place sq2 — it'll set its own civicRingRadius, overwriting sq1's
-        // value on the layout. We saved sq1Ring above for any further use.
-        //
-        // TODO(prompt 17): the second TownSquare overwriting
-        // civicRingRadius is brittle — once the polygon-based plaza
-        // model lands (prompt 17), DUAL_PLAZA registers two
-        // PlazaRegions with different purposes (CIVIC primary,
-        // MARKET secondary) on PlanContext, and civic / market
-        // building placement reads from the per-region radius
-        // instead of from the layout's single civicRingRadius
-        // field. The local sq1Ring workaround goes away then.
-        new LayoutPrimitive.TownSquare(sq2, secondaryCap, connector).place(pctx);
-        // Phase 17 doc 04 — secondary plaza is SQUARE / MARKET.
-        BlockPos sq2Pos = pctx.layout.getTownSquarePos();
-        RecipeHelpers.installPlaza(pctx, sq2Pos,
+        // Phase 18 doc 04 — secondary plaza is SQUARE / MARKET.
+        RecipeHelpers.installPlaza(pctx, sq2,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaPurpose.MARKET,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.SQUARE,
                 java.util.Optional.empty());
+        BlockPos sq2Pos = pctx.layout.getTownSquarePos();
 
         // Outward gate roads from each square
         int gateLen = pctx.density.getRing2Radius() + 16;

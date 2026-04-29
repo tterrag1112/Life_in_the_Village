@@ -138,13 +138,10 @@ public final class ChainRecipe implements ShapeRecipe {
         // ── Town square at the apex of the curve (centerline midpoint) ─────
         BlockPos squareApex = mainCenterline.get(mainCenterline.size() / 2);
         int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
-        new LayoutPrimitive.TownSquare(squareApex, civicCap, mainCenterline)
-                .place(pctx);
-        // Phase 17 doc 04 — LINEAR plaza along the apex tangent of
-        // the chain centerline.
+        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
         double apexTangentRad = RecipeHelpers.localTangentRad(
                 mainCenterline, mainCenterline.size() / 2);
-        RecipeHelpers.installLinearPlaza(pctx, pctx.layout.getTownSquarePos(),
+        RecipeHelpers.installLinearPlaza(pctx, squareApex,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaPurpose.CIVIC,
                 RecipeHelpers.cardinalFromRad(apexTangentRad));

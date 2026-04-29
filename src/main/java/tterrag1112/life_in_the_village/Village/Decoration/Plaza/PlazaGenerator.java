@@ -83,14 +83,22 @@ public final class PlazaGenerator {
      *  recede inward. */
     private static final int SLOPE_TOLERANCE = 2;
 
-    /** PLAZA_ADJACENT slots are emitted along polygon edges at this
-     *  step (in blocks of polygon perimeter). At ~6 blocks per slot,
-     *  a CITY plaza (perimeter ~75) gets ~12 slots — enough variety
-     *  for prompt 18's civic placement to choose from. */
+    /** Civic / PLAZA_ADJACENT slots are emitted along polygon edges
+     *  at this step (in blocks of polygon perimeter). At ~6 blocks
+     *  per slot, a CITY plaza (perimeter ~75) gets ~12 slots —
+     *  enough variety for civic placement to choose from. */
     private static final int PLAZA_ADJACENT_STEP = 6;
 
-    /** PLAZA_ADJACENT slots sit this far outside the polygon edge. */
-    private static final int PLAZA_ADJACENT_OUTSET = 2;
+    /** Plaza-edge civic slots sit this far outside the polygon edge.
+     *  Matches the legacy formula's
+     *  {@code civicInnerEdge + maxCivicFrontFace/2} — typical civic
+     *  building has front face ~12, so half is 6, plus 2 clearance =
+     *  8 blocks of standoff from polygon edge. */
+    private static final int PLAZA_ADJACENT_OUTSET = 8;
+
+    /** Maximum civic building front face for the slot footprint
+     *  budget (matches the legacy primitive's {@code +4} margin). */
+    private static final int CIVIC_FOOTPRINT_BUDGET = 16;
 
     private PlazaGenerator() {}
 
@@ -170,16 +178,51 @@ public final class PlazaGenerator {
                 connectedRoadIds, orientationRad);
         pctx.addPlazaRegion(region);
 
-        // Step 6 — emit PLAZA_ADJACENT slots
-        int slotCount = emitPlazaAdjacentSlots(pctx, region);
+        // Plaza area reservation. The legacy LayoutPrimitive.TownSquare
+        // added a forced DECORATION reserve so non-civic buildings'
+        // matcher commits don't overlap the plaza interior. With the
+        // primitive gone (Phase 18), the polygon is the source of
+        // truth — we add the same reservation here at the polygon's
+        // bounding circle.
+        Polygon.AABB bbox = Polygon.boundingBox(shaped);
+        int reserveR = Math.max(bbox.width(), bbox.length()) / 2 + 1;
+        pctx.layout.addForced(new tterrag1112.life_in_the_village.Village
+                .Planning.LayoutSlot(
+                        tterrag1112.life_in_the_village.Village.Planning
+                                .LayoutSlot.SlotType.DECORATION,
+                        centroid, reserveR));
+
+        // Layout-state convenience setters. Several downstream
+        // consumers (DecorationSlotEmitter, DumbellRecipe's trunk
+        // start, footprint-occupy in VillageDecorator) read these.
+        // We keep them populated to avoid scattering migrations.
+        pctx.layout.setTownSquarePos(centroid);
+        int polygonRadius = (int) Math.max(3, Math.sqrt(finalArea / Math.PI));
+        pctx.layout.setTownSquareRadius(polygonRadius);
+        // civicRingRadius repurposed: now the radius at which the
+        // generator emits PLAZA_ADJACENT civic slots, equal to
+        // polygonRadius + outset. Matches the legacy formula's
+        // "where civic buildings sit" semantic.
+        pctx.layout.setCivicRingRadius(polygonRadius + PLAZA_ADJACENT_OUTSET);
+
+        // Civic + PLAZA_ADJACENT slots — replaces the legacy
+        // LayoutPrimitive.TownSquare.emitSlots so the matcher's
+        // PRIME_CIVIC / SECONDARY_CIVIC pre-pass keeps working
+        // sourced from polygon edges instead of ring perimeter.
+        int slotCount = emitPlazaCivicSlots(pctx, region);
+
+        // Gathering points — migrated from TownSquareComposer
+        // (deleted in Phase 18). Registered onto Village via
+        // VillageLayout so persistence works the same way.
+        int gpCount = registerGatheringPoints(pctx, region);
 
         LOGGER.info("PlazaGenerator: {} {} plaza at {} (area {}/{}, "
-                + "vertices {}, adjacent slots {})",
+                + "vertices {}, civic slots {}, gathering points {})",
                 spec.purpose(), spec.preferredShape(),
                 centroid.toShortString(),
                 (int) finalArea, spec.targetArea(),
                 shaped.vertices().size(),
-                slotCount);
+                slotCount, gpCount);
         return Optional.of(region);
     }
 
@@ -377,19 +420,31 @@ public final class PlazaGenerator {
     // ── Step 6: PLAZA_ADJACENT slots ───────────────────────────────────
 
     /**
-     * Emits {@link SlotTag#PLAZA_ADJACENT}-tagged
-     * {@link PlacementSlot}s onto {@link PlanContext} along the
-     * polygon edge, just outside the boundary. No layout consumes
-     * them in prompt 17 — civic placement still rides on the legacy
-     * ring road. Prompt 18 wires civic profiles to prefer this tag.
+     * Phase 18 doc 04 §"Civic placement" — emits civic slots along
+     * the polygon edge, just outside the boundary. Replaces the
+     * legacy {@code LayoutPrimitive.TownSquare.emitSlots} so the
+     * matcher's {@code PlacementMatcher.placeTownHallPrePass}
+     * (which scans for {@link SlotTag#PRIME_CIVIC} / {@link
+     * SlotTag#SECONDARY_CIVIC}) keeps working sourced from polygon
+     * edges instead of ring perimeter.
+     *
+     * <p>The first slot (closest to the south / approach face) gets
+     * {@link SlotTag#PRIME_CIVIC} and is what the prepass tries
+     * first; remaining slots get {@link SlotTag#SECONDARY_CIVIC}
+     * and serve TOWN_HALL fallback + GUILD_HALL / TEMPLE / MARKET /
+     * INN. All slots additionally carry {@link SlotTag#PLAZA_ADJACENT}
+     * + {@link SlotTag#ROAD_ADJACENT} so non-civic profiles that
+     * prefer those tags get a small score nudge.</p>
+     *
+     * <p>Quality score decays by 2 per slot (matches the legacy
+     * primitive's {@code quality = 90 - i * 2}) so the prepass's
+     * tie-breaking lands on a stable south-first ordering.</p>
      */
-    private static int emitPlazaAdjacentSlots(PlanContext pctx, PlazaRegion region) {
+    private static int emitPlazaCivicSlots(PlanContext pctx, PlazaRegion region) {
         List<BlockPos> verts = region.footprint().vertices();
         BlockPos centroid = region.centroid();
         int emitted = 0;
         int n = verts.size();
-        // Walk the polygon perimeter, emitting a slot every
-        // ~PLAZA_ADJACENT_STEP blocks just outside the edge.
         for (int i = 0; i < n; i++) {
             BlockPos a = verts.get(i);
             BlockPos b = verts.get((i + 1) % n);
@@ -402,18 +457,126 @@ public final class PlazaGenerator {
                 BlockPos midpoint = new BlockPos(mx, region.floorY(), mz);
                 BlockPos outward = nudgeAwayFromCentroid(midpoint, centroid,
                         PLAZA_ADJACENT_OUTSET);
-                EnumSet<SlotTag> tags = EnumSet.of(
-                        SlotTag.PLAZA_ADJACENT, SlotTag.ROAD_ADJACENT);
+                // First emitted slot → PRIME_CIVIC; rest →
+                // SECONDARY_CIVIC. Matches the legacy primitive's
+                // "first angle wins TOWN_HALL" convention.
+                EnumSet<SlotTag> tags = (emitted == 0)
+                        ? EnumSet.of(SlotTag.PRIME_CIVIC,
+                                SlotTag.PLAZA_ADJACENT, SlotTag.ROAD_ADJACENT)
+                        : EnumSet.of(SlotTag.SECONDARY_CIVIC,
+                                SlotTag.PLAZA_ADJACENT, SlotTag.ROAD_ADJACENT);
+                int quality = Math.max(40, 90 - emitted * 2);
                 pctx.offerSlot(new PlacementSlot(
                         outward,
                         /* feedingRoad */ null,
                         tags,
-                        /* footprintBudget */ 12,
-                        /* qualityScore */ 80));
+                        /* footprintBudget */ CIVIC_FOOTPRINT_BUDGET,
+                        /* qualityScore */ quality));
                 emitted++;
             }
         }
         return emitted;
+    }
+
+    // ── Gathering point registration (migrated from TownSquareComposer) ──
+
+    /**
+     * Phase 18 doc 04 §"NPC gathering points" — migrated from the
+     * deleted {@code TownSquareComposer}. Registers one
+     * {@link tterrag1112.life_in_the_village.Village.Decoration
+     * .TownSquare.GatheringPoint} per sub-feature (FOUNTAIN at
+     * centroid, BENCHes around the polygon perimeter, NOTICE_BOARD
+     * along the south edge, GAZEBO off-axis for TOWN+, VENDOR_ZONE
+     * for MARKET-purpose plazas).
+     *
+     * <p>Position rules adapted to polygon shape — the polygon's
+     * centroid + bounding box drive sub-feature placement instead
+     * of a fixed radius. NPC consumption is unchanged; the
+     * Village.getGatheringPoints API is stable.</p>
+     */
+    private static int registerGatheringPoints(PlanContext pctx, PlazaRegion region) {
+        BlockPos centre = region.centroid();
+        int radius = (int) Math.max(3, Math.sqrt(
+                Polygon.area(region.footprint()) / Math.PI));
+        var village = pctx.layout;
+        int count = 0;
+
+        // FOUNTAIN at plaza centre — always present.
+        addGP(village, region, centre,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .TownSquare.GatheringPointKind.FOUNTAIN,
+                3, "fountain");
+        count++;
+
+        // BENCHes at four cardinal positions just inside the polygon
+        // edge (radius - 2) so NPCs sit looking inward at the centre.
+        if (radius >= 4) {
+            int benchDist = Math.max(1, radius - 2);
+            int[][] cards = {{0, benchDist}, {0, -benchDist},
+                             {benchDist, 0}, {-benchDist, 0}};
+            for (int i = 0; i < cards.length; i++) {
+                BlockPos bp = new BlockPos(
+                        centre.getX() + cards[i][0],
+                        centre.getY(),
+                        centre.getZ() + cards[i][1]);
+                addGP(village, region, bp,
+                        tterrag1112.life_in_the_village.Village.Decoration
+                                .TownSquare.GatheringPointKind.BENCH,
+                        1, "bench-" + i);
+                count++;
+            }
+        }
+
+        // NOTICE_BOARD on the south edge.
+        BlockPos notice = new BlockPos(centre.getX(), centre.getY(),
+                centre.getZ() + Math.max(1, radius - 2));
+        addGP(village, region, notice,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .TownSquare.GatheringPointKind.NOTICE_BOARD,
+                1, "notice");
+        count++;
+
+        // GAZEBO at SW off-axis for TOWN+ (radius >= 8) plazas.
+        if (radius >= 8) {
+            int off = Math.max(1, radius - 3);
+            BlockPos gz = new BlockPos(centre.getX() - off, centre.getY(),
+                    centre.getZ() - off);
+            addGP(village, region, gz,
+                    tterrag1112.life_in_the_village.Village.Decoration
+                            .TownSquare.GatheringPointKind.GAZEBO,
+                    5, "gazebo");
+            count++;
+        }
+
+        // VENDOR_ZONE for MARKET-purpose plazas + larger CIVIC plazas
+        // (size hint to NPCs that the plaza can host a market).
+        if (region.purpose() == PlazaPurpose.MARKET
+                || (region.purpose() == PlazaPurpose.CIVIC && radius >= 5)) {
+            int off = Math.max(1, radius - 2);
+            BlockPos vz = new BlockPos(centre.getX() + off, centre.getY(),
+                    centre.getZ() - off);
+            addGP(village, region, vz,
+                    tterrag1112.life_in_the_village.Village.Decoration
+                            .TownSquare.GatheringPointKind.VENDOR_ZONE,
+                    4, "vendor");
+            count++;
+        }
+
+        return count;
+    }
+
+    private static void addGP(tterrag1112.life_in_the_village.Village
+                                      .Planning.VillageLayout village,
+                              PlazaRegion region, BlockPos pos,
+                              tterrag1112.life_in_the_village.Village.Decoration
+                                      .TownSquare.GatheringPointKind kind,
+                              int capacity, String tag) {
+        UUID gpId = UUID.nameUUIDFromBytes(
+                ("plaza-gp/" + region.plazaId() + "/" + tag)
+                        .getBytes(StandardCharsets.UTF_8));
+        village.addGatheringPoint(
+                new tterrag1112.life_in_the_village.Village.Decoration
+                        .TownSquare.GatheringPoint(gpId, pos, kind, capacity));
     }
 
     private static BlockPos nudgeAwayFromCentroid(BlockPos from, BlockPos centroid,

@@ -5,7 +5,6 @@ import net.minecraft.core.Direction;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.Decoration.TownSquare.TownSquareComposer;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -558,7 +557,7 @@ public final class DecorationSlotEmitter {
                 /* quality */ 100));
 
         // LAMP_CORNER — four corners regardless of tier.
-        BlockPos[] lamps = TownSquareComposer.lampCornerPositions(centre, radius);
+        BlockPos[] lamps = PlazaSubSlotPositions.lampCornerPositions(centre, radius);
         for (BlockPos lp : lamps) {
             out.add(plazaSlot(parentId, lp, facingTowardCentre(centre, lp),
                     EnumSet.of(DecorationTag.PARK_FEATURE,
@@ -568,7 +567,7 @@ public final class DecorationSlotEmitter {
         }
 
         // NOTICE_BOARD on the south edge (road-facing).
-        BlockPos notice = TownSquareComposer.noticeBoardPosition(centre, radius);
+        BlockPos notice = PlazaSubSlotPositions.noticeBoardPosition(centre, radius);
         out.add(plazaSlot(parentId, notice, Direction.NORTH,
                 EnumSet.of(DecorationTag.PARK_FEATURE,
                         DecorationTag.PLAZA_NOTICE_BOARD),
@@ -577,7 +576,7 @@ public final class DecorationSlotEmitter {
 
         // BENCH_PERIMETER — VILLAGE+. Up to 4 benches.
         if (hasBenches) {
-            BlockPos[] benches = TownSquareComposer.benchPositions(centre, radius, 4);
+            BlockPos[] benches = PlazaSubSlotPositions.benchPositions(centre, radius, 4);
             for (BlockPos bp : benches) {
                 out.add(plazaSlot(parentId, bp, facingTowardCentre(centre, bp),
                         EnumSet.of(DecorationTag.PARK_FEATURE,
@@ -592,7 +591,7 @@ public final class DecorationSlotEmitter {
             // Use placeholder tier resolution from radius for the
             // composer call; the helper ignores tier when called via
             // hasFlowerbeds path.
-            BlockPos[] beds = TownSquareComposer.flowerbedPositions(
+            BlockPos[] beds = PlazaSubSlotPositions.flowerbedPositions(
                     centre, radius, VillageSizeTier.VILLAGE);
             for (BlockPos fp : beds) {
                 out.add(plazaSlot(parentId, fp, facingTowardCentre(centre, fp),
@@ -605,7 +604,7 @@ public final class DecorationSlotEmitter {
 
         // GAZEBO_SPOT — TOWN+ only.
         if (hasGazebo) {
-            BlockPos gazebo = TownSquareComposer.gazeboPosition(centre, radius);
+            BlockPos gazebo = PlazaSubSlotPositions.gazeboPosition(centre, radius);
             out.add(plazaSlot(parentId, gazebo, facingTowardCentre(centre, gazebo),
                     EnumSet.of(DecorationTag.PARK_FEATURE,
                             DecorationTag.PLAZA_GAZEBO),
@@ -615,7 +614,7 @@ public final class DecorationSlotEmitter {
 
         // MONUMENT_ACCENT — CITY only.
         if (hasMonument) {
-            BlockPos monument = TownSquareComposer.monumentPosition(centre, radius);
+            BlockPos monument = PlazaSubSlotPositions.monumentPosition(centre, radius);
             out.add(plazaSlot(parentId, monument, Direction.SOUTH,
                     EnumSet.of(DecorationTag.PARK_FEATURE,
                             DecorationTag.PLAZA_MONUMENT),
@@ -625,7 +624,7 @@ public final class DecorationSlotEmitter {
 
         // VENDOR_ZONE — VILLAGE+. Reserved; no profile in Phase 1.
         if (hasVendorZone) {
-            BlockPos vendor = TownSquareComposer.vendorZonePosition(centre, radius);
+            BlockPos vendor = PlazaSubSlotPositions.vendorZonePosition(centre, radius);
             out.add(plazaSlot(parentId, vendor, Direction.SOUTH,
                     EnumSet.of(DecorationTag.PARK_FEATURE,
                             DecorationTag.PLAZA_VENDOR_ZONE),
@@ -691,5 +690,74 @@ public final class DecorationSlotEmitter {
             if (dist > best) best = dist;
         }
         return best;
+    }
+
+    // ── Plaza sub-slot position helpers ─────────────────────────────────
+    // Migrated from the deleted TownSquareComposer (Phase 18 doc 04).
+    // The polygon plaza model derives an effective centre + radius from
+    // the polygon (centroid + sqrt(area/π)); these helpers operate on
+    // that derived radius so position math is unchanged.
+
+    private static final class PlazaSubSlotPositions {
+
+        private PlazaSubSlotPositions() {}
+
+        static BlockPos[] benchPositions(BlockPos centre, int radius, int count) {
+            if (count <= 0 || radius < 4) return new BlockPos[0];
+            int benchDist = Math.max(1, radius - 2);
+            int[][] cardinals = {{0, benchDist}, {0, -benchDist},
+                                 {benchDist, 0}, {-benchDist, 0}};
+            BlockPos[] out = new BlockPos[Math.min(count, cardinals.length)];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = new BlockPos(
+                        centre.getX() + cardinals[i][0],
+                        centre.getY(),
+                        centre.getZ() + cardinals[i][1]);
+            }
+            return out;
+        }
+
+        static BlockPos noticeBoardPosition(BlockPos centre, int radius) {
+            return new BlockPos(centre.getX(), centre.getY(),
+                    centre.getZ() + Math.max(1, radius - 2));
+        }
+
+        static BlockPos gazeboPosition(BlockPos centre, int radius) {
+            int off = Math.max(1, radius - 3);
+            return new BlockPos(centre.getX() - off, centre.getY(),
+                    centre.getZ() - off);
+        }
+
+        static BlockPos vendorZonePosition(BlockPos centre, int radius) {
+            int off = Math.max(1, radius - 2);
+            return new BlockPos(centre.getX() + off, centre.getY(),
+                    centre.getZ() - off);
+        }
+
+        static BlockPos[] lampCornerPositions(BlockPos centre, int radius) {
+            int corner = Math.max(1, radius - 1);
+            return new BlockPos[]{
+                    new BlockPos(centre.getX() + corner, centre.getY(), centre.getZ() + corner),
+                    new BlockPos(centre.getX() - corner, centre.getY(), centre.getZ() + corner),
+                    new BlockPos(centre.getX() + corner, centre.getY(), centre.getZ() - corner),
+                    new BlockPos(centre.getX() - corner, centre.getY(), centre.getZ() - corner)
+            };
+        }
+
+        static BlockPos[] flowerbedPositions(BlockPos centre, int radius,
+                                             VillageSizeTier tier) {
+            if (tier == VillageSizeTier.HAMLET) return new BlockPos[0];
+            int off = Math.max(1, radius - 2);
+            return new BlockPos[]{
+                    new BlockPos(centre.getX() + off, centre.getY(), centre.getZ() + off),
+                    new BlockPos(centre.getX() - off, centre.getY(), centre.getZ() + off),
+                    new BlockPos(centre.getX() - off, centre.getY(), centre.getZ() - off)
+            };
+        }
+
+        static BlockPos monumentPosition(BlockPos centre, int radius) {
+            return new BlockPos(centre.getX(), centre.getY(),
+                    centre.getZ() - 2);
+        }
     }
 }

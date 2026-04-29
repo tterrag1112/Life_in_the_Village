@@ -39,13 +39,12 @@ public final class CrossroadsRecipe implements ShapeRecipe {
 
         // ── Square at the intersection ─────────────────────────────────────
         int civicCap = Math.max(3, Math.min(6, totalBuildings / 4 + 2));
-        new LayoutPrimitive.TownSquare(centre, civicCap, null).place(pctx);
-        BlockPos squarePos = pctx.layout.getTownSquarePos();
-        int civicRing = pctx.layout.getCivicRingRadius();
-        // Phase 17 doc 04 — SQUARE polygon for the orthogonal crossroads layout.
-        RecipeHelpers.installPlaza(pctx, squarePos,
+        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
+        RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.SQUARE);
+        BlockPos squarePos = pctx.layout.getTownSquarePos();
+        int civicRing = pctx.layout.getCivicRingRadius();
 
         // ── Choose axes ────────────────────────────────────────────────────
         // Primary axis aligned with bestFlatDir, secondary perpendicular.

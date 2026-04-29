@@ -74,10 +74,8 @@ public final class LinearRecipe implements ShapeRecipe {
         // Tight civic capacity — civic forms a small cluster right
         // around the square, the rest of the village hangs off stubs.
         int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
-        new LayoutPrimitive.TownSquare(squareMid, civicCap, mainCenterline)
-                .place(pctx);
-        // Phase 17 doc 04 — LINEAR plaza extending along the main road axis.
-        RecipeHelpers.installLinearPlaza(pctx, pctx.layout.getTownSquarePos(),
+        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
+        RecipeHelpers.installLinearPlaza(pctx, squareMid,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaPurpose.CIVIC,
                 RecipeHelpers.cardinalFromRad(mainDirRad));

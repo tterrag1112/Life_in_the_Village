@@ -327,9 +327,25 @@ public final class PlanContext {
             target = adjusted;
         }
 
-        Rotation rotation = feedingRoad != null && !feedingRoad.isEmpty()
-                ? rotationFacingRoad(target, feedingRoad)
-                : Rotation.NONE;
+        // Phase 18 doc 04 §"Plaza-aware building rotation" — if the
+        // slot is within ~8 blocks of any registered plaza polygon's
+        // edge, rotate the building so its front face points at the
+        // polygon centroid. Layered ABOVE the existing road-facing
+        // logic so plaza-edge civic / market buildings present their
+        // facade to the plaza rather than the road they sit on. For
+        // slots far from any plaza, the existing logic is unchanged.
+        // For LINEAR plazas, the centroid is along the major axis;
+        // facing-the-centroid produces the more natural perpendicular-
+        // to-axis orientation.
+        Rotation rotation;
+        var nearbyPlaza = getPlazaRegionNear(target, 8);
+        if (nearbyPlaza.isPresent()) {
+            rotation = chooseFacing(target, nearbyPlaza.get().centroid());
+        } else {
+            rotation = feedingRoad != null && !feedingRoad.isEmpty()
+                    ? rotationFacingRoad(target, feedingRoad)
+                    : Rotation.NONE;
+        }
 
         StructureSizeCache.FootprintInfo info = sizes.get(sb.structure(), rotation);
         int w = info != null ? info.width() : 12;

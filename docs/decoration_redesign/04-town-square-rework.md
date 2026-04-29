@@ -363,3 +363,80 @@ Already kept by prompt 16:
   the polygon paves the polygon. They overlap at centre with
   the same palette — no visible duplication. Composer removal
   is part of prompt 18 alongside the civic ring retirement.
+
+### Prompt 18 — civic ring retirement + plaza-aware rotation + composer cleanup
+
+- **Plaza-aware building rotation lands.**
+  `PlanContext.tryCommitBuilding` (line ~330) now consults
+  `getPlazaRegionNear(target, 8)` BEFORE the road-facing
+  fallback. Slots within 8 blocks of any plaza polygon's
+  edge rotate to face the polygon centroid; slots farther
+  out keep the existing road-facing logic. For LINEAR
+  plazas the centroid is along the major axis, so
+  facing-centroid produces the natural perpendicular-to-axis
+  orientation.
+- **Civic placement migrated to PlazaGenerator slot emission.**
+  The legacy `LayoutPrimitive.TownSquare.emitSlots` was the
+  source of `PRIME_CIVIC` / `SECONDARY_CIVIC`-tagged slots
+  the matcher's `placeTownHallPrePass` consumes. With the
+  primitive deleted, `PlazaGenerator.emitPlazaCivicSlots`
+  emits the same tags along the polygon edge at outset 8
+  (matches the legacy formula's
+  `civicInnerEdge + maxCivicFrontFace/2` standoff). First
+  slot per polygon → `PRIME_CIVIC`; rest → `SECONDARY_CIVIC`;
+  all also tagged `PLAZA_ADJACENT` + `ROAD_ADJACENT`. Quality
+  decays 90 → 88 → 86 …, matching the legacy convention.
+  No civic profile changes needed — they already require
+  PRIME_CIVIC / SECONDARY_CIVIC, which the polygon-edge slots
+  now provide.
+- **`LayoutPrimitive.TownSquare` deleted entirely.** Removed
+  from the `permits` clause on the sealed interface; record
+  body deleted (~140 LOC). Twelve recipe call sites cleared
+  — every recipe that previously did
+  `new LayoutPrimitive.TownSquare(...).place(pctx)` (and
+  optionally `emitSlots`) now calls `installPlaza` once and
+  reads `pctx.layout.getTownSquarePos()` afterward.
+- **`installPlaza` is the unified entry point.** Sets every
+  layout state field that recipes / decoration emitter / etc
+  consume: `townSquarePos`, `townSquareRadius` (derived from
+  polygon area), `civicRingRadius` (= `polygonRadius +
+  civicOutset`), forced DECORATION reserve slot, civic
+  PRIME/SECONDARY slots, gathering points. HAMLET tier:
+  registers a `VillageCenterMarker`, sets the same fields
+  with HAMLET-radius (3) defaults, adds a small DECORATION
+  reservation. No polygon for HAMLETs.
+- **`TownSquareComposer` deleted alongside `TownSquareKit`,
+  `TownSquareKitRegistry`, `DefaultTownSquareKits`.** The
+  per-tier kit registry is gone; plaza decoration content is
+  registered as ordinary `DecorationProfile`s in later phases.
+  `GatheringPoint` / `GatheringPointKind` records kept
+  (still useful as the NPC social-position contract). Gathering-
+  point registration logic migrated from the deleted composer
+  to `PlazaGenerator.registerGatheringPoints`. Sub-slot
+  position helpers (`benchPositions`, `lampCornerPositions`,
+  …) inlined into `DecorationSlotEmitter` as a private nested
+  class so `DecorationSlotEmitter` no longer depends on the
+  TownSquare package.
+- **`VillageDecorator.decorateVillage` no longer calls the
+  composer.** The "Step 1: Town square" pavement step is
+  empty; the polygon paver later in the same method does
+  the actual paving for each registered region. `Set<BlockPos>
+  squarePavement = Collections.emptySet()` keeps the road-
+  network accumulator math identical.
+- **Ring road deleted.** `RoadPrimitive.Ring` invocation in
+  the old `LayoutPrimitive.TownSquare.place()` body is gone.
+  Per the prompt-18 audit, the ring road was purely
+  decorative — no NPC patrols, no trade routes, no weathering.
+  No replacement needed.
+- **DUAL_PLAZA `sq1Ring` workaround deleted.** Both plazas
+  install via `installPlaza` directly; the `civicRingRadius`
+  field is set per-plaza by the most recent `installPlaza`
+  call. The local-save workaround that prompt 17's TODO
+  flagged is gone.
+- **Civic distance shrink.** Legacy formula put civics at
+  ~17 (HAMLET) / ~26 (CITY) blocks from centroid. New
+  outset places civics at polygonRadius+8 → ~11 (HAMLET-
+  reservation, no polygon) / ~17 (CITY polygon radius
+  ~10 + 8). Tighter villages overall — no ring road
+  wasting space — but civic buildings still have their
+  PRIME_CIVIC standoff from the polygon edge.

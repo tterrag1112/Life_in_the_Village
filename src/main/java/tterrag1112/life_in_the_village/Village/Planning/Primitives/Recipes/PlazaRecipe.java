@@ -52,12 +52,12 @@ public final class PlazaRecipe implements ShapeRecipe {
         // in capacity), which is what makes PLAZA feel urban. The civic
         // buildings form a tight band tangent to the plaza area.
         int civicCap = Math.max(PLAZA_BUILDINGS, Math.min(8, totalBuildings / 3));
-        new LayoutPrimitive.TownSquare(centre, civicCap, null).place(pctx);
-        BlockPos squarePos = pctx.layout.getTownSquarePos();
-        // Phase 17 doc 04 — CIRCLE polygon for the plaza-centric layout.
-        RecipeHelpers.installPlaza(pctx, squarePos,
+        // Phase 18 doc 04 — polygon plaza handles all civic / layout
+        // setup; the legacy LayoutPrimitive.TownSquare is gone.
+        RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.CIRCLE);
+        BlockPos squarePos = pctx.layout.getTownSquarePos();
 
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
 

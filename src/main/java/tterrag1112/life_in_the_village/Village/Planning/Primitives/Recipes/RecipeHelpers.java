@@ -514,14 +514,26 @@ public final class RecipeHelpers {
 
         if (tier == VillageSizeTier.HAMLET) {
             // Doc 04 §"Tier-based sizing" — HAMLETs get a center
-            // marker, no polygon. The existing decoration profile
-            // path places a well at this position when the marker
-            // is consumed (prompt 18 will explicitly stamp; prompt
-            // 17 just registers).
+            // marker, no polygon. Phase 18: also set the layout's
+            // townSquarePos / Radius / civicRingRadius so downstream
+            // consumers (DecorationSlotEmitter, recipe trunk-start
+            // calculations, footprint occupy) read sane values.
+            // Add a small DECORATION reservation so non-civic
+            // buildings don't claim the centre — equivalent to what
+            // the deleted LayoutPrimitive.TownSquare did at HAMLET
+            // tier (radius 3).
             BlockPos snapped = pctx.solidSurface(targetCenter);
             VillageCenterMarker marker = new VillageCenterMarker(
                     snapped, snapped.getY(), defaultCulture(pctx));
             pctx.setVillageCenter(marker);
+            pctx.layout.setTownSquarePos(snapped);
+            pctx.layout.setTownSquareRadius(3);
+            pctx.layout.setCivicRingRadius(3 + 8);
+            pctx.layout.addForced(new tterrag1112.life_in_the_village
+                    .Village.Planning.LayoutSlot(
+                            tterrag1112.life_in_the_village.Village
+                                    .Planning.LayoutSlot.SlotType.DECORATION,
+                            snapped, 3));
             return Optional.empty();
         }
 

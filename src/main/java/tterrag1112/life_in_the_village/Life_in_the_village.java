@@ -83,11 +83,11 @@ public class Life_in_the_village {
         ShapeRuleRegistration.registerBuiltins();
         BuildingInhabitantRegistry.registerDefaults();
 
-        // Phase 1 doc 04 — register the default-culture town-square
-        // kits and their DecorationProfiles. Profiles must be in the
-        // registry before any DecorationPass runs.
-        tterrag1112.life_in_the_village.Village.Decoration.TownSquare
-                .DefaultTownSquareKits.registerAll();
+        // Phase 18 doc 04 — DefaultTownSquareKits.registerAll() removed
+        // alongside the TownSquareComposer + TownSquareKit deletion.
+        // Plaza decoration content registers as ordinary
+        // DecorationProfiles in later phases; the polygon plaza model
+        // doesn't use a per-tier kit registry.
 
         // Phase 10 — register placeholder road events when -Dlitv.testEvents=true
         PlaceholderEvents.registerIfEnabled();

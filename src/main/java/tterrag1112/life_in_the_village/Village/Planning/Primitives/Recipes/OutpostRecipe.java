@@ -30,13 +30,12 @@ public final class OutpostRecipe implements ShapeRecipe {
         // ── Tight central core ─────────────────────────────────────────────
         // Small civic capacity, tight ring
         int civicCap = Math.max(2, Math.min(4, totalBuildings / 5));
-        new LayoutPrimitive.TownSquare(centre, civicCap, null).place(pctx);
-        BlockPos squarePos = pctx.layout.getTownSquarePos();
-        int civicRing = pctx.layout.getCivicRingRadius();
-        // Phase 17 doc 04 — SQUARE polygon for the defensive outpost layout.
-        RecipeHelpers.installPlaza(pctx, squarePos,
+        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
+        RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.SQUARE);
+        BlockPos squarePos = pctx.layout.getTownSquarePos();
+        int civicRing = pctx.layout.getCivicRingRadius();
 
         // ── Defensive perimeter as the "wall" ──────────────────────────────
         // Place defensive in a TIGHT ring around the civic ring,
