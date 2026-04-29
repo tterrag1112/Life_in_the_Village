@@ -35,9 +35,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *   structures/{culture}/{style}/{building_type}/{variant}/level_{n}.nbt
  *
  *   Examples:
- *     structures/default/rural/blacksmith/blacksmith/level_1.nbt
- *     structures/default/rural/house/house/level_1.nbt
- *     structures/default/rural/guard_tower/guard_tower/level_1.nbt
+ *     structures/default/rural/blacksmith/blacksmith/well_hamlet.nbt
+ *     structures/default/rural/house/house/well_hamlet.nbt
+ *     structures/default/rural/guard_tower/guard_tower/well_hamlet.nbt
  * </pre>
  *
  * <h3>Fallback chain (P0a-04)</h3>
