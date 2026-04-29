@@ -123,9 +123,19 @@ public final class PlazaPaver {
      * plaza reads as locally flat. Returns the position to place the
      * paving block at, or {@code null} if the column is on water /
      * non-replaceable terrain.
+     *
+     * <p>{@code floorY} is the {@code MOTION_BLOCKING_NO_LEAVES}
+     * heightmap value at the plaza centre — i.e. the Y of the first
+     * AIR block above the surface. The pave block goes one below
+     * ({@code paveY = floorY - 1}) so it replaces the existing
+     * surface block and players walk on top at {@code floorY},
+     * matching the road realiser's {@code surfY - 1} convention.
+     * Original implementation paved at {@code floorY} which left the
+     * plaza one block higher than surrounding terrain.</p>
      */
     private static BlockPos clampAndCarveColumn(ServerLevel level, int x, int z,
                                                 int floorY) {
+        int paveY = floorY - 1;
         int surfY = level.getHeight(
                 Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
         BlockState surfaceBelow = level.getBlockState(new BlockPos(x, surfY - 1, z));
@@ -136,18 +146,21 @@ public final class PlazaPaver {
             return null;
         }
 
-        // If terrain is below floorY, fill up.
-        if (surfY < floorY) {
-            for (int y = surfY; y < floorY; y++) {
+        // If terrain is below paveY (column low), fill dirt up to
+        // paveY - 1 so the column has substrate under the pave.
+        if (surfY < paveY) {
+            for (int y = surfY; y < paveY; y++) {
                 BlockPos fill = new BlockPos(x, y, z);
                 BlockState s = level.getBlockState(fill);
                 if (s.isAir() || s.is(BlockTags.REPLACEABLE)) {
                     level.setBlock(fill, Blocks.DIRT.defaultBlockState(), 3);
                 }
             }
-        } else if (surfY > floorY + Y_CLAMP_RANGE) {
-            // If terrain is above the plaza floor band, carve down.
-            for (int y = surfY; y > floorY; y--) {
+        } else if (surfY > paveY + 1 + Y_CLAMP_RANGE) {
+            // If terrain is above the plaza floor band, carve down
+            // until paveY (exclusive — leave the surface block at
+            // paveY for the pave to replace).
+            for (int y = surfY - 1; y > paveY; y--) {
                 BlockPos carve = new BlockPos(x, y, z);
                 BlockState cs = level.getBlockState(carve);
                 if (cs.is(Blocks.GRASS_BLOCK) || cs.is(Blocks.DIRT)
@@ -157,7 +170,7 @@ public final class PlazaPaver {
                 } else break;
             }
         }
-        return new BlockPos(x, floorY, z);
+        return new BlockPos(x, paveY, z);
     }
 
     private static void placeAndClearAbove(ServerLevel level, BlockPos pavePos,

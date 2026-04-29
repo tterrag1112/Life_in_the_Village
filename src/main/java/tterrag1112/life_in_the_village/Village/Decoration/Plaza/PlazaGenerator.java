@@ -89,12 +89,18 @@ public final class PlazaGenerator {
      *  enough variety for civic placement to choose from. */
     private static final int PLAZA_ADJACENT_STEP = 6;
 
-    /** Plaza-edge civic slots sit this far outside the polygon edge.
-     *  Matches the legacy formula's
-     *  {@code civicInnerEdge + maxCivicFrontFace/2} — typical civic
-     *  building has front face ~12, so half is 6, plus 2 clearance =
-     *  8 blocks of standoff from polygon edge. */
-    private static final int PLAZA_ADJACENT_OUTSET = 8;
+    /** Plaza-edge civic slot baseline standoff from polygon edge,
+     *  before the per-village {@code maxCivicFrontFace/2} bonus is
+     *  added. Matches the legacy
+     *  {@code RING_ROAD_GAP + RING_ROAD_HALFWIDTH + CIVIC_CLEARANCE}
+     *  = 3 + 3 + 2 = 8 standoff. */
+    private static final int PLAZA_ADJACENT_BASE_OUTSET = 8;
+
+    /** Default {@code maxCivicFrontFace} when scanning
+     *  {@code pctx.remaining} returns no civic candidates (e.g. a
+     *  village with no civic buildings to place). Matches the legacy
+     *  primitive's default. */
+    private static final int DEFAULT_MAX_CIVIC_FRONT_FACE = 12;
 
     /** Maximum civic building front face for the slot footprint
      *  budget (matches the legacy primitive's {@code +4} margin). */
@@ -199,17 +205,23 @@ public final class PlazaGenerator {
         pctx.layout.setTownSquarePos(centroid);
         int polygonRadius = (int) Math.max(3, Math.sqrt(finalArea / Math.PI));
         pctx.layout.setTownSquareRadius(polygonRadius);
-        // civicRingRadius repurposed: now the radius at which the
-        // generator emits PLAZA_ADJACENT civic slots, equal to
-        // polygonRadius + outset. Matches the legacy formula's
-        // "where civic buildings sit" semantic.
-        pctx.layout.setCivicRingRadius(polygonRadius + PLAZA_ADJACENT_OUTSET);
+        // Civic standoff includes the largest civic building's
+        // half-front-face so the building's far edge clears the
+        // polygon — matches legacy's
+        // {@code civicInnerEdge + maxCivicFrontFace/2}. A 29×29
+        // TOWN_HALL needs ~15 blocks of bonus standoff on top of
+        // the 8-block base; without this the building commits
+        // PRIME_CIVIC and overlaps the plaza centre.
+        int maxCivicFrontFace = scanMaxCivicFrontFace(pctx);
+        int civicOutset = PLAZA_ADJACENT_BASE_OUTSET + maxCivicFrontFace / 2;
+        pctx.layout.setCivicRingRadius(polygonRadius + civicOutset);
 
         // Civic + PLAZA_ADJACENT slots — replaces the legacy
         // LayoutPrimitive.TownSquare.emitSlots so the matcher's
         // PRIME_CIVIC / SECONDARY_CIVIC pre-pass keeps working
         // sourced from polygon edges instead of ring perimeter.
-        int slotCount = emitPlazaCivicSlots(pctx, region);
+        int slotCount = emitPlazaCivicSlots(pctx, region, civicOutset,
+                maxCivicFrontFace);
 
         // Gathering points — migrated from TownSquareComposer
         // (deleted in Phase 18). Registered onto Village via
@@ -440,9 +452,13 @@ public final class PlazaGenerator {
      * primitive's {@code quality = 90 - i * 2}) so the prepass's
      * tie-breaking lands on a stable south-first ordering.</p>
      */
-    private static int emitPlazaCivicSlots(PlanContext pctx, PlazaRegion region) {
+    private static int emitPlazaCivicSlots(PlanContext pctx, PlazaRegion region,
+                                           int civicOutset,
+                                           int maxCivicFrontFace) {
         List<BlockPos> verts = region.footprint().vertices();
         BlockPos centroid = region.centroid();
+        int footprintBudget = Math.max(CIVIC_FOOTPRINT_BUDGET,
+                maxCivicFrontFace + 4);
         int emitted = 0;
         int n = verts.size();
         for (int i = 0; i < n; i++) {
@@ -456,7 +472,7 @@ public final class PlazaGenerator {
                 int mz = (int) Math.round(a.getZ() + (b.getZ() - a.getZ()) * t);
                 BlockPos midpoint = new BlockPos(mx, region.floorY(), mz);
                 BlockPos outward = nudgeAwayFromCentroid(midpoint, centroid,
-                        PLAZA_ADJACENT_OUTSET);
+                        civicOutset);
                 // First emitted slot → PRIME_CIVIC; rest →
                 // SECONDARY_CIVIC. Matches the legacy primitive's
                 // "first angle wins TOWN_HALL" convention.
@@ -470,12 +486,36 @@ public final class PlazaGenerator {
                         outward,
                         /* feedingRoad */ null,
                         tags,
-                        /* footprintBudget */ CIVIC_FOOTPRINT_BUDGET,
+                        /* footprintBudget */ footprintBudget,
                         /* qualityScore */ quality));
                 emitted++;
             }
         }
         return emitted;
+    }
+
+    /**
+     * Scans {@code pctx.remaining} for the largest civic-building
+     * front face. Mirrors the deleted {@code LayoutPrimitive.TownSquare
+     * .scanMaxCivicFrontFace}; the polygon civic outset uses this to
+     * keep buildings' far edges clear of the polygon interior.
+     */
+    private static int scanMaxCivicFrontFace(PlanContext pctx) {
+        int max = DEFAULT_MAX_CIVIC_FRONT_FACE;
+        for (var sb : pctx.remaining) {
+            var bt = PlanContext.parseType(sb);
+            if (bt == null) continue;
+            boolean isCivic = tterrag1112.life_in_the_village.Village.Planning
+                    .ZoneRegistry.zoneOf(bt) == tterrag1112.life_in_the_village
+                            .Village.Planning.BuildingZone.CIVIC
+                    || "TOWN_HALL".equals(sb.type());
+            if (!isCivic) continue;
+            var info = pctx.sizes.get(sb.structure(),
+                    net.minecraft.world.level.block.Rotation.NONE);
+            int ff = info != null ? Math.max(info.width(), info.length()) : 12;
+            if (ff > max) max = ff;
+        }
+        return max;
     }
 
     // ── Gathering point registration (migrated from TownSquareComposer) ──
