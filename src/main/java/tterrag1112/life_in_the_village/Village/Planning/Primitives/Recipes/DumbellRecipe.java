@@ -42,6 +42,10 @@ public final class DumbellRecipe implements ShapeRecipe {
                 new LayoutPrimitive.TownSquare(centre, capacity, null);
         square.emitSlots(pctx);
         square.place(pctx);
+        // Phase 17 doc 04 — IRREGULAR polygon for the unusual dumbell layout.
+        RecipeHelpers.installPlaza(pctx, pctx.layout.getTownSquarePos(),
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.IRREGULAR);
 
         // Trunk starts at the outer edge of the civic ring road, not at
         // centre, so the trunk and ring road do not overlap.

@@ -112,6 +112,10 @@ public final class HilltopRecipe implements ShapeRecipe {
         // buildings are placed by SCATTER below.
         pctx.layout.setTownSquarePos(peakPos);
         pctx.layout.setTownSquareRadius(4);
+        // Phase 17 doc 04 — SQUARE polygon at the hill peak.
+        RecipeHelpers.installPlaza(pctx, peakPos,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.SQUARE);
 
         // ── Find the base of the hill (gate location) ──────────────────────
         // The gate sits on the OPPOSITE side of the village centre from

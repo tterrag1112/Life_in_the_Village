@@ -661,6 +661,13 @@ public class Village {
         // can size sub-slots without round-tripping through
         // VillageLayout.
         this.townSquareRadius = layout.getTownSquareRadius();
+        // Phase 17 doc 04 — carry plaza polygons + village center
+        // marker from the layout to the persisted village.
+        if (!layout.getPlazaRegions().isEmpty()) {
+            this.plazaRegions.clear();
+            this.plazaRegions.addAll(layout.getPlazaRegions());
+        }
+        this.villageCenterMarker = layout.getVillageCenterMarker();
         for (BlockPos gp : layout.getGatePositions()) {
             if (!capitalGatePositions.contains(gp)) {
                 capitalGatePositions.add(gp);

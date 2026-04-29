@@ -45,6 +45,13 @@ public final class DualPlazaRecipe implements ShapeRecipe {
         new LayoutPrimitive.TownSquare(sq1, primaryCap, null).place(pctx);
         BlockPos sq1Pos = pctx.layout.getTownSquarePos();
         int sq1Ring = pctx.layout.getCivicRingRadius();
+        // Phase 17 doc 04 — primary plaza is CIRCLE / CIVIC.
+        RecipeHelpers.installPlaza(pctx, sq1Pos,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaPurpose.CIVIC,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.CIRCLE,
+                java.util.Optional.empty());
 
         // Connecting road from sq1's far side to sq2's near side
         BlockPos roadStart = RecipeHelpers.offsetSnapped(pctx, sq1Pos, mainDirRad + Math.PI, sq1Ring);
@@ -66,6 +73,14 @@ public final class DualPlazaRecipe implements ShapeRecipe {
         // instead of from the layout's single civicRingRadius
         // field. The local sq1Ring workaround goes away then.
         new LayoutPrimitive.TownSquare(sq2, secondaryCap, connector).place(pctx);
+        // Phase 17 doc 04 — secondary plaza is SQUARE / MARKET.
+        BlockPos sq2Pos = pctx.layout.getTownSquarePos();
+        RecipeHelpers.installPlaza(pctx, sq2Pos,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaPurpose.MARKET,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.SQUARE,
+                java.util.Optional.empty());
 
         // Outward gate roads from each square
         int gateLen = pctx.density.getRing2Radius() + 16;

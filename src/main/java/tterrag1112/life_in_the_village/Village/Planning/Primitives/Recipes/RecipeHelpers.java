@@ -2,8 +2,16 @@
 package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaGenerator;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaShape;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaSpec;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.VillageCenterMarker;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
@@ -15,6 +23,7 @@ import tterrag1112.life_in_the_village.Village.VillageTypeData;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Shared building blocks for ShapeRecipes. Most recipes follow the
@@ -463,6 +472,113 @@ public final class RecipeHelpers {
                 pctx.density.getRing2Radius(),
                 BuildingZone.RESIDENTIAL, leftovers, snapRoads
         ).place(pctx);
+    }
+
+    // =========================================================================
+    // Surface-snapped position math
+    // =========================================================================
+
+    // =========================================================================
+    // Plaza generation (Phase 17 doc 04)
+    // =========================================================================
+
+    /**
+     * Doc 04 §"Plaza generation algorithm" — recipe-friendly
+     * one-liner for plaza installation. Recipes pick a
+     * {@link PlazaShape} matching their layout and call this
+     * helper; it does the tier→area mapping, builds a
+     * {@link PlazaSpec}, and dispatches to {@link PlazaGenerator}.
+     *
+     * <p>HAMLET tier: skips polygon generation entirely and
+     * registers a {@link VillageCenterMarker} so the existing
+     * decoration profile path can place a "well" piece at the
+     * marker. Larger tiers register a {@link PlazaRegion}.</p>
+     *
+     * <p>This helper is additive to the existing
+     * {@code LayoutPrimitive.TownSquare} call. Both run during
+     * prompt 17 — the plaza polygon and the legacy ring road
+     * coexist; prompt 18 retires the ring road in favor of the
+     * polygon's PLAZA_ADJACENT slots.</p>
+     *
+     * @return the registered region, or empty if generation was
+     *         skipped (HAMLET tier) or failed (terrain hostile)
+     */
+    public static Optional<PlazaRegion> installPlaza(
+            PlanContext pctx,
+            BlockPos targetCenter,
+            PlazaPurpose purpose,
+            PlazaShape preferredShape,
+            Optional<Direction> majorAxis) {
+        if (pctx == null) return Optional.empty();
+        VillageSizeTier tier = pctx.sizeTier();
+
+        if (tier == VillageSizeTier.HAMLET) {
+            // Doc 04 §"Tier-based sizing" — HAMLETs get a center
+            // marker, no polygon. The existing decoration profile
+            // path places a well at this position when the marker
+            // is consumed (prompt 18 will explicitly stamp; prompt
+            // 17 just registers).
+            BlockPos snapped = pctx.solidSurface(targetCenter);
+            VillageCenterMarker marker = new VillageCenterMarker(
+                    snapped, snapped.getY(), defaultCulture(pctx));
+            pctx.setVillageCenter(marker);
+            return Optional.empty();
+        }
+
+        int targetArea = plazaTargetArea(tier);
+        PlazaSpec spec = new PlazaSpec(
+                purpose, targetCenter, targetArea, preferredShape, majorAxis);
+        return PlazaGenerator.generate(pctx, spec);
+    }
+
+    /** Convenience overload: CIVIC purpose, no major axis. The most
+     *  common call shape; recipes that just want "a plaza of this
+     *  shape, please" use this. */
+    public static Optional<PlazaRegion> installPlaza(
+            PlanContext pctx,
+            BlockPos targetCenter,
+            PlazaShape preferredShape) {
+        return installPlaza(pctx, targetCenter, PlazaPurpose.CIVIC,
+                preferredShape, Optional.empty());
+    }
+
+    /** Convenience overload for LINEAR shapes that need an axis. */
+    public static Optional<PlazaRegion> installLinearPlaza(
+            PlanContext pctx,
+            BlockPos targetCenter,
+            PlazaPurpose purpose,
+            Direction axis) {
+        return installPlaza(pctx, targetCenter, purpose,
+                PlazaShape.LINEAR, Optional.of(axis));
+    }
+
+    /** Doc 04 §"Tier-based sizing" — area target by tier. */
+    public static int plazaTargetArea(VillageSizeTier tier) {
+        if (tier == null) return 50;
+        return switch (tier) {
+            case HAMLET  -> 0;
+            case VILLAGE -> 50;
+            case TOWN    -> 150;
+            case CITY    -> 300;
+        };
+    }
+
+    /** Until per-village culture lookup lands, default-culture is
+     *  the only culture in the system. */
+    private static String defaultCulture(PlanContext pctx) {
+        return "default";
+    }
+
+    /** Convert a math-convention angle (radians) to the nearest
+     *  cardinal {@link Direction}. Used by recipes whose major axis
+     *  is in radian form to call
+     *  {@link #installLinearPlaza(PlanContext, BlockPos, PlazaPurpose, Direction)}. */
+    public static Direction cardinalFromRad(double angleRad) {
+        double deg = ((angleRad * 180.0 / Math.PI) % 360 + 360) % 360;
+        if (deg >= 315 || deg < 45) return Direction.EAST;
+        if (deg < 135) return Direction.SOUTH;
+        if (deg < 225) return Direction.WEST;
+        return Direction.NORTH;
     }
 
     // =========================================================================

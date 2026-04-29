@@ -80,6 +80,12 @@ public final class DocksideRecipe implements ShapeRecipe {
         BlockPos squarePos = mainCenterline.get(mainCenterline.size() / 3);
         int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
         new LayoutPrimitive.TownSquare(squarePos, civicCap, mainCenterline).place(pctx);
+        // Phase 17 doc 04 — LINEAR plaza along the shore (perpendicular
+        // to the inland-shore main road).
+        RecipeHelpers.installLinearPlaza(pctx, pctx.layout.getTownSquarePos(),
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaPurpose.CIVIC,
+                RecipeHelpers.cardinalFromRad(inlandRad + Math.PI / 2));
 
         List<List<BlockPos>> allRoads = new ArrayList<>();
         allRoads.add(mainCenterline);

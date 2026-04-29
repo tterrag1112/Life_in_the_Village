@@ -65,6 +65,12 @@ public final class RadialRecipe implements ShapeRecipe {
         square.place(pctx);
         BlockPos squarePos = pctx.layout.getTownSquarePos();
 
+        // Phase 17 doc 04 — register a polygon plaza alongside the
+        // legacy ring road. CIRCLE matches the radial layout's shape.
+        RecipeHelpers.installPlaza(pctx, squarePos,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.CIRCLE);
+
         // ── Main road (unchanged geometry) ─────────────────────────────────
         double terrainBias = directionRadOf(terrain.primaryOrientationDir());
         int civicCount = Math.max(1, squareCapacity);

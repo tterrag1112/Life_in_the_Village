@@ -48,6 +48,10 @@ public final class SprawlRecipe implements ShapeRecipe {
         // Mark a nominal centre for downstream systems.
         pctx.layout.setTownSquarePos(centre);
         pctx.layout.setTownSquareRadius(3);
+        // Phase 17 doc 04 — IRREGULAR polygon for sprawling layout.
+        RecipeHelpers.installPlaza(pctx, centre,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.IRREGULAR);
 
         List<List<BlockPos>> allRoads = new ArrayList<>();
         allRoads.add(mainCenterline);

@@ -49,6 +49,18 @@ public class VillageLayout {
     private int townSquareRadius = 0;
     @Nullable private BlockPos mainGateEndpoint;
 
+    /**
+     * Phase 17 doc 04 — polygon plaza registrations. Populated by
+     * recipe compose() via PlazaGenerator; copied onto Village in
+     * applyLayout. Empty for HAMLETs (which use villageCenterMarker
+     * instead) and for legacy / expansion paths.
+     */
+    private final List<tterrag1112.life_in_the_village.Village
+            .Decoration.Plaza.PlazaRegion> plazaRegions = new ArrayList<>();
+    @Nullable
+    private tterrag1112.life_in_the_village.Village.Decoration
+            .Plaza.VillageCenterMarker villageCenterMarker;
+
     private final List<BlockPos> gatePositions = new ArrayList<>();
 
     public static final int MIN_BUILDING_GAP = 4;
@@ -196,6 +208,29 @@ public class VillageLayout {
 
     public int getTownSquareRadius() { return townSquareRadius; }
     public void setTownSquareRadius(int r) { townSquareRadius = r; }
+
+    // ── Plaza polygon accessors (Phase 17 doc 04) ──────────────────────
+
+    public void addPlazaRegion(tterrag1112.life_in_the_village.Village
+                                       .Decoration.Plaza.PlazaRegion p) {
+        if (p != null) plazaRegions.add(p);
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Plaza.PlazaRegion> getPlazaRegions() {
+        return java.util.Collections.unmodifiableList(plazaRegions);
+    }
+
+    public void setVillageCenterMarker(@Nullable tterrag1112.life_in_the_village
+            .Village.Decoration.Plaza.VillageCenterMarker m) {
+        this.villageCenterMarker = m;
+    }
+
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Decoration
+            .Plaza.VillageCenterMarker getVillageCenterMarker() {
+        return villageCenterMarker;
+    }
 
     @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
     public void setMainGateEndpoint(@Nullable BlockPos pos) { mainGateEndpoint = pos; }

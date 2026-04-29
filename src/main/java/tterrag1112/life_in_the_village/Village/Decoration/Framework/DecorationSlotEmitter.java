@@ -514,6 +514,27 @@ public final class DecorationSlotEmitter {
         Village v = ctx.village();
         BlockPos centre = v.getTownSquarePos();
         int radius = v.getTownSquareRadius();
+
+        // Phase 17 doc 04 — polygon-aware path. If a PlazaRegion is
+        // registered, derive the effective centre + radius from the
+        // polygon (centroid + sqrt(area/π) approximation). Otherwise
+        // fall through to the legacy stamped-square radius. Both
+        // paths produce the same sub-slot tags / positions; the
+        // polygon path just sources its dimensions differently.
+        var plazas = v.getPlazaRegions();
+        if (!plazas.isEmpty()) {
+            // Use the largest polygon as the primary plaza for sub-
+            // slot emission. DUAL_PLAZA-style multi-plaza emission
+            // for secondary plazas lands in prompt 18 alongside the
+            // civic ring removal.
+            var primary = plazas.get(0);
+            double area = tterrag1112.life_in_the_village.Utilities
+                    .Geometry.Polygon.area(primary.footprint());
+            double effRadius = Math.max(3, Math.sqrt(area / Math.PI));
+            centre = primary.centroid();
+            radius = (int) Math.round(effRadius);
+        }
+
         if (centre == null || radius <= 0) return;
 
         // Reverse-derive tier from radius so VILLAGE+ gates work even

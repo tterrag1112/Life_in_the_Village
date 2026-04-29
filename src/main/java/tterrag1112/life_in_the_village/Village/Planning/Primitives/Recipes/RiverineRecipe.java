@@ -124,6 +124,11 @@ public final class RiverineRecipe implements ShapeRecipe {
         int civicCap = Math.max(2, Math.min(3, totalBuildings / 8 + 2));
         new LayoutPrimitive.TownSquare(squareMid, civicCap, mainCenterline)
                 .place(pctx);
+        // Phase 17 doc 04 — LINEAR plaza along the river axis.
+        RecipeHelpers.installLinearPlaza(pctx, pctx.layout.getTownSquarePos(),
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaPurpose.CIVIC,
+                RecipeHelpers.cardinalFromRad(mainDirRad));
 
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
         allRoadsForSnap.add(mainCenterline);

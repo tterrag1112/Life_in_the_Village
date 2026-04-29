@@ -286,3 +286,80 @@ Already kept by prompt 16:
 - **Civic ring NOT touched.** Prompt 18 work.
 - **Polygon NOT generated.** Prompt 17 work — plaza is still a
   stamped square, but the palette is now continuous with roads.
+
+### Prompt 17 — polygon generator + paver + recipe integration
+
+- **`PlazaGenerator` lands** at
+  `Village/Decoration/Plaza/PlazaGenerator.java`. Single entry
+  point `generate(PlanContext, PlazaSpec) → Optional<PlazaRegion>`.
+  Produces CIRCLE / SQUARE / LINEAR / IRREGULAR polygons via
+  shape-specific algorithms:
+  - CIRCLE: 16-gon at `radius = sqrt(targetArea / π)`.
+  - SQUARE: 4-corner polygon, deterministic 70/30 cardinal/diagonal
+    rotation roll seeded from `worldSeed XOR center.hashCode()`.
+  - LINEAR: rectangle with `width = 5`, `length = targetArea / 5`,
+    rotated to the recipe-supplied `majorAxis` cardinal.
+  - IRREGULAR: 16-gon with per-vertex radial perturbation in
+    [0.7×, 1.3×] base radius, simplified via `Polygon.simplify`
+    at tolerance 1.0. Seed-derived determinism, visually distinct
+    polygons per village.
+- **Terrain accommodation is single-pass per-vertex.** Vertices
+  on water (heightmap surface block is liquid) or steep slope
+  (>2 block delta over 3-block radius) are nudged 2 blocks
+  toward the centroid. After nudging, the polygon is simplified
+  again (DP tolerance 0.5) in case multiple vertices collapsed
+  onto the same XZ. Building-recession is **deferred to prompt
+  18** because committed buildings don't exist at compose time.
+- **`connectedRoadIds` left empty in prompt 17.** Road UUIDs are
+  assigned at realisation time inside `VillageRoadNetwork.
+  buildInitialNetwork`, not during recipe compose. Prompt 18
+  backfills these post-realisation when the matching is
+  unambiguous.
+- **`PLAZA_ADJACENT` slot emission landed in
+  `PlazaGenerator`.** Slots emitted along the polygon edge
+  every ~6 blocks of perimeter, just outside the polygon
+  (outset 2 blocks). For a CITY plaza (~75-block perimeter)
+  that's ~12 PLAZA_ADJACENT slots — enough variety for prompt
+  18's civic placement to choose from. No layout consumes
+  these tags in prompt 17.
+- **`PlazaPaver` lands** at
+  `Village/Decoration/Plaza/PlazaPaver.java`. Runs after the
+  road network in `VillageDecorator.decorateVillage`. Uses
+  `PathMaterial.sampleCore` for polygon interior and
+  `sampleEdge` for the edge transition (2-block outset with
+  position-seeded coverage noise). Same `PathMaterial` source
+  the road realiser uses, so polygon-road overwrite is
+  visually benign.
+- **Recipe integration via `RecipeHelpers.installPlaza`.**
+  Single-line call per recipe; the helper handles HAMLET
+  (registers `VillageCenterMarker`, skips polygon),
+  tier→targetArea mapping (VILLAGE=50, TOWN=150, CITY=300),
+  and dispatch to `PlazaGenerator`. 17 recipes updated:
+  RADIAL/PLAZA→CIRCLE; CROSSROADS/ENCLAVE/HILLTOP/OUTPOST
+  →SQUARE; LINEAR/CHAIN/RIVERINE/DOCKSIDE/ROADSIDE/TERRACED
+  →LINEAR (with cardinal axis); CLUSTERED/SPRAWL/GROVE/DUMBELL
+  →IRREGULAR; DUAL_PLAZA→CIRCLE primary + SQUARE secondary
+  (purpose=CIVIC primary, purpose=MARKET secondary).
+- **PlanContext ↔ VillageLayout ↔ Village plaza plumbing.**
+  `pctx.addPlazaRegion` mirrors onto `VillageLayout`;
+  `Village.applyLayout` carries plaza regions + center marker
+  from layout to persisted village. Codec round-trips work
+  (the `VillagePlazaMeta` sub-record landed in prompt 16).
+- **DUAL_PLAZA `civicRingRadius` workaround stays in place.**
+  The ring road still does civic placement work; per-region
+  radii arrive in prompt 18 with the ring road retirement.
+  Both plazas are now registered as separate `PlazaRegion`s
+  (CIVIC + MARKET) on the `Village`, so the polygon side of
+  the architecture is no longer brittle.
+- **`DecorationSlotEmitter.emitPlazaSubSlots` is polygon-aware.**
+  When a `PlazaRegion` is registered, the emitter derives an
+  effective centre + radius from the polygon's centroid +
+  `sqrt(area/π)`. Otherwise it falls through to the legacy
+  `townSquareRadius` path. Existing sub-slot positions and
+  tags unchanged; only the dimension source differs.
+- **Civic ring NOT touched.** Prompt 18 work.
+- **`TownSquareComposer` retained.** Still paves a stamped
+  square at village centre via the prompt-16 palette path;
+  the polygon paves the polygon. They overlap at centre with
+  the same palette — no visible duplication. Composer removal
+  is part of prompt 18 alongside the civic ring retirement.

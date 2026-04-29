@@ -51,6 +51,10 @@ public final class EnclaveRecipe implements ShapeRecipe {
         pctx.layout.setTownSquarePos(centre);
         pctx.layout.setTownSquareRadius(COURTYARD_HALF);
         pctx.layout.setCivicRingRadius(COURTYARD_HALF + 8);
+        // Phase 17 doc 04 — SQUARE polygon for the walled enclave courtyard.
+        RecipeHelpers.installPlaza(pctx, centre,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.SQUARE);
 
         // ── Pick gate side ─────────────────────────────────────────────────
         // Gate faces the bestFlatDir so trade routes have somewhere flat

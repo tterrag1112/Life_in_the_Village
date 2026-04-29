@@ -196,6 +196,10 @@ public final class ClusteredRecipe implements ShapeRecipe {
         // is set — CLUSTERED has no ring concept.
         pctx.layout.setTownSquarePos(main);
         pctx.layout.setTownSquareRadius(4);
+        // Phase 17 doc 04 — IRREGULAR polygon for the clustered layout.
+        RecipeHelpers.installPlaza(pctx, main,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.IRREGULAR);
 
         // ── Agricultural: distribute around the cluster ring ──────────────
         List<VillageTypeData.StarterBuilding> agri =

@@ -101,6 +101,22 @@ public class VillageDecorator {
                 allPathXZ.add(xzKey(p.getX(), p.getZ()));
 
         }
+
+        // ── Phase 17 doc 04 — Plaza polygon paving ────────────────────────────
+        // Runs after the road network so polygon interior overwrites any
+        // road centerlines crossing the plaza. Same PathMaterial palette
+        // as the road realiser, so the overwrite is visually benign.
+        // The legacy stamped-square pavement (above) sits at village
+        // centre and stays — for villages where the polygon is also at
+        // centre, both passes paint the same area with the same palette.
+        for (var region : village.getPlazaRegions()) {
+            Set<BlockPos> plazaPaved = tterrag1112.life_in_the_village
+                    .Village.Decoration.Plaza.PlazaPaver.pave(
+                            level, region, material, roadTier, footprint);
+            for (BlockPos p : plazaPaved) {
+                allPathXZ.add(xzKey(p.getX(), p.getZ()));
+            }
+        }
         System.out.println("VillageDecorator: road network produced "
                 + allPathXZ.size() + " path XZ positions across "
                 + data.getPathsForVillage(village.getId()).size() + " VillagePaths");

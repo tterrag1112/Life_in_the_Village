@@ -182,7 +182,14 @@ public final class PlanContext {
     public void addPlazaRegion(
             tterrag1112.life_in_the_village.Village.Decoration
                     .Plaza.PlazaRegion p) {
-        if (p != null) plazaRegions.add(p);
+        if (p != null) {
+            plazaRegions.add(p);
+            // Mirror onto VillageLayout so applyLayout carries plaza
+            // data onto the persisted Village. PlanContext is the
+            // compose-time scratch; layout is the post-compose
+            // hand-off to realisation + persistence.
+            layout.addPlazaRegion(p);
+        }
     }
 
     public List<tterrag1112.life_in_the_village.Village.Decoration
@@ -224,6 +231,7 @@ public final class PlanContext {
             tterrag1112.life_in_the_village.Village.Decoration
                     .Plaza.VillageCenterMarker m) {
         this.villageCenter = m;
+        layout.setVillageCenterMarker(m);
     }
 
     public java.util.Optional<tterrag1112.life_in_the_village.Village

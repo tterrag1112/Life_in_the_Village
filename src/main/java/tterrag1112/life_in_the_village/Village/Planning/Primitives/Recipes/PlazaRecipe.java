@@ -54,6 +54,10 @@ public final class PlazaRecipe implements ShapeRecipe {
         int civicCap = Math.max(PLAZA_BUILDINGS, Math.min(8, totalBuildings / 3));
         new LayoutPrimitive.TownSquare(centre, civicCap, null).place(pctx);
         BlockPos squarePos = pctx.layout.getTownSquarePos();
+        // Phase 17 doc 04 — CIRCLE polygon for the plaza-centric layout.
+        RecipeHelpers.installPlaza(pctx, squarePos,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.CIRCLE);
 
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
 

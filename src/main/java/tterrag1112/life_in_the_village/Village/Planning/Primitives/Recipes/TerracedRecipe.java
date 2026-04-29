@@ -192,6 +192,12 @@ public final class TerracedRecipe implements ShapeRecipe {
         // Mark the layout
         pctx.layout.setTownSquarePos(topCentre);
         pctx.layout.setTownSquareRadius(4);
+        // Phase 17 doc 04 — LINEAR plaza along the terrace contour
+        // (perpendicular to slope direction).
+        RecipeHelpers.installLinearPlaza(pctx, topCentre,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaPurpose.CIVIC,
+                RecipeHelpers.cardinalFromRad(terraceRad));
         pctx.layout.setMainGateEndpoint(mainGate);
         pctx.layout.addGatePosition(mainGate);
 

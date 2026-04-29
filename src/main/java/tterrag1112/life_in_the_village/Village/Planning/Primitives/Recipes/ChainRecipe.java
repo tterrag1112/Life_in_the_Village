@@ -140,6 +140,14 @@ public final class ChainRecipe implements ShapeRecipe {
         int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
         new LayoutPrimitive.TownSquare(squareApex, civicCap, mainCenterline)
                 .place(pctx);
+        // Phase 17 doc 04 — LINEAR plaza along the apex tangent of
+        // the chain centerline.
+        double apexTangentRad = RecipeHelpers.localTangentRad(
+                mainCenterline, mainCenterline.size() / 2);
+        RecipeHelpers.installLinearPlaza(pctx, pctx.layout.getTownSquarePos(),
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaPurpose.CIVIC,
+                RecipeHelpers.cardinalFromRad(apexTangentRad));
 
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
         allRoadsForSnap.add(mainCenterline);
