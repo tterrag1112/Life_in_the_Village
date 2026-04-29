@@ -68,6 +68,9 @@ public class VillageLayout {
 
     public static final int MIN_BUILDING_GAP = 4;
 
+    /** Max XZ distance for snapping a gate position to an existing graph node. */
+    private static final int GATE_SNAP_SLACK = 8;
+
     public VillageLayout(TerrainProfile terrain, LayoutDensityProfile density) {
         this.terrain = terrain;
         this.density = density;
@@ -295,9 +298,26 @@ public class VillageLayout {
     }
 
     @Nullable public BlockPos getMainGateEndpoint() { return mainGateEndpoint; }
-    public void setMainGateEndpoint(@Nullable BlockPos pos) { mainGateEndpoint = pos; }
+    public void setMainGateEndpoint(@Nullable BlockPos pos) {
+        this.mainGateEndpoint = pos;
+        if (pos != null) {
+            int nodeId = roadGraph.findNearestNode(pos, GATE_SNAP_SLACK);
+            if (nodeId >= 0) {
+                roadGraph.markAsGate(nodeId);
+            }
+            // If no nearby node exists, the legacy `mainGateEndpoint` field
+            // still works as a fallback — no behavior change for callers that
+            // call setMainGateEndpoint before any addRoad.
+        }
+    }
 
-    public void addGatePosition(BlockPos pos) { gatePositions.add(pos); }
+    public void addGatePosition(BlockPos pos) {
+        gatePositions.add(pos);
+        int nodeId = roadGraph.findNearestNode(pos, GATE_SNAP_SLACK);
+        if (nodeId >= 0) {
+            roadGraph.markAsGate(nodeId);
+        }
+    }
     public List<BlockPos> getGatePositions() { return Collections.unmodifiableList(gatePositions); }
 
     public BlockPos nearestGate(int x, int z) {

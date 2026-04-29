@@ -49,6 +49,25 @@ public final class RoadGraph {
         return id;
     }
 
+    /**
+     * Promotes an existing node to {@link NodeKind#GATE}. Idempotent —
+     * calling this on an already-GATE node is a no-op. The node retains
+     * its existing position and tier; only its kind changes.
+     *
+     * @throws IllegalArgumentException if {@code nodeId} is not a valid ID
+     */
+    public void markAsGate(int nodeId) {
+        if (nodeId < 0 || nodeId >= nodes.size()) {
+            throw new IllegalArgumentException("Invalid node ID: " + nodeId);
+        }
+        Node existing = nodes.get(nodeId);
+        if (existing.kind() == NodeKind.GATE) return;
+        Node updated = new Node(existing.id(), existing.pos(),
+                                NodeKind.GATE, existing.tier());
+        nodes.set(nodeId, updated);
+        if (!gateNodeIds.contains(nodeId)) gateNodeIds.add(nodeId);
+    }
+
     // ── Queries ─────────────────────────────────────────────────────────
 
     public Node node(int id) {
@@ -87,6 +106,25 @@ public final class RoadGraph {
             }
         }
         return nearest;
+    }
+
+    /**
+     * Returns the ID of the node closest to {@code pos} within {@code slack}
+     * blocks (XZ distance, Y ignored), or -1 if no node is within slack.
+     */
+    public int findNearestNode(BlockPos pos, int slack) {
+        int best = -1;
+        double bestSq = (double) slack * slack;
+        for (Node n : nodes) {
+            double dx = n.pos().getX() - pos.getX();
+            double dz = n.pos().getZ() - pos.getZ();
+            double dSq = dx * dx + dz * dz;
+            if (dSq <= bestSq) {
+                bestSq = dSq;
+                best = n.id();
+            }
+        }
+        return best;
     }
 
     public boolean isOnAnyEdge(BlockPos pos, int slack) {

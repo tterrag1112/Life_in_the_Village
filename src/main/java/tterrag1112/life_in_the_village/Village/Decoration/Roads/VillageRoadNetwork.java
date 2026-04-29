@@ -9,6 +9,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -124,12 +125,11 @@ public class VillageRoadNetwork {
                                          RandomSource random) {
         Set<Long> placedXZ = new HashSet<>();
 
-        for (tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive rp
-                : layout.getRoadPrimitives()) {
-            List<BlockPos> centerline = layout.getCenterline(rp);
+        for (RoadGraph.Edge edge : layout.getRoadGraph().allEdges()) {
+            List<BlockPos> centerline = edge.centerline();
             if (centerline.isEmpty()) continue;
 
-            RoadShape.RoadTier roadTier = rp.tier();
+            RoadShape.RoadTier roadTier = edge.primitive().tier();
 
             OrganicRoadPlacer.PlacementResult result =
                     OrganicRoadPlacer.place(level, centerline, material,
