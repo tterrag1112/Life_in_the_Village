@@ -128,14 +128,18 @@ public class VillagePlanner {
         // Remaining list is mutable; the recipe claims from it
         List<VillageTypeData.StarterBuilding> remaining = new ArrayList<>(expanded);
 
-        // Phase 3: build the planning-time FeatureMap (hull, water, cliffs).
-        // Recipes still read directly from terrain for now; migration to
-        // consume from pctx.features starts in Phase 8+.
+        long worldSeed = ctx.seed();
+
+        // Phase 4: noise-only FeatureMap build. All terrain access flows
+        // through FeatureSamplers so the result is deterministic from
+        // (worldSeed, centre) regardless of chunk-load order. The map is
+        // stashed on the layout so realization can call refine(level)
+        // before any consumer reads from it.
         tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap features =
                 tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap
-                        .buildPlanning(centre, terrain, expanded);
+                        .buildPlanning(centre, worldSeed, level, expanded);
+        layout.setFeatures(features);
 
-        long worldSeed = ctx.seed();
         PlanContext pctx = new PlanContext(
                 level, layout, sizeCache, rng, ctx, density, worldSeed, remaining, features);
 

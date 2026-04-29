@@ -306,6 +306,16 @@ public class VillageSpawner {
         }
 
         // ── Remaining phases ────────────────────────────────────────────────
+        // Phase 4: refine the planning-time FeatureMap against the live
+        // heightmap before any realiser would consume it. No realiser
+        // does in this phase; the call surfaces refinement bugs early
+        // and exercises the determinism guard. The refined map is
+        // discarded — it's properly threaded through LayoutPlan in
+        // Phase 19.
+        if (layout.getFeatures() != null) {
+            layout.getFeatures().refine(level);
+            System.out.println("[FeatureMap.refine] completed for " + villageName);
+        }
         FarmPlotPlacer.placeAll(level, layout, village, data, rng);
         VillageInhabitantPopulator.populate(level, village, data, placedBuildingsAll, rng);
         setupMerchantStalls(level, village, data, placedBuildingsAll, rng);

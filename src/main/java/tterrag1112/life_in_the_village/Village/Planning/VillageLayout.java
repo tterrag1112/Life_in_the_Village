@@ -47,6 +47,26 @@ public class VillageLayout {
 
     public BuildingFootprint getRoadFootprint() { return roadFootprint; }
 
+    /**
+     * Phase 4: planning-time geometric features (hull, water, cliffs).
+     * Stored on the layout so realization can call {@link
+     * tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap#refine}
+     * before consumers read it. Phase 19 replaces this transient field
+     * with persisted {@code LayoutPlan} state.
+     */
+    @Nullable private tterrag1112.life_in_the_village.Village
+            .Planning.Features.FeatureMap features;
+
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap getFeatures() {
+        return features;
+    }
+
+    public void setFeatures(
+            tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap f) {
+        this.features = f;
+    }
+
     private BlockPos center;
     private BlockPos townSquarePos;
     private int townSquareRadius = 0;
