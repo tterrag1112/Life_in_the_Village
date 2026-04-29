@@ -71,6 +71,10 @@ public class Village {
     // persisted graph. For now this is for debug visualization only.
     @Nullable private transient tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph debugRoadGraph;
 
+    // Transient — not persisted. Phase 19 replaces this with LayoutPlan's
+    // persisted FeatureMap. For now this is for debug visualization only.
+    @Nullable private transient tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap debugFeatureMap;
+
     // Needs — recomputed daily, only lastNeedsUpdate persisted
     private Map<NeedCategory, VillageNeed> needs = new EnumMap<>(NeedCategory.class);
     private long lastNeedsUpdate = -1L;
@@ -570,6 +574,16 @@ public class Village {
     public void setDebugRoadGraph(
             tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph g) {
         this.debugRoadGraph = g;
+    }
+
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap getDebugFeatureMap() {
+        return debugFeatureMap;
+    }
+
+    public void setDebugFeatureMap(
+            tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap fm) {
+        this.debugFeatureMap = fm;
     }
 
     // ── Plaza geometry + gathering points (Phase 1 doc 04) ──────────────
