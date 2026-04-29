@@ -61,6 +61,13 @@ public final class RadialRecipe implements ShapeRecipe {
                         .Plaza.PlazaShape.CIRCLE);
         BlockPos squarePos = pctx.layout.getTownSquarePos();
 
+        // Civic-count drives the gap-angle search below (where the main
+        // road exits the plaza). The legacy LayoutPrimitive.TownSquare
+        // sized this from buildingCapacity; preserve the same formula
+        // here so the road geometry is unchanged.
+        int totalBuildings = pctx.remaining.size();
+        int squareCapacity = Math.max(6, Math.min(10, totalBuildings / 4 + 3));
+
         // ── Main road (unchanged geometry) ─────────────────────────────────
         double terrainBias = directionRadOf(terrain.primaryOrientationDir());
         int civicCount = Math.max(1, squareCapacity);
