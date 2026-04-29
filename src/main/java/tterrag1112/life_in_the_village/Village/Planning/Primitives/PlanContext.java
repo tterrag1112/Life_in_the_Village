@@ -15,6 +15,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantSelect
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillageAgeCategoryHook;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.*;
+import tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
@@ -55,6 +56,14 @@ public final class PlanContext {
     public boolean allowRidgePlacement = false;
 
     /**
+     * Phase 3: planning-time geometric feature inventory (hull, water,
+     * cliffs, plazas, reservations). Recipes still read directly from
+     * {@link tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile}
+     * for now; recipe migration to consume from this map starts in Phase 8+.
+     */
+    public final FeatureMap features;
+
+    /**
      * Variant-selection inputs (P0a-06 / P0a-07). Set by
      * {@link tterrag1112.life_in_the_village.Village.Planning
      * .VillagePlanner} once it has the {@link VillageTypeData}; the
@@ -90,7 +99,8 @@ public final class PlanContext {
                        StructureSizeCache sizes, Random rng,
                        RuleContext ruleCtx, LayoutDensityProfile density,
                        long worldSeed,
-                       List<VillageTypeData.StarterBuilding> remaining) {
+                       List<VillageTypeData.StarterBuilding> remaining,
+                       FeatureMap features) {
         this.level = level;
         this.layout = layout;
         this.sizes = sizes;
@@ -99,6 +109,7 @@ public final class PlanContext {
         this.density = density;
         this.worldSeed = worldSeed;
         this.remaining = remaining;
+        this.features = features;
     }
 
     // =========================================================================
