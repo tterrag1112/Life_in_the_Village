@@ -25,6 +25,7 @@ Do NOT write any code until all items below are confirmed.
 | 4 | **Centerline algorithm** | How are points computed? Step through the logic before writing code |
 | 5 | **Drift strategy** | Does this primitive use `driftedLine`, per-point `DriftNoise.sample`, or no drift? |
 | 6 | **Connection points** | What are the start and end positions of the returned centerline? Recipes depend on these for non-overlap. |
+| 7 | **Caller contexts** | Will this primitive be used by recipes (always), grow strategies (sometimes), or both? Most primitives serve both. If the primitive requires explicit terrain-feature inputs that grow strategies can't easily synthesize, say so — that's a recipe-only primitive. Otherwise both contexts apply. |
 
 ---
 
@@ -67,6 +68,15 @@ record <PrimitiveName>(
 
 See `references/api.md` for the seeding contract, drift patterns, surface snapping, and shared helper signatures.
 
+### Caller contexts
+
+A road primitive's `computeCenterline` is called from two places:
+
+1. **Recipe direct.** The recipe builds the primitive in `composeSectors` and passes it to `pctx.layout.addEdge(...)`. The recipe captures the returned edge id for sector wiring. This is the common case.
+2. **Grow strategy.** When a sector overflows, an `ExtendAlongEdge` / `AddRing` / `AddSpur` strategy may construct a primitive of the appropriate type and add it to the graph. This happens during matching, after compose finishes.
+
+Both contexts call `computeCenterline(level, worldSeed)` with the same arguments. The primitive does not know which context invoked it, and does not need to. The seeding contract — deterministic from `worldSeed` plus anchor positions — ensures the centerline is reproducible regardless of caller.
+
 ---
 
 ## Step 2 — Wire into the sealed interface
@@ -93,5 +103,6 @@ public sealed interface RoadPrimitive
 - [ ] `tier()` returns the `tier` field
 - [ ] Start and end points of the returned centerline are documented in the Javadoc
 - [ ] `permits` clause updated in `RoadPrimitive.java`
+- [ ] The primitive's centerline is fully determined by `worldSeed` plus the record's fields. No `new Random()`, no `level.getRandom()`, no calls to mutable global state. (Grow strategies invoke primitives from inside the matcher loop where call-order nondeterminism would silently break placement determinism.)
 
 Present the complete record body inline in the chat, followed by the updated `permits` clause.
