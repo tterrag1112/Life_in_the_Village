@@ -3,7 +3,9 @@ package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Rotation;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Planning.StructureSizeCache;
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaGenerator;
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose;
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion;
@@ -44,6 +46,32 @@ import java.util.Set;
  */
 public final class RecipeHelpers {
     private RecipeHelpers() {}
+
+    // =========================================================================
+    // Building size queries (Phase C terrain pre-check)
+    // =========================================================================
+
+    /**
+     * Returns the largest rotated footprint side (max of W, L) across the
+     * buildings still in {@code pctx.remaining}. Used by recipe pre-checks
+     * to decide whether the available terrain can host the village's
+     * largest building before sinking time into geometry.
+     *
+     * <p>Falls back to {@link StructureSizeCache#DEFAULT_RADIUS}{@code * 2}
+     * when no size is available; that's conservative and keeps the recipe
+     * from aborting on a temporary cache miss.
+     */
+    public static int largestRotatedFootprint(PlanContext pctx) {
+        int max = 0;
+        for (var sb : pctx.remaining) {
+            var info = pctx.sizes.get(sb.structure(), Rotation.NONE);
+            if (info != null) {
+                int side = Math.max(info.width(), info.length());
+                if (side > max) max = side;
+            }
+        }
+        return max > 0 ? max : StructureSizeCache.DEFAULT_RADIUS * 2;
+    }
 
     // =========================================================================
     // Direction conversion

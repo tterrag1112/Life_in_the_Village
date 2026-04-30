@@ -137,4 +137,64 @@ public record TerrainProfile(
     public TerrainAnalyzer.FlatDirection primaryOrientationDir() {
         return waterFacingDir != null ? waterFacingDir : bestFlatDir;
     }
+
+    /**
+     * Returns the side length (W and L assumed roughly equal) of the
+     * largest contiguous patch of flat candidates whose Y range is at
+     * most {@code maxYVariance}. Used by recipe pre-checks to reject
+     * villages whose largest building physically can't sit anywhere on
+     * the available terrain.
+     *
+     * <p>Implementation: bins {@link #flatCandidates} by Y, finds the
+     * cluster with the largest XZ bounding box, returns
+     * {@code min(boundingBoxW, boundingBoxL)}. If no candidates qualify,
+     * returns 0.
+     *
+     * <p>Approximate by design — the goal is to cheaply detect "obviously
+     * impossible" terrain for very large buildings, not to certify exact
+     * fit. The terrain step (post-planning) is responsible for actually
+     * grading the chosen plot.
+     */
+    public int largestFlatPatchAvailable(int maxYVariance) {
+        if (flatCandidates.isEmpty()) return 0;
+
+        // Bin candidates by floor(Y / (maxYVariance+1)) so two candidates
+        // in the same bin are guaranteed to be within maxYVariance Y of
+        // each other. Two-pass sweep: candidates whose Y is within bin or
+        // (bin±1) are eligible; this catches cases where the bin boundary
+        // splits a flat plateau.
+        int bin = Math.max(1, maxYVariance + 1);
+        java.util.Map<Integer, java.util.List<BlockPos>> bins = new java.util.HashMap<>();
+        for (BlockPos p : flatCandidates) {
+            bins.computeIfAbsent(p.getY() / bin, k -> new java.util.ArrayList<>()).add(p);
+        }
+
+        int bestSide = 0;
+        for (var entry : bins.entrySet()) {
+            int bucket = entry.getKey();
+            // Combine this bucket with its neighbours so a near-bucket
+            // boundary doesn't artificially split a plateau.
+            java.util.List<BlockPos> patch = new java.util.ArrayList<>(entry.getValue());
+            java.util.List<BlockPos> below = bins.get(bucket - 1);
+            java.util.List<BlockPos> above = bins.get(bucket + 1);
+            if (below != null) patch.addAll(below);
+            if (above != null) patch.addAll(above);
+
+            // Filter to actual Y-range ≤ maxYVariance for THIS centre.
+            int centerY = entry.getValue().get(0).getY();
+            int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
+            int minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
+            for (BlockPos p : patch) {
+                if (Math.abs(p.getY() - centerY) > maxYVariance) continue;
+                if (p.getX() < minX) minX = p.getX();
+                if (p.getX() > maxX) maxX = p.getX();
+                if (p.getZ() < minZ) minZ = p.getZ();
+                if (p.getZ() > maxZ) maxZ = p.getZ();
+            }
+            if (minX == Integer.MAX_VALUE) continue;
+            int side = Math.min(maxX - minX, maxZ - minZ);
+            if (side > bestSide) bestSide = side;
+        }
+        return bestSide;
+    }
 }

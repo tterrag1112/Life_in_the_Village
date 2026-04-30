@@ -59,8 +59,36 @@ public final class PlazaRecipe extends BaseRecipe {
     private static final int SPUR_CAPACITY       = 6;
     private static final int UNLIMITED_CAPACITY  = 1024;
 
+    private boolean terrainTooRough;
+
+    @Override
+    protected void prepareFeatures(PlanContext pctx) {
+        int largest = RecipeHelpers.largestRotatedFootprint(pctx);
+        int requiredFlatSide = largest + 4;
+        int available = pctx.layout.getTerrain().largestFlatPatchAvailable(2);
+        terrainTooRough = available < requiredFlatSide;
+        if (terrainTooRough) {
+            System.out.println("PlazaRecipe: terrain pre-check failed — "
+                    + "largest building " + largest + "x" + largest
+                    + " needs ≥" + requiredFlatSide + " flat side, "
+                    + "available=" + available);
+        }
+    }
+
     @Override
     protected void composeSectors(PlanContext pctx) {
+        if (terrainTooRough) {
+            tterrag1112.life_in_the_village.Kingdom.Placement
+                    .PlacementFailureRecorder.record(
+                    tterrag1112.life_in_the_village.Kingdom.Placement
+                            .PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                    "PLAZA: no flat patch large enough — falling back to RADIAL",
+                    pctx.layout.getCenter(),
+                    tterrag1112.life_in_the_village.Village.VillageTypeData
+                            .ShapeType.PLAZA.name());
+            new RadialRecipe().compose(pctx);
+            return;
+        }
         BlockPos centre = pctx.layout.getCenter();
         TerrainProfile terrain = pctx.layout.getTerrain();
         int totalBuildings = pctx.remaining.size();

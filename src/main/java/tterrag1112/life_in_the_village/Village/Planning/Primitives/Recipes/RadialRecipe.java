@@ -60,14 +60,44 @@ public final class RadialRecipe extends BaseRecipe {
     /** Effectively unlimited capacity for outer rings (matcher hint only). */
     private static final int UNLIMITED_CAPACITY = 1024;
 
+    /** Cleared in {@link #prepareFeatures}; set true when the terrain
+     *  pre-check finds no flat patch large enough for the largest
+     *  building. {@link #composeSectors} aborts (RADIAL has no fallback). */
+    private boolean terrainTooRough;
+
     @Override
     protected void prepareFeatures(PlanContext pctx) {
-        // RADIAL is feature-agnostic. RIVERINE / HILLTOP / TERRACED
-        // override this in later phases.
+        // Terrain pre-check: if the largest building won't fit anywhere on
+        // the available terrain, mark unusable. Avoids the 30+ second slot-
+        // burn loops on impossible sites observed in the wild.
+        int largest = RecipeHelpers.largestRotatedFootprint(pctx);
+        int requiredFlatSide = largest + 4;
+        int available = pctx.layout.getTerrain().largestFlatPatchAvailable(2);
+        terrainTooRough = available < requiredFlatSide;
+        if (terrainTooRough) {
+            System.out.println("RadialRecipe: terrain pre-check failed — "
+                    + "largest building " + largest + "x" + largest
+                    + " needs ≥" + requiredFlatSide + " flat side, "
+                    + "available=" + available);
+        }
     }
 
     @Override
     protected void composeSectors(PlanContext pctx) {
+        if (terrainTooRough) {
+            // RADIAL is the canonical fallback recipe and has no further
+            // fallback of its own. Abort the village rather than loop into
+            // an even smaller recipe that would also reject.
+            tterrag1112.life_in_the_village.Kingdom.Placement
+                    .PlacementFailureRecorder.record(
+                    tterrag1112.life_in_the_village.Kingdom.Placement
+                            .PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                    "RADIAL: no flat patch large enough for largest building",
+                    pctx.layout.getCenter(),
+                    tterrag1112.life_in_the_village.Village.VillageTypeData
+                            .ShapeType.RADIAL.name());
+            return;
+        }
         BlockPos centre = pctx.layout.getCenter();
         TerrainProfile terrain = pctx.layout.getTerrain();
 

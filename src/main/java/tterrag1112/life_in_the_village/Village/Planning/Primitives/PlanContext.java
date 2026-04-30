@@ -388,6 +388,16 @@ public final class PlanContext {
         LayoutSlot slot = new LayoutSlot(resolved, bt, sb.structure(), slotRadius, rotation);
         slot.setFootprint(w, l);
         slot.setPadY(computePadY(resolved, w, l));
+        // Carry the originating slot's feeding road through to the
+        // committed LayoutSlot so the validator can measure distance to
+        // *this* building's feeding road instead of the nearest road in
+        // the whole graph. Edge id isn't available here (the matcher's
+        // PlacementSlot has it but tryCommitBuilding's parameter list
+        // doesn't); -1 is fine — the validator only consumes the
+        // centerline list. If feedingRoad is null/empty, the slot is
+        // ring-or-floating and the validator will fall back to a
+        // hull-distance check.
+        slot.setFeedingRoad(feedingRoad, -1);
 
         int halfW = w / 2;
         int halfL = l / 2;

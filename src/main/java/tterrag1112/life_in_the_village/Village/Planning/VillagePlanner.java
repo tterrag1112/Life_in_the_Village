@@ -72,6 +72,15 @@ public class VillagePlanner {
      */
     private static final int VALIDATOR_ROAD_HALF_WIDTH = 3;
 
+    /**
+     * Slack for ring/floating slots whose committed building has no
+     * feeding road (PlazaGenerator civic slots, agricultural fringes,
+     * hull-floating clusters). The validator falls back to a hull-distance
+     * check measured from village centre. The bound is
+     * {@code ring2Radius + footprintHalf + VALIDATOR_HULL_SLACK}.
+     */
+    private static final int VALIDATOR_HULL_SLACK = 8;
+
     // =========================================================================
     // Entry point
     // =========================================================================
@@ -239,41 +248,81 @@ public class VillagePlanner {
     private static boolean validatePlan(VillageLayout layout) {
         List<LayoutSlot> buildings = layout.buildings();
         for (LayoutSlot slot : buildings) {
-            BlockPos nearest = layout.nearestCenterlinePoint(slot.getPos());
-            if (nearest == null) {
-                System.out.println("VillagePlanner: building " + slot.getBuildingType()
-                        + " at " + slot.getPos() + " — no roads in layout");
-                return false;
-            }
-            int dx = Math.abs(nearest.getX() - slot.getPos().getX());
-            int dz = Math.abs(nearest.getZ() - slot.getPos().getZ());
-            int chebyshev = Math.max(dx, dz);
+            if (!validateBuildingDistance(slot, layout)) return false;
+        }
+        return true;
+    }
 
-            // Distance bound scales with footprint: a 29×29 building correctly
-            // placed against a road has its CENTRE ~17 blocks from the road
-            // centerline (because half its width is 14.5). The legacy
-            // edge-to-road check with a hardcoded "max 6" rejected these
-            // valid placements once perturbation drifted them another few
-            // blocks. New formula treats centre-to-road distance directly:
-            //
-            //   allowed = roadHalfWidth + footprintHalf + slack
-            //
-            // where slack absorbs maxDriftBlocks plus clearance.
-            int footprintHalf = Math.max(slot.getFootprintWidth(),
-                    slot.getFootprintLength()) / 2;
+    /**
+     * Validates a single building's distance to the road that fed its
+     * placement slot. Two branches:
+     *
+     * <ul>
+     *   <li><b>Has feeding road</b> — slot was emitted along a specific
+     *       road's centerline. Measured distance is to <em>that</em> road
+     *       only, not the nearest road in the graph. Fixes the legacy bug
+     *       where civic buildings on plaza-tangent slots were measured
+     *       across the plaza interior to a road on the opposite side.</li>
+     *   <li><b>Ring/floating slot</b> — no feeding road (PlazaGenerator
+     *       civic slot, agricultural fringe, hull-floating cluster).
+     *       Falls back to a hull-distance check: the building must be
+     *       within {@code ring2 + footprintHalf + VALIDATOR_HULL_SLACK}
+     *       of the village centre.</li>
+     * </ul>
+     */
+    private static boolean validateBuildingDistance(LayoutSlot slot,
+                                                    VillageLayout layout) {
+        BlockPos centre = slot.getPos();
+        int footprintHalf = Math.max(slot.getFootprintWidth(),
+                slot.getFootprintLength()) / 2;
+        java.util.List<BlockPos> feedingRoad = slot.getFeedingRoad();
+
+        if (feedingRoad != null && !feedingRoad.isEmpty()) {
+            int distance = nearestPointChebyshev(centre, feedingRoad);
             int allowed = VALIDATOR_ROAD_HALF_WIDTH
                     + footprintHalf
                     + VALIDATOR_ROAD_SLACK;
-            if (chebyshev > allowed) {
+            if (distance > allowed) {
                 System.out.println("VillagePlanner: building " + slot.getBuildingType()
-                        + " at " + slot.getPos() + " is " + chebyshev
-                        + " blocks from nearest road (max " + allowed
+                        + " at " + centre + " is " + distance
+                        + " blocks from feeding road (max " + allowed
                         + " for footprint " + slot.getFootprintWidth()
-                        + "x" + slot.getFootprintLength() + ")");
+                        + "x" + slot.getFootprintLength()
+                        + ", feedingRoad=" + feedingRoad.size() + " pts)");
                 return false;
             }
+            return true;
+        }
+
+        // Ring/floating slot — no feeding road. Hull-distance check.
+        BlockPos villageCentre = layout.getCenter();
+        int ring2 = layout.getDensity().getRing2Radius();
+        int dx = centre.getX() - villageCentre.getX();
+        int dz = centre.getZ() - villageCentre.getZ();
+        int distance = (int) Math.round(Math.sqrt((double) dx * dx + (double) dz * dz));
+        int allowed = ring2 + footprintHalf + VALIDATOR_HULL_SLACK;
+        if (distance > allowed) {
+            System.out.println("VillagePlanner: building " + slot.getBuildingType()
+                    + " at " + centre + " is " + distance
+                    + " blocks from village centre (max " + allowed
+                    + " for footprint " + slot.getFootprintWidth()
+                    + "x" + slot.getFootprintLength()
+                    + ", feedingRoad=none ring/floating)");
+            return false;
         }
         return true;
+    }
+
+    /** Chebyshev distance from {@code pos} to the nearest point in {@code points}. */
+    private static int nearestPointChebyshev(BlockPos pos, java.util.List<BlockPos> points) {
+        int best = Integer.MAX_VALUE;
+        for (BlockPos p : points) {
+            int dx = Math.abs(p.getX() - pos.getX());
+            int dz = Math.abs(p.getZ() - pos.getZ());
+            int cheb = Math.max(dx, dz);
+            if (cheb < best) best = cheb;
+        }
+        return best;
     }
 
     // =========================================================================

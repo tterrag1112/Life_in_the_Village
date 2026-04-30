@@ -70,6 +70,24 @@ public class LayoutSlot {
     private int footprintLength = 0;
 
     /**
+     * Centerline of the road that fed the originating slot, captured at
+     * commit time so the validator can measure distance to <em>this</em>
+     * road rather than the nearest road in the entire graph (which for
+     * plaza-tangent civic placements may be the road on the opposite
+     * side of the plaza).
+     *
+     * <p>{@code null} for ring/floating slots (PlazaGenerator civic slots,
+     * agricultural fringes, hull-floating clusters) — those are validated
+     * against a hull-distance bound instead. Debug-state only; not
+     * persisted on the {@link tterrag1112.life_in_the_village.Village
+     * .Building} record.
+     */
+    private java.util.List<net.minecraft.core.BlockPos> feedingRoad;
+
+    /** RoadGraph edge id of {@link #feedingRoad}, or -1 if none. */
+    private int feedingEdgeId = -1;
+
+    /**
      * Chosen variant identifier (P0a-06). Defaults to the type's
      * default variant id ({@code type.name().toLowerCase()}); the
      * matcher overwrites it when {@link
@@ -190,6 +208,19 @@ public class LayoutSlot {
     public int         getFootprintWidth()  { return footprintWidth; }
     public int         getFootprintLength() { return footprintLength; }
     public Rotation    getRotation()        { return rotation;       }
+
+    /** Feeding road of the originating PlacementSlot; null for ring/floating slots. */
+    public java.util.List<net.minecraft.core.BlockPos> getFeedingRoad() {
+        return feedingRoad;
+    }
+    /** Feeding edge id, or -1 for ring/floating slots. */
+    public int getFeedingEdgeId() { return feedingEdgeId; }
+
+    public void setFeedingRoad(java.util.List<net.minecraft.core.BlockPos> road,
+                               int edgeId) {
+        this.feedingRoad = (road == null || road.isEmpty()) ? null : road;
+        this.feedingEdgeId = edgeId;
+    }
 
     public void setRotation(Rotation rotation) {
         this.rotation = rotation != null ? rotation : Rotation.NONE;

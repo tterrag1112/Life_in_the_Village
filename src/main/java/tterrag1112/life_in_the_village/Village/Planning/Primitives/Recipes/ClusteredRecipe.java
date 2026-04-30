@@ -48,6 +48,29 @@ public final class ClusteredRecipe implements ShapeRecipe {
 
     @Override
     public void compose(PlanContext pctx) {
+        // Terrain pre-check (mirrors BaseRecipe-converted recipes' prepareFeatures
+        // logic; CLUSTERED implements ShapeRecipe directly so the check runs at
+        // the top of compose).
+        int largest = RecipeHelpers.largestRotatedFootprint(pctx);
+        int requiredFlatSide = largest + 4;
+        int available = pctx.layout.getTerrain().largestFlatPatchAvailable(2);
+        if (available < requiredFlatSide) {
+            System.out.println("ClusteredRecipe: terrain pre-check failed — "
+                    + "largest building " + largest + "x" + largest
+                    + " needs ≥" + requiredFlatSide + " flat side, "
+                    + "available=" + available);
+            tterrag1112.life_in_the_village.Kingdom.Placement
+                    .PlacementFailureRecorder.record(
+                    tterrag1112.life_in_the_village.Kingdom.Placement
+                            .PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                    "CLUSTERED: no flat patch large enough — falling back to RADIAL",
+                    pctx.layout.getCenter(),
+                    tterrag1112.life_in_the_village.Village.VillageTypeData
+                            .ShapeType.CLUSTERED.name());
+            new RadialRecipe().compose(pctx);
+            return;
+        }
+
         BlockPos centre = pctx.layout.getCenter();
         int totalBuildings = pctx.remaining.size();
 
