@@ -263,6 +263,7 @@ public final class PlacementMatcher {
                     c.slot.tags());
             if (committed != null) {
                 slots.remove(c.slot);
+                burnNearbySlots(committed);
                 placed.add(new PlacedRecord(bt, committed.getPos()));
                 return true;
             }
@@ -270,6 +271,38 @@ public final class PlacementMatcher {
             slots.remove(c.slot);
         }
         return false;
+    }
+
+    /**
+     * Removes pool slots whose ideal position falls inside the just-placed
+     * building's footprint plus a {@link tterrag1112.life_in_the_village
+     * .Village.Planning.VillageLayout#MIN_BUILDING_GAP} buffer. Without this,
+     * a 29×29 town hall commit would leave 8-12 nearby slots in the pool
+     * that look like valid candidates but always fail
+     * {@code tryCommitBuilding}'s overlap check, burning perturbation
+     * attempts on each one before falling through.
+     *
+     * <p>Burn radius is footprint-driven:
+     * {@code max(W, L) / 2 + MIN_BUILDING_GAP}. For a 14×14 building that's
+     * 7 + 4 = 11; for a 29×29 town hall it's 15 + 4 = 19; a hypothetical
+     * 40×40 castle gets 24. Large commits sweep more slots — by design.
+     */
+    private void burnNearbySlots(LayoutSlot committed) {
+        int w = committed.getFootprintWidth();
+        int l = committed.getFootprintLength();
+        int burnRadius = Math.max(w, l) / 2
+                + tterrag1112.life_in_the_village.Village.Planning
+                        .VillageLayout.MIN_BUILDING_GAP;
+        long rSq = (long) burnRadius * burnRadius;
+        BlockPos centre = committed.getPos();
+
+        Iterator<PlacementSlot> it = slots.iterator();
+        while (it.hasNext()) {
+            PlacementSlot s = it.next();
+            if (s.pos().distSqr(centre) < rSq) {
+                it.remove();
+            }
+        }
     }
 
     private int scoreSlot(PlacementSlot slot, BuildingType bt,

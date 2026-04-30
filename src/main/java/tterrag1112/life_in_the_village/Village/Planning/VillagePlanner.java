@@ -30,8 +30,9 @@ import java.util.*;
  *   <li>Create a {@link PlanContext} wrapping a fresh {@link VillageLayout}</li>
  *   <li>Dispatch to a {@link ShapeRecipe} which composes primitives
  *       into the layout — roads, town square, building slots, gate endpoint</li>
- *   <li>Validate: every building must be within {@link #MAX_BUILDING_TO_ROAD}
- *       blocks of a road centerline</li>
+ *   <li>Validate: every building must sit within
+ *       {@code roadHalfWidth + footprintHalf + }{@link #VALIDATOR_ROAD_SLACK}
+ *       blocks (Chebyshev) of a road centerline</li>
  *   <li>Run the orthogonal post-passes (farm plots, decoration clusters,
  *       Y clustering) and return the layout</li>
  * </ol>
@@ -48,12 +49,28 @@ public class VillagePlanner {
     private static final int DECORATION_RADIUS = 3;
 
     /**
-     * Maximum Chebyshev distance allowed between a building's centre and
-     * the nearest road centerline. Buildings farther than this from any
-     * road cause the plan to be rejected — a clear signal that the
-     * recipe didn't produce enough spurs.
+     * Maximum Chebyshev distance allowed between a building's edge and the
+     * nearest road centerline, in addition to the road's own reserved
+     * half-width. This is wiggle room: it absorbs perturbation drift
+     * (bounded by {@code PlacementSlot.maxDriftBlocks}, typically 6) plus a
+     * small clearance gap. The full allowed centre-to-road distance is
+     * {@code roadHalfWidth + footprintHalf + VALIDATOR_ROAD_SLACK}.
+     *
+     * <p>Replaces a hardcoded edge-distance limit that didn't scale with
+     * footprint or perturbation bound. The slack value covers both — drift
+     * up to 6 plus clearance — without admitting buildings that wandered
+     * arbitrarily far from any road.
      */
-    private static final int MAX_BUILDING_TO_ROAD = 6;
+    private static final int VALIDATOR_ROAD_SLACK = 6;
+
+    /**
+     * Conservative road half-width used by the validator. Matches
+     * {@code RoadShape.RoadTier.VILLAGE_ROAD.reservedHalfWidth()} (3) which
+     * is the value all road tiers actually reserve. Hardcoding here avoids
+     * threading the per-edge tier through the validator just for this one
+     * tolerance check; the formula is robust to small under-estimates.
+     */
+    private static final int VALIDATOR_ROAD_HALF_WIDTH = 3;
 
     // =========================================================================
     // Entry point
@@ -231,13 +248,28 @@ public class VillagePlanner {
             int dx = Math.abs(nearest.getX() - slot.getPos().getX());
             int dz = Math.abs(nearest.getZ() - slot.getPos().getZ());
             int chebyshev = Math.max(dx, dz);
-            // Account for building half-footprint — edge of building to road
-            int edge = chebyshev - Math.max(slot.getFootprintWidth(),
+
+            // Distance bound scales with footprint: a 29×29 building correctly
+            // placed against a road has its CENTRE ~17 blocks from the road
+            // centerline (because half its width is 14.5). The legacy
+            // edge-to-road check with a hardcoded "max 6" rejected these
+            // valid placements once perturbation drifted them another few
+            // blocks. New formula treats centre-to-road distance directly:
+            //
+            //   allowed = roadHalfWidth + footprintHalf + slack
+            //
+            // where slack absorbs maxDriftBlocks plus clearance.
+            int footprintHalf = Math.max(slot.getFootprintWidth(),
                     slot.getFootprintLength()) / 2;
-            if (edge > MAX_BUILDING_TO_ROAD) {
+            int allowed = VALIDATOR_ROAD_HALF_WIDTH
+                    + footprintHalf
+                    + VALIDATOR_ROAD_SLACK;
+            if (chebyshev > allowed) {
                 System.out.println("VillagePlanner: building " + slot.getBuildingType()
-                        + " at " + slot.getPos() + " is " + edge
-                        + " blocks from nearest road (max " + MAX_BUILDING_TO_ROAD + ")");
+                        + " at " + slot.getPos() + " is " + chebyshev
+                        + " blocks from nearest road (max " + allowed
+                        + " for footprint " + slot.getFootprintWidth()
+                        + "x" + slot.getFootprintLength() + ")");
                 return false;
             }
         }

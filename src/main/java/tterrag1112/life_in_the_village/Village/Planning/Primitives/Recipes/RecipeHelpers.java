@@ -635,27 +635,33 @@ public final class RecipeHelpers {
 
     /**
      * Footprint-aware slot generation. Computes perpendicular offset from
-     * {@code expectedMaxFootprint} and the parent road's geometry so the
-     * largest building this sector hosts can sit clear of the road's
-     * reserved width.
+     * {@code expectedMaxFootprint} and the parent road's reserved
+     * half-width (read from {@code tier}) so the largest building this
+     * sector hosts can sit clear of the road's reservation.
      *
-     * <p>{@code perpOffset = roadHalfWidth + ceil(expectedMaxFootprint/2) + clearance}.
-     * For a VILLAGE_ROAD (halfWidth=3) sector hosting a 29×29 town hall
-     * with 2-block clearance, that's 3 + 15 + 2 = 20 blocks.
+     * <p>{@code perpOffset = tier.reservedHalfWidth() + ceil(expectedMaxFootprint/2) + clearance}.
+     * For a {@code VILLAGE_ROAD} sector hosting a 29×29 town hall with
+     * 2-block clearance, that's 3 + 15 + 2 = 20 blocks.
+     *
+     * <p>Reading the tier directly (rather than passing a magic int)
+     * eliminates the chance of slot-generation assuming a road width
+     * different from what {@code BuildingFootprint.reserveRoad} actually
+     * reserves.
      *
      * @param expectedMaxFootprint largest footprint this sector will host;
      *                             the slot's {@code footprintBudgetW/L}
      *                             is set to this value too
-     * @param roadHalfWidth        reserved half-width of the parent road tier
+     * @param tier                 parent road tier; the reserved half-width
+     *                             is read from {@link RoadShape.RoadTier#reservedHalfWidth()}
      * @param clearance            additional buffer between building edge
      *                             and road reserve
      * @param maxDriftBlocks       perturbation bound for these slots
      */
     public static List<PlacementSlot> generateSlotsAlongCenterline(
             List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
-            int stride, int expectedMaxFootprint, int roadHalfWidth,
+            int stride, int expectedMaxFootprint, RoadShape.RoadTier tier,
             int clearance, int baseQuality, int maxDriftBlocks) {
-        int perpOffset = roadHalfWidth
+        int perpOffset = tier.reservedHalfWidth()
                 + (expectedMaxFootprint + 1) / 2
                 + clearance;
         return generateSlotsAlongCenterlineImpl(
@@ -682,14 +688,14 @@ public final class RecipeHelpers {
 
     /**
      * Footprint-aware one-sided slot generation. Mirror of the
-     * 9-arg {@link #generateSlotsAlongCenterline} with a side selector.
+     * tier-based {@link #generateSlotsAlongCenterline} with a side selector.
      */
     public static List<PlacementSlot> generateOneSidedSlotsAlongCenterline(
             List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
-            int stride, int expectedMaxFootprint, int roadHalfWidth,
+            int stride, int expectedMaxFootprint, RoadShape.RoadTier tier,
             int clearance, int baseQuality, int maxDriftBlocks,
             int sideSign) {
-        int perpOffset = roadHalfWidth
+        int perpOffset = tier.reservedHalfWidth()
                 + (expectedMaxFootprint + 1) / 2
                 + clearance;
         return generateSlotsAlongCenterlineImpl(
