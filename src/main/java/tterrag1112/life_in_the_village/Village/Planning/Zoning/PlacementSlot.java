@@ -2,6 +2,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.Zoning;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Rotation;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -18,22 +19,43 @@ import java.util.Set;
  * fails is also burned (not retried), since terrain problems are
  * positional, not building-specific.
  *
+ * <p>Phase 6 added {@code feedingEdgeId}, {@code footprintBudgetW},
+ * {@code footprintBudgetL}, {@code forcedRotation}, and
+ * {@code terrainPenalty}. The legacy 5-arg constructor stays valid;
+ * see {@link #PlacementSlot(BlockPos, List, Set, int, int)}.
+ *
  * @param pos             ideal target position; terrain resolution may nudge it
  * @param feedingRoad     road centerline used to choose rotation; may be null
+ * @param feedingEdgeId   RoadGraph edge id, -1 if none
  * @param tags            all tags this slot advertises
- * @param footprintBudget max footprint (largest of width/length) this slot
- *                        can accommodate — matcher filters candidates by this
+ * @param footprintBudgetW max along-road footprint (width)
+ * @param footprintBudgetL max across-road footprint (length)
+ * @param forcedRotation  nullable; null = rotation-flexible
  * @param qualityScore    layout's own ranking among peers with the same tag
  *                        class (higher = better); typically 0–100
+ * @param terrainPenalty  0 = flat; matcher subtracts from score (Phase 10)
  */
 public record PlacementSlot(BlockPos pos,
                             List<BlockPos> feedingRoad,
+                            int feedingEdgeId,
                             Set<SlotTag> tags,
-                            int footprintBudget,
-                            int qualityScore) {
+                            int footprintBudgetW,
+                            int footprintBudgetL,
+                            Rotation forcedRotation,
+                            int qualityScore,
+                            int terrainPenalty) {
     public PlacementSlot {
         tags = tags == null ? EnumSet.noneOf(SlotTag.class)
                 : EnumSet.copyOf(tags);
+    }
+
+    /** Backward-compat 5-arg constructor for code not yet migrated. */
+    public PlacementSlot(BlockPos pos, List<BlockPos> feedingRoad,
+                         Set<SlotTag> tags, int footprintBudget,
+                         int qualityScore) {
+        this(pos, feedingRoad, -1, tags,
+             footprintBudget, footprintBudget,
+             null, qualityScore, 0);
     }
 
     public boolean hasAll(Set<SlotTag> required) {
@@ -44,5 +66,11 @@ public record PlacementSlot(BlockPos pos,
         int n = 0;
         for (SlotTag t : preferred) if (tags.contains(t)) n++;
         return n;
+    }
+
+    /** Compatibility: returns the larger of W and L for legacy callers
+     *  that expected a single footprintBudget value. */
+    public int footprintBudget() {
+        return Math.max(footprintBudgetW, footprintBudgetL);
     }
 }
