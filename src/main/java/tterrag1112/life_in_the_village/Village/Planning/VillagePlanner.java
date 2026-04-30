@@ -178,16 +178,14 @@ public class VillagePlanner {
             return Optional.empty();
         }
 
-// 7a. Any buildings the recipe couldn't fit — try placing them
-        // anywhere along the road network as a fallback.
-        fallbackPlaceRemaining(pctx);
-        // 7. Rescue orphan buildings with emergency spurs, then validate
-        rescueOrphans(layout, level, ctx.seed());
+        // 7. Validate the plan. Phase 10 retired the fallbackPlaceRemaining
+        // and rescueOrphans rescue passes — orphans now indicate a planner
+        // bug and the village is rejected outright.
         if (!validatePlan(layout)) {
-            System.out.println("VillagePlanner: plan validation failed after rescue pass");
+            System.out.println("VillagePlanner: plan validation failed");
             PlacementFailureRecorder
                     .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
-                            "plan validation failed after rescue pass",
+                            "plan validation failed",
                             origin, typeData.getType());
             return Optional.empty();
         }
@@ -375,93 +373,5 @@ public class VillagePlanner {
             case EAST -> new int[]{1, 0};
             case WEST -> new int[]{-1, 0};
         };
-    }
-    /**
-     * For any building too far from a road, add a short StraightRoad
-     * primitive from the nearest existing centerline point to the
-     * building's entrance. Fixes the "adjacency relocated me miles
-     * away" case that used to fail validation.
-     */
-    private static void rescueOrphans(VillageLayout layout,
-                                      ServerLevel level, long worldSeed) {
-        List<LayoutSlot> buildings = layout.buildings();
-        for (LayoutSlot slot : buildings) {
-            BlockPos nearest = layout.nearestCenterlinePoint(slot.getPos());
-            if (nearest == null) continue;
-            int dx = Math.abs(nearest.getX() - slot.getPos().getX());
-            int dz = Math.abs(nearest.getZ() - slot.getPos().getZ());
-            int edge = Math.max(dx, dz)
-                    - Math.max(slot.getFootprintWidth(), slot.getFootprintLength()) / 2;
-            if (edge <= MAX_BUILDING_TO_ROAD) continue;
-
-            // Add a straight rescue road from nearest centerline to the
-            // building. Uses the smallest tier so it doesn't look like
-            // a main artery — just a footpath.
-            BlockPos target = solidSurface(level, slot.getPos());
-            BlockPos source = solidSurface(level, nearest);
-            var rescue = new tterrag1112.life_in_the_village.Village.Planning
-                    .Primitives.RoadPrimitive.StraightRoad(
-                    source, target, 1.5,
-                    tterrag1112.life_in_the_village.Village.Decoration
-                            .Roads.RoadShape.RoadTier.FOOTPATH);
-            layout.addRoad(rescue, level, worldSeed);
-            System.out.println("VillagePlanner: rescue spur from " + source
-                    + " to " + target + " for " + slot.getBuildingType());
-        }
-    }
-    /**
-     * Attempts to place any buildings the recipe couldn't fit into
-     * their preferred zone. Walks each road's centerline and tries
-     * offsets perpendicular to the road until a free spot is found.
-     * This is the "just put it somewhere along a road" fallback
-     * that catches buildings whose zone was full.
-     */
-    private static void fallbackPlaceRemaining(
-            tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext pctx) {
-        if (pctx.remaining.isEmpty()) return;
-
-        System.out.println("VillagePlanner: fallback placing "
-                + pctx.remaining.size() + " unfit buildings");
-
-        List<VillageTypeData.StarterBuilding> toPlace =
-                new ArrayList<>(pctx.remaining);
-        pctx.remaining.clear();
-
-        var centerlines = pctx.layout.getAllCenterlines();
-        int[] perpOffsets = {8, -8, 12, -12, 16, -16, 20, -20};
-
-        for (VillageTypeData.StarterBuilding sb : toPlace) {
-            tterrag1112.life_in_the_village.Village.Buildings.BuildingType bt =
-                    tterrag1112.life_in_the_village.Village.Planning.Primitives
-                            .PlanContext.parseType(sb);
-            if (bt == null) continue;
-
-            LayoutSlot slot = null;
-            outer:
-            for (List<BlockPos> centerline : centerlines) {
-                if (centerline.size() < 2) continue;
-                // Sample every ~6 blocks along the road
-                for (int i = 3; i < centerline.size(); i += 6) {
-                    BlockPos on = centerline.get(i);
-                    BlockPos prev = centerline.get(Math.max(0, i - 1));
-                    BlockPos next = centerline.get(
-                            Math.min(centerline.size() - 1, i + 1));
-                    int headX = Integer.signum(next.getX() - prev.getX());
-                    int headZ = Integer.signum(next.getZ() - prev.getZ());
-                    int perpX = -headZ;
-                    int perpZ = headX;
-                    if (perpX == 0 && perpZ == 0) { perpX = 1; perpZ = 0; }
-
-                    for (int d : perpOffsets) {
-                        BlockPos target = on.offset(perpX * d, 0, perpZ * d);
-                        slot = pctx.tryCommitBuilding(target, sb, bt, centerline);
-                        if (slot != null) break outer;
-                    }
-                }
-            }
-            if (slot == null) {
-                System.out.println("VillagePlanner: fallback could not place " + bt);
-            }
-        }
     }
 }
