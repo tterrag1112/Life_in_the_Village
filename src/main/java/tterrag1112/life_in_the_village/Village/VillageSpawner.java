@@ -118,6 +118,9 @@ public class VillageSpawner {
         if (layout.getFeatures() != null) {
             village.setDebugFeatureMap(layout.getFeatures());
         }
+        if (layout.getDebugSectors() != null) {
+            village.setDebugSectors(layout.getDebugSectors());
+        }
         // Copy the main gate endpoint onto the persistent Village
         village.setMainGateEndpoint(layout.getMainGateEndpoint());
         data.addVillage(village);

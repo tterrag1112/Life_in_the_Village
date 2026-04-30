@@ -163,6 +163,10 @@ public class VillagePlanner {
                             origin, typeData.getType());
             return Optional.empty();
         }
+        // Phase 9: snapshot the sectors a BaseRecipe emitted so /liv
+        // layout debug show_sectors can render them. Empty for
+        // unconverted recipes.
+        layout.setDebugSectors(new java.util.ArrayList<>(pctx.offeredSectors()));
         pctx.runMatcher();
 
         if (layout.buildings().isEmpty()) {
