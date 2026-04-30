@@ -1,302 +1,360 @@
-// FILE: src/main/java/tterrag1112/life_in_the_village/Village/Planning/Primitives/RiverineRecipe.java
 package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Features.PolygonXZ;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.ExtendAlongEdge;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.FixedGrowth;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.SectorRole;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * RIVERINE layout recipe.
+ * RIVERINE layout recipe. Phase 12.2: extends {@link BaseRecipe} and emits sectors.
  *
- * <p>A village strung along the inland side of a river or lake shore.
- * The main road runs parallel to the shore, the town square sits at
- * its midpoint, spurs branch inland (never toward water), and
- * water-adjacency buildings get short stubs reaching toward the shore.
+ * <p>A village strung along the inland side of a river or lake shore. The
+ * spine runs parallel to the nearest shore edge, offset {@link #SHORE_OFFSET}
+ * inland; the town square sits at the spine's midpoint; inland slots fill
+ * along the inland side; shore slots (FISHERY/DOCK/MILL/WATERMILL) sit
+ * shore-side; an inland agricultural ring sits well inland.
  *
- * <p>Falls back to RADIAL with a warning if no water body was detected
- * by the terrain analyzer — riverine geometry is meaningless without
- * a shore to align to.
+ * <p>Falls back to {@link RadialRecipe} when no shore edge is available
+ * — riverine geometry is meaningless without a shore to align to.
+ *
+ * <p>This is the first recipe where {@link #prepareFeatures} does
+ * substantive work: it derives spine direction from
+ * {@code pctx.features.nearestShoreEdge}.
  */
-public final class RiverineRecipe implements ShapeRecipe {
+public final class RiverineRecipe extends BaseRecipe {
 
-    /** Inland offset of the main road from the shore, in blocks. */
+    /** Inland offset of the spine from the shore, in blocks. */
     private static final int SHORE_OFFSET = 8;
-    /** Building types that prefer to sit on the shore side. */
+
+    /** Building types that prefer to sit on the shore side. (Reference only;
+     *  the matcher resolves placement via tag preferences.) */
+    @SuppressWarnings("unused")
     private static final List<String> WATER_TYPES =
             List.of("FISHERY", "DOCK", "MILL", "WATERMILL");
 
+    // ── Sector identifiers ──────────────────────────────────────────────────
+    private static final String SECTOR_CIVIC       = "riverine_civic";
+    private static final String SECTOR_INLAND_RES  = "riverine_inland_residential";
+    private static final String SECTOR_INLAND_PROD = "riverine_inland_production";
+    private static final String SECTOR_SHORE       = "riverine_shore";
+    private static final String SECTOR_INLAND_AGRI = "riverine_inland_agri";
+
+    // ── Tag sets ────────────────────────────────────────────────────────────
+    private static final Set<SlotTag> TAGS_INLAND_RESIDENTIAL = EnumSet.of(
+            SlotTag.RESIDENTIAL_INFILL, SlotTag.ROAD_ADJACENT, SlotTag.CIVIC_ADJACENT);
+    private static final Set<SlotTag> TAGS_INLAND_PRODUCTION = EnumSet.of(
+            SlotTag.PRODUCTION_INFILL, SlotTag.ROAD_ADJACENT, SlotTag.PRODUCTION_CLUSTER);
+    private static final Set<SlotTag> TAGS_SHORE = EnumSet.of(
+            SlotTag.SHORE, SlotTag.RIVER_BANK, SlotTag.PIER_ADJACENT,
+            SlotTag.ROAD_ADJACENT);
+    private static final Set<SlotTag> TAGS_INLAND_AGRI = EnumSet.of(
+            SlotTag.FIELD_EDGE, SlotTag.PASTURE, SlotTag.RESIDENTIAL_OUTER);
+
+    /** Cached state populated by {@link #prepareFeatures} and consumed by
+     *  {@link #composeSectors}. Each {@code RiverineRecipe} instance is
+     *  constructed fresh per village (via {@code ShapeRecipe.forShape}),
+     *  so instance state is safe within a single compose() call. */
+    private BlockPos cachedShoreNearest;
+    private double cachedInlandRad;
+    private double cachedAlongRad;
+    private boolean cachedUsable;
+
     @Override
-    public void compose(PlanContext pctx) {
-        TerrainProfile terrain = pctx.layout.getTerrain();
+    protected void prepareFeatures(PlanContext pctx) {
+        cachedUsable = false;
         BlockPos origin = pctx.layout.getCenter();
 
+        PolygonXZ.Edge shoreEdge = pctx.features.nearestShoreEdge(origin);
+        if (shoreEdge == null) return;
 
-        if (!terrain.hasWater()) {
-            System.out.println("RiverineRecipe: no water body detected — "
+        BlockPos a = shoreEdge.a();
+        BlockPos b = shoreEdge.b();
+        BlockPos shoreMid = new BlockPos(
+                (a.getX() + b.getX()) / 2,
+                origin.getY(),
+                (a.getZ() + b.getZ()) / 2);
+
+        // Inland direction: from shore midpoint toward origin.
+        int dx = origin.getX() - shoreMid.getX();
+        int dz = origin.getZ() - shoreMid.getZ();
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len < 1.0) return;
+        double inlandRad = Math.atan2(dz, dx);
+
+        // Along-shore direction: parallel to the shore edge.
+        double edgeDx = b.getX() - a.getX();
+        double edgeDz = b.getZ() - a.getZ();
+        double alongRad = Math.atan2(edgeDz, edgeDx);
+
+        cachedShoreNearest = pctx.solidSurface(shoreMid);
+        cachedInlandRad = inlandRad;
+        cachedAlongRad = alongRad;
+        cachedUsable = true;
+    }
+
+    @Override
+    protected void composeSectors(PlanContext pctx) {
+        BlockPos origin = pctx.layout.getCenter();
+
+        // ── Fallback: no usable shore → RADIAL ────────────────────────────
+        if (!cachedUsable) {
+            System.out.println("RiverineRecipe: no usable shore edge — "
                     + "falling back to RADIAL");
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
+                    "no usable shore edge",
+                    origin, VillageTypeData.ShapeType.RIVERINE.name());
             new RadialRecipe().compose(pctx);
-            PlacementFailureRecorder
-                    .record(PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
-                            "no water body detected",
-                            origin, VillageTypeData.ShapeType.RIVERINE.name());
             return;
         }
 
+        // Preserve legacy behavior: non-water-type buildings refuse water tiles.
         pctx.rejectWaterForAll = true;
 
+        BlockPos shoreNearest = cachedShoreNearest;
+        double inlandRad = cachedInlandRad;
+        double alongRad = cachedAlongRad;
 
-        TerrainAnalyzer.WaterBodyInfo water = terrain.waterBody();
-        BlockPos shore = water.nearestShore();
-
-        // ── Inland direction: from shore toward origin ─────────────────────
-        // Computed as a unit vector in the XZ plane. Reliable even when
-        // waterFacingDir's cardinal quantization would point wrong.
-        double inlandDx = origin.getX() - shore.getX();
-        double inlandDz = origin.getZ() - shore.getZ();
-        double inlandLen = Math.sqrt(inlandDx * inlandDx + inlandDz * inlandDz);
-        if (inlandLen < 1) {
-            // origin is sitting on top of the shore — push out arbitrarily
-            inlandDx = 1; inlandDz = 0; inlandLen = 1;
-        }
-        double inX = inlandDx / inlandLen;
-        double inZ = inlandDz / inlandLen;
-        // Shore tangent = perpendicular to inland (rotate 90° CCW)
-        double tanX = -inZ;
-        double tanZ = inX;
-
-        // Inland direction in radians for spur angles
-        double inlandRad = Math.atan2(inZ, inX);
-        // Shore-parallel direction in radians for the main road
-        double mainDirRad = Math.atan2(tanZ, tanX);
-
-        // ── Main road: parallel to shore, offset inland ────────────────────
         int totalBuildings = pctx.remaining.size();
+
+        // ── Spine geometry: parallel to shore, offset inland ──────────────
+        BlockPos spineCentre = pctx.solidSurface(new BlockPos(
+                shoreNearest.getX() + (int) Math.round(Math.cos(inlandRad) * SHORE_OFFSET),
+                origin.getY(),
+                shoreNearest.getZ() + (int) Math.round(Math.sin(inlandRad) * SHORE_OFFSET)));
+
+        // Preserve legacy halfLength formula so spine length stays comparable.
         int halfLength = pctx.density.getRing2Radius() * 3
                 + totalBuildings * 6
                 + 48;
 
-        // Anchor: shore point pushed inland by SHORE_OFFSET, then the road
-        // extends ±halfLength along the shore tangent from there.
-        int anchorX = shore.getX() + (int) Math.round(inX * SHORE_OFFSET);
-        int anchorZ = shore.getZ() + (int) Math.round(inZ * SHORE_OFFSET);
-        BlockPos anchor = pctx.solidSurface(new BlockPos(anchorX, origin.getY(), anchorZ));
+        BlockPos spineStart = pctx.solidSurface(new BlockPos(
+                spineCentre.getX() + (int) Math.round(Math.cos(alongRad) * halfLength),
+                origin.getY(),
+                spineCentre.getZ() + (int) Math.round(Math.sin(alongRad) * halfLength)));
+        BlockPos spineEnd = pctx.solidSurface(new BlockPos(
+                spineCentre.getX() - (int) Math.round(Math.cos(alongRad) * halfLength),
+                origin.getY(),
+                spineCentre.getZ() - (int) Math.round(Math.sin(alongRad) * halfLength)));
 
-        BlockPos mainStart = pctx.solidSurface(new BlockPos(
-                anchor.getX() + (int) Math.round(tanX * halfLength),
-                anchor.getY(),
-                anchor.getZ() + (int) Math.round(tanZ * halfLength)));
-        BlockPos mainEnd = pctx.solidSurface(new BlockPos(
-                anchor.getX() - (int) Math.round(tanX * halfLength),
-                anchor.getY(),
-                anchor.getZ() - (int) Math.round(tanZ * halfLength)));
+        // Clamp endpoints inland if shoreline curvature put them on water.
+        spineStart = clampInlandIfWater(pctx, spineStart, inlandRad);
+        spineEnd   = clampInlandIfWater(pctx, spineEnd,   inlandRad);
 
-        RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
-                mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
-        List<BlockPos> mainCenterline = pctx.layout.addRoad(
-                mainRoad, pctx.level, pctx.worldSeed);
+        int startNodeId = pctx.layout.addNode(
+                spineStart, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
+        int endNodeId = pctx.layout.addNode(
+                spineEnd, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
 
-        // Gate endpoint: the inland end of the main road. Use whichever
-        // end is farther from the shore (drift can flip which one is which).
-        BlockPos gate = mainStart.distSqr(shore) > mainEnd.distSqr(shore)
-                ? mainStart : mainEnd;
-        pctx.layout.setMainGateEndpoint(gate);
-        pctx.layout.addGatePosition(mainStart);
-        pctx.layout.addGatePosition(mainEnd);
+        RoadPrimitive.StraightRoad spine = new RoadPrimitive.StraightRoad(
+                spineStart, spineEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+        int spineEdgeId = pctx.layout.addEdge(
+                startNodeId, endNodeId, spine,
+                pctx.level, pctx.worldSeed, EdgeRole.SPINE);
 
-        // ── Town square at the midpoint of the main road ───────────────────
-        BlockPos squareMid = mainCenterline.get(mainCenterline.size() / 2);
+        List<BlockPos> spineCenterline =
+                pctx.layout.getRoadGraph().edge(spineEdgeId).centerline();
 
-        // Reduced civic capacity — the TownSquare primitive lays civic in a
-        // full ring, which would cross the river. A smaller ring stays
-        // mostly on the inland side. (Real fix is a HALF_RING mode later.)
+        // Gate endpoint: whichever spine end is farther from the shore (legacy logic).
+        BlockPos gateEndpoint = spineStart.distSqr(shoreNearest)
+                > spineEnd.distSqr(shoreNearest) ? spineStart : spineEnd;
+        pctx.layout.setMainGateEndpoint(gateEndpoint);
+        pctx.layout.addGatePosition(spineStart);
+        pctx.layout.addGatePosition(spineEnd);
+
+        // ── Civic ring at the spine midpoint ──────────────────────────────
+        BlockPos midpoint = spineCenterline.isEmpty() ? spineCentre
+                : spineCenterline.get(spineCenterline.size() / 2);
+
+        // Reduced civic capacity — legacy convention: civic ring shouldn't
+        // cross the river so we keep it small.
         int civicCap = Math.max(2, Math.min(3, totalBuildings / 8 + 2));
-        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
-        RecipeHelpers.installLinearPlaza(pctx, squareMid,
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .Plaza.PlazaPurpose.CIVIC,
-                RecipeHelpers.cardinalFromRad(mainDirRad));
 
-        List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
-        allRoadsForSnap.add(mainCenterline);
-
-        // ── Water-side stubs for water-adjacency buildings ─────────────────
-        List<VillageTypeData.StarterBuilding> waterBuildings =
-                claimWaterTypes(pctx);
-        if (!waterBuildings.isEmpty()) {
-            // Stub length: just enough to reach near the shore but stop
-            // short of the water. SHORE_OFFSET - 2 keeps the building's
-            // footprint dry.
-            int stubLength = SHORE_OFFSET - 2;
-            int stubSpacing = Math.max(8,
-                    mainCenterline.size() / (waterBuildings.size() + 1));
-
-            for (int i = 0; i < waterBuildings.size(); i++) {
-                int idx = Math.min(mainCenterline.size() - 1,
-                        stubSpacing * (i + 1));
-                BlockPos branchHint = mainCenterline.get(idx);
-
-                // Stub points TOWARD the shore (opposite of inland)
-                double stubAngle = inlandRad + Math.PI;
-                RoadPrimitive.Spur stub = new RoadPrimitive.Spur(
-                        mainCenterline,
-                        branchHint,
-                        stubAngle,
-                        stubLength,
-                        1.5,
-                        RoadShape.RoadTier.FOOTPATH);
-                List<BlockPos> stubCenterline = pctx.layout.addRoad(
-                        stub, pctx.level, pctx.worldSeed);
-                allRoadsForSnap.add(stubCenterline);
-
-                BlockPos focal = stubCenterline.get(stubCenterline.size() - 1);
-                // Single-building "circle" — SCATTER with one entry just
-                // places it next to the focal on the back side.
-                List<VillageTypeData.StarterBuilding> single =
-                        List.of(waterBuildings.get(i));
-                new LayoutPrimitive.BuildingCircle(
-                        focal,
-                        LayoutPrimitive.BuildingCircle.Mode.SCATTER,
-                        single,
-                        stubCenterline
-                ).place(pctx);
-            }
+        int civicSnapshot = pctx.slotPoolSize();
+        RecipeHelpers.installLinearPlaza(pctx, midpoint,
+                PlazaPurpose.CIVIC, RecipeHelpers.cardinalFromRad(alongRad));
+        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
+        if (!civicSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
+                    civicSlots, civicCap, false, FixedGrowth.INSTANCE,
+                    spineEdgeId, null));
         }
 
-        // ── Inland spurs for production + residential ──────────────────────
-        List<VillageTypeData.StarterBuilding> production =
-                pctx.claimByZone(BuildingZone.PRODUCTION, 1000);
-        List<VillageTypeData.StarterBuilding> residential =
-                pctx.claimByZone(BuildingZone.RESIDENTIAL, 1000);
+        // ── Inland-side sectors along the spine ───────────────────────────
+        int inlandSign = computeInlandSign(alongRad, inlandRad);
 
-        int spurCount = Math.max(2,
-                (int) Math.ceil((production.size() + residential.size()) / 4.0));
-        spurCount = Math.min(spurCount, 5);
-
-        // Distribute buildings across inland spurs
-        List<List<VillageTypeData.StarterBuilding>> buckets = new ArrayList<>();
-        for (int i = 0; i < spurCount; i++) buckets.add(new ArrayList<>());
-        int b = 0;
-        for (VillageTypeData.StarterBuilding sb : production) {
-            buckets.get(b++ % spurCount).add(sb);
-        }
-        for (VillageTypeData.StarterBuilding sb : residential) {
-            buckets.get(b++ % spurCount).add(sb);
+        List<PlacementSlot> inlandResSlots =
+                RecipeHelpers.generateOneSidedSlotsAlongCenterline(
+                        spineCenterline, spineEdgeId, TAGS_INLAND_RESIDENTIAL,
+                        7, 8, 50, inlandSign);
+        if (!inlandResSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_INLAND_RES, SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.RESIDENTIAL, inlandResSlots,
+                    12, true, new ExtendAlongEdge(32, 4), spineEdgeId, null));
         }
 
-        // Spur branch fractions along the main road, biased away from
-        // the square at the midpoint
-        double[] fractions = spurCount == 2 ? new double[]{0.3, 0.7}
-                : spurCount == 3 ? new double[]{0.25, 0.5, 0.75}
-                : spurCount == 4 ? new double[]{0.2, 0.4, 0.6, 0.8}
-                : new double[]{0.15, 0.32, 0.5, 0.68, 0.85};
-
-        for (int i = 0; i < spurCount; i++) {
-            List<VillageTypeData.StarterBuilding> bucket = buckets.get(i);
-            if (bucket.isEmpty()) continue;
-
-            int idx = Math.min(mainCenterline.size() - 1,
-                    Math.max(0, (int)(fractions[i] * mainCenterline.size())));
-            BlockPos branchHint = mainCenterline.get(idx);
-
-            // Inland angle with small jitter
-            double spurAngle = inlandRad
-                    + (pctx.rng.nextDouble() - 0.5) * 0.5;
-            int spurLength = pctx.density.getRing1Radius() + 4
-                    + pctx.rng.nextInt(Math.max(1,
-                    pctx.density.getRing2Radius() - pctx.density.getRing1Radius()));
-
-            RoadPrimitive.Spur spur = new RoadPrimitive.Spur(
-                    mainCenterline,
-                    branchHint,
-                    spurAngle,
-                    spurLength,
-                    5.0,
-                    RoadShape.RoadTier.VILLAGE_PATH);
-            List<BlockPos> spurCenterline = pctx.layout.addRoad(
-                    spur, pctx.level, pctx.worldSeed);
-            allRoadsForSnap.add(spurCenterline);
-
-            BlockPos focal = spurCenterline.get(spurCenterline.size() - 1);
-            new LayoutPrimitive.BuildingCircle(
-                    focal,
-                    LayoutPrimitive.BuildingCircle.Mode.SCATTER,
-                    bucket,
-                    spurCenterline
-            ).place(pctx);
+        List<PlacementSlot> inlandProdSlots =
+                RecipeHelpers.generateOneSidedSlotsAlongCenterline(
+                        spineCenterline, spineEdgeId, TAGS_INLAND_PRODUCTION,
+                        12, 8, 45, inlandSign);
+        if (!inlandProdSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_INLAND_PROD, SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.PRODUCTION, inlandProdSlots,
+                    6, true, new ExtendAlongEdge(32, 3), spineEdgeId, null));
         }
 
-        // ── Agricultural ring on the inland side ───────────────────────────
-        // Centered on the inland anchor, not the geometric origin, so the
-        // ring sits inland and crops don't grow in the river.
-        List<VillageTypeData.StarterBuilding> agri =
-                pctx.claimByZone(BuildingZone.AGRICULTURAL, 1000);
-        if (!agri.isEmpty()) {
-            int ringInner = pctx.density.getRing2Radius() + 4;
-            int ringOuter = pctx.density.getRing2Radius() + 20;
-            // Anchor pushed further inland so the ring band clears the shore
-            BlockPos agriCentre = new BlockPos(
-                    anchor.getX() + (int) Math.round(inX * ringInner / 2),
-                    anchor.getY(),
-                    anchor.getZ() + (int) Math.round(inZ * ringInner / 2));
-            new LayoutPrimitive.RingBand(
-                    agriCentre, ringInner, ringOuter,
-                    BuildingZone.AGRICULTURAL, agri, allRoadsForSnap
-            ).place(pctx);
+        // ── Shore-side sector ─────────────────────────────────────────────
+        int shoreSign = -inlandSign;
+        List<PlacementSlot> shoreSlots =
+                RecipeHelpers.generateOneSidedSlotsAlongCenterline(
+                        spineCenterline, spineEdgeId, TAGS_SHORE,
+                        10, 5, 60, shoreSign);
+        shoreSlots = filterShoreSlots(pctx, shoreSlots);
+        if (!shoreSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_SHORE, SectorRole.SHORE_STRIP, BuildingZone.PRODUCTION,
+                    shoreSlots,
+                    4, false, FixedGrowth.INSTANCE, spineEdgeId, null));
         }
 
-        // ── Defensive on the inland flank ──────────────────────────────────
-        List<VillageTypeData.StarterBuilding> defensive =
-                pctx.claimByZone(BuildingZone.DEFENSIVE, 1000);
-        if (!defensive.isEmpty()) {
-            BlockPos defCentre = new BlockPos(
-                    anchor.getX() + (int) Math.round(inX * pctx.density.getRing2Radius()),
-                    anchor.getY(),
-                    anchor.getZ() + (int) Math.round(inZ * pctx.density.getRing2Radius()));
-            new LayoutPrimitive.RingBand(
-                    defCentre,
-                    pctx.density.getRing1Radius(),
-                    pctx.density.getRing2Radius(),
-                    BuildingZone.DEFENSIVE, defensive, allRoadsForSnap
-            ).place(pctx);
-        }
+        // ── Inland agricultural fringe ────────────────────────────────────
+        BlockPos agriCentre = pctx.solidSurface(new BlockPos(
+                midpoint.getX() + (int) Math.round(Math.cos(inlandRad)
+                        * pctx.density.getRing1Radius()),
+                origin.getY(),
+                midpoint.getZ() + (int) Math.round(Math.sin(inlandRad)
+                        * pctx.density.getRing1Radius())));
 
-        // ── Stragglers ─────────────────────────────────────────────────────
-        if (!pctx.remaining.isEmpty()) {
-            List<VillageTypeData.StarterBuilding> leftovers =
-                    new ArrayList<>(pctx.remaining);
-            pctx.remaining.clear();
-            new LayoutPrimitive.RingBand(
-                    anchor,
-                    pctx.density.getRing1Radius(),
-                    pctx.density.getRing2Radius(),
-                    BuildingZone.RESIDENTIAL, leftovers, allRoadsForSnap
-            ).place(pctx);
+        List<PlacementSlot> agriSlots = RecipeHelpers.generateRingSlots(
+                agriCentre,
+                pctx.density.getRing1Radius() / 2,
+                pctx.density.getRing2Radius(),
+                TAGS_INLAND_AGRI,
+                6, 40, pctx);
+
+        agriSlots = filterInlandSlots(pctx, agriSlots, midpoint, inlandRad);
+        if (!agriSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_INLAND_AGRI, SectorRole.AGRICULTURAL_FRINGE,
+                    BuildingZone.AGRICULTURAL, agriSlots,
+                    6, true, new AddRing(16, 6), spineEdgeId, null));
         }
     }
 
-    /** Pulls fishery/dock/mill-style buildings out of remaining. */
-    private static List<VillageTypeData.StarterBuilding> claimWaterTypes(PlanContext pctx) {
-        List<VillageTypeData.StarterBuilding> taken = new ArrayList<>();
-        Iterator<VillageTypeData.StarterBuilding> it = pctx.remaining.iterator();
-        while (it.hasNext()) {
-            VillageTypeData.StarterBuilding sb = it.next();
-            if (WATER_TYPES.contains(sb.type())) {
-                taken.add(sb);
-                it.remove();
-            }
+    @Override
+    protected void registerAnchors(PlanContext pctx) {
+        super.registerAnchors(pctx);
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    /**
+     * If {@code pos} sits on water (e.g. the spine wandered onto a curving
+     * shoreline), shift it inland by {@link #SHORE_OFFSET} repeatedly until
+     * it's no longer on water. Caps at 4 attempts to avoid runaway shifts.
+     */
+    private static BlockPos clampInlandIfWater(PlanContext pctx, BlockPos pos, double inlandRad) {
+        BlockPos current = pos;
+        for (int attempt = 0; attempt < 4 && pctx.features.isOnWater(current); attempt++) {
+            current = pctx.solidSurface(new BlockPos(
+                    current.getX() + (int) Math.round(Math.cos(inlandRad) * SHORE_OFFSET),
+                    pos.getY(),
+                    current.getZ() + (int) Math.round(Math.sin(inlandRad) * SHORE_OFFSET)));
         }
-        return taken;
+        return current;
+    }
+
+    /**
+     * +1 / -1 indicating which perpendicular side of the spine is "inland."
+     * Cross product Z component of (along-shore, inland) gives the sign in
+     * the same convention used by {@code generateOneSidedSlotsAlongCenterline}
+     * (positive perp = +perpZ axis when heading East).
+     */
+    private static int computeInlandSign(double alongRad, double inlandRad) {
+        double ax = Math.cos(alongRad), az = Math.sin(alongRad);
+        double ix = Math.cos(inlandRad), iz = Math.sin(inlandRad);
+        double cross = ax * iz - az * ix;
+        return cross >= 0 ? +1 : -1;
+    }
+
+    /**
+     * Drops shore slots that ended up on water or too far from any shore
+     * edge (10-block tolerance). The centerline-walk slot generator stamps
+     * positions blindly; this filter removes anything geometrically wrong.
+     */
+    private static List<PlacementSlot> filterShoreSlots(PlanContext pctx,
+                                                         List<PlacementSlot> slots) {
+        List<PlacementSlot> out = new ArrayList<>();
+        for (PlacementSlot s : slots) {
+            BlockPos pos = s.pos();
+            if (pctx.features.isOnWater(pos)) continue;
+            PolygonXZ.Edge nearest = pctx.features.nearestShoreEdge(pos);
+            if (nearest == null) continue;
+            if (distanceFromPosToEdge(pos, nearest) > 10) continue;
+            out.add(s);
+        }
+        return out;
+    }
+
+    /**
+     * Drops inland slots that landed on the wrong side of the spine (i.e.
+     * water-side) or directly on water. Tolerance of 8 blocks across the
+     * spine accounts for spine width and slot perpendicular spread.
+     */
+    private static List<PlacementSlot> filterInlandSlots(PlanContext pctx,
+                                                          List<PlacementSlot> slots,
+                                                          BlockPos referenceAtSpine,
+                                                          double inlandRad) {
+        List<PlacementSlot> out = new ArrayList<>();
+        double ix = Math.cos(inlandRad), iz = Math.sin(inlandRad);
+        for (PlacementSlot s : slots) {
+            int dx = s.pos().getX() - referenceAtSpine.getX();
+            int dz = s.pos().getZ() - referenceAtSpine.getZ();
+            double dot = dx * ix + dz * iz;
+            if (dot < -8) continue;
+            if (pctx.features.isOnWater(s.pos())) continue;
+            out.add(s);
+        }
+        return out;
+    }
+
+    /** Perpendicular XZ distance from {@code pos} to a shore edge segment. */
+    private static double distanceFromPosToEdge(BlockPos pos, PolygonXZ.Edge edge) {
+        long ax = edge.a().getX(), az = edge.a().getZ();
+        long bx = edge.b().getX(), bz = edge.b().getZ();
+        long dx = bx - ax, dz = bz - az;
+        long lenSq = dx * dx + dz * dz;
+        if (lenSq == 0) {
+            long ddx = pos.getX() - ax, ddz = pos.getZ() - az;
+            return Math.sqrt(ddx * ddx + ddz * ddz);
+        }
+        double t = ((pos.getX() - ax) * (double) dx + (pos.getZ() - az) * (double) dz) / lenSq;
+        t = Math.max(0, Math.min(1, t));
+        double cx = ax + t * dx, cz = az + t * dz;
+        double ex = pos.getX() - cx, ez = pos.getZ() - cz;
+        return Math.sqrt(ex * ex + ez * ez);
     }
 }

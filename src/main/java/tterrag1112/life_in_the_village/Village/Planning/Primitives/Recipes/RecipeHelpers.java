@@ -654,6 +654,38 @@ public final class RecipeHelpers {
     }
 
     /**
+     * Generates {@code slotCount} slots distributed angularly around
+     * {@code centre} at radii in {@code [innerRadius, outerRadius]}.
+     * Used by ring-style sectors (agricultural fringes, defensive fringes)
+     * that emit a small set of slots covering an annular region.
+     *
+     * <p>Radius is varied per slot so slots don't all sit on a single
+     * circle — they form a band rather than a ring. Quality decays by 2
+     * per slot, floored at 10.
+     */
+    public static List<PlacementSlot> generateRingSlots(
+            BlockPos centre, int innerRadius, int outerRadius,
+            Set<SlotTag> tags, int slotCount, int baseQuality,
+            PlanContext pctx) {
+        List<PlacementSlot> out = new ArrayList<>();
+        if (slotCount <= 0) return out;
+        int span = Math.max(1, outerRadius - innerRadius);
+        int q = baseQuality;
+        for (int i = 0; i < slotCount; i++) {
+            double angle = 2 * Math.PI * i / slotCount;
+            int r = innerRadius + (i % 3) * span / 3;
+            BlockPos pos = pctx.solidSurface(new BlockPos(
+                    centre.getX() + (int) Math.round(Math.cos(angle) * r),
+                    centre.getY(),
+                    centre.getZ() + (int) Math.round(Math.sin(angle) * r)));
+            out.add(new PlacementSlot(pos, List.of(centre), -1,
+                    tags, 14, 14, null, q, 0));
+            q = Math.max(10, q - 2);
+        }
+        return out;
+    }
+
+    /**
      * Like {@link #generateSlotsAlongCenterline} but emits slots on one
      * side only. {@code sideSign}: +1 emits on the positive-perpendicular
      * side (same direction as {@code perpX/perpZ} in the centerline walk),
