@@ -17,6 +17,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Planning.*;
 import tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
@@ -80,6 +81,15 @@ public final class PlanContext {
     private VariantSelector variantSelector;
 
     private final List<PlacementSlot> offeredSlots = new java.util.ArrayList<>();
+
+    /**
+     * Phase 8: sector pool. Recipes converted to {@link BaseRecipe} emit
+     * sectors here via {@link #offerSector}; the matcher's sector-aware
+     * entry point consumes them. Unconverted recipes use {@link #offerSlot}
+     * and the legacy flat-slot path. {@link #runMatcher} dispatches based
+     * on whether sectors were offered.
+     */
+    private final List<Sector> offeredSectors = new java.util.ArrayList<>();
 
     /**
      * Doc 04 §"Core concepts" — plaza polygon registrations.
@@ -710,17 +720,61 @@ public final class PlanContext {
         return java.util.Collections.unmodifiableList(offeredSlots);
     }
 
+    /** Phase 8: recipes call this from composeSectors to add a sector. */
+    public void offerSector(Sector sector) {
+        offeredSectors.add(sector);
+    }
+
+    /** Returns an unmodifiable view of all offered sectors so far. */
+    public List<Sector> offeredSectors() {
+        return java.util.Collections.unmodifiableList(offeredSectors);
+    }
+
+    /** True if any recipe has offered at least one sector during compose. */
+    public boolean hasSectors() {
+        return !offeredSectors.isEmpty();
+    }
+
+    /** Current size of the flat slot pool. Used with
+     *  {@link #drainSlotsSince(int)} for the snapshot/drain pattern. */
+    public int slotPoolSize() {
+        return offeredSlots.size();
+    }
+
+    /**
+     * Phase 8 transitional helper: removes and returns slots added since
+     * the snapshot index. Used by recipes converting to sectors to migrate
+     * slots produced by helpers (installPlaza, RingBand.emitSlots, etc.)
+     * out of the flat pool into a sector. Remove after Phase 15 when no
+     * recipe uses the flat pool.
+     */
+    public List<PlacementSlot> drainSlotsSince(int sinceIndex) {
+        List<PlacementSlot> drained = new ArrayList<>(
+                offeredSlots.subList(sinceIndex, offeredSlots.size()));
+        offeredSlots.subList(sinceIndex, offeredSlots.size()).clear();
+        return drained;
+    }
+
     /**
      * Runs the {@link tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementMatcher}
      * against this context. Called by the planner after recipe.compose()
-     * returns. No-op if no slots were offered and nothing remains to
-     * place — i.e. a recipe that still does all its work the old way
-     * via claimByZone is unaffected.
+     * returns. Dispatches to {@link
+     * tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementMatcher#runWithSectors}
+     * if any sector was offered (BaseRecipe path), otherwise the legacy
+     * flat-slot {@link tterrag1112.life_in_the_village.Village.Planning
+     * .Zoning.PlacementMatcher#run}. No-op if both pools are empty and
+     * nothing remains.
      */
     public void runMatcher() {
-        if (offeredSlots.isEmpty() && remaining.isEmpty()) return;
-        new tterrag1112.life_in_the_village.Village.Planning.Zoning
-                .PlacementMatcher(this, offeredSlots).run();
+        if (offeredSlots.isEmpty() && offeredSectors.isEmpty()
+                && remaining.isEmpty()) return;
+        var matcher = new tterrag1112.life_in_the_village.Village.Planning
+                .Zoning.PlacementMatcher(this, offeredSlots);
+        if (hasSectors()) {
+            matcher.runWithSectors(offeredSectors);
+        } else {
+            matcher.run();
+        }
     }
     /**
      * Stamps {@code ROAD_ADJACENT}/{@code BACKFILL} slots along a road

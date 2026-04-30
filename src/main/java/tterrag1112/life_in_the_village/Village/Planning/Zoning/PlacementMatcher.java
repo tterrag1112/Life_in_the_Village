@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.StarterBuilding;
 
 import java.util.*;
@@ -62,6 +63,30 @@ public final class PlacementMatcher {
         this.pctx = pctx;
         // Mutable copy — slots are consumed as we commit
         this.slots = new ArrayList<>(slots);
+    }
+
+    /**
+     * Sector-aware placement entry point. Used by recipes converted to
+     * {@link tterrag1112.life_in_the_village.Village.Planning.Primitives
+     * .BaseRecipe}. The legacy flat-slot {@link #run} stays valid for
+     * unconverted recipes during the Phase 8-15 migration.
+     *
+     * <p>Phase 8 implementation: flatten all sector slots into a single
+     * pool (preserving sector emission order, then per-sector slot order)
+     * and append any remaining flat-pool slots, then run the existing
+     * {@link #run} algorithm against that pool. This produces results
+     * equivalent to flat-slot mode for now. Phase 10 wires sector
+     * capacity tracking and growth into this method.
+     */
+    public void runWithSectors(List<Sector> sectors) {
+        List<PlacementSlot> flat = new ArrayList<>();
+        for (Sector s : sectors) {
+            flat.addAll(s.slots());
+        }
+        flat.addAll(this.slots);
+        this.slots.clear();
+        this.slots.addAll(flat);
+        run();
     }
 
     public void run() {
