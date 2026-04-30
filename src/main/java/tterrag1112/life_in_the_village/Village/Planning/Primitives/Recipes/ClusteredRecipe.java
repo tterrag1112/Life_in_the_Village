@@ -1,33 +1,50 @@
-// FILE: src/main/java/tterrag1112/life_in_the_village/Village/Planning/Primitives/ClusteredRecipe.java
 package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.*;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.SectorRole;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * CLUSTERED layout recipe.
+ * CLUSTERED layout recipe. Phase 11.2: implements {@link ShapeRecipe} directly
+ * (escape-hatch — no central spine, no civic ring, no symmetric layout).
  *
- * <p>3-5 separate building clumps connected by winding footpaths. No
- * central plaza, no main road, no concentric anything. The largest
- * clump contains the town hall and is treated as the "main" cluster
- * for trade route attachment, but it doesn't dominate the layout.
+ * <p>3-5 separate building clumps connected by winding footpaths. The largest
+ * clump (cluster 0) is CIVIC_TIGHT so it accepts the town hall. No BaseRecipe
+ * lifecycle — the geometry can't decompose into prepareFeatures → composeSectors.
  *
- * <p>Reads as: a settlement that grew from separate family compounds.
- * Tribal village, refugee camp, frontier homestead grouping. The lack
- * of central organization is the point.
+ * <p>What changed from the pre-conversion version: claimByZone + bucket
+ * distribution + BuildingCircle.place() + RingBand.place() replaced by one
+ * sector per cluster (emitted via snapshot/drain around
+ * {@code BuildingCircle.emitSlotsWithTags}). Each cluster grows via AddRing.
  */
 public final class ClusteredRecipe implements ShapeRecipe {
 
     /** Minimum XZ distance between cluster centres. */
     private static final int MIN_CLUSTER_SPACING = 60;
+
+    private static final Set<SlotTag> TAGS_CLUSTER = EnumSet.of(
+            SlotTag.RESIDENTIAL_INFILL, SlotTag.PRODUCTION_INFILL,
+            SlotTag.ROAD_ADJACENT, SlotTag.BACKFILL);
+    private static final Set<SlotTag> TAGS_MAIN_CLUSTER = EnumSet.of(
+            SlotTag.CIVIC_ADJACENT, SlotTag.SECONDARY_CIVIC,
+            SlotTag.RESIDENTIAL_CORE, SlotTag.ROAD_ADJACENT);
 
     @Override
     public void compose(PlanContext pctx) {
@@ -35,13 +52,9 @@ public final class ClusteredRecipe implements ShapeRecipe {
         int totalBuildings = pctx.remaining.size();
 
         // ── Decide how many clusters ───────────────────────────────────────
-        // 3-5 clusters depending on building count. Each cluster wants
-        // 3-5 buildings minimum to read as a clump rather than a row.
         int clusterCount = Math.max(3, Math.min(5, totalBuildings / 4));
 
         // ── Pick cluster centres ───────────────────────────────────────────
-        // Distribute around `centre` at distance `ring1` to `ring2`,
-        // with random angular offsets and a minimum-spacing check.
         List<BlockPos> clusterCentres = new ArrayList<>();
         int innerR = pctx.density.getRing2Radius();
         int outerR = pctx.density.getRing2Radius() * 2 + 16;
@@ -58,7 +71,6 @@ public final class ClusteredRecipe implements ShapeRecipe {
                         centre.getX() + (int)(Math.cos(angle) * r),
                         centre.getY(),
                         centre.getZ() + (int)(Math.sin(angle) * r)));
-                // Check minimum spacing against already-placed clusters
                 boolean tooClose = false;
                 for (BlockPos other : clusterCentres) {
                     if (candidate.distSqr(other) < MIN_CLUSTER_SPACING * MIN_CLUSTER_SPACING) {
@@ -66,10 +78,11 @@ public final class ClusteredRecipe implements ShapeRecipe {
                         break;
                     }
                 }
-                if (!tooClose) {
-                    picked = candidate;
-                    break;
-                }
+                if (tooClose) continue;
+                if (pctx.features.isOnWater(candidate)) continue;
+                if (pctx.features.isOnCliff(candidate)) continue;
+                picked = candidate;
+                break;
             }
             if (picked != null) clusterCentres.add(picked);
         }
@@ -80,72 +93,18 @@ public final class ClusteredRecipe implements ShapeRecipe {
                     + " (spacing constraint = " + MIN_CLUSTER_SPACING + ")");
         }
         if (clusterCentres.isEmpty()) {
-            System.out.println("ClusteredRecipe: failed to pick any cluster centres "
-                    + "— falling back to RADIAL");
-            PlacementFailureRecorder
-                    .record(PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
-                            "failed to pick any cluster centers",
-                            centre, VillageTypeData.ShapeType.CLUSTERED.name());
+            System.out.println("ClusteredRecipe: failed to pick any cluster centres"
+                    + " — falling back to RADIAL");
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
+                    "failed to pick any cluster centers",
+                    centre, VillageTypeData.ShapeType.CLUSTERED.name());
             new RadialRecipe().compose(pctx);
             return;
         }
 
-        // ── Distribute buildings across clusters ───────────────────────────
-        // Town hall + civic + half of production go to the largest cluster
-        // (cluster 0 by convention). The rest distribute round-robin.
-        VillageTypeData.StarterBuilding townHall = pctx.claimTownHall();
-        List<VillageTypeData.StarterBuilding> civic =
-                pctx.claimByZone(BuildingZone.CIVIC, 1000);
-        List<VillageTypeData.StarterBuilding> production =
-                pctx.claimByZone(BuildingZone.PRODUCTION, 1000);
-        List<VillageTypeData.StarterBuilding> residential =
-                pctx.claimByZone(BuildingZone.RESIDENTIAL, 1000);
-
-        List<List<VillageTypeData.StarterBuilding>> buckets = new ArrayList<>();
-        for (int i = 0; i < clusterCentres.size(); i++) buckets.add(new ArrayList<>());
-
-        // Main cluster (index 0): town hall + all civic + first slice of production
-        if (townHall != null) buckets.get(0).add(townHall);
-        buckets.get(0).addAll(civic);
-
-        // Production round-robin starting from cluster 0
-        int b = 0;
-        for (VillageTypeData.StarterBuilding sb : production) {
-            buckets.get(b++ % clusterCentres.size()).add(sb);
-        }
-        // Residential round-robin starting from cluster 1 (so cluster 0
-        // doesn't get overloaded if there are lots of houses)
-        b = clusterCentres.size() > 1 ? 1 : 0;
-        for (VillageTypeData.StarterBuilding sb : residential) {
-            buckets.get(b++ % clusterCentres.size()).add(sb);
-        }
-
-        // ── Place each cluster as a SCATTER BuildingCircle ────────────────
-        // The "main" cluster (index 0) is placed first because it gets
-        // the town hall. Mark cluster 0 as the gate endpoint source.
+        // ── Connect clusters with footpaths (greedy MST) ───────────────────
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
-        for (int i = 0; i < clusterCentres.size(); i++) {
-            BlockPos focal = clusterCentres.get(i);
-            List<VillageTypeData.StarterBuilding> bucket = buckets.get(i);
-            if (bucket.isEmpty()) continue;
-
-            // SCATTER without a feeding road — the cluster wraps the
-            // focal point on all sides. Pass a tiny synthetic road so
-            // the SCATTER hemisphere logic has something to face away from.
-            BlockPos synthRoadEnd = focal.offset(8, 0, 0);
-            List<BlockPos> synthRoad = List.of(synthRoadEnd, focal);
-
-            new LayoutPrimitive.BuildingCircle(
-                    focal,
-                    LayoutPrimitive.BuildingCircle.Mode.SCATTER,
-                    bucket,
-                    synthRoad
-            ).place(pctx);
-        }
-
-        // ── Connect clusters with footpaths (greedy MST-ish) ───────────────
-        // Each cluster after the first connects to its nearest already-
-        // placed cluster. Builds a tree of paths, no cycles.
         List<BlockPos> connected = new ArrayList<>();
         connected.add(clusterCentres.get(0));
         for (int i = 1; i < clusterCentres.size(); i++) {
@@ -153,7 +112,6 @@ public final class ClusteredRecipe implements ShapeRecipe {
             BlockPos nearest = connected.stream()
                     .min(Comparator.comparingDouble(p -> p.distSqr(next)))
                     .orElse(connected.get(0));
-            // Path between them — slightly drifted footpath
             RoadPrimitive.StraightRoad path = new RoadPrimitive.StraightRoad(
                     nearest, next, 4.0, RoadShape.RoadTier.FOOTPATH);
             List<BlockPos> pathLine = pctx.layout.addRoad(
@@ -162,13 +120,10 @@ public final class ClusteredRecipe implements ShapeRecipe {
             connected.add(next);
         }
 
-        // ── Gate endpoint: extend a path outward from the main cluster ────
-        // Trade routes need somewhere to attach. Pick a direction away
-        // from all other clusters and run a short FOOTPATH outward.
+        // ── Gate road outward from the main cluster ────────────────────────
         BlockPos main = clusterCentres.get(0);
         double awayAngle = 0;
         if (clusterCentres.size() > 1) {
-            // Angle away from the centroid of the other clusters
             double cx = 0, cz = 0;
             for (int i = 1; i < clusterCentres.size(); i++) {
                 cx += clusterCentres.get(i).getX();
@@ -191,52 +146,52 @@ public final class ClusteredRecipe implements ShapeRecipe {
         pctx.layout.setMainGateEndpoint(gateEnd);
         pctx.layout.addGatePosition(gateEnd);
 
-        // Mark cluster 0 as the town square position so the decorator
-        // and trade systems have something to anchor to. No civic ring
-        // is set — CLUSTERED has no ring concept.
+        // Mark cluster 0 as the town square position.
         pctx.layout.setTownSquarePos(main);
         pctx.layout.setTownSquareRadius(4);
-        // Phase 17 doc 04 — IRREGULAR polygon for the clustered layout.
         RecipeHelpers.installPlaza(pctx, main,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.IRREGULAR);
 
-        // ── Agricultural: distribute around the cluster ring ──────────────
-        List<VillageTypeData.StarterBuilding> agri =
-                pctx.claimByZone(BuildingZone.AGRICULTURAL, 1000);
-        if (!agri.isEmpty()) {
-            new LayoutPrimitive.RingBand(
-                    centre,
-                    pctx.density.getRing2Radius() + 8,
-                    pctx.density.getRing2Radius() + 24,
-                    BuildingZone.AGRICULTURAL, agri, allRoadsForSnap
-            ).place(pctx);
-        }
+        // ── Emit one sector per cluster (snapshot/drain pattern) ──────────
+        // Placeholder list for BuildingCircle size estimation (count only).
+        int perCluster = Math.max(3, totalBuildings / clusterCentres.size());
 
-        // ── Defensive: scatter a few near the gate road ────────────────────
-        List<VillageTypeData.StarterBuilding> defensive =
-                pctx.claimByZone(BuildingZone.DEFENSIVE, 1000);
-        if (!defensive.isEmpty()) {
-            // Place defensive near the gate end as a watch post
-            new LayoutPrimitive.BuildingCircle(
-                    gateEnd,
+        for (int i = 0; i < clusterCentres.size(); i++) {
+            BlockPos focal = clusterCentres.get(i);
+            boolean isMain = (i == 0);
+
+            List<VillageTypeData.StarterBuilding> placeholder = new ArrayList<>();
+            int copy = Math.min(perCluster, pctx.remaining.size());
+            for (int k = 0; k < copy; k++) placeholder.add(pctx.remaining.get(k));
+
+            // Synthetic road for facing context (all sides → circle wraps focal).
+            BlockPos synthRoadEnd = focal.offset(8, 0, 0);
+            List<BlockPos> synthRoad = List.of(synthRoadEnd, focal);
+
+            int clusterSnapshot = pctx.slotPoolSize();
+            LayoutPrimitive.BuildingCircle circle = new LayoutPrimitive.BuildingCircle(
+                    focal,
                     LayoutPrimitive.BuildingCircle.Mode.SCATTER,
-                    defensive,
-                    gateLine
-            ).place(pctx);
-        }
+                    placeholder,
+                    synthRoad);
+            circle.emitSlotsWithTags(pctx,
+                    isMain ? TAGS_MAIN_CLUSTER : TAGS_CLUSTER,
+                    isMain ? 60 : 40);
 
-        // ── Stragglers ─────────────────────────────────────────────────────
-        if (!pctx.remaining.isEmpty()) {
-            List<VillageTypeData.StarterBuilding> leftovers =
-                    new ArrayList<>(pctx.remaining);
-            pctx.remaining.clear();
-            new LayoutPrimitive.RingBand(
-                    centre,
-                    pctx.density.getRing1Radius(),
-                    pctx.density.getRing2Radius(),
-                    BuildingZone.RESIDENTIAL, leftovers, allRoadsForSnap
-            ).place(pctx);
+            List<PlacementSlot> clusterSlots = pctx.drainSlotsSince(clusterSnapshot);
+            if (!clusterSlots.isEmpty()) {
+                pctx.offerSector(new Sector(
+                        "clustered_cluster_" + i,
+                        isMain ? SectorRole.CIVIC_TIGHT : SectorRole.RESIDENTIAL_CLUSTER,
+                        isMain ? BuildingZone.CIVIC : BuildingZone.RESIDENTIAL,
+                        clusterSlots,
+                        isMain ? 6 : 4,
+                        true,
+                        new AddRing(8, 3),
+                        -1,
+                        null));
+            }
         }
     }
 }

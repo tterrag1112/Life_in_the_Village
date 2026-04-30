@@ -1,46 +1,67 @@
-// FILE: src/main/java/tterrag1112/life_in_the_village/Village/Planning/Primitives/RoadsideRecipe.java
 package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.ExtendAlongEdge;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.FixedGrowth;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.SectorRole;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.VillageEdgeDescriptor;
-import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadEdge;
-import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
-import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * ROADSIDE — LINEAR with one-side bias.
+ * ROADSIDE layout recipe. Phase 11.2: extends {@link BaseRecipe} and emits sectors.
  *
- * <p>All buildings sit on one side of the main road. The other side
- * is open — meant to face an edge feature like water, a cliff, or
- * dense forest. The bias direction is chosen by terrain: if water is
- * present, buildings sit AWAY from it; if ridges, away from them;
- * otherwise an arbitrary side.
+ * <p>LINEAR with one-side bias. All buildings sit on the side of the main road
+ * that faces away from an edge feature (water, cliff). The build side is
+ * terrain-driven: if water or a ridge occupies the left-perpendicular sample
+ * point, buildings flip to the right side.
  *
- * <p>Reads as: a frontier highway hamlet, a coach-stop village, a
- * settlement built up against a natural feature it doesn't engage with.
+ * <p>Emits 3 sectors: civic (CIVIC_TIGHT), residential (RESIDENTIAL_INFILL),
+ * production (RESIDENTIAL_INFILL). Both non-civic sectors grow via
+ * ExtendAlongEdge so overflow adds more one-sided slots without crossing
+ * to the feature-facing side.
  */
-public final class RoadsideRecipe implements ShapeRecipe {
+public final class RoadsideRecipe extends BaseRecipe {
+
+    // ── Sector identifiers ──────────────────────────────────────────────────
+    private static final String SECTOR_CIVIC       = "roadside_civic";
+    private static final String SECTOR_RESIDENTIAL = "roadside_residential";
+    private static final String SECTOR_PRODUCTION  = "roadside_production";
+
+    // ── Tag sets ────────────────────────────────────────────────────────────
+    private static final Set<SlotTag> TAGS_RESIDENTIAL = EnumSet.of(
+            SlotTag.RESIDENTIAL_INFILL, SlotTag.ROAD_ADJACENT, SlotTag.CIVIC_ADJACENT);
+    private static final Set<SlotTag> TAGS_PRODUCTION = EnumSet.of(
+            SlotTag.PRODUCTION_INFILL, SlotTag.ROAD_ADJACENT, SlotTag.PRODUCTION_CLUSTER);
 
     @Override
-    public void compose(PlanContext pctx) {
+    protected void composeSectors(PlanContext pctx) {
         BlockPos centre = pctx.layout.getCenter();
         TerrainProfile terrain = pctx.layout.getTerrain();
         int totalBuildings = pctx.remaining.size();
 
-        // ── Main road heading: aligned with bestFlatDir ────────────────────
+        // ── Main road heading aligned with bestFlatDir ────────────────────
         double mainDirRad = RecipeHelpers.directionRadOf(terrain.bestFlatDir());
-        double tanX = Math.cos(mainDirRad), tanZ = Math.sin(mainDirRad);
+        double tanX = Math.cos(mainDirRad);
+        double tanZ = Math.sin(mainDirRad);
 
-        int halfLength = Math.max(60, (totalBuildings * 10) + pctx.density.getRing2Radius());
+        int halfLength = Math.max(60,
+                (totalBuildings * 10) + pctx.density.getRing2Radius());
 
         BlockPos mainStart = pctx.solidSurface(new BlockPos(
                 centre.getX() + (int) Math.round(tanX * halfLength),
@@ -51,74 +72,129 @@ public final class RoadsideRecipe implements ShapeRecipe {
                 centre.getY(),
                 centre.getZ() - (int) Math.round(tanZ * halfLength)));
 
-        List<BlockPos> mainCenterline = pctx.layout.addRoad(
-                new RoadPrimitive.StraightRoad(mainStart, mainEnd, 8.0,
-                        RoadShape.RoadTier.VILLAGE_ROAD),
-                pctx.level, pctx.worldSeed);
+        int startNodeId = pctx.layout.addNode(
+                mainStart, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
+        int endNodeId = pctx.layout.addNode(
+                mainEnd, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
+
+        RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
+                mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+        int mainEdgeId = pctx.layout.addEdge(
+                startNodeId, endNodeId, mainRoad,
+                pctx.level, pctx.worldSeed, EdgeRole.SPINE);
+        List<BlockPos> mainCenterline =
+                pctx.layout.getRoadGraph().edge(mainEdgeId).centerline();
+
         pctx.layout.setMainGateEndpoint(mainEnd);
         pctx.layout.addGatePosition(mainStart);
         pctx.layout.addGatePosition(mainEnd);
 
-        // ── Determine which side is "away from feature" ────────────────────
-        // Default to left. If water or a ridge is on the left side
-        // (perpendicular to the road), flip to right.
-        double leftPerpX = -tanZ, leftPerpZ = tanX;
-        boolean buildLeft = true;
+        // ── Determine which side is "away from feature" ───────────────────
+        // sideSign: +1 = positive-perp side (right of heading in slot walk),
+        //           -1 = negative-perp side (left of heading in slot walk).
+        // Mirrors the legacy stubSpursAlongRoad ALWAYS_LEFT / ALWAYS_RIGHT logic.
+        int sideSign = determineBuildSide(pctx, centre, mainDirRad);
+
+        // ── Civic ring — linear plaza at midpoint ─────────────────────────
+        BlockPos squareMid = mainCenterline.isEmpty() ? centre
+                : mainCenterline.get(mainCenterline.size() / 2);
+        int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
+        double midTangentRad = RecipeHelpers.localTangentRad(
+                mainCenterline, mainCenterline.size() / 2);
+
+        int civicSnapshot = pctx.slotPoolSize();
+        RecipeHelpers.installLinearPlaza(pctx, squareMid,
+                PlazaPurpose.CIVIC, RecipeHelpers.cardinalFromRad(midTangentRad));
+        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
+        if (!civicSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
+                    civicSlots, civicCap, false, FixedGrowth.INSTANCE,
+                    mainEdgeId, null));
+        }
+
+        // ── One-sided residential infill ──────────────────────────────────
+        List<PlacementSlot> residentialSlots =
+                RecipeHelpers.generateOneSidedSlotsAlongCenterline(
+                        mainCenterline, mainEdgeId, TAGS_RESIDENTIAL,
+                        7, 7, 50, sideSign);
+        if (!residentialSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_RESIDENTIAL, SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.RESIDENTIAL, residentialSlots,
+                    12, true, new ExtendAlongEdge(32, 4), mainEdgeId, null));
+        }
+
+        // ── One-sided production infill ───────────────────────────────────
+        List<PlacementSlot> productionSlots =
+                RecipeHelpers.generateOneSidedSlotsAlongCenterline(
+                        mainCenterline, mainEdgeId, TAGS_PRODUCTION,
+                        12, 7, 45, sideSign);
+        if (!productionSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_PRODUCTION, SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.PRODUCTION, productionSlots,
+                    6, true, new ExtendAlongEdge(32, 3), mainEdgeId, null));
+        }
+    }
+
+    @Override
+    protected void registerAnchors(PlanContext pctx) {
+        super.registerAnchors(pctx);
+    }
+
+    /**
+     * Determines which side of the main road to build on, preserving the
+     * legacy terrain-dot-product logic but consulting {@code pctx.features}
+     * (via a 24-block perpendicular sample) as primary check.
+     *
+     * <p>Returns -1 when the legacy logic would have used ALWAYS_LEFT (stubs
+     * going left-of-heading), +1 for ALWAYS_RIGHT. The slot walk's
+     * perpendicular direction is +perpX/+perpZ, so -1 places slots to the
+     * negative-perp side (left of heading in the Minecraft XZ convention).
+     */
+    private int determineBuildSide(PlanContext pctx, BlockPos centre, double mainDirRad) {
+        // Perpendicular to the right of heading (headX=cos, headZ=sin →
+        // perpX=-sin, perpZ=cos); same as the offerRoadSlots/slot-walk
+        // convention for side=+1.
+        double perpX = -Math.sin(mainDirRad);
+        double perpZ =  Math.cos(mainDirRad);
+
+        // Sample 24 blocks to the "positive perp" side.
+        BlockPos perpSample = centre.offset(
+                (int) Math.round(perpX * 24), 0, (int) Math.round(perpZ * 24));
+
+        // If the positive-perp side has a feature, build on the negative side.
+        if (pctx.features.isOnWater(perpSample)) return -1;
+        if (pctx.features.isOnCliff(perpSample)) return -1;
+
+        // Fallback: honour legacy terrain water/ridge dot-product check.
+        TerrainProfile terrain = pctx.layout.getTerrain();
         if (terrain.hasWater()) {
             BlockPos water = terrain.waterBody().centre();
-            double waterDx = water.getX() - centre.getX();
-            double waterDz = water.getZ() - centre.getZ();
-            // Dot product: positive means water is on the left
-            if (waterDx * leftPerpX + waterDz * leftPerpZ > 0) buildLeft = false;
+            double wDx = water.getX() - centre.getX();
+            double wDz = water.getZ() - centre.getZ();
+            // Positive dot → water is on the positive-perp side → build negative.
+            if (wDx * perpX + wDz * perpZ > 0) return -1;
         } else if (terrain.hasRidges()) {
             var ridge = terrain.ridges().get(0);
             int rcx = (ridge.min().getX() + ridge.max().getX()) / 2;
             int rcz = (ridge.min().getZ() + ridge.max().getZ()) / 2;
             double rDx = rcx - centre.getX();
             double rDz = rcz - centre.getZ();
-            if (rDx * leftPerpX + rDz * leftPerpZ > 0) buildLeft = false;
+            if (rDx * perpX + rDz * perpZ > 0) return -1;
         }
 
-        // ── Town square at midpoint ────────────────────────────────────────
-        BlockPos squareMid = mainCenterline.get(mainCenterline.size() / 2);
-        int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
-        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
-        double midTangentRad = RecipeHelpers.localTangentRad(
-                mainCenterline, mainCenterline.size() / 2);
-        RecipeHelpers.installLinearPlaza(pctx, squareMid,
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .Plaza.PlazaPurpose.CIVIC,
-                RecipeHelpers.cardinalFromRad(midTangentRad));
-
-        List<List<BlockPos>> allRoads = new ArrayList<>();
-        allRoads.add(mainCenterline);
-
-        // ── Stub spurs all on one side ─────────────────────────────────────
-        List<VillageTypeData.StarterBuilding> stubBuildings =
-                RecipeHelpers.claimAndInterleaveProdResidential(pctx);
-        RecipeHelpers.SidePolicy policy = buildLeft
-                ? RecipeHelpers.SidePolicy.ALWAYS_LEFT
-                : RecipeHelpers.SidePolicy.ALWAYS_RIGHT;
-        List<List<BlockPos>> stubs = RecipeHelpers.stubSpursAlongRoad(
-                pctx, mainCenterline, stubBuildings, policy,
-                7, 5, RoadShape.RoadTier.FOOTPATH);
-        allRoads.addAll(stubs);
-
-        RecipeHelpers.rescueTownHallOnRoad(pctx, mainCenterline);
-
-        // ── Agricultural at the road ends, defensive on perimeter ──────────
-        RecipeHelpers.placeAgriculturalRing(pctx, centre, 6, 24, allRoads);
-        RecipeHelpers.placeDefensiveRing(pctx, centre, 0, 12, allRoads);
-        RecipeHelpers.placeStragglersRingBand(pctx, centre, allRoads);
+        return +1;
     }
 
-    /** Two gateways at the road's two terminal ends (designed for through-road traffic). */
+    /** Two gateways at the road's terminal ends. */
     @Override
     public List<GatewayDescriptor> describeGateways(PlanContext pctx) {
         return GatewayDescriptor.deriveFromLayout(pctx);
     }
 
-    /** Single THROUGH_VILLAGE edge along the main road, connecting the two gateways. */
+    /** Single THROUGH_VILLAGE edge along the main road. */
     @Override
     public List<VillageEdgeDescriptor> describeInternalRoads(PlanContext pctx) {
         return LinearRecipe.deriveThruRoad(pctx);
