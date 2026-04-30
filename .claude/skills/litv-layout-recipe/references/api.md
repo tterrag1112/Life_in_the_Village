@@ -1,189 +1,453 @@
-# Life in the Village — Layout API Reference
+# Life in the Village — Layout API Reference (post-Phase-10)
 
-## PlanContext Fields
+Reference for `litv-layout-recipe`. Authoritative on signatures and
+patterns; defers to `docs/placement-rework/01-PLACEMENT-ABSTRACTIONS.md`
+for the contract behind them.
+
+## 1. PlanContext
+
+### Fields
 
 | Field | Type | Use |
 |-------|------|-----|
-| `pctx.layout.getCenter()` | `BlockPos` | Village origin (town square centre) |
-| `pctx.layout.getTerrain()` | `TerrainProfile` | Full terrain snapshot |
+| `pctx.layout.getCenter()` | `BlockPos` | Village origin |
+| `pctx.layout.getTerrain()` | `TerrainProfile` | Legacy terrain snapshot — recipes prefer `pctx.features` |
+| `pctx.features` | `FeatureMap` | Hull, water polygons, cliff polygons, plaza polygons, reservations. Authoritative for feature queries. |
 | `pctx.density.getRing1Radius()` | `int` | Inner spur length guidance |
-| `pctx.density.getRing2Radius()` | `int` | Outer ring radius guidance (acts as a density multiplier — not an absolute; use as a scale input to derived geometry) |
-| `pctx.remaining` | `List<StarterBuilding>` | All unplaced buildings — do NOT claim directly; let the matcher consume |
-| `pctx.rng` | `Random` | Seeded RNG |
-| `pctx.worldSeed` | `long` | Stable world seed for road noise |
+| `pctx.density.getRing2Radius()` | `int` | Outer ring radius guidance (density scale, not absolute) |
+| `pctx.remaining` | `List<StarterBuilding>` | All unplaced buildings. **Do NOT read or claim** — the matcher consumes this after `composeSectors` returns. |
+| `pctx.rng` | `Random` | Seeded RNG. Use only for visual jitter; sector growth derives its own seeds. |
+| `pctx.worldSeed` | `long` | Stable world seed |
 | `pctx.level` | `ServerLevel` | World reference |
+| `pctx.allowRidgePlacement` | `boolean` | Set `true` early in compose if buildings may sit on ridges (HILLTOP, TERRACED). |
 
-## PlanContext Methods
+### Sector / slot API
 
 ```java
-// Add a road to the layout and get its centerline back
-List<BlockPos> centerline = pctx.layout.addRoad(primitive, pctx.level, pctx.worldSeed);
+// Emit a sector. The matcher consumes these.
+pctx.offerSector(new Sector(id, role, zone, slots, capacity,
+                            canGrow, growth, parentEdgeId, exclusionShape));
 
-// Emit road-adjacent slots along a centerline
-// spacing=6-8, perpOffset=6-8, quality=25-60 typical
-pctx.offerRoadSlots(centerline, spacing, perpOffset, tagSet, quality);
+// Read what's been offered so far (debug / introspection).
+List<Sector> sectors = pctx.offeredSectors();
+boolean any = pctx.hasSectors();
 
-// Emit a single named slot (for features: shore, peak, terrace, etc.)
-pctx.offerSlot(new PlacementSlot(pos, feedingRoad, tags, footprintBudget, qualityScore));
-
-// Snap a BlockPos to the solid surface Y
-BlockPos snapped = pctx.solidSurface(pos);
-
-// Allow buildings on ridge terrain (call early in compose() when needed)
-pctx.allowRidgePlacement = true;
-
-// Run the matcher — called by VillagePlanner after compose(); do NOT call manually
-// pctx.runMatcher();  ← do NOT call from inside compose()
+// Snapshot/drain pattern — used during the Phase 8-15 transition for
+// helpers that still write into the flat slot pool (installPlaza,
+// LayoutPrimitive.RingBand.emitSlots, etc.). Capture the slot-pool
+// size before the helper runs, then drain into a sector after.
+int snapshot = pctx.slotPoolSize();
+helperThatWritesFlatSlots(pctx);
+List<PlacementSlot> drained = pctx.drainSlotsSince(snapshot);
 ```
 
-## Road Primitives
+### Do not call
 
-All road primitives are passed to `pctx.layout.addRoad(primitive, pctx.level, pctx.worldSeed)`
-which returns the computed `List<BlockPos>` centerline.
+- `pctx.offerSlot(...)` / `pctx.offerRoadSlots(...)` — legacy flat-slot
+  path. Only used by unconverted recipes; new recipes emit sectors only.
+- `pctx.claimByZone(...)` / `pctx.claimType(...)` / `pctx.claimTownHall()`
+  — recipes never claim from `remaining`. The matcher owns that.
+- `pctx.runMatcher()` — VillagePlanner calls this after compose. Do not
+  invoke it manually.
 
-### StraightRoad
+### Surface helpers (still used)
+
 ```java
-new RoadPrimitive.StraightRoad(from, to, driftAmplitude, tier)
-// driftAmplitude: 3=subtle, 6=visible wander, 10+=don't
-```
-
-### CurvedRoad
-```java
-new RoadPrimitive.CurvedRoad(from, to, curvature, driftAmplitude, tier)
-// curvature: 0=straight, 0.15=gentle, 0.3=strong, 0.5+=near-semicircle
-```
-
-### Ring (closed loop)
-```java
-new RoadPrimitive.Ring(centre, radius, driftAmplitude, tier)
-```
-
-### Arc (partial ring, has two endpoints)
-```java
-new RoadPrimitive.Arc(centre, radius, startAngle, arcSpan, driftAmplitude, tier)
-// startAngle/arcSpan in radians; arcSpan=Math.PI for a half-ring
-```
-
-### Spur (branches off an existing road)
-```java
-new RoadPrimitive.Spur(parentCenterline, branchPointHint, directionRad, length, driftAmplitude, tier)
-// branchPointHint snaps to nearest actual point on parent
-```
-
-### Road tiers (from best to worst-looking)
-```
-RoadShape.RoadTier.MAIN_ROAD       — trunk, widest
-RoadShape.RoadTier.VILLAGE_PATH    — standard village road
-RoadShape.RoadTier.FOOTPATH        — narrow connector / stub spur
-```
-
-### Angle helpers
-```java
-RecipeHelpers.directionRadOf(TerrainAnalyzer.FlatDirection dir)  // FlatDirection → radians
-// FlatDirection values: EAST(0), SOUTH(PI/2), WEST(PI), NORTH(-PI/2)
+BlockPos snapped = pctx.solidSurface(pos);  // snap Y to MOTION_BLOCKING_NO_LEAVES
 ```
 
 ---
 
-## Layout Primitives
+## 2. Building the road graph
 
-Layout primitives call `emitSlots(pctx)` to offer slots to the matcher.
-They also have `place(pctx)` for direct building placement — do NOT use `place()`
-in matcher-compatible recipes; use `emitSlots()` instead, except for `TownSquare`
-which must call both.
+New recipes build the graph explicitly: register every node and
+capture every edge id. The legacy 3-arg `pctx.layout.addRoad(primitive,
+level, seed)` still works as a backward-compat shim (it auto-creates
+TERMINUS endpoints), but new recipes prefer `addEdge` so sector
+`parentEdgeId` wiring is unambiguous.
 
-### TownSquare
+### Spine pattern
+
 ```java
-int capacity = Math.max(6, Math.min(10, pctx.remaining.size() / 4 + 3));
-LayoutPrimitive.TownSquare square = new LayoutPrimitive.TownSquare(centre, capacity, mainCenterline);
-square.emitSlots(pctx);  // emits PRIME_CIVIC + SECONDARY_CIVIC slots
-square.place(pctx);      // sets townSquarePos, townSquareRadius, civicRingRadius; draws ring road
-// Both must be called. emitSlots() first.
+RoadShape.RoadTier tier = RoadShape.RoadTier.VILLAGE_ROAD;
 
-// After place(), civicRingRadius is set. Use the ring road outer edge to start the next road:
-// (civicRing is the building placement radius; ring road sits at civicRing-6, halfwidth=3)
-int civicRing = pctx.layout.getCivicRingRadius();
-int ringRoadOuter = Math.max(9, civicRing - 3);
+// 1. Endpoints — surface-snapped
+BlockPos gateStart = pctx.solidSurface(...);
+BlockPos gateEnd   = pctx.solidSurface(...);
+
+// 2. Register nodes; capture node ids
+int gateStartId = pctx.layout.addNode(gateStart, NodeKind.GATE,     tier);
+int gateEndId   = pctx.layout.addNode(gateEnd,   NodeKind.TERMINUS, tier);
+
+// 3. Build the primitive and add it as an edge with role + node ids
+RoadPrimitive.StraightRoad spine = new RoadPrimitive.StraightRoad(
+        gateStart, gateEnd, 4.0, tier);
+int spineEdgeId = pctx.layout.addEdge(
+        gateStartId, gateEndId, spine, pctx.level, pctx.worldSeed,
+        EdgeRole.SPINE);
+
+// 4. Centerline (if needed for slot positioning)
+RoadGraph graph = pctx.layout.getRoadGraph();
+List<BlockPos> spineCenterline = graph.edge(spineEdgeId).centerline();
+
+// 5. Tell the layout this is the main gate
+pctx.layout.setMainGateEndpoint(gateEnd);
+pctx.layout.addGatePosition(gateStart);
+pctx.layout.addGatePosition(gateEnd);
 ```
 
-### BuildingCircle
+### Spur pattern
+
 ```java
-// SCATTER = randomised spread around focal point (most common)
-// TIGHT   = buildings tangent to each other (dense cluster)
-// LOOSE   = buildings with gaps (outer clusters)
-new LayoutPrimitive.BuildingCircle(focal, Mode.SCATTER, buildings, feedingRoad)
-    .emitSlotsWithTags(pctx, tagSet, baseQuality);  // preferred over .emitSlots()
+// Mid-edge branch: snap branch point to an existing node if one is
+// close, otherwise insert a JUNCTION node.
+int branchNodeId = graph.findNearestNode(branchPos, /* slack */ 4);
+if (branchNodeId < 0) {
+    branchNodeId = pctx.layout.addNode(branchPos, NodeKind.JUNCTION, tier);
+}
+int spurEndId = pctx.layout.addNode(spurEndPos, NodeKind.TERMINUS, tier);
+
+RoadPrimitive.Spur spur = new RoadPrimitive.Spur(
+        spineCenterline, branchPos, directionRad, length, 3.0, tier);
+int spurEdgeId = pctx.layout.addEdge(
+        branchNodeId, spurEndId, spur, pctx.level, pctx.worldSeed,
+        EdgeRole.SPUR);
 ```
 
-### LinearRow
+### NodeKind values recipes commonly use
+
+| Value | Use |
+|---|---|
+| `JUNCTION` | 3+ edges meet (spur branch off a spine, ring tangent) |
+| `GATE` | Village boundary — road exits the layout here |
+| `TERMINUS` | Dead end (spur tip, isolated road end) |
+| `FOCAL` | Plaza centre, town-hall pad |
+
+`CASTLE_ANCHOR`, `MANOR_ANCHOR`, `BRIDGE_HEAD`, `SHORE_HEAD` are reserved
+for kingdom-rework / bridge-rework recipes. Don't use them in general
+recipes.
+
+### EdgeRole values
+
+| Value | Use |
+|---|---|
+| `SPINE` | Main road / trunk |
+| `SPUR` | Branches off a spine |
+| `RING` | Closed loop or arc |
+
+The matcher and the visualizer both read `EdgeRole`; pick by intent.
+
+---
+
+## 3. Sector emission patterns
+
+A `Sector` is a region of placement intent: ordered slots, a capacity
+hint, a growth strategy, and an optional parent road edge. The
+constructor:
+
 ```java
-// Buildings lined up along a heading direction
-new LayoutPrimitive.LinearRow(start, headingRad, facingSide, spacing, buildings, facingRoad)
-    .emitSlots(pctx);
-// facingSide: +1=left of heading, -1=right
+new Sector(
+    String id,                  // recipe-prefixed, stable, unique
+    SectorRole role,            // matcher peer-overflow lookup
+    BuildingZone zoneHint,      // hint, not a filter
+    List<PlacementSlot> slots,  // ordered candidate positions
+    int capacity,               // matcher prefers not to exceed; 0 = reservation
+    boolean canGrow,
+    GrowthPolicy growth,        // FixedGrowth, AddRing, AddSpur, ExtendAlongEdge
+    int parentEdgeId,           // RoadGraph edge id, -1 if floating
+    PolygonXZ exclusionShape    // null unless excluding a region from growth
+)
 ```
 
-### RingBand
+### Civic ring (fixed, around the plaza)
+
+`installPlaza` (in `RecipeHelpers`) writes civic slots into the flat
+pool. Drain them into a `CIVIC_RING` sector with `FixedGrowth`:
+
 ```java
-// Outer ring distribution (agri/defensive/stragglers)
-// Use RecipeHelpers helpers below instead of constructing directly
-new LayoutPrimitive.RingBand(centre, innerRadius, outerRadius, zone, buildings, snapRoads)
-    .place(pctx);
-// RingBand.place() is fine — it handles its own terrain resolution internally
+int snapshot = pctx.slotPoolSize();
+RecipeHelpers.installPlaza(pctx, centre, PlazaShape.CIRCLE);
+List<PlacementSlot> civicSlots = pctx.drainSlotsSince(snapshot);
+if (!civicSlots.isEmpty()) {
+    pctx.offerSector(new Sector(
+        "<recipe>_civic_ring", SectorRole.CIVIC_RING, BuildingZone.CIVIC,
+        civicSlots, /* capacity tuned to plaza size */ 8,
+        false, FixedGrowth.INSTANCE, -1, null));
+}
+```
+
+The `drainSlotsSince` snapshot/drain pattern is a Phase 8 transitional
+helper. After Phase 18 (plaza polygon ownership consolidation), plaza
+slot emission moves out of the flat pool entirely and this dance goes
+away. For now, every recipe that uses `installPlaza` does this.
+
+### Spur cluster (growable via AddSpur)
+
+```java
+List<PlacementSlot> slots = generateSlotsAlongCenterline(
+    spurCenterline, spurEdgeId, TAGS_SPUR_CLUSTER,
+    /* stride */ 6, /* perpOffset */ 7, /* quality */ 50);
+
+pctx.offerSector(new Sector(
+    "<recipe>_spur_NE", SectorRole.SPUR_CLUSTER, BuildingZone.PRODUCTION,
+    slots, /* capacity */ 5, true,
+    new AddSpur(/* spurLength */ 48, /* slotsPerSpur */ 4),
+    spurEdgeId, null));
+```
+
+### Residential infill along a spine (growable via ExtendAlongEdge)
+
+```java
+pctx.offerSector(new Sector(
+    "<recipe>_main_residential", SectorRole.RESIDENTIAL_INFILL,
+    BuildingZone.RESIDENTIAL,
+    slots, /* capacity */ 8, true,
+    new ExtendAlongEdge(/* extension */ 32, /* slotsPerRound */ 4),
+    spineEdgeId, null));
+```
+
+### Outer agri ring (growable via AddRing)
+
+```java
+pctx.offerSector(new Sector(
+    "<recipe>_outer_agri", SectorRole.AGRICULTURAL_FRINGE,
+    BuildingZone.AGRICULTURAL,
+    slots, /* capacity */ 6, true,
+    new AddRing(/* ringSpacing */ 20, /* slotCount */ 8),
+    -1, null));
+```
+
+`-1` for `parentEdgeId` is correct here — concentric rings don't hang
+off a single edge.
+
+### Reservation (no slots, no growth)
+
+```java
+pctx.offerSector(new Sector(
+    "<recipe>_market_reservation", SectorRole.GARDEN_RESERVATION,
+    BuildingZone.CIVIC,
+    List.of(), /* capacity */ 0, false,
+    FixedGrowth.INSTANCE, -1, exclusionPolygon));
+```
+
+`exclusionPolygon` is a `PolygonXZ` that other sectors' growth must
+avoid. A reservation with `capacity=0` and an empty slot list is the
+canonical "block this region from being used" pattern.
+
+### Author rules
+
+- **Id prefix.** Always start the id with the recipe name (`radial_…`,
+  `riverine_…`). Sector ids share a flat namespace across recipes.
+- **`parentEdgeId`.** `-1` only for floating sectors (rings, reservations).
+  Road-adjacent sectors must point at the right edge so growth knows
+  which road to extend.
+- **`zoneHint`.** Pick the `BuildingZone` whose buildings the sector
+  primarily wants. The matcher uses this for peer-overflow ordering;
+  it is **not** a filter.
+- **Capacity tuning.** Tune to match similar sectors in existing
+  recipes (RadialRecipe is the reference). When in doubt, err small —
+  growth picks up the slack.
+- **No overlap.** Sectors must not overlap. See
+  `docs/placement-rework/01-PLACEMENT-ABSTRACTIONS.md` § "Sector".
+
+### SectorRole values
+
+```
+CIVIC_RING, CIVIC_TIGHT,
+SPUR_CLUSTER, RESIDENTIAL_CLUSTER, RESIDENTIAL_INFILL,
+SHORE_STRIP, RAMP_TERRACE,
+AGRICULTURAL_FRINGE, DEFENSIVE_FRINGE,
+GARDEN_RESERVATION, FESTIVAL_RESERVATION, CEMETERY_RESERVATION,
+NAMED_ANCHOR
 ```
 
 ---
 
-## RecipeHelpers (static utility methods)
+## 4. Slot generation helper
+
+A pattern recipes use repeatedly to walk a centerline and emit slots
+on both sides:
 
 ```java
-// Distribute buildings round-robin into N buckets (production first)
-List<List<StarterBuilding>> buckets = RecipeHelpers.distributeToBuckets(pctx, bucketCount);
+private static List<PlacementSlot> generateSlotsAlongCenterline(
+        List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
+        int stride, int perpOffset, int quality) {
+    List<PlacementSlot> out = new ArrayList<>();
+    if (centerline.size() < 2) return out;
 
-// Plant stub spurs along a road and scatter buildings at each tip
-List<List<BlockPos>> spurs = RecipeHelpers.stubSpursAlongRoad(
-    pctx, parentCenterline, bucket,
-    RecipeHelpers.SidePolicy.ALTERNATING,  // or LEFT_ONLY / RIGHT_ONLY
-    spurLength, perpOffset,
-    RoadShape.RoadTier.FOOTPATH);
+    for (int i = stride; i < centerline.size(); i += stride) {
+        BlockPos pos  = centerline.get(i);
+        BlockPos prev = centerline.get(Math.max(0, i - 1));
+        BlockPos next = centerline.get(Math.min(centerline.size() - 1, i + 1));
 
-// Scatter a bucket of buildings around a focal point
-RecipeHelpers.scatterBucketAt(pctx, focal, bucket, feedingRoad);
+        int hx = next.getX() - prev.getX();
+        int hz = next.getZ() - prev.getZ();
+        double hl = Math.sqrt((double) hx * hx + (double) hz * hz);
+        if (hl < 1) continue;
 
-// Outer rings — claim remaining buildings of a zone and place in RingBand
-RecipeHelpers.placeAgriculturalRing(pctx, centre, innerOffset, outerOffset, allRoads);
-RecipeHelpers.placeDefensiveRing(pctx, centre, innerOffset, outerOffset, allRoads);
-RecipeHelpers.placeStragglersRingBand(pctx, centre, allRoads);
+        Rotation rot = rotationAlongRoad(prev, next);
 
-// Ensure TOWN_HALL gets placed even if no PRIME_CIVIC slot was taken
-RecipeHelpers.rescueTownHallOnAnyRoad(pctx, allRoads);
+        for (int side : new int[] { -1, +1 }) {
+            int px = (int) Math.round(-hz / hl * perpOffset * side);
+            int pz = (int) Math.round( hx / hl * perpOffset * side);
+            BlockPos slotPos = pos.offset(px, 0, pz);
 
-// Place farm cluster at a road end
-RecipeHelpers.placeFarmCluster(pctx, roadEnd, outwardAngle, farms, snapRoads);
+            out.add(new PlacementSlot(
+                slotPos, centerline, edgeId, tags,
+                /* footprintBudgetW */ 14, /* footprintBudgetL */ 14,
+                rot, quality, /* terrainPenalty */ 0));
+        }
+    }
+    return out;
+}
 ```
+
+### PlacementSlot constructor (9-arg, post-Phase-6)
+
+```java
+new PlacementSlot(
+    BlockPos pos,
+    List<BlockPos> feedingRoad,    // road centerline; null permitted
+    int feedingEdgeId,             // RoadGraph edge id, -1 if none
+    Set<SlotTag> tags,
+    int footprintBudgetW,          // along-road budget
+    int footprintBudgetL,          // across-road budget
+    Rotation forcedRotation,       // null = rotation-flexible
+    int qualityScore,
+    int terrainPenalty             // 0 = flat; matcher subtracts from score
+)
+```
+
+The legacy 5-arg constructor (`pos, feedingRoad, tags, footprintBudget,
+qualityScore`) still exists for backward compatibility with unconverted
+recipes. New recipes always use the 9-arg form so `feedingEdgeId` and
+`forcedRotation` are explicit.
 
 ---
 
-## SlotTag Reference
+## 5. Feature-aware patterns
+
+Recipes consult `pctx.features` (a `FeatureMap`) for terrain queries.
+The `FeatureMap` is built by `FeatureMap.buildPlanning(...)` before
+compose runs and refined by `refine(level)` after. XZ polygons are
+authoritative; Y values are advisory (terrain step refines them).
+
+### Feature queries
+
+```java
+FeatureMap features = pctx.features;
+
+PolygonXZ hull             = features.hull();              // village footprint
+List<WaterFeature> water   = features.waterFeatures();
+List<CliffFeature> cliffs  = features.cliffFeatures();
+List<PolygonXZ> plazas     = features.plazaPolygons();     // already-pinned plazas
+List<ReservedRegion> resvs = features.reservations();
+
+boolean inHull   = features.isInsideHull(pos);
+boolean onWater  = features.isOnWater(pos);
+boolean onCliff  = features.isOnCliff(pos);
+boolean clear    = features.isClearForFootprint(centre, w, l);
+
+PolygonXZ.Edge shore = features.nearestShoreEdge(pos);     // null if no water
+PolygonXZ.Edge cliff = features.nearestCliffEdge(pos);     // null if no cliffs
+```
+
+### Riverine: orient spine parallel to shore
+
+```java
+@Override
+protected void prepareFeatures(PlanContext pctx) {
+    PolygonXZ.Edge shore = pctx.features.nearestShoreEdge(pctx.layout.getCenter());
+    if (shore == null) return;  // composeSectors falls back below
+    // Stash the shore edge for composeSectors via a private field, or
+    // recompute it there. The PlanContext is the only state shared
+    // across the three lifecycle methods.
+}
+
+@Override
+protected void composeSectors(PlanContext pctx) {
+    PolygonXZ.Edge shore = pctx.features.nearestShoreEdge(pctx.layout.getCenter());
+    if (shore == null) {
+        PlacementFailureRecorder.record(
+            PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+            "no water detected for RIVERINE",
+            pctx.layout.getCenter(),
+            VillageTypeData.ShapeType.RIVERINE.name());
+        new RadialRecipe().compose(pctx);
+        return;
+    }
+    // Use shore.a() / shore.b() to derive a parallel heading...
+}
+```
+
+### Hilltop: locate the peak via cliff features
+
+```java
+List<CliffFeature> cliffs = pctx.features.cliffFeatures();
+if (cliffs.isEmpty()) {
+    /* fallback */ return;
+}
+CliffFeature peak = cliffs.stream()
+    .max(Comparator.comparingInt(CliffFeature::topY))
+    .orElseThrow();
+// peak.ridgeFootprint() is a PolygonXZ; centre slots inside it.
+pctx.allowRidgePlacement = true;  // peak buildings sit on the ridge
+```
+
+### Per-slot guards
+
+```java
+// Skip slots that fall on water or cliffs
+if (pctx.features.isOnWater(slotPos)) continue;
+if (pctx.features.isOnCliff(slotPos)) continue;
+
+// Stay inside the village hull (especially relevant for AddRing growth)
+if (!pctx.features.isInsideHull(slotPos)) continue;
+
+// Footprint clearance — the matcher will retry adjacent positions
+// if this fails, but pre-filtering saves cycles
+if (!pctx.features.isClearForFootprint(slotPos, w, l)) continue;
+```
+
+### Terrain fallback recorder
+
+Always record the reason before delegating:
+
+```java
+PlacementFailureRecorder.record(
+    PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+    "no <feature> detected",
+    centre, VillageTypeData.ShapeType.<SHAPE_TYPE>.name());
+new <FallbackRecipe>().compose(pctx);
+return;
+```
+
+Phase 22 introduces a declarative fallback chain. Until then, the
+in-recipe fallback shown here is the convention.
+
+---
+
+## 6. SlotTag reference
 
 Use `EnumSet.of(SlotTag.X, SlotTag.Y)` to build tag sets.
 
 | Tag | When to emit |
 |-----|-------------|
-| `PRIME_CIVIC` | TownSquare tangent positions, best quality |
-| `SECONDARY_CIVIC` | TownSquare outer ring, lower quality |
+| `PRIME_CIVIC` | Plaza-adjacent tangent positions, best quality |
+| `SECONDARY_CIVIC` | Outer civic ring, lower quality |
 | `CIVIC_ADJACENT` | Near civic area but not prime |
+| `PLAZA_ADJACENT` | Adjacent to a plaza polygon edge |
 | `PRODUCTION_CLUSTER` | Spur clusters, workshop districts |
 | `PRODUCTION_SPUR_END` | Spur tip positions |
 | `PRODUCTION_INFILL` | Road-side production infill |
 | `RESIDENTIAL_INFILL` | Standard road-side houses |
-| `RESIDENTIAL_OUTER` | Outer edge residential |
+| `RESIDENTIAL_OUTER` | Outer-edge residential |
 | `FIELD_EDGE` | Adjacent to farm plots / open land |
 | `PASTURE` | Open ground suitable for animals |
 | `WALL_ADJACENT` | Near a defensive perimeter |
 | `GATE_ADJACENT` | Near a village entrance |
 | `HIGH_GROUND` | Elevated terrain (watchtower, mine) |
-| `SHORE` | Adjacent to water body |
+| `SHORE` | Adjacent to a water body |
 | `PIER_ADJACENT` | Dock/pier slot near water |
 | `RIVER_BANK` | Along a river channel |
 | `TERRACE_EDGE` | On a slope terrace step |
@@ -194,49 +458,67 @@ Use `EnumSet.of(SlotTag.X, SlotTag.Y)` to build tag sets.
 
 ---
 
-## TerrainProfile Fields (for terrain guards and geometry decisions)
+## 7. RecipeHelpers (slimmed)
+
+The following helpers are still safe to call from sector-aware recipes:
 
 ```java
-TerrainProfile terrain = pctx.layout.getTerrain();
+// Angle conversion: FlatDirection → radians
+double rad = RecipeHelpers.directionRadOf(TerrainAnalyzer.FlatDirection.EAST);
 
-terrain.flatRatio()           // 0-1, proportion of flat ground
-terrain.waterRatio()          // 0-1, proportion of water
-terrain.steepRatio()          // 0-1, proportion of steep/ridge terrain
-terrain.treeRatio()           // 0-1, proportion with tree cover
-terrain.hasSlope()            // true if slopeDir != null && slopeMagnitude >= 6
-terrain.slopeDir()            // FlatDirection of downhill, or null
-terrain.slopeMagnitude()      // Y-drop in blocks across ~24 block radius
-terrain.waterBody()           // WaterBodyInfo or null
-terrain.waterFacingDir()      // FlatDirection toward nearest water, or null
-terrain.ridges()              // List<RidgeInfo> — terrain ridges to route around
-terrain.bestFlatDir()         // cardinal direction with most flat terrain
-terrain.heightVariance()      // maxY - minY
-terrain.flatCandidates()      // List<BlockPos> — good flat building positions
-terrain.clearingCandidates()  // List<BlockPos> — flat + no trees
+// Modulo-aware angle delta in (-π, π]
+double d = RecipeHelpers.angleDelta(a, b);
+
+// Branch-index helpers for placing spurs along a centerline
+List<Integer> idxs = RecipeHelpers.branchIndicesAlong(centerline, fractions);
+
+// Local tangent direction (radians) at centerline[idx]
+double tangentRad = RecipeHelpers.localTangentRad(centerline, idx);
+
+// Distribute pctx.remaining round-robin into N buckets
+List<List<VillageTypeData.StarterBuilding>> buckets =
+    RecipeHelpers.claimAndBucketProdResidential(pctx, bucketCount);
+
+// Plaza installer — emits civic slots into the flat pool.
+// Use the snapshot/drain pattern (section 3) to wrap into a sector.
+RecipeHelpers.installPlaza(pctx, centre, PlazaShape.CIRCLE);
 ```
 
-### WaterBodyInfo fields
-```java
-TerrainAnalyzer.WaterBodyInfo wb = terrain.waterBody();
-wb.centre()        // BlockPos centre of water mass
-wb.nearestShore()  // BlockPos closest shore to village origin
-wb.radius()        // approximate radius in blocks
-wb.blockCount()    // number of water blocks detected
-```
+**Removed from this doc** because they wrote into the flat slot pool
+or relied on the deleted rescue passes:
+
+- `placeAgriculturalRing`, `placeDefensiveRing`, `placeStragglersRingBand`
+  — replace with direct `AGRICULTURAL_FRINGE` / `DEFENSIVE_FRINGE`
+  sector emission using `AddRing` growth.
+- `rescueTownHallOnAnyRoad`, `rescueTownHallOnRoad` — the matcher's
+  town-hall pre-pass and the new growth path replace these.
+
+**May still appear in unconverted recipes** but should not be called
+from sector-aware recipes:
+
+- `stubSpursAlongRoad`, `scatterBucketAt`, `scatterBucketAtRoadEnd`
+  — these write into the flat pool. If a sector-aware recipe needs
+  similar geometry, replicate the slot-generation logic inside
+  `composeSectors` and emit a sector instead.
+- `placeFarmCluster` — Phase 17 reworks farm placement; for now,
+  prefer direct sector emission over this helper.
 
 ---
 
-## Road Non-Overlap Rules
+## 8. Road non-overlap rules
 
 **Every road piece must begin where the previous connecting piece ends.**
-Overlap causes visual artifacts and footprint conflicts. Follow these patterns:
+Overlap causes visual artifacts and footprint conflicts.
 
-### After TownSquare (civic ring road)
-`civicRingRadius` is the civic **building** placement radius, not the ring road edge.
-The ring road sits at `civicRing - 6` with a half-width of 3, so its outer edge is `civicRing - 3`.
+### After `installPlaza` (civic ring road)
+
+`civicRingRadius` is the civic **building** placement radius. The ring
+road sits at `civicRing - 6` with a half-width of 3, so its outer edge
+is `civicRing - 3`:
+
 ```java
 int civicRing = pctx.layout.getCivicRingRadius();
-int ringRoadOuter = Math.max(9, civicRing - 3); // ring road outer edge
+int ringRoadOuter = Math.max(9, civicRing - 3);
 BlockPos roadStart = pctx.solidSurface(new BlockPos(
     centre.getX() + (int) Math.round(Math.cos(dirRad) * ringRoadOuter),
     centre.getY(),
@@ -244,7 +526,9 @@ BlockPos roadStart = pctx.solidSurface(new BlockPos(
 ```
 
 ### After a Ring (explicit Ring primitive)
-A road following a ring must **start at the ring's perimeter** in the outward direction:
+
+A road following a ring must **start at the ring's perimeter**:
+
 ```java
 BlockPos roadStart = pctx.solidSurface(new BlockPos(
     ringCentre.getX() + (int) Math.round(Math.cos(dirRad) * ringRadius),
@@ -252,36 +536,35 @@ BlockPos roadStart = pctx.solidSurface(new BlockPos(
     ringCentre.getZ() + (int) Math.round(Math.sin(dirRad) * ringRadius)));
 ```
 
-A road leading **into** a ring must end at the ring's perimeter, with the ring centre offset
-a further `ringRadius` beyond the road endpoint:
-```java
-// Road endpoint lands on the ring's perimeter
-BlockPos roadEnd = ...; // last point of the incoming road
-// Ring centre is ringRadius further in the same direction
-BlockPos ringCentre = pctx.solidSurface(new BlockPos(
-    roadEnd.getX() + (int) Math.round(Math.cos(dirRad) * ringRadius),
-    roadEnd.getY(),
-    roadEnd.getZ() + (int) Math.round(Math.sin(dirRad) * ringRadius)));
-// Ring road: Ring(ringCentre, ringRadius, ...)  — perimeter meets roadEnd exactly
-```
+A road leading **into** a ring must end at the ring's perimeter, with
+the ring centre offset a further `ringRadius` beyond the road endpoint.
 
-### After a StraightRoad or Spur
+### Adding the road as an edge (canonical form)
+
 ```java
-List<BlockPos> centerline = pctx.layout.addRoad(road, pctx.level, pctx.worldSeed);
+List<BlockPos> centerline = pctx.layout.getRoadGraph()
+        .edge(edgeId).centerline();
 BlockPos roadEnd = centerline.get(centerline.size() - 1);
-// next road starts from roadEnd
+// next road's "from" node sits at roadEnd
 ```
 
-### Full dumbbell pattern (TownSquare → trunk → far ring)
+Use `pctx.layout.addEdge(fromNodeId, toNodeId, primitive, level, seed,
+role)` rather than the legacy 3-arg `addRoad(primitive, level, seed)`.
+The legacy form auto-creates two TERMINUS nodes with no `EdgeRole` —
+fine for transitional recipes, but new recipes give the caller control
+over node kinds, edge role, and the captured edge id (needed for
+`Sector.parentEdgeId`).
+
+### Full dumbbell pattern (plaza → trunk → far ring)
+
 ```java
 int civicRing     = pctx.layout.getCivicRingRadius();
 int ringRoadOuter = Math.max(9, civicRing - 3);
 int ringBRadius   = Math.max(8, pctx.density.getRing1Radius() / 2 + 4);
 int armLength     = pctx.density.getRing1Radius() + pctx.density.getRing2Radius();
 
-// Trunk: starts at ring A outer edge, ends at ring B perimeter
-BlockPos trunkStart = pctx.solidSurface(offset(centre, dirRad, ringRoadOuter));
-BlockPos trunkEnd   = pctx.solidSurface(offset(trunkStart, dirRad, armLength));
+BlockPos trunkStart  = pctx.solidSurface(offset(centre, dirRad, ringRoadOuter));
+BlockPos trunkEnd    = pctx.solidSurface(offset(trunkStart, dirRad, armLength));
 BlockPos ringBCentre = pctx.solidSurface(offset(trunkEnd, dirRad, ringBRadius));
 
 // Helper: offset(pos, angleRad, dist) = pos + (cos*dist, 0, sin*dist)
@@ -289,71 +572,7 @@ BlockPos ringBCentre = pctx.solidSurface(offset(trunkEnd, dirRad, ringBRadius));
 
 ---
 
-## Terrain Adaptation Patterns
-
-### Fallback pattern (always required)
-```java
-if (!terrain.hasSlope()) {  // or whatever your guard condition is
-    PlacementFailureRecorder.record(
-        PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
-        "no <feature> detected",
-        centre, VillageTypeData.ShapeType.<SHAPE_TYPE>.name());
-    new <FallbackRecipe>().compose(pctx);
-    return;
-}
-```
-
-### Orient main road toward best flat ground
-```java
-double mainDirRad = RecipeHelpers.directionRadOf(terrain.bestFlatDir());
-```
-
-### Orient toward water
-```java
-double waterAngle = terrain.waterFacingDir() != null
-    ? RecipeHelpers.directionRadOf(terrain.waterFacingDir())
-    : RecipeHelpers.directionRadOf(terrain.bestFlatDir());
-```
-
-### Route road perpendicular to slope (terrace-style)
-```java
-// If slope is EAST/WEST, terraces run NORTH/SOUTH and vice versa
-double slopeRad = RecipeHelpers.directionRadOf(terrain.slopeDir());
-double terraceHeading = slopeRad + Math.PI / 2;
-```
-
-### Avoid ridges in road placement
-```java
-// Default: pctx rejects ridge-blocked building positions automatically.
-// To ALLOW ridge placement (e.g. HILLTOP, TERRACED):
-pctx.allowRidgePlacement = true;
-```
-
-### Emit water-feature slots
-```java
-if (terrain.waterBody() != null) {
-    BlockPos shore = pctx.solidSurface(terrain.waterBody().nearestShore());
-    pctx.offerSlot(new PlacementSlot(
-        shore, mainCenterline,
-        EnumSet.of(SlotTag.SHORE, SlotTag.ROAD_ADJACENT),
-        16, 80));
-}
-```
-
-### Emit high-ground slots (hilltop / watchtower)
-```java
-// Sample elevation above baseY to find highest flat candidate
-terrain.flatCandidates().stream()
-    .filter(p -> p.getY() > terrain.baseY() + 4)
-    .forEach(p -> pctx.offerSlot(new PlacementSlot(
-        pctx.solidSurface(p), mainCenterline,
-        EnumSet.of(SlotTag.HIGH_GROUND, SlotTag.ROAD_ADJACENT),
-        16, 75)));
-```
-
----
-
-## Common Slot Tag Sets (as named constants in recipe files)
+## 9. Common slot tag sets (named constants)
 
 ```java
 private static final Set<SlotTag> TAGS_CIVIC =
