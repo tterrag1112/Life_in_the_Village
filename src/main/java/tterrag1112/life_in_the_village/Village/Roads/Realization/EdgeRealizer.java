@@ -6,7 +6,9 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
+import net.minecraft.util.RandomSource;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.StairwayPlacer;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
@@ -133,6 +135,8 @@ public final class EdgeRealizer {
                         UnifiedRoadPlacer.place(level, centerline, edgeMaterial, sp.tier(), edge, culture, edgePalette);
                 case RoadPrimitive.Bridge bridge ->
                         placeBridge(level, bridge);
+                case RoadPrimitive.Stairway stairway ->
+                        placeStairway(level, stairway, centerline, edge, edgeMaterial);
                 default ->
                         UnifiedRoadPlacer.place(level, centerline, edgeMaterial, edgeTier, edge, culture, edgePalette);
             };
@@ -265,6 +269,31 @@ public final class EdgeRealizer {
     private static List<BlockPos> placeBridge(ServerLevel level,
                                               RoadPrimitive.Bridge bridge) {
         return RoadRouter.placeBridge(level, bridge.from(), bridge.to());
+    }
+
+    // =========================================================================
+    // Stairway placement (Phase 13.1)
+    // =========================================================================
+
+    /**
+     * Realises a {@link RoadPrimitive.Stairway} by placing stair blocks
+     * along the (already-Y-interpolated) centerline via
+     * {@link StairwayPlacer}. The surface-paint pipeline is intentionally
+     * skipped — stairways are a deliberate alternative to flat road
+     * surface, not a layer on top of it.
+     *
+     * <p>RandomSource derived from the edge id (matching the convention
+     * used by {@code UnifiedRoadPlacer}) so re-realisation is deterministic.
+     */
+    private static List<BlockPos> placeStairway(ServerLevel level,
+                                                RoadPrimitive.Stairway stairway,
+                                                List<BlockPos> centerline,
+                                                tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge edge,
+                                                tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial material) {
+        long seed = edge.getEdgeId().getLeastSignificantBits()
+                ^ edge.getEdgeId().getMostSignificantBits();
+        RandomSource rng = RandomSource.create(seed);
+        return StairwayPlacer.place(level, centerline, material, stairway.tier(), rng);
     }
 
     // =========================================================================

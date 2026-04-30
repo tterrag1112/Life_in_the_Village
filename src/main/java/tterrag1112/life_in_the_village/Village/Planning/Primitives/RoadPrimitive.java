@@ -56,7 +56,8 @@ public sealed interface RoadPrimitive
         RoadPrimitive.Spur,
         RoadPrimitive.SmoothedPath,
         RoadPrimitive.ArmApproach,
-        RoadPrimitive.Bridge {
+        RoadPrimitive.Bridge,
+        RoadPrimitive.Stairway {
 
     /**
      * Computes the centerline of this road, snapped to the surface Y at
@@ -96,6 +97,7 @@ public sealed interface RoadPrimitive
                 case "SmoothedPath"  -> SmoothedPath.CODEC;
                 case "ArmApproach"   -> ArmApproach.CODEC;
                 case "Bridge"        -> Bridge.CODEC;
+                case "Stairway"      -> Stairway.CODEC;
                 default -> throw new IllegalArgumentException(
                         "Unknown RoadPrimitive type: '" + type + "'");
             }
@@ -601,6 +603,90 @@ public sealed interface RoadPrimitive
             // as a deliberate structure, with just enough wobble that the
             // deck endpoints don't hit obviously-gridded coordinates.
             return driftedLine(level, from, to, 1.5, seed);
+        }
+    }
+
+    // =========================================================================
+    // Stairway  (Phase 13.1)
+    // =========================================================================
+
+    /**
+     * A road primitive that climbs or descends a slope via stair-step
+     * blocks. Used where regular surface paint would produce a bumpy,
+     * unwalkable path — HILLTOP's switchback main road and TERRACED's
+     * ramps are the canonical use cases.
+     *
+     * <h3>Centerline shape</h3>
+     * The centerline is sampled along the chord from {@code from} to
+     * {@code to}. Y interpolates LINEARLY from {@code from.getY()} to
+     * {@code to.getY()} — the centerline does <em>not</em> surface-snap.
+     * This is the entire point: a stairway intentionally deviates from
+     * the natural heightmap so the realiser can place stair blocks at
+     * regular intervals.
+     *
+     * <p>The realiser ({@code EdgeRealizer}) recognises Stairway primitives
+     * and dispatches to {@code StairwayPlacer}, which fills support
+     * underneath each stair when natural ground is lower and clears
+     * headroom above when natural ground is higher.
+     *
+     * <p>Drift amplitude is small (1.0): stairway paths read better as
+     * straight than as wandering. Use a chain of multiple Stairway
+     * primitives at different angles for switchback effects, not drift.
+     *
+     * @param from stairway base (lower Y)
+     * @param to   stairway top (higher Y)
+     * @param tier road tier; governs stair material and width via the realiser
+     */
+    record Stairway(
+            BlockPos from,
+            BlockPos to,
+            RoadShape.RoadTier tier
+    ) implements RoadPrimitive {
+
+        static final MapCodec<Stairway> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                BlockPos.CODEC.fieldOf("from").forGetter(Stairway::from),
+                BlockPos.CODEC.fieldOf("to").forGetter(Stairway::to),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(Stairway::tier)
+        ).apply(i, Stairway::new));
+
+        @Override public String typeKey() { return "Stairway"; }
+
+        @Override
+        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
+            int dx = to.getX() - from.getX();
+            int dz = to.getZ() - from.getZ();
+            int dy = to.getY() - from.getY();
+            double chord = Math.sqrt(dx * dx + dz * dz);
+
+            if (chord < 1) {
+                return List.of(from);
+            }
+
+            int steps = Math.max(2, (int) Math.ceil(chord));
+            List<BlockPos> line = new ArrayList<>(steps + 1);
+
+            long seed = DriftNoise.localSeed(worldSeed, from, to);
+            double perpX = -dz / chord;
+            double perpZ =  dx / chord;
+            double driftAmp = 1.0;
+            double ampScale = Math.min(1.0, chord / 64.0);
+
+            for (int i = 0; i <= steps; i++) {
+                double t = i / (double) steps;
+                double bx = from.getX() + dx * t;
+                double bz = from.getZ() + dz * t;
+                // Y interpolates linearly — DO NOT surface-snap. The deviation
+                // from natural heightmap is the whole point of a stairway.
+                int y = (int) Math.round(from.getY() + dy * t);
+
+                double drift = DriftNoise.sample(t, seed) * driftAmp * ampScale;
+                int x = (int) Math.round(bx + perpX * drift);
+                int z = (int) Math.round(bz + perpZ * drift);
+
+                line.add(new BlockPos(x, y, z));
+            }
+            return dedupe(line);
         }
     }
 
