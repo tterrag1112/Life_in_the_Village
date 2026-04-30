@@ -20,10 +20,14 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
+
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Shared building blocks for ShapeRecipes. Most recipes follow the
@@ -606,5 +610,80 @@ public final class RecipeHelpers {
                 from.getX() + (int) Math.round(Math.cos(direction) * distance),
                 from.getY(),
                 from.getZ() + (int) Math.round(Math.sin(direction) * distance)));
+    }
+
+    // =========================================================================
+    // Centerline slot generation (Phase 11+)
+    // =========================================================================
+
+    /**
+     * Generates {@link PlacementSlot}s on both sides of a road centerline.
+     * Walks the centerline at every {@code stride} index steps and emits
+     * one slot per side (left and right) at {@code perpOffset} blocks from
+     * the road. Quality decays by 1 per stride step, floored at 5.
+     *
+     * <p>Intended as the canonical replacement for
+     * {@link PlanContext#offerRoadSlots} in recipes that emit sectors:
+     * call this, collect the list, wrap it in a {@code Sector}.
+     */
+    public static List<PlacementSlot> generateSlotsAlongCenterline(
+            List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
+            int stride, int perpOffset, int baseQuality) {
+        List<PlacementSlot> out = new ArrayList<>();
+        if (centerline == null || centerline.size() < 2) return out;
+        int q = baseQuality;
+        for (int i = stride; i < centerline.size() - 1; i += stride) {
+            BlockPos on   = centerline.get(i);
+            BlockPos prev = centerline.get(Math.max(0, i - 1));
+            BlockPos next = centerline.get(Math.min(centerline.size() - 1, i + 1));
+            int headX = Integer.signum(next.getX() - prev.getX());
+            int headZ = Integer.signum(next.getZ() - prev.getZ());
+            if (headX == 0 && headZ == 0) { headX = 1; headZ = 0; }
+            int perpX = -headZ;
+            int perpZ =  headX;
+
+            for (int side : new int[]{+1, -1}) {
+                BlockPos target = on.offset(perpX * perpOffset * side, 0,
+                                            perpZ * perpOffset * side);
+                out.add(new PlacementSlot(target, centerline, edgeId,
+                        tags, 16, 16, null, q, 0));
+            }
+            q = Math.max(5, q - 1);
+        }
+        return out;
+    }
+
+    /**
+     * Like {@link #generateSlotsAlongCenterline} but emits slots on one
+     * side only. {@code sideSign}: +1 emits on the positive-perpendicular
+     * side (same direction as {@code perpX/perpZ} in the centerline walk),
+     * -1 emits on the opposite side.
+     *
+     * <p>Used by ROADSIDE which places all buildings away from an edge
+     * feature (water, cliff) on one side of the main road.
+     */
+    public static List<PlacementSlot> generateOneSidedSlotsAlongCenterline(
+            List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
+            int stride, int perpOffset, int baseQuality, int sideSign) {
+        List<PlacementSlot> out = new ArrayList<>();
+        if (centerline == null || centerline.size() < 2) return out;
+        int q = baseQuality;
+        for (int i = stride; i < centerline.size() - 1; i += stride) {
+            BlockPos on   = centerline.get(i);
+            BlockPos prev = centerline.get(Math.max(0, i - 1));
+            BlockPos next = centerline.get(Math.min(centerline.size() - 1, i + 1));
+            int headX = Integer.signum(next.getX() - prev.getX());
+            int headZ = Integer.signum(next.getZ() - prev.getZ());
+            if (headX == 0 && headZ == 0) { headX = 1; headZ = 0; }
+            int perpX = -headZ;
+            int perpZ =  headX;
+
+            BlockPos target = on.offset(perpX * perpOffset * sideSign, 0,
+                                        perpZ * perpOffset * sideSign);
+            out.add(new PlacementSlot(target, centerline, edgeId,
+                    tags, 16, 16, null, q, 0));
+            q = Math.max(5, q - 1);
+        }
+        return out;
     }
 }

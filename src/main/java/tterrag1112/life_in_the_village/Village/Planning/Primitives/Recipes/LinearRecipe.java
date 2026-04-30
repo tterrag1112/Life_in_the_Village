@@ -1,50 +1,72 @@
-// FILE: src/main/java/tterrag1112/life_in_the_village/Village/Planning/Primitives/LinearRecipe.java
 package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.ExtendAlongEdge;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.FixedGrowth;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.SectorRole;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.VillageEdgeDescriptor;
-import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadEdge;
-import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * LINEAR layout recipe.
+ * LINEAR layout recipe. Phase 11.2: extends {@link BaseRecipe} and emits sectors.
  *
  * <p>A village strung along a single main street with the town square
- * as a widening at the midpoint. Buildings sit on both sides of the
- * street via short perpendicular stub spurs. No outer ring, no radial
- * spurs — the main road IS the village. Use for trade outposts, trail
- * hamlets, mining camps, anywhere that grew along a route.
+ * at the midpoint. Buildings sit on both sides of the street (generated
+ * as sectors along the centerline). Farm clusters cap each road end.
+ *
+ * <p>Road geometry unchanged from the pre-conversion version. What changed:
+ * stub-spur + BuildingCircle.place() is replaced by two sectors on the main
+ * centerline (residential and production), each growing via ExtendAlongEdge.
  */
-public final class LinearRecipe implements ShapeRecipe {
+public final class LinearRecipe extends BaseRecipe {
+
+    // ── Sector identifiers ──────────────────────────────────────────────────
+    private static final String SECTOR_CIVIC       = "linear_civic";
+    private static final String SECTOR_RESIDENTIAL = "linear_main_residential";
+    private static final String SECTOR_PRODUCTION  = "linear_main_production";
+    private static final String SECTOR_FARM_START  = "linear_farm_start";
+    private static final String SECTOR_FARM_END    = "linear_farm_end";
+
+    // ── Tag sets ────────────────────────────────────────────────────────────
+    private static final Set<SlotTag> TAGS_MAIN_RESIDENTIAL = EnumSet.of(
+            SlotTag.RESIDENTIAL_INFILL, SlotTag.ROAD_ADJACENT, SlotTag.CIVIC_ADJACENT);
+    private static final Set<SlotTag> TAGS_MAIN_PRODUCTION = EnumSet.of(
+            SlotTag.PRODUCTION_INFILL, SlotTag.ROAD_ADJACENT, SlotTag.PRODUCTION_CLUSTER);
+    private static final Set<SlotTag> TAGS_END_FARM = EnumSet.of(
+            SlotTag.FIELD_EDGE, SlotTag.PASTURE, SlotTag.RESIDENTIAL_OUTER);
 
     @Override
-    public void compose(PlanContext pctx) {
+    protected void composeSectors(PlanContext pctx) {
         BlockPos origin = pctx.layout.getCenter();
         TerrainProfile terrain = pctx.layout.getTerrain();
-
         int totalBuildings = pctx.remaining.size();
 
-        // ── Main road direction = best flat direction ──────────────────────
-        double mainDirRad = directionRadOf(terrain.bestFlatDir());
+        // ── Main road ─────────────────────────────────────────────────────
+        double mainDirRad = RecipeHelpers.directionRadOf(terrain.bestFlatDir());
         double tanX = Math.cos(mainDirRad);
         double tanZ = Math.sin(mainDirRad);
 
-        // ── Main road length: scales hard with building count ──────────────
-        // Each side of the street holds totalBuildings/2 stubs at ~10
-        // block intervals, so the road needs to be at least that long
-        // plus tails on each end.
+        // Scale with building count: each side needs ~10 blocks per building.
         int halfLength = Math.max(60,
                 (totalBuildings * 10) + pctx.density.getRing2Radius());
 
@@ -57,172 +79,117 @@ public final class LinearRecipe implements ShapeRecipe {
                 origin.getY(),
                 origin.getZ() - (int) Math.round(tanZ * halfLength)));
 
+        int startNodeId = pctx.layout.addNode(
+                mainStart, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
+        int endNodeId = pctx.layout.addNode(
+                mainEnd, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
+
         RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
                 mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
-        List<BlockPos> mainCenterline = pctx.layout.addRoad(
-                mainRoad, pctx.level, pctx.worldSeed);
+        int mainEdgeId = pctx.layout.addEdge(
+                startNodeId, endNodeId, mainRoad,
+                pctx.level, pctx.worldSeed, EdgeRole.SPINE);
+        List<BlockPos> mainCenterline =
+                pctx.layout.getRoadGraph().edge(mainEdgeId).centerline();
 
-        // Gate endpoint = whichever end is closer to the world spawn-ish
-        // direction. For now just pick mainEnd; trade routes will work either way.
         pctx.layout.setMainGateEndpoint(mainEnd);
         pctx.layout.addGatePosition(mainStart);
         pctx.layout.addGatePosition(mainEnd);
 
-        // ── Town square at the midpoint ────────────────────────────────────
-        BlockPos squareMid = mainCenterline.get(mainCenterline.size() / 2);
-
-        // Tight civic capacity — civic forms a small cluster right
-        // around the square, the rest of the village hangs off stubs.
+        // ── Civic ring — linear plaza at midpoint ─────────────────────────
+        BlockPos squareMid = mainCenterline.isEmpty() ? origin
+                : mainCenterline.get(mainCenterline.size() / 2);
         int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
-        // Phase 18 doc 04 — polygon plaza handles all civic / layout setup.
+
+        int civicSnapshot = pctx.slotPoolSize();
         RecipeHelpers.installLinearPlaza(pctx, squareMid,
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .Plaza.PlazaPurpose.CIVIC,
-                RecipeHelpers.cardinalFromRad(mainDirRad));
-
-        List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
-        allRoadsForSnap.add(mainCenterline);
-
-        // ── Production + residential as alternating-side stubs ─────────────
-        List<VillageTypeData.StarterBuilding> production =
-                pctx.claimByZone(BuildingZone.PRODUCTION, 1000);
-        List<VillageTypeData.StarterBuilding> residential =
-                pctx.claimByZone(BuildingZone.RESIDENTIAL, 1000);
-
-        List<VillageTypeData.StarterBuilding> stubBuildings = new ArrayList<>();
-        // Interleave production and residential so the street isn't all
-        // shops on one end and houses on the other
-        int p = 0, r = 0;
-        while (p < production.size() || r < residential.size()) {
-            if (p < production.size()) stubBuildings.add(production.get(p++));
-            if (r < residential.size()) stubBuildings.add(residential.get(r++));
+                PlazaPurpose.CIVIC, RecipeHelpers.cardinalFromRad(mainDirRad));
+        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
+        if (!civicSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
+                    civicSlots, civicCap, false, FixedGrowth.INSTANCE,
+                    mainEdgeId, null));
         }
 
-        // Stub spacing: distribute stubs evenly along the road, skipping
-        // a margin around the square so the civic cluster has breathing room
-        int squareIdx = mainCenterline.size() / 2;
-        int squareMargin = Math.max(8, mainCenterline.size() / 8);
-        int usableStart = 4;
-        int usableEnd = mainCenterline.size() - 4;
-
-        int stubCount = stubBuildings.size();
-        if (stubCount > 0) {
-            // Build a list of valid centerline indices avoiding the square margin
-            List<Integer> stubIndices = new ArrayList<>();
-            int leftCount = stubCount / 2;
-            int rightCount = stubCount - leftCount;
-            // Left of square
-            for (int i = 0; i < leftCount; i++) {
-                int range = (squareIdx - squareMargin) - usableStart;
-                if (range <= 0) break;
-                int idx = usableStart + (range * i) / Math.max(1, leftCount);
-                stubIndices.add(idx);
-            }
-            // Right of square
-            for (int i = 0; i < rightCount; i++) {
-                int range = usableEnd - (squareIdx + squareMargin);
-                if (range <= 0) break;
-                int idx = (squareIdx + squareMargin) + (range * i) / Math.max(1, rightCount);
-                stubIndices.add(idx);
-            }
-
-            // Place each building on an alternating side via a 6-block stub
-            for (int i = 0; i < stubBuildings.size() && i < stubIndices.size(); i++) {
-                int idx = stubIndices.get(i);
-                BlockPos branchHint = mainCenterline.get(idx);
-                boolean leftSide = (i & 1) == 0;
-                double stubAngle = mainDirRad + (leftSide ? -Math.PI / 2 : Math.PI / 2);
-                // Small jitter so not laser-perpendicular
-                stubAngle += (pctx.rng.nextDouble() - 0.5) * 0.3;
-
-                int stubLength = 6 + pctx.rng.nextInt(4);
-                RoadPrimitive.Spur stub = new RoadPrimitive.Spur(
-                        mainCenterline,
-                        branchHint,
-                        stubAngle,
-                        stubLength,
-                        1.5,
-                        RoadShape.RoadTier.FOOTPATH);
-                List<BlockPos> stubCenterline = pctx.layout.addRoad(
-                        stub, pctx.level, pctx.worldSeed);
-                allRoadsForSnap.add(stubCenterline);
-
-                BlockPos focal = stubCenterline.get(stubCenterline.size() - 1);
-                List<VillageTypeData.StarterBuilding> single =
-                        List.of(stubBuildings.get(i));
-                new LayoutPrimitive.BuildingCircle(
-                        focal,
-                        LayoutPrimitive.BuildingCircle.Mode.SCATTER,
-                        single,
-                        stubCenterline
-                ).place(pctx);
-            }
+        // ── Both-side residential infill along the main road ─────────────
+        List<PlacementSlot> residentialSlots =
+                RecipeHelpers.generateSlotsAlongCenterline(
+                        mainCenterline, mainEdgeId, TAGS_MAIN_RESIDENTIAL,
+                        8, 7, 50);
+        if (!residentialSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_RESIDENTIAL, SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.RESIDENTIAL, residentialSlots,
+                    12, true, new ExtendAlongEdge(32, 4), mainEdgeId, null));
         }
 
-        // ── Agricultural at the two ends of the main road ──────────────────
-        List<VillageTypeData.StarterBuilding> agri =
-                pctx.claimByZone(BuildingZone.AGRICULTURAL, 1000);
-        if (!agri.isEmpty()) {
-            // Split between the two ends
-            int half = (agri.size() + 1) / 2;
-            placeFarmCluster(pctx, mainStart, mainDirRad + Math.PI,
-                    agri.subList(0, half), allRoadsForSnap);
-            if (half < agri.size()) {
-                placeFarmCluster(pctx, mainEnd, mainDirRad,
-                        agri.subList(half, agri.size()), allRoadsForSnap);
-            }
+        // ── Both-side production infill along the main road ───────────────
+        List<PlacementSlot> productionSlots =
+                RecipeHelpers.generateSlotsAlongCenterline(
+                        mainCenterline, mainEdgeId, TAGS_MAIN_PRODUCTION,
+                        12, 7, 45);
+        if (!productionSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_PRODUCTION, SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.PRODUCTION, productionSlots,
+                    6, true, new ExtendAlongEdge(32, 3), mainEdgeId, null));
         }
 
-        // ── Defensive: one at each end of the main road as gatehouses ──────
-        List<VillageTypeData.StarterBuilding> defensive =
-                pctx.claimByZone(BuildingZone.DEFENSIVE, 1000);
-        if (!defensive.isEmpty()) {
-            new LayoutPrimitive.RingBand(
-                    origin,
-                    halfLength - 8, halfLength + 4,
-                    BuildingZone.DEFENSIVE, defensive, allRoadsForSnap
-            ).place(pctx);
+        // ── Farm clusters at each end ─────────────────────────────────────
+        List<PlacementSlot> farmStart = generateFarmCluster(
+                pctx, mainStart, mainDirRad + Math.PI, mainEdgeId);
+        if (!farmStart.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_FARM_START, SectorRole.AGRICULTURAL_FRINGE,
+                    BuildingZone.AGRICULTURAL, farmStart,
+                    4, true, new AddRing(12, 4), mainEdgeId, null));
         }
 
-        // ── Stragglers: just snap to the main road ─────────────────────────
-        if (!pctx.remaining.isEmpty()) {
-            List<VillageTypeData.StarterBuilding> leftovers =
-                    new ArrayList<>(pctx.remaining);
-            pctx.remaining.clear();
-            new LayoutPrimitive.RingBand(
-                    origin,
-                    8, halfLength,
-                    BuildingZone.RESIDENTIAL, leftovers, allRoadsForSnap
-            ).place(pctx);
+        List<PlacementSlot> farmEnd = generateFarmCluster(
+                pctx, mainEnd, mainDirRad, mainEdgeId);
+        if (!farmEnd.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    SECTOR_FARM_END, SectorRole.AGRICULTURAL_FRINGE,
+                    BuildingZone.AGRICULTURAL, farmEnd,
+                    4, true, new AddRing(12, 4), mainEdgeId, null));
         }
     }
 
-    /** Places a small cluster of farm buildings extending past the road's end. */
-    private void placeFarmCluster(PlanContext pctx, BlockPos roadEnd, double outwardAngle,
-                                  List<VillageTypeData.StarterBuilding> farms,
-                                  List<List<BlockPos>> snapRoads) {
-        if (farms.isEmpty()) return;
-        BlockPos focal = new BlockPos(
-                roadEnd.getX() + (int) Math.round(Math.cos(outwardAngle) * 16),
-                roadEnd.getY(),
-                roadEnd.getZ() + (int) Math.round(Math.sin(outwardAngle) * 16));
-        focal = pctx.solidSurface(focal);
+    /** 5 farm slots in a cluster 16 blocks past the road's end. */
+    private static List<PlacementSlot> generateFarmCluster(
+            PlanContext pctx, BlockPos roadEnd, double outwardAngle, int parentEdgeId) {
+        List<PlacementSlot> slots = new ArrayList<>();
+        BlockPos focal = pctx.solidSurface(roadEnd.offset(
+                (int) Math.round(Math.cos(outwardAngle) * 16), 0,
+                (int) Math.round(Math.sin(outwardAngle) * 16)));
 
-        new LayoutPrimitive.BuildingCircle(
-                focal,
-                LayoutPrimitive.BuildingCircle.Mode.SCATTER,
-                farms,
-                snapRoads.get(0) // main road for facing
-        ).place(pctx);
+        for (int i = 0; i < 5; i++) {
+            double angle = 2 * Math.PI * i / 5;
+            BlockPos slotPos = pctx.solidSurface(focal.offset(
+                    (int) Math.round(Math.cos(angle) * 8), 0,
+                    (int) Math.round(Math.sin(angle) * 8)));
+            if (pctx.features.isOnWater(slotPos)) continue;
+            if (pctx.features.isOnCliff(slotPos)) continue;
+            slots.add(new PlacementSlot(
+                    slotPos, List.of(focal), parentEdgeId,
+                    TAGS_END_FARM, 14, 14, null, 30, 0));
+        }
+        return slots;
     }
 
-    /** Two gateways: PRIMARY at mainEnd (main gate), SIDE at mainStart (tail end). */
+    @Override
+    protected void registerAnchors(PlanContext pctx) {
+        super.registerAnchors(pctx);
+    }
+
+    /** Two gateways: PRIMARY at mainEnd, SIDE at mainStart. */
     @Override
     public List<GatewayDescriptor> describeGateways(PlanContext pctx) {
         return GatewayDescriptor.deriveFromLayout(pctx);
     }
 
-    /** Single THROUGH_VILLAGE edge along the main street, connecting the two gateways. */
+    /** Single THROUGH_VILLAGE edge along the main street. */
     @Override
     public List<VillageEdgeDescriptor> describeInternalRoads(PlanContext pctx) {
         return deriveThruRoad(pctx);
@@ -238,10 +205,9 @@ public final class LinearRecipe implements ShapeRecipe {
         List<BlockPos> best = findBestCenterline(cls, a, b);
         if (best == null || best.isEmpty()) return List.of();
 
-        // Orient: first point closest to a
         boolean rev = best.get(0).distSqr(b) < best.get(0).distSqr(a);
         List<BlockPos> oriented;
-        if (rev) { oriented = new ArrayList<>(best); java.util.Collections.reverse(oriented); }
+        if (rev) { oriented = new ArrayList<>(best); Collections.reverse(oriented); }
         else oriented = best;
 
         return List.of(new VillageEdgeDescriptor(a, b, oriented,
@@ -256,20 +222,12 @@ public final class LinearRecipe implements ShapeRecipe {
         for (List<BlockPos> cl : cls) {
             if (cl.size() < 2) continue;
             BlockPos s = cl.get(0), e = cl.get(cl.size() - 1);
-            double score = Math.min(s.distSqr(a) + e.distSqr(b), s.distSqr(b) + e.distSqr(a));
+            double score = Math.min(s.distSqr(a) + e.distSqr(b),
+                                    s.distSqr(b) + e.distSqr(a));
             if (score < bestScore || (score == bestScore && cl.size() > bestLen)) {
                 bestScore = score; best = cl; bestLen = cl.size();
             }
         }
         return best;
-    }
-
-    private static double directionRadOf(TerrainAnalyzer.FlatDirection dir) {
-        return switch (dir) {
-            case EAST  -> 0;
-            case SOUTH -> Math.PI / 2;
-            case WEST  -> Math.PI;
-            case NORTH -> -Math.PI / 2;
-        };
     }
 }
