@@ -109,7 +109,8 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
                     civicSlots, civicCap, false, FixedGrowth.INSTANCE,
-                    mainEdgeId, null));
+                    mainEdgeId, null,
+                    32));
         }
 
         // ── Both-side residential infill along the main road ─────────────
@@ -121,7 +122,8 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_RESIDENTIAL, SectorRole.RESIDENTIAL_INFILL,
                     BuildingZone.RESIDENTIAL, residentialSlots,
-                    12, true, new ExtendAlongEdge(32, 4), mainEdgeId, null));
+                    12, true, new ExtendAlongEdge(32, 4), mainEdgeId, null,
+                    16));
         }
 
         // ── Both-side production infill along the main road ───────────────
@@ -133,7 +135,8 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_PRODUCTION, SectorRole.RESIDENTIAL_INFILL,
                     BuildingZone.PRODUCTION, productionSlots,
-                    6, true, new ExtendAlongEdge(32, 3), mainEdgeId, null));
+                    6, true, new ExtendAlongEdge(32, 3), mainEdgeId, null,
+                    16));
         }
 
         // ── Farm clusters at each end ─────────────────────────────────────
@@ -143,7 +146,8 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_FARM_START, SectorRole.AGRICULTURAL_FRINGE,
                     BuildingZone.AGRICULTURAL, farmStart,
-                    4, true, new AddRing(12, 4), mainEdgeId, null));
+                    4, true, new AddRing(12, 4), mainEdgeId, null,
+                    18));
         }
 
         List<PlacementSlot> farmEnd = generateFarmCluster(
@@ -152,7 +156,8 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_FARM_END, SectorRole.AGRICULTURAL_FRINGE,
                     BuildingZone.AGRICULTURAL, farmEnd,
-                    4, true, new AddRing(12, 4), mainEdgeId, null));
+                    4, true, new AddRing(12, 4), mainEdgeId, null,
+                    18));
         }
     }
 

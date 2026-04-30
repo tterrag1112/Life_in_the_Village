@@ -21,8 +21,9 @@ import java.util.Set;
  *
  * <p>Phase 6 added {@code feedingEdgeId}, {@code footprintBudgetW},
  * {@code footprintBudgetL}, {@code forcedRotation}, and
- * {@code terrainPenalty}. The legacy 5-arg constructor stays valid;
- * see {@link #PlacementSlot(BlockPos, List, Set, int, int)}.
+ * {@code terrainPenalty}. Fix-up Phase A added {@code maxDriftBlocks}.
+ * The legacy 5-arg constructor stays valid; see
+ * {@link #PlacementSlot(BlockPos, List, Set, int, int)}.
  *
  * @param pos             ideal target position; terrain resolution may nudge it
  * @param feedingRoad     road centerline used to choose rotation; may be null
@@ -34,6 +35,9 @@ import java.util.Set;
  * @param qualityScore    layout's own ranking among peers with the same tag
  *                        class (higher = better); typically 0–100
  * @param terrainPenalty  0 = flat; matcher subtracts from score (Phase 10)
+ * @param maxDriftBlocks  perturbation bound: tryCommitWithRetries will
+ *                        never commit at a position more than this many
+ *                        blocks from {@code pos}. Default 6.
  */
 public record PlacementSlot(BlockPos pos,
                             List<BlockPos> feedingRoad,
@@ -43,19 +47,32 @@ public record PlacementSlot(BlockPos pos,
                             int footprintBudgetL,
                             Rotation forcedRotation,
                             int qualityScore,
-                            int terrainPenalty) {
+                            int terrainPenalty,
+                            int maxDriftBlocks) {
     public PlacementSlot {
         tags = tags == null ? EnumSet.noneOf(SlotTag.class)
                 : EnumSet.copyOf(tags);
     }
 
-    /** Backward-compat 5-arg constructor for code not yet migrated. */
+    /** Backward-compat 9-arg constructor. Defaults {@code maxDriftBlocks=6}. */
+    public PlacementSlot(BlockPos pos, List<BlockPos> feedingRoad,
+                         int feedingEdgeId, Set<SlotTag> tags,
+                         int footprintBudgetW, int footprintBudgetL,
+                         Rotation forcedRotation, int qualityScore,
+                         int terrainPenalty) {
+        this(pos, feedingRoad, feedingEdgeId, tags,
+             footprintBudgetW, footprintBudgetL,
+             forcedRotation, qualityScore, terrainPenalty, 6);
+    }
+
+    /** Backward-compat 5-arg constructor for code not yet migrated.
+     *  Defaults {@code maxDriftBlocks=6}. */
     public PlacementSlot(BlockPos pos, List<BlockPos> feedingRoad,
                          Set<SlotTag> tags, int footprintBudget,
                          int qualityScore) {
         this(pos, feedingRoad, -1, tags,
              footprintBudget, footprintBudget,
-             null, qualityScore, 0);
+             null, qualityScore, 0, 6);
     }
 
     public boolean hasAll(Set<SlotTag> required) {

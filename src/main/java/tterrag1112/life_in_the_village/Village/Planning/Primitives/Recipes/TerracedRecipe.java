@@ -216,7 +216,8 @@ public final class TerracedRecipe extends BaseRecipe {
                 false,
                 FixedGrowth.INSTANCE,
                 middleTerrace.edgeId,
-                null));
+                null,
+                32));
 
         // ── A sector per terrace ──────────────────────────────────────────
         // Tier the sectors by terrace index: top = upper (civic/production
@@ -272,7 +273,8 @@ public final class TerracedRecipe extends BaseRecipe {
                     true,
                     new ExtendAlongEdge(28, 4),
                     t.edgeId,
-                    null));
+                    null,
+                    16));
         }
 
         // ── Base agricultural ring (downhill of the bottom terrace) ───────
@@ -299,7 +301,8 @@ public final class TerracedRecipe extends BaseRecipe {
                 true,
                 new AddRing(14, 6),
                 -1,
-                null));
+                null,
+                18));
     }
 
     /** Bookkeeping holder for each terrace's identity in the road graph. */

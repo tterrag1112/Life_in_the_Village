@@ -110,7 +110,8 @@ public final class RoadsideRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
                     civicSlots, civicCap, false, FixedGrowth.INSTANCE,
-                    mainEdgeId, null));
+                    mainEdgeId, null,
+                    32));
         }
 
         // ── One-sided residential infill ──────────────────────────────────
@@ -122,7 +123,8 @@ public final class RoadsideRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_RESIDENTIAL, SectorRole.RESIDENTIAL_INFILL,
                     BuildingZone.RESIDENTIAL, residentialSlots,
-                    12, true, new ExtendAlongEdge(32, 4), mainEdgeId, null));
+                    12, true, new ExtendAlongEdge(32, 4), mainEdgeId, null,
+                    16));
         }
 
         // ── One-sided production infill ───────────────────────────────────
@@ -134,7 +136,8 @@ public final class RoadsideRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_PRODUCTION, SectorRole.RESIDENTIAL_INFILL,
                     BuildingZone.PRODUCTION, productionSlots,
-                    6, true, new ExtendAlongEdge(32, 3), mainEdgeId, null));
+                    6, true, new ExtendAlongEdge(32, 3), mainEdgeId, null,
+                    16));
         }
     }
 

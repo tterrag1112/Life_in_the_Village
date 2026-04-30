@@ -617,21 +617,100 @@ public final class RecipeHelpers {
     // =========================================================================
 
     /**
-     * Generates {@link PlacementSlot}s on both sides of a road centerline.
-     * Walks the centerline at every {@code stride} index steps and emits
-     * one slot per side (left and right) at {@code perpOffset} blocks from
-     * the road. Quality decays by 1 per stride step, floored at 5.
+     * Generates {@link PlacementSlot}s on both sides of a road centerline
+     * with a caller-specified perpendicular offset. Both sides per stride.
+     * Quality decays by 1 per stride step, floored at 5.
      *
-     * <p>Intended as the canonical replacement for
-     * {@link PlanContext#offerRoadSlots} in recipes that emit sectors:
-     * call this, collect the list, wrap it in a {@code Sector}.
+     * <p>Legacy 6-arg form. Footprint budget defaults to 16, drift bound to 6.
+     * Callers needing footprint-aware sizing (e.g. civic sectors that host
+     * a 29×29 town hall) should use the 9-arg overload below.
      */
     public static List<PlacementSlot> generateSlotsAlongCenterline(
             List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
             int stride, int perpOffset, int baseQuality) {
+        return generateSlotsAlongCenterlineImpl(
+                centerline, edgeId, tags, stride, perpOffset,
+                16, 16, baseQuality, 6, +1, true);
+    }
+
+    /**
+     * Footprint-aware slot generation. Computes perpendicular offset from
+     * {@code expectedMaxFootprint} and the parent road's geometry so the
+     * largest building this sector hosts can sit clear of the road's
+     * reserved width.
+     *
+     * <p>{@code perpOffset = roadHalfWidth + ceil(expectedMaxFootprint/2) + clearance}.
+     * For a VILLAGE_ROAD (halfWidth=3) sector hosting a 29×29 town hall
+     * with 2-block clearance, that's 3 + 15 + 2 = 20 blocks.
+     *
+     * @param expectedMaxFootprint largest footprint this sector will host;
+     *                             the slot's {@code footprintBudgetW/L}
+     *                             is set to this value too
+     * @param roadHalfWidth        reserved half-width of the parent road tier
+     * @param clearance            additional buffer between building edge
+     *                             and road reserve
+     * @param maxDriftBlocks       perturbation bound for these slots
+     */
+    public static List<PlacementSlot> generateSlotsAlongCenterline(
+            List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
+            int stride, int expectedMaxFootprint, int roadHalfWidth,
+            int clearance, int baseQuality, int maxDriftBlocks) {
+        int perpOffset = roadHalfWidth
+                + (expectedMaxFootprint + 1) / 2
+                + clearance;
+        return generateSlotsAlongCenterlineImpl(
+                centerline, edgeId, tags, stride, perpOffset,
+                expectedMaxFootprint, expectedMaxFootprint,
+                baseQuality, maxDriftBlocks, +1, true);
+    }
+
+    /**
+     * Like {@link #generateSlotsAlongCenterline} but emits slots on one
+     * side only. {@code sideSign}: +1 emits on the positive-perpendicular
+     * side (same direction as {@code perpX/perpZ} in the centerline walk),
+     * -1 emits on the opposite side.
+     *
+     * <p>Legacy 7-arg form. Footprint budget defaults to 16, drift bound to 6.
+     */
+    public static List<PlacementSlot> generateOneSidedSlotsAlongCenterline(
+            List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
+            int stride, int perpOffset, int baseQuality, int sideSign) {
+        return generateSlotsAlongCenterlineImpl(
+                centerline, edgeId, tags, stride, perpOffset,
+                16, 16, baseQuality, 6, sideSign, false);
+    }
+
+    /**
+     * Footprint-aware one-sided slot generation. Mirror of the
+     * 9-arg {@link #generateSlotsAlongCenterline} with a side selector.
+     */
+    public static List<PlacementSlot> generateOneSidedSlotsAlongCenterline(
+            List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
+            int stride, int expectedMaxFootprint, int roadHalfWidth,
+            int clearance, int baseQuality, int maxDriftBlocks,
+            int sideSign) {
+        int perpOffset = roadHalfWidth
+                + (expectedMaxFootprint + 1) / 2
+                + clearance;
+        return generateSlotsAlongCenterlineImpl(
+                centerline, edgeId, tags, stride, perpOffset,
+                expectedMaxFootprint, expectedMaxFootprint,
+                baseQuality, maxDriftBlocks, sideSign, false);
+    }
+
+    /**
+     * Shared inner walker for centerline slot generation. {@code bothSides=true}
+     * emits +1 and -1 perpendicular slots; {@code bothSides=false} emits
+     * only the {@code sideSign} side.
+     */
+    private static List<PlacementSlot> generateSlotsAlongCenterlineImpl(
+            List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
+            int stride, int perpOffset, int footprintW, int footprintL,
+            int baseQuality, int maxDriftBlocks, int sideSign, boolean bothSides) {
         List<PlacementSlot> out = new ArrayList<>();
         if (centerline == null || centerline.size() < 2) return out;
         int q = baseQuality;
+        int[] sides = bothSides ? new int[]{+1, -1} : new int[]{sideSign};
         for (int i = stride; i < centerline.size() - 1; i += stride) {
             BlockPos on   = centerline.get(i);
             BlockPos prev = centerline.get(Math.max(0, i - 1));
@@ -642,11 +721,12 @@ public final class RecipeHelpers {
             int perpX = -headZ;
             int perpZ =  headX;
 
-            for (int side : new int[]{+1, -1}) {
+            for (int side : sides) {
                 BlockPos target = on.offset(perpX * perpOffset * side, 0,
                                             perpZ * perpOffset * side);
                 out.add(new PlacementSlot(target, centerline, edgeId,
-                        tags, 16, 16, null, q, 0));
+                        tags, footprintW, footprintL,
+                        null, q, 0, maxDriftBlocks));
             }
             q = Math.max(5, q - 1);
         }
@@ -662,11 +742,26 @@ public final class RecipeHelpers {
      * <p>Radius is varied per slot so slots don't all sit on a single
      * circle — they form a band rather than a ring. Quality decays by 2
      * per slot, floored at 10.
+     *
+     * <p>Legacy 7-arg form. Footprint budget defaults to 14, drift bound to 6.
      */
     public static List<PlacementSlot> generateRingSlots(
             BlockPos centre, int innerRadius, int outerRadius,
             Set<SlotTag> tags, int slotCount, int baseQuality,
             PlanContext pctx) {
+        return generateRingSlots(centre, innerRadius, outerRadius, tags,
+                slotCount, baseQuality, pctx, 14, 6);
+    }
+
+    /**
+     * Footprint-aware ring slots. Ring slots don't have an inherent road,
+     * so {@code roadHalfWidth} and {@code clearance} aren't meaningful;
+     * this overload only carries the footprint budget and drift bound.
+     */
+    public static List<PlacementSlot> generateRingSlots(
+            BlockPos centre, int innerRadius, int outerRadius,
+            Set<SlotTag> tags, int slotCount, int baseQuality,
+            PlanContext pctx, int expectedMaxFootprint, int maxDriftBlocks) {
         List<PlacementSlot> out = new ArrayList<>();
         if (slotCount <= 0) return out;
         int span = Math.max(1, outerRadius - innerRadius);
@@ -679,42 +774,9 @@ public final class RecipeHelpers {
                     centre.getY(),
                     centre.getZ() + (int) Math.round(Math.sin(angle) * r)));
             out.add(new PlacementSlot(pos, List.of(centre), -1,
-                    tags, 14, 14, null, q, 0));
+                    tags, expectedMaxFootprint, expectedMaxFootprint,
+                    null, q, 0, maxDriftBlocks));
             q = Math.max(10, q - 2);
-        }
-        return out;
-    }
-
-    /**
-     * Like {@link #generateSlotsAlongCenterline} but emits slots on one
-     * side only. {@code sideSign}: +1 emits on the positive-perpendicular
-     * side (same direction as {@code perpX/perpZ} in the centerline walk),
-     * -1 emits on the opposite side.
-     *
-     * <p>Used by ROADSIDE which places all buildings away from an edge
-     * feature (water, cliff) on one side of the main road.
-     */
-    public static List<PlacementSlot> generateOneSidedSlotsAlongCenterline(
-            List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
-            int stride, int perpOffset, int baseQuality, int sideSign) {
-        List<PlacementSlot> out = new ArrayList<>();
-        if (centerline == null || centerline.size() < 2) return out;
-        int q = baseQuality;
-        for (int i = stride; i < centerline.size() - 1; i += stride) {
-            BlockPos on   = centerline.get(i);
-            BlockPos prev = centerline.get(Math.max(0, i - 1));
-            BlockPos next = centerline.get(Math.min(centerline.size() - 1, i + 1));
-            int headX = Integer.signum(next.getX() - prev.getX());
-            int headZ = Integer.signum(next.getZ() - prev.getZ());
-            if (headX == 0 && headZ == 0) { headX = 1; headZ = 0; }
-            int perpX = -headZ;
-            int perpZ =  headX;
-
-            BlockPos target = on.offset(perpX * perpOffset * sideSign, 0,
-                                        perpZ * perpOffset * sideSign);
-            out.add(new PlacementSlot(target, centerline, edgeId,
-                    tags, 16, 16, null, q, 0));
-            q = Math.max(5, q - 1);
         }
         return out;
     }

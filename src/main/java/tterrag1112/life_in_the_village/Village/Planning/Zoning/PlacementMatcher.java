@@ -258,7 +258,8 @@ public final class PlacementMatcher {
             // tryCommitBuilding) gives them the slot-tag scoring
             // bonus. Recipe-direct callers use the no-tag overload.
             LayoutSlot committed = pctx.tryCommitWithRetries(
-                    c.slot.pos(), sb, bt, c.slot.feedingRoad(), 8,
+                    c.slot.pos(), sb, bt, c.slot.feedingRoad(),
+                    c.slot.maxDriftBlocks(),
                     c.slot.tags());
             if (committed != null) {
                 slots.remove(c.slot);

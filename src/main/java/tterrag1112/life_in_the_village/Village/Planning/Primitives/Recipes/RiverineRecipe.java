@@ -198,7 +198,8 @@ public final class RiverineRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
                     civicSlots, civicCap, false, FixedGrowth.INSTANCE,
-                    spineEdgeId, null));
+                    spineEdgeId, null,
+                    32));
         }
 
         // ── Inland-side sectors along the spine ───────────────────────────
@@ -212,7 +213,8 @@ public final class RiverineRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_INLAND_RES, SectorRole.RESIDENTIAL_INFILL,
                     BuildingZone.RESIDENTIAL, inlandResSlots,
-                    12, true, new ExtendAlongEdge(32, 4), spineEdgeId, null));
+                    12, true, new ExtendAlongEdge(32, 4), spineEdgeId, null,
+                    16));
         }
 
         List<PlacementSlot> inlandProdSlots =
@@ -223,7 +225,8 @@ public final class RiverineRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_INLAND_PROD, SectorRole.RESIDENTIAL_INFILL,
                     BuildingZone.PRODUCTION, inlandProdSlots,
-                    6, true, new ExtendAlongEdge(32, 3), spineEdgeId, null));
+                    6, true, new ExtendAlongEdge(32, 3), spineEdgeId, null,
+                    16));
         }
 
         // ── Shore-side sector ─────────────────────────────────────────────
@@ -237,7 +240,8 @@ public final class RiverineRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_SHORE, SectorRole.SHORE_STRIP, BuildingZone.PRODUCTION,
                     shoreSlots,
-                    4, false, FixedGrowth.INSTANCE, spineEdgeId, null));
+                    4, false, FixedGrowth.INSTANCE, spineEdgeId, null,
+                    16));
         }
 
         // ── Inland agricultural fringe ────────────────────────────────────
@@ -260,7 +264,8 @@ public final class RiverineRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_INLAND_AGRI, SectorRole.AGRICULTURAL_FRINGE,
                     BuildingZone.AGRICULTURAL, agriSlots,
-                    6, true, new AddRing(16, 6), spineEdgeId, null));
+                    6, true, new AddRing(16, 6), spineEdgeId, null,
+                    18));
         }
     }
 

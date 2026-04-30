@@ -15,15 +15,19 @@ import java.util.List;
  * <p>See {@code 01-PLACEMENT-ABSTRACTIONS.md} section "Sector" for
  * author rules and overlap policy.
  *
- * @param id              stable identifier, e.g. "civic_ring", "spur_NE"
- * @param role            sector role for matcher peer-overflow lookups
- * @param zoneHint        ideal occupant zone; matcher hint, not a filter
- * @param slots           ordered candidate positions (mutable via grow)
- * @param capacity        matcher prefers not to exceed; 0 = reservation
- * @param canGrow         if false, overflow is dropped silently
- * @param growth          strategy invoked on overflow when canGrow=true
- * @param parentEdgeId    RoadGraph edge this sector hangs off, -1 if floating
- * @param exclusionShape  optional polygon excluding growth into a region
+ * @param id                   stable identifier, e.g. "civic_ring", "spur_NE"
+ * @param role                 sector role for matcher peer-overflow lookups
+ * @param zoneHint             ideal occupant zone; matcher hint, not a filter
+ * @param slots                ordered candidate positions (mutable via grow)
+ * @param capacity             matcher prefers not to exceed; 0 = reservation
+ * @param canGrow              if false, overflow is dropped silently
+ * @param growth               strategy invoked on overflow when canGrow=true
+ * @param parentEdgeId         RoadGraph edge this sector hangs off, -1 if floating
+ * @param exclusionShape       optional polygon excluding growth into a region
+ * @param expectedMaxFootprint largest building footprint this sector hosts;
+ *                             slot generators size perpendicular offsets to
+ *                             accommodate it. Default 16 (typical residential
+ *                             / production); civic-with-town-hall is 32+.
  */
 public record Sector(
         String id,
@@ -34,7 +38,8 @@ public record Sector(
         boolean canGrow,
         GrowthPolicy growth,
         int parentEdgeId,
-        PolygonXZ exclusionShape
+        PolygonXZ exclusionShape,
+        int expectedMaxFootprint
 ) {
     public Sector {
         // Defensive copy of slots so callers can't mutate the record's list
@@ -51,6 +56,21 @@ public record Sector(
             throw new IllegalArgumentException(
                 "Sector growth must be non-null (use FixedGrowth.INSTANCE)");
         }
+        if (expectedMaxFootprint <= 0) {
+            throw new IllegalArgumentException(
+                "Sector expectedMaxFootprint must be positive (got "
+                + expectedMaxFootprint + ")");
+        }
+    }
+
+    /** Backward-compat 9-arg constructor. Defaults
+     *  {@code expectedMaxFootprint=16} (typical residential / production). */
+    public Sector(String id, SectorRole role, BuildingZone zoneHint,
+                  List<PlacementSlot> slots, int capacity, boolean canGrow,
+                  GrowthPolicy growth, int parentEdgeId,
+                  PolygonXZ exclusionShape) {
+        this(id, role, zoneHint, slots, capacity, canGrow, growth,
+             parentEdgeId, exclusionShape, 16);
     }
 
     /**
@@ -72,6 +92,7 @@ public record Sector(
         combined.addAll(slots);
         combined.addAll(additional);
         return new Sector(id, role, zoneHint, combined, capacity, canGrow,
-                          growth, parentEdgeId, exclusionShape);
+                          growth, parentEdgeId, exclusionShape,
+                          expectedMaxFootprint);
     }
 }

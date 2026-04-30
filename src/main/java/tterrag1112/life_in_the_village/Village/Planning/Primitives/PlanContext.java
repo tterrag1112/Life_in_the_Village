@@ -536,19 +536,31 @@ public final class PlanContext {
         }
         int perpX = -headZ, perpZ = headX;
 
-        int[] offsets = {4, -4, 8, -8, 12, -12, maxShift, -maxShift};
-        for (int d : offsets) {
-            if (Math.abs(d) > maxShift) continue;
-            BlockPos along = target.offset(headX * d, 0, headZ * d);
-            s = tryCommitBuilding(along, sb, bt, feedingRoad, slotTags);
-            if (s != null) return s;
-        }
-        for (int d : new int[]{4, -4, 8, -8}) {
-            BlockPos perp = target.offset(perpX * d, 0, perpZ * d);
-            s = tryCommitBuilding(perp, sb, bt, feedingRoad, slotTags);
-            if (s != null) return s;
+        // Bounded perturbation — maxShift is the slot's maxDriftBlocks.
+        // Each candidate is only tried if its Euclidean drift from target
+        // stays within the bound. Outside the bound, we burn rather than
+        // commit at a position the recipe didn't intend.
+        int[] shifts = {4, -4, 8, -8};
+        for (int shift : shifts) {
+            if (Math.abs(shift) > maxShift) continue;
+            BlockPos along = target.offset(headX * shift, 0, headZ * shift);
+            if (driftDistance(target, along) <= maxShift) {
+                s = tryCommitBuilding(along, sb, bt, feedingRoad, slotTags);
+                if (s != null) return s;
+            }
+            BlockPos perp = target.offset(perpX * shift, 0, perpZ * shift);
+            if (driftDistance(target, perp) <= maxShift) {
+                s = tryCommitBuilding(perp, sb, bt, feedingRoad, slotTags);
+                if (s != null) return s;
+            }
         }
         return null;
+    }
+
+    private static int driftDistance(BlockPos a, BlockPos b) {
+        int dx = b.getX() - a.getX();
+        int dz = b.getZ() - a.getZ();
+        return (int) Math.round(Math.sqrt((double) dx * dx + (double) dz * dz));
     }
 
     // =========================================================================

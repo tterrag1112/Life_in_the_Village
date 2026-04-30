@@ -190,7 +190,8 @@ public final class ClusteredRecipe implements ShapeRecipe {
                         true,
                         new AddRing(8, 3),
                         -1,
-                        null));
+                        null,
+                        isMain ? 32 : 16));
             }
         }
     }

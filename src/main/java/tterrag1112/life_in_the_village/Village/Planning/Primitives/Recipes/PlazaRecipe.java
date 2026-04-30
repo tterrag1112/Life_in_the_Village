@@ -76,7 +76,8 @@ public final class PlazaRecipe extends BaseRecipe {
                     SECTOR_CIVIC,
                     SectorRole.CIVIC_RING,
                     BuildingZone.CIVIC,
-                    civicSlots, civicCap, false, FixedGrowth.INSTANCE, -1, null));
+                    civicSlots, civicCap, false, FixedGrowth.INSTANCE, -1, null,
+                    32));
         }
 
         // ── Choose which spur aligns best with flat terrain (main gate) ──────
@@ -154,7 +155,8 @@ public final class PlazaRecipe extends BaseRecipe {
                         SectorRole.SPUR_CLUSTER,
                         BuildingZone.PRODUCTION,
                         spurSlots, SPUR_CAPACITY, true, new AddSpur(48, 4),
-                        spurEdgeId, null));
+                        spurEdgeId, null,
+                        16));
             }
         }
 
@@ -181,7 +183,8 @@ public final class PlazaRecipe extends BaseRecipe {
                     SECTOR_OUTER_AGRI,
                     SectorRole.AGRICULTURAL_FRINGE,
                     BuildingZone.AGRICULTURAL,
-                    agriSlots, UNLIMITED_CAPACITY, true, new AddRing(16, 8), -1, null));
+                    agriSlots, UNLIMITED_CAPACITY, true, new AddRing(16, 8), -1, null,
+                    18));
         }
 
         // ── Defensive ring → DEFENSIVE_FRINGE sector ────────────────────────
@@ -200,7 +203,8 @@ public final class PlazaRecipe extends BaseRecipe {
                     SECTOR_OUTER_DEF,
                     SectorRole.DEFENSIVE_FRINGE,
                     BuildingZone.DEFENSIVE,
-                    defenseSlots, UNLIMITED_CAPACITY, true, new AddRing(12, 6), -1, null));
+                    defenseSlots, UNLIMITED_CAPACITY, true, new AddRing(12, 6), -1, null,
+                    18));
         }
 
         // ── Straggler band (ring1..ring2) → RESIDENTIAL_INFILL sector ───────
@@ -219,7 +223,8 @@ public final class PlazaRecipe extends BaseRecipe {
                     SECTOR_STRAGGLER,
                     SectorRole.RESIDENTIAL_INFILL,
                     BuildingZone.RESIDENTIAL,
-                    stragSlots, UNLIMITED_CAPACITY, true, new AddRing(16, 8), -1, null));
+                    stragSlots, UNLIMITED_CAPACITY, true, new AddRing(16, 8), -1, null,
+                    16));
         }
     }
 

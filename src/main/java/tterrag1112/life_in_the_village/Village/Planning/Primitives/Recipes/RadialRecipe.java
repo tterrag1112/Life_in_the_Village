@@ -92,7 +92,8 @@ public final class RadialRecipe extends BaseRecipe {
                     false,
                     FixedGrowth.INSTANCE,
                     -1,
-                    null));
+                    null,
+                    32));
         }
 
         // ── Main road (geometry unchanged; slots stay in the flat pool) ────
@@ -223,7 +224,8 @@ public final class RadialRecipe extends BaseRecipe {
                         true,
                         new AddSpur(48, 4),
                         spurEdgeId,
-                        null));
+                        null,
+                        16));
             }
         }
 
@@ -280,7 +282,8 @@ public final class RadialRecipe extends BaseRecipe {
                     true,
                     new AddRing(16, 8),
                     -1,
-                    null));
+                    null,
+                    18));
         }
 
         // ── Outer defensive RingBand → DEFENSIVE_FRINGE sector ─────────────
@@ -304,7 +307,8 @@ public final class RadialRecipe extends BaseRecipe {
                     true,
                     new AddRing(12, 6),
                     -1,
-                    null));
+                    null,
+                    18));
         }
     }
 

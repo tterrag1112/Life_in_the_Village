@@ -170,14 +170,16 @@ public final class HilltopRecipe extends BaseRecipe {
         pctx.layout.addGatePosition(baseGate);
 
         // ── Peak anchor sector (town hall) ────────────────────────────────
+        // Footprint budget sized for 29×29 town halls plus a small gap.
         BlockPos peakSnapped   = pctx.solidSurface(peakPos);
         Rotation peakFacing    = PlanContext.chooseFacing(peakSnapped, baseGate);
         PlacementSlot peakSlot = new PlacementSlot(
                 peakSnapped, seg2Centerline, seg2EdgeId,
-                TAGS_PEAK, 8, 8, peakFacing, 100, 0);
+                TAGS_PEAK, 32, 32, peakFacing, 100, 0, 6);
         pctx.offerSector(new Sector(
                 SECTOR_PEAK_ANCHOR, SectorRole.NAMED_ANCHOR, BuildingZone.CIVIC,
-                List.of(peakSlot), 1, false, FixedGrowth.INSTANCE, seg2EdgeId, null));
+                List.of(peakSlot), 1, false, FixedGrowth.INSTANCE,
+                seg2EdgeId, null, 32));
 
         // ── Concentric arc roads (270° arcs at three radii) ───────────────
         // Arc centre angle points away from the gate so the gate-side
@@ -209,7 +211,8 @@ public final class HilltopRecipe extends BaseRecipe {
                 upperArcLine, -1, TAGS_UPPER, 6, 8, 60));
         pctx.offerSector(new Sector(
                 SECTOR_UPPER_ARC, SectorRole.CIVIC_RING, BuildingZone.CIVIC,
-                upperSlots, civicCap, false, FixedGrowth.INSTANCE, seg2EdgeId, null));
+                upperSlots, civicCap, false, FixedGrowth.INSTANCE,
+                seg2EdgeId, null, 18));
 
         // ── Mid arc sector (production/residential) ───────────────────────
         int midCap = Math.max(4, totalBuildings / 4);
@@ -217,14 +220,16 @@ public final class HilltopRecipe extends BaseRecipe {
                 midArcLine, -1, TAGS_MID, 6, 8, 45);
         pctx.offerSector(new Sector(
                 SECTOR_MID_ARC, SectorRole.RESIDENTIAL_CLUSTER, BuildingZone.RESIDENTIAL,
-                midSlots, midCap, true, new AddRing(8, 4), seg1EdgeId, null));
+                midSlots, midCap, true, new AddRing(8, 4),
+                seg1EdgeId, null, 16));
 
         // ── Lower arc sector (residential outer) ─────────────────────────
         List<PlacementSlot> lowerSlots = RecipeHelpers.generateSlotsAlongCenterline(
                 lowerArcLine, -1, TAGS_LOWER, 6, 8, 35);
         pctx.offerSector(new Sector(
                 SECTOR_LOWER_ARC, SectorRole.RESIDENTIAL_INFILL, BuildingZone.RESIDENTIAL,
-                lowerSlots, midCap, true, new AddRing(8, 4), seg1EdgeId, null));
+                lowerSlots, midCap, true, new AddRing(8, 4),
+                seg1EdgeId, null, 16));
 
         // ── Agricultural base sector ──────────────────────────────────────
         // Farms sit on the flat below the gate, not on the slope.
@@ -234,7 +239,8 @@ public final class HilltopRecipe extends BaseRecipe {
                 baseGate, agriInner, agriOuter, TAGS_AGRI, 8, 25, pctx);
         pctx.offerSector(new Sector(
                 SECTOR_BASE_AGRI, SectorRole.AGRICULTURAL_FRINGE, BuildingZone.AGRICULTURAL,
-                agriSlots, 6, true, new AddRing(16, 6), seg1EdgeId, null));
+                agriSlots, 6, true, new AddRing(16, 6),
+                seg1EdgeId, null, 18));
     }
 
     // =========================================================================
