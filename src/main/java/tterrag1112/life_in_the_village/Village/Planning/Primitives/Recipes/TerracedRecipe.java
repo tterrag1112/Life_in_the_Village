@@ -3,248 +3,312 @@ package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder;
+import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.ExtendAlongEdge;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.FixedGrowth;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.SectorRole;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
-import tterrag1112.life_in_the_village.Village.Village;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * TERRACED — village built on a moderate slope with stepped rows.
  *
- * <p>Three or four parallel "terrace" roads run along contour lines
- * (perpendicular to the slope direction) at decreasing Y. Each terrace
- * is a {@link RoadPrimitive.StraightRoad} that surface-snaps to its
- * own elevation. Buildings sit in {@link LayoutPrimitive.LinearRow}
- * along each terrace. A short ramp road connects adjacent terraces
- * end-to-end so the village reads as a stepped path zig-zagging up
- * the slope.
+ * <p>{@value #TERRACE_COUNT} parallel terrace roads run along contour
+ * lines (perpendicular to the slope direction) at decreasing Y. Each
+ * terrace is its own row of buildings. {@link RoadPrimitive.Stairway}
+ * ramps connect adjacent terraces end-to-end (alternating sides) so the
+ * village reads as a stepped path zig-zagging up the slope.
  *
  * <p>Reads as: vineyard village, hill town, rice-paddy settlement,
  * Mediterranean coastal town. The slope IS the structure.
  *
- * <p>Falls back to LINEAR if the terrain has no significant slope
- * ({@link TerrainProfile#hasSlope()} returns false).
+ * <p>Falls back to {@link LinearRecipe} if the terrain has no
+ * significant slope ({@link TerrainProfile#hasSlope()} returns false).
  */
-public final class TerracedRecipe implements ShapeRecipe {
+public final class TerracedRecipe extends BaseRecipe {
 
     /** Number of terrace levels. */
     private static final int TERRACE_COUNT = 4;
+
     /** XZ offset between adjacent terraces, in blocks. */
     private static final int TERRACE_XZ_STEP = 14;
 
+    private static final Set<SlotTag> TAGS_UPPER_TERRACE =
+            EnumSet.of(SlotTag.SECONDARY_CIVIC, SlotTag.PRODUCTION_CLUSTER,
+                       SlotTag.HIGH_GROUND, SlotTag.ROAD_ADJACENT,
+                       SlotTag.TERRACE_EDGE);
+    private static final Set<SlotTag> TAGS_MID_TERRACE =
+            EnumSet.of(SlotTag.RESIDENTIAL_INFILL, SlotTag.CIVIC_ADJACENT,
+                       SlotTag.ROAD_ADJACENT, SlotTag.TERRACE_EDGE);
+    private static final Set<SlotTag> TAGS_LOWER_TERRACE =
+            EnumSet.of(SlotTag.RESIDENTIAL_INFILL, SlotTag.RESIDENTIAL_OUTER,
+                       SlotTag.PRODUCTION_INFILL, SlotTag.ROAD_ADJACENT,
+                       SlotTag.TERRACE_EDGE);
+    private static final Set<SlotTag> TAGS_BASE_AGRI =
+            EnumSet.of(SlotTag.FIELD_EDGE, SlotTag.PASTURE,
+                       SlotTag.TERRACE_EDGE);
+
+    // Feature state — written by prepareFeatures, read by composeSectors.
+    // Safe because ShapeRecipe.forShape() creates a fresh instance per village.
+    private TerrainAnalyzer.FlatDirection cachedSlopeDir;
+    private boolean cachedUsable;
+
     @Override
-    public void compose(PlanContext pctx) {
+    protected void prepareFeatures(PlanContext pctx) {
         TerrainProfile terrain = pctx.layout.getTerrain();
-        BlockPos centre = pctx.layout.getCenter();
 
         if (!terrain.hasSlope()) {
-            System.out.println("TerracedRecipe: no significant slope detected "
-                    + "— falling back to LINEAR");
-            PlacementFailureRecorder
-                    .record(PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
-                            "no significant slope detected",
-                            centre, VillageTypeData.ShapeType.TERRACED.name());
+            cachedUsable = false;
+            return;
+        }
+
+        cachedSlopeDir = terrain.slopeDir();
+        cachedUsable   = true;
+        // Like HILLTOP, the validator's ridge rejection would refuse most
+        // slope positions. Allow ridge placement so terraces can exist on
+        // hilly ground.
+        pctx.allowRidgePlacement = true;
+    }
+
+    @Override
+    protected void composeSectors(PlanContext pctx) {
+        BlockPos centre = pctx.layout.getCenter();
+
+        // ── Fallback: no slope → LINEAR ───────────────────────────────────
+        if (!cachedUsable) {
+            System.out.println("TerracedRecipe: no significant slope detected — "
+                    + "falling back to LINEAR");
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                    "no significant slope detected",
+                    centre, VillageTypeData.ShapeType.TERRACED.name());
             new LinearRecipe().compose(pctx);
             return;
         }
 
-        // Like HILLTOP, the validator's ridge rejection would refuse
-        // most slope positions. Allow ridge placement so terraces can
-        // actually exist on hilly ground.
-        pctx.allowRidgePlacement = true;
+        // ── Slope and terrace direction setup ─────────────────────────────
+        // Slope direction points downhill. Terraces run perpendicular to
+        // it (along contour lines). Terrace heading = slope + π/2.
+        double slopeRad           = RecipeHelpers.directionRadOf(cachedSlopeDir);
+        double terraceHeadingRad  = slopeRad + Math.PI / 2;
+        double tanX               = Math.cos(terraceHeadingRad);
+        double tanZ               = Math.sin(terraceHeadingRad);
+        double slopeUx            = Math.cos(slopeRad);
+        double slopeUz            = Math.sin(slopeRad);
 
         int totalBuildings = pctx.remaining.size();
+        int terraceLength  = Math.max(48, totalBuildings * 4
+                + pctx.density.getRing2Radius() / 2);
+        int middleIndex    = TERRACE_COUNT / 2;
 
-        // ── Direction setup ────────────────────────────────────────────────
-        // Slope direction is the cardinal in which Y drops most.
-        // Terraces run PERPENDICULAR to slope (along contour lines).
-        // Climbing direction = opposite of slope direction.
-        TerrainAnalyzer.FlatDirection slopeDir = terrain.slopeDir();
-        double slopeRad = RecipeHelpers.directionRadOf(slopeDir);
-        double uphillRad = slopeRad + Math.PI;
-        double terraceRad = slopeRad + Math.PI / 2;  // perpendicular = contour
-
-        double slopeX = Math.cos(slopeRad);
-        double slopeZ = Math.sin(slopeRad);
-        double terraceX = Math.cos(terraceRad);
-        double terraceZ = Math.sin(terraceRad);
-
-        // ── Terrace lengths and counts ─────────────────────────────────────
-        // Each terrace holds buildingsPerTerrace buildings on average.
-        int buildingsPerTerrace = Math.max(2,
-                (int) Math.ceil(totalBuildings / (double) TERRACE_COUNT));
-        // Approximate row length: avg building width 12 + spacing 2 = 14
-        int terraceLength = buildingsPerTerrace * 14 + 8;
-
-        // ── Distribute buildings across terraces ───────────────────────────
-        // Town hall + civic on the TOP terrace (most prestigious).
-        // Production on middle terraces, residential on the bottom.
-        // The top terrace is the smallest (fewest buildings) to make
-        // the visual hierarchy obvious.
-        var townHall = pctx.claimTownHall();
-        var civic = pctx.claimByZone(
-                tterrag1112.life_in_the_village.Village.Planning.BuildingZone.CIVIC, 1000);
-        var production = pctx.claimByZone(
-                tterrag1112.life_in_the_village.Village.Planning.BuildingZone.PRODUCTION, 1000);
-        var residential = pctx.claimByZone(
-                tterrag1112.life_in_the_village.Village.Planning.BuildingZone.RESIDENTIAL, 1000);
-
-        List<List<VillageTypeData.StarterBuilding>> terraceBuckets = new ArrayList<>();
-        for (int i = 0; i < TERRACE_COUNT; i++) terraceBuckets.add(new ArrayList<>());
-
-        // Top terrace (index 0): town hall + all civic
-        if (townHall != null) terraceBuckets.get(0).add(townHall);
-        terraceBuckets.get(0).addAll(civic);
-
-        // Distribute production across middle terraces (1 and 2)
-        int midCount = Math.max(1, TERRACE_COUNT - 2);
-        int b = 1;
-        for (var sb : production) {
-            terraceBuckets.get(1 + (b++ % midCount)).add(sb);
-        }
-        // Residential on the bottom terrace (highest index)
-        terraceBuckets.get(TERRACE_COUNT - 1).addAll(residential);
-
-        // ── Build terraces ─────────────────────────────────────────────────
-        // Terrace i is at XZ offset (i * TERRACE_XZ_STEP) downhill from
-        // the centre. The terrace road runs perpendicular (along the
-        // contour) for terraceLength blocks. The starting end alternates
-        // so adjacent terraces zig-zag rather than stacking on top of
-        // each other in plan view.
-        List<List<BlockPos>> allRoads = new ArrayList<>();
-        BlockPos topCentre = RecipeHelpers.offsetSnapped(
-                pctx, centre, uphillRad, TERRACE_XZ_STEP * (TERRACE_COUNT / 2));
-
-        BlockPos prevTerraceEnd = null;
-        BlockPos mainGate = null;
+        // ── Build each terrace as its own SPINE edge ──────────────────────
+        // Index 0 = topmost (uphill); TERRACE_COUNT-1 = bottommost.
+        List<TerraceData> terraces = new ArrayList<>();
         for (int i = 0; i < TERRACE_COUNT; i++) {
-            BlockPos terraceCentre = RecipeHelpers.offsetSnapped(
-                    pctx, topCentre, slopeRad, i * TERRACE_XZ_STEP);
-
-            // Alternating starting side: even terraces start on the
-            // "left" end (negative terrace direction), odd on the right
-            boolean rightSide = (i & 1) == 1;
-            int dirSign = rightSide ? -1 : 1;
+            int slopeOffset = (i - middleIndex) * TERRACE_XZ_STEP;
+            // Negative offset (i < middle) = uphill (against slope);
+            // positive offset = downhill.
+            BlockPos terraceMid = pctx.solidSurface(new BlockPos(
+                    centre.getX() - (int) Math.round(slopeUx * slopeOffset),
+                    centre.getY(),
+                    centre.getZ() - (int) Math.round(slopeUz * slopeOffset)));
 
             BlockPos terraceStart = pctx.solidSurface(new BlockPos(
-                    terraceCentre.getX() - (int) Math.round(terraceX * (terraceLength / 2.0) * dirSign),
-                    terraceCentre.getY(),
-                    terraceCentre.getZ() - (int) Math.round(terraceZ * (terraceLength / 2.0) * dirSign)));
+                    terraceMid.getX() - (int) Math.round(tanX * terraceLength / 2.0),
+                    terraceMid.getY(),
+                    terraceMid.getZ() - (int) Math.round(tanZ * terraceLength / 2.0)));
             BlockPos terraceEnd = pctx.solidSurface(new BlockPos(
-                    terraceCentre.getX() + (int) Math.round(terraceX * (terraceLength / 2.0) * dirSign),
-                    terraceCentre.getY(),
-                    terraceCentre.getZ() + (int) Math.round(terraceZ * (terraceLength / 2.0) * dirSign)));
+                    terraceMid.getX() + (int) Math.round(tanX * terraceLength / 2.0),
+                    terraceMid.getY(),
+                    terraceMid.getZ() + (int) Math.round(tanZ * terraceLength / 2.0)));
 
-            // The terrace road. Drift kept low so the row stays readable.
-            List<BlockPos> terraceRoad = pctx.layout.addRoad(
-                    new RoadPrimitive.StraightRoad(terraceStart, terraceEnd, 3.0,
-                            i == 0 ? RoadShape.RoadTier.VILLAGE_ROAD
-                                    : RoadShape.RoadTier.VILLAGE_PATH),
-                    pctx.level, pctx.worldSeed);
-            allRoads.add(terraceRoad);
+            int startNodeId = pctx.layout.addNode(
+                    terraceStart, NodeKind.TERMINUS, RoadShape.RoadTier.VILLAGE_PATH);
+            int endNodeId = pctx.layout.addNode(
+                    terraceEnd, NodeKind.TERMINUS, RoadShape.RoadTier.VILLAGE_PATH);
 
-            // Connector ramp from previous terrace's end to this one's start.
-            // Surface-snap on every centerline point makes it climb the slope.
-            if (prevTerraceEnd != null) {
-                List<BlockPos> ramp = pctx.layout.addRoad(
-                        new RoadPrimitive.StraightRoad(prevTerraceEnd, terraceStart, 2.0,
-                                RoadShape.RoadTier.FOOTPATH),
-                        pctx.level, pctx.worldSeed);
-                allRoads.add(ramp);
-            }
-            prevTerraceEnd = terraceEnd;
+            RoadPrimitive.StraightRoad terraceRoad = new RoadPrimitive.StraightRoad(
+                    terraceStart, terraceEnd, 3.0, RoadShape.RoadTier.VILLAGE_PATH);
+            int terraceEdgeId = pctx.layout.addEdge(
+                    startNodeId, endNodeId, terraceRoad,
+                    pctx.level, pctx.worldSeed, EdgeRole.SPINE);
 
-            // ── Place buildings as a LinearRow along the terrace ───────────
-            var bucket = terraceBuckets.get(i);
-            if (!bucket.isEmpty()) {
-                // Row heading = terrace road heading (with sign for alternation)
-                double rowHeading = terraceRad;
-                if (rightSide) rowHeading += Math.PI;
-                // Buildings face DOWNHILL (toward slope direction) so the
-                // row looks out over the lower terraces
-                int facingSide = facingSideForDownhill(rowHeading, slopeRad);
+            List<BlockPos> terraceCenterline =
+                    pctx.layout.getRoadGraph().edge(terraceEdgeId).centerline();
 
-                // Start the row a few blocks in from the terrace start
-                BlockPos rowStart = pctx.solidSurface(new BlockPos(
-                        terraceStart.getX() + (int) Math.round(Math.cos(rowHeading) * 4),
-                        terraceStart.getY(),
-                        terraceStart.getZ() + (int) Math.round(Math.sin(rowHeading) * 4)));
-
-                new LayoutPrimitive.LinearRow(
-                        rowStart, rowHeading, facingSide,
-                        2,                  // 2 blocks spacing between buildings
-                        bucket,
-                        terraceRoad
-                ).place(pctx);
-            }
-
-            if (i == TERRACE_COUNT - 1) mainGate = terraceEnd;
+            terraces.add(new TerraceData(i, startNodeId, endNodeId,
+                    terraceEdgeId, terraceCenterline, terraceMid));
         }
 
-        // Mark the layout
-        pctx.layout.setTownSquarePos(topCentre);
+        // ── Connect adjacent terraces with Stairway ramps ─────────────────
+        // Even-i ramps go from upper.end → lower.end (right side);
+        // odd-i ramps go from upper.start → lower.start (left side).
+        // The result is a zig-zag switchback up the slope.
+        for (int i = 0; i < TERRACE_COUNT - 1; i++) {
+            TerraceData upper = terraces.get(i);
+            TerraceData lower = terraces.get(i + 1);
+            boolean rightSide      = (i % 2 == 0);
+            int upperEndNodeId     = rightSide ? upper.endNodeId   : upper.startNodeId;
+            int lowerEndNodeId     = rightSide ? lower.endNodeId   : lower.startNodeId;
+
+            BlockPos upperPos = pctx.layout.getRoadGraph().node(upperEndNodeId).pos();
+            BlockPos lowerPos = pctx.layout.getRoadGraph().node(lowerEndNodeId).pos();
+
+            RoadPrimitive.Stairway ramp = new RoadPrimitive.Stairway(
+                    lowerPos, upperPos, RoadShape.RoadTier.VILLAGE_PATH);
+            pctx.layout.addEdge(
+                    upperEndNodeId, lowerEndNodeId, ramp,
+                    pctx.level, pctx.worldSeed, EdgeRole.SPUR);
+        }
+
+        // ── Promote the bottom-terrace approach end to a GATE ─────────────
+        TerraceData lowestTerrace      = terraces.get(TERRACE_COUNT - 1);
+        // The ramp from terrace TERRACE_COUNT-2 to TERRACE_COUNT-1 attaches
+        // to the right side iff (TERRACE_COUNT-2) is even. The main gate
+        // sits on the OPPOSITE end so the player approaches the village
+        // from the bottom row first.
+        boolean lowestConnectsRight    = ((TERRACE_COUNT - 2) % 2 == 0);
+        int mainGateNodeId             = lowestConnectsRight
+                ? lowestTerrace.startNodeId
+                : lowestTerrace.endNodeId;
+        BlockPos mainGatePos           =
+                pctx.layout.getRoadGraph().node(mainGateNodeId).pos();
+        pctx.layout.getRoadGraph().markAsGate(mainGateNodeId);
+        pctx.layout.setMainGateEndpoint(mainGatePos);
+        pctx.layout.addGatePosition(mainGatePos);
+
+        // ── Town square on the middle terrace ─────────────────────────────
+        TerraceData middleTerrace = terraces.get(middleIndex);
+        BlockPos squareCentre     = middleTerrace.midPoint;
+        int squareCapacity        = Math.max(3, Math.min(6, totalBuildings / 6 + 2));
+
+        pctx.layout.setTownSquarePos(squareCentre);
         pctx.layout.setTownSquareRadius(4);
-        // Phase 17 doc 04 — LINEAR plaza along the terrace contour
-        // (perpendicular to slope direction).
-        RecipeHelpers.installLinearPlaza(pctx, topCentre,
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .Plaza.PlazaPurpose.CIVIC,
-                RecipeHelpers.cardinalFromRad(terraceRad));
-        pctx.layout.setMainGateEndpoint(mainGate);
-        pctx.layout.addGatePosition(mainGate);
 
-        // ── Agricultural at the very bottom of the slope ───────────────────
-        // Farms make sense on the flat below the village
-        BlockPos farmCentre = RecipeHelpers.offsetSnapped(
-                pctx, prevTerraceEnd != null ? prevTerraceEnd : centre,
-                slopeRad, pctx.density.getRing1Radius() + 8);
-        var agri = pctx.claimByZone(
-                tterrag1112.life_in_the_village.Village.Planning.BuildingZone.AGRICULTURAL, 1000);
-        if (!agri.isEmpty()) {
-            RecipeHelpers.scatterBucketAt(pctx, farmCentre, agri,
-                    allRoads.get(allRoads.size() - 1));
-        }
+        int civicSnapshot = pctx.slotPoolSize();
+        RecipeHelpers.installLinearPlaza(pctx, squareCentre, PlazaPurpose.CIVIC,
+                RecipeHelpers.cardinalFromRad(terraceHeadingRad));
+        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
 
-        // ── Defensive: split between top terrace (lookout) and bottom (gate) ──
-        var defensive = pctx.claimByZone(
-                tterrag1112.life_in_the_village.Village.Planning.BuildingZone.DEFENSIVE, 1000);
-        if (!defensive.isEmpty()) {
-            int half = (defensive.size() + 1) / 2;
-            // Top terrace lookouts
-            RecipeHelpers.scatterBucketAt(pctx, topCentre,
-                    defensive.subList(0, half), allRoads.get(0));
-            if (half < defensive.size()) {
-                // Bottom terrace gate guards
-                RecipeHelpers.scatterBucketAt(pctx,
-                        prevTerraceEnd != null ? prevTerraceEnd : centre,
-                        defensive.subList(half, defensive.size()),
-                        allRoads.get(allRoads.size() - 1));
+        pctx.offerSector(new Sector(
+                "terraced_civic",
+                SectorRole.CIVIC_TIGHT,
+                BuildingZone.CIVIC,
+                civicSlots,
+                squareCapacity,
+                false,
+                FixedGrowth.INSTANCE,
+                middleTerrace.edgeId,
+                null));
+
+        // ── A sector per terrace ──────────────────────────────────────────
+        // Tier the sectors by terrace index: top = upper (civic/production
+        // priority), middle = mid (residential infill, filtered to avoid
+        // the plaza), bottom = lower (residential overflow).
+        for (TerraceData t : terraces) {
+            Set<SlotTag> tags;
+            int baseQuality;
+            BuildingZone zoneHint;
+            int capacity;
+
+            if (t.index < middleIndex) {
+                tags        = TAGS_UPPER_TERRACE;
+                baseQuality = 55;
+                zoneHint    = BuildingZone.CIVIC;
+                capacity    = 6;
+            } else if (t.index == middleIndex) {
+                tags        = TAGS_MID_TERRACE;
+                baseQuality = 50;
+                zoneHint    = BuildingZone.RESIDENTIAL;
+                capacity    = 8;
+            } else {
+                tags        = TAGS_LOWER_TERRACE;
+                baseQuality = 40;
+                zoneHint    = BuildingZone.RESIDENTIAL;
+                capacity    = 8;
             }
+
+            List<PlacementSlot> terraceSlots =
+                    RecipeHelpers.generateSlotsAlongCenterline(
+                            t.centerline, t.edgeId, tags, 8, 6, baseQuality);
+
+            // For the middle terrace, filter slots that overlap the plaza
+            // so terrace residential doesn't conflict with civic placement.
+            if (t.index == middleIndex) {
+                BlockPos sqCentre = pctx.layout.getTownSquarePos();
+                int sqRadius      = pctx.layout.getCivicRingRadius();
+                if (sqCentre != null && sqRadius > 0) {
+                    int squareGap = sqRadius + 4;
+                    long gapSq    = (long) squareGap * squareGap;
+                    terraceSlots = terraceSlots.stream()
+                            .filter(s -> s.pos().distSqr(sqCentre) > gapSq)
+                            .toList();
+                }
+            }
+
+            pctx.offerSector(new Sector(
+                    "terraced_terrace_" + t.index,
+                    SectorRole.RESIDENTIAL_INFILL,
+                    zoneHint,
+                    terraceSlots,
+                    capacity,
+                    true,
+                    new ExtendAlongEdge(28, 4),
+                    t.edgeId,
+                    null));
         }
 
-        RecipeHelpers.placeStragglersRingBand(pctx, centre, allRoads);
+        // ── Base agricultural ring (downhill of the bottom terrace) ───────
+        BlockPos agriCentre = pctx.solidSurface(new BlockPos(
+                lowestTerrace.midPoint.getX()
+                        + (int) Math.round(slopeUx * pctx.density.getRing1Radius()),
+                centre.getY(),
+                lowestTerrace.midPoint.getZ()
+                        + (int) Math.round(slopeUz * pctx.density.getRing1Radius())));
+
+        List<PlacementSlot> agriSlots = RecipeHelpers.generateRingSlots(
+                agriCentre,
+                pctx.density.getRing1Radius() / 2,
+                pctx.density.getRing2Radius(),
+                TAGS_BASE_AGRI,
+                6, 35, pctx);
+
+        pctx.offerSector(new Sector(
+                "terraced_base_agri",
+                SectorRole.AGRICULTURAL_FRINGE,
+                BuildingZone.AGRICULTURAL,
+                agriSlots,
+                6,
+                true,
+                new AddRing(14, 6),
+                -1,
+                null));
     }
 
-    /**
-     * Computes the facing-side parameter for {@link LayoutPrimitive.LinearRow}
-     * such that buildings face the downhill direction.
-     */
-    private static int facingSideForDownhill(double rowHeading, double slopeRad) {
-        // The row's "left side" (relative to heading) is at angle rowHeading + π/2.
-        // We want buildings to face slopeRad. If left side dot slopeRad > 0,
-        // facingSide = +1, else -1.
-        double leftX = -Math.sin(rowHeading);
-        double leftZ = Math.cos(rowHeading);
-        double slopeX = Math.cos(slopeRad);
-        double slopeZ = Math.sin(slopeRad);
-        return (leftX * slopeX + leftZ * slopeZ) > 0 ? 1 : -1;
-    }
+    /** Bookkeeping holder for each terrace's identity in the road graph. */
+    private record TerraceData(
+            int index,
+            int startNodeId,
+            int endNodeId,
+            int edgeId,
+            List<BlockPos> centerline,
+            BlockPos midPoint
+    ) {}
 }
