@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ConnectorAllee;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.MilestoneDecorator;
@@ -130,6 +131,8 @@ public final class EdgeRealizer {
                         placeArm(level, arm, centerline, edge, data);
                 case RoadPrimitive.SmoothedPath sp ->
                         UnifiedRoadPlacer.place(level, centerline, edgeMaterial, sp.tier(), edge, culture, edgePalette);
+                case RoadPrimitive.Bridge bridge ->
+                        placeBridge(level, bridge);
                 default ->
                         UnifiedRoadPlacer.place(level, centerline, edgeMaterial, edgeTier, edge, culture, edgePalette);
             };
@@ -242,6 +245,26 @@ public final class EdgeRealizer {
             System.out.println("[EdgeRealizer] Placed " + instances.size()
                     + " shelter(s) on edge " + edge.getEdgeId().toString().substring(0, 8));
         }
+    }
+
+    // =========================================================================
+    // Bridge placement (Phase 12.1)
+    // =========================================================================
+
+    /**
+     * Realises a {@link RoadPrimitive.Bridge} by placing a plank deck via
+     * {@code RoadRouter.placeBridge}. The surface-paint pipeline
+     * ({@link UnifiedRoadPlacer#place}) is intentionally skipped — bridges
+     * are a deliberate alternative to the road surface, not a layer on top
+     * of it.
+     *
+     * <p>The post-hoc water-span detection inside {@code UnifiedRoadPlacer}
+     * remains as a defensive fallback for non-Bridge primitives whose
+     * centerline accidentally crosses water.
+     */
+    private static List<BlockPos> placeBridge(ServerLevel level,
+                                              RoadPrimitive.Bridge bridge) {
+        return RoadRouter.placeBridge(level, bridge.from(), bridge.to());
     }
 
     // =========================================================================

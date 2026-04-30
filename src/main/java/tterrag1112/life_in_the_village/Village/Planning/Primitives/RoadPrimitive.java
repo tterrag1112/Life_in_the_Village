@@ -55,7 +55,8 @@ public sealed interface RoadPrimitive
         RoadPrimitive.Arc,
         RoadPrimitive.Spur,
         RoadPrimitive.SmoothedPath,
-        RoadPrimitive.ArmApproach {
+        RoadPrimitive.ArmApproach,
+        RoadPrimitive.Bridge {
 
     /**
      * Computes the centerline of this road, snapped to the surface Y at
@@ -94,6 +95,7 @@ public sealed interface RoadPrimitive
                 case "Spur"          -> Spur.CODEC;
                 case "SmoothedPath"  -> SmoothedPath.CODEC;
                 case "ArmApproach"   -> ArmApproach.CODEC;
+                case "Bridge"        -> Bridge.CODEC;
                 default -> throw new IllegalArgumentException(
                         "Unknown RoadPrimitive type: '" + type + "'");
             }
@@ -547,6 +549,58 @@ public sealed interface RoadPrimitive
         public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
             long seed = DriftNoise.localSeed(worldSeed, dockingAnchor, armEndpoint);
             return driftedLine(level, dockingAnchor, armEndpoint, DRIFT, seed);
+        }
+    }
+
+    // =========================================================================
+    // Bridge  (Phase 12.1)
+    // =========================================================================
+
+    /**
+     * A road primitive that spans water with a plank deck. Used by recipes
+     * that intentionally connect across water (RIVERINE may stub a bridge
+     * to a far bank; CROSSROADS may bridge a stream).
+     *
+     * <p>The centerline is a {@link #driftedLine}-style straight surface-snapped
+     * line from {@code from} to {@code to} with low drift (1.5) so the
+     * bridge reads as a deliberate structure. The realiser
+     * ({@code EdgeRealizer}) recognises Bridge primitives and dispatches
+     * to {@code RoadRouter.placeBridge} instead of the surface-paint
+     * pipeline — no road blocks are stamped under the deck.
+     *
+     * <p>Tier governs deck width via the same conventions used by
+     * {@code OrganicRoadPlacer}, although the current
+     * {@code RoadRouter.placeBridge} implementation hard-codes a default
+     * width; tier is preserved on the record so future deck-width
+     * dispatch can read it without an interface change.
+     *
+     * @param from bridge head on the village side; should be a SHORE_HEAD
+     *             or BRIDGE_HEAD node position
+     * @param to   bridge tail on the far side
+     * @param tier road tier (deck width derives from tier)
+     */
+    record Bridge(
+            BlockPos from,
+            BlockPos to,
+            RoadShape.RoadTier tier
+    ) implements RoadPrimitive {
+
+        static final MapCodec<Bridge> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                BlockPos.CODEC.fieldOf("from").forGetter(Bridge::from),
+                BlockPos.CODEC.fieldOf("to").forGetter(Bridge::to),
+                Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name)
+                        .fieldOf("tier").forGetter(Bridge::tier)
+        ).apply(i, Bridge::new));
+
+        @Override public String typeKey() { return "Bridge"; }
+
+        @Override
+        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
+            long seed = DriftNoise.localSeed(worldSeed, from, to);
+            // Drift amplitude 1.5: keeps the bridge straight enough to read
+            // as a deliberate structure, with just enough wobble that the
+            // deck endpoints don't hit obviously-gridded coordinates.
+            return driftedLine(level, from, to, 1.5, seed);
         }
     }
 
