@@ -92,6 +92,14 @@ public final class PlanContext {
     private final List<Sector> offeredSectors = new java.util.ArrayList<>();
 
     /**
+     * Transient: sector-id keyed by the committed building's centre pos.
+     * Written by PlacementMatcher after each successful commit; read by
+     * VillagePlanner.dumpPlan. Always empty for flat-slot (non-sector) recipes.
+     */
+    public final java.util.Map<BlockPos, String> committedSectorIds =
+            new java.util.LinkedHashMap<>();
+
+    /**
      * Doc 04 §"Core concepts" — plaza polygon registrations.
      * Populated by recipe compose() for VILLAGE+ tiers (prompt 17);
      * empty list means HAMLET, expansion path, or pre-prompt-17

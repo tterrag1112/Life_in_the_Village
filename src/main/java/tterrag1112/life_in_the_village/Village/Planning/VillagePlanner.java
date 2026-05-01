@@ -8,12 +8,15 @@ import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleAutoDeri
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleSelection;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillageAgeCategoryHook;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
 import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRule;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.*;
@@ -207,7 +210,7 @@ public class VillagePlanner {
         // 7. Validate the plan. Phase 10 retired the fallbackPlaceRemaining
         // and rescueOrphans rescue passes — orphans now indicate a planner
         // bug and the village is rejected outright.
-        if (!validatePlan(layout)) {
+        if (!validatePlan(layout, pctx)) {
             System.out.println("VillagePlanner: plan validation failed");
             PlacementFailureRecorder
                     .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
@@ -245,7 +248,8 @@ public class VillagePlanner {
     // Validation
     // =========================================================================
 
-    private static boolean validatePlan(VillageLayout layout) {
+    private static boolean validatePlan(VillageLayout layout, PlanContext pctx) {
+        dumpPlan(layout, pctx, "POST_COMPOSE");
         List<LayoutSlot> buildings = layout.buildings();
         for (LayoutSlot slot : buildings) {
             if (!validateBuildingDistance(slot, layout)) return false;
@@ -311,6 +315,172 @@ public class VillagePlanner {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Structured six-section dump of the complete plan state. Called unconditionally
+     * at the top of validatePlan so the output always lands in the log whether the
+     * plan passes or fails. All output goes to System.out so it appears in the same
+     * stream as the existing debug prints.
+     *
+     * <p>Sections: ROADS · SECTORS · SLOTS BY SECTOR · COMMITTED BUILDINGS ·
+     * VALIDATION SUMMARY (with per-failed-building feedingRoad mismatch diagnosis).
+     */
+    private static void dumpPlan(VillageLayout layout, PlanContext pctx, String tag) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n=== PLAN DUMP [").append(tag).append("] centre=")
+          .append(layout.getCenter()).append(" ===\n");
+
+        // ── SECTION 1: ROADS ─────────────────────────────────────────────
+        sb.append("\n--- ROADS ---\n");
+        RoadGraph graph = layout.getRoadGraph();
+        int edgeCount = 0;
+        for (RoadGraph.Edge e : graph.allEdges()) {
+            sb.append("  edge#").append(e.id())
+              .append(" role=").append(e.role())
+              .append(" tier=").append(e.primitive().tier())
+              .append(" pts=").append(e.centerline().size());
+            if (!e.centerline().isEmpty()) {
+                sb.append(" from=").append(e.centerline().get(0))
+                  .append(" to=").append(e.centerline().get(e.centerline().size() - 1));
+            }
+            sb.append('\n');
+            edgeCount++;
+        }
+        if (edgeCount == 0) sb.append("  (none)\n");
+
+        // ── SECTION 2: SECTORS ───────────────────────────────────────────
+        sb.append("\n--- SECTORS ---\n");
+        List<Sector> sectors = layout.getDebugSectors();
+        if (sectors == null || sectors.isEmpty()) {
+            sb.append("  (none — flat-slot recipe or debug sectors not set)\n");
+        } else {
+            for (Sector s : sectors) {
+                sb.append("  sector=").append(s.id())
+                  .append(" role=").append(s.role())
+                  .append(" zone=").append(s.zoneHint())
+                  .append(" slots=").append(s.slots().size())
+                  .append(" cap=").append(s.capacity())
+                  .append(" edgeId=").append(s.parentEdgeId())
+                  .append(" maxFp=").append(s.expectedMaxFootprint())
+                  .append('\n');
+            }
+        }
+
+        // ── SECTION 3: SLOTS BY SECTOR ────────────────────────────────────
+        sb.append("\n--- SLOTS BY SECTOR ---\n");
+        if (sectors == null || sectors.isEmpty()) {
+            sb.append("  (no sectors)\n");
+        } else {
+            for (Sector s : sectors) {
+                sb.append("  [").append(s.id()).append("]\n");
+                if (s.slots().isEmpty()) {
+                    sb.append("    (empty)\n");
+                }
+                int shown = 0;
+                for (PlacementSlot slot : s.slots()) {
+                    if (shown >= 8 && s.slots().size() > 10) {
+                        sb.append("    ... ").append(s.slots().size() - shown)
+                          .append(" more\n");
+                        break;
+                    }
+                    sb.append("    pos=").append(slot.pos())
+                      .append(" tags=").append(slot.tags())
+                      .append(" fpW=").append(slot.footprintBudgetW())
+                      .append(" fpL=").append(slot.footprintBudgetL())
+                      .append(" drift=").append(slot.maxDriftBlocks())
+                      .append(" road=").append(slot.feedingRoad() != null
+                              ? slot.feedingRoad().size() + "pts" : "none")
+                      .append('\n');
+                    shown++;
+                }
+            }
+        }
+
+        // ── SECTION 4: COMMITTED BUILDINGS ────────────────────────────────
+        sb.append("\n--- COMMITTED BUILDINGS ---\n");
+        List<LayoutSlot> buildings = layout.buildings();
+        if (buildings.isEmpty()) {
+            sb.append("  (none)\n");
+        } else {
+            for (LayoutSlot slot : buildings) {
+                String sectorId = pctx != null
+                        ? pctx.committedSectorIds.get(slot.getPos()) : null;
+                sb.append("  ").append(slot.getBuildingType())
+                  .append(" at=").append(slot.getPos())
+                  .append(" fp=").append(slot.getFootprintWidth())
+                  .append("x").append(slot.getFootprintLength())
+                  .append(" sector=").append(sectorId != null ? sectorId : "unknown")
+                  .append(" feedRoad=").append(slot.getFeedingRoad() != null
+                          ? slot.getFeedingRoad().size() + "pts" : "none")
+                  .append('\n');
+            }
+        }
+
+        // ── SECTION 5: VALIDATION SUMMARY ─────────────────────────────────
+        sb.append("\n--- VALIDATION SUMMARY ---\n");
+        int passed = 0, failed = 0;
+        int ring2 = layout.getDensity().getRing2Radius();
+        for (LayoutSlot slot : buildings) {
+            int footprintHalf = Math.max(slot.getFootprintWidth(),
+                    slot.getFootprintLength()) / 2;
+            java.util.List<BlockPos> feedingRoad = slot.getFeedingRoad();
+            boolean ok;
+            int dist;
+            int allowed;
+            String mode;
+
+            if (feedingRoad != null && !feedingRoad.isEmpty()) {
+                dist = nearestPointChebyshev(slot.getPos(), feedingRoad);
+                allowed = VALIDATOR_ROAD_HALF_WIDTH + footprintHalf + VALIDATOR_ROAD_SLACK;
+                mode = "road";
+                ok = dist <= allowed;
+            } else {
+                BlockPos vc = layout.getCenter();
+                int dx = slot.getPos().getX() - vc.getX();
+                int dz = slot.getPos().getZ() - vc.getZ();
+                dist = (int) Math.round(Math.sqrt((double) dx * dx + (double) dz * dz));
+                allowed = ring2 + footprintHalf + VALIDATOR_HULL_SLACK;
+                mode = "hull";
+                ok = dist <= allowed;
+            }
+
+            if (ok) {
+                passed++;
+            } else {
+                failed++;
+                String sectorId = pctx != null
+                        ? pctx.committedSectorIds.get(slot.getPos()) : null;
+                sb.append("  FAIL ").append(slot.getBuildingType())
+                  .append(" at=").append(slot.getPos())
+                  .append(" dist=").append(dist).append(">max=").append(allowed)
+                  .append(" mode=").append(mode)
+                  .append(" sector=").append(sectorId != null ? sectorId : "unknown")
+                  .append('\n');
+                // Nearest road across ALL edges for mismatch diagnosis.
+                RoadGraph.Edge nearestEdge = layout.getRoadGraph().edgeNearest(slot.getPos());
+                if (nearestEdge != null && !nearestEdge.centerline().isEmpty()) {
+                    int allEdgeDist = nearestPointChebyshev(
+                            slot.getPos(), nearestEdge.centerline());
+                    sb.append("    nearest-any-edge: edge#").append(nearestEdge.id())
+                      .append(" role=").append(nearestEdge.role())
+                      .append(" chebDist=").append(allEdgeDist);
+                    if (feedingRoad != null) {
+                        int mismatch = dist - allEdgeDist;
+                        if (mismatch > 4) {
+                            sb.append(" FEEDING_ROAD_MISMATCH(+").append(mismatch).append(")");
+                        }
+                    }
+                    sb.append('\n');
+                }
+            }
+        }
+        sb.append("  total=").append(buildings.size())
+          .append(" passed=").append(passed)
+          .append(" failed=").append(failed)
+          .append('\n');
+        sb.append("=== END PLAN DUMP ===\n");
+        System.out.print(sb);
     }
 
     /** Chebyshev distance from {@code pos} to the nearest point in {@code points}. */

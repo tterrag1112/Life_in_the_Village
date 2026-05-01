@@ -56,6 +56,8 @@ public final class PlacementMatcher {
     private final PlanContext pctx;
     private final List<PlacementSlot> slots;
     private final List<PlacedRecord> placed = new ArrayList<>();
+    /** Identity map: slot reference → sector id, built in runWithSectors. */
+    private final Map<PlacementSlot, String> slotSectorIds = new IdentityHashMap<>();
 
     private record PlacedRecord(BuildingType type, BlockPos pos) {}
 
@@ -79,6 +81,13 @@ public final class PlacementMatcher {
      * capacity tracking and growth into this method.
      */
     public void runWithSectors(List<Sector> sectors) {
+        // Build slot→sectorId map before flattening (identity equality is required
+        // because PlacementSlot is a record — two slots at the same pos are equal).
+        for (Sector s : sectors) {
+            for (PlacementSlot slot : s.slots()) {
+                slotSectorIds.put(slot, s.id());
+            }
+        }
         List<PlacementSlot> flat = new ArrayList<>();
         for (Sector s : sectors) {
             flat.addAll(s.slots());
@@ -265,6 +274,10 @@ public final class PlacementMatcher {
                 slots.remove(c.slot);
                 burnNearbySlots(committed);
                 placed.add(new PlacedRecord(bt, committed.getPos()));
+                String sectorId = slotSectorIds.get(c.slot);
+                if (sectorId != null) {
+                    pctx.committedSectorIds.put(committed.getPos(), sectorId);
+                }
                 return true;
             }
             // Retries exhausted at this slot position — burn it
