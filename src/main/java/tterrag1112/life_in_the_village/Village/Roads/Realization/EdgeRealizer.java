@@ -11,6 +11,8 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.StairwayPlacer;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.CenterlineResult;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ConnectorAllee;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.MilestoneDecorator;
@@ -124,8 +126,16 @@ public final class EdgeRealizer {
         List<BlockPos> centerlinePath = new ArrayList<>();
         RoadShape.RoadTier edgeTier = PrimitiveChainBuilder.edgeTierToRoadTier(edge.getTier());
 
+        PrimitiveContext primCtx = PrimitiveContext.basic(level, level.getSeed());
         for (RoadPrimitive primitive : primitives) {
-            List<BlockPos> centerline = primitive.computeCenterline(level, level.getSeed());
+            CenterlineResult result = primitive.computeCenterline(primCtx);
+            if (!result.isComplete()) {
+                // TODO Phase 17+: handle truncation
+                System.out.println("EdgeRealizer: " + primitive.typeKey()
+                        + " truncated " + result.reason()
+                        + " at " + result.refusedAt());
+            }
+            List<BlockPos> centerline = result.points();
             if (centerline.size() < 2) continue;
 
             List<BlockPos> placed = switch (primitive) {

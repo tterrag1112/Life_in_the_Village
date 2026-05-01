@@ -63,11 +63,27 @@ public sealed interface RoadPrimitive
      * Computes the centerline of this road, snapped to the surface Y at
      * every step. Pure — no blocks are placed.
      *
-     * @param level world reference for surface Y lookup
-     * @param worldSeed stable seed used to derive deterministic noise
-     * @return ordered list of centerline positions from start to end
+     * <p>Implementations may truncate the centerline where terrain refuses
+     * traversal (cliffs beyond {@link PrimitiveContext#maxStepDeltaY()},
+     * water for non-water-capable primitives, missing surface). The
+     * returned {@link CenterlineResult} carries the accepted points plus
+     * a {@link TerminationReason}; on default-Minecraft terrain the
+     * reason is {@link TerminationReason#COMPLETED}.
+     *
+     * @param ctx primitive inputs (level, seed, feature map, cliff threshold)
      */
-    List<BlockPos> computeCenterline(ServerLevel level, long worldSeed);
+    CenterlineResult computeCenterline(PrimitiveContext ctx);
+
+    /**
+     * Whether this primitive is permitted to walk over water. Defaults
+     * false; {@link Bridge} and future Causeway-style primitives override
+     * to true. When false, a centerline point that maps to a water
+     * feature truncates the walk with
+     * {@link TerminationReason#WATER_CROSSING}.
+     */
+    default boolean isWaterCapable() {
+        return false;
+    }
 
     /** Tier this road should be painted at. */
     RoadShape.RoadTier tier();
@@ -136,9 +152,11 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "StraightRoad"; }
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
-            long localSeed = DriftNoise.localSeed(worldSeed, from, to);
-            return driftedLine(level, from, to, driftAmplitude, localSeed);
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            long localSeed = DriftNoise.localSeed(ctx.worldSeed(), from, to);
+            List<BlockPos> line = driftedLine(ctx.level(), from, to,
+                    driftAmplitude, localSeed);
+            return applyTerrainChecks(line, ctx, isWaterCapable());
         }
     }
 
@@ -177,8 +195,9 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "CurvedRoad"; }
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
-            long localSeed = DriftNoise.localSeed(worldSeed, from, to)
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            ServerLevel level = ctx.level();
+            long localSeed = DriftNoise.localSeed(ctx.worldSeed(), from, to)
                     ^ Double.doubleToLongBits(curvature);
 
             int dx = to.getX() - from.getX();
@@ -187,7 +206,7 @@ public sealed interface RoadPrimitive
             if (chordLen < 1) {
                 List<BlockPos> out = new ArrayList<>();
                 out.add(surfaceAt(level, from.getX(), from.getZ()));
-                return out;
+                return CenterlineResult.complete(out);
             }
 
             // Unit perpendicular (rotate heading 90° CCW)
@@ -215,7 +234,7 @@ public sealed interface RoadPrimitive
                 int z = (int) Math.round(arcZ + perpZ * driftOffset);
                 line.add(surfaceAt(level, x, z));
             }
-            return dedupe(line);
+            return applyTerrainChecks(dedupe(line), ctx, isWaterCapable());
         }
     }
 
@@ -249,8 +268,9 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "Ring"; }
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
-            long localSeed = DriftNoise.localSeed(worldSeed, centre, centre)
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            ServerLevel level = ctx.level();
+            long localSeed = DriftNoise.localSeed(ctx.worldSeed(), centre, centre)
                     ^ ((long) radius * 2654435761L);
 
             // One sample per block of circumference
@@ -268,7 +288,7 @@ public sealed interface RoadPrimitive
                 int z = centre.getZ() + (int) Math.round(Math.sin(angle) * r);
                 line.add(surfaceAt(level, x, z));
             }
-            return dedupe(line);
+            return applyTerrainChecks(dedupe(line), ctx, isWaterCapable());
         }
     }
 
@@ -313,8 +333,9 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "Arc"; }
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
-            long localSeed = DriftNoise.localSeed(worldSeed, centre, centre)
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            ServerLevel level = ctx.level();
+            long localSeed = DriftNoise.localSeed(ctx.worldSeed(), centre, centre)
                     ^ ((long) radius * 2654435761L)
                     ^ Double.doubleToLongBits(startAngle)
                     ^ Double.doubleToLongBits(arcSpan);
@@ -335,7 +356,7 @@ public sealed interface RoadPrimitive
                 int z = centre.getZ() + (int) Math.round(Math.sin(angle) * r);
                 line.add(surfaceAt(level, x, z));
             }
-            return dedupe(line);
+            return applyTerrainChecks(dedupe(line), ctx, isWaterCapable());
         }
     }
 
@@ -386,14 +407,17 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "Spur"; }
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            ServerLevel level = ctx.level();
             BlockPos snappedStart = nearestOnCenterline(parentCenterline, branchPointHint);
             int endX = snappedStart.getX() + (int) Math.round(Math.cos(directionRad) * length);
             int endZ = snappedStart.getZ() + (int) Math.round(Math.sin(directionRad) * length);
             BlockPos end = surfaceAt(level, endX, endZ);
 
-            long localSeed = DriftNoise.localSeed(worldSeed, snappedStart, end);
-            return driftedLine(level, snappedStart, end, driftAmplitude, localSeed);
+            long localSeed = DriftNoise.localSeed(ctx.worldSeed(), snappedStart, end);
+            List<BlockPos> line = driftedLine(level, snappedStart, end,
+                    driftAmplitude, localSeed);
+            return applyTerrainChecks(line, ctx, isWaterCapable());
         }
 
         private static BlockPos nearestOnCenterline(List<BlockPos> centerline, BlockPos hint) {
@@ -445,16 +469,22 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "SmoothedPath"; }
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
-            if (waypoints.size() < 2) return new ArrayList<>(waypoints);
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            ServerLevel level = ctx.level();
+            if (waypoints.size() < 2) {
+                return CenterlineResult.complete(new ArrayList<>(waypoints));
+            }
             List<BlockPos> smoothed = RoutePathSmoother.smooth(level, waypoints);
             if (driftAmplitude > 0) {
                 long effectiveSeed = seed != 0 ? seed
-                        : DriftNoise.localSeed(worldSeed,
+                        : DriftNoise.localSeed(ctx.worldSeed(),
                                 waypoints.get(0), waypoints.get(waypoints.size() - 1));
                 smoothed = applyLateralDrift(level, smoothed, driftAmplitude, effectiveSeed);
             }
-            return smoothed;
+            // Trade roads were routed by cell-path A* before reaching this
+            // primitive; truncating mid-path here would orphan the far
+            // hub. Skip terrain checks — return the full smoothed path.
+            return CenterlineResult.complete(smoothed);
         }
 
         private static List<BlockPos> applyLateralDrift(
@@ -548,9 +578,12 @@ public sealed interface RoadPrimitive
         private static final double DRIFT = 2.0;
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
-            long seed = DriftNoise.localSeed(worldSeed, dockingAnchor, armEndpoint);
-            return driftedLine(level, dockingAnchor, armEndpoint, DRIFT, seed);
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            long seed = DriftNoise.localSeed(ctx.worldSeed(),
+                    dockingAnchor, armEndpoint);
+            List<BlockPos> line = driftedLine(ctx.level(),
+                    dockingAnchor, armEndpoint, DRIFT, seed);
+            return applyTerrainChecks(line, ctx, isWaterCapable());
         }
     }
 
@@ -596,13 +629,20 @@ public sealed interface RoadPrimitive
 
         @Override public String typeKey() { return "Bridge"; }
 
+        /** Bridges span water by design. */
+        @Override public boolean isWaterCapable() { return true; }
+
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
-            long seed = DriftNoise.localSeed(worldSeed, from, to);
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
+            long seed = DriftNoise.localSeed(ctx.worldSeed(), from, to);
             // Drift amplitude 1.5: keeps the bridge straight enough to read
             // as a deliberate structure, with just enough wobble that the
             // deck endpoints don't hit obviously-gridded coordinates.
-            return driftedLine(level, from, to, 1.5, seed);
+            // Bridges intentionally span water and Y discontinuities at the
+            // shoreline; skip terrain checks so the deck reaches the far
+            // bank rather than truncating at the first water cell.
+            List<BlockPos> line = driftedLine(ctx.level(), from, to, 1.5, seed);
+            return CenterlineResult.complete(line);
         }
     }
 
@@ -653,20 +693,20 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "Stairway"; }
 
         @Override
-        public List<BlockPos> computeCenterline(ServerLevel level, long worldSeed) {
+        public CenterlineResult computeCenterline(PrimitiveContext ctx) {
             int dx = to.getX() - from.getX();
             int dz = to.getZ() - from.getZ();
             int dy = to.getY() - from.getY();
             double chord = Math.sqrt(dx * dx + dz * dz);
 
             if (chord < 1) {
-                return List.of(from);
+                return CenterlineResult.complete(List.of(from));
             }
 
             int steps = Math.max(2, (int) Math.ceil(chord));
             List<BlockPos> line = new ArrayList<>(steps + 1);
 
-            long seed = DriftNoise.localSeed(worldSeed, from, to);
+            long seed = DriftNoise.localSeed(ctx.worldSeed(), from, to);
             double perpX = -dz / chord;
             double perpZ =  dx / chord;
             double driftAmp = 1.0;
@@ -686,7 +726,10 @@ public sealed interface RoadPrimitive
 
                 line.add(new BlockPos(x, y, z));
             }
-            return dedupe(line);
+            // Stairways intentionally produce Y deltas larger than
+            // maxStepDeltaY between consecutive points — that's what
+            // makes them stairways. Skip terrain checks.
+            return CenterlineResult.complete(dedupe(line));
         }
     }
 
@@ -734,6 +777,47 @@ public sealed interface RoadPrimitive
     static BlockPos surfaceAt(ServerLevel level, int x, int z) {
         int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
         return new BlockPos(x, y, z);
+    }
+
+    /**
+     * Walks an already-computed centerline and truncates it at the first
+     * point that fails a terrain check. Water and Y-discontinuity checks
+     * are applied; the {@code refusedAt} of any non-COMPLETED result is
+     * the rejected point itself (i.e. the first point not appended).
+     *
+     * <p>Used by primitives that produce surface-snapped centerlines and
+     * want the standard truncation behaviour. Bridge/Stairway-style
+     * primitives bypass this entirely and return
+     * {@link CenterlineResult#complete} unconditionally.
+     */
+    static CenterlineResult applyTerrainChecks(List<BlockPos> points,
+                                               PrimitiveContext ctx,
+                                               boolean waterCapable) {
+        if (points.isEmpty()) return CenterlineResult.complete(points);
+
+        List<BlockPos> accepted = new ArrayList<>(points.size());
+        BlockPos prev = null;
+        int maxDy = ctx.maxStepDeltaY();
+        for (BlockPos p : points) {
+            if (!waterCapable && ctx.features().isOnWater(p)) {
+                return new CenterlineResult(accepted,
+                        TerminationReason.WATER_CROSSING, p);
+            }
+            if (prev != null) {
+                int dy = p.getY() - prev.getY();
+                if (dy < -maxDy) {
+                    return new CenterlineResult(accepted,
+                            TerminationReason.CLIFF_DROP, p);
+                }
+                if (dy > maxDy) {
+                    return new CenterlineResult(accepted,
+                            TerminationReason.CLIFF_RISE, p);
+                }
+            }
+            accepted.add(p);
+            prev = p;
+        }
+        return CenterlineResult.complete(accepted);
     }
 
     /** Removes consecutive XZ duplicates. Y differences are ignored. */

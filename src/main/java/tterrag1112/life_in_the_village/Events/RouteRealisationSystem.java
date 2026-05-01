@@ -13,6 +13,8 @@ import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RouteRealiser;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.CenterlineResult;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Roads.Decoration.ConnectorAllee;
 import tterrag1112.life_in_the_village.Village.Roads.Docking.VillageDockingPoint;
@@ -155,7 +157,14 @@ public final class RouteRealisationSystem {
                 dock.dockingAnchor(), dock.armEndpoint(),
                 APPROACH_DRIFT,
                 RoadShape.RoadTier.VILLAGE_ROAD);
-        List<BlockPos> centerline = primitive.computeCenterline(level, level.getSeed());
+        PrimitiveContext ctx = PrimitiveContext.basic(level, level.getSeed());
+        CenterlineResult result = primitive.computeCenterline(ctx);
+        if (!result.isComplete()) {
+            // TODO Phase 17+: handle truncation
+            System.out.println("RouteRealisationSystem.placeApproach: truncated "
+                    + result.reason() + " at " + result.refusedAt());
+        }
+        List<BlockPos> centerline = result.points();
 
         if (centerline.size() < 2) return List.of();
 

@@ -7,6 +7,8 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.CenterlineResult;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
@@ -130,7 +132,16 @@ public class VillageLayout {
 
     /** Adds a road primitive and computes+caches its centerline. */
     public List<BlockPos> addRoad(RoadPrimitive primitive, ServerLevel level, long worldSeed) {
-        List<BlockPos> cl = primitive.computeCenterline(level, worldSeed);
+        PrimitiveContext ctx = PrimitiveContext.basic(level, worldSeed);
+        CenterlineResult result = primitive.computeCenterline(ctx);
+        if (!result.isComplete()) {
+            // TODO Phase 17+: handle truncation (insert TERMINUS at
+            // result.lastPoint(), chain Bridge/Stairway, abort sector).
+            System.out.println("VillageLayout.addRoad: " + primitive.typeKey()
+                    + " truncated " + result.reason()
+                    + " at " + result.refusedAt());
+        }
+        List<BlockPos> cl = result.points();
         if (cl.isEmpty()) return cl;
 
         BlockPos fromPos = cl.get(0);
@@ -152,7 +163,15 @@ public class VillageLayout {
                        ServerLevel level,
                        long worldSeed,
                        EdgeRole role) {
-        List<BlockPos> cl = primitive.computeCenterline(level, worldSeed);
+        PrimitiveContext ctx = PrimitiveContext.basic(level, worldSeed);
+        CenterlineResult result = primitive.computeCenterline(ctx);
+        if (!result.isComplete()) {
+            // TODO Phase 17+: handle truncation
+            System.out.println("VillageLayout.addEdge: " + primitive.typeKey()
+                    + " truncated " + result.reason()
+                    + " at " + result.refusedAt());
+        }
+        List<BlockPos> cl = result.points();
         int edgeId = roadGraph.addEdge(fromNodeId, toNodeId, primitive, cl, role);
         if (!cl.isEmpty()) {
             roadFootprint.reserveRoad(cl, primitive.tier().reservedHalfWidth());

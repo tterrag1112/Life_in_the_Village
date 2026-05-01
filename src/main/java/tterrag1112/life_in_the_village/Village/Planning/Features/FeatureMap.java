@@ -37,6 +37,22 @@ public final class FeatureMap {
     /** Distance (blocks) above which {@link #refine} logs a Y-drift warning. */
     public static final int Y_DRIFT_WARN_BLOCKS = 4;
 
+    /** Empty sentinel for callers that don't have a planning-time map.
+     *  All is-X queries return false. Do not mutate — it is shared. */
+    private static final FeatureMap EMPTY = new FeatureMap();
+
+    /**
+     * Returns a shared empty feature map. Used by primitive callers
+     * (realiser, trade-route system) that don't hold a planning-time map
+     * but still need to satisfy the {@code PrimitiveContext} contract.
+     * Every is-X query returns false, so primitives consulting this
+     * fall back to live-terrain checks for cliffs and never truncate
+     * on water.
+     */
+    public static FeatureMap empty() {
+        return EMPTY;
+    }
+
     /** Side length (in samples) of the planning-time coarse grid. */
     private static final int GRID_SIZE = 16;
     /** Spacing (in blocks) between coarse-grid samples. */
