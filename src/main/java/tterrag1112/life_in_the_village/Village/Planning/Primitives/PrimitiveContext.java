@@ -28,8 +28,13 @@ public record PrimitiveContext(
         FeatureMap features,
         int maxStepDeltaY) {
 
-    /** Default cliff threshold — Y change beyond this triggers CLIFF_*. */
-    public static final int DEFAULT_MAX_STEP_DELTA_Y = 4;
+    /** Default cliff threshold — Y change beyond this triggers CLIFF_*.
+     *  Tuned to 6 (was 4): default-Minecraft hilly biomes regularly produce
+     *  4–5 block Y-steps without an actual cliff being present, and 4 was
+     *  truncating spurs/arcs that should traverse cleanly. 6 corresponds
+     *  roughly to a 1-block-per-2-horizontal slope; sheer cliffs (8+ block
+     *  vertical-chunk drops) still trip CLIFF_RISE/DROP. */
+    public static final int DEFAULT_MAX_STEP_DELTA_Y = 6;
 
     /**
      * Convenience factory for callers that don't have a {@link FeatureMap}
