@@ -222,26 +222,65 @@ public final class RadialRecipe extends BaseRecipe {
                     ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
             allRoadsForSnap.add(spurCenterline);
 
+            // ── Cluster arc: 60° arc at spur-tip radius, centred on spur angle ──
+            // Each cluster slot's feedingRoad is this arc (not the parent spur),
+            // so the validator measures distance to the road the building sits
+            // beside rather than to a road 30+ blocks away.
+            BlockPos spurTip = spurCenterline.isEmpty() ? branchHint
+                    : spurCenterline.get(spurCenterline.size() - 1);
+            double tipDx = spurTip.getX() - squarePos.getX();
+            double tipDz = spurTip.getZ() - squarePos.getZ();
+            int clusterRadius = Math.max(8,
+                    (int) Math.round(Math.sqrt(tipDx * tipDx + tipDz * tipDz)));
+            double tipAngle = Math.atan2(tipDz, tipDx);
+
+            RoadPrimitive.Arc clusterArc = new RoadPrimitive.Arc(
+                    squarePos, clusterRadius,
+                    tipAngle - Math.PI / 6,
+                    Math.PI / 3,
+                    3.0,
+                    RoadShape.RoadTier.VILLAGE_PATH);
+            int beforeClusterEdges = pctx.layout.getRoadGraph().edgeCount();
+            List<BlockPos> clusterArcCenterline = pctx.layout.addRoad(
+                    clusterArc, pctx.level, pctx.worldSeed);
+            int clusterArcEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeClusterEdges
+                    ? pctx.layout.getRoadGraph().edgeCount() - 1 : spurEdgeId;
+            allRoadsForSnap.add(clusterArcCenterline);
+
             // Snapshot before emitting per-spur slots; everything emitted
             // until the next snapshot becomes the spur's sector.
             int spurSnapshot = pctx.slotPoolSize();
             pctx.offerRoadSlots(spurCenterline, 6, 7, TAGS_SPUR_ROAD, 40);
 
-            BlockPos focal = spurCenterline.get(spurCenterline.size() - 1);
-            int placeholderCount = Math.max(3, remaining / spurCount);
-            List<tterrag1112.life_in_the_village.Village.VillageTypeData
-                    .StarterBuilding> placeholder = new ArrayList<>();
-            int copy = Math.min(placeholderCount, pctx.remaining.size());
-            for (int k = 0; k < copy; k++) {
-                placeholder.add(pctx.remaining.get(k));
+            // Emit cluster slots just outside the arc, one per ~10 arc steps.
+            // Outward direction for each slot = away from village centre.
+            int clusterFp = 16;
+            int clusterPerpOffset = 3 + clusterFp / 2 + 2;   // 13 blocks outside arc
+            int clusterStride = 10;
+            for (int j = 0; j < clusterArcCenterline.size(); j += clusterStride) {
+                BlockPos arcPt = clusterArcCenterline.get(j);
+                double outDx = arcPt.getX() - squarePos.getX();
+                double outDz = arcPt.getZ() - squarePos.getZ();
+                double outLen = Math.sqrt(outDx * outDx + outDz * outDz);
+                if (outLen < 1) continue;
+                int slotX = arcPt.getX()
+                        + (int) Math.round(outDx / outLen * clusterPerpOffset);
+                int slotZ = arcPt.getZ()
+                        + (int) Math.round(outDz / outLen * clusterPerpOffset);
+                BlockPos slotPos = pctx.solidSurface(
+                        new BlockPos(slotX, arcPt.getY(), slotZ));
+                if (pctx.features.isOnWater(slotPos)) continue;
+                if (pctx.features.isOnCliff(slotPos)) continue;
+                pctx.offerSlot(new PlacementSlot(
+                        slotPos,
+                        clusterArcCenterline,
+                        clusterArcEdgeId,
+                        TAGS_SPUR_CLUSTER,
+                        clusterFp, clusterFp,
+                        null,
+                        65,
+                        0));
             }
-
-            LayoutPrimitive.BuildingCircle circle =
-                    new LayoutPrimitive.BuildingCircle(
-                            focal,
-                            LayoutPrimitive.BuildingCircle.Mode.SCATTER,
-                            placeholder, spurCenterline);
-            circle.emitSlotsWithTags(pctx, TAGS_SPUR_CLUSTER, 65);
 
             List<PlacementSlot> spurSlots = pctx.drainSlotsSince(spurSnapshot);
             if (!spurSlots.isEmpty()) {
