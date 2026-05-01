@@ -156,8 +156,13 @@ public final class RadialRecipe extends BaseRecipe {
 
         RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
                 mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+        int beforeMainEdges = pctx.layout.getRoadGraph().edgeCount();
         List<BlockPos> mainCenterline = pctx.layout.addRoad(
                 mainRoad, pctx.level, pctx.worldSeed);
+        int mainEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeMainEdges
+                ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
+        radialEdgeLog("MAIN_ROAD", "StraightRoad", 0, mainDirRad,
+                mainEdgeId, mainCenterline, centre);
 
         pctx.layout.setMainGateEndpoint(mainEnd);
         pctx.layout.addGatePosition(mainStart);
@@ -220,6 +225,8 @@ public final class RadialRecipe extends BaseRecipe {
                     spur, pctx.level, pctx.worldSeed);
             int spurEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeEdges
                     ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
+            radialEdgeLog("SPUR_" + i, "Spur", spurLength, spurAngle,
+                    spurEdgeId, spurCenterline, centre);
             allRoadsForSnap.add(spurCenterline);
 
             // ── Cluster arc: 60° arc at spur-tip radius, centred on spur angle ──
@@ -245,6 +252,8 @@ public final class RadialRecipe extends BaseRecipe {
                     clusterArc, pctx.level, pctx.worldSeed);
             int clusterArcEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeClusterEdges
                     ? pctx.layout.getRoadGraph().edgeCount() - 1 : spurEdgeId;
+            radialEdgeLog("SPUR_" + i + "_CLUSTER_ARC", "Arc", clusterRadius, tipAngle,
+                    clusterArcEdgeId, clusterArcCenterline, centre);
             allRoadsForSnap.add(clusterArcCenterline);
 
             // Snapshot before emitting per-spur slots; everything emitted
@@ -323,8 +332,13 @@ public final class RadialRecipe extends BaseRecipe {
                 RoadPrimitive.Arc arc = new RoadPrimitive.Arc(
                         squarePos, r, arcStartAngle, arcSpan, drift,
                         RoadShape.RoadTier.VILLAGE_PATH);
+                int beforeArcEdges = pctx.layout.getRoadGraph().edgeCount();
                 List<BlockPos> arcCenterline = pctx.layout.addRoad(
                         arc, pctx.level, pctx.worldSeed);
+                int arcEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeArcEdges
+                        ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
+                radialEdgeLog("ARC_" + ai, "Arc", r, arcCentreAngle,
+                        arcEdgeId, arcCenterline, centre);
                 allRoadsForSnap.add(arcCenterline);
                 pctx.offerRoadSlots(arcCenterline, 10, 7, TAGS_ARC, 30);
             }
@@ -341,6 +355,7 @@ public final class RadialRecipe extends BaseRecipe {
                 allRoadsForSnap);
         agriBand.emitSlots(pctx);
         List<PlacementSlot> agriSlots = pctx.drainSlotsSince(agriSnapshot);
+        radialRingLog("AGRI", outerR + 4, outerR + 20, agriSlots, centre);
         if (!agriSlots.isEmpty()) {
             pctx.offerSector(new Sector(
                     "radial_outer_agri",
@@ -366,6 +381,7 @@ public final class RadialRecipe extends BaseRecipe {
                 allRoadsForSnap);
         defenseBand.emitSlots(pctx);
         List<PlacementSlot> defenseSlots = pctx.drainSlotsSince(defenseSnapshot);
+        radialRingLog("DEFENSE", outerR, outerR + 10, defenseSlots, centre);
         if (!defenseSlots.isEmpty()) {
             pctx.offerSector(new Sector(
                     "radial_outer_defense",
@@ -401,5 +417,72 @@ public final class RadialRecipe extends BaseRecipe {
             case WEST  -> Math.PI;
             case NORTH -> -Math.PI / 2;
         };
+    }
+
+    // ── Diagnostic helpers (no behavior change) ────────────────────────────
+
+    private static int chebR(BlockPos p, BlockPos centre) {
+        return Math.max(Math.abs(p.getX() - centre.getX()),
+                        Math.abs(p.getZ() - centre.getZ()));
+    }
+
+    private static void radialEdgeLog(String role, String primitive,
+            int requestedR, double requestedAngle,
+            int edgeId, List<BlockPos> cl, BlockPos centre) {
+        if (cl.isEmpty()) {
+            System.out.println("[RADIAL-RADIUS] edge#" + edgeId
+                    + " role=" + role + " primitive=" + primitive
+                    + " requestedR=" + requestedR
+                    + " requestedAngle=" + String.format("%.1f", Math.toDegrees(requestedAngle)) + "deg"
+                    + " pts=0 (empty)");
+            return;
+        }
+        BlockPos first = cl.get(0);
+        BlockPos last  = cl.get(cl.size() - 1);
+        BlockPos mid   = cl.get(cl.size() / 2);
+        int firstR = chebR(first, centre);
+        int lastR  = chebR(last,  centre);
+        int midR   = chebR(mid,   centre);
+        int minR = Integer.MAX_VALUE, maxR = Integer.MIN_VALUE;
+        long sumR = 0; int count = 0;
+        for (int i = 0; i < cl.size(); i += 8) {
+            int r = chebR(cl.get(i), centre);
+            if (r < minR) minR = r;
+            if (r > maxR) maxR = r;
+            sumR += r; count++;
+        }
+        int meanR  = count > 0 ? (int)(sumR / count) : 0;
+        int rRange = maxR == Integer.MIN_VALUE ? 0 : maxR - minR;
+        System.out.println("[RADIAL-RADIUS] edge#" + edgeId
+                + " role=" + role + " primitive=" + primitive
+                + " requestedR=" + requestedR
+                + " requestedAngle=" + String.format("%.1f", Math.toDegrees(requestedAngle)) + "deg"
+                + " pts=" + cl.size()
+                + " firstPt=" + first.toShortString() + " lastPt=" + last.toShortString()
+                + " firstR=" + firstR + " lastR=" + lastR + " midR=" + midR
+                + " meanR=" + meanR + " rRange=" + rRange);
+    }
+
+    private static void radialRingLog(String name, int inner, int outer,
+            List<PlacementSlot> slots, BlockPos centre) {
+        if (slots.isEmpty()) {
+            System.out.println("[RADIAL-RADIUS] RingBand " + name
+                    + " inner=" + inner + " outer=" + outer + " slotCount=0");
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        long sumR = 0;
+        for (PlacementSlot s : slots) {
+            int r = chebR(s.pos(), centre);
+            if (sb.length() > 0) sb.append(',');
+            sb.append(r);
+            sumR += r;
+        }
+        int meanSlotR = (int)(sumR / slots.size());
+        System.out.println("[RADIAL-RADIUS] RingBand " + name
+                + " inner=" + inner + " outer=" + outer
+                + " slotCount=" + slots.size()
+                + " slotR=[" + sb + "]"
+                + " meanSlotR=" + meanSlotR);
     }
 }
