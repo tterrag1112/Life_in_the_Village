@@ -519,45 +519,43 @@ public sealed interface LayoutPrimitive
                                 .Zoning.SlotTag.ROAD_ADJACENT);
             };
 
+            // The recipe passes outerRadius as the outer perimeter — typically
+            // the outermost RING road's centerline. Slots must sit strictly
+            // outside that centerline by at least footprint/2 + MIN_BUILDING_GAP
+            // so the building's bounding box clears the reserved road blocks.
+            // Old code snapped to the nearest road and offset only 8 blocks
+            // toward the ideal, which left agri/defense slots inside any
+            // closer road (inner arcs in RADIAL) and overlapping the outer
+            // ring road's footprint. See the [radial_outer_agri] dump which
+            // showed slots at ~85 from centre when the band was 101–117.
+            final int SLOT_FOOTPRINT = 18;
+            int safeRadius = outerRadius + (SLOT_FOOTPRINT / 2)
+                    + tterrag1112.life_in_the_village.Village.Planning
+                            .VillageLayout.MIN_BUILDING_GAP;
+
             int count = Math.max(buildings.size(), 8);
             double angleStep = 2 * Math.PI / count;
-            int midR = (innerRadius + outerRadius) / 2;
 
             for (int i = 0; i < count; i++) {
                 double angle = i * angleStep;
-                BlockPos ideal = new BlockPos(
-                        centre.getX() + (int) Math.round(Math.cos(angle) * midR),
+                BlockPos target = new BlockPos(
+                        centre.getX() + (int) Math.round(Math.cos(angle) * safeRadius),
                         centre.getY(),
-                        centre.getZ() + (int) Math.round(Math.sin(angle) * midR));
+                        centre.getZ() + (int) Math.round(Math.sin(angle) * safeRadius));
 
                 List<BlockPos> nearestRoad = null;
-                BlockPos nearestPoint = ideal;
                 if (snapRoads != null) {
                     double bestDist = Double.MAX_VALUE;
                     for (List<BlockPos> road : snapRoads) {
                         if (road.isEmpty()) continue;
-                        BlockPos p = PlanContext.nearestOn(road, ideal);
-                        double d = p.distSqr(ideal);
-                        if (d < bestDist) { bestDist = d; nearestRoad = road; nearestPoint = p; }
+                        BlockPos p = PlanContext.nearestOn(road, target);
+                        double d = p.distSqr(target);
+                        if (d < bestDist) { bestDist = d; nearestRoad = road; }
                     }
-                }
-                // Place slot 8 blocks perpendicular from road point, in direction of ideal
-                BlockPos target;
-                if (nearestRoad != null) {
-                    int dx = ideal.getX() - nearestPoint.getX();
-                    int dz = ideal.getZ() - nearestPoint.getZ();
-                    double len = Math.sqrt(dx * dx + dz * dz);
-                    if (len < 0.01) { target = ideal; }
-                    else {
-                        int ox = (int) Math.round(dx / len * 8);
-                        int oz = (int) Math.round(dz / len * 8);
-                        target = nearestPoint.offset(ox, 0, oz);
-                    }
-                } else {
-                    target = ideal;
                 }
 
-                pctx.offerSlot(new PlacementSlot(target, nearestRoad, tags, 18, 30 - i));
+                pctx.offerSlot(new PlacementSlot(target, nearestRoad, tags,
+                        SLOT_FOOTPRINT, 30 - i));
             }
         }
     }
