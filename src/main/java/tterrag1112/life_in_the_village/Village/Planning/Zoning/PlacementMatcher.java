@@ -60,6 +60,7 @@ public final class PlacementMatcher {
     private final Map<PlacementSlot, String> slotSectorIds = new IdentityHashMap<>();
 
     private record PlacedRecord(BuildingType type, BlockPos pos) {}
+    private record CandidateLog(PlacementSlot slot, List<String> reasons) {}
 
     public PlacementMatcher(PlanContext pctx, List<PlacementSlot> slots) {
         this.pctx = pctx;
@@ -261,11 +262,17 @@ public final class PlacementMatcher {
         LOG.info("commitBest {} required={} candidates={}", bt, required, candidates.size());
 
 
+        // Per-candidate rejection snapshots — populated only when
+        // tryCommitWithRetries returns null. Dumped as one [REJECT_DEBUG]
+        // block at the bottom if every candidate failed.
+        List<CandidateLog> rejected = new ArrayList<>();
+
         for (Scored c : candidates) {
             // Variant-aware overload: thread the slot tags through so
             // PlanContext.applyVariantSelection (called inside
             // tryCommitBuilding) gives them the slot-tag scoring
             // bonus. Recipe-direct callers use the no-tag overload.
+            pctx.rejectionLog.clear();
             LayoutSlot committed = pctx.tryCommitWithRetries(
                     c.slot.pos(), sb, bt, c.slot.feedingRoad(),
                     c.slot.maxDriftBlocks(),
@@ -280,10 +287,67 @@ public final class PlacementMatcher {
                 }
                 return true;
             }
-            // Retries exhausted at this slot position — burn it
+            // Retries exhausted at this slot position — burn it.
+            // Snapshot the rejection reasons so we can dump them after the
+            // tier walk completes if no candidate committed.
+            rejected.add(new CandidateLog(c.slot,
+                    new ArrayList<>(pctx.rejectionLog)));
             slots.remove(c.slot);
         }
+
+        if (!rejected.isEmpty()) {
+            dumpRejectedCandidates(bt, required, rejected);
+        }
         return false;
+    }
+
+    /**
+     * Per-candidate rejection dump. Called from {@link #commitBest} when
+     * every candidate slot failed to commit. Each candidate's
+     * {@link PlanContext#rejectionLog} snapshot is summarised with unique
+     * reasons + counts so a tier of three slots that all failed for the
+     * same root cause shows up clearly.
+     */
+    private void dumpRejectedCandidates(BuildingType bt,
+                                        Set<SlotTag> required,
+                                        List<CandidateLog> rejected) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[REJECT_DEBUG] commitBest type=").append(bt)
+          .append(" tier=").append(required)
+          .append(" candidates=").append(rejected.size())
+          .append('\n');
+        for (int idx = 0; idx < rejected.size(); idx++) {
+            CandidateLog cl = rejected.get(idx);
+            PlacementSlot slot = cl.slot();
+            List<String> reasons = cl.reasons();
+            String sectorId = slotSectorIds.get(slot);
+            sb.append("  candidate#").append(idx)
+              .append(" pos=").append(slot.pos())
+              .append(" tags=").append(slot.tags())
+              .append(" fpW=").append(slot.footprintBudgetW())
+              .append(" fpL=").append(slot.footprintBudgetL())
+              .append(" feedRoad=").append(slot.feedingRoad() != null
+                      ? slot.feedingRoad().size() + "pts" : "none")
+              .append(" sector=").append(sectorId != null ? sectorId : "unknown")
+              .append('\n');
+            if (reasons.isEmpty()) {
+                sb.append("    REJECT: no reason recorded "
+                        + "(commit returned null on a path that bypassed all FAIL hooks)\n");
+            } else {
+                Map<String, Integer> counts = new LinkedHashMap<>();
+                for (String reason : reasons) counts.merge(reason, 1, Integer::sum);
+                sb.append("    REJECT: ").append(reasons.size()).append(" attempt(s); ");
+                boolean first = true;
+                for (Map.Entry<String, Integer> e : counts.entrySet()) {
+                    if (!first) sb.append("; ");
+                    sb.append(e.getKey()).append(" (x").append(e.getValue()).append(")");
+                    first = false;
+                }
+                sb.append('\n');
+            }
+        }
+        sb.append("[REJECT_DEBUG] all candidates exhausted — falling to next tier\n");
+        System.out.print(sb);
     }
 
     /**

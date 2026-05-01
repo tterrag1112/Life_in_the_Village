@@ -100,6 +100,17 @@ public final class PlanContext {
             new java.util.LinkedHashMap<>();
 
     /**
+     * Transient: rejection reasons accumulated during the current
+     * tryCommitBuilding / tryCommitWithRetries call sequence. Each FAIL
+     * branch in tryCommitBuilding appends one entry. PlacementMatcher
+     * clears this before each candidate's commit attempt and snapshots it
+     * after a failed return. Other call sites (recipe-direct placement)
+     * may ignore it — the list is read-only diagnostic.
+     */
+    public final java.util.List<String> rejectionLog =
+            new java.util.ArrayList<>();
+
+    /**
      * Doc 04 §"Core concepts" — plaza polygon registrations.
      * Populated by recipe compose() for VILLAGE+ tiers (prompt 17);
      * empty list means HAMLET, expansion path, or pre-prompt-17
@@ -351,6 +362,8 @@ public final class PlanContext {
             BlockPos adjusted = applyAdjacency(target, reqs);
             if (adjusted == null) {
                 if (diag) System.out.println("[TH]   FAIL adjacency");
+                rejectionLog.add("adjacency unsatisfied (no nearby "
+                        + reqs.get(0).feature() + ")");
                 return null;
             }
             target = adjusted;
@@ -389,6 +402,9 @@ public final class PlanContext {
                 slotRadius, rejectWater);
         if (resolved == null) {
             if (diag) System.out.println("[TH]   FAIL terrain");
+            rejectionLog.add("terrain resolution failed (no flat patch radius="
+                    + slotRadius + " jitter=" + density.getBuildingJitter()
+                    + " rejectWater=" + rejectWater + ")");
             return null;
         }
         if (diag) System.out.println("[TH]   resolved=" + resolved);
@@ -413,6 +429,8 @@ public final class PlanContext {
                 resolved.getX() - halfW, resolved.getY(), resolved.getZ() - halfL);
         if (!layout.getRoadFootprint().isClear(footprintOrigin, w, l, 1)) {
             if (diag) System.out.println("[TH]   FAIL road-footprint overlap");
+            rejectionLog.add("footprint " + w + "x" + l
+                    + " overlaps reserved road at " + resolved);
             return null;
         }
 
@@ -426,12 +444,16 @@ public final class PlanContext {
             int distSq = dx * dx + dz * dz;
             int effective = civicRing + Math.max(halfW, halfL);
             if (distSq < effective * effective) {
+                rejectionLog.add("inside civic ring guard (radius=" + civicRing
+                        + ", footprint=" + w + "x" + l + ")");
                 return null;
             }
         }
 
         if (!layout.tryAdd(slot)) {
             if (diag) System.out.println("[TH]   FAIL layout.tryAdd (overlap with existing forced/building slot)");
+            rejectionLog.add("footprint " + w + "x" + l
+                    + " overlaps existing committed slot");
             return null;
         }
 
