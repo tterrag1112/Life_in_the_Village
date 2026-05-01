@@ -576,20 +576,26 @@ public final class PlanContext {
         }
         int perpX = -headZ, perpZ = headX;
 
-        // Bounded perturbation — maxShift is the slot's maxDriftBlocks.
-        // Each candidate is only tried if its Euclidean drift from target
-        // stays within the bound. Outside the bound, we burn rather than
-        // commit at a position the recipe didn't intend.
+        // Clamp drift by actual building footprint so a small building placed
+        // in a large-budget slot (footprintBudgetW=16 but actual=9) doesn't
+        // drift past the validator threshold (roadHalfWidth + footprintHalf +
+        // VALIDATOR_ROAD_SLACK). max(w,l) is rotation-invariant.
+        StructureSizeCache.FootprintInfo sizeInfo =
+                sizes.get(sb.structure(), Rotation.NONE);
+        int sizeW = sizeInfo != null ? sizeInfo.width() : 12;
+        int sizeL = sizeInfo != null ? sizeInfo.length() : 12;
+        int effectiveShift = Math.min(maxShift, Math.max(sizeW, sizeL) / 2);
+
         int[] shifts = {4, -4, 8, -8};
         for (int shift : shifts) {
-            if (Math.abs(shift) > maxShift) continue;
+            if (Math.abs(shift) > effectiveShift) continue;
             BlockPos along = target.offset(headX * shift, 0, headZ * shift);
-            if (driftDistance(target, along) <= maxShift) {
+            if (driftDistance(target, along) <= effectiveShift) {
                 s = tryCommitBuilding(along, sb, bt, feedingRoad, slotTags);
                 if (s != null) return s;
             }
             BlockPos perp = target.offset(perpX * shift, 0, perpZ * shift);
-            if (driftDistance(target, perp) <= maxShift) {
+            if (driftDistance(target, perp) <= effectiveShift) {
                 s = tryCommitBuilding(perp, sb, bt, feedingRoad, slotTags);
                 if (s != null) return s;
             }
