@@ -2752,4 +2752,129 @@ exhaustive consumers).
 
 ### Next
 
-Per-user direction.
+Phase 17 (below).
+
+---
+
+### 2026-05-01 — Phase 17: recipes react to road truncation
+
+**Phase:** 17 — maxStepDeltaY tune + spine viability + slot clamping
+
+#### Step 1 — maxStepDeltaY bump
+
+`PrimitiveContext.DEFAULT_MAX_STEP_DELTA_Y` raised 6 → 8. Vanilla hilly
+biomes regularly produce 6–7 block Y-steps that are not actual cliffs; 8
+avoids premature CLIFF truncation on normal terrain.
+
+Javadoc updated; `@param` entry updated (was "Default 4", now "Default 8").
+TODO comment added: introduce `TerrainCategory` enum and lower to 4 for
+Lithosphere/Tectonic when that infrastructure exists.
+
+#### Step 2 — slot emission clamped to actual road extent
+
+**`RingBand.emitSlots` proximity clamp (LayoutPrimitive.java):**
+When `useSharedRing` is true, each candidate slot position is checked
+against the outer ring's actual centerline. If the nearest ring centerline
+point is more than `SAFE_OFFSET * 2 = 32` blocks away, the slot is skipped.
+This discards slots that fall in the angular gap left by a truncated Ring
+road (e.g., a ring that stopped at a cliff only covers 270° — the remaining
+90° would otherwise emit slots with no nearby feeding road, guaranteed to
+fail the validator).
+
+When the ring is complete (360°), every slot's nearest ring point is ≤18
+blocks away — all slots pass. When truncated, slots in the uncovered zone
+have nearest ring points from the arc ends, which are far away → dropped.
+
+**`LinearRecipe` farm cluster endpoints:**
+Farm clusters were previously placed at the geometric `mainStart`/`mainEnd`
+(the intended road endpoints). If the road truncated before reaching
+`mainEnd`, the cluster was still placed at the geometric target — which may
+be in bad terrain (why the road stopped). Now uses:
+- `actualStart = mainCenterline.get(0)` (or geometric fallback if empty)
+- `actualEnd   = mainCenterline.get(last)` (actual truncation point)
+
+Farm outward angles (`mainDirRad ± π`) are unchanged; they still point
+away from the road, but now from the correct anchor position.
+
+#### Step 3 — severe-truncation cascade
+
+**`BaseRecipe` (BaseRecipe.java):**
+- Added `SpineViability` inner enum: `OK | ROTATE | FALLBACK | ABORT`.
+- Added static `checkSpineViability(CenterlineResult result, int intendedLength)`:
+  - If `result.isComplete()` or `intendedLength ≤ 0` → `OK`
+  - If `actualPoints / intendedLength ≥ 0.30` → `OK`
+  - `CLIFF_DROP / CLIFF_RISE` → `ROTATE` (rotating 90° may clear the cliff)
+  - `WATER_CROSSING` → `FALLBACK` (rotation unlikely to help)
+  - `NO_SURFACE` → `ABORT`
+- `compose()` now prints `[SPINE-VIABILITY] RecipeName truncations=N pivots=M`
+  after `composeSectors` returns if any truncation was recorded.
+
+**`PlanContext` (PlanContext.java):**
+- Added `spineTruncationCount` / `spinePivotCount` int fields (default 0).
+- Added `recordSpineTruncation()`, `recordSpinePivot()`, and matching
+  getters — recipes call these from the cascade path.
+
+**`RadialRecipe` (RadialRecipe.java):**
+- After constructing `mainRoad` (before `addRoad`), probes the centerline
+  via `mainRoad.computeCenterline(PrimitiveContext.basic(...))` without
+  touching the graph.
+- Calls `checkSpineViability(probeMain, mainLength)`:
+  - `ABORT` → records truncation, returns (composeSectors aborted).
+  - `ROTATE` / `FALLBACK` → constructs a 90°-rotated road, probes it:
+    - If rotated version is `OK` → reassigns `mainDirRad`, `mainStart`,
+      `mainEnd`, `mainRoad` to the rotated values; records truncation + pivot.
+      All downstream layout (spurs, arcs, outer ring, gate endpoints) uses
+      the rotated direction automatically.
+    - Otherwise → records truncation + pivot, logs "DUMBELL recommended",
+      continues with the partially-truncated original road.
+  - `OK` → falls through to `addRoad` unchanged.
+
+**`LinearRecipe` (LinearRecipe.java):**
+- `addNode` calls moved to AFTER the probe/rotation block so no orphaned
+  GATE nodes are created in the road graph if we rotate.
+- Same probe → rotate → continue pattern as RadialRecipe.
+- `ABORT` path also calls `PlacementFailureRecorder.record` with
+  `TERRAIN_UNSUITABLE`.
+
+### Files modified (this session)
+
+- `Village/Planning/Primitives/PrimitiveContext.java` — step 1 constant bump
+- `Village/Planning/Primitives/PlanContext.java` — truncation/pivot stats
+- `Village/Planning/Primitives/BaseRecipe.java` — SpineViability + checkSpineViability + summary print
+- `Village/Planning/Primitives/LayoutPrimitive.java` — RingBand proximity clamp
+- `Village/Planning/Primitives/Recipes/RadialRecipe.java` — probe + rotation, new imports
+- `Village/Planning/Primitives/Recipes/LinearRecipe.java` — probe + rotation, actual farm endpoints, new imports
+
+### Invariants respected
+
+- No abstract-method renames.
+- No changes to `CenterlineResult` / `TerminationReason` API.
+- No changes to `PlacementSlot`, matcher, validator, building profiles.
+- No new `RoadPrimitive` subtypes.
+- No civic ring / TownSquare path touched.
+- Other recipes (Crossroads, Chain, Plaza, Grove, etc.) unchanged —
+  `spineTruncationCount` stays 0 for them.
+
+### Build status
+
+Gradle compile gated by network access; changes verified by inspection.
+Key correctness checks:
+- `SpineViability` switch in `checkSpineViability` is exhaustive over all
+  5 `TerminationReason` values.
+- `RingBand` proximity check only executes when `useSharedRing` is true
+  and `outerRingCenterline` is known non-empty (guarded by the
+  `useSharedRing` condition).
+- `LinearRecipe` addNode calls now after probe/rotation — no phantom gate
+  nodes on the rotate path.
+- `RadialRecipe` variable reassignments (`mainDirRad`, `mainStart`,
+  `mainEnd`, `mainRoad`) are all non-final locals.
+
+### Deferred
+
+- Phase 17.5: WEAVER perturbation-clamp (matcher-side, single-file change)
+- Phase 17.6: FARMHOUSE intermittent FIELD_EDGE diagnostic
+- Per-terrain-category `maxStepDeltaY` override (awaits TerrainCategory enum)
+
+### Next
+
+Phase 17.5 or as directed.

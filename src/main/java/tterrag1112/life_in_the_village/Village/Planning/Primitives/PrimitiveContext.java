@@ -20,7 +20,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap;
  * @param maxStepDeltaY   max allowed |Y| change between consecutive
  *                        centerline points before a primitive truncates
  *                        with {@link TerminationReason#CLIFF_DROP} or
- *                        {@link TerminationReason#CLIFF_RISE}. Default 4.
+ *                        {@link TerminationReason#CLIFF_RISE}. Default 8.
  */
 public record PrimitiveContext(
         ServerLevel level,
@@ -29,12 +29,12 @@ public record PrimitiveContext(
         int maxStepDeltaY) {
 
     /** Default cliff threshold — Y change beyond this triggers CLIFF_*.
-     *  Tuned to 6 (was 4): default-Minecraft hilly biomes regularly produce
-     *  4–5 block Y-steps without an actual cliff being present, and 4 was
-     *  truncating spurs/arcs that should traverse cleanly. 6 corresponds
-     *  roughly to a 1-block-per-2-horizontal slope; sheer cliffs (8+ block
-     *  vertical-chunk drops) still trip CLIFF_RISE/DROP. */
-    public static final int DEFAULT_MAX_STEP_DELTA_Y = 6;
+     *  Tuned to 8 (was 6): vanilla hilly biomes regularly produce 6–7 block
+     *  Y-steps without a genuine cliff; 8 corresponds roughly to a
+     *  1-block-per-1.5-horizontal slope. True sheer drops still exceed this.
+     *  TODO(Phase-17): introduce TerrainCategory enum and lower this to 4 for
+     *  Lithosphere / Tectonic / other extreme-terrain presets. */
+    public static final int DEFAULT_MAX_STEP_DELTA_Y = 8;
 
     /**
      * Convenience factory for callers that don't have a {@link FeatureMap}
