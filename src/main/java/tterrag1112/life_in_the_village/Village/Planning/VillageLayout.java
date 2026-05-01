@@ -132,6 +132,18 @@ public class VillageLayout {
 
     /** Adds a road primitive and computes+caches its centerline. */
     public List<BlockPos> addRoad(RoadPrimitive primitive, ServerLevel level, long worldSeed) {
+        return addRoad(primitive, level, worldSeed, null);
+    }
+
+    /**
+     * Role-aware variant. Pass {@code role=null} to keep the default-role
+     * inference; pass an explicit {@link EdgeRole} (e.g. {@link
+     * EdgeRole#OUTER_RING}) to override it. Used when a recipe constructs a
+     * Ring/Arc primitive that has a more specific semantic role than the
+     * generic RING default.
+     */
+    public List<BlockPos> addRoad(RoadPrimitive primitive, ServerLevel level,
+                                  long worldSeed, EdgeRole role) {
         PrimitiveContext ctx = PrimitiveContext.basic(level, worldSeed);
         CenterlineResult result = primitive.computeCenterline(ctx);
         if (!result.isComplete()) {
@@ -151,8 +163,8 @@ public class VillageLayout {
         int fromId = roadGraph.addNode(fromPos, NodeKind.TERMINUS, tier);
         int toId   = roadGraph.addNode(toPos,   NodeKind.TERMINUS, tier);
 
-        EdgeRole role = defaultRoleFor(primitive);
-        roadGraph.addEdge(fromId, toId, primitive, cl, role);
+        EdgeRole resolvedRole = role != null ? role : defaultRoleFor(primitive);
+        roadGraph.addEdge(fromId, toId, primitive, cl, resolvedRole);
 
         roadFootprint.reserveRoad(cl, tier.reservedHalfWidth());
         return cl;

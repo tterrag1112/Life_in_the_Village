@@ -122,6 +122,21 @@ public final class PlanContext {
             .Plaza.VillageCenterMarker villageCenter;
 
 
+    /**
+     * Phase: shared outer-ring road wiring. When a recipe emits a single
+     * outer perimeter road shared by multiple {@link
+     * tterrag1112.life_in_the_village.Village.Planning.Primitives
+     * .LayoutPrimitive.RingBand}s (DEFENSIVE inside the road, AGRICULTURAL
+     * outside), it stashes the ring's edge id, centerline, and centre-radius
+     * here so the bands can attach their slots to the same road instead of
+     * floating with no feeding edge. Default {@code edgeId=-1} means "no
+     * shared ring road; bands fall back to their {@code outerRadius}-derived
+     * safeRadius logic."
+     */
+    private int outerRingEdgeId = -1;
+    private List<BlockPos> outerRingCenterline = List.of();
+    private int outerRingRadius = 0;
+
     private static final int MAX_TERRAIN_ATTEMPTS = 32;
 
     public PlanContext(ServerLevel level, VillageLayout layout,
@@ -834,6 +849,24 @@ public final class PlanContext {
             matcher.run();
         }
     }
+    /**
+     * Stashes the shared outer-ring road that subsequent {@link
+     * tterrag1112.life_in_the_village.Village.Planning.Primitives
+     * .LayoutPrimitive.RingBand}s should attach their slots to. Called
+     * once per recipe, before invoking the bands. Pass {@code edgeId=-1}
+     * to clear (the default).
+     */
+    public void setOuterRing(int edgeId, List<BlockPos> centerline, int radius) {
+        this.outerRingEdgeId = edgeId;
+        this.outerRingCenterline = centerline != null
+                ? centerline : java.util.List.of();
+        this.outerRingRadius = radius;
+    }
+
+    public int outerRingEdgeId() { return outerRingEdgeId; }
+    public List<BlockPos> outerRingCenterline() { return outerRingCenterline; }
+    public int outerRingRadius() { return outerRingRadius; }
+
     /**
      * Stamps {@code ROAD_ADJACENT}/{@code BACKFILL} slots along a road
      * centerline at the given spacing, offset perpendicular to the road

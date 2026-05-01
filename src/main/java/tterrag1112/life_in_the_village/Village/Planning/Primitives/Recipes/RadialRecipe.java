@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
+import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
@@ -344,6 +345,34 @@ public final class RadialRecipe extends BaseRecipe {
             }
         }
 
+        // ── Shared outer-ring road ─────────────────────────────────────────
+        // Both DEFENSIVE and AGRICULTURAL bands attach to a single perimeter
+        // road. ringR is positioned so DEFENSIVE slots sit at ringR-16 (inside)
+        // and AGRICULTURAL slots at ringR+16 (outside), both within the 16–18
+        // window required for footprint clearance + validator pass. ringR is
+        // shifted out from the spur/arc network at outerR by ~20 blocks so
+        // DEFENSIVE slots land just outside the village proper.
+        // RingBand emitSlots places slots at radii measured from `centre`
+        // (the layout centre, not the plaza). Anchor the Ring at `centre`
+        // too so slot-to-road distance is purely radial — anchoring at
+        // squarePos would introduce a per-angle offset equal to the
+        // plaza-to-centre vector, breaking the SAFE_OFFSET window when the
+        // plaza centroid drifts more than a few blocks from centre.
+        int ringR = outerR + 20;
+        RoadPrimitive.Ring outerRing = new RoadPrimitive.Ring(
+                centre, ringR, 2.0, RoadShape.RoadTier.VILLAGE_PATH);
+        int beforeRingEdges = pctx.layout.getRoadGraph().edgeCount();
+        List<BlockPos> outerRingCenterline = pctx.layout.addRoad(
+                outerRing, pctx.level, pctx.worldSeed, EdgeRole.OUTER_RING);
+        int outerRingEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeRingEdges
+                ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
+        radialEdgeLog("OUTER_RING", "Ring", ringR, 0.0,
+                outerRingEdgeId, outerRingCenterline, centre);
+        allRoadsForSnap.add(outerRingCenterline);
+        if (outerRingEdgeId >= 0) {
+            pctx.setOuterRing(outerRingEdgeId, outerRingCenterline, ringR);
+        }
+
         // ── Outer agri RingBand → AGRICULTURAL_FRINGE sector ───────────────
         int agriSnapshot = pctx.slotPoolSize();
         LayoutPrimitive.RingBand agriBand = new LayoutPrimitive.RingBand(
@@ -365,7 +394,7 @@ public final class RadialRecipe extends BaseRecipe {
                     UNLIMITED_CAPACITY,
                     true,
                     new AddRing(16, 8),
-                    -1,
+                    outerRingEdgeId,
                     null,
                     18));
         }
@@ -391,7 +420,7 @@ public final class RadialRecipe extends BaseRecipe {
                     UNLIMITED_CAPACITY,
                     true,
                     new AddRing(12, 6),
-                    -1,
+                    outerRingEdgeId,
                     null,
                     18));
         }

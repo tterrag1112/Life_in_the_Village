@@ -196,9 +196,10 @@ public class LayoutDebugCommand {
 
     private static ParticleOptions particleForRole(EdgeRole role) {
         return switch (role) {
-            case SPINE -> ParticleTypes.END_ROD;
-            case SPUR  -> ParticleTypes.FLAME;
-            case RING  -> ParticleTypes.COMPOSTER;
+            case SPINE      -> ParticleTypes.END_ROD;
+            case SPUR       -> ParticleTypes.FLAME;
+            case RING       -> ParticleTypes.COMPOSTER;
+            case OUTER_RING -> ParticleTypes.WAX_ON;
         };
     }
 

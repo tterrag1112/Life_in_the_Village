@@ -490,9 +490,6 @@ public sealed interface LayoutPrimitive
 
         @Override
         public void emitSlots(PlanContext pctx) {
-            System.out.println("RingBand[" + zone + "] emitSlots called: buildings="
-                    + (buildings != null ? buildings.size() : "null")
-                    + " inner=" + innerRadius + " outer=" + outerRadius);
             java.util.Set<tterrag1112.life_in_the_village.Village.Planning
                     .Zoning.SlotTag> tags = switch (zone) {
                 case AGRICULTURAL -> java.util.EnumSet.of(
@@ -519,19 +516,44 @@ public sealed interface LayoutPrimitive
                                 .Zoning.SlotTag.ROAD_ADJACENT);
             };
 
-            // The recipe passes outerRadius as the outer perimeter — typically
-            // the outermost RING road's centerline. Slots must sit strictly
-            // outside that centerline by at least footprint/2 + MIN_BUILDING_GAP
-            // so the building's bounding box clears the reserved road blocks.
-            // Old code snapped to the nearest road and offset only 8 blocks
-            // toward the ideal, which left agri/defense slots inside any
-            // closer road (inner arcs in RADIAL) and overlapping the outer
-            // ring road's footprint. See the [radial_outer_agri] dump which
-            // showed slots at ~85 from centre when the band was 101–117.
+            // SLOT_FOOTPRINT chosen so the largest WALL_ADJACENT (guard tower)
+            // and FIELD_EDGE (farmhouse) buildings fit. SAFE_OFFSET clears
+            // the road's reserved corridor (reservedHalfWidth=3 for every
+            // tier) plus the slot's own footprint half plus MIN_BUILDING_GAP.
+            // Validator's road-distance threshold is roadHalfWidth(3) +
+            // halfFp(9) + slack(6) = 18, so SAFE_OFFSET=16 sits inside the
+            // 16–18 window where slots both clear the road footprint and
+            // satisfy the validator.
             final int SLOT_FOOTPRINT = 18;
-            int safeRadius = outerRadius + (SLOT_FOOTPRINT / 2)
-                    + tterrag1112.life_in_the_village.Village.Planning
-                            .VillageLayout.MIN_BUILDING_GAP;
+            final int SAFE_OFFSET = 16;
+
+            // Shared outer-ring path (Phase 18+ fix): when the recipe has
+            // staged a single perimeter road for both DEFENSIVE and
+            // AGRICULTURAL bands, both bands attach to it — DEFENSIVE on the
+            // inside, AGRICULTURAL on the outside. The ring road itself is
+            // ALREADY in the road graph; this band only emits slots and
+            // points them at the shared edge id / centerline.
+            int outerRingEdgeId = pctx.outerRingEdgeId();
+            List<BlockPos> outerRingCenterline = pctx.outerRingCenterline();
+            int outerRingRadius = pctx.outerRingRadius();
+            boolean useSharedRing = outerRingEdgeId >= 0
+                    && !outerRingCenterline.isEmpty()
+                    && outerRingRadius > 0
+                    && (zone == BuildingZone.DEFENSIVE
+                            || zone == BuildingZone.AGRICULTURAL);
+
+            // Slot radius differs by code path:
+            //   shared-ring path: ringR ± SAFE_OFFSET (DEFENSIVE inside, AGRI outside)
+            //   fallback path:    outerRadius + SAFE_OFFSET (legacy band-derived)
+            int slotRadius = useSharedRing
+                    ? (zone == BuildingZone.DEFENSIVE
+                            ? outerRingRadius - SAFE_OFFSET
+                            : outerRingRadius + SAFE_OFFSET)
+                    : outerRadius + SAFE_OFFSET;
+
+            System.out.println("RingBand[" + zone + "] emitSlots: useShared="
+                    + useSharedRing + " ringR=" + outerRingRadius
+                    + " slotR=" + slotRadius);
 
             int count = Math.max(buildings.size(), 8);
             double angleStep = 2 * Math.PI / count;
@@ -539,24 +561,42 @@ public sealed interface LayoutPrimitive
             for (int i = 0; i < count; i++) {
                 double angle = i * angleStep;
                 BlockPos target = new BlockPos(
-                        centre.getX() + (int) Math.round(Math.cos(angle) * safeRadius),
+                        centre.getX() + (int) Math.round(Math.cos(angle) * slotRadius),
                         centre.getY(),
-                        centre.getZ() + (int) Math.round(Math.sin(angle) * safeRadius));
+                        centre.getZ() + (int) Math.round(Math.sin(angle) * slotRadius));
 
-                List<BlockPos> nearestRoad = null;
-                if (snapRoads != null) {
-                    double bestDist = Double.MAX_VALUE;
-                    for (List<BlockPos> road : snapRoads) {
-                        if (road.isEmpty()) continue;
-                        BlockPos p = PlanContext.nearestOn(road, target);
-                        double d = p.distSqr(target);
-                        if (d < bestDist) { bestDist = d; nearestRoad = road; }
-                    }
+                List<BlockPos> feedingRoad;
+                int feedingEdgeId;
+                if (useSharedRing) {
+                    feedingRoad   = outerRingCenterline;
+                    feedingEdgeId = outerRingEdgeId;
+                } else {
+                    // Per-target nearest snap (legacy behaviour preserved
+                    // for recipes that haven't been migrated to the shared
+                    // ring path).
+                    feedingRoad   = nearestRoadFor(target);
+                    feedingEdgeId = -1;
                 }
 
-                pctx.offerSlot(new PlacementSlot(target, nearestRoad, tags,
-                        SLOT_FOOTPRINT, 30 - i));
+                pctx.offerSlot(new PlacementSlot(
+                        target, feedingRoad, feedingEdgeId, tags,
+                        SLOT_FOOTPRINT, SLOT_FOOTPRINT,
+                        null, 30 - i, 0));
             }
+        }
+
+        /** Per-target nearest-road snap for the fallback emitSlots path. */
+        private List<BlockPos> nearestRoadFor(BlockPos target) {
+            if (snapRoads == null) return null;
+            List<BlockPos> nearest = null;
+            double bestDist = Double.MAX_VALUE;
+            for (List<BlockPos> road : snapRoads) {
+                if (road == null || road.isEmpty()) continue;
+                BlockPos p = PlanContext.nearestOn(road, target);
+                double d = p.distSqr(target);
+                if (d < bestDist) { bestDist = d; nearest = road; }
+            }
+            return nearest;
         }
     }
 }

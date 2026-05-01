@@ -2649,3 +2649,107 @@ sits at the surface.
 ### Next
 
 Per-user direction.
+
+## Session B6 — 2026-05-01 — RADIAL shared outer ring road
+
+### Goal
+
+Fix the AGRI/DEFENSE band placement in `RadialRecipe` where slots landed
+30–50 blocks beyond the outermost arc road and had no real feeding road,
+so guard towers / stockpiles / farmhouses failed validation. Diagnostic
+dumps from the previous session showed slots at cheb radii ~120/130 with
+the nearest existing road being SPINE / ARC_1 at meanR=59 / 73.
+
+### Solution
+
+Introduce a single shared perimeter ring road that both bands attach to.
+DEFENSIVE slots sit just inside the ring (`ringR - 16`), AGRICULTURAL
+slots just outside (`ringR + 16`). The 16-block offset is exactly the
+window that satisfies both constraints: footprint clearance against the
+road's reservedHalfWidth=3 (slot half-fp 9 + reservedHalf 3 + gap 4 = 16
+blocks min), and the validator's road-distance threshold (3 + 9 + 6 = 18
+max). With Ring drift amplitude=2, slot-to-road distance ranges 14–18,
+inside the window.
+
+### Implementation
+
+1. **`EdgeRole.OUTER_RING`** — new enum value for the perimeter ring.
+   `LayoutDebugCommand.particleForRole` extended with `WAX_ON` particle
+   so the exhaustive switch still compiles.
+2. **`VillageLayout.addRoad(primitive, level, seed, role)`** — overload
+   that accepts an explicit role. Existing 3-arg form delegates with
+   `role=null` (preserving `defaultRoleFor` inference). Used by
+   `RadialRecipe` to tag the new ring as `OUTER_RING`.
+3. **`PlanContext.outerRingEdgeId / outerRingCenterline / outerRingRadius`**
+   — three new fields plus `setOuterRing(...)` and accessors. Default
+   `edgeId=-1` means "no shared ring; bands fall back."
+4. **`LayoutPrimitive.RingBand.emitSlots`** — branches on `pctx.outerRingEdgeId() >= 0`
+   AND zone ∈ {DEFENSIVE, AGRICULTURAL}. Shared-ring path uses the
+   ring's edge id and centerline as `feedingRoad/feedingEdgeId` and
+   computes slot radius as `ringR ± SAFE_OFFSET` (sign by zone).
+   Fallback path keeps the legacy per-target nearest-road snap; non-RADIAL
+   recipes (CrossroadsRecipe, GroveRecipe, ChainRecipe, PlazaRecipe,
+   TerracedRecipe-stragglers, etc.) hit this path unchanged.
+5. **`RadialRecipe.composeSectors`** — after the spurs/cluster arcs/outer
+   arcs are emitted, builds a `RoadPrimitive.Ring` at `centre` with
+   `ringR = outerR + 20`, drift 2.0, VILLAGE_PATH tier; calls the new
+   `addRoad(..., EdgeRole.OUTER_RING)`; stashes edge id / centerline /
+   radius on PlanContext; passes the captured edge id as `parentEdgeId`
+   on both AGRI and DEFENSE sectors.
+
+### Anchor choice
+
+Ring anchored at `centre` (= `pctx.layout.getCenter()`), not `squarePos`.
+The bands compute slot positions from `centre`; using a different anchor
+would offset the road by the plaza-to-centre vector and erode the 16–18
+SAFE_OFFSET window. Existing arc roads still anchor at `squarePos` —
+that's a separate decision for inner arcs, where the plaza is the
+natural focal point.
+
+### Files modified
+
+- `Village/Planning/Graph/EdgeRole.java` — added `OUTER_RING`.
+- `Village/Planning/Primitives/PlanContext.java` — outer-ring fields,
+  setter, getters.
+- `Village/Planning/Primitives/LayoutPrimitive.java` — `RingBand.emitSlots`
+  shared-ring branch + fallback preservation.
+- `Village/Planning/VillageLayout.java` — `addRoad` 4-arg overload with
+  optional role.
+- `Village/Planning/Primitives/Recipes/RadialRecipe.java` — emits the
+  shared ring, sets PlanContext, threads edge id into both sectors.
+- `Commands/LayoutDebugCommand.java` — switch case for the new role.
+
+### Untouched on purpose
+
+- Civic ring + plaza geometry (Phase 18 doc 04).
+- Inner arc roads (ARC_0, ARC_1) — they remain as residential infill,
+  anchored at `squarePos`.
+- Spur cluster arcs — still serve production clusters at the spur tip
+  radius.
+- SlotTag values for AGRI/DEFENSE.
+- `Sector.expectedMaxFootprint=18` — kept.
+- Other recipes that build RingBands without setting the outer ring on
+  PlanContext use the legacy fallback path.
+
+### Build status
+
+Gradle compile gated by network access (no NeoForge artifacts cached
+offline); changes verified by inspection. The exhaustive `EdgeRole`
+switch in `LayoutDebugCommand` is the only switch the grep found, so
+adding `OUTER_RING` to the enum is safe everywhere else (no other
+exhaustive consumers).
+
+### Validation criteria for next playtest
+
+- New `--- ROADS ---` entry with `role=OUTER_RING`, pts ≈ 2π·ringR
+  (~880 for ringR=140).
+- AGRI / DEFENSE sector dumps report `road=Npts` matching the outer
+  ring's centerline length (not SPINE/ARC).
+- GUARD_TOWER / STOCKPILE / FARMHOUSE rows in committed buildings show
+  `feedRoad=Npts` matching the ring.
+- VALIDATION SUMMARY: zero FAILs for these three building types across
+  multiple RADIAL spawns on Lithosphere terrain.
+
+### Next
+
+Per-user direction.
