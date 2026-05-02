@@ -5,8 +5,10 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.CenterlineResult;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddSpur;
@@ -157,6 +159,55 @@ public final class RadialRecipe extends BaseRecipe {
 
         RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
                 mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+
+        // Phase 17 Step 3: probe spine viability before committing to graph.
+        // If the road would be severely truncated by a cliff, try rotating 90°.
+        // We call computeCenterline directly so the probe doesn't add to the
+        // graph; addRoad below then recomputes (deterministic same result).
+        CenterlineResult probeMain = mainRoad.computeCenterline(
+                PrimitiveContext.basic(pctx.level, pctx.worldSeed));
+        SpineViability mainViability = checkSpineViability(probeMain, mainLength);
+        if (mainViability == SpineViability.ABORT) {
+            pctx.recordSpineTruncation();
+            System.out.println("RadialRecipe: main road NO_SURFACE — aborting composeSectors");
+            return;
+        }
+        if (mainViability == SpineViability.ROTATE
+                || mainViability == SpineViability.FALLBACK) {
+            double rotDir = mainDirRad + Math.PI / 2;
+            BlockPos rotStart = new BlockPos(
+                    squarePos.getX() + (int) Math.round(Math.cos(rotDir) * extendedRing),
+                    squarePos.getY(),
+                    squarePos.getZ() + (int) Math.round(Math.sin(rotDir) * extendedRing));
+            rotStart = pctx.solidSurface(rotStart);
+            BlockPos rotEnd = new BlockPos(
+                    rotStart.getX() + (int) Math.round(Math.cos(rotDir) * mainLength),
+                    rotStart.getY(),
+                    rotStart.getZ() + (int) Math.round(Math.sin(rotDir) * mainLength));
+            rotEnd = pctx.solidSurface(rotEnd);
+            RoadPrimitive.StraightRoad rotRoad = new RoadPrimitive.StraightRoad(
+                    rotStart, rotEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+            CenterlineResult probeRot = rotRoad.computeCenterline(
+                    PrimitiveContext.basic(pctx.level, pctx.worldSeed));
+            SpineViability rotViability = checkSpineViability(probeRot, mainLength);
+            pctx.recordSpineTruncation();
+            if (rotViability == SpineViability.OK) {
+                // Rotated direction clears the obstacle — use it for all
+                // direction-sensitive layout downstream (spurs, arcs, gates).
+                mainDirRad = rotDir;
+                mainStart  = rotStart;
+                mainEnd    = rotEnd;
+                mainRoad   = rotRoad;
+                pctx.recordSpinePivot();
+            } else {
+                // Both directions truncated — continue with the partial road
+                // and log that a DUMBELL fallback would be preferable.
+                pctx.recordSpinePivot();
+                System.out.println("RadialRecipe: spine truncated in both directions"
+                        + " — DUMBELL fallback recommended (not invoked)");
+            }
+        }
+
         int beforeMainEdges = pctx.layout.getRoadGraph().edgeCount();
         List<BlockPos> mainCenterline = pctx.layout.addRoad(
                 mainRoad, pctx.level, pctx.worldSeed);

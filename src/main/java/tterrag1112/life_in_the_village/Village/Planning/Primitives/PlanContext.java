@@ -849,6 +849,17 @@ public final class PlanContext {
             matcher.run();
         }
     }
+    // ── Phase 17 spine-truncation statistics ──────────────────────────────────
+    // Incremented by recipes when they detect or react to severe spine
+    // truncation. BaseRecipe.compose() prints a summary line when non-zero.
+    private int spineTruncationCount = 0;
+    private int spinePivotCount = 0;
+
+    public void recordSpineTruncation() { spineTruncationCount++; }
+    public void recordSpinePivot()      { spinePivotCount++; }
+    public int  spineTruncationCount()  { return spineTruncationCount; }
+    public int  spinePivotCount()       { return spinePivotCount; }
+
     /**
      * Stashes the shared outer-ring road that subsequent {@link
      * tterrag1112.life_in_the_village.Village.Planning.Primitives

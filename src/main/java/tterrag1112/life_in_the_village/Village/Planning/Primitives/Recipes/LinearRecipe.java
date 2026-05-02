@@ -7,7 +7,9 @@ import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.CenterlineResult;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.ExtendAlongEdge;
@@ -107,13 +109,61 @@ public final class LinearRecipe extends BaseRecipe {
                 origin.getY(),
                 origin.getZ() - (int) Math.round(tanZ * halfLength)));
 
+        RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
+                mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+
+        // Phase 17 Step 3: probe spine before adding to graph; try 90° rotation
+        // if severely truncated. addNode calls are deferred to after the
+        // rotation decision so we don't leave orphaned GATE nodes in the graph.
+        CenterlineResult probeMain = mainRoad.computeCenterline(
+                PrimitiveContext.basic(pctx.level, pctx.worldSeed));
+        SpineViability mainViability = checkSpineViability(probeMain, 2 * halfLength);
+        if (mainViability == SpineViability.ABORT) {
+            pctx.recordSpineTruncation();
+            tterrag1112.life_in_the_village.Kingdom.Placement
+                    .PlacementFailureRecorder.record(
+                    tterrag1112.life_in_the_village.Kingdom.Placement
+                            .PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                    "LINEAR: main road NO_SURFACE abort",
+                    pctx.layout.getCenter(),
+                    tterrag1112.life_in_the_village.Village.VillageTypeData
+                            .ShapeType.LINEAR.name());
+            return;
+        }
+        if (mainViability == SpineViability.ROTATE
+                || mainViability == SpineViability.FALLBACK) {
+            double rotDir = mainDirRad + Math.PI / 2;
+            BlockPos rotStart = pctx.solidSurface(new BlockPos(
+                    origin.getX() + (int) Math.round(Math.cos(rotDir) * halfLength),
+                    origin.getY(),
+                    origin.getZ() + (int) Math.round(Math.sin(rotDir) * halfLength)));
+            BlockPos rotEnd = pctx.solidSurface(new BlockPos(
+                    origin.getX() - (int) Math.round(Math.cos(rotDir) * halfLength),
+                    origin.getY(),
+                    origin.getZ() - (int) Math.round(Math.sin(rotDir) * halfLength)));
+            RoadPrimitive.StraightRoad rotRoad = new RoadPrimitive.StraightRoad(
+                    rotStart, rotEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+            CenterlineResult probeRot = rotRoad.computeCenterline(
+                    PrimitiveContext.basic(pctx.level, pctx.worldSeed));
+            SpineViability rotViability = checkSpineViability(probeRot, 2 * halfLength);
+            pctx.recordSpineTruncation();
+            if (rotViability == SpineViability.OK) {
+                mainDirRad = rotDir;
+                mainStart  = rotStart;
+                mainEnd    = rotEnd;
+                mainRoad   = rotRoad;
+                pctx.recordSpinePivot();
+            } else {
+                pctx.recordSpinePivot();
+                System.out.println("LinearRecipe: spine truncated in both directions,"
+                        + " continuing with best available");
+            }
+        }
+
         int startNodeId = pctx.layout.addNode(
                 mainStart, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
         int endNodeId = pctx.layout.addNode(
                 mainEnd, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
-
-        RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
-                mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
         int mainEdgeId = pctx.layout.addEdge(
                 startNodeId, endNodeId, mainRoad,
                 pctx.level, pctx.worldSeed, EdgeRole.SPINE);
@@ -168,8 +218,16 @@ public final class LinearRecipe extends BaseRecipe {
         }
 
         // ── Farm clusters at each end ─────────────────────────────────────
+        // Phase 17 Step 2: use actual road endpoints, not geometric targets,
+        // so farms aren't placed at truncated-road positions that may be in
+        // bad terrain (the road stopped short for exactly that reason).
+        BlockPos actualStart = mainCenterline.isEmpty()
+                ? mainStart : mainCenterline.get(0);
+        BlockPos actualEnd = mainCenterline.isEmpty()
+                ? mainEnd : mainCenterline.get(mainCenterline.size() - 1);
+
         List<PlacementSlot> farmStart = generateFarmCluster(
-                pctx, mainStart, mainDirRad + Math.PI, mainEdgeId);
+                pctx, actualStart, mainDirRad + Math.PI, mainEdgeId);
         if (!farmStart.isEmpty()) {
             pctx.offerSector(new Sector(
                     SECTOR_FARM_START, SectorRole.AGRICULTURAL_FRINGE,
@@ -179,7 +237,7 @@ public final class LinearRecipe extends BaseRecipe {
         }
 
         List<PlacementSlot> farmEnd = generateFarmCluster(
-                pctx, mainEnd, mainDirRad, mainEdgeId);
+                pctx, actualEnd, mainDirRad, mainEdgeId);
         if (!farmEnd.isEmpty()) {
             pctx.offerSector(new Sector(
                     SECTOR_FARM_END, SectorRole.AGRICULTURAL_FRINGE,

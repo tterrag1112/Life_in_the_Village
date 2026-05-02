@@ -568,6 +568,15 @@ public sealed interface LayoutPrimitive
                 List<BlockPos> feedingRoad;
                 int feedingEdgeId;
                 if (useSharedRing) {
+                    // Phase 17 Step 2: skip slots where the ring road was
+                    // truncated. The slot is at ringR ± SAFE_OFFSET; when the
+                    // ring exists at this angle the nearest ring point is
+                    // within ~18 blocks. If the ring stopped short, the nearest
+                    // point is from a different angle and will be > SAFE_OFFSET*2
+                    // away — those slots would fail the validator and add noise.
+                    BlockPos nearestRingPt = PlanContext.nearestOn(outerRingCenterline, target);
+                    double distToRing = Math.sqrt(nearestRingPt.distSqr(target));
+                    if (distToRing > SAFE_OFFSET * 2) continue;
                     feedingRoad   = outerRingCenterline;
                     feedingEdgeId = outerRingEdgeId;
                 } else {

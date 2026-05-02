@@ -2,6 +2,8 @@ package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaShape;
 
+// CenterlineResult and TerminationReason are in the same package — no import needed.
+
 /**
  * Three-step lifecycle for shape recipes that fit the standard pattern:
  * prepare features, compose sectors, register named anchors. Recipes
@@ -33,11 +35,62 @@ import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaShape;
  */
 public abstract class BaseRecipe implements ShapeRecipe {
 
+    /**
+     * Phase 17 Step 3: outcome of a primary-spine viability check.
+     * Recipes call {@link #checkSpineViability} after probing the spine road;
+     * they branch on the result to decide whether to proceed, rotate 90°, or
+     * record a fallback signal.
+     */
+    public enum SpineViability {
+        /** Spine traversed ≥ 30 % of intended length — proceed normally. */
+        OK,
+        /** Severe cliff truncation — rotating 90° may find a clear path. */
+        ROTATE,
+        /** Water or other obstacle — rotation is unlikely to help; log fallback. */
+        FALLBACK,
+        /** No surface at all — abort composeSectors entirely. */
+        ABORT
+    }
+
+    /**
+     * Checks whether a just-computed spine {@link CenterlineResult} is viable.
+     *
+     * <p>Returns {@link SpineViability#OK} when the centerline reached ≥ 30 %
+     * of {@code intendedLength} points OR when the walk completed normally
+     * ({@link TerminationReason#COMPLETED}). Otherwise maps the truncation
+     * reason to a corrective action.
+     *
+     * @param result         result from {@code RoadPrimitive.computeCenterline}
+     * @param intendedLength expected point count for a full traversal
+     *                       (use the geometric length in blocks — centerlines
+     *                       produce roughly one point per block)
+     */
+    protected static SpineViability checkSpineViability(
+            CenterlineResult result, int intendedLength) {
+        if (result.isComplete() || intendedLength <= 0) return SpineViability.OK;
+        double ratio = (double) result.points().size() / intendedLength;
+        if (ratio >= 0.30) return SpineViability.OK;
+        return switch (result.reason()) {
+            case COMPLETED      -> SpineViability.OK; // can't reach here but be safe
+            case CLIFF_DROP,
+                 CLIFF_RISE     -> SpineViability.ROTATE;
+            case WATER_CROSSING -> SpineViability.FALLBACK;
+            case NO_SURFACE     -> SpineViability.ABORT;
+        };
+    }
+
     @Override
     public final void compose(PlanContext pctx) {
         prepareFeatures(pctx);
         composeSectors(pctx);
         registerAnchors(pctx);
+        int t = pctx.spineTruncationCount();
+        int p = pctx.spinePivotCount();
+        if (t > 0 || p > 0) {
+            System.out.println("[SPINE-VIABILITY] "
+                    + getClass().getSimpleName()
+                    + " truncations=" + t + " pivots=" + p);
+        }
     }
 
     /**
