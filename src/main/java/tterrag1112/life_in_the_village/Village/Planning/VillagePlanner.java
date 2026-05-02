@@ -52,6 +52,18 @@ public class VillagePlanner {
     private static final int DECORATION_RADIUS = 3;
 
     /**
+     * Phase 16b: when the cascade engine marks a layout unplannable,
+     * the planner stashes the reason here so {@link
+     * tterrag1112.life_in_the_village.Village.VillageSpawner} can
+     * distinguish "site genuinely unsuitable" from "planner rejected,
+     * try local refinement". Reset at the start of every {@link #plan}
+     * call. Single-threaded village planning makes the static field
+     * safe; if planning ever becomes parallel, switch to ThreadLocal.
+     */
+    private static volatile String lastUnplannableReason = null;
+    public static String lastUnplannableReason() { return lastUnplannableReason; }
+
+    /**
      * Maximum Chebyshev distance allowed between a building's edge and the
      * nearest road centerline, in addition to the road's own reserved
      * half-width. This is wiggle room: it absorbs perturbation drift
@@ -91,6 +103,9 @@ public class VillagePlanner {
     public static Optional<VillageLayout> plan(
             ServerLevel level, BlockPos origin,
             VillageTypeData typeData, Random rng, int villageLevel) {
+
+        // Reset cross-call cascade-state signal at the entry to plan().
+        lastUnplannableReason = null;
 
         // 1. Terrain analysis
         TerrainProfile terrain = TerrainAnalyzer.analyze(level, origin);
@@ -180,9 +195,14 @@ public class VillagePlanner {
         pctx.setVariantContext(typeData, styleSel, tier,
                 VillageAgeCategoryHook.forNewVillage());
 
-        // 6. Dispatch to the recipe
+        // 6. Dispatch to the recipe. Seed finalShape with the requested shape
+        // so the cascade engine can update it on fallback.
+        VillageTypeData.ShapeType requestedShape =
+                typeData.getShapeProfile().shapeType();
+        pctx.setFinalShape(requestedShape);
+        int initialBuildingCount = expanded.size();
         try {
-            ShapeRecipe.forShape(typeData.getShapeProfile().shapeType()).compose(pctx);
+            ShapeRecipe.forShape(requestedShape).compose(pctx);
         } catch (Exception e) {
             System.out.println("VillagePlanner: recipe failed — " + e.getMessage());
             e.printStackTrace();
@@ -192,6 +212,24 @@ public class VillagePlanner {
                             origin, typeData.getType());
             return Optional.empty();
         }
+
+        // Phase 16b: cascade engine may mark the site unplannable. Short-circuit
+        // before running the matcher / validator — the layout has nothing to
+        // match. VillageSpawner reads lastUnplannableReason() to skip refinement.
+        if (layout.isUnplannable()) {
+            String reason = layout.unplannableReason() != null
+                    ? layout.unplannableReason() : "(no reason given)";
+            lastUnplannableReason = reason;
+            System.out.println("VillagePlanner: site unplannable — " + reason);
+            PlacementFailureRecorder
+                    .record(PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                            "site unplannable: " + reason,
+                            origin, typeData.getType());
+            printVillageSummary(pctx, layout, initialBuildingCount,
+                    requestedShape, "UNPLANNABLE");
+            return Optional.empty();
+        }
+
         // Phase 9: snapshot the sectors a BaseRecipe emitted so /liv
         // layout debug show_sectors can render them. Empty for
         // unconverted recipes.
@@ -204,6 +242,8 @@ public class VillagePlanner {
                     .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
                             "recipe produced no buildings",
                             origin, typeData.getType());
+            printVillageSummary(pctx, layout, initialBuildingCount,
+                    requestedShape, "NO_BUILDINGS");
             return Optional.empty();
         }
 
@@ -216,6 +256,8 @@ public class VillagePlanner {
                     .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
                             "plan validation failed",
                             origin, typeData.getType());
+            printVillageSummary(pctx, layout, initialBuildingCount,
+                    requestedShape, "VALIDATION_FAILED");
             return Optional.empty();
         }
 
@@ -241,7 +283,36 @@ public class VillagePlanner {
         System.out.println("VillagePlanner: planned "
                 + typeData.getShapeProfile().shapeType()
                 + " village — " + layout);
+        printVillageSummary(pctx, layout, initialBuildingCount,
+                requestedShape, "OK");
         return Optional.of(layout);
+    }
+
+    /**
+     * Phase 16b per-village summary. Combines compose-time cascade stats
+     * (truncations, retries, finalShape, primary spine ratio) with
+     * post-matcher validated/total counts. Printed after the matcher
+     * runs (or as close as the failure path allows).
+     */
+    private static void printVillageSummary(PlanContext pctx, VillageLayout layout,
+            int initialBuildingCount,
+            VillageTypeData.ShapeType requestedShape, String status) {
+        var spine = pctx.primarySpineResult();
+        String spineRatio = spine == null ? "n/a"
+                : String.format("%.2f", spine.completionRatio());
+        String spineLen = spine == null ? "n/a"
+                : (spine.actualLength() + "/" + spine.intendedLength());
+        var finalShape = pctx.finalShape() != null
+                ? pctx.finalShape() : requestedShape;
+        int validated = layout.buildings().size();
+        System.out.println("[VILLAGE-SUMMARY] shape=" + requestedShape
+                + " status=" + status
+                + " spineRatio=" + spineRatio
+                + " spineLen=" + spineLen
+                + " truncations=" + pctx.truncationCount()
+                + " retries=" + pctx.cascadeRetryCount()
+                + " finalShape=" + finalShape
+                + " validated=" + validated + "/" + initialBuildingCount);
     }
 
     // =========================================================================

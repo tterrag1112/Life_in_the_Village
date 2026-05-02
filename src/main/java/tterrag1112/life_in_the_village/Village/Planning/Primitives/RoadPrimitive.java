@@ -89,6 +89,21 @@ public sealed interface RoadPrimitive
     RoadShape.RoadTier tier();
 
     /**
+     * Phase 16b: pre-truncation target length in blocks. Recipes compare
+     * the actual centerline length against this to detect severe
+     * truncation (see {@link RoadResult#completionRatio()}).
+     *
+     * <p>Default throws {@link UnsupportedOperationException} — every
+     * subtype that flows through {@code computeAndRecord} must override.
+     * This makes accidental omission fail loudly instead of silently
+     * returning 0 (which would make every road look 100%-complete).
+     */
+    default int intendedLength() {
+        throw new UnsupportedOperationException(
+                "intendedLength() not implemented for " + typeKey());
+    }
+
+    /**
      * Stable string key used as the discriminator in {@link #CODEC}.
      * Must be unique across all permitted subtypes and must not change
      * once edges have been serialized to disk.
@@ -150,6 +165,11 @@ public sealed interface RoadPrimitive
         ).apply(i, StraightRoad::new));
 
         @Override public String typeKey() { return "StraightRoad"; }
+
+        @Override
+        public int intendedLength() {
+            return (int) Math.round(Math.sqrt(from.distSqr(to)));
+        }
 
         @Override
         public CenterlineResult computeCenterline(PrimitiveContext ctx) {
@@ -268,6 +288,11 @@ public sealed interface RoadPrimitive
         @Override public String typeKey() { return "Ring"; }
 
         @Override
+        public int intendedLength() {
+            return (int) Math.round(2.0 * Math.PI * radius);
+        }
+
+        @Override
         public CenterlineResult computeCenterline(PrimitiveContext ctx) {
             ServerLevel level = ctx.level();
             long localSeed = DriftNoise.localSeed(ctx.worldSeed(), centre, centre)
@@ -331,6 +356,11 @@ public sealed interface RoadPrimitive
         ).apply(i, Arc::new));
 
         @Override public String typeKey() { return "Arc"; }
+
+        @Override
+        public int intendedLength() {
+            return (int) Math.round(radius * Math.abs(arcSpan));
+        }
 
         @Override
         public CenterlineResult computeCenterline(PrimitiveContext ctx) {
@@ -405,6 +435,11 @@ public sealed interface RoadPrimitive
         ).apply(i, Spur::new));
 
         @Override public String typeKey() { return "Spur"; }
+
+        @Override
+        public int intendedLength() {
+            return length;
+        }
 
         @Override
         public CenterlineResult computeCenterline(PrimitiveContext ctx) {

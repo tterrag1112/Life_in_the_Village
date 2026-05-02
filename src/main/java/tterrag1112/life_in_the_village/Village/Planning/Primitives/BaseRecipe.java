@@ -1,141 +1,312 @@
 package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
+import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaShape;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
+import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
-// CenterlineResult and TerminationReason are in the same package — no import needed.
+import java.util.ArrayList;
+import java.util.List;
+
+// CenterlineResult, RoadResult, RoadPrimitive, PrimitiveContext,
+// TerminationReason, PlanContext are in the same package — no imports needed.
 
 /**
  * Three-step lifecycle for shape recipes that fit the standard pattern:
- * prepare features, compose sectors, register named anchors. Recipes
- * that don't fit (CLUSTERED, GROVE, OUTPOST may not) continue to
- * implement {@link ShapeRecipe} directly and override {@link #compose}.
+ * prepare features, compose sectors, register named anchors.
  *
- * <h3>Lifecycle</h3>
+ * <h3>Default lifecycle (most recipes)</h3>
  * <ol>
- *   <li>{@link #prepareFeatures} — recipes that need feature awareness
- *       (e.g. RIVERINE locating its shore, HILLTOP locating its peak)
- *       override this. Default is no-op.</li>
+ *   <li>{@link #prepareFeatures} — feature-aware pre-pass (default no-op).</li>
  *   <li>{@link #composeSectors} — REQUIRED. Build the road graph and
  *       emit sectors. The matcher consumes whatever this method
  *       produces.</li>
- *   <li>{@link #registerAnchors} — register named anchors. Default
- *       registers MAIN_GATE if {@code pctx.layout.getMainGateEndpoint()}
- *       is set. Recipes with additional anchors (TREASURY, AUDIENCE,
- *       MANOR_NE) override.</li>
+ *   <li>{@link #registerAnchors} — register named anchors (default no-op).</li>
  * </ol>
  *
- * <p>Recipes can also override {@link #preferredPlazaShape()} to declare
- * what plaza geometry they want. The default is CIRCLE; PLAZA prefers
- * SQUARE; CROSSROADS may prefer RECTANGLE.
+ * <h3>Cascade-aware recipes (Phase 16b)</h3>
+ * Recipes that participate in the constraint-propagation engine
+ * ({@link #runWithCascade}) override {@link #compose} to invoke it
+ * and override {@link #composeOnce} with a probe-then-commit body.
+ * The engine retries via {@link #reEmit}; recipes declare a
+ * {@link #fallbackShape} for when retries are exhausted.
  *
- * <h3>Why final compose</h3>
- * The {@code compose} method is intentionally final on this class so
- * the lifecycle ordering can't be silently broken. A recipe that needs
- * different ordering should not extend BaseRecipe.
+ * <p>Currently RADIAL and LINEAR are cascade-aware. All other recipes
+ * keep the default {@link #compose} (which calls
+ * {@link #composeSectors} once) and ignore the engine.
+ *
+ * <p>The opt-in is intentional: recipes that don't have a
+ * meaningful primary spine can't usefully participate, and
+ * forcing them through the engine just adds latency without value.
+ *
+ * <p>Recipes can also override {@link #preferredPlazaShape()} to declare
+ * what plaza geometry they want.
  */
 public abstract class BaseRecipe implements ShapeRecipe {
 
+    // =========================================================================
+    // Cascade engine (Phase 16b)
+    // =========================================================================
+
     /**
-     * Phase 17 Step 3: outcome of a primary-spine viability check.
-     * Recipes call {@link #checkSpineViability} after probing the spine road;
-     * they branch on the result to decide whether to proceed, rotate 90°, or
-     * record a fallback signal.
+     * Outcome of a constraint check. Generalizes beyond truncation —
+     * future Phase 22 / architectural-shift cases (slot loss, sector
+     * starvation) will reuse this enum verbatim.
      */
-    public enum SpineViability {
-        /** Spine traversed ≥ 30 % of intended length — proceed normally. */
+    public enum RecipeStatus {
+        /** Plan acceptable; engine returns. */
         OK,
-        /** Severe cliff truncation — rotating 90° may find a clear path. */
-        ROTATE,
-        /** Water or other obstacle — rotation is unlikely to help; log fallback. */
+        /** Plan unacceptable; engine re-invokes {@link #composeOnce} with mutated state. */
+        RETRY,
+        /** Plan unacceptable; engine delegates to {@link #fallbackShape}. */
         FALLBACK,
-        /** No surface at all — abort composeSectors entirely. */
+        /** Site unsalvageable; engine marks layout unplannable and returns. */
         ABORT
     }
 
     /**
-     * Checks whether a just-computed spine {@link CenterlineResult} is viable.
-     *
-     * <p>Returns {@link SpineViability#OK} when the centerline reached ≥ 30 %
-     * of {@code intendedLength} points OR when the walk completed normally
-     * ({@link TerminationReason#COMPLETED}). Otherwise maps the truncation
-     * reason to a corrective action.
-     *
-     * @param result         result from {@code RoadPrimitive.computeCenterline}
-     * @param intendedLength expected point count for a full traversal
-     *                       (use the geometric length in blocks — centerlines
-     *                       produce roughly one point per block)
+     * Reason a recipe needs to re-emit. Sealed so future phases can add
+     * variants without churning every {@link #reEmit} site. Phase 16b
+     * only consumes {@link SevereTruncation}; the other variants exist
+     * as scaffolding for Phase 22 and the post-rework experiments.
      */
-    protected static SpineViability checkSpineViability(
-            CenterlineResult result, int intendedLength) {
-        if (result.isComplete() || intendedLength <= 0) return SpineViability.OK;
-        double ratio = (double) result.points().size() / intendedLength;
-        if (ratio >= 0.30) return SpineViability.OK;
-        return switch (result.reason()) {
-            case COMPLETED      -> SpineViability.OK; // can't reach here but be safe
-            case CLIFF_DROP,
-                 CLIFF_RISE     -> SpineViability.ROTATE;
-            case WATER_CROSSING -> SpineViability.FALLBACK;
-            case NO_SURFACE     -> SpineViability.ABORT;
-        };
+    public sealed interface ReEmitReason
+            permits ReEmitReason.SevereTruncation,
+                    ReEmitReason.SlotsDropped,
+                    ReEmitReason.SectorStarved {
+
+        record SevereTruncation(RoadResult primary) implements ReEmitReason {}
+        record SlotsDropped(int dropped, int total) implements ReEmitReason {}
+        record SectorStarved(String sectorId, int unfilledMin) implements ReEmitReason {}
     }
 
+    /**
+     * Engine entry point for cascade-aware recipes. Calls
+     * {@link #composeOnce} up to {@code maxRetries} times, dispatching
+     * on the returned {@link ReEmitReason} via {@link #reEmit}.
+     *
+     * <p>Contract on {@link #composeOnce} implementations: the body
+     * MUST be probe-then-commit. No layout mutation may happen before
+     * the recipe decides whether to return a reason. Once a reason is
+     * returned, the engine assumes nothing was committed and proceeds
+     * to retry / fallback / abort. Recipes that need to commit before
+     * the viability check should not participate in the engine.
+     */
+    protected void runWithCascade(PlanContext pctx, int maxRetries) {
+        prepareFeatures(pctx);
+        for (int i = 0; i < maxRetries; i++) {
+            ReEmitReason reason = composeOnce(pctx);
+            if (reason == null) {
+                registerAnchors(pctx);
+                return;
+            }
+            RecipeStatus status = reEmit(reason, pctx);
+            switch (status) {
+                case OK -> {
+                    registerAnchors(pctx);
+                    return;
+                }
+                case RETRY -> {
+                    // loop; reEmit has mutated cascade state on pctx
+                }
+                case FALLBACK -> {
+                    ShapeType next = fallbackShape();
+                    if (next == null) {
+                        pctx.layout.markUnplannable(
+                                "FALLBACK with no fallbackShape — "
+                                + getClass().getSimpleName()
+                                + " reason=" + describeReason(reason));
+                        return;
+                    }
+                    System.out.println("[CASCADE] "
+                            + getClass().getSimpleName()
+                            + " falling back to " + next
+                            + " reason=" + describeReason(reason));
+                    pctx.setFinalShape(next);
+                    // Reset cascade state for the fallback shape — its
+                    // spine direction is its own concern; carrying our
+                    // accumulated rotation would skew its terrain alignment,
+                    // and exhausting our retry budget would deny it the
+                    // chance to attempt its own rotation.
+                    pctx.setCascadeAxisRotation(0.0);
+                    pctx.resetCascadeRetryCount();
+                    ShapeRecipe.forShape(next).compose(pctx);
+                    return;
+                }
+                case ABORT -> {
+                    pctx.layout.markUnplannable("ABORT reason="
+                            + describeReason(reason));
+                    return;
+                }
+            }
+        }
+        pctx.layout.markUnplannable("retry budget exhausted ("
+                + maxRetries + ") — " + getClass().getSimpleName());
+    }
+
+    /**
+     * Probe-then-commit body for cascade-aware recipes.
+     *
+     * <p>Default delegates to {@link #composeSectors} and returns
+     * {@code null} (= OK), which is the right behavior for non-cascade
+     * recipes that nonetheless route through the engine. Cascade-aware
+     * recipes override this with a probe-first body that returns a
+     * {@link ReEmitReason} when the constraint check fails (without
+     * having mutated the layout).
+     */
+    protected ReEmitReason composeOnce(PlanContext pctx) {
+        composeSectors(pctx);
+        return null;
+    }
+
+    /**
+     * Recipe-specific dispatch on a re-emit reason. Default falls back
+     * unconditionally; recipes that can recover (e.g., RADIAL on
+     * truncation: rotate axis) override.
+     */
+    protected RecipeStatus reEmit(ReEmitReason reason, PlanContext pctx) {
+        return reason == null ? RecipeStatus.OK : RecipeStatus.FALLBACK;
+    }
+
+    /**
+     * The shape this recipe falls back to when the cascade engine
+     * exhausts its retries or {@link #reEmit} returns
+     * {@link RecipeStatus#FALLBACK}. Default {@code null} = abort.
+     */
+    protected ShapeType fallbackShape() {
+        return null;
+    }
+
+    /**
+     * Generic primary-spine check shared by all cascade-aware recipes.
+     * Buckets {@link RoadResult#completionRatio()} into the four
+     * status levels: ≥0.6 OK, ≥0.3 RETRY, ≥0.15 FALLBACK, else ABORT.
+     */
+    protected static RecipeStatus checkPrimarySpine(RoadResult primary) {
+        double ratio = primary.completionRatio();
+        if (ratio >= 0.60) return RecipeStatus.OK;
+        if (ratio >= 0.30) return RecipeStatus.RETRY;
+        if (ratio >= 0.15) return RecipeStatus.FALLBACK;
+        return RecipeStatus.ABORT;
+    }
+
+    /**
+     * Probes a primitive's centerline and wraps the result with
+     * intended/actual length so recipes can drive viability checks.
+     * Does NOT mutate the road graph — the caller is responsible for
+     * deciding whether to commit via {@link
+     * tterrag1112.life_in_the_village.Village.Planning.VillageLayout#addRoad}.
+     */
+    protected static RoadResult computeAndRecord(RoadPrimitive p, PlanContext pctx) {
+        CenterlineResult raw = p.computeCenterline(
+                PrimitiveContext.basic(pctx.level, pctx.worldSeed));
+        return new RoadResult(p, raw.points(), raw.isComplete(),
+                raw.reason(), p.intendedLength(), raw.points().size());
+    }
+
+    /**
+     * Drops candidate slots whose feeding road no longer reaches them.
+     * Returns the input unchanged when the road is complete; otherwise
+     * filters out slots more than {@code budget} blocks (chebyshev)
+     * from the nearest centerline point, where
+     * {@code budget = footprintHalf + roadHalfWidth + slack}.
+     *
+     * <p>{@code roadHalfWidth} is read from the feeding road's tier
+     * via {@link RoadShape.RoadTier#reservedHalfWidth()} so the budget
+     * tracks future tier additions. {@code footprintHalf} is computed
+     * from {@link PlacementSlot#footprintBudget()} / 2 inline rather
+     * than via a new accessor on PlacementSlot (constraint: don't
+     * change PlacementSlot).
+     */
+    public static List<PlacementSlot> clampToRoadReach(
+            List<PlacementSlot> candidates,
+            RoadResult feedingRoad,
+            int slack) {
+        if (feedingRoad.isComplete() || feedingRoad.centerline().isEmpty()) {
+            return candidates;
+        }
+        int roadHalfWidth = feedingRoad.primitive().tier().reservedHalfWidth();
+        List<PlacementSlot> kept = new ArrayList<>(candidates.size());
+        int dropped = 0;
+        for (PlacementSlot s : candidates) {
+            BlockPos nearest = PlanContext.nearestOn(
+                    feedingRoad.centerline(), s.pos());
+            int chebDist = Math.max(
+                    Math.abs(nearest.getX() - s.pos().getX()),
+                    Math.abs(nearest.getZ() - s.pos().getZ()));
+            int footprintHalf = s.footprintBudget() / 2;
+            int budget = footprintHalf + roadHalfWidth + slack;
+            if (chebDist <= budget) {
+                kept.add(s);
+            } else {
+                dropped++;
+            }
+        }
+        if (dropped > 0) {
+            System.out.println("[CLAMP] " + feedingRoad.primitive().typeKey()
+                    + " dropped=" + dropped + "/" + candidates.size()
+                    + " (truncated at " + feedingRoad.actualLength() + "/"
+                    + feedingRoad.intendedLength() + ")");
+        }
+        return kept;
+    }
+
+    private static String describeReason(ReEmitReason reason) {
+        if (reason instanceof ReEmitReason.SevereTruncation t) {
+            return "SevereTruncation primary="
+                    + t.primary().actualLength() + "/"
+                    + t.primary().intendedLength()
+                    + " " + t.primary().reason();
+        }
+        return reason.getClass().getSimpleName();
+    }
+
+    // =========================================================================
+    // Lifecycle
+    // =========================================================================
+
+    /**
+     * Default lifecycle: prepareFeatures → composeSectors →
+     * registerAnchors. Cascade-aware recipes override this to call
+     * {@link #runWithCascade} instead. The override is documented and
+     * intentional — the lifecycle invariant is now a convention, not a
+     * compile-time guarantee, to enable Phase 16b's engine.
+     */
     @Override
-    public final void compose(PlanContext pctx) {
+    public void compose(PlanContext pctx) {
         prepareFeatures(pctx);
         composeSectors(pctx);
         registerAnchors(pctx);
-        int t = pctx.spineTruncationCount();
-        int p = pctx.spinePivotCount();
-        if (t > 0 || p > 0) {
-            System.out.println("[SPINE-VIABILITY] "
-                    + getClass().getSimpleName()
-                    + " truncations=" + t + " pivots=" + p);
-        }
     }
 
     /**
      * Optional pre-pass for feature-aware recipes. Default is no-op.
-     *
-     * <p>Override this when the recipe needs to consult or augment
-     * {@code pctx.features} before laying out sectors. Examples: RIVERINE
-     * computes the shore-aligned spine direction, HILLTOP locates the
-     * peak, TERRACED resolves slope contour lines.
-     *
-     * <p>This method may also emit plaza polygons via
-     * {@code pctx.features.addPlazaPolygon(...)} if the recipe wants
-     * the plaza geometry pinned before sector emission.
      */
     protected void prepareFeatures(PlanContext pctx) {
         // no-op default
     }
 
     /**
-     * Build the road graph and emit sectors. Required.
-     *
-     * <p>Implementations call {@code pctx.layout.addNode(...)},
-     * {@code pctx.layout.addEdge(...)}, and append sectors via
-     * {@link PlanContext#offerSector} (Phase 8 introduces this method).
+     * Build the road graph and emit sectors. Required for default
+     * (non-cascade) recipes. Cascade-aware recipes typically leave this
+     * empty (or unused) and put their body in
+     * {@link #composeOnce} instead.
      */
     protected abstract void composeSectors(PlanContext pctx);
 
     /**
-     * Register named anchors after sectors are emitted. Default is
-     * intentional no-op — the legacy mainGateEndpoint field on
-     * VillageLayout already serves this purpose. Phase 19 introduces the
-     * proper AnchorKind registry and LayoutPlan.anchors.
-     *
-     * <p>Recipes with additional named anchors (capital recipes registering
-     * CASTLE_ANCHOR, manor-bearing recipes registering MANOR_ANCHOR_*, etc.)
-     * override and call {@code super} to keep the default MAIN_GATE handling.
+     * Register named anchors after sectors are emitted. Default no-op.
+     * The legacy {@code mainGateEndpoint} field on VillageLayout
+     * already serves this purpose; Phase 19 introduces the proper
+     * AnchorKind registry.
      */
     protected void registerAnchors(PlanContext pctx) {
         // Phase 19 wires this through to LayoutPlan.anchors.
     }
 
     /**
-     * Declares the plaza shape this recipe prefers. Default is CIRCLE.
-     * The plaza generator consults this when laying out the village
-     * centre. Phase 18 wires this into PlazaGenerator / TownSquarePlacer.
+     * Declares the plaza shape this recipe prefers. Default CIRCLE.
      */
     public PlazaShape preferredPlazaShape() {
         return PlazaShape.CIRCLE;

@@ -95,6 +95,21 @@ public class VillageLayout {
     private int townSquareRadius = 0;
     @Nullable private BlockPos mainGateEndpoint;
 
+    // ── Phase 16b unplannable signal ────────────────────────────────────────
+    // Set by the cascade engine when ABORT or fallback-with-no-shape fires.
+    // VillagePlanner reads this after compose to decide whether to log
+    // "site unplannable" and skip the matcher / validator. VillageSpawner
+    // reads it to skip local refinement (terrain is bad; refinement won't help).
+    private boolean unplannable = false;
+    @Nullable private String unplannableReason;
+
+    public void markUnplannable(String reason) {
+        this.unplannable = true;
+        this.unplannableReason = reason;
+    }
+    public boolean isUnplannable() { return unplannable; }
+    @Nullable public String unplannableReason() { return unplannableReason; }
+
     /**
      * Phase 17 doc 04 — polygon plaza registrations. Populated by
      * recipe compose() via PlazaGenerator; copied onto Village in

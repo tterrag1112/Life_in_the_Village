@@ -849,16 +849,51 @@ public final class PlanContext {
             matcher.run();
         }
     }
-    // ── Phase 17 spine-truncation statistics ──────────────────────────────────
-    // Incremented by recipes when they detect or react to severe spine
-    // truncation. BaseRecipe.compose() prints a summary line when non-zero.
-    private int spineTruncationCount = 0;
-    private int spinePivotCount = 0;
+    // ── Phase 16b cascade engine state ────────────────────────────────────────
+    // truncationCount: number of times any road truncated severely enough
+    //                  to drive a re-emit. Generalizes prior spineTruncationCount.
+    // cascadeRetryCount: number of RETRY iterations the engine has performed
+    //                  for this village. Cascade-aware recipes increment via
+    //                  recordCascadeRetry() inside reEmit() before returning RETRY.
+    // cascadeAxisRotation: accumulated radian offset applied to the primary
+    //                  spine direction by RETRYs. Recipes read this during
+    //                  composeOnce to align their spine with the current attempt.
+    private int truncationCount = 0;
+    private int cascadeRetryCount = 0;
+    private double cascadeAxisRotation = 0.0;
 
-    public void recordSpineTruncation() { spineTruncationCount++; }
-    public void recordSpinePivot()      { spinePivotCount++; }
-    public int  spineTruncationCount()  { return spineTruncationCount; }
-    public int  spinePivotCount()       { return spinePivotCount; }
+    public void recordTruncation()       { truncationCount++; }
+    public void recordCascadeRetry()     { cascadeRetryCount++; }
+    public int  truncationCount()        { return truncationCount; }
+    public int  cascadeRetryCount()      { return cascadeRetryCount; }
+    public double cascadeAxisRotation()  { return cascadeAxisRotation; }
+    public void setCascadeAxisRotation(double r) { cascadeAxisRotation = r; }
+    /** Reset only the per-shape retry counter — preserves total
+     *  truncationCount across fallbacks (the summary reports the
+     *  cumulative truncation count over the whole compose tree). */
+    public void resetCascadeRetryCount() { cascadeRetryCount = 0; }
+
+    // ── Summary tracking (Phase 16b) ──────────────────────────────────────────
+    // Cascade-aware recipes record their primary spine RoadResult here so
+    // VillagePlanner can print spineRatio in the per-village summary.
+    // finalShape is set by the cascade engine when it falls back; the planner
+    // also seeds it with the originally-dispatched shape.
+    private tterrag1112.life_in_the_village.Village.Planning.Primitives
+            .RoadResult primarySpineResult;
+    private tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType
+            finalShape;
+
+    public void recordPrimarySpine(
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .RoadResult r) { primarySpineResult = r; }
+    public tterrag1112.life_in_the_village.Village.Planning.Primitives
+            .RoadResult primarySpineResult() { return primarySpineResult; }
+    public void setFinalShape(
+            tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType s) {
+        finalShape = s;
+    }
+    public tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType
+            finalShape() { return finalShape; }
 
     /**
      * Stashes the shared outer-ring road that subsequent {@link

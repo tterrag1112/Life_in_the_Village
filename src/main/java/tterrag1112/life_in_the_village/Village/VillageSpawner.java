@@ -92,6 +92,18 @@ public class VillageSpawner {
                 level, roughSurface, typeData, rng, villageLevel);
 
         if (layoutOpt.isEmpty()) {
+            // Phase 16b: if the cascade marked the site unplannable, the
+            // terrain itself is unsuitable — local refinement won't help
+            // (the planner already exhausted rotation + fallback). Skip
+            // the retry and surface a distinct failure.
+            String unplannable = tterrag1112.life_in_the_village
+                    .Village.Planning.VillagePlanner.lastUnplannableReason();
+            if (unplannable != null) {
+                System.out.println(
+                        "VillageSpawner: site unplannable — " + unplannable);
+                return Optional.empty();
+            }
+
             // Safety net: TerrainAnalyzer rejected the planned position. Search a
             // small radius for a better offset (handles noise-vs-chunk height
             // disagreements of a few blocks, or minor water/cliff at the planned spot).
@@ -106,6 +118,16 @@ public class VillageSpawner {
         }
 
         if (layoutOpt.isEmpty()) {
+            // After local refinement, check unplannable again — the refined
+            // attempt may have hit the cascade's ABORT path too.
+            String unplannable = tterrag1112.life_in_the_village
+                    .Village.Planning.VillagePlanner.lastUnplannableReason();
+            if (unplannable != null) {
+                System.out.println(
+                        "VillageSpawner: site unplannable (after refinement) — "
+                        + unplannable);
+                return Optional.empty();
+            }
             System.out.println("VillageSpawner: planner rejected (incl. local refinement) — aborting");
             return Optional.empty();
         }

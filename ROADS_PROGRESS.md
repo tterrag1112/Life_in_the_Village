@@ -2878,3 +2878,264 @@ Key correctness checks:
 ### Next
 
 Phase 17.5 or as directed.
+
+---
+
+### 2026-05-02 — Phase 16b: truncation reaction + general re-emit pattern
+
+**Phase:** 16b — recipes consume `RoadResult`; general cascade engine.
+
+Reference: `docs/zoningandlayout_redesign/PLACEMENT-REWORK-STATE.md`,
+sections 3, 4, 8.
+
+This phase reframes / replaces the Phase-17 work in commit `65b3b6d`.
+The previous implementation used the right idea (probe → check →
+rotate-or-fall-back) but was hard-named to truncation specifically;
+sections 3 and 8 of the state doc require general re-emit naming so
+Phase 22 can extend the engine without churning every override.
+
+#### Naming changes (mandatory per state doc §8)
+
+| Old (65b3b6d)                 | New (Phase 16b)             |
+|-------------------------------|-----------------------------|
+| `SpineViability` enum         | `RecipeStatus` enum         |
+| values: OK/ROTATE/FALLBACK/ABORT | OK/RETRY/FALLBACK/ABORT  |
+| `checkSpineViability()`       | `checkPrimarySpine()`       |
+| `recordSpineTruncation()`     | `recordTruncation()`        |
+| `recordSpinePivot()`          | `recordCascadeRetry()`      |
+| `spineTruncationCount`        | `truncationCount`           |
+| `spinePivotCount`             | `cascadeRetryCount`         |
+
+`SpineViability.ROTATE` was renamed `RecipeStatus.RETRY` because
+"rotate" was overly specific — RETRY accommodates future re-emit
+strategies (different anchor, alternate primitive, etc.) that aren't
+axis rotations.
+
+#### Step 1 — `RoadResult` data flow
+
+New `Village/Planning/Primitives/RoadResult.java` — record wrapping a
+primitive's centerline with `intendedLength` and `actualLength` plus a
+`completionRatio()`. Recipes capture per-primitive results and pass
+them into slot emission.
+
+Added `RoadPrimitive.intendedLength()` as a default method that throws
+`UnsupportedOperationException` (so unmigrated subtypes fail loudly).
+Implemented for the four subtypes recipes use today:
+
+- `StraightRoad`: chord length `sqrt(distSqr(from, to))`
+- `Ring`: `2πr`
+- `Arc`: `r * |arcSpan|`
+- `Spur`: `length` field
+
+`CurvedRoad`, `SmoothedPath`, `ArmApproach`, `Bridge`, `Stairway` use
+the throwing default. None of them flow through `computeAndRecord`
+yet, so the failure mode never triggers in practice.
+
+`BaseRecipe.computeAndRecord(primitive, pctx)` is the helper that
+constructs a `RoadResult` from a `computeCenterline` call without
+mutating the road graph. Recipes call it during their probe phase.
+
+#### Step 2 — slot clamping
+
+Static helper `BaseRecipe.clampToRoadReach(candidates, roadResult,
+slack)`. Returns the input list unchanged when the road is complete;
+otherwise filters out slots whose chebyshev distance from the nearest
+centerline point exceeds `footprintHalf + roadHalfWidth + slack`.
+
+`footprintHalf` is computed inline from `slot.footprintBudget() / 2`
+(no `PlacementSlot` change). `roadHalfWidth` is per-tier via
+`feedingRoad.primitive().tier().reservedHalfWidth()`. `slack=6`
+matches the validator's `VALIDATOR_ROAD_SLACK`.
+
+Applied at the recipe level (post-emission filter):
+
+- **RADIAL**: `OUTER_RING.RoadResult` clamps both AGRI and DEFENSE
+  bands. Each per-spur cluster arc's RoadResult clamps that spur's
+  cluster slots.
+- **LINEAR**: spine `RoadResult` clamps residential and production
+  along-centerline slots.
+
+The previous in-emit proximity clamp on `RingBand.emitSlots`
+(`distToRing > SAFE_OFFSET * 2`) is removed — same goal, but the new
+clamping is per-recipe and uses the proper budget formula instead of
+a hardcoded `32`.
+
+#### Step 3 — minimal-viable LINEAR conversion
+
+LINEAR was already producing slots along the spine (existing
+`RecipeHelpers.generateSlotsAlongCenterline`). The only Phase-16b
+change is wrapping the slot list through `clampToRoadReach`. No new
+sectors, no retag, no body restructure beyond the
+probe-then-commit reorganization required for cascade discipline.
+
+PLAZA, CLUSTERED, CHAIN, others — unchanged. They participate via the
+default `compose()` (calls `composeSectors` once) and ignore the
+engine. Their `compose()` is still callable by name from the cascade
+engine if a cascade-aware recipe falls back to one — they just don't
+have their own cascade behaviour.
+
+#### Step 4 — general re-emit engine in `BaseRecipe`
+
+```
+RecipeStatus { OK, RETRY, FALLBACK, ABORT }
+
+ReEmitReason  (sealed):
+    SevereTruncation(RoadResult primary)   // consumed in 16b
+    SlotsDropped(int dropped, int total)   // scaffolding for Phase 22
+    SectorStarved(String, int)             // scaffolding for Phase 22
+
+runWithCascade(pctx, maxRetries):
+    prepareFeatures
+    loop (maxRetries):
+        reason = composeOnce(pctx)
+        if reason == null: registerAnchors; return
+        switch reEmit(reason, pctx):
+            OK       → registerAnchors; return
+            RETRY    → loop (engine state was mutated by reEmit)
+            FALLBACK → set finalShape, reset cascade-axis + retry counter,
+                       delegate to ShapeRecipe.forShape(fallbackShape())
+            ABORT    → markUnplannable; return
+    markUnplannable("retry budget exhausted")
+```
+
+`composeOnce(pctx) → ReEmitReason` is the probe-then-commit body.
+Default impl (for non-cascade recipes that nonetheless route through
+the engine) calls `composeSectors` and returns null = OK.
+
+`reEmit(reason, pctx) → RecipeStatus` is the recipe-side dispatch.
+Default returns FALLBACK for any non-null reason. Cascade-aware
+recipes override.
+
+`fallbackShape() → ShapeType` — null = abort. Cascade-aware recipes
+declare their next link.
+
+#### Compose contract change (item 1 in load-bearing answers)
+
+`BaseRecipe.compose()` is no longer `final`. Cascade-aware recipes
+override it to call `runWithCascade(pctx, 3)`; non-cascade recipes
+keep the inherited default (`prepareFeatures + composeSectors +
+registerAnchors`).
+
+The lifecycle ordering invariant becomes a documented convention.
+The Javadoc on `BaseRecipe` is updated to make the override
+explicitly allowed for cascade-aware recipes.
+
+#### Recipe state on PlanContext (item 2)
+
+Recipes stay stateless singletons. Per-village retry state lives on
+`PlanContext`:
+
+- `truncationCount` — incremented each time a recipe records a
+  truncation (replaces 65b3b6d's `spineTruncationCount`).
+- `cascadeRetryCount` — engine-tracked retry attempts; recipes
+  read this in `reEmit` to decide RETRY-vs-FALLBACK.
+- `cascadeAxisRotation` — accumulated radian offset applied to spine
+  direction; set by the recipe's `reEmit` before returning RETRY,
+  read at the top of the next `composeOnce`.
+- `primarySpineResult` — the recipe's spine RoadResult; printed in
+  the per-village summary.
+- `finalShape` — current shape after any fallback; engine updates
+  on FALLBACK delegation.
+
+#### Probe-then-commit discipline (item 3)
+
+`composeOnce` MUST not mutate the layout before deciding whether to
+return a reason. RADIAL: spine probe uses `centre` plus
+`density.getRing1Radius()` as a civic-ring proxy (the real
+`installPlaza` runs only after the probe passes). LINEAR: spine probe
+runs before `addNode` / `addEdge`.
+
+A few-block discrepancy between probe geometry (centre-anchored) and
+commit geometry (squarePos-anchored, post-plaza) is well within the
+30 % viability threshold and doesn't affect the OK/RETRY/FALLBACK/ABORT
+classification.
+
+#### `markUnplannable` wiring (item 11)
+
+`VillageLayout.markUnplannable(reason)` + `isUnplannable()` +
+`unplannableReason()` added.
+
+`VillagePlanner` after `compose`:
+- If `layout.isUnplannable()`: log "VillagePlanner: site unplannable —
+  <reason>", record TERRAIN_UNSUITABLE failure, stash reason in
+  static `lastUnplannableReason`, print summary, return empty.
+
+`VillageSpawner`:
+- After first `plan` returns empty: read `VillagePlanner.
+  lastUnplannableReason()`. Non-null → log "VillageSpawner: site
+  unplannable" and abort without local refinement.
+- After local refinement also returns empty: same check, distinct log.
+
+Static field is reset at the start of every `plan()` call. Single-
+threaded village planning makes the field safe.
+
+#### Per-village summary (item 10)
+
+`VillagePlanner.printVillageSummary` runs after the matcher (or as
+close as the failure path allows) and emits:
+
+```
+[VILLAGE-SUMMARY] shape=RADIAL status=OK spineRatio=1.00
+  spineLen=232/232 truncations=0 retries=0 finalShape=RADIAL
+  validated=27/27
+```
+
+Status codes: `OK | UNPLANNABLE | NO_BUILDINGS | VALIDATION_FAILED`.
+
+The `[SPINE-VIABILITY]` line previously emitted from
+`BaseRecipe.compose()` is removed — its info is now in the summary
+line, printed at the right point in the pipeline.
+
+#### Fallback chain
+
+- RADIAL → LINEAR → ABORT (LINEAR's `fallbackShape()` returns null)
+- Every other recipe → ABORT (default `fallbackShape() = null`)
+
+Phase 22 will let village types declare custom chains in JSON; Phase
+16b's hardcoded default is the seed.
+
+#### Files changed
+
+- `Village/Planning/Primitives/RoadResult.java` — NEW
+- `Village/Planning/Primitives/RoadPrimitive.java` — `intendedLength()`
+- `Village/Planning/Primitives/BaseRecipe.java` — full rewrite of
+  the cascade engine, RecipeStatus, ReEmitReason, runWithCascade,
+  composeOnce, reEmit, fallbackShape, computeAndRecord,
+  clampToRoadReach. Un-finals compose().
+- `Village/Planning/Primitives/PlanContext.java` — renames + new
+  fields (cascadeAxisRotation, primarySpineResult, finalShape,
+  resetCascadeRetryCount).
+- `Village/Planning/Primitives/LayoutPrimitive.java` — RingBand
+  in-emit proximity clamp removed.
+- `Village/Planning/Primitives/Recipes/RadialRecipe.java` —
+  full rewrite; cascade-aware, probe-then-commit, OUTER_RING +
+  cluster-arc clamping.
+- `Village/Planning/Primitives/Recipes/LinearRecipe.java` —
+  full rewrite; cascade-aware, spine clamping.
+- `Village/Planning/VillageLayout.java` — markUnplannable +
+  accessors.
+- `Village/Planning/VillagePlanner.java` — short-circuit on
+  unplannable, per-village summary, lastUnplannableReason static.
+- `Village/VillageSpawner.java` — distinct site-unplannable path
+  that skips local refinement.
+
+#### Build status
+
+Gradle compile gated by network access; changes verified by inspection.
+Open questions resolved per user direction:
+
+1. Rotate twice before fallback? **Deferred** — one rotation, then
+   fallback. Revisit if spawn data shows two-rotation recovery is
+   meaningful.
+2. Retry budget? **3** — accommodates one rotation + one fallback +
+   safety margin.
+3. compose() override opt-in? **Yes** — un-finaled, documented as
+   intentional.
+
+#### Validation (next steps for the user)
+
+The user's prompt asks for spawn data after this lands. Cascade
+behavior — RETRY resolving to OK vs FALLBACK vs ABORT — is the
+diagnostic that drives the next phase's prompt.
+
+

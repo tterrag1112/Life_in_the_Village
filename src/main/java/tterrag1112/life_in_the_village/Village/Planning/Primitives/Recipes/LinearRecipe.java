@@ -7,10 +7,9 @@ import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.CenterlineResult;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadResult;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.ExtendAlongEdge;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.FixedGrowth;
@@ -22,6 +21,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.VillageEdgeDescriptor;
+import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -30,26 +30,30 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * LINEAR layout recipe. Phase 11.2: extends {@link BaseRecipe} and emits sectors.
+ * LINEAR layout recipe. Phase 16b: cascade-aware (minimal-viable
+ * conversion — just enough to test truncation reaction on a non-radial
+ * spine).
  *
- * <p>A village strung along a single main street with the town square
- * at the midpoint. Buildings sit on both sides of the street (generated
- * as sectors along the centerline). Farm clusters cap each road end.
+ * <p>{@link #compose} routes through the cascade engine.
+ * {@link #composeOnce} probes the spine before adding any road / node
+ * to the graph; if {@link #checkPrimarySpine} returns non-OK, the
+ * engine retries with a 90°-rotated axis (one rotation only) before
+ * falling back. {@link #fallbackShape} is {@code null}: LINEAR is the
+ * tail of the chain, so an unviable site is marked unplannable rather
+ * than recursing into another shape.
  *
- * <p>Road geometry unchanged from the pre-conversion version. What changed:
- * stub-spur + BuildingCircle.place() is replaced by two sectors on the main
- * centerline (residential and production), each growing via ExtendAlongEdge.
+ * <p>Spine-anchored slots (residential / production along the main
+ * street) clamp to the spine's {@link RoadResult} via
+ * {@link #clampToRoadReach}.
  */
 public final class LinearRecipe extends BaseRecipe {
 
-    // ── Sector identifiers ──────────────────────────────────────────────────
     private static final String SECTOR_CIVIC       = "linear_civic";
     private static final String SECTOR_RESIDENTIAL = "linear_main_residential";
     private static final String SECTOR_PRODUCTION  = "linear_main_production";
     private static final String SECTOR_FARM_START  = "linear_farm_start";
     private static final String SECTOR_FARM_END    = "linear_farm_end";
 
-    // ── Tag sets ────────────────────────────────────────────────────────────
     private static final Set<SlotTag> TAGS_MAIN_RESIDENTIAL = EnumSet.of(
             SlotTag.RESIDENTIAL_INFILL, SlotTag.ROAD_ADJACENT, SlotTag.CIVIC_ADJACENT);
     private static final Set<SlotTag> TAGS_MAIN_PRODUCTION = EnumSet.of(
@@ -57,7 +61,14 @@ public final class LinearRecipe extends BaseRecipe {
     private static final Set<SlotTag> TAGS_END_FARM = EnumSet.of(
             SlotTag.FIELD_EDGE, SlotTag.PASTURE, SlotTag.RESIDENTIAL_OUTER);
 
+    private static final int CLAMP_SLACK = 6;
+
     private boolean terrainTooRough;
+
+    @Override
+    public void compose(PlanContext pctx) {
+        runWithCascade(pctx, 3);
+    }
 
     @Override
     protected void prepareFeatures(PlanContext pctx) {
@@ -74,29 +85,30 @@ public final class LinearRecipe extends BaseRecipe {
     }
 
     @Override
-    protected void composeSectors(PlanContext pctx) {
+    protected ReEmitReason composeOnce(PlanContext pctx) {
         if (terrainTooRough) {
             tterrag1112.life_in_the_village.Kingdom.Placement
                     .PlacementFailureRecorder.record(
                     tterrag1112.life_in_the_village.Kingdom.Placement
                             .PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
-                    "LINEAR: no flat patch large enough — falling back to RADIAL",
+                    "LINEAR: no flat patch large enough",
                     pctx.layout.getCenter(),
-                    tterrag1112.life_in_the_village.Village.VillageTypeData
-                            .ShapeType.LINEAR.name());
-            new RadialRecipe().compose(pctx);
-            return;
+                    ShapeType.LINEAR.name());
+            pctx.layout.markUnplannable(
+                    "LINEAR terrain too rough for largest building");
+            return null;
         }
+
         BlockPos origin = pctx.layout.getCenter();
         TerrainProfile terrain = pctx.layout.getTerrain();
         int totalBuildings = pctx.remaining.size();
 
-        // ── Main road ─────────────────────────────────────────────────────
+        // ── Phase A: probe spine (no layout mutation) ─────────────────────
         double mainDirRad = RecipeHelpers.directionRadOf(terrain.bestFlatDir());
+        mainDirRad += pctx.cascadeAxisRotation();
         double tanX = Math.cos(mainDirRad);
         double tanZ = Math.sin(mainDirRad);
 
-        // Scale with building count: each side needs ~10 blocks per building.
         int halfLength = Math.max(60,
                 (totalBuildings * 10) + pctx.density.getRing2Radius());
 
@@ -111,55 +123,14 @@ public final class LinearRecipe extends BaseRecipe {
 
         RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
                 mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
-
-        // Phase 17 Step 3: probe spine before adding to graph; try 90° rotation
-        // if severely truncated. addNode calls are deferred to after the
-        // rotation decision so we don't leave orphaned GATE nodes in the graph.
-        CenterlineResult probeMain = mainRoad.computeCenterline(
-                PrimitiveContext.basic(pctx.level, pctx.worldSeed));
-        SpineViability mainViability = checkSpineViability(probeMain, 2 * halfLength);
-        if (mainViability == SpineViability.ABORT) {
-            pctx.recordSpineTruncation();
-            tterrag1112.life_in_the_village.Kingdom.Placement
-                    .PlacementFailureRecorder.record(
-                    tterrag1112.life_in_the_village.Kingdom.Placement
-                            .PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
-                    "LINEAR: main road NO_SURFACE abort",
-                    pctx.layout.getCenter(),
-                    tterrag1112.life_in_the_village.Village.VillageTypeData
-                            .ShapeType.LINEAR.name());
-            return;
-        }
-        if (mainViability == SpineViability.ROTATE
-                || mainViability == SpineViability.FALLBACK) {
-            double rotDir = mainDirRad + Math.PI / 2;
-            BlockPos rotStart = pctx.solidSurface(new BlockPos(
-                    origin.getX() + (int) Math.round(Math.cos(rotDir) * halfLength),
-                    origin.getY(),
-                    origin.getZ() + (int) Math.round(Math.sin(rotDir) * halfLength)));
-            BlockPos rotEnd = pctx.solidSurface(new BlockPos(
-                    origin.getX() - (int) Math.round(Math.cos(rotDir) * halfLength),
-                    origin.getY(),
-                    origin.getZ() - (int) Math.round(Math.sin(rotDir) * halfLength)));
-            RoadPrimitive.StraightRoad rotRoad = new RoadPrimitive.StraightRoad(
-                    rotStart, rotEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
-            CenterlineResult probeRot = rotRoad.computeCenterline(
-                    PrimitiveContext.basic(pctx.level, pctx.worldSeed));
-            SpineViability rotViability = checkSpineViability(probeRot, 2 * halfLength);
-            pctx.recordSpineTruncation();
-            if (rotViability == SpineViability.OK) {
-                mainDirRad = rotDir;
-                mainStart  = rotStart;
-                mainEnd    = rotEnd;
-                mainRoad   = rotRoad;
-                pctx.recordSpinePivot();
-            } else {
-                pctx.recordSpinePivot();
-                System.out.println("LinearRecipe: spine truncated in both directions,"
-                        + " continuing with best available");
-            }
+        RoadResult spineProbe = computeAndRecord(mainRoad, pctx);
+        pctx.recordPrimarySpine(spineProbe);
+        RecipeStatus status = checkPrimarySpine(spineProbe);
+        if (status != RecipeStatus.OK) {
+            return new ReEmitReason.SevereTruncation(spineProbe);
         }
 
+        // ── Phase B: commit (probe passed) ────────────────────────────────
         int startNodeId = pctx.layout.addNode(
                 mainStart, NodeKind.GATE, RoadShape.RoadTier.VILLAGE_ROAD);
         int endNodeId = pctx.layout.addNode(
@@ -169,6 +140,12 @@ public final class LinearRecipe extends BaseRecipe {
                 pctx.level, pctx.worldSeed, EdgeRole.SPINE);
         List<BlockPos> mainCenterline =
                 pctx.layout.getRoadGraph().edge(mainEdgeId).centerline();
+        // Refresh RoadResult with the actual stored centerline (will match
+        // the probe; computeCenterline is deterministic).
+        RoadResult spineResult = new RoadResult(
+                mainRoad, mainCenterline, spineProbe.isComplete(),
+                spineProbe.reason(), mainRoad.intendedLength(),
+                mainCenterline.size());
 
         pctx.layout.setMainGateEndpoint(mainEnd);
         pctx.layout.addGatePosition(mainStart);
@@ -187,15 +164,16 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
                     civicSlots, civicCap, false, FixedGrowth.INSTANCE,
-                    mainEdgeId, null,
-                    32));
+                    mainEdgeId, null, 32));
         }
 
-        // ── Both-side residential infill along the main road ─────────────
-        List<PlacementSlot> residentialSlots =
+        // ── Both-side residential infill along the main road ──────────────
+        List<PlacementSlot> residentialRaw =
                 RecipeHelpers.generateSlotsAlongCenterline(
                         mainCenterline, mainEdgeId, TAGS_MAIN_RESIDENTIAL,
                         8, 7, 50);
+        List<PlacementSlot> residentialSlots =
+                clampToRoadReach(residentialRaw, spineResult, CLAMP_SLACK);
         if (!residentialSlots.isEmpty()) {
             pctx.offerSector(new Sector(
                     SECTOR_RESIDENTIAL, SectorRole.RESIDENTIAL_INFILL,
@@ -205,10 +183,12 @@ public final class LinearRecipe extends BaseRecipe {
         }
 
         // ── Both-side production infill along the main road ───────────────
-        List<PlacementSlot> productionSlots =
+        List<PlacementSlot> productionRaw =
                 RecipeHelpers.generateSlotsAlongCenterline(
                         mainCenterline, mainEdgeId, TAGS_MAIN_PRODUCTION,
                         12, 7, 45);
+        List<PlacementSlot> productionSlots =
+                clampToRoadReach(productionRaw, spineResult, CLAMP_SLACK);
         if (!productionSlots.isEmpty()) {
             pctx.offerSector(new Sector(
                     SECTOR_PRODUCTION, SectorRole.RESIDENTIAL_INFILL,
@@ -218,9 +198,8 @@ public final class LinearRecipe extends BaseRecipe {
         }
 
         // ── Farm clusters at each end ─────────────────────────────────────
-        // Phase 17 Step 2: use actual road endpoints, not geometric targets,
-        // so farms aren't placed at truncated-road positions that may be in
-        // bad terrain (the road stopped short for exactly that reason).
+        // Use actual road endpoints, not geometric targets, so farms aren't
+        // placed where the road never reached.
         BlockPos actualStart = mainCenterline.isEmpty()
                 ? mainStart : mainCenterline.get(0);
         BlockPos actualEnd = mainCenterline.isEmpty()
@@ -232,8 +211,7 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_FARM_START, SectorRole.AGRICULTURAL_FRINGE,
                     BuildingZone.AGRICULTURAL, farmStart,
-                    4, true, new AddRing(12, 4), mainEdgeId, null,
-                    18));
+                    4, true, new AddRing(12, 4), mainEdgeId, null, 18));
         }
 
         List<PlacementSlot> farmEnd = generateFarmCluster(
@@ -242,9 +220,38 @@ public final class LinearRecipe extends BaseRecipe {
             pctx.offerSector(new Sector(
                     SECTOR_FARM_END, SectorRole.AGRICULTURAL_FRINGE,
                     BuildingZone.AGRICULTURAL, farmEnd,
-                    4, true, new AddRing(12, 4), mainEdgeId, null,
-                    18));
+                    4, true, new AddRing(12, 4), mainEdgeId, null, 18));
         }
+
+        return null;  // OK — no re-emit
+    }
+
+    @Override
+    protected RecipeStatus reEmit(ReEmitReason reason, PlanContext pctx) {
+        if (reason instanceof ReEmitReason.SevereTruncation) {
+            pctx.recordTruncation();
+            if (pctx.cascadeRetryCount() < 1) {
+                pctx.recordCascadeRetry();
+                pctx.setCascadeAxisRotation(
+                        pctx.cascadeAxisRotation() + Math.PI / 2);
+                return RecipeStatus.RETRY;
+            }
+            return RecipeStatus.FALLBACK;
+        }
+        return super.reEmit(reason, pctx);
+    }
+
+    /** LINEAR is the tail of the cascade chain — no further fallback. */
+    @Override
+    protected ShapeType fallbackShape() {
+        return null;
+    }
+
+    @Override
+    protected void composeSectors(PlanContext pctx) {
+        // LinearRecipe is cascade-aware: the body lives in composeOnce.
+        throw new UnsupportedOperationException(
+                "LinearRecipe goes through composeOnce; composeSectors not used");
     }
 
     /** 5 farm slots in a cluster 16 blocks past the road's end. */

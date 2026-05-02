@@ -5,11 +5,10 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.BaseRecipe;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.CenterlineResult;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
-import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadResult;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddSpur;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.FixedGrowth;
@@ -19,6 +18,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
+import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -26,17 +26,25 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * RADIAL layout. Phase 8: extends {@link BaseRecipe} and emits sectors
- * in addition to flat slots. Geometry is identical to the pre-conversion
- * version — same plaza, same main road, same spur angles, same arc roads,
- * same outer rings.
+ * RADIAL layout. Phase 16b: cascade-aware via {@link #runWithCascade}.
  *
- * <p>What changed: civic / spur-cluster / outer-ring slot emissions are
- * wrapped into {@link Sector}s via the snapshot-and-drain helper on
- * {@link PlanContext}. Main-road and arc road slots stay in the flat
- * pool — the matcher's {@code runWithSectors} flattens both pools so
- * placement is unchanged. Phase 10 introduces real per-sector capacity
- * tracking and growth invocation.
+ * <p>Geometry unchanged from prior phases — same plaza, main road,
+ * spurs, arc roads, outer ring. What changed:
+ *
+ * <ul>
+ *   <li>{@link #compose} routes through the cascade engine rather than
+ *       calling {@link #composeSectors} directly.</li>
+ *   <li>{@link #composeOnce} is structured probe → decide → commit.
+ *       The primary spine's viability is checked before any layout
+ *       mutation, so RETRY can re-run with a rotated axis without
+ *       producing duplicate plazas / roads.</li>
+ *   <li>OUTER_RING / cluster-arc slot emissions clamp via
+ *       {@link #clampToRoadReach} so truncated roads no longer
+ *       advertise unreachable slots.</li>
+ *   <li>{@link #reEmit} handles {@code SevereTruncation}: one 90°
+ *       rotation, then FALLBACK to LINEAR.</li>
+ *   <li>{@link #fallbackShape} returns LINEAR.</li>
+ * </ul>
  */
 public final class RadialRecipe extends BaseRecipe {
 
@@ -52,27 +60,22 @@ public final class RadialRecipe extends BaseRecipe {
     private static final Set<SlotTag> TAGS_ARC =
             EnumSet.of(SlotTag.ROAD_ADJACENT, SlotTag.RESIDENTIAL_INFILL,
                     SlotTag.BACKFILL);
-    private static final Set<SlotTag> TAGS_OUTER_AGRI =
-            EnumSet.of(SlotTag.FIELD_EDGE, SlotTag.PASTURE, SlotTag.BACKFILL);
-    private static final Set<SlotTag> TAGS_OUTER_DEFENSE =
-            EnumSet.of(SlotTag.WALL_ADJACENT, SlotTag.HIGH_GROUND,
-                    SlotTag.RESIDENTIAL_OUTER);
 
-    /** Spur cluster soft cap — preserved from the pre-conversion recipe. */
     private static final int SPUR_CAPACITY = 5;
-    /** Effectively unlimited capacity for outer rings (matcher hint only). */
     private static final int UNLIMITED_CAPACITY = 1024;
+    /** Per-slot slack added to {@code footprintHalf + roadHalfWidth} for clamp. */
+    private static final int CLAMP_SLACK = 6;
 
-    /** Cleared in {@link #prepareFeatures}; set true when the terrain
-     *  pre-check finds no flat patch large enough for the largest
-     *  building. {@link #composeSectors} aborts (RADIAL has no fallback). */
+    /** Set true by {@link #prepareFeatures} when terrain is unusable. */
     private boolean terrainTooRough;
 
     @Override
+    public void compose(PlanContext pctx) {
+        runWithCascade(pctx, 3);
+    }
+
+    @Override
     protected void prepareFeatures(PlanContext pctx) {
-        // Terrain pre-check: if the largest building won't fit anywhere on
-        // the available terrain, mark unusable. Avoids the 30+ second slot-
-        // burn loops on impossible sites observed in the wild.
         int largest = RecipeHelpers.largestRotatedFootprint(pctx);
         int requiredFlatSide = largest + 4;
         int available = pctx.layout.getTerrain().largestFlatPatchAvailable(2);
@@ -86,50 +89,27 @@ public final class RadialRecipe extends BaseRecipe {
     }
 
     @Override
-    protected void composeSectors(PlanContext pctx) {
+    protected ReEmitReason composeOnce(PlanContext pctx) {
         if (terrainTooRough) {
-            // RADIAL is the canonical fallback recipe and has no further
-            // fallback of its own. Abort the village rather than loop into
-            // an even smaller recipe that would also reject.
+            // No fallback shape will fit either — abort cleanly.
             tterrag1112.life_in_the_village.Kingdom.Placement
                     .PlacementFailureRecorder.record(
                     tterrag1112.life_in_the_village.Kingdom.Placement
                             .PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
                     "RADIAL: no flat patch large enough for largest building",
                     pctx.layout.getCenter(),
-                    tterrag1112.life_in_the_village.Village.VillageTypeData
-                            .ShapeType.RADIAL.name());
-            return;
+                    ShapeType.RADIAL.name());
+            pctx.layout.markUnplannable(
+                    "RADIAL terrain too rough for largest building");
+            return null;
         }
+
         BlockPos centre = pctx.layout.getCenter();
         TerrainProfile terrain = pctx.layout.getTerrain();
-
-        // ── Plaza (drains civic slots into a CIVIC_RING sector) ────────────
-        int civicSnapshot = pctx.slotPoolSize();
-        RecipeHelpers.installPlaza(pctx, centre,
-                tterrag1112.life_in_the_village.Village.Decoration
-                        .Plaza.PlazaShape.CIRCLE);
-        BlockPos squarePos = pctx.layout.getTownSquarePos();
-
         int totalBuildings = pctx.remaining.size();
+
+        // ── Phase A: probe spine (no layout mutation) ─────────────────────
         int squareCapacity = Math.max(6, Math.min(10, totalBuildings / 4 + 3));
-
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    "radial_civic_ring",
-                    SectorRole.CIVIC_RING,
-                    BuildingZone.CIVIC,
-                    civicSlots,
-                    squareCapacity,
-                    false,
-                    FixedGrowth.INSTANCE,
-                    -1,
-                    null,
-                    32));
-        }
-
-        // ── Main road (geometry unchanged; slots stay in the flat pool) ────
         double terrainBias = directionRadOf(terrain.primaryOrientationDir());
         int civicCount = Math.max(1, squareCapacity);
         double civicStep = 2 * Math.PI / civicCount;
@@ -140,72 +120,66 @@ public final class RadialRecipe extends BaseRecipe {
             double diff = Math.abs(angleDelta(gapAngle, terrainBias));
             if (diff < best) { best = diff; mainDirRad = gapAngle; }
         }
-        int civicRing = pctx.layout.getCivicRingRadius();
-        int extendedRing = civicRing + 20;
-        BlockPos mainStart = new BlockPos(
-                squarePos.getX() + (int) Math.round(Math.cos(mainDirRad) * extendedRing),
-                squarePos.getY(),
-                squarePos.getZ() + (int) Math.round(Math.sin(mainDirRad) * extendedRing));
-        mainStart = pctx.solidSurface(mainStart);
+        // Apply cascade rotation accumulator (RETRY adds 90°, etc.)
+        mainDirRad += pctx.cascadeAxisRotation();
+
+        // Probe geometry uses density.getRing1Radius() as a proxy for the
+        // civic ring (the real value is set by installPlaza, which we
+        // can't run yet without committing). The few-block discrepancy
+        // is well within the 30% viability threshold.
+        int approxCivicRing = pctx.density.getRing1Radius();
+        int extendedRing = approxCivicRing + 20;
         int densityScale = Math.max(1, pctx.density.getRing2Radius());
-        int outerR = civicRing + 40 + densityScale;
-
+        int outerR = approxCivicRing + 40 + densityScale;
         int mainLength = outerR * 2 + 48;
-        BlockPos mainEnd = new BlockPos(
-                mainStart.getX() + (int) Math.round(Math.cos(mainDirRad) * mainLength),
-                mainStart.getY(),
-                mainStart.getZ() + (int) Math.round(Math.sin(mainDirRad) * mainLength));
-        mainEnd = pctx.solidSurface(mainEnd);
 
+        BlockPos probeStart = pctx.solidSurface(new BlockPos(
+                centre.getX() + (int) Math.round(Math.cos(mainDirRad) * extendedRing),
+                centre.getY(),
+                centre.getZ() + (int) Math.round(Math.sin(mainDirRad) * extendedRing)));
+        BlockPos probeEnd = pctx.solidSurface(new BlockPos(
+                probeStart.getX() + (int) Math.round(Math.cos(mainDirRad) * mainLength),
+                probeStart.getY(),
+                probeStart.getZ() + (int) Math.round(Math.sin(mainDirRad) * mainLength)));
+        RoadPrimitive.StraightRoad probeRoad = new RoadPrimitive.StraightRoad(
+                probeStart, probeEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
+        RoadResult spineProbe = computeAndRecord(probeRoad, pctx);
+        pctx.recordPrimarySpine(spineProbe);
+        RecipeStatus status = checkPrimarySpine(spineProbe);
+        if (status != RecipeStatus.OK) {
+            return new ReEmitReason.SevereTruncation(spineProbe);
+        }
+
+        // ── Phase B: commit (probe passed) ────────────────────────────────
+        int civicSnapshot = pctx.slotPoolSize();
+        RecipeHelpers.installPlaza(pctx, centre,
+                tterrag1112.life_in_the_village.Village.Decoration
+                        .Plaza.PlazaShape.CIRCLE);
+        BlockPos squarePos = pctx.layout.getTownSquarePos();
+        int civicRing = pctx.layout.getCivicRingRadius();
+        // Re-derive geometry from the actual squarePos (may differ from
+        // centre by a few blocks). outerR uses the real civicRing.
+        int extendedRing2 = civicRing + 20;
+        int outerR2 = civicRing + 40 + densityScale;
+        int mainLength2 = outerR2 * 2 + 48;
+
+        BlockPos mainStart = pctx.solidSurface(new BlockPos(
+                squarePos.getX() + (int) Math.round(Math.cos(mainDirRad) * extendedRing2),
+                squarePos.getY(),
+                squarePos.getZ() + (int) Math.round(Math.sin(mainDirRad) * extendedRing2)));
+        BlockPos mainEnd = pctx.solidSurface(new BlockPos(
+                mainStart.getX() + (int) Math.round(Math.cos(mainDirRad) * mainLength2),
+                mainStart.getY(),
+                mainStart.getZ() + (int) Math.round(Math.sin(mainDirRad) * mainLength2)));
         RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
                 mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
 
-        // Phase 17 Step 3: probe spine viability before committing to graph.
-        // If the road would be severely truncated by a cliff, try rotating 90°.
-        // We call computeCenterline directly so the probe doesn't add to the
-        // graph; addRoad below then recomputes (deterministic same result).
-        CenterlineResult probeMain = mainRoad.computeCenterline(
-                PrimitiveContext.basic(pctx.level, pctx.worldSeed));
-        SpineViability mainViability = checkSpineViability(probeMain, mainLength);
-        if (mainViability == SpineViability.ABORT) {
-            pctx.recordSpineTruncation();
-            System.out.println("RadialRecipe: main road NO_SURFACE — aborting composeSectors");
-            return;
-        }
-        if (mainViability == SpineViability.ROTATE
-                || mainViability == SpineViability.FALLBACK) {
-            double rotDir = mainDirRad + Math.PI / 2;
-            BlockPos rotStart = new BlockPos(
-                    squarePos.getX() + (int) Math.round(Math.cos(rotDir) * extendedRing),
-                    squarePos.getY(),
-                    squarePos.getZ() + (int) Math.round(Math.sin(rotDir) * extendedRing));
-            rotStart = pctx.solidSurface(rotStart);
-            BlockPos rotEnd = new BlockPos(
-                    rotStart.getX() + (int) Math.round(Math.cos(rotDir) * mainLength),
-                    rotStart.getY(),
-                    rotStart.getZ() + (int) Math.round(Math.sin(rotDir) * mainLength));
-            rotEnd = pctx.solidSurface(rotEnd);
-            RoadPrimitive.StraightRoad rotRoad = new RoadPrimitive.StraightRoad(
-                    rotStart, rotEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
-            CenterlineResult probeRot = rotRoad.computeCenterline(
-                    PrimitiveContext.basic(pctx.level, pctx.worldSeed));
-            SpineViability rotViability = checkSpineViability(probeRot, mainLength);
-            pctx.recordSpineTruncation();
-            if (rotViability == SpineViability.OK) {
-                // Rotated direction clears the obstacle — use it for all
-                // direction-sensitive layout downstream (spurs, arcs, gates).
-                mainDirRad = rotDir;
-                mainStart  = rotStart;
-                mainEnd    = rotEnd;
-                mainRoad   = rotRoad;
-                pctx.recordSpinePivot();
-            } else {
-                // Both directions truncated — continue with the partial road
-                // and log that a DUMBELL fallback would be preferable.
-                pctx.recordSpinePivot();
-                System.out.println("RadialRecipe: spine truncated in both directions"
-                        + " — DUMBELL fallback recommended (not invoked)");
-            }
+        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
+        if (!civicSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    "radial_civic_ring", SectorRole.CIVIC_RING,
+                    BuildingZone.CIVIC, civicSlots, squareCapacity, false,
+                    FixedGrowth.INSTANCE, -1, null, 32));
         }
 
         int beforeMainEdges = pctx.layout.getRoadGraph().edgeCount();
@@ -220,11 +194,9 @@ public final class RadialRecipe extends BaseRecipe {
         pctx.layout.addGatePosition(mainStart);
         pctx.layout.addGatePosition(mainEnd);
 
-        // Main-road backfill slots stay flat — the matcher's runWithSectors
-        // appends the flat pool to the sectorized slot list, preserving order.
         pctx.offerRoadSlots(mainCenterline, 8, 8, TAGS_MAIN_ROAD, 35);
 
-        // ── Spurs (each becomes a SPUR_CLUSTER sector) ─────────────────────
+        // ── Spurs (each becomes a SPUR_CLUSTER sector) ────────────────────
         int remaining = pctx.remaining.size();
         int spurCount = Math.max(2, (int) Math.ceil(remaining / 5.0));
         spurCount = Math.min(spurCount, Math.max(2, remaining / 2));
@@ -248,9 +220,9 @@ public final class RadialRecipe extends BaseRecipe {
             if (i < squareRooted) {
                 spurAngle = mainDirRad + Math.PI + (i - squareRooted / 2.0) * spurArc;
                 branchHint = new BlockPos(
-                        squarePos.getX() + (int) Math.round(Math.cos(spurAngle) * extendedRing),
+                        squarePos.getX() + (int) Math.round(Math.cos(spurAngle) * extendedRing2),
                         squarePos.getY(),
-                        squarePos.getZ() + (int) Math.round(Math.sin(spurAngle) * extendedRing));
+                        squarePos.getZ() + (int) Math.round(Math.sin(spurAngle) * extendedRing2));
             } else {
                 double frac = mainFractions[i - squareRooted];
                 int idx = Math.min(mainCenterline.size() - 1,
@@ -269,9 +241,6 @@ public final class RadialRecipe extends BaseRecipe {
                     mainCenterline, branchHint, spurAngle,
                     spurLength, 5.0, RoadShape.RoadTier.VILLAGE_PATH);
 
-            // Capture the edge id of the spur road so the SPUR_CLUSTER
-            // sector can advertise it as parentEdgeId. RoadGraph assigns
-            // sequential ids; addRoad either appends 0 or 1 edges.
             int beforeEdges = pctx.layout.getRoadGraph().edgeCount();
             List<BlockPos> spurCenterline = pctx.layout.addRoad(
                     spur, pctx.level, pctx.worldSeed);
@@ -281,10 +250,7 @@ public final class RadialRecipe extends BaseRecipe {
                     spurEdgeId, spurCenterline, centre);
             allRoadsForSnap.add(spurCenterline);
 
-            // ── Cluster arc: 60° arc at spur-tip radius, centred on spur angle ──
-            // Each cluster slot's feedingRoad is this arc (not the parent spur),
-            // so the validator measures distance to the road the building sits
-            // beside rather than to a road 30+ blocks away.
+            // ── Cluster arc (60° arc at spur tip) ──────────────────────────
             BlockPos spurTip = spurCenterline.isEmpty() ? branchHint
                     : spurCenterline.get(spurCenterline.size() - 1);
             double tipDx = spurTip.getX() - squarePos.getX();
@@ -295,10 +261,10 @@ public final class RadialRecipe extends BaseRecipe {
 
             RoadPrimitive.Arc clusterArc = new RoadPrimitive.Arc(
                     squarePos, clusterRadius,
-                    tipAngle - Math.PI / 6,
-                    Math.PI / 3,
-                    3.0,
-                    RoadShape.RoadTier.VILLAGE_PATH);
+                    tipAngle - Math.PI / 6, Math.PI / 3,
+                    3.0, RoadShape.RoadTier.VILLAGE_PATH);
+            // Probe-record so we can clamp cluster slots to the arc's reach.
+            RoadResult clusterArcResult = computeAndRecord(clusterArc, pctx);
             int beforeClusterEdges = pctx.layout.getRoadGraph().edgeCount();
             List<BlockPos> clusterArcCenterline = pctx.layout.addRoad(
                     clusterArc, pctx.level, pctx.worldSeed);
@@ -308,16 +274,14 @@ public final class RadialRecipe extends BaseRecipe {
                     clusterArcEdgeId, clusterArcCenterline, centre);
             allRoadsForSnap.add(clusterArcCenterline);
 
-            // Snapshot before emitting per-spur slots; everything emitted
-            // until the next snapshot becomes the spur's sector.
             int spurSnapshot = pctx.slotPoolSize();
             pctx.offerRoadSlots(spurCenterline, 6, 7, TAGS_SPUR_ROAD, 40);
 
-            // Emit cluster slots just outside the arc, one per ~10 arc steps.
-            // Outward direction for each slot = away from village centre.
+            // Emit cluster slots into a local list, then clamp + offer.
             int clusterFp = 16;
-            int clusterPerpOffset = 3 + clusterFp / 2 + 2;   // 13 blocks outside arc
+            int clusterPerpOffset = 3 + clusterFp / 2 + 2;
             int clusterStride = 10;
+            List<PlacementSlot> clusterCandidates = new ArrayList<>();
             for (int j = 0; j < clusterArcCenterline.size(); j += clusterStride) {
                 BlockPos arcPt = clusterArcCenterline.get(j);
                 double outDx = arcPt.getX() - squarePos.getX();
@@ -332,41 +296,33 @@ public final class RadialRecipe extends BaseRecipe {
                         new BlockPos(slotX, arcPt.getY(), slotZ));
                 if (pctx.features.isOnWater(slotPos)) continue;
                 if (pctx.features.isOnCliff(slotPos)) continue;
-                pctx.offerSlot(new PlacementSlot(
-                        slotPos,
-                        clusterArcCenterline,
-                        clusterArcEdgeId,
-                        TAGS_SPUR_CLUSTER,
-                        clusterFp, clusterFp,
-                        null,
-                        65,
-                        0));
+                clusterCandidates.add(new PlacementSlot(
+                        slotPos, clusterArcCenterline, clusterArcEdgeId,
+                        TAGS_SPUR_CLUSTER, clusterFp, clusterFp,
+                        null, 65, 0));
+            }
+            for (PlacementSlot s :
+                    clampToRoadReach(clusterCandidates, clusterArcResult, CLAMP_SLACK)) {
+                pctx.offerSlot(s);
             }
 
             List<PlacementSlot> spurSlots = pctx.drainSlotsSince(spurSnapshot);
             if (!spurSlots.isEmpty()) {
                 pctx.offerSector(new Sector(
-                        "radial_spur_" + i,
-                        SectorRole.SPUR_CLUSTER,
-                        BuildingZone.PRODUCTION,
-                        spurSlots,
-                        SPUR_CAPACITY,
-                        true,
-                        new AddSpur(48, 4),
-                        spurEdgeId,
-                        null,
-                        16));
+                        "radial_spur_" + i, SectorRole.SPUR_CLUSTER,
+                        BuildingZone.PRODUCTION, spurSlots, SPUR_CAPACITY,
+                        true, new AddSpur(48, 4), spurEdgeId, null, 16));
             }
         }
 
-        // ── Arc roads (slots stay flat) ────────────────────────────────────
+        // ── Inner arc roads (slots stay flat; not clamped — feed off spine) ──
         if (spurCount >= 3) {
             System.out.println("RADIAL arcs: spurCount=" + spurCount
                     + " civicRing=" + civicRing + " outerR=" + pctx.density.getRing2Radius());
 
             int[] arcRadii = {
-                    civicRing + (outerR - civicRing) / 2,
-                    civicRing + (outerR - civicRing) * 3 / 4
+                    civicRing + (outerR2 - civicRing) / 2,
+                    civicRing + (outerR2 - civicRing) * 3 / 4
             };
             double arcCentreAngle = mainDirRad + Math.PI;
             double arcSpan = Math.toRadians(210);
@@ -378,8 +334,6 @@ public final class RadialRecipe extends BaseRecipe {
                     System.out.println("RADIAL arc " + ai + " skipped: r=" + r);
                     continue;
                 }
-                System.out.println("RADIAL arc " + ai + " requested: r=" + r);
-
                 double drift = ai == 0 ? 4.0 : 5.5;
                 RoadPrimitive.Arc arc = new RoadPrimitive.Arc(
                         squarePos, r, arcStartAngle, arcSpan, drift,
@@ -396,22 +350,12 @@ public final class RadialRecipe extends BaseRecipe {
             }
         }
 
-        // ── Shared outer-ring road ─────────────────────────────────────────
-        // Both DEFENSIVE and AGRICULTURAL bands attach to a single perimeter
-        // road. ringR is positioned so DEFENSIVE slots sit at ringR-16 (inside)
-        // and AGRICULTURAL slots at ringR+16 (outside), both within the 16–18
-        // window required for footprint clearance + validator pass. ringR is
-        // shifted out from the spur/arc network at outerR by ~20 blocks so
-        // DEFENSIVE slots land just outside the village proper.
-        // RingBand emitSlots places slots at radii measured from `centre`
-        // (the layout centre, not the plaza). Anchor the Ring at `centre`
-        // too so slot-to-road distance is purely radial — anchoring at
-        // squarePos would introduce a per-angle offset equal to the
-        // plaza-to-centre vector, breaking the SAFE_OFFSET window when the
-        // plaza centroid drifts more than a few blocks from centre.
-        int ringR = outerR + 20;
+        // ── Shared outer-ring road (consumed by AGRI + DEFENSE bands) ─────
+        int ringR = outerR2 + 20;
         RoadPrimitive.Ring outerRing = new RoadPrimitive.Ring(
                 centre, ringR, 2.0, RoadShape.RoadTier.VILLAGE_PATH);
+        // Probe-record so the bands can clamp to the ring's actual reach.
+        RoadResult outerRingResult = computeAndRecord(outerRing, pctx);
         int beforeRingEdges = pctx.layout.getRoadGraph().edgeCount();
         List<BlockPos> outerRingCenterline = pctx.layout.addRoad(
                 outerRing, pctx.level, pctx.worldSeed, EdgeRole.OUTER_RING);
@@ -424,63 +368,81 @@ public final class RadialRecipe extends BaseRecipe {
             pctx.setOuterRing(outerRingEdgeId, outerRingCenterline, ringR);
         }
 
-        // ── Outer agri RingBand → AGRICULTURAL_FRINGE sector ───────────────
+        // ── Outer agri RingBand → AGRICULTURAL_FRINGE sector ──────────────
         int agriSnapshot = pctx.slotPoolSize();
         LayoutPrimitive.RingBand agriBand = new LayoutPrimitive.RingBand(
-                centre,
-                outerR + 4,
-                outerR + 20,
+                centre, outerR2 + 4, outerR2 + 20,
                 BuildingZone.AGRICULTURAL,
-                new ArrayList<>(),
-                allRoadsForSnap);
+                new ArrayList<>(), allRoadsForSnap);
         agriBand.emitSlots(pctx);
-        List<PlacementSlot> agriSlots = pctx.drainSlotsSince(agriSnapshot);
-        radialRingLog("AGRI", outerR + 4, outerR + 20, agriSlots, centre);
+        List<PlacementSlot> agriRaw = pctx.drainSlotsSince(agriSnapshot);
+        List<PlacementSlot> agriSlots =
+                clampToRoadReach(agriRaw, outerRingResult, CLAMP_SLACK);
+        radialRingLog("AGRI", outerR2 + 4, outerR2 + 20, agriSlots, centre);
         if (!agriSlots.isEmpty()) {
             pctx.offerSector(new Sector(
-                    "radial_outer_agri",
-                    SectorRole.AGRICULTURAL_FRINGE,
-                    BuildingZone.AGRICULTURAL,
-                    agriSlots,
-                    UNLIMITED_CAPACITY,
-                    true,
-                    new AddRing(16, 8),
-                    outerRingEdgeId,
-                    null,
-                    18));
+                    "radial_outer_agri", SectorRole.AGRICULTURAL_FRINGE,
+                    BuildingZone.AGRICULTURAL, agriSlots,
+                    UNLIMITED_CAPACITY, true, new AddRing(16, 8),
+                    outerRingEdgeId, null, 18));
         }
 
-        // ── Outer defensive RingBand → DEFENSIVE_FRINGE sector ─────────────
+        // ── Outer defensive RingBand → DEFENSIVE_FRINGE sector ────────────
         int defenseSnapshot = pctx.slotPoolSize();
         LayoutPrimitive.RingBand defenseBand = new LayoutPrimitive.RingBand(
-                centre,
-                outerR,
-                outerR + 10,
+                centre, outerR2, outerR2 + 10,
                 BuildingZone.DEFENSIVE,
-                new ArrayList<>(),
-                allRoadsForSnap);
+                new ArrayList<>(), allRoadsForSnap);
         defenseBand.emitSlots(pctx);
-        List<PlacementSlot> defenseSlots = pctx.drainSlotsSince(defenseSnapshot);
-        radialRingLog("DEFENSE", outerR, outerR + 10, defenseSlots, centre);
+        List<PlacementSlot> defenseRaw = pctx.drainSlotsSince(defenseSnapshot);
+        List<PlacementSlot> defenseSlots =
+                clampToRoadReach(defenseRaw, outerRingResult, CLAMP_SLACK);
+        radialRingLog("DEFENSE", outerR2, outerR2 + 10, defenseSlots, centre);
         if (!defenseSlots.isEmpty()) {
             pctx.offerSector(new Sector(
-                    "radial_outer_defense",
-                    SectorRole.DEFENSIVE_FRINGE,
-                    BuildingZone.DEFENSIVE,
-                    defenseSlots,
-                    UNLIMITED_CAPACITY,
-                    true,
-                    new AddRing(12, 6),
-                    outerRingEdgeId,
-                    null,
-                    18));
+                    "radial_outer_defense", SectorRole.DEFENSIVE_FRINGE,
+                    BuildingZone.DEFENSIVE, defenseSlots,
+                    UNLIMITED_CAPACITY, true, new AddRing(12, 6),
+                    outerRingEdgeId, null, 18));
         }
+
+        return null;  // OK — no re-emit
+    }
+
+    @Override
+    protected RecipeStatus reEmit(ReEmitReason reason, PlanContext pctx) {
+        if (reason instanceof ReEmitReason.SevereTruncation) {
+            pctx.recordTruncation();
+            // One rotation attempt; if rotation also fails the engine
+            // will call us again and we'll fall back.
+            if (pctx.cascadeRetryCount() < 1) {
+                pctx.recordCascadeRetry();
+                pctx.setCascadeAxisRotation(
+                        pctx.cascadeAxisRotation() + Math.PI / 2);
+                return RecipeStatus.RETRY;
+            }
+            return RecipeStatus.FALLBACK;
+        }
+        return super.reEmit(reason, pctx);
+    }
+
+    @Override
+    protected ShapeType fallbackShape() {
+        return ShapeType.LINEAR;
+    }
+
+    @Override
+    protected void composeSectors(PlanContext pctx) {
+        // RadialRecipe is cascade-aware: the body lives in composeOnce.
+        // composeSectors is required by BaseRecipe but never invoked when
+        // compose() routes through runWithCascade.
+        throw new UnsupportedOperationException(
+                "RadialRecipe goes through composeOnce; composeSectors not used");
     }
 
     @Override
     protected void registerAnchors(PlanContext pctx) {
         super.registerAnchors(pctx);
-        // RADIAL has no additional named anchors beyond MAIN_GATE.
     }
 
     private static double angleDelta(double a, double b) {
@@ -499,7 +461,7 @@ public final class RadialRecipe extends BaseRecipe {
         };
     }
 
-    // ── Diagnostic helpers (no behavior change) ────────────────────────────
+    // ── Diagnostic helpers (no behavior change) ──────────────────────────
 
     private static int chebR(BlockPos p, BlockPos centre) {
         return Math.max(Math.abs(p.getX() - centre.getX()),
