@@ -43,7 +43,6 @@ public class LayoutDebugCommand {
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("liv")
-                .requires(s -> s.hasPermission(2))
                 .then(Commands.literal("layout")
                         .then(Commands.literal("debug")
                                 .then(Commands.literal("show_graph")

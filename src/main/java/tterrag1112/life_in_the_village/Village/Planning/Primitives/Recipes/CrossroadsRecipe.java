@@ -195,7 +195,7 @@ public final class CrossroadsRecipe extends BaseRecipe {
         double[] stubFractions = {0.35, 0.65};
 
         for (int armIdx = 0; armIdx < 4; armIdx++) {
-            List<BlockPos> arm = arms[armIdx];
+            List<BlockPos> arm = arms.get(armIdx);
             double armAngle = armAngles[armIdx];
             int armEdgeId = armEdgeIds[armIdx];
 

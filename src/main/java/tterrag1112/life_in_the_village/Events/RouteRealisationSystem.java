@@ -179,13 +179,13 @@ public final class RouteRealisationSystem {
 
         RandomSource rng = RandomSource.create(
                 dock.armEndpoint().asLong() ^ dock.dockingAnchor().asLong());
-        OrganicRoadPlacer.PlacementResult result = OrganicRoadPlacer.place(
+        OrganicRoadPlacer.PlacementResult placementResult = OrganicRoadPlacer.place(
                 level, centerline, material, RoadShape.RoadTier.VILLAGE_ROAD, null, rng);
 
         // Plant allée alongside the approach
         ConnectorAllee.place(level, dock, centerline, village.getVillageType());
 
-        return result.placedBlocks();
+        return placementResult.placedBlocks();
     }
 
     // =========================================================================
