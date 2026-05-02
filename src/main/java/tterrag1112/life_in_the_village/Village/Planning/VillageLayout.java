@@ -95,6 +95,33 @@ public class VillageLayout {
     private int townSquareRadius = 0;
     @Nullable private BlockPos mainGateEndpoint;
 
+    // ── Phase 17 farm plot slots ────────────────────────────────────────────
+    // Plot slots emitted by RecipeHelpers.emitFarmPlotSlots and claimed by
+    // VillagePlanner.runFarmPlotPass live here, separate from the building
+    // matcher's slot pool. The parallel map carries the FarmPlotSpec for each
+    // claimed slot — kept off PlacementSlot/LayoutSlot to avoid changes to
+    // the matcher's tag-based logic. FarmPlotPlacer reads both at realisation.
+    private final List<tterrag1112.life_in_the_village.Village.Planning.Zoning
+            .PlacementSlot> plotSlots = new ArrayList<>();
+    private final java.util.Map<tterrag1112.life_in_the_village.Village.Planning
+            .Zoning.PlacementSlot, FarmPlotSpec> plotSpecs =
+            new java.util.LinkedHashMap<>();
+
+    public void addPlotSlot(tterrag1112.life_in_the_village.Village.Planning
+            .Zoning.PlacementSlot slot, FarmPlotSpec spec) {
+        plotSlots.add(slot);
+        if (spec != null) plotSpecs.put(slot, spec);
+    }
+    public List<tterrag1112.life_in_the_village.Village.Planning.Zoning
+            .PlacementSlot> plotSlots() {
+        return Collections.unmodifiableList(plotSlots);
+    }
+    public FarmPlotSpec getPlotSpec(
+            tterrag1112.life_in_the_village.Village.Planning.Zoning
+                    .PlacementSlot slot) {
+        return plotSpecs.get(slot);
+    }
+
     // ── Phase 16b unplannable signal ────────────────────────────────────────
     // Set by the cascade engine when ABORT or fallback-with-no-shape fires.
     // VillagePlanner reads this after compose to decide whether to log

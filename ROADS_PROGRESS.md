@@ -3138,4 +3138,185 @@ The user's prompt asks for spawn data after this lands. Cascade
 behavior — RETRY resolving to OK vs FALLBACK vs ABORT — is the
 diagnostic that drives the next phase's prompt.
 
+---
+
+### 2026-05-02 — Phase 17: farm plot sector integration
+
+**Phase:** 17 — move farm plot positioning from post-spawn realiser
+into the planner.
+
+Reference: `docs/zoningandlayout_redesign/PLACEMENT-REWORK-STATE.md`,
+section 4.
+
+#### Changes
+
+**Step 1 — SlotTag.** Added `FARM_PLOT_CROP` and `FARM_PLOT_ANIMAL`
+near `FIELD_EDGE`. These tags are recipe-emitted-and-claimed by the
+new plot pass, NOT building-matcher-targeted; no `BuildingProfileRegistry`
+entries reference them.
+
+**Step 2 — `FarmPlotSpec` record** (new file
+`Village/Planning/FarmPlotSpec.java`):
+
+```java
+record FarmPlotSpec(
+    BlockPos ownerFarmhousePos,   // position-based; UUID resolved at realise time
+    FarmPlot.PlotSubtype subtype, // CROP_FIELD | ANIMAL_PEN
+    int halfW, int halfL,         // plot base half-dimensions
+    int edgeJitterSeed)           // for deterministic shape regen
+```
+
+**Owner ID timing.** Building UUIDs do not exist at planning time —
+`BuildingPlacer.placeAndRegister` creates them after the planner returns.
+The spec carries the planning-time anchor `ownerFarmhousePos` (the
+FARMHOUSE LayoutSlot's pos); the realiser maps this to a Building UUID
+via a position-nearest lookup in `resolveOwner`.
+
+**Step 3 — VillageLayout plot storage.** Added a parallel
+`Map<PlacementSlot, FarmPlotSpec>` plus a list of plot slots, with
+`addPlotSlot(slot, spec)`, `plotSlots()`, `getPlotSpec(slot)`. Kept
+off `PlacementSlot` itself so the building matcher's tag-based logic
+isn't affected.
+
+**Step 4 — `RecipeHelpers.emitFarmPlotSlots`** now placement-aware.
+The prior 65b3b6d-style hardcoded ring would have silently converted
+INTEGRATED and DISTANT_FIELDS villages into PERIMETER_OUTSIDE
+behaviour; that's a regression masquerading as plumbing. Per-mode
+defaults (overridden when `config.minDistance/maxDistance` are
+non-zero):
+
+| placement          | inner default       | outer default        |
+|--------------------|---------------------|----------------------|
+| INTEGRATED         | 0                   | 16                   |
+| PERIMETER_OUTSIDE  | villageRadius + 12  | villageRadius + 36   |
+| DISTANT_FIELDS     | 40                  | 80                   |
+| NONE               | (skipped)           |                      |
+
+Each emitted slot's footprint = `(BASE_HALF + EDGE_JITTER) * 2` on
+each axis — reserves the realiser's jitter margin so jittered plot
+edges can't spill outside the validated footprint:
+
+- Crop plot: `24×20` (= `(9+3)*2 × (7+3)*2`)
+- Animal pen: `32×26` (= `(9+4+3)*2 × (7+3+3)*2`)
+
+Signature is `emitFarmPlotSlots(pctx, farmhouseCount, config)` — the
+helper doesn't need the farmhouse list (only the count drives plot
+total). The planner does the per-slot owner claim.
+
+**Step 5 — `VillagePlanner.runFarmPlotPass`.** Hooks in *after*
+`validatePlan(layout, pctx)` returns success. No point planning plots
+for a layout about to be discarded; if validation fails, plot pass
+doesn't run at all.
+
+The pass:
+1. Collects FARMHOUSE LayoutSlots from `layout.buildings()`.
+2. Calls `emitFarmPlotSlots` for candidate positions.
+3. For each candidate, finds the nearest farmhouse via
+   `LayoutSlot.getPos().distSqr(slot.pos())` (the prompt's
+   `b.getShape().getOrigin()` was a Building API; corrected to
+   LayoutSlot per user direction).
+4. Caps owner claims at `config.plotsPerFarmhouse()`.
+5. Validates via `validatePlotSlot`: footprint clear of
+   `layout.getRoadFootprint()`; across-footprint flatness `≤ 6`
+   (different metric from Phase 16b's per-step `maxStepDeltaY=8`).
+6. Constructs a `FarmPlotSpec` (with `pctx.rng.nextInt()` as the
+   `edgeJitterSeed`) and calls `layout.addPlotSlot(slot, spec)`.
+
+Drops on validation failure are silent per spec; the realiser surfaces
+the count.
+
+The planner emits a separate `--- PLOT SLOTS ---` log section after
+the pass — the main `dumpPlan` runs before plot pass (inside
+`validatePlan`) so plot positions land in a follow-up log rather than
+the central dump.
+
+**Step 6 — `FarmPlotPlacer.placeAll` refactor.** Now a thin realiser:
+walks `layout.plotSlots()`, resolves owner Building via
+`resolveOwner(plannedPos, village, data)` (closest FARMHOUSE Building
+to the planned anchor; null if structure load failed), regenerates
+deterministic plot shape from `spec.edgeJitterSeed()`, and runs the
+existing levelling / crop / pen / fence / footpath / FarmPlot
+registration logic on the planned position.
+
+Removed:
+- `findPlotLocation` (spiral search)
+- `isValidPlotLocation`
+- `placeCropPlots` / `placeAnimalPens` (split-by-subtype loops)
+- Bounds-aware retry
+
+Preserved (all on the realiser side, behaviour unchanged):
+- `generateShape` / `medianFootprintY` / `levelPad`
+- `placeCropPlot` / `placeAnimalPen` / `placeFenceWithGate` /
+  `placeWaterSource` / `placeWaterTrough` / `spawnPenAnimals`
+- `chooseCrops` / `chooseCropType`
+- `placeFootpath` (still uses `RoadRouter.findRoad`; Phase 20 will
+  migrate this to the new graph)
+- The `PlotShape` data class and its private helpers
+
+**Realiser log.** Now emits:
+
+```
+FarmPlotPlacer: planned=N realised=M droppedNoOwner=K droppedNoSpec=K
+```
+
+`droppedNoOwner` non-zero indicates a planned plot whose FARMHOUSE
+failed to materialise (rare; structure load error). `droppedNoSpec`
+is a defensive counter that should always be zero.
+
+#### Files changed
+
+- `Village/Planning/Zoning/SlotTag.java` — two new values
+- `Village/Planning/FarmPlotSpec.java` — NEW
+- `Village/Planning/VillageLayout.java` — plot slot storage
+- `Village/Planning/Primitives/Recipes/RecipeHelpers.java` —
+  `emitFarmPlotSlots` + `ringForPlacement`
+- `Village/Planning/VillagePlanner.java` — `runFarmPlotPass` +
+  `validatePlotSlot` + plot-slots log section
+- `Village/Planning/FarmPlotPlacer.java` — refactored `placeAll` +
+  `resolveOwner`; removed `findPlotLocation` / `isValidPlotLocation` /
+  `placeCropPlots` / `placeAnimalPens`; cleaned unused imports
+  (`AABB`, `Collectors`, `BoundingBox`)
+
+#### Constraints honored
+
+- `FarmPlot` data class untouched
+- `FarmPlotCommands` (CLI) untouched
+- `VillageInhabitantPopulator` untouched
+- `PlacementMatcher.run()` untouched (plot pass is separate, not a
+  matcher modification)
+- `FarmPlotConfig` schema unchanged (just consumed via the new emission helper)
+- AGRI ring slot emission unchanged in `RingBand` / `RecipeHelpers`
+- Plot footpath routing still uses `RoadRouter.findRoad` (Phase 20
+  migrates to the new graph)
+- Crop selection / animal spawning / fence-with-gate / water trough
+  logic byte-identical for any plot landing at the same position
+- No new persistent data type for plot specs — `FarmPlot` is what
+  persists; `FarmPlotSpec` is planning-time only
+
+#### Open questions resolved
+
+1. Validation drop vs retry: drop, log count. Confirmed.
+2. Uniform-around-ring vs cluster-by-owner emission: uniform-ring
+   stays for Phase 17. Aesthetic clustering is later authoring work.
+3. Plot specs on PlacementSlot vs parallel map on VillageLayout:
+   parallel map. Confirmed.
+
+#### Build status
+
+Gradle compile gated by network access; verified by inspection. Key
+correctness points:
+
+- `LayoutSlot.getPos()` and `getBuildingType()` exist; used correctly
+  in the claim pass.
+- `village.getBuildingIds()` exists on `Village` (line 747); used
+  in the realiser's owner resolver.
+- `FarmPlot.PlotSubtype` enum unchanged; `setFarmhouseId(UUID)` setter
+  unchanged.
+- `pctx.density.getRing2Radius()` exists; used as `villageRadius` for
+  PERIMETER_OUTSIDE ring offset.
+- Same-package access keeps `FarmPlotSpec` reachable from
+  VillagePlanner / VillageLayout / FarmPlotPlacer without imports.
+
+
+
 

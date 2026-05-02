@@ -4,6 +4,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes.RecipeHelpers;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleAutoDeriver;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.StyleSelection;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillageAgeCategoryHook;
@@ -261,6 +264,11 @@ public class VillagePlanner {
             return Optional.empty();
         }
 
+        // Phase 17: emit + claim + validate farm plot slots. Runs only after
+        // the layout has passed full validation — no point planning plots
+        // for a layout that's about to be discarded.
+        runFarmPlotPass(pctx, typeData);
+
         // Ensure town square has SOMETHING marked if recipe didn't.
         // Doc 04 §"Tier scaling" — the fallback uses HAMLET radius
         // (3) since this branch only runs when the recipe never
@@ -313,6 +321,151 @@ public class VillagePlanner {
                 + " retries=" + pctx.cascadeRetryCount()
                 + " finalShape=" + finalShape
                 + " validated=" + validated + "/" + initialBuildingCount);
+    }
+
+    // =========================================================================
+    // Phase 17: farm plot pass (planner-side)
+    // =========================================================================
+
+    /**
+     * Emit + claim + validate farm plot slots.
+     *
+     * <p>Steps: collect FARMHOUSE LayoutSlots from the validated layout;
+     * call {@link RecipeHelpers#emitFarmPlotSlots} to emit candidate slots
+     * around the village; for each candidate, find the nearest farmhouse
+     * (capped at {@code config.plotsPerFarmhouse()} per owner); validate
+     * the slot's footprint against road overlap and across-footprint
+     * flatness (delta-Y &le; 6); register validated slots on the layout
+     * with their {@link FarmPlotSpec}.
+     *
+     * <p>Plots that fail validation are silently dropped — Phase 17 is
+     * plumbing-side; aesthetic recovery (try a different angle / radius)
+     * is authoring work for later. The realiser surfaces the dropped
+     * count in its log.
+     */
+    private static void runFarmPlotPass(PlanContext pctx, VillageTypeData typeData) {
+        VillageTypeData.FarmPlotConfig config = typeData.getFarmPlotConfig();
+        if (config.placement() == VillageTypeData.FarmPlotPlacement.NONE) return;
+
+        VillageLayout layout = pctx.layout;
+        List<LayoutSlot> farmhouses = layout.buildings().stream()
+                .filter(b -> b.getBuildingType() == BuildingType.FARMHOUSE)
+                .toList();
+        if (farmhouses.isEmpty()) {
+            System.out.println("VillagePlanner: no FARMHOUSE buildings — "
+                    + "skipping farm plot pass");
+            return;
+        }
+
+        List<PlacementSlot> candidates = RecipeHelpers.emitFarmPlotSlots(
+                pctx, farmhouses.size(), config);
+        if (candidates.isEmpty()) return;
+
+        Map<BlockPos, Integer> claimedPerFarmhouse = new HashMap<>();
+        int validated = 0;
+        int droppedClaim = 0;
+        int droppedValidator = 0;
+
+        for (PlacementSlot slot : candidates) {
+            // Ownership: nearest farmhouse by chebyshev — same metric the
+            // matcher uses so plot ownership reflects walking distance.
+            LayoutSlot owner = farmhouses.stream()
+                    .min(Comparator.comparingDouble(
+                            f -> f.getPos().distSqr(slot.pos())))
+                    .orElse(null);
+            if (owner == null) { droppedClaim++; continue; }
+
+            BlockPos ownerPos = owner.getPos();
+            int claimed = claimedPerFarmhouse.getOrDefault(ownerPos, 0);
+            if (claimed >= config.plotsPerFarmhouse()) {
+                droppedClaim++;
+                continue;
+            }
+            if (!validatePlotSlot(pctx, slot)) {
+                droppedValidator++;
+                continue;
+            }
+
+            FarmPlot.PlotSubtype subtype = slot.tags().contains(
+                    tterrag1112.life_in_the_village.Village.Planning.Zoning
+                            .SlotTag.FARM_PLOT_ANIMAL)
+                    ? FarmPlot.PlotSubtype.ANIMAL_PEN
+                    : FarmPlot.PlotSubtype.CROP_FIELD;
+
+            // Recover base half-dims from the slot's footprint budget by
+            // peeling off the EDGE_JITTER margin the helper added. The
+            // realiser's PlotShape generator takes these as input.
+            int halfW = slot.footprintBudgetW() / 2 - 3;  // EDGE_JITTER = 3
+            int halfL = slot.footprintBudgetL() / 2 - 3;
+
+            FarmPlotSpec spec = new FarmPlotSpec(
+                    ownerPos, subtype, halfW, halfL, pctx.rng.nextInt());
+            layout.addPlotSlot(slot, spec);
+            claimedPerFarmhouse.merge(ownerPos, 1, Integer::sum);
+            validated++;
+        }
+
+        System.out.println("VillagePlanner: farm plot pass — emitted="
+                + candidates.size() + " validated=" + validated
+                + " droppedClaim=" + droppedClaim
+                + " droppedValidator=" + droppedValidator
+                + " (placement=" + config.placement() + " perFh="
+                + config.plotsPerFarmhouse() + ")");
+
+        // Plot slots aren't covered by the main dumpPlan (which ran inside
+        // validatePlan, before this pass). Emit a separate section so the
+        // realisation team can verify positions against the world.
+        if (validated > 0) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("\n--- PLOT SLOTS ---\n");
+            for (PlacementSlot s : layout.plotSlots()) {
+                FarmPlotSpec spec = layout.getPlotSpec(s);
+                if (spec == null) continue;
+                sb.append("  pos=").append(s.pos())
+                  .append(" subtype=").append(spec.subtype())
+                  .append(" half=").append(spec.halfW()).append('x')
+                  .append(spec.halfL())
+                  .append(" fp=").append(s.footprintBudgetW()).append('x')
+                  .append(s.footprintBudgetL())
+                  .append(" owner=").append(spec.ownerFarmhousePos())
+                  .append(" seed=").append(spec.edgeJitterSeed())
+                  .append('\n');
+            }
+            System.out.println(sb.toString());
+        }
+    }
+
+    /** Plot slot validator: rejects road-footprint overlap and slopes
+     *  steeper than 6 blocks across the footprint. */
+    private static boolean validatePlotSlot(PlanContext pctx, PlacementSlot slot) {
+        int halfW = slot.footprintBudgetW() / 2;
+        int halfL = slot.footprintBudgetL() / 2;
+        int w = halfW * 2;
+        int l = halfL * 2;
+        BlockPos origin = new BlockPos(
+                slot.pos().getX() - halfW,
+                slot.pos().getY(),
+                slot.pos().getZ() - halfL);
+
+        if (!pctx.layout.getRoadFootprint().isClear(origin, w, l, 1)) {
+            return false;
+        }
+
+        // Across-footprint flatness — different metric from Phase 16b's
+        // per-step maxStepDeltaY (which is 8). 6 here is "field flatness":
+        // a 6-block delta over a 24x20 plot is roughly the upper bound a
+        // levelPad pass can hide.
+        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
+        for (int dx = -halfW; dx <= halfW; dx += 4) {
+            for (int dz = -halfL; dz <= halfL; dz += 4) {
+                int y = pctx.level.getHeight(
+                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                        slot.pos().getX() + dx, slot.pos().getZ() + dz);
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+        return (maxY - minY) <= 6;
     }
 
     // =========================================================================

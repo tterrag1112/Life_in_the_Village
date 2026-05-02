@@ -18,6 +18,11 @@ public enum SlotTag {
     RESIDENTIAL_CORE, RESIDENTIAL_INFILL, RESIDENTIAL_OUTER,
     // Agricultural
     FIELD_EDGE, PASTURE,
+    // Farm plots (Phase 17). Emitted by RecipeHelpers.emitFarmPlotSlots
+    // and claimed by VillagePlanner.runFarmPlotPass — NOT by the building
+    // matcher. Do not add these to any BuildingProfileRegistry entry; they
+    // are recipe-emitted-and-claimed-by-the-plot-pass, not building-targeted.
+    FARM_PLOT_CROP, FARM_PLOT_ANIMAL,
     // Defensive
     WALL_ADJACENT, GATE_ADJACENT, HIGH_GROUND,
     // Specialty (terrain- or feature-bound)

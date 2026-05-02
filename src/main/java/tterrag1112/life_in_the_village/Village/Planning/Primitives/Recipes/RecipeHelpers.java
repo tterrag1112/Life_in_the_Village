@@ -787,6 +787,136 @@ public final class RecipeHelpers {
                 slotCount, baseQuality, pctx, 14, 6);
     }
 
+    // =========================================================================
+    // Phase 17 — farm plot slot emission
+    // =========================================================================
+
+    /** Mirrors FarmPlotPlacer's BASE_HALF_W (kept in sync with the realiser). */
+    private static final int FARM_PLOT_BASE_HALF_W = 9;
+    /** Mirrors FarmPlotPlacer's BASE_HALF_L. */
+    private static final int FARM_PLOT_BASE_HALF_L = 7;
+    /** Mirrors FarmPlotPlacer's EDGE_JITTER — the slot footprint reserves
+     *  this margin on each axis so jittered plot edges can't spill outside
+     *  the validated footprint. */
+    private static final int FARM_PLOT_EDGE_JITTER = 3;
+    /** Animal pen extras on top of the base crop dimensions. */
+    private static final int ANIMAL_PEN_EXTRA_W = 4;
+    private static final int ANIMAL_PEN_EXTRA_L = 3;
+
+    /**
+     * Phase 17: emit farm plot slots around the village.
+     *
+     * <p>Honors {@link tterrag1112.life_in_the_village.Village.VillageTypeData
+     * .FarmPlotConfig#placement()}:
+     * <ul>
+     *   <li>{@code INTEGRATED}: ring [0, max(16, maxDistance)] from centre
+     *   <li>{@code PERIMETER_OUTSIDE}: ring
+     *       [villageRadius + min, villageRadius + max] (defaults 12 / 36)
+     *   <li>{@code DISTANT_FIELDS}: ring [min, max] absolute (defaults 40 / 80)
+     *   <li>{@code NONE}: returns empty
+     * </ul>
+     *
+     * <p>{@code FarmPlotConfig.minDistance} and {@code maxDistance} override
+     * the per-mode defaults when non-zero. Sentinel zero means "use the
+     * mode default" (matches the legacy {@code FarmPlotConfig.integrated()}
+     * convention where minDistance=0).
+     *
+     * <p>Each emitted slot carries {@link SlotTag#FARM_PLOT_CROP} or
+     * {@link SlotTag#FARM_PLOT_ANIMAL} and the appropriate footprint
+     * budget — base half-dim doubled, plus {@code EDGE_JITTER} margin on
+     * each axis. The actual {@link tterrag1112.life_in_the_village.Village
+     * .Planning.FarmPlotSpec} is constructed by the planner's claim pass
+     * (which has the owning farmhouse position and an rng for the jitter
+     * seed); this helper only emits position + footprint + tag.
+     *
+     * @param farmhouseCount number of FARMHOUSE LayoutSlots placed —
+     *                       drives total plot count via
+     *                       {@code config.plotsPerFarmhouse()}
+     */
+    public static List<PlacementSlot> emitFarmPlotSlots(
+            PlanContext pctx, int farmhouseCount,
+            VillageTypeData.FarmPlotConfig config) {
+        List<PlacementSlot> out = new ArrayList<>();
+        if (farmhouseCount <= 0) return out;
+        if (config.placement()
+                == VillageTypeData.FarmPlotPlacement.NONE) return out;
+
+        int totalPlots = farmhouseCount * config.plotsPerFarmhouse();
+        if (totalPlots <= 0) return out;
+
+        int cropPlots   = config.allowAnimalPens()
+                ? (int) Math.round(totalPlots * 0.7)
+                : totalPlots;
+        int animalPlots = totalPlots - cropPlots;
+
+        int[] ring = ringForPlacement(pctx, config);
+        int innerR = ring[0];
+        int outerR = ring[1];
+        int span   = Math.max(1, outerR - innerR);
+
+        BlockPos centre = pctx.layout.getCenter();
+
+        // Footprint budgets: base half-dim doubled, plus EDGE_JITTER on each
+        // axis so jittered plot edges fit inside the validated footprint.
+        int cropFpW   = (FARM_PLOT_BASE_HALF_W + FARM_PLOT_EDGE_JITTER) * 2;
+        int cropFpL   = (FARM_PLOT_BASE_HALF_L + FARM_PLOT_EDGE_JITTER) * 2;
+        int animalFpW = (FARM_PLOT_BASE_HALF_W + ANIMAL_PEN_EXTRA_W
+                + FARM_PLOT_EDGE_JITTER) * 2;
+        int animalFpL = (FARM_PLOT_BASE_HALF_L + ANIMAL_PEN_EXTRA_L
+                + FARM_PLOT_EDGE_JITTER) * 2;
+
+        Set<SlotTag> cropTags   = java.util.EnumSet.of(
+                SlotTag.FARM_PLOT_CROP, SlotTag.FIELD_EDGE);
+        Set<SlotTag> animalTags = java.util.EnumSet.of(
+                SlotTag.FARM_PLOT_ANIMAL, SlotTag.PASTURE);
+
+        for (int i = 0; i < totalPlots; i++) {
+            double angle = 2 * Math.PI * i / totalPlots;
+            int r = innerR + (span > 1 ? pctx.rng.nextInt(span) : 0);
+            BlockPos pos = pctx.solidSurface(new BlockPos(
+                    centre.getX() + (int) Math.round(Math.cos(angle) * r),
+                    centre.getY(),
+                    centre.getZ() + (int) Math.round(Math.sin(angle) * r)));
+            boolean isCrop = i < cropPlots;
+            out.add(new PlacementSlot(
+                    pos,
+                    List.of(centre),    // no road feed; planner pass uses bbox-based validation
+                    -1,                 // edgeId — plots aren't road-fed
+                    isCrop ? cropTags : animalTags,
+                    isCrop ? cropFpW : animalFpW,
+                    isCrop ? cropFpL : animalFpL,
+                    null,               // forcedRotation
+                    50,                 // qualityScore (not used by plot pass)
+                    0,                  // terrainPenalty
+                    0));                // maxDriftBlocks — plots aren't perturbed
+        }
+        return out;
+    }
+
+    /** Returns {@code [innerR, outerR]} for a placement mode, applying
+     *  the config's min/max overrides when non-zero. */
+    private static int[] ringForPlacement(
+            PlanContext pctx, VillageTypeData.FarmPlotConfig config) {
+        int villageRadius = pctx.density.getRing2Radius();
+        int min = config.minDistance();
+        int max = config.maxDistance();
+        return switch (config.placement()) {
+            case INTEGRATED -> new int[]{
+                    min > 0 ? min : 0,
+                    max > 0 ? max : 16
+            };
+            case PERIMETER_OUTSIDE -> new int[]{
+                    villageRadius + (min > 0 ? min : 12),
+                    villageRadius + (max > 0 ? max : 36)
+            };
+            case DISTANT_FIELDS -> new int[]{
+                    min > 0 ? min : 40,
+                    max > 0 ? max : 80
+            };
+            case NONE -> new int[]{0, 0};   // unreachable; caller filters
+        };
+    }
+
     /**
      * Footprint-aware ring slots. Ring slots don't have an inherent road,
      * so {@code roadHalfWidth} and {@code clearance} aren't meaningful;
