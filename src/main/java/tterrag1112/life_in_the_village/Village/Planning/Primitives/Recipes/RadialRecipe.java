@@ -194,7 +194,19 @@ public final class RadialRecipe extends BaseRecipe {
         pctx.layout.addGatePosition(mainStart);
         pctx.layout.addGatePosition(mainEnd);
 
+        // Microfix Fix 3: wrap spine slots in a sector so HOUSE / etc.
+        // landing here get attributed to "radial_main_road" instead of
+        // "unknown" in the plan dump.
+        int mainRoadSnapshot = pctx.slotPoolSize();
         pctx.offerRoadSlots(mainCenterline, 8, 8, TAGS_MAIN_ROAD, 35);
+        List<PlacementSlot> mainRoadSlots = pctx.drainSlotsSince(mainRoadSnapshot);
+        if (!mainRoadSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    "radial_main_road", SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.RESIDENTIAL, mainRoadSlots,
+                    UNLIMITED_CAPACITY, false, FixedGrowth.INSTANCE,
+                    mainEdgeId, null, 16));
+        }
 
         // ── Spurs (each becomes a SPUR_CLUSTER sector) ────────────────────
         int remaining = pctx.remaining.size();
@@ -346,7 +358,19 @@ public final class RadialRecipe extends BaseRecipe {
                 radialEdgeLog("ARC_" + ai, "Arc", r, arcCentreAngle,
                         arcEdgeId, arcCenterline, centre);
                 allRoadsForSnap.add(arcCenterline);
+                // Microfix Fix 3: wrap arc slots in their own sector so HOUSE
+                // / etc. landing here get attributed to "radial_arc_N" instead
+                // of "unknown".
+                int arcSnapshot = pctx.slotPoolSize();
                 pctx.offerRoadSlots(arcCenterline, 10, 7, TAGS_ARC, 30);
+                List<PlacementSlot> arcSlots = pctx.drainSlotsSince(arcSnapshot);
+                if (!arcSlots.isEmpty()) {
+                    pctx.offerSector(new Sector(
+                            "radial_arc_" + ai, SectorRole.RESIDENTIAL_INFILL,
+                            BuildingZone.RESIDENTIAL, arcSlots,
+                            UNLIMITED_CAPACITY, false, FixedGrowth.INSTANCE,
+                            arcEdgeId, null, 16));
+                }
             }
         }
 

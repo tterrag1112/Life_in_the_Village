@@ -207,8 +207,17 @@ public final class ChainRecipe extends BaseRecipe {
         allRoadsForSnap.add(mainCenterline);
 
         // ── Spine road slots (backfill along the main curve) ──────────────
-        // These stay in the flat pool for the matcher to pick up.
+        // Microfix Fix 3: wrap in a sector for attribution.
+        int spineSnapshot = pctx.slotPoolSize();
         pctx.offerRoadSlots(mainCenterline, 8, 8, TAGS_SPINE_ROAD, 35);
+        List<PlacementSlot> spineSlots = pctx.drainSlotsSince(spineSnapshot);
+        if (!spineSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    "chain_spine", SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.RESIDENTIAL, spineSlots,
+                    1024, false, FixedGrowth.INSTANCE,
+                    mainEdgeId, null, 16));
+        }
 
         // ── Stub spurs along the curve ─────────────────────────────────────
         // Four stubs spaced evenly, perpendicular to the local curve tangent,

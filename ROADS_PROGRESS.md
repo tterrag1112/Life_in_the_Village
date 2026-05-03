@@ -3317,6 +3317,177 @@ correctness points:
 - Same-package access keeps `FarmPlotSpec` reachable from
   VillagePlanner / VillageLayout / FarmPlotPlacer without imports.
 
+---
+
+### 2026-05-03 — Microfix batch: stabilise the 27/27 baseline
+
+**Phase:** Microfix batch (P0; per state-doc Section 8). Three
+independent fixes that share test surface (the same superflat seed
+reproduces all three).
+
+#### Fix 1 — RingBand DEFENSIVE SAFE_OFFSET tuned for 9×9 buildings
+
+**Diagnosis verified.** GUARD_TOWER (9×9, halfW=4) at slot
+{ringR − 16} fails the validator's road-distance cap of
+halfFp(4) + roadHalfWidth(3) + slack(6) = 13. Distance 16 > 13.
+
+**The prompt's suggested fix (slot center on centerline) was
+rejected** — it would put the building footprint inside the road's
+±5-block reservation, trading road-distance failure for road-overlap
+failure.
+
+**Actual fix**: split the single SAFE_OFFSET into zone-specific
+constants in `LayoutPrimitive.RingBand.emitSlots`:
+
+| zone | offset | passes validator? | clears road? |
+|------|--------|-------------------|--------------|
+| DEFENSIVE     | **12** (was 16) | 12 ≤ 13 ✓ for 9×9 | 12 > 4+6=10 ✓ |
+| AGRICULTURAL  | 16 (unchanged)  | 16 ≤ 18 ✓ for 18×14 | 16 > 9+6=15 ✓ |
+| (fallback path) | 16 (unchanged) | unchanged from 16b |  |
+
+Skipped the SLOT_FOOTPRINT tuning (DEFENSIVE roster all ≤ 9×9).
+
+**Documented inline as a Path 1/2 signal.** Per-zone SAFE_OFFSET
+tuning is the same shape of problem as 16b's removed in-emit clamp:
+slots emitted at a fixed radius can't satisfy every building size.
+Architectural fix (matcher-side perpendicular slide, or
+per-building-tier slot rings) is Phase 22+ work.
+
+#### Fix 2 — Slot footprint budget derived from perpOffset
+
+**Diagnosis verified — but the prompt's first two hypotheses are
+wrong.** `BuildingFootprint.reserveRoad` reserves exactly
+`(2*halfWidth+1)²` blocks per centerline point, with halfWidth=3
+for every tier (`RoadShape.RoadTier.reservedHalfWidth()`). Reservation
+is 7 blocks wide, NOT 20+. Same key added twice is a Set no-op, so
+no per-segment accumulation either.
+
+**Real cause**: legacy `generateSlotsAlongCenterline` (6-arg) and
+`PlanContext.offerRoadSlots` hardcode `footprintBudget = 16`. With
+LinearRecipe's `perpOffset = 7`, only buildings ≤ 6 wide actually
+fit (perpOffset − roadHalfWidth − 1 gap = 3 blocks each side from
+slot centre), but the slot advertised 16 wide. The matcher
+committed large buildings (TOWN_HALL 29×29, HOUSE 11×20, STOCKPILE
+13×13) and they immediately failed the road-overlap check.
+
+**Fix per user direction (Path B — tighten footprint, don't change
+perpOffset)**:
+
+- `RecipeHelpers.generateSlotsAlongCenterline` (6-arg) and
+  `generateOneSidedSlotsAlongCenterline` (7-arg): footprint budget
+  derived via new `footprintBudgetForPerpOffset(perpOffset)` helper.
+  Formula: `max(4, (perpOffset − 3 − 1) * 2)`. The 9-arg
+  footprint-aware overloads (which take `expectedMaxFootprint`
+  explicitly) are unchanged.
+- `PlanContext.offerRoadSlots`: same inline derivation.
+
+**Expected behavioural fallout** (per user direction):
+LINEAR will visibly route TOWN_HALL / HOUSE / STOCKPILE elsewhere
+(to civic / plaza-edge slots when those exist; otherwise these
+buildings fail to place via the matcher's
+`No slot matched any preference tier` warning). That's information
+worth surfacing — if LINEAR's plaza/civic emission can't absorb
+large buildings, LINEAR is structurally weaker than its current
+slot count suggested. **The validation bar shifts from "27/27
+placed" to "all buildings that fit emitted slots place;
+buildings that don't fit are correctly rejected."**
+
+**Path C (matcher-side perpendicular slide)** is the structurally
+correct long-term fix — noted as Phase 22 / post-rework candidate.
+
+#### Fix 3 — Wrap un-sectored road emissions in sectors
+
+**Diagnosis verified.** The matcher's sector attribution
+(`PlacementMatcher.slotSectorIds`, `IdentityHashMap`) is correct:
+sector slots → attribution preserved; flat-pool slots → sector=null
+→ "unknown". HOUSEs reporting `sector=unknown` were claiming slots
+emitted via `pctx.offerRoadSlots(...)` without subsequent
+`drainSlotsSince` / `offerSector` wrapping. That's the spine and
+inner arc emissions in RadialRecipe (and the trunk / ringB / spurs
+in DumbellRecipe, and the spine in ChainRecipe).
+
+**Fix**: wrap each un-sectored `offerRoadSlots` call in a snapshot
+→ drain → `offerSector(...)` block. Sectors created:
+
+- `radial_main_road` (RESIDENTIAL_INFILL, mainEdgeId)
+- `radial_arc_N` per inner arc (RESIDENTIAL_INFILL, arcEdgeId)
+- `dumbell_trunk` / `dumbell_ringB` (RESIDENTIAL_INFILL)
+- `dumbell_spur_N` per spur (SPUR_CLUSTER)
+- `chain_spine` (RESIDENTIAL_INFILL)
+
+Other recipes that already wrap their road emissions (LINEAR,
+GROVE spurs, ChainRecipe stubs/farm ends, CrossroadsRecipe arms,
+PlazaRecipe spurs, HilltopRecipe terrace rows, TerracedRecipe rows)
+were left unchanged.
+
+#### Files modified
+
+- `Village/Planning/Primitives/LayoutPrimitive.java` — Fix 1
+- `Village/Planning/Primitives/Recipes/RecipeHelpers.java` —
+  Fix 2 (legacy slot generators + footprint helper)
+- `Village/Planning/Primitives/PlanContext.java` —
+  Fix 2 (offerRoadSlots)
+- `Village/Planning/Primitives/Recipes/RadialRecipe.java` —
+  Fix 3 (spine + 2 inner arcs sectored)
+- `Village/Planning/Primitives/Recipes/DumbellRecipe.java` —
+  Fix 3 (trunk + ringB + N spurs sectored, edge IDs captured)
+- `Village/Planning/Primitives/Recipes/ChainRecipe.java` —
+  Fix 3 (spine sectored)
+
+#### Constraints honored
+
+- PlacementMatcher tier-walking, scoring, avoidance — untouched
+- No new SlotTags
+- TownSquarePlacer / decoration / paving — untouched
+- ENCLAVE not changed (no spine, no arc; uses installPlaza)
+- Validator rules untouched (the 13-block cap is correctly catching
+  the geometry bug; we fixed the geometry instead)
+- No Phase 16b or Phase 17 code touched
+- LINEAR's recipe authoring (perpOffset choice) unchanged — Path B
+  honors the constraint by tightening the slot footprint budget so
+  the matcher rejects oversized candidates rather than committing
+  them and failing post-commit
+- Recipes that already wrap their emissions in sectors left untouched
+- DumbellRecipe was previously a `ShapeRecipe` (not BaseRecipe);
+  Fix 3 only added sector wrapping, not cascade integration
+
+#### Build status
+
+Gradle compile gated by network access; verified by inspection.
+Notes:
+
+- DumbellRecipe gained imports for `BuildingZone`, `FixedGrowth`,
+  `Sector`, `SectorRole`, `PlacementSlot`. The `LayoutPrimitive`
+  import is now unused (only referenced by the old, non-existent
+  `LayoutPrimitive.TownSquare` symbol per a stale import). Left in
+  place; Java's unused-import is a warning, not an error.
+- Edge ID capture pattern (`int beforeX = edgeCount();
+  addRoad(...); int xEdgeId = edgeCount() > beforeX ? -1 : ...`)
+  added to DumbellRecipe to support the new sectors' parentEdgeId.
+  Same pattern already used elsewhere.
+
+#### Validation (next steps for the user)
+
+Spawn on superflat:
+
+- **RADIAL** — should now report `validated=27/27` and HOUSE
+  attributions like `radial_main_road`, `radial_arc_0`,
+  `radial_spur_N` instead of `unknown`. GUARD_TOWER should commit
+  on first try inside the OUTER_RING.
+- **LINEAR** — TOWN_HALL / large buildings will land on plaza/civic
+  slots if those fit, otherwise surface as `No slot matched any
+  preference tier`. The bar is "all buildings that fit are placed",
+  not "27/27".
+- **PLAZA / GROVE / DUMBELL** — no regressions expected; new sectors
+  are debug-visible attribution improvements.
+- **ENCLAVE** — unchanged; runs as before.
+- **Cascade behavior on hilly terrain** — unchanged from Phase 16b
+  baseline.
+
+If LINEAR drops a meaningful number of large buildings post-fix,
+that's signal for Phase 22 (recipe fallback chains) — LINEAR's
+authoring genuinely needs civic/plaza slot capacity revisited.
+
 
 
 

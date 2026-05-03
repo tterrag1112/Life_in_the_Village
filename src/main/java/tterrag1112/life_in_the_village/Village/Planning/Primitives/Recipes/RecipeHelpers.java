@@ -649,16 +649,25 @@ public final class RecipeHelpers {
      * with a caller-specified perpendicular offset. Both sides per stride.
      * Quality decays by 1 per stride step, floored at 5.
      *
-     * <p>Legacy 6-arg form. Footprint budget defaults to 16, drift bound to 6.
-     * Callers needing footprint-aware sizing (e.g. civic sectors that host
-     * a 29×29 town hall) should use the 9-arg overload below.
+     * <p>Legacy 6-arg form. The slot footprint budget is now derived from
+     * {@code perpOffset} so the slot honestly advertises what fits next to
+     * the road. With reservedHalfWidth=3 (every tier today), a slot at
+     * perpOffset=7 has 7-3-1=3 blocks of free space on each side of its
+     * centre, so the budget is 6×6. Buildings larger than that will fail
+     * the matcher's footprint-mismatch penalty rather than being committed
+     * and then rejected by the road-overlap check.
+     *
+     * <p>Callers that legitimately need a wider slot (sectors at known
+     * perpOffsets that host larger buildings) should use the 9-arg
+     * footprint-aware overload below.
      */
     public static List<PlacementSlot> generateSlotsAlongCenterline(
             List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
             int stride, int perpOffset, int baseQuality) {
+        int fp = footprintBudgetForPerpOffset(perpOffset);
         return generateSlotsAlongCenterlineImpl(
                 centerline, edgeId, tags, stride, perpOffset,
-                16, 16, baseQuality, 6, +1, true);
+                fp, fp, baseQuality, 6, +1, true);
     }
 
     /**
@@ -704,14 +713,36 @@ public final class RecipeHelpers {
      * side (same direction as {@code perpX/perpZ} in the centerline walk),
      * -1 emits on the opposite side.
      *
-     * <p>Legacy 7-arg form. Footprint budget defaults to 16, drift bound to 6.
+     * <p>Legacy 7-arg form. Footprint budget derived from {@code perpOffset}
+     * the same way as {@link #generateSlotsAlongCenterline} — see that
+     * method's javadoc for the rationale.
      */
     public static List<PlacementSlot> generateOneSidedSlotsAlongCenterline(
             List<BlockPos> centerline, int edgeId, Set<SlotTag> tags,
             int stride, int perpOffset, int baseQuality, int sideSign) {
+        int fp = footprintBudgetForPerpOffset(perpOffset);
         return generateSlotsAlongCenterlineImpl(
                 centerline, edgeId, tags, stride, perpOffset,
-                16, 16, baseQuality, 6, sideSign, false);
+                fp, fp, baseQuality, 6, sideSign, false);
+    }
+
+    /**
+     * Microfix: derive footprint budget from perpOffset so the legacy
+     * 6/7-arg slot generators advertise what actually fits next to the
+     * road. Formula: {@code (perpOffset - reservedHalfWidth - 1) * 2},
+     * floored at 4 so callers that pass a tiny perpOffset still get a
+     * usable slot. Hardcodes reservedHalfWidth=3 (true for every tier
+     * today; see {@link RoadShape.RoadTier#reservedHalfWidth()}).
+     *
+     * <p>The 1-block subtraction is the gap between building edge and
+     * road reservation edge — matches BuildingFootprint.isClear's
+     * {@code buffer=1} convention.
+     */
+    private static int footprintBudgetForPerpOffset(int perpOffset) {
+        final int RESERVED_HALF_WIDTH = 3;
+        final int GAP = 1;
+        int fp = (perpOffset - RESERVED_HALF_WIDTH - GAP) * 2;
+        return Math.max(4, fp);
     }
 
     /**

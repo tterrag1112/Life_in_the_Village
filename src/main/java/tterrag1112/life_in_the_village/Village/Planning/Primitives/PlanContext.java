@@ -932,6 +932,10 @@ public final class PlanContext {
                     .Zoning.SlotTag> tags,
             int quality) {
         if (centerline == null || centerline.size() < 2) return;
+        // Microfix: derive footprint budget from perpOffset so the slot
+        // honestly advertises what actually fits next to the road.
+        // (perpOffset - reservedHalfWidth(3) - 1 gap) * 2, floored at 4.
+        int fp = Math.max(4, (perpOffset - 3 - 1) * 2);
         int q = quality;
         for (int i = spacing; i < centerline.size() - 1; i += spacing) {
             net.minecraft.core.BlockPos on = centerline.get(i);
@@ -950,7 +954,7 @@ public final class PlanContext {
                         perpZ * perpOffset * side);
                 offerSlot(new tterrag1112.life_in_the_village.Village.Planning
                         .Zoning.PlacementSlot(target, centerline,
-                        tags, 16, q));
+                        tags, fp, q));
             }
             q = Math.max(5, q - 1);
         }

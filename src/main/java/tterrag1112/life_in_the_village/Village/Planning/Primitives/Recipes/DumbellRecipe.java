@@ -2,10 +2,15 @@ package tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.LayoutPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.FixedGrowth;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
+import tterrag1112.life_in_the_village.Village.Planning.Sectors.SectorRole;
+import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 
 import java.util.ArrayList;
@@ -66,22 +71,48 @@ public final class DumbellRecipe implements ShapeRecipe {
                 trunkEnd.getY(),
                 trunkEnd.getZ() + (int) Math.round(Math.sin(mainDirRad) * ringBRadius)));
 
+        int beforeTrunk = pctx.layout.getRoadGraph().edgeCount();
         List<BlockPos> trunkCenterline = pctx.layout.addRoad(
                 new RoadPrimitive.StraightRoad(
                         trunkStart, trunkEnd, 4.0, RoadShape.RoadTier.VILLAGE_PATH),
                 pctx.level, pctx.worldSeed);
+        int trunkEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeTrunk
+                ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
 
+        // Microfix Fix 3: wrap trunk slots in a sector for attribution.
+        int trunkSnapshot = pctx.slotPoolSize();
         pctx.offerRoadSlots(trunkCenterline, 7, 7, TAGS_RESIDENTIAL, 50);
+        List<PlacementSlot> trunkSlots = pctx.drainSlotsSince(trunkSnapshot);
+        if (!trunkSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    "dumbell_trunk", SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.RESIDENTIAL, trunkSlots,
+                    1024, false, FixedGrowth.INSTANCE,
+                    trunkEdgeId, null, 16));
+        }
 
         // ── Ring B: production end ─────────────────────────────────────────
         // Ring starts at its own centre — no overlap with trunk because
         // the trunk ends exactly at ringBCentre.
+        int beforeRingB = pctx.layout.getRoadGraph().edgeCount();
         List<BlockPos> ringBCenterline = pctx.layout.addRoad(
                 new RoadPrimitive.Ring(
                         ringBCentre, ringBRadius, 2.0, RoadShape.RoadTier.VILLAGE_PATH),
                 pctx.level, pctx.worldSeed);
+        int ringBEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeRingB
+                ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
 
+        // Microfix Fix 3: wrap ring B slots in a sector for attribution.
+        int ringBSnapshot = pctx.slotPoolSize();
         pctx.offerRoadSlots(ringBCenterline, 6, 7, TAGS_PRODUCTION, 60);
+        List<PlacementSlot> ringBSlots = pctx.drainSlotsSince(ringBSnapshot);
+        if (!ringBSlots.isEmpty()) {
+            pctx.offerSector(new Sector(
+                    "dumbell_ringB", SectorRole.RESIDENTIAL_INFILL,
+                    BuildingZone.PRODUCTION, ringBSlots,
+                    1024, false, FixedGrowth.INSTANCE,
+                    ringBEdgeId, null, 16));
+        }
 
         // ── Production spurs off Ring B ────────────────────────────────────
         // Spurs branch from the ring perimeter (branchPointHint snaps to
@@ -92,19 +123,35 @@ public final class DumbellRecipe implements ShapeRecipe {
                 mainDirRad + Math.PI / 2, // left flank
                 mainDirRad - Math.PI / 2  // right flank
         };
+        int spurIdx = 0;
         for (double angle : spurAngles) {
             BlockPos branchHint = new BlockPos(
                     ringBCentre.getX() + (int) Math.round(Math.cos(angle) * ringBRadius),
                     ringBCentre.getY(),
                     ringBCentre.getZ() + (int) Math.round(Math.sin(angle) * ringBRadius));
             int spurLength = 8 + pctx.rng.nextInt(6);
+            int beforeSpur = pctx.layout.getRoadGraph().edgeCount();
             List<BlockPos> spurLine = pctx.layout.addRoad(
                     new RoadPrimitive.Spur(
                             ringBCenterline, branchHint, angle,
                             spurLength, 2.0, RoadShape.RoadTier.FOOTPATH),
                     pctx.level, pctx.worldSeed);
+            int spurEdgeId = pctx.layout.getRoadGraph().edgeCount() > beforeSpur
+                    ? pctx.layout.getRoadGraph().edgeCount() - 1 : -1;
+
+            // Microfix Fix 3: wrap each spur's slots in a sector for attribution.
+            int spurSnapshot = pctx.slotPoolSize();
             pctx.offerRoadSlots(spurLine, 5, 6, TAGS_SPUR_END, 55);
+            List<PlacementSlot> spurSlots = pctx.drainSlotsSince(spurSnapshot);
+            if (!spurSlots.isEmpty()) {
+                pctx.offerSector(new Sector(
+                        "dumbell_spur_" + spurIdx, SectorRole.SPUR_CLUSTER,
+                        BuildingZone.PRODUCTION, spurSlots,
+                        16, false, FixedGrowth.INSTANCE,
+                        spurEdgeId, null, 16));
+            }
             allSpurs.add(spurLine);
+            spurIdx++;
         }
 
         // ── Collect all roads ──────────────────────────────────────────────

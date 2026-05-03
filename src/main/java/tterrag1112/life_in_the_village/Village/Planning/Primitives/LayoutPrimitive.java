@@ -517,15 +517,25 @@ public sealed interface LayoutPrimitive
             };
 
             // SLOT_FOOTPRINT chosen so the largest WALL_ADJACENT (guard tower)
-            // and FIELD_EDGE (farmhouse) buildings fit. SAFE_OFFSET clears
-            // the road's reserved corridor (reservedHalfWidth=3 for every
-            // tier) plus the slot's own footprint half plus MIN_BUILDING_GAP.
-            // Validator's road-distance threshold is roadHalfWidth(3) +
-            // halfFp(9) + slack(6) = 18, so SAFE_OFFSET=16 sits inside the
-            // 16–18 window where slots both clear the road footprint and
-            // satisfy the validator.
+            // and FIELD_EDGE (farmhouse) buildings fit. Microfix: zone-specific
+            // SAFE_OFFSET. The DEFENSIVE roster (GUARD_TOWER 9×9, WATCHTOWER 9×9,
+            // BARRACKS, PRISON) is small; the previous shared SAFE_OFFSET=16
+            // was tuned for an 18×18 worst case and put 9×9 buildings at 16
+            // blocks from the road, exceeding the validator's 4+3+6=13 cap.
+            // DEFENSIVE_OFFSET=12 satisfies both validator (12 ≤ 13 for 9×9)
+            // and road-overlap clearance (12 > halfW(4) + roadHalfWidth(3) +
+            // 1 gap = 8). AGRI keeps 16 — FARMHOUSE 18×14 needs the wider
+            // offset to clear the road (16 > 9 + 6 = 15).
+            //
+            // Note (post-rework Path 1/2 signal): per-zone SAFE_OFFSET tuning
+            // is the same shape of problem as 16b's removed in-emit clamp —
+            // slots emitted at a fixed radius can't satisfy every building
+            // size. The architectural fix (matcher-side perpendicular slide
+            // or per-building-tier slot rings) is Phase 22+.
             final int SLOT_FOOTPRINT = 18;
-            final int SAFE_OFFSET = 16;
+            final int DEFENSIVE_OFFSET   = 12;
+            final int AGRICULTURAL_OFFSET = 16;
+            final int FALLBACK_OFFSET     = 16;
 
             // Shared outer-ring path (Phase 18+ fix): when the recipe has
             // staged a single perimeter road for both DEFENSIVE and
@@ -543,13 +553,13 @@ public sealed interface LayoutPrimitive
                             || zone == BuildingZone.AGRICULTURAL);
 
             // Slot radius differs by code path:
-            //   shared-ring path: ringR ± SAFE_OFFSET (DEFENSIVE inside, AGRI outside)
-            //   fallback path:    outerRadius + SAFE_OFFSET (legacy band-derived)
+            //   shared-ring path: ringR ± zone-offset (DEFENSIVE inside, AGRI outside)
+            //   fallback path:    outerRadius + FALLBACK_OFFSET (legacy band-derived)
             int slotRadius = useSharedRing
                     ? (zone == BuildingZone.DEFENSIVE
-                            ? outerRingRadius - SAFE_OFFSET
-                            : outerRingRadius + SAFE_OFFSET)
-                    : outerRadius + SAFE_OFFSET;
+                            ? outerRingRadius - DEFENSIVE_OFFSET
+                            : outerRingRadius + AGRICULTURAL_OFFSET)
+                    : outerRadius + FALLBACK_OFFSET;
 
             System.out.println("RingBand[" + zone + "] emitSlots: useShared="
                     + useSharedRing + " ringR=" + outerRingRadius
