@@ -573,6 +573,47 @@ public class VillagePlanner {
         }
         if (edgeCount == 0) sb.append("  (none)\n");
 
+        // ── SECTION 1.5: PLAZA (Phase 18) ────────────────────────────────
+        // Plaza is the post-Phase-18 single owner of plaza geometry +
+        // civic slots. Prints once per registered plaza (DUAL_PLAZA
+        // produces two; ENCLAVE produces zero; everything else is one).
+        sb.append("\n--- PLAZA ---\n");
+        java.util.List<tterrag1112.life_in_the_village.Village.Planning.Plaza>
+                plazas = layout.getPlazas();
+        if (plazas.isEmpty()) {
+            sb.append("  none (recipe does not register a Plaza)\n");
+        } else {
+            int pi = 0;
+            for (var plz : plazas) {
+                sb.append("  plaza#").append(pi++)
+                  .append(" centre=").append(plz.centre())
+                  .append(" plazaR=").append(plz.townSquareRadius())
+                  .append(" civicRingR=").append(plz.civicRingRadius());
+                if (plz.region() != null) {
+                    sb.append(" shape=").append(plz.region().shape())
+                      .append(" purpose=").append(plz.region().purpose())
+                      .append(" verts=").append(plz.region().footprint().vertices().size());
+                }
+                int total = plz.civicSlots().size();
+                sb.append(" civicSlots=").append(total).append('\n');
+                int shown = 0;
+                for (PlacementSlot slot : plz.civicSlotsView()) {
+                    if (shown >= 6 && total > 8) {
+                        sb.append("    ... ").append(total - shown)
+                          .append(" more\n");
+                        break;
+                    }
+                    sb.append("    pos=").append(slot.pos())
+                      .append(" tags=").append(slot.tags())
+                      .append(" fp=").append(slot.footprintBudgetW())
+                      .append('x').append(slot.footprintBudgetL())
+                      .append(" q=").append(slot.qualityScore())
+                      .append('\n');
+                    shown++;
+                }
+            }
+        }
+
         // ── SECTION 2: SECTORS ───────────────────────────────────────────
         sb.append("\n--- SECTORS ---\n");
         List<Sector> sectors = layout.getDebugSectors();

@@ -93,28 +93,14 @@ public final class CrossroadsRecipe extends BaseRecipe {
         int totalBuildings = pctx.remaining.size();
 
         // ── Square at the intersection ─────────────────────────────────────
-        int civicCap = Math.max(3, Math.min(6, totalBuildings / 4 + 2));
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool. The
+        // matcher's civic-first claim path consumes plaza.civicSlots()
+        // directly — no snapshot/drain or sector-wrapping needed.
         RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.SQUARE);
         BlockPos squarePos = pctx.layout.getTownSquarePos();
         int civicRing = pctx.layout.getCivicRingRadius();
-
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    "crossroads_civic_ring",
-                    SectorRole.CIVIC_RING,
-                    BuildingZone.CIVIC,
-                    civicSlots,
-                    civicCap,
-                    false,
-                    FixedGrowth.INSTANCE,
-                    -1,
-                    null,
-                    32));
-        }
 
         // ── Choose axes ────────────────────────────────────────────────────
         double primaryRad = directionRadOf(terrain.bestFlatDir());

@@ -156,16 +156,11 @@ public final class LinearRecipe extends BaseRecipe {
                 : mainCenterline.get(mainCenterline.size() / 2);
         int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
 
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool. The
+        // matcher's civic-first claim path consumes plaza.civicSlots()
+        // directly — no snapshot/drain or sector-wrapping needed.
         RecipeHelpers.installLinearPlaza(pctx, squareMid,
                 PlazaPurpose.CIVIC, RecipeHelpers.cardinalFromRad(mainDirRad));
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
-                    civicSlots, civicCap, false, FixedGrowth.INSTANCE,
-                    mainEdgeId, null, 32));
-        }
 
         // ── Both-side residential infill along the main road ──────────────
         List<PlacementSlot> residentialRaw =

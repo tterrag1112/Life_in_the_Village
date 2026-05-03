@@ -93,20 +93,9 @@ public final class PlazaRecipe extends BaseRecipe {
         TerrainProfile terrain = pctx.layout.getTerrain();
         int totalBuildings = pctx.remaining.size();
 
-        // ── Civic ring (plaza installation drains into a CIVIC_RING sector) ─
-        int civicSnapshot = pctx.slotPoolSize();
+        // ── Plaza (Phase 18: civic slots live on Plaza, not the flat pool) ──
         RecipeHelpers.installPlaza(pctx, centre, PlazaShape.CIRCLE);
         BlockPos squarePos = pctx.layout.getTownSquarePos();
-        int civicCap = Math.max(PLAZA_BUILDINGS, Math.min(8, totalBuildings / 3));
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    SECTOR_CIVIC,
-                    SectorRole.CIVIC_RING,
-                    BuildingZone.CIVIC,
-                    civicSlots, civicCap, false, FixedGrowth.INSTANCE, -1, null,
-                    32));
-        }
 
         // ── Choose which spur aligns best with flat terrain (main gate) ──────
         double[] spurAngles = {

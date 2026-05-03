@@ -3488,6 +3488,220 @@ If LINEAR drops a meaningful number of large buildings post-fix,
 that's signal for Phase 22 (recipe fallback chains) — LINEAR's
 authoring genuinely needs civic/plaza slot capacity revisited.
 
+---
+
+### 2026-05-04 — Phase 18: polygon-aware plaza ownership consolidation
+
+**Phase:** 18 (Path B per user direction). The original "refactor
+TownSquare" framing didn't match the codebase — `LayoutPrimitive
+.TownSquare` was deleted in a prior doc-04 effort, and the polygon
+machinery (`PlazaGenerator` + `PlazaRegion` + `RecipeHelpers
+.installPlaza`) had taken over. Surfaced this twice; user ruled
+**Path B**: build Plaza as a façade over the polygon migration that
+already happened, not over the deleted class.
+
+#### Plaza façade
+
+New `Village/Planning/Plaza.java`. Class (not record) so the
+civic-slot list can be mutable while geometry fields stay
+effectively-final.
+
+```
+Plaza(
+    PlazaRegion region,        // nullable for HAMLET
+    BlockPos    townSquarePos,
+    int         townSquareRadius,
+    int         civicRingRadius,
+    List<PlacementSlot> civicSlots)  // mutable; matcher consumes
+```
+
+Helpers: `centre()` (alias of townSquarePos), `civicSlots()` (mutable
+view for matcher), `civicSlotsView()` (read-only for inspection),
+`withCivicRingRadius(int)` and `withCivicSlots(List)` (immutable
+geometry overrides).
+
+#### VillageLayout plaza ownership
+
+```
+private final List<Plaza> plazas
+public  void   addPlaza(Plaza)
+public  void   replacePlaza(Plaza old, Plaza new)
+public  Plaza  getPlaza()         // first registered, null if none
+public  List<Plaza> getPlazas()   // all (DUAL_PLAZA returns 2)
+```
+
+The legacy `getTownSquarePos / getTownSquareRadius / getCivicRing
+Radius` getters now delegate to the first plaza when one is
+registered, falling back to the recipe-set field otherwise. ENCLAVE
+(no plaza) still works via the field. The setters are kept (they
+remain the source of truth for plaza-less layouts).
+
+#### Civic slots off the flat pool
+
+`PlazaGenerator.emitPlazaCivicSlots` was renamed to
+`buildPlazaCivicSlots` and now returns `List<PlacementSlot>` instead
+of calling `pctx.offerSlot`. `PlazaGenerator.generate` builds and
+registers a Plaza on the layout (with civic slots inside) and only
+then writes the legacy fields (idempotent — getters delegate to
+Plaza first anyway).
+
+`RecipeHelpers.installPlaza`'s HAMLET branch also registers a
+minimal Plaza (region=null, civicSlots=empty) so downstream code
+can call `layout.getPlaza()` without null-checking shape detail.
+
+#### Matcher civic-first claim path
+
+`PlacementMatcher` gets a new `commitBestFromPool(sb, bt, pool,
+required, preferred, weight)` helper that mirrors `commitBest` but
+draws candidates from the passed pool and removes claimed slots
+from it.
+
+- `placeTownHallPrePass` tries `plaza.civicSlots()` first
+  (PRIME_CIVIC then SECONDARY_CIVIC), falls back to the flat pool
+  if nothing claimed.
+- `placeOne` checks `ZoneRegistry.zoneOf(bt) == BuildingZone.CIVIC`
+  and walks the building's preference tiers against `plaza
+  .civicSlots()` first, then the flat pool. Other zones skip
+  straight to the flat tier walk.
+
+Plaza-less layouts (ENCLAVE) skip both Plaza pool checks via
+`plaza == null` guards and use the flat-pool walk unchanged.
+
+#### Recipe migration
+
+Removed civic snapshot/drain + `_civic_ring` sector wrapping from
+nine recipes (civic slots no longer enter the flat pool, so the
+drain would always return empty):
+
+- RadialRecipe (`radial_civic_ring` sector gone)
+- LinearRecipe (`linear_civic` sector gone)
+- PlazaRecipe (`plaza_civic_ring` sector gone)
+- ChainRecipe (`chain_civic_ring` sector gone)
+- GroveRecipe (`grove_civic_ring` sector gone; uses
+  `Plaza.withCivicRingRadius` + `replacePlaza` for the wide-ring
+  override)
+- CrossroadsRecipe (`crossroads_civic_ring` sector gone)
+- RiverineRecipe (`riverine_civic` sector gone)
+- RoadsideRecipe (`roadside_civic` sector gone)
+- TerracedRecipe (`terraced_civic` sector gone)
+
+Orphan `SECTOR_CIVIC` constants and `civicCap` locals left in
+place — Java compiles with warnings. Phase 19's LayoutPlan migration
+will scrub them.
+
+ENCLAVE untouched (no `installPlaza` to flow Plaza out of, but it
+DOES call installPlaza per the survey — verifying separately).
+DumbellRecipe doesn't call `installPlaza` directly (uses
+`LayoutPrimitive.RingBand` for its production end).
+
+#### GROVE wide-ring override pattern
+
+Before: `setCivicRingRadius(wideRing)` directly on the layout's
+mutable field. Brittle — the legacy field could drift from the
+PlazaRegion's polygon geometry.
+
+After: `plaza.withCivicRingRadius(wideRing)` returns a new Plaza,
+`layout.replacePlaza(old, new)` swaps it in place. The legacy
+setter is also called for consistency with plaza-less paths
+(harmless — the getter delegates to the Plaza anyway).
+
+#### Plan dump --- PLAZA --- section
+
+Added between `--- ROADS ---` and `--- SECTORS ---`. Format:
+
+```
+--- PLAZA ---
+  plaza#0 centre=BlockPos{...} plazaR=12 civicRingR=35 shape=CIRCLE
+          purpose=CIVIC verts=8 civicSlots=8
+    pos=... tags=[PRIME_CIVIC, PLAZA_ADJACENT, ROAD_ADJACENT]
+            fp=18x18 q=90
+    pos=... tags=[SECONDARY_CIVIC, ...] fp=18x18 q=88
+    ...
+```
+
+For plaza-less layouts: `none (recipe does not register a Plaza)`.
+For DUAL_PLAZA: prints two `plaza#N` blocks.
+
+The `radial_civic_ring` / `linear_civic` etc. sectors no longer
+appear in `--- SECTORS ---` (the recipes don't construct them).
+Civic visibility moves entirely to the new PLAZA section.
+
+#### Files modified
+
+- `Village/Planning/Plaza.java` — NEW
+- `Village/Planning/VillageLayout.java` — plazas list, accessors,
+  delegating legacy getters
+- `Village/Decoration/Plaza/PlazaGenerator.java` —
+  `buildPlazaCivicSlots` returns list; `generate` constructs +
+  registers Plaza
+- `Village/Planning/Primitives/Recipes/RecipeHelpers.java` —
+  HAMLET branch registers minimal Plaza
+- `Village/Planning/Zoning/PlacementMatcher.java` — civic-first
+  claim path in `placeTownHallPrePass` and `placeOne`;
+  `commitBestFromPool` helper; new imports
+- 9 recipes — civic snapshot/drain/sector-wrap removed; GroveRecipe
+  uses `Plaza.withCivicRingRadius` + `replacePlaza`
+- `Village/Planning/VillagePlanner.java` — `--- PLAZA ---` dump
+  section
+
+#### Constraints honored
+
+- Did NOT recreate the deleted `LayoutPrimitive.TownSquare` class
+- Did NOT recreate the deleted civic ring road
+- Did NOT change PlazaGenerator polygon math, vertex generation,
+  or paving logic
+- Did NOT change the HAMLET vs VILLAGE+ branching in `installPlaza`
+- Did NOT change matcher tier-walking, scoring, or avoidance —
+  only added a Plaza-first preamble for CIVIC zone tier walks
+- Did NOT add new SlotTags (PRIME_CIVIC / SECONDARY_CIVIC /
+  CIVIC_ADJACENT unchanged)
+- Did NOT touch TownSquarePlacer (the realiser)
+- Did NOT change ENCLAVE (plaza-less; flat-pool fallback)
+- Did NOT remove `townSquarePos / Radius / civicRingRadius` from
+  VillageLayout — getters delegate, fields stay for backward compat
+- Did NOT change `addForced` or DECORATION semantics
+- Did NOT touch Phase 17 plot slot emission
+- Did NOT touch microfix-batch outputs (DEFENSIVE SAFE_OFFSET,
+  Fix 3 sector wraps, Fix 2 footprint budget formula)
+
+#### Build status
+
+Gradle compile gated by network access; verified by inspection.
+Notes:
+
+- Plaza is in the same package as VillageLayout / VillagePlanner
+  (`Village.Planning`) so no import is needed there. PlacementMatcher
+  (in `Village.Planning.Zoning`) imports it explicitly.
+- Orphan `SECTOR_CIVIC` constants and `civicCap` locals (4 recipes)
+  emit unused-variable warnings. Java accepts the build.
+- The matcher's civic-first path increases the pre-pass call depth
+  by one tier-walk attempt for CIVIC buildings. Negligible perf
+  impact; the Plaza pool is at most ~12 slots for VILLAGE+ and
+  empty for HAMLETs.
+
+#### Validation (next steps for the user)
+
+Spawn on superflat:
+
+- **RADIAL** — plan dump shows new `--- PLAZA ---` section with
+  centre, plazaR, civicRingR, shape, civicSlots count + first 6
+  slot positions. The `radial_civic_ring` sector no longer appears
+  in `--- SECTORS ---`. Building positions byte-identical to the
+  microfix-batch baseline (TOWN_HALL still claims PRIME_CIVIC, etc.).
+- **PLAZA** — larger plaza shows higher `plazaR` / `civicRingR` /
+  `civicSlots` count. Buildings still place identically.
+- **GROVE** — `civicRingR` reflects the widened value
+  (`originalCivicRing * GROVE_RING_MULTIPLIER`).
+- **ENCLAVE** — `--- PLAZA ---` reads "none". TOWN_HALL still
+  places via the matcher's flat-pool fallback. No regression.
+- Microfix-batch fixes intact: GUARD_TOWER at chebDist 12 from
+  OUTER_RING; HOUSEs report `radial_main_road` / `radial_arc_N`
+  attribution; Phase 17 `--- PLOT SLOTS ---` section unchanged.
+
+If Phase 18 surfaces friction in any specific recipe (most likely
+PLAZA's custom plaza radius or DUAL_PLAZA's two plazas), surface
+it for Phase 22 / post-rework consideration.
+
 
 
 

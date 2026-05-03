@@ -6,6 +6,7 @@ import tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorde
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Plaza;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.*;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddRing;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.AddSpur;
@@ -89,8 +90,11 @@ public final class GroveRecipe extends BaseRecipe {
         int totalBuildings = pctx.remaining.size();
 
         // ── Wide civic ring ──────────────────────────────────────────────────
-        int civicCap = Math.max(4, Math.min(8, totalBuildings / 3));
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool. GROVE
+        // widens the civic ring after installPlaza via the Plaza façade
+        // (plaza.withCivicRingRadius) and re-registers via replacePlaza.
+        // The legacy setCivicRingRadius is kept in sync for plaza-less
+        // consumers (decoration / footprint) that still read the field.
         RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.IRREGULAR);
@@ -98,24 +102,14 @@ public final class GroveRecipe extends BaseRecipe {
         int civicRing = pctx.layout.getCivicRingRadius();
 
         int wideRing = (int)(civicRing * GROVE_RING_MULTIPLIER);
+        Plaza grovePlaza = pctx.layout.getPlaza();
+        if (grovePlaza != null) {
+            pctx.layout.replacePlaza(grovePlaza,
+                    grovePlaza.withCivicRingRadius(wideRing));
+        }
         pctx.layout.setCivicRingRadius(wideRing);
         pctx.layout.addForced(new LayoutSlot(
                 LayoutSlot.SlotType.DECORATION, squarePos, wideRing - 4));
-
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    "grove_civic_ring",
-                    SectorRole.CIVIC_RING,
-                    BuildingZone.CIVIC,
-                    civicSlots,
-                    civicCap,
-                    false,
-                    FixedGrowth.INSTANCE,
-                    -1,
-                    null,
-                    32));
-        }
 
         // ── Spurs outward at evenly spaced angles ────────────────────────────
         int spurCount = Math.max(3, Math.min(6, totalBuildings / 4));

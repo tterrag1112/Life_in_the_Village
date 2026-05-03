@@ -184,12 +184,10 @@ public final class PlazaGenerator {
                 connectedRoadIds, orientationRad);
         pctx.addPlazaRegion(region);
 
-        // Plaza area reservation. The legacy LayoutPrimitive.TownSquare
-        // added a forced DECORATION reserve so non-civic buildings'
-        // matcher commits don't overlap the plaza interior. With the
-        // primitive gone (Phase 18), the polygon is the source of
-        // truth — we add the same reservation here at the polygon's
-        // bounding circle.
+        // Plaza area reservation. With the legacy LayoutPrimitive.TownSquare
+        // gone, the polygon is the source of truth — we add the DECORATION
+        // reservation at the polygon's bounding circle so non-civic
+        // matcher commits don't overlap the plaza interior.
         Polygon.AABB bbox = Polygon.boundingBox(shaped);
         int reserveR = Math.max(bbox.width(), bbox.length()) / 2 + 1;
         pctx.layout.addForced(new tterrag1112.life_in_the_village.Village
@@ -198,30 +196,37 @@ public final class PlazaGenerator {
                                 .LayoutSlot.SlotType.DECORATION,
                         centroid, reserveR));
 
-        // Layout-state convenience setters. Several downstream
-        // consumers (DecorationSlotEmitter, DumbellRecipe's trunk
-        // start, footprint-occupy in VillageDecorator) read these.
-        // We keep them populated to avoid scattering migrations.
-        pctx.layout.setTownSquarePos(centroid);
         int polygonRadius = (int) Math.max(3, Math.sqrt(finalArea / Math.PI));
-        pctx.layout.setTownSquareRadius(polygonRadius);
         // Civic standoff includes the largest civic building's
         // half-front-face so the building's far edge clears the
-        // polygon — matches legacy's
-        // {@code civicInnerEdge + maxCivicFrontFace/2}. A 29×29
-        // TOWN_HALL needs ~15 blocks of bonus standoff on top of
-        // the 8-block base; without this the building commits
-        // PRIME_CIVIC and overlaps the plaza centre.
+        // polygon. A 29×29 TOWN_HALL needs ~15 blocks of bonus
+        // standoff on top of the 8-block base.
         int maxCivicFrontFace = scanMaxCivicFrontFace(pctx);
         int civicOutset = PLAZA_ADJACENT_BASE_OUTSET + maxCivicFrontFace / 2;
-        pctx.layout.setCivicRingRadius(polygonRadius + civicOutset);
+        int civicRingR = polygonRadius + civicOutset;
 
-        // Civic + PLAZA_ADJACENT slots — replaces the legacy
-        // LayoutPrimitive.TownSquare.emitSlots so the matcher's
-        // PRIME_CIVIC / SECONDARY_CIVIC pre-pass keeps working
-        // sourced from polygon edges instead of ring perimeter.
-        int slotCount = emitPlazaCivicSlots(pctx, region, civicOutset,
-                maxCivicFrontFace);
+        // Phase 18: civic slots collected into a Plaza façade rather than
+        // pushed to pctx.offerSlot. The matcher's civic-first claim path
+        // consumes from Plaza.civicSlots() directly.
+        java.util.List<tterrag1112.life_in_the_village.Village.Planning.Zoning
+                .PlacementSlot> civicSlots = buildPlazaCivicSlots(
+                        region, civicOutset, maxCivicFrontFace);
+
+        tterrag1112.life_in_the_village.Village.Planning.Plaza plaza =
+                new tterrag1112.life_in_the_village.Village.Planning.Plaza(
+                        region, centroid, polygonRadius, civicRingR,
+                        civicSlots);
+        pctx.layout.addPlaza(plaza);
+
+        // Legacy field setters — downstream consumers (DecorationSlotEmitter,
+        // DumbellRecipe's trunk start, footprint-occupy in VillageDecorator)
+        // still read pctx.layout.getTownSquarePos / getCivicRingRadius. The
+        // getters delegate to Plaza when present so these explicit setters
+        // are redundant on the new path, but cheap and they keep the
+        // plaza-less fallback (ENCLAVE) consistent.
+        pctx.layout.setTownSquarePos(centroid);
+        pctx.layout.setTownSquareRadius(polygonRadius);
+        pctx.layout.setCivicRingRadius(civicRingR);
 
         // Gathering points — migrated from TownSquareComposer
         // (deleted in Phase 18). Registered onto Village via
@@ -234,7 +239,7 @@ public final class PlazaGenerator {
                 centroid.toShortString(),
                 (int) finalArea, spec.targetArea(),
                 shaped.vertices().size(),
-                slotCount, gpCount);
+                civicSlots.size(), gpCount);
         return Optional.of(region);
     }
 
@@ -452,14 +457,21 @@ public final class PlazaGenerator {
      * primitive's {@code quality = 90 - i * 2}) so the prepass's
      * tie-breaking lands on a stable south-first ordering.</p>
      */
-    private static int emitPlazaCivicSlots(PlanContext pctx, PlazaRegion region,
-                                           int civicOutset,
-                                           int maxCivicFrontFace) {
+    /**
+     * Phase 18: returns the civic slot pool for {@link Plaza#civicSlots()}
+     * instead of pushing slots into the flat pool. Geometry, tags, and
+     * quality scoring are unchanged from the prior {@code emitPlazaCivicSlots}
+     * (which used to call {@code pctx.offerSlot}).
+     */
+    private static java.util.List<PlacementSlot> buildPlazaCivicSlots(
+            PlazaRegion region,
+            int civicOutset,
+            int maxCivicFrontFace) {
         List<BlockPos> verts = region.footprint().vertices();
         BlockPos centroid = region.centroid();
         int footprintBudget = Math.max(CIVIC_FOOTPRINT_BUDGET,
                 maxCivicFrontFace + 4);
-        int emitted = 0;
+        java.util.List<PlacementSlot> out = new java.util.ArrayList<>();
         int n = verts.size();
         for (int i = 0; i < n; i++) {
             BlockPos a = verts.get(i);
@@ -476,22 +488,22 @@ public final class PlazaGenerator {
                 // First emitted slot → PRIME_CIVIC; rest →
                 // SECONDARY_CIVIC. Matches the legacy primitive's
                 // "first angle wins TOWN_HALL" convention.
+                int emitted = out.size();
                 EnumSet<SlotTag> tags = (emitted == 0)
                         ? EnumSet.of(SlotTag.PRIME_CIVIC,
                                 SlotTag.PLAZA_ADJACENT, SlotTag.ROAD_ADJACENT)
                         : EnumSet.of(SlotTag.SECONDARY_CIVIC,
                                 SlotTag.PLAZA_ADJACENT, SlotTag.ROAD_ADJACENT);
                 int quality = Math.max(40, 90 - emitted * 2);
-                pctx.offerSlot(new PlacementSlot(
+                out.add(new PlacementSlot(
                         outward,
                         /* feedingRoad */ null,
                         tags,
                         /* footprintBudget */ footprintBudget,
                         /* qualityScore */ quality));
-                emitted++;
             }
         }
-        return emitted;
+        return out;
     }
 
     /**

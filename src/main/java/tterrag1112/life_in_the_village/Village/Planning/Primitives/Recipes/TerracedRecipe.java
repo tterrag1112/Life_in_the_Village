@@ -202,22 +202,9 @@ public final class TerracedRecipe extends BaseRecipe {
         pctx.layout.setTownSquarePos(squareCentre);
         pctx.layout.setTownSquareRadius(4);
 
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool.
         RecipeHelpers.installLinearPlaza(pctx, squareCentre, PlazaPurpose.CIVIC,
                 RecipeHelpers.cardinalFromRad(terraceHeadingRad));
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-
-        pctx.offerSector(new Sector(
-                "terraced_civic",
-                SectorRole.CIVIC_TIGHT,
-                BuildingZone.CIVIC,
-                civicSlots,
-                squareCapacity,
-                false,
-                FixedGrowth.INSTANCE,
-                middleTerrace.edgeId,
-                null,
-                32));
 
         // ── A sector per terrace ──────────────────────────────────────────
         // Tier the sectors by terrace index: top = upper (civic/production

@@ -5,9 +5,12 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
+import tterrag1112.life_in_the_village.Village.Planning.Plaza;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
 import tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector;
+import tterrag1112.life_in_the_village.Village.Planning.ZoneRegistry;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.StarterBuilding;
 
 import java.util.*;
@@ -137,7 +140,18 @@ public final class PlacementMatcher {
         if (th == null) return;
 
         BuildingType bt = BuildingType.TOWN_HALL;
-        // Try PRIME_CIVIC first, then SECONDARY_CIVIC
+        // Phase 18: civic-first claim path. Try the Plaza's owned civic
+        // pool before the flat pool. Plaza-less layouts (ENCLAVE) skip
+        // straight to the flat-pool walk via the existing commitBest.
+        Plaza plaza = pctx.layout.getPlaza();
+        if (plaza != null && !plaza.civicSlots().isEmpty()) {
+            if (commitBestFromPool(th, bt, plaza.civicSlots(),
+                    Set.of(SlotTag.PRIME_CIVIC), Set.of(), 100)) return;
+            if (commitBestFromPool(th, bt, plaza.civicSlots(),
+                    Set.of(SlotTag.SECONDARY_CIVIC), Set.of(), 70)) return;
+        }
+
+        // Try PRIME_CIVIC first, then SECONDARY_CIVIC against the flat pool
         if (commitBest(th, bt, Set.of(SlotTag.PRIME_CIVIC), Set.of(), 100)) return;
         if (commitBest(th, bt, Set.of(SlotTag.SECONDARY_CIVIC), Set.of(), 70)) return;
         LOG.warn("PlacementMatcher: TOWN_HALL could not claim any civic slot — "
@@ -223,6 +237,22 @@ public final class PlacementMatcher {
      */
     private boolean placeOne(StarterBuilding sb, BuildingType bt, boolean strict) {
         BuildingProfile profile = BuildingProfileRegistry.get(bt);
+
+        // Phase 18: civic-first claim path. CIVIC-zone buildings try the
+        // Plaza's owned civic pool before the flat pool. Other zones skip
+        // straight to the flat tier walk.
+        if (ZoneRegistry.zoneOf(bt) == BuildingZone.CIVIC) {
+            Plaza plaza = pctx.layout.getPlaza();
+            if (plaza != null && !plaza.civicSlots().isEmpty()) {
+                for (SlotPreference tier : profile.preferences()) {
+                    if (commitBestFromPool(sb, bt, plaza.civicSlots(),
+                            tier.required(), tier.preferred(), tier.weight())) {
+                        return true;
+                    }
+                }
+            }
+        }
+
         for (SlotPreference tier : profile.preferences()) {
             if (commitBest(sb, bt, tier.required(), tier.preferred(), tier.weight())) {
                 return true;
@@ -295,6 +325,64 @@ public final class PlacementMatcher {
             slots.remove(c.slot);
         }
 
+        if (!rejected.isEmpty()) {
+            dumpRejectedCandidates(bt, required, rejected);
+        }
+        return false;
+    }
+
+    /**
+     * Phase 18: civic-pool variant of {@link #commitBest}. Mirrors the
+     * scoring + commit path but draws candidates from the passed
+     * {@code pool} (typically {@link Plaza#civicSlots()}) instead of
+     * {@link #slots}. On commit, the slot is removed from the pool so
+     * successive civic placements don't pick it again.
+     *
+     * <p>Slot attribution: civic slots aren't in {@link #slotSectorIds}
+     * (Plaza is not a Sector), so committed positions don't get a
+     * sector entry in {@link PlanContext#committedSectorIds}. Plan-dump
+     * attribution falls back to "unknown" — which is correct: these
+     * buildings live on the Plaza, not in any sector. The new
+     * --- PLAZA --- dump section provides the equivalent visibility.
+     */
+    private boolean commitBestFromPool(StarterBuilding sb, BuildingType bt,
+                                       List<PlacementSlot> pool,
+                                       Set<SlotTag> required, Set<SlotTag> preferred,
+                                       int tierWeight) {
+        if (pool.isEmpty()) return false;
+        AvoidanceRule avoid = BuildingProfileRegistry.get(bt).avoidance();
+        int footprintEst = estimateFootprint(sb);
+
+        record Scored(PlacementSlot slot, int score) {}
+        List<Scored> candidates = new ArrayList<>();
+        for (PlacementSlot s : pool) {
+            if (!s.hasAll(required)) continue;
+            int score = scoreSlot(s, bt, preferred, tierWeight,
+                    avoid, footprintEst);
+            if (score <= FOOTPRINT_HARD_REJECT / 2) continue;
+            candidates.add(new Scored(s, score));
+        }
+        candidates.sort((a, b) -> Integer.compare(b.score, a.score));
+        LOG.info("commitBestFromPool {} required={} candidates={}/{}",
+                bt, required, candidates.size(), pool.size());
+
+        List<CandidateLog> rejected = new ArrayList<>();
+        for (Scored c : candidates) {
+            pctx.rejectionLog.clear();
+            LayoutSlot committed = pctx.tryCommitWithRetries(
+                    c.slot.pos(), sb, bt, c.slot.feedingRoad(),
+                    c.slot.maxDriftBlocks(),
+                    c.slot.tags());
+            if (committed != null) {
+                pool.remove(c.slot);
+                burnNearbySlots(committed);
+                placed.add(new PlacedRecord(bt, committed.getPos()));
+                return true;
+            }
+            rejected.add(new CandidateLog(c.slot,
+                    new ArrayList<>(pctx.rejectionLog)));
+            pool.remove(c.slot);
+        }
         if (!rejected.isEmpty()) {
             dumpRejectedCandidates(bt, required, rejected);
         }

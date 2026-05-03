@@ -32,9 +32,39 @@ public class VillageLayout {
     private final LayoutDensityProfile density;
     private final List<LayoutSlot> slots = new ArrayList<>();
 
+    // ── Phase 18 plaza ownership ────────────────────────────────────────────
+    // Plaza is the post-Phase-18 single owner of plaza geometry + civic
+    // slots. {@link #getPlaza()} returns the first registered plaza (the
+    // common case); {@link #getPlazas()} returns all (DUAL_PLAZA registers
+    // two). The legacy townSquarePos / townSquareRadius / civicRingRadius
+    // getters delegate to the first plaza when present, falling back to
+    // the recipe-set field for plaza-less layouts (ENCLAVE).
+    private final List<Plaza> plazas = new ArrayList<>();
+
+    public void addPlaza(Plaza plaza) {
+        if (plaza != null) plazas.add(plaza);
+    }
+    /** Replaces a registered Plaza in-place (e.g. GROVE after
+     *  {@link Plaza#withCivicRingRadius}). Looks up by reference; if the
+     *  old plaza isn't registered, the new one is appended. */
+    public void replacePlaza(Plaza oldPlaza, Plaza newPlaza) {
+        if (newPlaza == null) return;
+        int i = plazas.indexOf(oldPlaza);
+        if (i >= 0) plazas.set(i, newPlaza);
+        else plazas.add(newPlaza);
+    }
+    @Nullable public Plaza getPlaza() {
+        return plazas.isEmpty() ? null : plazas.get(0);
+    }
+    public List<Plaza> getPlazas() { return Collections.unmodifiableList(plazas); }
+
+    // ── Civic ring radius (legacy field; delegates to plaza when set) ──────
     private int civicRingRadius = 0;
 
-    public int getCivicRingRadius() { return civicRingRadius; }
+    public int getCivicRingRadius() {
+        Plaza p = getPlaza();
+        return p != null ? p.civicRingRadius() : civicRingRadius;
+    }
     public void setCivicRingRadius(int r) { this.civicRingRadius = r; }
 
 
@@ -363,10 +393,16 @@ public class VillageLayout {
     public BlockPos getCenter() { return center; }
     public void setCenter(BlockPos c) { center = c; }
 
-    public BlockPos getTownSquarePos() { return townSquarePos; }
+    public BlockPos getTownSquarePos() {
+        Plaza p = getPlaza();
+        return p != null ? p.townSquarePos() : townSquarePos;
+    }
     public void setTownSquarePos(BlockPos pos) { townSquarePos = pos; }
 
-    public int getTownSquareRadius() { return townSquareRadius; }
+    public int getTownSquareRadius() {
+        Plaza p = getPlaza();
+        return p != null ? p.townSquareRadius() : townSquareRadius;
+    }
     public void setTownSquareRadius(int r) { townSquareRadius = r; }
 
     // ── Plaza polygon accessors (Phase 17 doc 04) ──────────────────────

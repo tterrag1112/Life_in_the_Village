@@ -181,27 +181,13 @@ public final class ChainRecipe extends BaseRecipe {
         BlockPos squareApex = mainCenterline.get(mainCenterline.size() / 2);
         double apexTangentRad = RecipeHelpers.localTangentRad(
                 mainCenterline, mainCenterline.size() / 2);
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool. The
+        // matcher's civic-first claim path consumes plaza.civicSlots()
+        // directly — no snapshot/drain or sector-wrapping needed.
         RecipeHelpers.installLinearPlaza(pctx, squareApex,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaPurpose.CIVIC,
                 RecipeHelpers.cardinalFromRad(apexTangentRad));
-
-        int civicCap = Math.max(2, Math.min(4, totalBuildings / 6 + 1));
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    "chain_civic_ring",
-                    SectorRole.CIVIC_RING,
-                    BuildingZone.CIVIC,
-                    civicSlots,
-                    civicCap,
-                    false,
-                    FixedGrowth.INSTANCE,
-                    mainEdgeId,
-                    null,
-                    32));
-        }
 
         List<List<BlockPos>> allRoadsForSnap = new ArrayList<>();
         allRoadsForSnap.add(mainCenterline);

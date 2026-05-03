@@ -151,7 +151,9 @@ public final class RadialRecipe extends BaseRecipe {
         }
 
         // ── Phase B: commit (probe passed) ────────────────────────────────
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool. The
+        // matcher's civic-first claim path consumes plaza.civicSlots()
+        // directly — no snapshot/drain needed.
         RecipeHelpers.installPlaza(pctx, centre,
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.PlazaShape.CIRCLE);
@@ -174,13 +176,6 @@ public final class RadialRecipe extends BaseRecipe {
         RoadPrimitive.StraightRoad mainRoad = new RoadPrimitive.StraightRoad(
                 mainStart, mainEnd, 8.0, RoadShape.RoadTier.VILLAGE_ROAD);
 
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    "radial_civic_ring", SectorRole.CIVIC_RING,
-                    BuildingZone.CIVIC, civicSlots, squareCapacity, false,
-                    FixedGrowth.INSTANCE, -1, null, 32));
-        }
 
         int beforeMainEdges = pctx.layout.getRoadGraph().edgeCount();
         List<BlockPos> mainCenterline = pctx.layout.addRoad(

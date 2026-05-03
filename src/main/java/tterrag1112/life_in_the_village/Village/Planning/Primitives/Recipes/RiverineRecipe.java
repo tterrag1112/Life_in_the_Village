@@ -190,17 +190,9 @@ public final class RiverineRecipe extends BaseRecipe {
         // cross the river so we keep it small.
         int civicCap = Math.max(2, Math.min(3, totalBuildings / 8 + 2));
 
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool.
         RecipeHelpers.installLinearPlaza(pctx, midpoint,
                 PlazaPurpose.CIVIC, RecipeHelpers.cardinalFromRad(alongRad));
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
-                    civicSlots, civicCap, false, FixedGrowth.INSTANCE,
-                    spineEdgeId, null,
-                    32));
-        }
 
         // ── Inland-side sectors along the spine ───────────────────────────
         int inlandSign = computeInlandSign(alongRad, inlandRad);

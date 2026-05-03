@@ -130,17 +130,9 @@ public final class RoadsideRecipe extends BaseRecipe {
         double midTangentRad = RecipeHelpers.localTangentRad(
                 mainCenterline, mainCenterline.size() / 2);
 
-        int civicSnapshot = pctx.slotPoolSize();
+        // Phase 18: civic slots live on Plaza, not the flat pool.
         RecipeHelpers.installLinearPlaza(pctx, squareMid,
                 PlazaPurpose.CIVIC, RecipeHelpers.cardinalFromRad(midTangentRad));
-        List<PlacementSlot> civicSlots = pctx.drainSlotsSince(civicSnapshot);
-        if (!civicSlots.isEmpty()) {
-            pctx.offerSector(new Sector(
-                    SECTOR_CIVIC, SectorRole.CIVIC_TIGHT, BuildingZone.CIVIC,
-                    civicSlots, civicCap, false, FixedGrowth.INSTANCE,
-                    mainEdgeId, null,
-                    32));
-        }
 
         // ── One-sided residential infill ──────────────────────────────────
         List<PlacementSlot> residentialSlots =

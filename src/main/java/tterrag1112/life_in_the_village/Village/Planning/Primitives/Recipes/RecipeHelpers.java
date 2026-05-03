@@ -546,14 +546,9 @@ public final class RecipeHelpers {
 
         if (tier == VillageSizeTier.HAMLET) {
             // Doc 04 §"Tier-based sizing" — HAMLETs get a center
-            // marker, no polygon. Phase 18: also set the layout's
-            // townSquarePos / Radius / civicRingRadius so downstream
-            // consumers (DecorationSlotEmitter, recipe trunk-start
-            // calculations, footprint occupy) read sane values.
-            // Add a small DECORATION reservation so non-civic
-            // buildings don't claim the centre — equivalent to what
-            // the deleted LayoutPrimitive.TownSquare did at HAMLET
-            // tier (radius 3).
+            // marker, no polygon. Phase 18: also register a minimal
+            // Plaza (region=null, empty civicSlots) so downstream
+            // consumers can call layout.getPlaza() uniformly.
             BlockPos snapped = pctx.solidSurface(targetCenter);
             VillageCenterMarker marker = new VillageCenterMarker(
                     snapped, snapped.getY(), defaultCulture(pctx));
@@ -566,6 +561,10 @@ public final class RecipeHelpers {
                             tterrag1112.life_in_the_village.Village
                                     .Planning.LayoutSlot.SlotType.DECORATION,
                             snapped, 3));
+            pctx.layout.addPlaza(new tterrag1112.life_in_the_village
+                    .Village.Planning.Plaza(
+                            null, snapped, 3, 3 + 8,
+                            java.util.List.of()));
             return Optional.empty();
         }
 
