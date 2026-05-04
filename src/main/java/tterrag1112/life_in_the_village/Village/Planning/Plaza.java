@@ -1,5 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning;
 
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion;
@@ -8,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Phase 18: polygon-aware plaza façade.
@@ -104,4 +107,22 @@ public final class Plaza {
         return new Plaza(region, townSquarePos, townSquareRadius,
                 civicRingRadius, newSlots);
     }
+
+    // =========================================================================
+    // Phase 20a CODEC
+    // =========================================================================
+    // civicSlots are NOT persisted: PlacementSlot (and SlotTag) don't have
+    // codecs yet, and adding them is significant churn for marginal value
+    // (expansion's civic-first claim path falls through to the flat-pool
+    // walk when civicSlots is empty — same behaviour as ENCLAVE today).
+    // After save/reload, Plaza.civicSlots() is an empty mutable list.
+    // Documented as a Phase 20a limitation.
+    public static final Codec<Plaza> CODEC = RecordCodecBuilder.create(i -> i.group(
+            PlazaRegion.CODEC.optionalFieldOf("region")
+                    .forGetter(p -> Optional.ofNullable(p.region())),
+            BlockPos.CODEC.fieldOf("townSquarePos").forGetter(Plaza::townSquarePos),
+            Codec.INT.fieldOf("townSquareRadius").forGetter(Plaza::townSquareRadius),
+            Codec.INT.fieldOf("civicRingRadius").forGetter(Plaza::civicRingRadius)
+    ).apply(i, (region, pos, sqR, civR) ->
+            new Plaza(region.orElse(null), pos, sqR, civR, List.of())));
 }

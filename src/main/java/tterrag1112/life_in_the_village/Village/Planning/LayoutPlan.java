@@ -1,6 +1,9 @@
 package tterrag1112.life_in_the_village.Village.Planning;
 
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.world.level.block.Rotation;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -74,26 +77,64 @@ public record LayoutPlan(
 
     /** Final cascade status visible on a plan. RETRY/FALLBACK never
      *  appear — they're resolved before {@code build()} returns. */
-    public enum Status { OK, ABORT }
-
-    public LayoutPlan {
-        roads        = List.copyOf(roads);
-        buildings    = List.copyOf(buildings);
-        plotSlots    = List.copyOf(plotSlots);
-        sectors      = List.copyOf(sectors);
-        anchors      = Map.copyOf(anchors);
-        plazaRegions = List.copyOf(plazaRegions);
+    public enum Status {
+        OK, ABORT;
+        public static final Codec<Status> CODEC =
+                Codec.STRING.xmap(Status::valueOf, Status::name);
     }
 
-    public Optional<BlockPos> anchor(AnchorKind kind) {
-        return Optional.ofNullable(anchors.get(kind));
-    }
+    // ── Phase 20a inline enum codecs (centralised here to avoid
+    // touching every enum file) ──────────────────────────────────────
+    private static final Codec<EdgeRole> EDGE_ROLE_CODEC =
+            Codec.STRING.xmap(EdgeRole::valueOf, EdgeRole::name);
+    private static final Codec<RoadShape.RoadTier> ROAD_TIER_CODEC =
+            Codec.STRING.xmap(RoadShape.RoadTier::valueOf, RoadShape.RoadTier::name);
+    private static final Codec<BuildingType> BUILDING_TYPE_CODEC =
+            Codec.STRING.xmap(BuildingType::valueOf, BuildingType::name);
+    private static final Codec<Rotation> ROTATION_CODEC =
+            Codec.STRING.xmap(Rotation::valueOf, Rotation::name);
+    private static final Codec<FarmPlot.PlotSubtype> PLOT_SUBTYPE_CODEC =
+            Codec.STRING.xmap(FarmPlot.PlotSubtype::valueOf,
+                              FarmPlot.PlotSubtype::name);
+    private static final Codec<SectorRole> SECTOR_ROLE_CODEC =
+            Codec.STRING.xmap(SectorRole::valueOf, SectorRole::name);
+    private static final Codec<BuildingZone> BUILDING_ZONE_CODEC =
+            Codec.STRING.xmap(BuildingZone::valueOf, BuildingZone::name);
+    private static final Codec<ShapeType> SHAPE_TYPE_CODEC =
+            Codec.STRING.xmap(ShapeType::valueOf, ShapeType::name);
+    private static final Codec<AnchorKind> ANCHOR_KIND_CODEC =
+            Codec.STRING.xmap(AnchorKind::valueOf, AnchorKind::name);
 
-    public Optional<Plaza> primaryPlaza() {
-        return Optional.ofNullable(plaza);
-    }
-
-    public boolean isOk() { return status == Status.OK; }
+    // ── Top-level CODEC (Phase 20a) ───────────────────────────────────
+    public static final Codec<LayoutPlan> CODEC = RecordCodecBuilder.create(i -> i.group(
+            BlockPos.CODEC.fieldOf("centre").forGetter(LayoutPlan::centre),
+            SHAPE_TYPE_CODEC.fieldOf("finalShape").forGetter(LayoutPlan::finalShape),
+            Plaza.CODEC.optionalFieldOf("plaza")
+                    .forGetter(p -> Optional.ofNullable(p.plaza())),
+            PlazaRegion.CODEC.listOf().optionalFieldOf("plazaRegions", List.of())
+                    .forGetter(LayoutPlan::plazaRegions),
+            RoadEdge.CODEC.listOf().optionalFieldOf("roads", List.of())
+                    .forGetter(LayoutPlan::roads),
+            PlacedBuilding.CODEC.listOf().optionalFieldOf("buildings", List.of())
+                    .forGetter(LayoutPlan::buildings),
+            PlannedPlot.CODEC.listOf().optionalFieldOf("plotSlots", List.of())
+                    .forGetter(LayoutPlan::plotSlots),
+            SectorView.CODEC.listOf().optionalFieldOf("sectors", List.of())
+                    .forGetter(LayoutPlan::sectors),
+            Codec.unboundedMap(ANCHOR_KIND_CODEC, BlockPos.CODEC)
+                    .optionalFieldOf("anchors", Map.of())
+                    .forGetter(LayoutPlan::anchors),
+            Status.CODEC.optionalFieldOf("status", Status.OK).forGetter(LayoutPlan::status),
+            Codec.INT.optionalFieldOf("truncations", 0).forGetter(LayoutPlan::truncations),
+            Codec.INT.optionalFieldOf("cascadeRetries", 0).forGetter(LayoutPlan::cascadeRetries),
+            Codec.STRING.optionalFieldOf("unplannableReason")
+                    .forGetter(p -> Optional.ofNullable(p.unplannableReason()))
+    ).apply(i, (centre, finalShape, plaza, plazaRegions, roads, buildings,
+                plotSlots, sectors, anchors, status, truncations, retries,
+                reason) -> new LayoutPlan(
+                    centre, finalShape, plaza.orElse(null), plazaRegions,
+                    roads, buildings, plotSlots, sectors, anchors,
+                    status, truncations, retries, reason.orElse(null))));
 
     /**
      * One road edge as the spawner / decorator / expansion sees it.
@@ -109,6 +150,15 @@ public record LayoutPlan(
             BlockPos from,
             BlockPos to) {
         public RoadEdge { centerline = List.copyOf(centerline); }
+
+        public static final Codec<RoadEdge> CODEC = RecordCodecBuilder.create(i -> i.group(
+                Codec.INT.fieldOf("edgeId").forGetter(RoadEdge::edgeId),
+                EDGE_ROLE_CODEC.fieldOf("role").forGetter(RoadEdge::role),
+                ROAD_TIER_CODEC.fieldOf("tier").forGetter(RoadEdge::tier),
+                BlockPos.CODEC.listOf().fieldOf("centerline").forGetter(RoadEdge::centerline),
+                BlockPos.CODEC.fieldOf("from").forGetter(RoadEdge::from),
+                BlockPos.CODEC.fieldOf("to").forGetter(RoadEdge::to)
+        ).apply(i, RoadEdge::new));
     }
 
     /**
@@ -137,6 +187,18 @@ public record LayoutPlan(
             feedingRoad = feedingRoad != null
                     ? List.copyOf(feedingRoad) : List.of();
         }
+
+        public static final Codec<PlacedBuilding> CODEC = RecordCodecBuilder.create(i -> i.group(
+                UUIDUtil.CODEC.fieldOf("id").forGetter(PlacedBuilding::id),
+                BUILDING_TYPE_CODEC.fieldOf("type").forGetter(PlacedBuilding::type),
+                BlockPos.CODEC.fieldOf("centre").forGetter(PlacedBuilding::centre),
+                ROTATION_CODEC.fieldOf("rotation").forGetter(PlacedBuilding::rotation),
+                Codec.INT.fieldOf("footprintWidth").forGetter(PlacedBuilding::footprintWidth),
+                Codec.INT.fieldOf("footprintLength").forGetter(PlacedBuilding::footprintLength),
+                Codec.STRING.optionalFieldOf("sectorId", "unknown").forGetter(PlacedBuilding::sectorId),
+                BlockPos.CODEC.listOf().optionalFieldOf("feedingRoad", List.of())
+                        .forGetter(PlacedBuilding::feedingRoad)
+        ).apply(i, PlacedBuilding::new));
     }
 
     /**
@@ -150,7 +212,17 @@ public record LayoutPlan(
             BlockPos centre,
             int halfW,
             int halfL,
-            int edgeJitterSeed) {}
+            int edgeJitterSeed) {
+
+        public static final Codec<PlannedPlot> CODEC = RecordCodecBuilder.create(i -> i.group(
+                BlockPos.CODEC.fieldOf("ownerFarmhousePos").forGetter(PlannedPlot::ownerFarmhousePos),
+                PLOT_SUBTYPE_CODEC.fieldOf("subtype").forGetter(PlannedPlot::subtype),
+                BlockPos.CODEC.fieldOf("centre").forGetter(PlannedPlot::centre),
+                Codec.INT.fieldOf("halfW").forGetter(PlannedPlot::halfW),
+                Codec.INT.fieldOf("halfL").forGetter(PlannedPlot::halfL),
+                Codec.INT.fieldOf("edgeJitterSeed").forGetter(PlannedPlot::edgeJitterSeed)
+        ).apply(i, PlannedPlot::new));
+    }
 
     /**
      * Sector metadata for decoration / debug. Slot positions are NOT
@@ -165,5 +237,16 @@ public record LayoutPlan(
             int slotCount,
             int capacity,
             int parentEdgeId,
-            int expectedMaxFootprint) {}
+            int expectedMaxFootprint) {
+
+        public static final Codec<SectorView> CODEC = RecordCodecBuilder.create(i -> i.group(
+                Codec.STRING.fieldOf("id").forGetter(SectorView::id),
+                SECTOR_ROLE_CODEC.fieldOf("role").forGetter(SectorView::role),
+                BUILDING_ZONE_CODEC.fieldOf("zone").forGetter(SectorView::zone),
+                Codec.INT.fieldOf("slotCount").forGetter(SectorView::slotCount),
+                Codec.INT.fieldOf("capacity").forGetter(SectorView::capacity),
+                Codec.INT.fieldOf("parentEdgeId").forGetter(SectorView::parentEdgeId),
+                Codec.INT.fieldOf("expectedMaxFootprint").forGetter(SectorView::expectedMaxFootprint)
+        ).apply(i, SectorView::new));
+    }
 }

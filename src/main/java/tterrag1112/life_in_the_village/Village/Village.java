@@ -80,6 +80,13 @@ public class Village {
     @Nullable private transient List<tterrag1112.life_in_the_village.Village
             .Planning.Sectors.Sector> debugSectors;
 
+    // Phase 20a — persisted LayoutPlan. Set by applyLayout from the
+    // composed VillageLayout's getPlan(); round-trips through Village.CODEC.
+    // BuildSiteFinder (Phase 20) reads via getPlan(); falls back to legacy
+    // spiral when null (old saves predating this phase).
+    @Nullable private tterrag1112.life_in_the_village.Village.Planning
+            .LayoutPlan plan;
+
     // Needs — recomputed daily, only lastNeedsUpdate persisted
     private Map<NeedCategory, VillageNeed> needs = new EnumMap<>(NeedCategory.class);
     private long lastNeedsUpdate = -1L;
@@ -231,7 +238,11 @@ public class Village {
             Optional<BlockPos> mainGateEndpoint,
             int townSquareRadius,
             List<tterrag1112.life_in_the_village.Village.Decoration
-                    .TownSquare.GatheringPoint> gatheringPoints
+                    .TownSquare.GatheringPoint> gatheringPoints,
+            // Phase 20a — persisted LayoutPlan piggy-backs here because
+            // Village.CODEC was already at the apply16 ceiling.
+            Optional<tterrag1112.life_in_the_village.Village.Planning
+                    .LayoutPlan> layoutPlan
     ) {
         static final Codec<VillageLayoutMeta> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -280,7 +291,10 @@ public class Village {
                                 .TownSquare.GatheringPoint.CODEC.listOf()
                                 .optionalFieldOf("gatheringPoints",
                                         new ArrayList<>())
-                                .forGetter(VillageLayoutMeta::gatheringPoints)
+                                .forGetter(VillageLayoutMeta::gatheringPoints),
+                        tterrag1112.life_in_the_village.Village.Planning
+                                .LayoutPlan.CODEC.optionalFieldOf("layoutPlan")
+                                .forGetter(VillageLayoutMeta::layoutPlan)
                 ).apply(i, VillageLayoutMeta::new));
 
         static VillageLayoutMeta empty() {
@@ -289,7 +303,7 @@ public class Village {
                     0, 0, 1,
                     new ArrayList<>(), 0L, new ArrayList<>(),
                     true, Optional.empty(), Optional.empty(),
-                    0, new ArrayList<>());
+                    0, new ArrayList<>(), Optional.empty());
         }
 
         static VillageLayoutMeta from(Village v) {
@@ -307,7 +321,8 @@ public class Village {
                     Optional.ofNullable(v.plannedOrigin),
                     Optional.ofNullable(v.mainGateEndpoint),
                     v.townSquareRadius,
-                    new ArrayList<>(v.gatheringPoints));
+                    new ArrayList<>(v.gatheringPoints),
+                    Optional.ofNullable(v.plan));
         }
 
         void applyTo(Village v) {
@@ -332,6 +347,7 @@ public class Village {
                 v.gatheringPoints.clear();
                 v.gatheringPoints.addAll(gatheringPoints);
             }
+            layoutPlan.ifPresent(p -> v.plan = p);
         }
     }
 
@@ -523,6 +539,18 @@ public class Village {
     /** Per-village laws; never {@code null} after construction. */
     public tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy getPolicy() {
         return policy;
+    }
+
+    /** Phase 20a — persisted LayoutPlan from initial spawn. May be null
+     *  for villages saved before Phase 20a (BuildSiteFinder falls back
+     *  to legacy spiral when null). */
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Planning.LayoutPlan getPlan() {
+        return plan;
+    }
+    public void setPlan(
+            @Nullable tterrag1112.life_in_the_village.Village.Planning.LayoutPlan p) {
+        this.plan = p;
     }
 
     // =========================================================================
@@ -724,6 +752,10 @@ public class Village {
                 capitalGatePositions.add(gp);
             }
         }
+        // Phase 20a — persist the LayoutPlan attached during planning.
+        // Null for villages whose plan-build failed (markUnplannable path);
+        // BuildSiteFinder falls back to legacy spiral search when plan is null.
+        this.plan = layout.getPlan();
     }
 
     /**

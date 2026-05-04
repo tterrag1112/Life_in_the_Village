@@ -3906,6 +3906,165 @@ shape=LINEAR status=ABORT reason="..." plaza=absent buildings=0`.
    `validatePlan` before `LayoutPlanBuilder.build()` runs. Could
    restructure to dump twice or move the build earlier; deferred.
 
+---
+
+### 2026-05-04 — Phase 20a: LayoutPlan persistence
+
+**Phase:** 20a — prerequisite for Phase 20 BuildSiteFinder
+migration. Phase 19 explicitly scoped persistence out, so the
+LayoutPlan was attached to a `VillageLayout` that GC'd after
+`Village.applyLayout` returned. Expansion code calling
+`village.getPlan()` would always see null. This phase wires
+the plan onto `Village` with a Codec round-trip.
+
+#### Codecs added
+
+All inlined in `LayoutPlan.java` to avoid touching every enum file
+(none of the affected enums implement `StringRepresentable`). Each
+enum codec is a `Codec.STRING.xmap(EnumName::valueOf, EnumName::name)`
+pair. Same pattern `FarmPlot.CropType.CODEC` already uses.
+
+Inline enum codecs (private to LayoutPlan):
+- `EdgeRole`, `RoadShape.RoadTier`, `BuildingType`, `Rotation`,
+  `FarmPlot.PlotSubtype`, `SectorRole`, `BuildingZone`, `ShapeType`,
+  `AnchorKind`
+
+Public record codecs:
+- `LayoutPlan.Status.CODEC` (OK | ABORT)
+- `LayoutPlan.RoadEdge.CODEC` — edgeId, role, tier, centerline,
+  from, to
+- `LayoutPlan.PlacedBuilding.CODEC` — id (UUIDUtil.CODEC), type,
+  centre, rotation, footprintWidth/Length, sectorId, feedingRoad
+- `LayoutPlan.PlannedPlot.CODEC` — ownerFarmhousePos, subtype,
+  centre, halfW, halfL, edgeJitterSeed
+- `LayoutPlan.SectorView.CODEC` — id, role, zone, slotCount,
+  capacity, parentEdgeId, expectedMaxFootprint
+- `LayoutPlan.CODEC` — top-level, 13 fields (centre, finalShape,
+  plaza Optional, plazaRegions, roads, buildings, plotSlots,
+  sectors, anchors Map, status, truncations, cascadeRetries,
+  unplannableReason Optional)
+- `Plaza.CODEC` — region (Optional), townSquarePos, townSquareRadius,
+  civicRingRadius. **civicSlots persists as empty** (see deferral
+  below).
+
+#### Deferred persistence (documented limitations)
+
+**`Plaza.civicSlots`** — `PlacementSlot` and `SlotTag` don't have
+codecs yet. Adding them is significant (PlacementSlot has 10 fields
+including `Set<SlotTag>`, `Rotation`, `List<BlockPos>` feedingRoad,
+etc.). After save/reload, `plaza.civicSlots()` is an empty mutable
+list. The matcher's civic-first claim path falls through to the
+flat-pool walk when civicSlots is empty — same behaviour as ENCLAVE
+today, where Plaza is null entirely. The behavioural impact: a
+village reloaded from disk that has unclaimed civic slots will
+treat them as already-claimed for expansion purposes, potentially
+placing civic buildings via flat-pool fallback instead of plaza-edge.
+Acceptable for Phase 20a; full PlacementSlot persistence is a future
+polish item.
+
+**`FeatureMap`** — Option B (rebuild on load) chosen over Option A
+(codec). Construction is deterministic from `(origin, worldSeed,
+plazas)` and runs well under 50ms (16×16 sample grid + polygon
+clustering). 5 nested types (`PolygonXZ`, `WaterFeature`,
+`CliffFeature`, `ReservedRegion`, hull `PolygonXZ`) would require
+codecs for each — disproportionate to the rebuild cost. Phase 20's
+BuildSiteFinder will call `FeatureMap.buildPlanning(level, centre,
+worldSeed, plazas)` lazily on first expansion query.
+
+#### Village wiring
+
+`Village.java`:
+- New `@Nullable LayoutPlan plan` field.
+- `getPlan() / setPlan(LayoutPlan)` accessors.
+- `applyLayout(VillageLayout, ServerLevel)` now ends with
+  `this.plan = layout.getPlan()` — null if planning failed
+  (markUnplannable path), in which case BuildSiteFinder falls back
+  to legacy spiral search.
+
+#### `Village.CODEC` apply16 ceiling — and the workaround
+
+`Village.CODEC` was already at exactly 16 fields (the apply16 limit
+on `RecordCodecBuilder.Instance.group`). Adding a 17th
+(`layoutPlan`) wouldn't compile.
+
+Workaround: piggy-back the LayoutPlan onto `VillageLayoutMeta`, the
+private nested record that already groups layout-related state
+(centre, ring radii, gate positions, gathering points, etc.) into
+one Village.CODEC slot. VillageLayoutMeta had 14 fields; adding
+`Optional<LayoutPlan> layoutPlan` makes 15 — comfortably under the
+limit. `from(Village)` reads `v.plan`; `applyTo(Village)` sets
+`v.plan` from the optional.
+
+The piggy-back means saved JSON has `layoutMeta.layoutPlan` rather
+than a top-level `layoutPlan` key. Old saves' `layoutMeta` blocks
+won't have the `layoutPlan` field; `optionalFieldOf("layoutPlan")`
+decodes to `Optional.empty()` and `applyTo` leaves `v.plan` null.
+Backward-compatible.
+
+#### Files modified
+
+- `Village/Planning/LayoutPlan.java` — codecs (inline enum codecs +
+  4 nested record CODECs + top-level CODEC). +180 LOC.
+- `Village/Planning/Plaza.java` — CODEC. +20 LOC.
+- `Village/Village.java` — `plan` field, accessors, `applyLayout`
+  wiring, VillageLayoutMeta extension (record field + CODEC entry +
+  empty/from/applyTo updates).
+
+#### Constraints honored
+
+- LayoutPlan record shape unchanged (Phase 19 schema). All Phase
+  20a work was adding codecs to existing records, not changing fields.
+- FeatureMap data model unchanged.
+- No new persistence formats beyond the LayoutPlan addition to
+  VillageLayoutMeta.
+- BuildSiteFinder NOT migrated yet — that's Phase 20.
+- Transient debug fields on Village (`debugRoadGraph`,
+  `debugFeatureMap`, `debugSectors`) left as-is. Their consumers
+  (debug viz commands) keep working unchanged. A future cleanup can
+  back them with the persisted plan; not in scope here.
+- Old saves backward-compatible: missing `layoutPlan` decodes to
+  null; expansion uses `legacyFindSite`.
+
+#### Build status
+
+Gradle compile gated by network access; verified by inspection.
+Notes:
+- `LayoutPlan.CODEC` has 13 fields — under apply16.
+- `Plaza.CODEC` has 4 fields.
+- `VillageLayoutMeta.CODEC` now 15 fields — under apply16.
+- `Village.CODEC` unchanged at 16 fields (the addition rides on
+  VillageLayoutMeta).
+- All inline enum codecs use `valueOf` / `name` pattern matching
+  the existing `FarmPlot.CropType.CODEC` precedent.
+- `UUIDUtil.CODEC` is the canonical NeoForge UUID codec used by
+  PlacedBuilding.
+
+#### What this enables
+
+Phase 20's Step 1 prerequisites are now satisfied:
+- `village.getPlan()` returns a non-null LayoutPlan after spawn
+  AND across save/reload (new saves only).
+- `plan.plotSlots()` reachable for FarmPlotPlacer expansion.
+- `plan.roads()` / `plan.buildings()` / `plan.anchors()` reachable
+  for BuildSiteFinder's pickFeedingRoad / footprint-overlap checks.
+- FeatureMap reachable via `FeatureMap.buildPlanning(...)` rebuild
+  on demand.
+
+Old saves (predating this phase) have null plans and use the
+documented `legacyFindSite` fallback. Going forward (post-20),
+expansion is consistent with initial planning across save/reload.
+
+#### Validation (next steps for the user)
+
+1. Spawn a fresh RADIAL village. Save world. Reload.
+   `village.getPlan()` returns non-null. Spot-check fields match
+   pre-reload state.
+2. Plan dump's `[LAYOUT-PLAN]` log line emits identically on
+   re-spawn (deterministic UUIDs from centre+slotIndex).
+3. Old save: `village.getPlan()` returns null. No errors.
+4. Expansion not yet migrated — still uses spiral. Phase 20 prompt
+   is now unblocked.
+
 
 
 
