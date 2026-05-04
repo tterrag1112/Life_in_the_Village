@@ -21,7 +21,6 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathRouter;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
-import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
@@ -98,8 +97,14 @@ public class FarmPlotPlacer {
             return;
         }
 
-        List<PlacementSlot> plotSlots = layout.plotSlots();
-        if (plotSlots.isEmpty()) {
+        // Phase 19: read planned plots from the immutable LayoutPlan instead
+        // of layout.plotSlots() / layout.getPlotSpec(). PlannedPlot carries
+        // everything we need (centre, subtype, halfW/L, edgeJitterSeed,
+        // ownerFarmhousePos) inline — no spec lookup, no parallel map.
+        LayoutPlan plan = layout.getPlan();
+        List<LayoutPlan.PlannedPlot> plots =
+                plan != null ? plan.plotSlots() : List.of();
+        if (plots.isEmpty()) {
             System.out.println("FarmPlotPlacer: no planned plot slots for "
                     + village.getName());
             return;
@@ -109,56 +114,49 @@ public class FarmPlotPlacer {
 
         int realised = 0;
         int droppedNoOwner = 0;
-        int droppedNoSpec = 0;
 
-        for (PlacementSlot slot : plotSlots) {
-            FarmPlotSpec spec = layout.getPlotSpec(slot);
-            if (spec == null) {
-                droppedNoSpec++;
-                continue;
-            }
-
+        for (LayoutPlan.PlannedPlot pp : plots) {
             // Resolve owner UUID by looking up the farmhouse Building whose
             // origin is closest to the planned ownerFarmhousePos. The
             // planner stamped the LayoutSlot position; the realiser maps
             // it to the persisted Building UUID created by BuildingPlacer.
-            Building owner = resolveOwner(spec.ownerFarmhousePos(), village, data);
+            Building owner = resolveOwner(pp.ownerFarmhousePos(), village, data);
             if (owner == null) {
-                System.out.println("FarmPlotPlacer: planned plot at " + slot.pos()
-                        + " — owner farmhouse at " + spec.ownerFarmhousePos()
+                System.out.println("FarmPlotPlacer: planned plot at " + pp.centre()
+                        + " — owner farmhouse at " + pp.ownerFarmhousePos()
                         + " did not materialise; skipping");
                 droppedNoOwner++;
                 continue;
             }
 
             // Regenerate the deterministic plot shape from the planning seed.
-            Random shapeRng = new Random(spec.edgeJitterSeed());
+            Random shapeRng = new Random(pp.edgeJitterSeed());
             PlotShape shape = generateShape(shapeRng,
-                    spec.halfW(), spec.halfL(), EDGE_JITTER);
-            int targetY = medianFootprintY(level, slot.pos(), shape);
+                    pp.halfW(), pp.halfL(), EDGE_JITTER);
+            int targetY = medianFootprintY(level, pp.centre(), shape);
             BlockPos flatCentre = new BlockPos(
-                    slot.pos().getX(), targetY, slot.pos().getZ());
+                    pp.centre().getX(), targetY, pp.centre().getZ());
 
             levelPad(level, flatCentre, shape, targetY);
 
             FarmPlot plot;
             String plotName;
-            if (spec.subtype() == FarmPlot.PlotSubtype.CROP_FIELD) {
+            if (pp.subtype() == FarmPlot.PlotSubtype.CROP_FIELD) {
                 BlockState[] crops = chooseCrops(rng, STRIP_COUNT);
                 placeCropPlot(level, flatCentre, shape, targetY, crops, style, rng);
                 FarmPlot.CropType cropType = chooseCropType(
-                        style, realised, plotSlots.size(), rng, village, data);
+                        style, realised, plots.size(), rng, village, data);
                 plotName = village.getName() + "_farm_" + (realised + 1);
                 plot = new FarmPlot(
                         UUID.randomUUID(), plotName, flatCentre,
-                        Math.max(spec.halfW(), spec.halfL()),
+                        Math.max(pp.halfW(), pp.halfL()),
                         cropType, FarmPlot.PlotSubtype.CROP_FIELD);
             } else {
                 placeAnimalPen(level, flatCentre, shape, targetY, style, rng);
                 plotName = village.getName() + "_pen_" + (realised + 1);
                 plot = new FarmPlot(
                         UUID.randomUUID(), plotName, flatCentre,
-                        Math.max(spec.halfW(), spec.halfL()),
+                        Math.max(pp.halfW(), pp.halfL()),
                         FarmPlot.CropType.PASTURE,
                         FarmPlot.PlotSubtype.ANIMAL_PEN);
             }
@@ -167,14 +165,13 @@ public class FarmPlotPlacer {
             placeFootpath(level, flatCentre, shape, owner, data, village, style);
             data.addFarmPlot(plot);
             System.out.println("FarmPlotPlacer: realised "
-                    + spec.subtype() + " '" + plotName + "' at " + flatCentre);
+                    + pp.subtype() + " '" + plotName + "' at " + flatCentre);
             realised++;
         }
 
-        System.out.println("FarmPlotPlacer: planned=" + plotSlots.size()
+        System.out.println("FarmPlotPlacer: planned=" + plots.size()
                 + " realised=" + realised
-                + " droppedNoOwner=" + droppedNoOwner
-                + " droppedNoSpec=" + droppedNoSpec);
+                + " droppedNoOwner=" + droppedNoOwner);
     }
 
     /** Position-to-UUID lookup for plot ownership. The planner stamps the

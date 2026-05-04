@@ -3702,6 +3702,210 @@ If Phase 18 surfaces friction in any specific recipe (most likely
 PLAZA's custom plaza radius or DUAL_PLAZA's two plazas), surface
 it for Phase 22 / post-rework consideration.
 
+---
+
+### 2026-05-04 — Phase 19: LayoutPlan + AnchorKind handoff
+
+**Phase:** 19 — immutable plan-as-contract handoff between the
+planner and downstream consumers (spawner, decorator, expansion).
+
+#### What landed
+
+Three new types in `Village/Planning`:
+
+- **`AnchorKind`** — enum naming canonical anchor positions:
+  TOWN_SQUARE, MAIN_GATE, SECONDARY_GATE, RIVER_LANDING,
+  HIGH_GROUND, BRIDGE_HEAD, HARBOR, KEEP. The latter three are
+  reserved for future phases.
+
+- **`LayoutPlan`** — immutable record carrying the post-compose
+  snapshot consumers read. Fields:
+  - `centre`, `finalShape`, `plaza` (nullable), `plazaRegions`
+  - `roads` (`List<RoadEdge>`)
+  - `buildings` (`List<PlacedBuilding>` — committed, post-validation)
+  - `plotSlots` (`List<PlannedPlot>` — Phase 17 farm plots)
+  - `sectors` (`List<SectorView>` — metadata-only per open-question
+    default)
+  - `anchors` (`Map<AnchorKind, BlockPos>`)
+  - `status` (`OK | ABORT`), `truncations`, `cascadeRetries`
+  - `unplannableReason` (nullable)
+  - Convenience: `anchor(AnchorKind)`, `primaryPlaza()`, `isOk()`
+
+- **`LayoutPlanBuilder`** — builds a `LayoutPlan` from a
+  fully-composed `VillageLayout` plus `PlanContext`. Resolves road
+  node IDs to BlockPos via the graph, derives stable per-building
+  UUIDs from `(centre, slotIndex)`, reads sector attribution from
+  `pctx.committedSectorIds`.
+
+`VillageLayout` gets `getPlan()` / `setPlan(LayoutPlan)`.
+`VillagePlanner.plan()` builds the plan after `runFarmPlotPass`
+returns and attaches it; logs a `[LAYOUT-PLAN]` summary line via
+`appendPlanSnapshot`.
+
+The plan dump now emits a `--- LAYOUT PLAN SNAPSHOT ---` section at
+the top of `dumpPlan`. (Note: `dumpPlan` runs inside `validatePlan`,
+which fires BEFORE the plan is built — so the in-dump snapshot
+shows a placeholder message; the real snapshot is the
+`[LAYOUT-PLAN]` line emitted from `plan()` after `LayoutPlanBuilder
+.build()` completes.)
+
+#### Consumer migrations
+
+**`FarmPlotPlacer.placeAll`** — fully migrated. Now reads
+`layout.getPlan().plotSlots()` (a `List<PlannedPlot>`) instead of
+`layout.plotSlots()` + `layout.getPlotSpec(slot)`. The
+`PlannedPlot` record carries every field the realiser needs
+(centre, subtype, halfW/halfL, edgeJitterSeed, ownerFarmhousePos)
+inline — no parallel-map lookup. Unused `PlacementSlot` import
+removed.
+
+**`VillageSpawner` buildings loop — DEFERRED.** The iteration loop
+reads `slot.getVariantId()`, `slot.getStyle()`, `slot
+.getStructurePath()` (variant data). `PlacedBuilding` doesn't carry
+these fields — adding them would expand the record substantially.
+Per scope discipline (the prompt explicitly says this is a "shape
+change to the planning/consumption boundary, not a redesign of
+either side"), the buildings loop stays on `LayoutSlot` for now.
+Phase 19 follow-up or post-rework: extend `PlacedBuilding` with
+variant fields and migrate the spawner.
+
+**`VillageDecorator` — DEFERRED.** Only 4 `layout.*` reads, all
+mechanical. Same rationale: minimum-blast-radius scope keeps the
+phase landable; full decorator migration comes when expansion
+(Phase 20) lands and the consumption surface stabilises.
+
+#### Accessor name corrections vs prompt pseudocode
+
+The prompt's Step 2/3 pseudocode uses several names that don't
+match the codebase. Corrected per the prompt's directive
+("Where current accessors don't exist, surface the gap"):
+
+| Prompt name                | Actual accessor                            |
+|----------------------------|--------------------------------------------|
+| `LayoutSlot.getPivot()`    | (does not exist; spawner computes pivot)   |
+| `LayoutSlot.getFootprintW`/`L` | `getFootprintWidth()` / `getFootprintLength()` |
+| `LayoutSlot.getSectorId()` | `pctx.committedSectorIds.get(slot.getPos())` |
+| `Sector.zone()`            | `Sector.zoneHint()`                        |
+| `Sector.cap()`             | `Sector.capacity()`                        |
+| `Sector.edgeId()`          | `Sector.parentEdgeId()`                    |
+| `Sector.maxFp()`           | `Sector.expectedMaxFootprint()`            |
+| `RoadGraph.Edge.from()`    | `e.fromNodeId()` → `graph.node(id).pos()`  |
+| `RoadGraph.Edge.to()`      | `e.toNodeId()` → `graph.node(id).pos()`    |
+| `RoadGraph.Edge.tier()`    | `e.primitive().tier()`                     |
+| `RoadRole`                 | `EdgeRole` (already exists; same 4 values) |
+| `pctx.cascadeStatus`       | (no field; derived from `layout.isUnplannable()`) |
+| `pctx.sectors()`           | `pctx.offeredSectors()`                    |
+| `pctx.truncationCount` (field) | `pctx.truncationCount()` (method)      |
+| `pctx.finalShape` (field)  | `pctx.finalShape()` (method)               |
+
+#### Open-question defaults applied
+
+- **(1) UUID generation**: deterministic from `(centre, slotIndex)`
+  per `LayoutPlanBuilder.deriveStableId`. The prompt suggested
+  `(villageId, slotIndex)` but no Village UUID exists at planning
+  time — `BuildingPlacer.placeAndRegister` mints UUIDs at
+  realisation. Centre coords are stable across re-builds with the
+  same seed, so cross-system reference is safe; realisation can
+  substitute its own UUID without breaking plan immutability.
+
+- **(2) SectorView slot positions**: metadata-only. Slot positions
+  for committed slots are on `PlacedBuilding`; uncommitted slots
+  aren't structurally interesting after the matcher has run. If a
+  decoration pass needs uncommitted slot positions, surface and add
+  a separate field.
+
+- **(3) RoadEdge.role enum**: uses existing `EdgeRole` (SPINE, SPUR,
+  RING, OUTER_RING). No new enum.
+
+- **(4) Status field**: derived from `layout.isUnplannable()` since
+  Phase 16b doesn't surface a final `RecipeStatus` on `pctx`.
+  `OK` if planning succeeded, `ABORT` if marked unplannable.
+  Intermediate cascade states never appear on a built plan.
+
+- **(5) ENCLAVE plaza handling**: `plaza == null` on the plan;
+  `anchors[TOWN_SQUARE]` reads from `layout.getTownSquarePos()`
+  (the legacy field set by the recipe). No synthetic Plaza, no
+  ENCLAVE migration to the polygon path.
+
+#### Files modified
+
+- `Village/Planning/AnchorKind.java` — NEW
+- `Village/Planning/LayoutPlan.java` — NEW (record + 4 nested records)
+- `Village/Planning/LayoutPlanBuilder.java` — NEW
+- `Village/Planning/VillageLayout.java` — getPlan / setPlan
+- `Village/Planning/VillagePlanner.java` — build LayoutPlan after
+  runFarmPlotPass, log `[LAYOUT-PLAN]`, plan-dump section,
+  `appendPlanSnapshot` helper
+- `Village/Planning/FarmPlotPlacer.java` — consumes
+  `LayoutPlan.PlannedPlot` list (clean migration); removed unused
+  PlacementSlot import
+
+#### Constraints honored
+
+- Did NOT delete `VillageLayout` — still planning-time scratch
+- Did NOT change recipe authoring — recipes still build into layout
+- Did NOT change the matcher — still consumes flat pool +
+  `Plaza.civicSlots()` per Phase 18
+- Did NOT introduce `LayoutPlan.toLayout()` — arrow is one-way
+- Did NOT make `LayoutPlan` mutable — record + immutable copies
+- Did NOT change Phase 16b cascade engine
+- Did NOT migrate `BuildSiteFinder` — Phase 20 work
+- Did NOT add Phase 22 fallback chains
+- Did NOT touch persistence formats (`FarmPlot`, `Building`,
+  `VillageSavedData`) — `LayoutPlan` is in-memory only
+- Did NOT add new SlotTags / BuildingTypes / RoadTiers
+- Did NOT extend `AnchorKind` beyond Step 1's set
+- Did NOT introduce constraint feedback loops
+
+#### Build status
+
+Gradle compile gated by network access; verified by inspection.
+Notable points:
+
+- All three new files (AnchorKind, LayoutPlan, LayoutPlanBuilder)
+  are in `Village.Planning` so VillageLayout / VillagePlanner /
+  FarmPlotPlacer access them without imports.
+- `PlazaRegion` is referenced fully-qualified in LayoutPlanBuilder
+  (no import needed; unconventional but legal).
+- `LayoutPlan.PlannedPlot.ownerFarmhousePos` matches
+  `FarmPlotSpec.ownerFarmhousePos()` (Phase 17's Path A choice —
+  position-based ownership, UUID resolved at realise time).
+- The unused `civicCap` / `SECTOR_CIVIC` orphans from Phase 18 are
+  unchanged; still warnings only.
+
+#### Validation (next steps for the user)
+
+Spawn on flat-terrain RADIAL, expect:
+- New `[LAYOUT-PLAN]` log line after `[VILLAGE-SUMMARY]`, showing
+  `shape=RADIAL status=OK truncations=0 retries=0 plaza=present
+  ... buildings=27 plotSlots=N roads=10 sectors=8 anchors:
+  TOWN_SQUARE=... MAIN_GATE=...`.
+- Existing dump sections (`--- ROADS ---`, `--- PLAZA ---`,
+  `--- SECTORS ---`, etc.) byte-identical to Phase 18 baseline.
+- Buildings, roads, plaza paving, plot crops visually identical.
+- `FarmPlotPlacer: planned=N realised=N droppedNoOwner=0` — the
+  realiser's plot-iteration log unchanged in shape.
+
+ENCLAVE: `[LAYOUT-PLAN] plaza=absent anchors: TOWN_SQUARE=...` (the
+courtyard position still surfaces via the legacy field).
+
+ABORT cases (Lithosphere LINEAR truncation): `[LAYOUT-PLAN]
+shape=LINEAR status=ABORT reason="..." plaza=absent buildings=0`.
+
+#### Phase 19 follow-ups
+
+1. **Spawner buildings-loop migration** — requires extending
+   `PlacedBuilding` with variant fields (`variantId`, `style`,
+   `structurePath`). Substantial; defer until consumer surface
+   stabilises.
+2. **VillageDecorator migration** — 4 mechanical reads. Land
+   alongside Phase 20 (BuildSiteFinder migration) which touches
+   the same surface.
+3. **`dumpPlan`'s placeholder** — the in-dump snapshot is "built
+   after validatePlan" because `dumpPlan` fires inside
+   `validatePlan` before `LayoutPlanBuilder.build()` runs. Could
+   restructure to dump twice or move the build earlier; deferred.
+
 
 
 

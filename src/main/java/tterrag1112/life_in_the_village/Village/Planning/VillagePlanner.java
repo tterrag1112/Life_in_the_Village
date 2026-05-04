@@ -293,7 +293,54 @@ public class VillagePlanner {
                 + " village — " + layout);
         printVillageSummary(pctx, layout, initialBuildingCount,
                 requestedShape, "OK");
+
+        // Phase 19: build the immutable LayoutPlan handoff. Attached to
+        // the layout via getPlan() so existing callers don't break;
+        // spawner / decorator / FarmPlotPlacer migrate to read the plan
+        // instead of layout's mutable state.
+        LayoutPlan plan = LayoutPlanBuilder.build(layout, pctx);
+        layout.setPlan(plan);
+        StringBuilder planLog = new StringBuilder("[LAYOUT-PLAN] ");
+        appendPlanSnapshot(planLog, plan);
+        System.out.println(planLog);
         return Optional.of(layout);
+    }
+
+    /** Phase 19 plan-dump snippet shared between dumpPlan (when a plan
+     *  is attached) and the post-build [LAYOUT-PLAN] log line. */
+    private static void appendPlanSnapshot(StringBuilder sb, LayoutPlan plan) {
+        sb.append("  shape=").append(plan.finalShape())
+          .append(" status=").append(plan.status())
+          .append(" truncations=").append(plan.truncations())
+          .append(" retries=").append(plan.cascadeRetries());
+        if (plan.unplannableReason() != null) {
+            sb.append(" reason=\"").append(plan.unplannableReason()).append('"');
+        }
+        sb.append('\n');
+        if (plan.plaza() != null) {
+            sb.append("  plaza=present centre=").append(plan.plaza().centre())
+              .append(" plazaR=").append(plan.plaza().townSquareRadius())
+              .append(" civicRingR=").append(plan.plaza().civicRingRadius())
+              .append(" civicSlots=").append(plan.plaza().civicSlots().size())
+              .append('\n');
+        } else {
+            sb.append("  plaza=absent\n");
+        }
+        sb.append("  buildings=").append(plan.buildings().size())
+          .append(" plotSlots=").append(plan.plotSlots().size())
+          .append(" roads=").append(plan.roads().size())
+          .append(" sectors=").append(plan.sectors().size())
+          .append('\n');
+        sb.append("  anchors:");
+        if (plan.anchors().isEmpty()) {
+            sb.append(" (none)\n");
+        } else {
+            sb.append('\n');
+            for (var entry : plan.anchors().entrySet()) {
+                sb.append("    ").append(entry.getKey())
+                  .append("=").append(entry.getValue()).append('\n');
+            }
+        }
     }
 
     /**
@@ -554,6 +601,25 @@ public class VillagePlanner {
         StringBuilder sb = new StringBuilder();
         sb.append("\n=== PLAN DUMP [").append(tag).append("] centre=")
           .append(layout.getCenter()).append(" ===\n");
+
+        // ── SECTION 0: LAYOUT PLAN SNAPSHOT (Phase 19) ───────────────────
+        // Top-of-dump verification surface for the immutable LayoutPlan
+        // that the spawner / decorator / expansion will consume. The plan
+        // is built at the END of plan(), which is AFTER dumpPlan runs
+        // inside validatePlan — so the snapshot here reflects the plan
+        // FROM A PRIOR successful run if the layout has one attached
+        // (none on the first dump call). On the post-validate dump call
+        // the plan is also still null (not built yet); the snapshot is
+        // mostly visible for the OK path's printVillageSummary.
+        // For a clean snapshot of the actually-built plan, see the
+        // [LAYOUT-PLAN] line emitted from plan() after build().
+        LayoutPlan attachedPlan = layout.getPlan();
+        sb.append("\n--- LAYOUT PLAN SNAPSHOT ---\n");
+        if (attachedPlan == null) {
+            sb.append("  (built after validatePlan — see [LAYOUT-PLAN] log line)\n");
+        } else {
+            appendPlanSnapshot(sb, attachedPlan);
+        }
 
         // ── SECTION 1: ROADS ─────────────────────────────────────────────
         sb.append("\n--- ROADS ---\n");

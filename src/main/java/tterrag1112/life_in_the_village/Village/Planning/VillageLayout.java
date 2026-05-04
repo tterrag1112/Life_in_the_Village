@@ -167,6 +167,15 @@ public class VillageLayout {
     public boolean isUnplannable() { return unplannable; }
     @Nullable public String unplannableReason() { return unplannableReason; }
 
+    // ── Phase 19 LayoutPlan handoff ─────────────────────────────────────────
+    // Built once at the end of VillagePlanner.plan() from this layout's
+    // fully-composed state. Spawner and decorator read the plan instead
+    // of this layout's mutable surface. The arrow is one-way; nothing
+    // here mutates back into the layout from the plan.
+    @Nullable private LayoutPlan plan;
+    @Nullable public LayoutPlan getPlan() { return plan; }
+    public void setPlan(LayoutPlan p) { this.plan = p; }
+
     /**
      * Phase 17 doc 04 — polygon plaza registrations. Populated by
      * recipe compose() via PlazaGenerator; copied onto Village in
