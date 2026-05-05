@@ -4563,6 +4563,154 @@ New files:
   existing free-form String. Likewise for `biomeAffinity` /
   `kingdomRoles` ResourceLocation typing.
 
+---
+
+## Phase 23.1 — Measurement harness + LAYOUT_OVERVIEW.md (part 1 of 2)
+
+The rework's exit criterion. Phase 23 was scoped as a single phase
+in the original plan but reframed during implementation as
+two cycles because measurement requires a live Minecraft session:
+
+- **23.1 (this commit):** ship the harness, the reference doc,
+  and the closeout scaffold. Measurement and polish do NOT happen
+  in this cycle.
+- **23.2 (follow-up):** user runs `/litv measure 300` in-game,
+  reports the JSONL + console summary; that cycle lands
+  measurement-driven polish fixes and fills the closeout numbers
+  in `PLACEMENT-REWORK-STATE.md` Section 9.1.
+
+#### What changed
+
+New file `Commands/MeasureCommand.java`:
+- `/litv measure <count> [seed] [commit]` — Brigadier command.
+  Default mode is dry-run (planner-only, no world commits) since
+  `VillagePlanner.plan()` doesn't invoke `VillageSitePreparer.prepare()`.
+  A 500-spawn dry-run measures planner success without trashing
+  500 forests.
+- `commit` flag is reserved for a future end-to-end variant; the
+  current implementation does NOT call `VillageSpawner.spawnVillage`
+  even with the flag set. The flag exists today as scaffolding for
+  Phase 23.2 if measurement reveals planner-level success doesn't
+  predict end-to-end success.
+- `SpawnOutcome` record + `FailureMode` enum (TRUNCATION_ABORT,
+  VALIDATION_FAILED, MATCHER_EXHAUSTED, CASCADE_EXHAUSTED,
+  TERRAIN_UNPLANNABLE, SITE_PREP_FAILED, CRASH, UNCLASSIFIED).
+- `classify(reason, recorded)` — combines `PlacementFailureRecorder`
+  structured Reason values (preferred) with substring matching on
+  `unplannableReason` (fallback). Substrings match the literal
+  strings written today: `"cascade exhausted"`, `"SevereTruncation"`,
+  `"ValidationFailed"`, `"recipe produced no buildings"` (the
+  matcher-exhausted case — `"CORE_PLACEMENT_FAILED"` from the
+  prompt's pseudocode does NOT appear in code, replaced).
+- `chainAdvanced: boolean` (derived from
+  `cascadeRetries > 0 || finalShape != primaryShape`) replaces
+  the prompt's `chainPosition: int` because PlanContext
+  (where position lives) is discarded post-compose. The prompt
+  rule "DO NOT extend LayoutPlan" stays intact — measurement
+  convenience does not justify schema churn.
+- Per-spawn JSONL written to
+  `<gameDir>/logs/litv-measure-<timestamp>.jsonl`. Header line
+  records masterSeed, count, commit-mode, registry size, and
+  timestamp for reproducibility.
+- Console summary follows the prompt's report format —
+  per-shape primary-success rate, per-shape final-success rate
+  (incl. fallback), failure-mode breakdown, median + P95
+  composition time, cascade engine activity (truncations,
+  retries, chain advances, chain exhaustions).
+
+Structural integrity verification (`verifyReworkIntegrity()`):
+- ~20 lines of reflection-based checks that fire BEFORE any
+  spawn happens.
+- Asserts: `Village.plan` field exists (Phase 20a),
+  `LayoutPlan.cascadeRetries` / `truncations` /
+  `unplannableReason` record components exist (Phase 16b/19),
+  `VillageTypeData.settlementTier` field exists (Phase 21),
+  `BaseRecipe.runWithCascade` method exists (Phase 16b),
+  `PlanContext.cascadeChain` method exists (Phase 22).
+- Failures abort the harness with a clear "rework integrity
+  failed" message. Catches accidental undo of any rework
+  structural piece in future refactors.
+
+`Events/ModModEvents.java`:
+- Added `MeasureCommand.register(event.getDispatcher())` to the
+  `RegisterCommandsEvent` handler. Wildcard import covers the
+  class.
+
+New file `LAYOUT_OVERVIEW.md` at project root:
+- Reference document for recipe authors and downstream
+  consumers. Describes the contract the placement rework
+  leaves in place.
+- Sections: Pipeline (9 steps from site selection to
+  decoration), Recipe contract (inputs/outputs/cascade
+  integration), Available primitives (road + layout + plaza),
+  SlotTag vocabulary (with pointer to authoritative source),
+  Validator rules (Phase 16b structural rules),
+  Cascade engine (RecipeStatus, ReEmitReason, summary log),
+  Measurement harness usage.
+- Descriptive — what shipped, not aspirational.
+
+`docs/zoningandlayout_redesign/PLACEMENT-REWORK-STATE.md`:
+- Phase table: Phases 17, 18, 19, 20, 21, 22 marked
+  **landed**; Phase 23 marked
+  **harness landed (23.1); measurement + polish pending (23.2)**.
+- Section 9.1 added — measurement results table with empty
+  cells for the user to fill in post-run. Includes
+  default-Minecraft and rougher-mod columns.
+- Section 10 added — post-rework backlog, fully populated:
+  - LINEAR / PLAZA / DUAL_PLAZA recipe-authoring quality (3 items)
+  - Other shape recipes' fallback chains as measurement reveals
+  - Bridge / Stairway primitives (Causeway optional)
+  - 3 Phase 20 deferred polish items (`scoreSlot` lift,
+    multi-edge BFS, `Plaza.civicSlots` persistence)
+  - Architectural-shift experiment (OrganicRecipe / Path 2)
+  - Adjacent reworks (kingdom, trade road, decoration, economy,
+    atlas) listed but explicitly out-of-scope for placement.
+- Section 11 = the original "What this document is not"
+  (renumbered from old Section 10).
+
+#### Status
+
+- Harness compiles structurally; live compile gated by
+  sandbox network access (maven.neoforged.net 403).
+  Spot-checked diffs.
+- Reference doc and state-doc closeout scaffold complete.
+- Phase 23.1 ships the **infrastructure**; Phase 23.2 lands
+  the **measurement-driven fixes**.
+
+#### Validation (next steps for the user)
+
+1. **Run the harness on default Minecraft.**
+   ```
+   /litv measure 300
+   ```
+   Verify: structural integrity check passes; JSONL file
+   appears under `<gameDir>/logs/`; summary report prints
+   to chat.
+2. **Sanity-check the structural-integrity assertion.**
+   Temporarily rename a reflection target (e.g. rename
+   `Village.plan` → `Village.layoutPlan`); re-run; confirm
+   harness aborts loudly with the clear message; revert.
+3. **Spot-check a failed spawn.** Pick one JSONL line with
+   `success: false`; the recorded `seed` + `requestedCentre` +
+   `villageType` should let a single re-attempt reproduce
+   the failure for diagnosis.
+4. **Run on rougher terrain (Lithosphere / Tectonic / etc.).**
+   Same command; expect lower overall success rate.
+5. **Report findings** — JSONL excerpt + console summary.
+   Phase 23.2's prompt scopes the polish pass to whatever
+   measurement reveals.
+
+#### Phase 23.1 follow-ups (Phase 23.2 scope)
+
+- Polish pass on dominant failure modes surfaced by
+  measurement.
+- Fill in Section 9.1's measurement table with actual
+  numbers.
+- Mark Phase 23 row in the phase table as fully landed.
+- Decide which post-rework backlog items (Section 10) get
+  promoted to active follow-up phases vs. left as
+  documentation.
+
 
 
 

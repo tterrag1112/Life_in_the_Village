@@ -56,13 +56,13 @@ files. The 23 phases were:
 | 14 | Convert TERRACED + Causeway primitive | **see note below** |
 | 15 | Convert remaining 9 recipes | **dropped from rework** |
 | 16 | RoadPrimitive signature change + truncation | landed (plumbing only) |
-| 17 | Farm plot sector integration | pending |
-| 18 | Plaza polygon ownership consolidation | pending |
-| 19 | LayoutPlan + AnchorKind + spawner/decorator wiring | pending |
-| 20 | BuildSiteFinder migration to graph + feature queries | pending |
-| 21 | VillageTypeData kingdom-rework schema additions | pending |
-| 22 | Recipe fallback chains | pending |
-| 23 | 90% success measurement + persistent-failure polish | pending |
+| 17 | Farm plot sector integration | landed |
+| 18 | Plaza polygon ownership consolidation | landed |
+| 19 | LayoutPlan + AnchorKind + spawner/decorator wiring | landed |
+| 20 | BuildSiteFinder migration to graph + feature queries | landed (incl. Phase 20a LayoutPlan persistence) |
+| 21 | VillageTypeData kingdom-rework schema additions | landed |
+| 22 | Recipe fallback chains | landed |
+| 23 | 90% success measurement + persistent-failure polish | **harness landed (23.1); measurement + polish pending (23.2)** |
 
 **Note on Phases 12, 13, 14.** These bundled recipe conversions with
 *new road primitives* (Bridge, Stairway, Causeway). The conversions
@@ -356,7 +356,119 @@ Phase 23 declares the rework complete when:
 After the exit criterion is met, the architectural-shift experiment
 in Section 5 begins.
 
-## 10. What this document is not
+### 9.1. Measurement results
+
+Phase 23.1 landed the harness (`/litv measure`) and
+`LAYOUT_OVERVIEW.md`. The measurement run itself is a separate
+follow-up step (Phase 23.2) — it requires a live Minecraft
+session.
+
+Once the run is performed, the user fills the table below from
+the JSONL output and console summary.
+
+| Metric | Default Minecraft | Lithosphere / rougher mod |
+|---|---|---|
+| Corpus size | _____ | _____ |
+| Master seed used | _____ | _____ |
+| Overall success rate | ____% | ____% |
+| Primary-shape success | ____% | ____% |
+| Fallback-rescued success | ____% | ____% |
+| RADIAL primary-success | ____% | ____% |
+| Crashes | _____ | _____ |
+| Median composition time | ____ ms | ____ ms |
+| P95 composition time | ____ ms | ____ ms |
+
+**Dominant failure modes (top 3 by count):** _____, _____, _____.
+
+**Polish-pass items addressed (Phase 23.2):** _____.
+
+**Items deferred to post-rework backlog (Section 10):** _____.
+
+If the measured rates are below the targets and the failures are
+structural (not recipe-authoring quality), Phase 23.2 iterates
+until the structural fixes land. If the failures are
+recipe-authoring quality and fallback chains catch them, the
+exit criterion is met regardless of absolute primary-success rate.
+
+## 10. Post-rework backlog
+
+Once Phase 23.2 (measurement + polish + closeout numbers) lands,
+the placement rework is structurally complete and the state doc
+transitions from "active rework state" to "completed rework
+reference." The following items are explicitly out of the
+rework's scope but have known callers and are queued as
+post-rework work:
+
+### Recipe-authoring quality
+
+1. **LINEAR recipe-authoring rework.** LINEAR currently relies on
+   the `RADIAL` fallback chain (Phase 22) to ship on most terrain.
+   The recipe itself drops most of its slot pool under the
+   tightened footprint budget (microfix Fix 2). A focused
+   recipe-authoring pass restores LINEAR as a primary-success
+   shape on flat farming terrain.
+2. **PLAZA recipe-authoring rework.** Plaza authoring inherits
+   PLAZA's superflat issues (Section 6b). Slot-overlap with the
+   four spurs causes most failures. Same `RADIAL` fallback
+   absorbs failure today; a focused pass would restore primary
+   success.
+3. **DUAL_PLAZA recipe-authoring rework.** Inherits PLAZA's
+   issues. Treated together with PLAZA.
+4. **Other shape recipes** (RIVERINE, HILLTOP, ROADSIDE, etc.).
+   Add `fallback_chain` declarations as their failure modes are
+   surfaced by Phase 23 measurement; recipe-authoring quality
+   passes follow if and when measurement blames them.
+
+### Decoupled primitives
+
+5. **Bridge** (water-crossing) and **Stairway** (vertical
+   traversal) road primitives. Decoupled from any recipe
+   converting to use them. **Causeway** is optional — only land
+   if Bridge + Stairway prove insufficient.
+
+### Phase 20 deferred polish items
+
+6. **`scoreSlot` lift.** The matcher's per-slot scoring loop
+   uses raw `LayoutSlot` access; lifting it onto the graph view
+   would make scoring uniform with other graph queries.
+   Promoted to backlog or absorbed by Phase 23.2 if measurement
+   surfaces matcher pathology.
+7. **Multi-edge footpath BFS.** Expansion currently does
+   single-edge BFS; multi-edge would let footpaths cross plaza
+   regions cleanly. Deferred unless measurement reveals visible
+   regression.
+8. **`Plaza.civicSlots` persistence.** The civic-slot list on
+   `Plaza` rebuilds on demand; persisting it would save a
+   recompute per spawn. Cosmetic optimization; deferred unless
+   profiling blames it.
+
+### Architectural-shift experiment (Section 5)
+
+9. **`OrganicRecipe.java` Path 2 prototype.** Two to four prompts
+   of work. Reads `FeatureMap`, fires terrain-aware strategies,
+   emits primitives + sectors based on what fires. Compared
+   empirically against Path 1 + cascade by spawning 30 of each
+   across the same seeds via `/litv measure`. The harness from
+   Phase 23 is the comparison instrument.
+
+### Adjacent reworks (not the placement rework's job)
+
+10. **Kingdom rework.** Wires Phase 21's schema fields
+    (`settlementTier`, `biomeAffinity`, `kingdomRoles`,
+    `tradePriority`, `canBeCapital`, `maxPerKingdom`) into
+    actual kingdom-level placement and selection logic. The
+    placement layer is stable underneath this work.
+11. **Trade road rework.** Pathfinding and road decay between
+    villages.
+12. **Decoration content rework.** NBT bridges, festival decor,
+    town square rework, parks/gardens.
+13. **Economy rework.** Beyond the gate-anchor seam.
+14. **Atlas rework.** Worldgen-time atlas rebuilds.
+
+None of items 10–14 require further structural work in
+placement before they can begin.
+
+## 11. What this document is not
 
 This document does not duplicate the original `00-OVERVIEW.md`,
 `01-ABSTRACTIONS.md`, or `02-PHASES.md` planning files. If those
