@@ -96,10 +96,14 @@ public class VillageTypeDatagen implements DataProvider {
                 .build();
     }
 
-    /** LINEAR — small farming hamlet along a single road. */
+    /** LINEAR — small farming hamlet along a single road.
+     *  Phase 22: falls back to RADIAL when LINEAR's recipe-authoring
+     *  problems (microfix Fix 2 footprint-budget tightening dropped
+     *  most of LINEAR's slot pool) reject the layout. */
     private JsonObject buildFarmingHamlet() {
         return VillageTypeBuilder.create("farming_hamlet", "default")
                 .shape(ShapeType.LINEAR)
+                .fallbackChain(ShapeType.RADIAL)
                 .forcedAxis(true)
                 .terrainStrategy(TerrainStrategy.FLAT)
                 .townSquareCapacity(3)
@@ -113,10 +117,13 @@ public class VillageTypeDatagen implements DataProvider {
                 .build();
     }
 
-    /** PLAZA — large urban trade city with civic ring and four spurs. */
+    /** PLAZA — large urban trade city with civic ring and four spurs.
+     *  Phase 22: falls back to RADIAL when PLAZA's recipe-authoring
+     *  fails the validator (Section 6b — most superflat sites). */
     private JsonObject buildTradeCity() {
         return VillageTypeBuilder.create("trade_city", "default")
                 .shape(ShapeType.PLAZA)
+                .fallbackChain(ShapeType.RADIAL)
                 .terrainStrategy(TerrainStrategy.FLAT)
                 .townSquareCapacity(8)
                 .streetDensity(1.3f)
@@ -158,10 +165,13 @@ public class VillageTypeDatagen implements DataProvider {
                 .build();
     }
 
-    /** DUAL_PLAZA — twin village with two town squares. */
+    /** DUAL_PLAZA — twin village with two town squares.
+     *  Phase 22: falls back to RADIAL (its plaza authoring inherits
+     *  PLAZA's superflat issues). */
     private JsonObject buildTwinVillage() {
         return VillageTypeBuilder.create("twin_village", "default")
                 .shape(ShapeType.DUAL_PLAZA)
+                .fallbackChain(ShapeType.RADIAL)
                 .terrainStrategy(TerrainStrategy.FLAT)
                 .townSquareCapacity(5)
                 .building(BuildingType.TOWN_HALL,   "town_hall/level_1")

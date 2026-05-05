@@ -4243,5 +4243,191 @@ Notes:
   expansion-time civic placement can use the plaza pool instead of
   falling through to flat-pool.
 
+---
+
+### 2026-05-04 — Phase 22: Recipe fallback chains
+
+**Phase:** 22 — fallback policy moves into the schema layer.
+VillageTypeData declares the cascade chain; the engine reads it.
+Recipes stop owning fallback decisions.
+
+#### What landed
+
+**Schema:**
+- `VillageTypeData.fallbackChain` field (`List<ShapeType>`, default
+  empty) + `getFallbackChain()` / `setFallbackChain()`.
+- `VillageTypeRegistry` parses `"fallback_chain": ["RADIAL"]` from
+  village type JSON.
+- `VillageTypeBuilder.fallbackChain(ShapeType...)` for datagen.
+- `VillageTypeDatagen` declares `.fallbackChain(RADIAL)` for
+  LINEAR (`farming_hamlet`), PLAZA (`trade_city`), DUAL_PLAZA
+  (`twin_village`).
+
+**Cascade engine generalisation:**
+- `PlanContext.cascadeChain` (`List<ShapeType>`) and
+  `cascadeChainPosition` (int).
+  Layout: `[primary, ...fallbacks]`. `cascadeChainPosition` is the
+  index of the current shape; FALLBACK advances by one.
+- `PlanContext.resetForFallback()` clears mutable composition state
+  (slot pool, sectors, plaza polygons, road-graph state on layout,
+  cascade-axis rotation, retry count, truncation count, primary
+  spine result, outer-ring shared-state) while preserving immutable
+  analysis (terrain profile, density profile, FeatureMap, variant
+  context, RNG).
+- `VillageLayout.resetForFallback()` clears slots, road graph (new
+  `RoadGraph.clear()`), road footprint (new `BuildingFootprint
+  .clear()`), plazas, plot slots, gates, gathering points, plan,
+  unplannable flags. Preserves terrain / density / features.
+- `BaseRecipe.runWithCascade` FALLBACK case now:
+  1. Gets next shape via new `nextChainShape(pctx)` helper —
+     prefers schema chain; falls back to per-recipe `fallbackShape()`
+     for one extra hop when no chain is set (legacy path).
+  2. Advances `pctx.cascadeChainPosition`.
+  3. Calls `pctx.resetForFallback()` + `layout.resetForFallback()`.
+  4. Recursively invokes `forShape(next).compose(pctx)`.
+
+**Validator-triggered cascade (new in Phase 22):**
+- `BaseRecipe.ReEmitReason.ValidationFailed(passed, total,
+  failureKinds)` record — sealed-interface variant.
+- `VillagePlanner.plan()` wraps `compose → matcher → validatePlan`
+  in a labeled `attempt:` while loop. If `validatePlan` fails AND
+  `passedCount < 0.6 * totalCount` AND chain has more entries:
+  advance position, reset both pctx and layout state, set
+  `currentShape` to the next chain entry, `continue attempt` —
+  the loop runs compose again with the new shape. The recipe's
+  `reEmit` is NOT consulted for the validator path in this phase
+  (per Open Q4 default — auto cascade); the `ValidationFailed`
+  reason is scaffolding for future hooks.
+- `countValidatedBuildings(layout)` helper walks all buildings
+  without short-circuiting (existing `validatePlan` short-circuits
+  on first failure, so we need a separate count for the threshold
+  check).
+
+**Plan dump:**
+- `appendPlanSnapshot` extended in the success path: when
+  `pctx.cascadeChain().size() > 1`, the `[LAYOUT-PLAN]` log line
+  appends a `cascade: started=X chain=[...] position=N
+  fallback-fired/no-fallback` line. Trivial-chain villages keep
+  the existing format.
+
+#### Open question dispositions
+
+- **(1) ABORT sentinel**: chose Option (b) — implicit ABORT at
+  chain end. No `ShapeType.ABORT` enum value added. Chain
+  exhaustion = `cascadeChainPosition + 1 >= chain.size()`.
+- **(2) Reset between chain entries**: chose Option (b) per the
+  user default — preserve immutable analysis (terrain, density,
+  FeatureMap, variant context, RNG seed continuity), reset
+  mutable composition state.
+- **(3) Plan dump rendering on multi-stage cascades**: implemented
+  as a single appended line showing `started=X chain=[...]
+  position=N` flag. For the "PLAZA RETRY×3 → RADIAL RETRY×1 →
+  ABORT" case the position points to the final shape and the
+  per-shape retry counts are subsumed into `truncations` /
+  `retries` aggregates already on the snapshot.
+- **(4) Validator-cascade auto vs opt-in**: chose Option (a) —
+  auto. Validator failure under 0.6 always advances chain when
+  one is available. ValidationFailed reEmitReason is declared but
+  not yet consulted; recipes can override `reEmit` to handle it
+  in a future phase.
+- **(5) `fallbackShape()` deprecation enforcement**: chose default
+  no — left as a soft-deprecated method. Schema chain takes
+  precedence via `nextChainShape`; the legacy method is consulted
+  only when no chain is set. Marked in code comments.
+
+#### Files modified
+
+- `Village/VillageTypeData.java` — fallbackChain field + accessors
+- `Village/VillageTypeBuilder.java` — `.fallbackChain(...)` builder
+- `Village/VillageTypeRegistry.java` — JSON `fallback_chain` parsing
+- `Datagen/VillageTypeDatagen.java` — chains for
+  farming_hamlet (LINEAR), trade_city (PLAZA), twin_village
+  (DUAL_PLAZA), all → RADIAL
+- `Village/Planning/Primitives/BaseRecipe.java` — ValidationFailed
+  reason; `nextChainShape` helper; runWithCascade FALLBACK uses
+  chain
+- `Village/Planning/Primitives/PlanContext.java` — cascadeChain /
+  cascadeChainPosition state + `advanceCascadeChain` +
+  `resetForFallback`
+- `Village/Planning/VillageLayout.java` — `resetForFallback`
+- `Village/Planning/Graph/RoadGraph.java` — `clear()`
+- `Village/Planning/BuildingFootprint.java` — `clear()`
+- `Village/Planning/VillagePlanner.java` — chain init at start of
+  plan(); `attempt:` while loop; `countValidatedBuildings` helper;
+  cascade chain context in `[LAYOUT-PLAN]` log
+
+#### Constraints honored
+
+- `RecipeStatus` enum unchanged (`OK | RETRY | FALLBACK | ABORT`).
+- `ShapeType` enum unchanged (no `ABORT` added — implicit at chain
+  end).
+- Per-recipe `fallbackShape()` still works as a soft-deprecated
+  fallback when no schema chain is set.
+- `PlacementMatcher` untouched.
+- `VillageTypeData` persistence: only the new `fallback_chain`
+  optional field; no breaking changes to existing JSON.
+- No new ShapeType values.
+- No inter-recipe state passing — chain advance via shared pctx
+  with state reset between entries.
+- `LayoutPlanBuilder` untouched (the plan reflects the final
+  successful recipe).
+- Validator thresholds unchanged (0.6 cutoff is for trigger logic,
+  not validator rules).
+- `FarmPlotPlacer` / plot pass behavior untouched.
+- Cascade chain is read-only after VillageTypeData registration.
+- No Phase 23 measurement logic.
+- Phase 16b RecipeStatus enum unchanged.
+- Phase 19 LayoutPlan record + persistence unchanged.
+- Phase 20 BuildSiteFinder untouched.
+
+#### Build status
+
+Gradle compile gated by network access; verified by inspection.
+Notes:
+- `RoadGraph.clear()` and `BuildingFootprint.clear()` added without
+  changing existing public API.
+- The `attempt:` while loop in VillagePlanner is bounded by
+  `cascadeChain().size()` (each loop iteration either advances
+  position or breaks/returns), so it terminates.
+- `runWithCascade`'s recursive call to `forShape(next).compose(pctx)`
+  passes the same pctx — the next recipe's runWithCascade sees the
+  advanced position and continues from there. No infinite recursion
+  because `nextChainShape` returns null at chain end.
+- Old saves (no `fallback_chain` in JSON): default empty chain,
+  `cascadeChain = [primary]` only, `nextChainShape` calls
+  `fallbackShape()` once for legacy compat.
+
+#### Validation (next steps for the user)
+
+1. RADIAL village (no fallback chain) — behavior unchanged from
+   Phase 21 baseline; `cascade:` line absent from `[LAYOUT-PLAN]`.
+2. PLAZA village on superflat — primary attempt fails validator;
+   cascade advances to RADIAL; second attempt succeeds. Log shows
+   `[CASCADE] validator-triggered fallback to RADIAL ...` and
+   `cascade: started=PLAZA chain=[PLAZA, RADIAL] position=1
+   fallback-fired`.
+3. LINEAR village on terrain that LINEAR's authoring rejects —
+   same fallback to RADIAL.
+4. Site where both PLAZA and RADIAL fail — chain exhausts;
+   `markUnplannable("cascade exhausted ...")`. No empty-village
+   placement.
+5. Phase 16b truncation cascade still fires for RIVERINE / HILLTOP
+   on hostile terrain; result is the same chain advance via
+   `runWithCascade` FALLBACK path.
+6. Old saves with no persisted plan: legacy `fallbackShape()` path
+   still fires for cascade-aware recipes — single hop, then ABORT.
+
+#### Phase 22 follow-ups
+
+- Recipe-level `reEmit(ValidationFailed)` hooks (currently the
+  reason is scaffolding-only; recipes can opt in to validator-
+  cascade decisions in a future phase).
+- Per-shape retry count rendering in the cascade summary (today
+  the snapshot shows aggregate `truncations` / `retries`; per-shape
+  breakdown deferred).
+- Adding fallback chains to RIVERINE, HILLTOP, ROADSIDE, etc. as
+  their failure modes are observed in spawn data (Phase 23
+  measurement will surface candidates).
+
 
 

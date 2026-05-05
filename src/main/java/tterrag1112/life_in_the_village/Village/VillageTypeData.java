@@ -220,6 +220,18 @@ public class VillageTypeData {
     }
     public Set<VillageTag> getTags() { return tags;}
 
+    // ── Phase 22 cascade fallback chain ────────────────────────────────────
+    // List of ShapeTypes to try in order when the primary shape's compose
+    // returns FALLBACK (Phase 16b cascade) or when the validator rejects
+    // a composed plan with passed/total < 0.6 threshold. Empty list = no
+    // schema-declared chain; cascade engine falls back to the per-recipe
+    // BaseRecipe.fallbackShape() (Phase 22 deprecated path).
+    private List<ShapeType> fallbackChain = List.of();
+    public List<ShapeType> getFallbackChain() { return fallbackChain; }
+    public void setFallbackChain(List<ShapeType> chain) {
+        this.fallbackChain = chain != null ? List.copyOf(chain) : List.of();
+    }
+
     /** Raw style declaration: {@code "rural"}, {@code "urban"}, or
      *  {@code "auto"}. Default is {@code "auto"}. */
     public String getStyle() { return style; }

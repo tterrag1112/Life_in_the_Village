@@ -83,6 +83,14 @@ public class BuildingFootprint {
     /**
      * Marks a building's footprint (plus buffer) as occupied.
      */
+    /** Phase 22: clears all occupied + reserved cells. Used by
+     *  {@code VillageLayout.resetForFallback()} on cascade chain
+     *  advance. */
+    public void clear() {
+        occupied.clear();
+        roadReserved.clear();
+    }
+
     public void occupyBuilding(Building building, int buffer) {
         BlockPos origin = building.getShape().getOrigin();
         int w = building.getShape().getWidth();

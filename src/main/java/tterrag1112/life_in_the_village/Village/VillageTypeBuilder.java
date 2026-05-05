@@ -109,6 +109,20 @@ public final class VillageTypeBuilder {
         return this;
     }
 
+    /**
+     * Phase 22 — declares the fallback chain for this village type.
+     * If the primary shape's compose returns FALLBACK (cascade) or the
+     * planner's validator rejects below the 0.6 threshold, the engine
+     * advances through this list in order. Empty / unspecified means no
+     * chain (legacy per-recipe fallbackShape() applies).
+     */
+    public VillageTypeBuilder fallbackChain(ShapeType... shapes) {
+        com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+        for (ShapeType s : shapes) arr.add(s.name());
+        root.add("fallback_chain", arr);
+        return this;
+    }
+
     public VillageTypeBuilder townSquareCapacity(int capacity) {
         root.addProperty("town_square_capacity", capacity);
         return this;

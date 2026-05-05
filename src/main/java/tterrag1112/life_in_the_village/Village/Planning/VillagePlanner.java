@@ -203,65 +203,103 @@ public class VillagePlanner {
         VillageTypeData.ShapeType requestedShape =
                 typeData.getShapeProfile().shapeType();
         pctx.setFinalShape(requestedShape);
+
+        // Phase 22: build the cascade chain — [primary, ...fallbacks]. The
+        // schema-declared fallback list is on VillageTypeData; if absent,
+        // the chain is just [primary] and the cascade engine falls back
+        // to the per-recipe BaseRecipe.fallbackShape() for one extra hop.
+        java.util.List<VillageTypeData.ShapeType> cascadeChain =
+                new java.util.ArrayList<>();
+        cascadeChain.add(requestedShape);
+        if (typeData.getFallbackChain() != null) {
+            cascadeChain.addAll(typeData.getFallbackChain());
+        }
+        pctx.setCascadeChain(cascadeChain);
+        pctx.setCascadeChainPosition(0);
+
         int initialBuildingCount = expanded.size();
-        try {
-            ShapeRecipe.forShape(requestedShape).compose(pctx);
-        } catch (Exception e) {
-            System.out.println("VillagePlanner: recipe failed — " + e.getMessage());
-            e.printStackTrace();
-            PlacementFailureRecorder
-                    .record(PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
-                            "recipe failed",
-                            origin, typeData.getType());
-            return Optional.empty();
-        }
 
-        // Phase 16b: cascade engine may mark the site unplannable. Short-circuit
-        // before running the matcher / validator — the layout has nothing to
-        // match. VillageSpawner reads lastUnplannableReason() to skip refinement.
-        if (layout.isUnplannable()) {
-            String reason = layout.unplannableReason() != null
-                    ? layout.unplannableReason() : "(no reason given)";
-            lastUnplannableReason = reason;
-            System.out.println("VillagePlanner: site unplannable — " + reason);
-            PlacementFailureRecorder
-                    .record(PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
-                            "site unplannable: " + reason,
-                            origin, typeData.getType());
-            printVillageSummary(pctx, layout, initialBuildingCount,
-                    requestedShape, "UNPLANNABLE");
-            return Optional.empty();
-        }
+        // Phase 22: compose+matcher+validate loop. Validator failure
+        // below the 0.6 threshold triggers a cascade chain advance + state
+        // reset + recompose with the next shape. Truncation cascade
+        // (Phase 16b) still fires INSIDE compose; we just see its outcome
+        // (markUnplannable) here and treat as terminal.
+        VillageTypeData.ShapeType currentShape = requestedShape;
+        attempt:
+        while (true) {
+            try {
+                ShapeRecipe.forShape(currentShape).compose(pctx);
+            } catch (Exception e) {
+                System.out.println("VillagePlanner: recipe failed — " + e.getMessage());
+                e.printStackTrace();
+                PlacementFailureRecorder
+                        .record(PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
+                                "recipe failed",
+                                origin, typeData.getType());
+                return Optional.empty();
+            }
 
-        // Phase 9: snapshot the sectors a BaseRecipe emitted so /liv
-        // layout debug show_sectors can render them. Empty for
-        // unconverted recipes.
-        layout.setDebugSectors(new java.util.ArrayList<>(pctx.offeredSectors()));
-        pctx.runMatcher();
+            // Phase 16b: cascade engine may mark the site unplannable. The
+            // chain has already been walked inside runWithCascade — we
+            // don't re-attempt at the planner level. Treat as terminal.
+            if (layout.isUnplannable()) {
+                String reason = layout.unplannableReason() != null
+                        ? layout.unplannableReason() : "(no reason given)";
+                lastUnplannableReason = reason;
+                System.out.println("VillagePlanner: site unplannable — " + reason);
+                PlacementFailureRecorder
+                        .record(PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                                "site unplannable: " + reason,
+                                origin, typeData.getType());
+                printVillageSummary(pctx, layout, initialBuildingCount,
+                        requestedShape, "UNPLANNABLE");
+                return Optional.empty();
+            }
 
-        if (layout.buildings().isEmpty()) {
-            System.out.println("VillagePlanner: recipe produced no buildings");
-            PlacementFailureRecorder
-                    .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
-                            "recipe produced no buildings",
-                            origin, typeData.getType());
-            printVillageSummary(pctx, layout, initialBuildingCount,
-                    requestedShape, "NO_BUILDINGS");
-            return Optional.empty();
-        }
+            // Phase 9: snapshot the sectors a BaseRecipe emitted so /liv
+            // layout debug show_sectors can render them. Empty for
+            // unconverted recipes.
+            layout.setDebugSectors(new java.util.ArrayList<>(pctx.offeredSectors()));
+            pctx.runMatcher();
 
-        // 7. Validate the plan. Phase 10 retired the fallbackPlaceRemaining
-        // and rescueOrphans rescue passes — orphans now indicate a planner
-        // bug and the village is rejected outright.
-        if (!validatePlan(layout, pctx)) {
-            System.out.println("VillagePlanner: plan validation failed");
-            PlacementFailureRecorder
-                    .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
-                            "plan validation failed",
-                            origin, typeData.getType());
-            printVillageSummary(pctx, layout, initialBuildingCount,
-                    requestedShape, "VALIDATION_FAILED");
-            return Optional.empty();
+            if (layout.buildings().isEmpty()) {
+                System.out.println("VillagePlanner: recipe produced no buildings");
+                PlacementFailureRecorder
+                        .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
+                                "recipe produced no buildings",
+                                origin, typeData.getType());
+                printVillageSummary(pctx, layout, initialBuildingCount,
+                        requestedShape, "NO_BUILDINGS");
+                return Optional.empty();
+            }
+
+            // 7. Validate the plan. Phase 22: significant validation loss
+            // (passed/total < 0.6) triggers a cascade chain advance.
+            if (!validatePlan(layout, pctx)) {
+                int passed = countValidatedBuildings(layout);
+                int total  = layout.buildings().size();
+                if (total > 0 && passed < total * 0.6
+                        && pctx.cascadeChainPosition() + 1 < pctx.cascadeChain().size()) {
+                    pctx.advanceCascadeChain();
+                    pctx.resetForFallback();
+                    layout.resetForFallback();
+                    currentShape = pctx.cascadeChain().get(pctx.cascadeChainPosition());
+                    pctx.setFinalShape(currentShape);
+                    System.out.println("[CASCADE] validator-triggered fallback to "
+                            + currentShape + " (passed=" + passed + "/" + total
+                            + ") chainPos=" + pctx.cascadeChainPosition());
+                    continue attempt;
+                }
+                System.out.println("VillagePlanner: plan validation failed");
+                PlacementFailureRecorder
+                        .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
+                                "plan validation failed",
+                                origin, typeData.getType());
+                printVillageSummary(pctx, layout, initialBuildingCount,
+                        requestedShape, "VALIDATION_FAILED");
+                return Optional.empty();
+            }
+            break;  // success — exit the cascade-attempt loop
         }
 
         // Phase 17: emit + claim + validate farm plot slots. Runs only after
@@ -302,12 +340,23 @@ public class VillagePlanner {
         layout.setPlan(plan);
         StringBuilder planLog = new StringBuilder("[LAYOUT-PLAN] ");
         appendPlanSnapshot(planLog, plan);
+        // Phase 22: append cascade chain context when non-trivial (chain
+        // had a fallback that was either tried or available).
+        if (pctx.cascadeChain().size() > 1) {
+            planLog.append("  cascade: started=").append(requestedShape)
+                   .append(" chain=").append(pctx.cascadeChain())
+                   .append(" position=").append(pctx.cascadeChainPosition())
+                   .append(pctx.cascadeChainPosition() > 0
+                           ? " fallback-fired" : " no-fallback")
+                   .append('\n');
+        }
         System.out.println(planLog);
         return Optional.of(layout);
     }
 
     /** Phase 19 plan-dump snippet shared between dumpPlan (when a plan
-     *  is attached) and the post-build [LAYOUT-PLAN] log line. */
+     *  is attached) and the post-build [LAYOUT-PLAN] log line.
+     *  Phase 22 extended with chain context. */
     private static void appendPlanSnapshot(StringBuilder sb, LayoutPlan plan) {
         sb.append("  shape=").append(plan.finalShape())
           .append(" status=").append(plan.status())
@@ -526,6 +575,20 @@ public class VillagePlanner {
             if (!validateBuildingDistance(slot, layout)) return false;
         }
         return true;
+    }
+
+    /**
+     * Phase 22: counts buildings that pass {@link
+     * #validateBuildingDistance(LayoutSlot, VillageLayout)} without
+     * short-circuiting. Used by the validator-triggered cascade
+     * threshold check.
+     */
+    private static int countValidatedBuildings(VillageLayout layout) {
+        int passed = 0;
+        for (LayoutSlot slot : layout.buildings()) {
+            if (validateBuildingDistance(slot, layout)) passed++;
+        }
+        return passed;
     }
 
     /**

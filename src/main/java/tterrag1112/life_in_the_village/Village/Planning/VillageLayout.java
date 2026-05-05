@@ -177,6 +177,36 @@ public class VillageLayout {
     public void setPlan(LayoutPlan p) { this.plan = p; }
 
     /**
+     * Phase 22: clears mutable composition state for a cascade chain
+     * advance. Preserves immutable analysis (terrain profile, density
+     * profile, FeatureMap) so the next chain entry doesn't rebuild
+     * expensive shared inputs. Pairs with
+     * {@code PlanContext.resetForFallback()}.
+     */
+    public void resetForFallback() {
+        slots.clear();
+        roadGraph.clear();
+        roadFootprint.clear();
+        plazas.clear();
+        plotSlots.clear();
+        plotSpecs.clear();
+        plazaRegions.clear();
+        gatheringPoints.clear();
+        gatePositions.clear();
+        townSquarePos = null;
+        townSquareRadius = 0;
+        civicRingRadius = 0;
+        mainGateEndpoint = null;
+        villageCenterMarker = null;
+        plan = null;
+        unplannable = false;
+        unplannableReason = null;
+        debugSectors = null;
+        // Don't reset: terrain, density, features (FeatureMap),
+        // debugRoadGraph / debugFeatureMap (transient debug fields).
+    }
+
+    /**
      * Phase 17 doc 04 — polygon plaza registrations. Populated by
      * recipe compose() via PlazaGenerator; copied onto Village in
      * applyLayout. Empty for HAMLETs (which use villageCenterMarker

@@ -74,11 +74,19 @@ public abstract class BaseRecipe implements ShapeRecipe {
     public sealed interface ReEmitReason
             permits ReEmitReason.SevereTruncation,
                     ReEmitReason.SlotsDropped,
-                    ReEmitReason.SectorStarved {
+                    ReEmitReason.SectorStarved,
+                    ReEmitReason.ValidationFailed {
 
         record SevereTruncation(RoadResult primary) implements ReEmitReason {}
         record SlotsDropped(int dropped, int total) implements ReEmitReason {}
         record SectorStarved(String sectorId, int unfilledMin) implements ReEmitReason {}
+        /** Phase 22: planner's validator rejected the composed plan with
+         *  passed/total below the 0.6 threshold. Fired from
+         *  VillagePlanner after validation; the recipe's reEmit decides
+         *  whether to fall back via the cascade chain. */
+        record ValidationFailed(int passed, int total,
+                                java.util.List<String> failureKinds)
+                implements ReEmitReason {}
     }
 
     /**
@@ -111,10 +119,18 @@ public abstract class BaseRecipe implements ShapeRecipe {
                     // loop; reEmit has mutated cascade state on pctx
                 }
                 case FALLBACK -> {
-                    ShapeType next = fallbackShape();
+                    // Phase 22: prefer the schema-declared cascade chain
+                    // on PlanContext (set by VillagePlanner from
+                    // VillageTypeData.getFallbackChain()). Fall back to
+                    // the per-recipe fallbackShape() when the chain is
+                    // unset (legacy path). The chain entry list is
+                    // [primary, ...fallbacks]; cascadeChainPosition is
+                    // the index of the CURRENT shape, so the next entry
+                    // is at position+1.
+                    ShapeType next = nextChainShape(pctx);
                     if (next == null) {
                         pctx.layout.markUnplannable(
-                                "FALLBACK with no fallbackShape — "
+                                "cascade exhausted — "
                                 + getClass().getSimpleName()
                                 + " reason=" + describeReason(reason));
                         return;
@@ -122,15 +138,14 @@ public abstract class BaseRecipe implements ShapeRecipe {
                     System.out.println("[CASCADE] "
                             + getClass().getSimpleName()
                             + " falling back to " + next
-                            + " reason=" + describeReason(reason));
+                            + " reason=" + describeReason(reason)
+                            + " chainPos=" + pctx.cascadeChainPosition()
+                            + "->" + (pctx.cascadeChainPosition() + 1));
+                    // Advance position + reset mutable composition state.
+                    pctx.advanceCascadeChain();
+                    pctx.resetForFallback();
+                    pctx.layout.resetForFallback();
                     pctx.setFinalShape(next);
-                    // Reset cascade state for the fallback shape — its
-                    // spine direction is its own concern; carrying our
-                    // accumulated rotation would skew its terrain alignment,
-                    // and exhausting our retry budget would deny it the
-                    // chance to attempt its own rotation.
-                    pctx.setCascadeAxisRotation(0.0);
-                    pctx.resetCascadeRetryCount();
                     ShapeRecipe.forShape(next).compose(pctx);
                     return;
                 }
@@ -259,7 +274,30 @@ public abstract class BaseRecipe implements ShapeRecipe {
                     + t.primary().intendedLength()
                     + " " + t.primary().reason();
         }
+        if (reason instanceof ReEmitReason.ValidationFailed v) {
+            return "ValidationFailed " + v.passed() + "/" + v.total()
+                    + " kinds=" + v.failureKinds();
+        }
         return reason.getClass().getSimpleName();
+    }
+
+    /**
+     * Phase 22: returns the next chain shape, or null if the chain is
+     * exhausted. Prefers the schema chain on PlanContext; falls back to
+     * the per-recipe {@link #fallbackShape()} only when no chain is set.
+     */
+    protected ShapeType nextChainShape(PlanContext pctx) {
+        java.util.List<ShapeType> chain = pctx.cascadeChain();
+        if (chain != null && !chain.isEmpty()) {
+            int next = pctx.cascadeChainPosition() + 1;
+            return next < chain.size() ? chain.get(next) : null;
+        }
+        // Legacy per-recipe fallback (Phase 16b path). Only fires once;
+        // a second FALLBACK has nothing to advance to.
+        if (pctx.cascadeChainPosition() == 0) {
+            return fallbackShape();
+        }
+        return null;
     }
 
     // =========================================================================

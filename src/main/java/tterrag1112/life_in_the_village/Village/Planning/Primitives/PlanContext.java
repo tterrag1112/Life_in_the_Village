@@ -873,6 +873,59 @@ public final class PlanContext {
      *  cumulative truncation count over the whole compose tree). */
     public void resetCascadeRetryCount() { cascadeRetryCount = 0; }
 
+    // ── Phase 22 cascade chain ────────────────────────────────────────────────
+    // Set once at the start of VillagePlanner.plan() from
+    // VillageTypeData.getFallbackChain(). Layout: [primary, ...fallbacks].
+    // cascadeChainPosition is the index of the CURRENT shape; FALLBACK
+    // advances to position+1.
+    private java.util.List<tterrag1112.life_in_the_village.Village
+            .VillageTypeData.ShapeType> cascadeChain = java.util.List.of();
+    private int cascadeChainPosition = 0;
+
+    public java.util.List<tterrag1112.life_in_the_village.Village
+            .VillageTypeData.ShapeType> cascadeChain() { return cascadeChain; }
+    public int cascadeChainPosition() { return cascadeChainPosition; }
+    public void setCascadeChain(
+            java.util.List<tterrag1112.life_in_the_village.Village
+                    .VillageTypeData.ShapeType> chain) {
+        this.cascadeChain = chain != null
+                ? java.util.List.copyOf(chain) : java.util.List.of();
+    }
+    public void setCascadeChainPosition(int pos) {
+        this.cascadeChainPosition = pos;
+    }
+    /** Advances cascadeChainPosition by one. Caller is responsible for
+     *  bounds-checking via {@link #cascadeChain()} {@code .size()}. */
+    public void advanceCascadeChain() { cascadeChainPosition++; }
+
+    /**
+     * Phase 22: clears mutable composition state for a chain advance.
+     * Preserves immutable analysis (terrain, density, features), the
+     * variant context, the rng (so seed stability holds across the
+     * whole plan), and the cascade chain itself (advancing, not
+     * resetting). Pairs with {@code VillageLayout.resetForFallback()};
+     * runWithCascade and VillagePlanner call both.
+     */
+    public void resetForFallback() {
+        offeredSlots.clear();
+        offeredSectors.clear();
+        committedSectorIds.clear();
+        rejectionLog.clear();
+        plazaRegions.clear();
+        cascadeAxisRotation = 0.0;
+        cascadeRetryCount   = 0;
+        truncationCount     = 0;
+        primarySpineResult  = null;
+        outerRingEdgeId     = -1;
+        outerRingCenterline = java.util.List.of();
+        outerRingRadius     = 0;
+        villageCenter       = null;
+        // Don't reset: typeData, styleSelection, sizeTier, ageCategory,
+        // variantSelector (variant context — village-wide), rng (seed
+        // continuity), cascadeChain / cascadeChainPosition (advancing,
+        // not resetting).
+    }
+
     // ── Summary tracking (Phase 16b) ──────────────────────────────────────────
     // Cascade-aware recipes record their primary spine RoadResult here so
     // VillagePlanner can print spineRatio in the per-village summary.

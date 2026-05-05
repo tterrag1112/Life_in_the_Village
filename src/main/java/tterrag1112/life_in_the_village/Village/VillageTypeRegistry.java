@@ -135,6 +135,29 @@ public class VillageTypeRegistry
                         shapeProfile, farmPlotConfig, strategy, townSquareCapacity,
                         manualTags);
                 typeData.setShapeRules(shapeRules);
+
+                // Phase 22: optional fallback_chain. JSON: an array of
+                // ShapeType names. Empty / missing means no schema-declared
+                // chain; cascade engine falls back to the per-recipe
+                // fallbackShape() (Phase 16b path). The chain does NOT
+                // include the primary shape — it's the list of shapes
+                // tried after primary fails.
+                if (json.has("fallback_chain")) {
+                    java.util.List<VillageTypeData.ShapeType> chain =
+                            new java.util.ArrayList<>();
+                    for (var el : json.getAsJsonArray("fallback_chain")) {
+                        if (!el.isJsonPrimitive()) continue;
+                        try {
+                            chain.add(VillageTypeData.ShapeType
+                                    .valueOf(el.getAsString()));
+                        } catch (IllegalArgumentException ex) {
+                            LOGGER.warn("Unknown ShapeType '{}' in fallback_chain "
+                                    + "for {} — skipping",
+                                    el.getAsString(), location);
+                        }
+                    }
+                    typeData.setFallbackChain(chain);
+                }
                 if (json.has("style")) {
                     typeData.setStyle(json.get("style").getAsString());
                 }
