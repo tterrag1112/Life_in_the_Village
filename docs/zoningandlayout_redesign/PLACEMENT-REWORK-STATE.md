@@ -11,6 +11,17 @@ If anything in here conflicts with later decisions, the later
 decisions win — but this document should be updated rather than left
 to drift.
 
+**Critical: source-of-truth note.** Claude.ai's `project_knowledge_search`
+tool returns code that is **stale** relative to the live filesystem
+that Claude Code edits. The project knowledge was uploaded once, at
+some earlier point, and has not been refreshed as Claude Code has
+landed changes. As of this revision, project knowledge does not
+reflect the doc-04 polygon migration, the microfix batch, Phase 16b,
+or Phase 17. **Claude Code's grep / view of the actual files is
+authoritative.** When this document and project knowledge disagree
+about what code looks like, this document is closer to truth, but
+both can be wrong. Verify by asking Claude Code to read the file.
+
 ---
 
 ## 1. Scope of the rework
@@ -63,6 +74,14 @@ files. The 23 phases were:
 | 21 | VillageTypeData kingdom-rework schema additions | landed |
 | 22 | Recipe fallback chains | landed |
 | 23 | 90% success measurement + persistent-failure polish | **harness landed (23.1); measurement + polish pending (23.2)** |
+| 16b | Truncation reaction + general re-emit pattern | **landed** |
+| 17 | Farm plot sector integration | **landed** |
+| 18 | Plaza polygon ownership consolidation (Path B framing) | pending — see Section 4 |
+| 19 | LayoutPlan + AnchorKind + spawner/decorator wiring | pending |
+| 20 | BuildSiteFinder migration to graph + feature queries | pending |
+| 21 | VillageTypeData kingdom-rework schema additions | pending |
+| 22 | Recipe fallback chains | pending |
+| 23 | 90% success measurement + persistent-failure polish | pending |
 
 **Note on Phases 12, 13, 14.** These bundled recipe conversions with
 *new road primitives* (Bridge, Stairway, Causeway). The conversions
@@ -72,29 +91,49 @@ decoupled from any recipe converting to use them. Causeway is
 optional and may be skipped entirely if Bridge + Stairway prove
 sufficient.
 
-## 3. Truncation reaction (Phase 16 follow-up)
+**Note on doc-04 polygon migration.** Outside the formal phase
+sequence, a separate effort ("Phase 18 doc 04") landed and absorbed
+part of the original Phase 18 scope. It deleted `LayoutPrimitive.TownSquare`
+entirely and replaced it with a polygon-based plaza model
+(`PlazaRegion` + `PlazaGenerator` + `PlazaPaver` +
+`RecipeHelpers.installPlaza`). The civic ring road was also deleted
+(the prompt-15 audit confirmed no NPC / trade / pathing dependency).
+The remaining Phase 18 work is now polygon-aware consolidation, not
+TownSquare collapse — see Section 4.
 
-Phase 16 landed the plumbing: `RoadPrimitive.computeCenterline` now
-returns a result with `isComplete()` and a `TruncationReason` (one of
-`CLIFF_RISE`, `CLIFF_DROP`, `WATER_CROSSING`). Truncation logs fire
-correctly. Nothing consumes the result yet.
+## 3. Truncation reaction (Phase 16 follow-up) — LANDED
 
-The follow-up phase — call it **Phase 16b** — wires consumption:
+Phase 16 landed the plumbing: `RoadPrimitive.computeCenterline` returns
+a `RoadResult` with `isComplete()` and a `TerminationReason` (one of
+`CLIFF_RISE`, `CLIFF_DROP`, `WATER_CROSSING`, plus `COMPLETE`).
 
-- Recipes capture the truncation result per primitive call.
-- Slot emission clamps to the actual reachable road, not the
-  geometric intent.
-- A severe-truncation cascade pivots the recipe (rotate axis, fall
-  back to a simpler shape, or abort the site cleanly) when the
-  primary spine is below a viability threshold.
+Phase 16b landed the consumer side:
 
-This phase also frames the cascade as the **first instance of a
-general constraint-propagation pattern**, not as truncation-specific
-logic. The enum is `RecipeStatus` (not `SpineViability`); the
-re-emit method on `BaseRecipe` is `reEmit(reason)` and accepts any
-constraint violation, not only truncation. Future cases (slot loss
-beyond threshold, footprint conflict, sector starvation) plug into
-the same engine. Phase 22 generalizes it.
+- Recipes capture `RoadResult` per primitive call.
+- Slot emission clamps to the actual reachable road via
+  `clampToRoadReach` post-emission helper.
+- A severe-truncation cascade pivots the recipe (rotate axis once,
+  then fall back, then abort) when the primary spine is below a
+  viability threshold.
+- The cascade is implemented as a general re-emit engine
+  (`BaseRecipe.reEmit(reason)`) that future constraint violations
+  plug into.
+
+Renames that landed (per Section 8):
+- `SpineViability` → `RecipeStatus`
+- `checkSpineViability` → `checkPrimarySpine`
+- `spineTruncationCount` → `truncationCount`
+- `spinePivotCount` → `cascadeRetryCount`
+
+Per-village summary line is printed in `VillagePlanner` after the
+matcher returns:
+`shape=X status=Y spineRatio=R spineLen=A/B truncations=N retries=M finalShape=F validated=A/B`
+
+The framing as the **first specific case of a general re-emit
+engine** is preserved in code. `ReEmitReason` is a sealed interface
+permitting `SevereTruncation`, `SlotsDropped`, `SectorStarved`. Only
+`SevereTruncation` is consumed today; the other two are scaffolding
+for Phase 22 and the post-rework architectural-shift experiment.
 
 This framing is non-negotiable. It is what makes Phase 22 cheap and
 what positions the codebase for the architectural choice in Section
@@ -102,53 +141,65 @@ what positions the codebase for the architectural choice in Section
 
 ## 4. Pending work, in execution order
 
-This is the corrected, complete list. The original plan undercounted
-because it lumped recipe conversions and primitives together and
-because constraint-propagation emerged as an extra item.
+The original list undercounted because it lumped recipe conversions
+and primitives together and because constraint-propagation emerged
+as an extra item. The current ordered list is:
 
-1. **Phase 16b — truncation reaction + general re-emit pattern.**
-   RADIAL gets full slot clamping. LINEAR gets a minimal-viable
-   conversion (just enough to run a non-radial test). The cascade
-   is implemented as a general re-emit engine.
+1. **Phase 18 — Plaza polygon ownership consolidation (Path B
+   framing).** TownSquare and the civic ring road were deleted in
+   the doc-04 migration; the polygon model (PlazaRegion +
+   PlazaGenerator + PlazaPaver + installPlaza) replaced them.
+   Phase 18's remaining scope is polygon-aware consolidation:
+   introduce a `Plaza` record/class that wraps PlazaRegion plus the
+   legacy `townSquarePos` / `townSquareRadius` / `civicRingRadius`
+   fields; add `getPlaza()` (singular) plus `getPlazas()` (plural);
+   move civic slot emission off the flat pool by having
+   `PlazaGenerator.emitPlazaCivicSlots` return slots directly to
+   `installPlaza` for registration on the Plaza; add a civic-first
+   claim path in PlacementMatcher that reads `Plaza.civicSlots()`
+   first, falls back to flat pool. Plan dump gains a `--- PLAZA ---`
+   section showing polygon centre, area, vertices, civic slot
+   count. Out of scope: don't recreate TownSquare, don't recreate
+   the ring road, don't change PlazaGenerator's polygon math, don't
+   touch HAMLET vs VILLAGE+ branching in installPlaza.
 
-2. **Phase 17 — Farm plot sector integration.** Farm plots currently
-   live outside the sector framework, handled by `FarmPlotPlacer`.
-   Move them inside.
-
-3. **Phase 18 — Plaza polygon ownership consolidation.** TownSquare
-   slot emission moves out of the flat pool. Removes the
-   `drainSlotsSince` awkwardness. Cleans up the
-   `sector=unknown` attribution in plan dumps.
-
-4. **Phase 19 — LayoutPlan + AnchorKind + spawner/decorator wiring.**
+2. **Phase 19 — LayoutPlan + AnchorKind + spawner/decorator wiring.**
    The immutable plan-as-contract handoff. Spawner and decorator
    currently consume the mutable `VillageLayout`. This is the
    load-bearing phase that makes constraint-propagation natural and
    makes any future architectural shift possible. Do not skip.
 
-5. **Phase 20 — BuildSiteFinder migration.** Expansion currently uses
+3. **Phase 20 — BuildSiteFinder migration.** Expansion currently uses
    spiral search on raw block positions. Move it onto the new graph
    and feature-map APIs so expansion participates in the same system
    as initial planning.
 
-6. **Phase 22 — Recipe fallback chains.** Schema-level. Village types
-   declare their fallback chain (e.g. `RADIAL → LINEAR → ABORT`).
-   The cascade in Phase 16b consumes this. Generalize the re-emit
-   engine here.
+4. **Phase 22 — Recipe fallback chains.** Schema-level. Village types
+   declare their fallback chain. The cascade in Phase 16b consumes
+   this. Generalize the re-emit engine here.
 
-7. **Phase 21 — Kingdom-rework schema additions.** Schema-only;
+5. **Phase 21 — Kingdom-rework schema additions.** Schema-only;
    small. Can land anytime after Phase 19.
 
-8. **Microfix batch.** Three deferred matcher/layout polish items
-   (see Section 6).
+6. **LINEAR recipe authoring rework.** Post-rework backlog item, not
+   in the rework's exit criteria. The microfix batch's Fix 2
+   tightened LINEAR's slot footprint budget correctly, which exposed
+   that LINEAR's recipe authoring is fundamentally broken: civic
+   slots overlap the spine reservation, footprint sizes mismatch
+   buildings in two dimensions, and `linear_civic` cap=3 caps
+   capacity below TOWN_HALL+INN+GUILD_HALL+MARKET requirements.
+   LINEAR places 1/27 buildings on superflat. Result: **the
+   Phase 16b cascade fallback chain is now RADIAL → ABORT**, not
+   RADIAL → LINEAR → ABORT. Reverting requires fixing LINEAR
+   authoring first.
 
-9. **Bridge / Stairway / (optional) Causeway primitives.** Decoupled
+7. **Bridge / Stairway / (optional) Causeway primitives.** Decoupled
    from recipe conversion. The primitives ship; recipe authoring
    uses them later.
 
-10. **Phase 23 — 90% success measurement + polish.** The rework's
-    exit criterion. Spawn many villages on varied terrain, measure
-    the success rate, fix the patterns that surface.
+8. **Phase 23 — 90% success measurement + polish.** The rework's
+   exit criterion. Spawn many villages on varied terrain, measure
+   the success rate, fix the patterns that surface.
 
 After Phase 23, the rework is done. The architectural-shift
 experiment in Section 5 happens *after* this point, on the finished
@@ -262,36 +313,53 @@ Doing the experiment before this work lands would be premature —
 the infrastructure that makes both paths viable doesn't exist yet,
 so the comparison would be unfair.
 
-## 6. Deferred microfixes
+## 6. Microfix batch — LANDED
 
-These are small bugs surfaced during the rework but not blocking it.
-Batch them in a single prompt after Phase 16b lands.
+The original microfix batch had three deferred items
+(GUARD_TOWER `useShared`, WEAVER perturbation-clamp, FARMHOUSE
+FIELD_EDGE diagnostic). Of these, the first two were superseded by
+diagnostic work that surfaced different root causes. The actual
+batch that landed:
 
-- **GUARD_TOWER RingBand `useShared` bug.** When `useShared=true`,
-  RingBand should override its own inner/outer radii with
-  `sharedRingR ± footprintOffset`. Currently the diagnostic prints
-  `useShared=true` but the slot math ignores the shared ring and
-  uses the band's nominal inner/outer instead. AGRI happens to work
-  because its footprint is large enough to absorb the gap; DEFENSE
-  fails because GUARD_TOWER's 9×9 footprint can't.
+- **Fix 1 — GUARD_TOWER 15 blocks off OUTER_RING.** Original
+  diagnosis (RingBand `useShared` slot math) was wrong; Claude Code
+  identified the actual fix. `DEFENSIVE.SAFE_OFFSET` lowered from
+  16 to 12. GUARD_TOWER now lands at `chebDist=12` from the
+  OUTER_RING centerline, validator passes.
 
-- **WEAVER perturbation-clamp.** The matcher uses slot `fpW=16
-  fpL=16` budget when perturbing a building, but WEAVER is 9×9.
-  This lets the matcher push WEAVER 5+ blocks off the road; the
-  validator's `max=13` for a 9×9 then fails. Clamp matcher
-  perturbation to `min(slotFootprint, buildingActualFootprint +
-  slack)`.
+- **Fix 2 — LINEAR slot footprint budget.** Tightened slot footprint
+  budget so the matcher correctly rejects oversized candidates.
+  Result: LINEAR now places 1/27 buildings on superflat, because
+  LINEAR's recipe authoring is fundamentally broken (slots overlap
+  spine reservation, sector caps mismatch building counts). This is
+  *expected fallout* of the fix — the matcher is now being honest
+  about the recipe's brokenness instead of corrupting placements to
+  hide it. LINEAR rework is post-rework backlog. **Cascade fallback
+  chain is now RADIAL → ABORT** (no LINEAR step).
 
-- **FARMHOUSE FIELD_EDGE intermittent reject diagnostic.** Three
-  candidates are offered; all reject. Surface the reject reason in
-  the dump so the cause becomes diagnosable. Fix follows once the
-  cause is known.
+- **Fix 3 — `sector=unknown` HOUSE attribution.** Spine and arc
+  emissions in `RadialRecipe` are now wrapped in sectors
+  (`radial_main_road`, `radial_arc_0`, `radial_arc_1`). All HOUSEs
+  now report real sectors in plan dumps.
 
-- **`sector=unknown` attribution for HOUSE.** Houses commit through
-  the legacy flat-slot path and don't carry sector tags into the
-  plan dump. Cosmetic but useful for debugging future authoring
-  work. Likely resolves itself when Phase 18 (plaza polygon
-  ownership) lands; if not, surface and fix.
+Items not addressed in the batch (deferred):
+
+- **WEAVER perturbation-clamp.** Original concern was that matcher
+  perturbation pushed WEAVER past validator slack on a 9×9
+  footprint. Not yet observed in current testing; if it surfaces,
+  fix is `min(slotFootprint, buildingActualFootprint + slack)` in
+  matcher perturbation logic.
+
+- **FARMHOUSE FIELD_EDGE intermittent reject diagnostic.** Original
+  concern was that three candidates were offered and all rejected
+  without surfacing a reason. Not yet observed in current testing.
+
+New microfix candidate (P3 polish, post-Phase 18):
+
+- **`validated=N/M` summary line displays wrong M.** Per-village
+  summary line shows `validated=27/15` instead of `27/27` on a
+  successful RADIAL run. Likely a display-only bug in the summary
+  formatter, not a regression. Not blocking.
 
 ## 7. Out-of-scope items
 
@@ -310,7 +378,8 @@ Explicitly out of scope:
   (economy rework).
 - Worldgen-time atlas rebuilds (atlas rework).
 - Recipe authoring as creative work — the visual / aesthetic design
-  of layouts. Post-rework.
+  of layouts. Post-rework. (LINEAR's rework is one specific instance
+  in this bucket.)
 - The Path 1 vs Path 2 architectural decision. Post-rework.
 - Decoration content (NBT bridges, festival decor, town square
   rework, parks/gardens). Decoration rework.
@@ -323,18 +392,57 @@ specifics; explicit naming protects the design.
 
 - **`RecipeStatus`** is the enum returned from constraint checks
   (formerly proposed as `SpineViability`). Generalizes beyond
-  truncation.
+  truncation. Values: `OK`, `RETRY`, `FALLBACK`, `ABORT`. Landed.
 - **`BaseRecipe.reEmit(reason)`** is the general re-emit method
   recipes override. Truncation cascade is one specific call site.
+  Landed.
+- **`ReEmitReason`** is a sealed interface permitting
+  `SevereTruncation`, `SlotsDropped`, `SectorStarved`. Only the
+  first is consumed today. Landed.
 - **`RoadResult`** is the per-primitive record carrying centerline,
-  `isComplete()`, `TruncationReason`, intended length, actual
+  `isComplete()`, `TerminationReason`, intended length, actual
   length. Recipes capture and pass these into slot emission.
+  Landed. Note: the enum is `TerminationReason` (a road can
+  terminate complete, too), not `TruncationReason` as originally
+  proposed.
 - **`LayoutPlan`** is the immutable plan record produced at end of
   planning, consumed by spawner and decorator. Replaces the
   mutable `VillageLayout` as the contract. Phase 19 introduces it.
+  Pending.
 - **`AnchorKind`** is the enum of named anchor positions (e.g.
   `TOWN_SQUARE`, `MAIN_GATE`, `RIVER_LANDING`) that map to graph
-  node IDs on the LayoutPlan.
+  node IDs on the LayoutPlan. Pending (Phase 19).
+- **`Plaza`** is the planned record/class (Phase 18, Path B
+  framing) that wraps `PlazaRegion` plus the legacy
+  `townSquarePos` / `townSquareRadius` / `civicRingRadius`
+  fields. Replaces the deleted TownSquare-as-state-owner pattern.
+  Pending.
+
+PlanContext fields added by Phase 16b:
+- `cascadeRetryCount` (int)
+- `cascadeAxisRotation` (double, radians, accumulated)
+- `truncationCount` (int)
+
+VillageLayout fields added by Phase 16b:
+- `unplannable` (boolean)
+- `unplannableReason` (String)
+
+VillageLayout state from doc-04 migration (post-deletion):
+- `townSquarePos` (BlockPos) — kept as legacy field, written by
+  installPlaza on the HAMLET path and PlazaGenerator.generate on
+  the VILLAGE+ path
+- `townSquareRadius` (int) — same
+- `civicRingRadius` (int) — same
+- `getPlazaRegions()` (List<PlazaRegion>, plural) — current accessor
+  for the polygon plaza model
+- `addPlazaRegion(PlazaRegion)` — current registrar
+- `plotSlots` (Phase 17: list of farm plot PlacementSlots)
+
+Phase 18 adds:
+- `getPlaza()` (singular convenience accessor returning the first
+  region, or null for plaza-less recipes like ENCLAVE)
+- `setPlaza(Plaza)` / `getPlaza().civicSlots()` for the matcher's
+  civic-first claim path
 
 ## 9. The rework's exit criterion
 
@@ -356,6 +464,32 @@ Phase 23 declares the rework complete when:
 After the exit criterion is met, the architectural-shift experiment
 in Section 5 begins.
 
+## 10. Reference baseline
+
+The canonical baseline for byte-equality validation in subsequent
+phases is the most recent successful RADIAL run on superflat:
+- centre = (-1881, -60, 237)
+- 27/27 placed, 27/27 validated
+- status=OK, truncations=0, retries=0
+- `--- PLOT SLOTS ---` section present (Phase 17)
+- All HOUSE buildings attributed to real sectors (Fix 3)
+- GUARD_TOWER lands at chebDist=12 from OUTER_RING (Fix 1)
+
+The current `dumpPlan` output format (VillagePlanner.java line ~553)
+includes the following sections:
+- `--- ROADS ---`
+- `--- SECTORS ---`
+- `--- SLOTS BY SECTOR ---`
+- `--- COMMITTED BUILDINGS ---`
+- `--- PLOT SLOTS ---` (Phase 17)
+- `--- VALIDATION SUMMARY ---`
+- per-village summary line
+
+It does **not** include a `ringRoadR` field anywhere (the civic ring
+road was deleted in doc-04). It does not yet include a `--- PLAZA ---`
+section (Phase 18 adds that).
+
+## 11. What this document is not
 ### 9.1. Measurement results
 
 Phase 23.1 landed the harness (`/litv measure`) and
