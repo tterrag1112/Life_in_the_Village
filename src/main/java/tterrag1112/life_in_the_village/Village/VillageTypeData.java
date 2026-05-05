@@ -232,6 +232,48 @@ public class VillageTypeData {
         this.fallbackChain = chain != null ? List.copyOf(chain) : List.of();
     }
 
+    // ── Phase 21 kingdom-rework schema additions ───────────────────────────
+    // Declared here so the kingdom rework can read these without needing to
+    // extend the schema. Phase 21 wires nothing — VillagePlanner / spawner /
+    // matcher are all unaware of these fields. Defaults match the prompt
+    // section "Field design" so older datapacks keep loading unchanged.
+    //
+    // Note: `culture` is NOT here — it already exists at line 111 as a
+    // constructor-set final field with a parser default of "default".
+    private SettlementTier settlementTier = SettlementTier.HAMLET;
+    private Set<String> biomeAffinity = Set.of();
+    private Set<String> kingdomRoles = Set.of();
+    private int tradePriority = 1;
+    private boolean canBeCapital = false;
+    private int maxPerKingdom = -1;
+
+    public SettlementTier getSettlementTier() { return settlementTier; }
+    public void setSettlementTier(SettlementTier tier) {
+        this.settlementTier = tier != null ? tier : SettlementTier.HAMLET;
+    }
+
+    public Set<String> getBiomeAffinity() { return biomeAffinity; }
+    public void setBiomeAffinity(Set<String> affinity) {
+        this.biomeAffinity = affinity != null
+                ? Set.copyOf(affinity) : Set.of();
+    }
+
+    public Set<String> getKingdomRoles() { return kingdomRoles; }
+    public void setKingdomRoles(Set<String> roles) {
+        this.kingdomRoles = roles != null ? Set.copyOf(roles) : Set.of();
+    }
+
+    public int getTradePriority() { return tradePriority; }
+    public void setTradePriority(int priority) {
+        this.tradePriority = priority;
+    }
+
+    public boolean canBeCapital() { return canBeCapital; }
+    public void setCanBeCapital(boolean can) { this.canBeCapital = can; }
+
+    public int getMaxPerKingdom() { return maxPerKingdom; }
+    public void setMaxPerKingdom(int max) { this.maxPerKingdom = max; }
+
     /** Raw style declaration: {@code "rural"}, {@code "urban"}, or
      *  {@code "auto"}. Default is {@code "auto"}. */
     public String getStyle() { return style; }

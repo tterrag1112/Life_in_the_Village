@@ -1,6 +1,10 @@
 {
   "type": "riverside_town",
+  "biome_affinity": [
+    "river"
+  ],
   "culture": "default",
+  "settlement_tier": "VILLAGE",
   "shape_profile": {
     "forced_axis": true,
     "max_rings": 2,

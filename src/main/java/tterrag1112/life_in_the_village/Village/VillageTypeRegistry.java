@@ -158,6 +158,12 @@ public class VillageTypeRegistry
                     }
                     typeData.setFallbackChain(chain);
                 }
+                // ── Phase 21 kingdom-rework schema ─────────────────────
+                // Schema-only — no consumer wired in this phase. Bad
+                // values throw VillageTypeParseException and the
+                // top-level catch below drops the type and logs.
+                parseKingdomReworkSchema(json, typeData, type);
+
                 if (json.has("style")) {
                     typeData.setStyle(json.get("style").getAsString());
                 }
@@ -216,5 +222,109 @@ public class VillageTypeRegistry
     public void loadFromServer(ResourceManager manager) {
         Map<String, VillageTypeData> loaded = prepare(manager, null);
         apply(loaded, manager, null);
+    }
+
+    // ─── Phase 21: kingdom-rework schema parsing ──────────────────────────
+    // Schema-only. Parsed values are stored on VillageTypeData; no
+    // consumer is wired in this phase. Bad values throw
+    // VillageTypeParseException, which the top-level catch in prepare()
+    // turns into a logged error and a dropped village type.
+
+    private static void parseKingdomReworkSchema(JsonObject json,
+                                                 VillageTypeData typeData,
+                                                 String name) {
+        // settlement_tier — case-insensitive enum name; throws on bad.
+        if (json.has("settlement_tier")) {
+            String tierStr = json.get("settlement_tier").getAsString();
+            SettlementTier tier = SettlementTier.fromName(tierStr);
+            if (tier == null) {
+                throw new VillageTypeParseException(
+                        "Village type '" + name + "' has invalid "
+                        + "settlement_tier='" + tierStr + "'. Valid: "
+                        + java.util.Arrays.toString(SettlementTier.values()));
+            }
+            typeData.setSettlementTier(tier);
+        }
+
+        // biome_affinity — string array, defaults to empty.
+        if (json.has("biome_affinity")) {
+            typeData.setBiomeAffinity(parseStringSet(
+                    json.getAsJsonArray("biome_affinity"),
+                    name, "biome_affinity"));
+        }
+
+        // kingdom_roles — string array, defaults to empty.
+        if (json.has("kingdom_roles")) {
+            typeData.setKingdomRoles(parseStringSet(
+                    json.getAsJsonArray("kingdom_roles"),
+                    name, "kingdom_roles"));
+        }
+
+        // trade_priority — int 0..4, defaults to 1.
+        if (json.has("trade_priority")) {
+            typeData.setTradePriority(
+                    json.get("trade_priority").getAsInt());
+        }
+
+        // can_be_capital — boolean, defaults to false.
+        if (json.has("can_be_capital")) {
+            typeData.setCanBeCapital(
+                    json.get("can_be_capital").getAsBoolean());
+        }
+
+        // max_per_kingdom — int -1 or positive, defaults to -1.
+        if (json.has("max_per_kingdom")) {
+            typeData.setMaxPerKingdom(
+                    json.get("max_per_kingdom").getAsInt());
+        }
+
+        validateKingdomFields(typeData, name);
+    }
+
+    private static java.util.Set<String> parseStringSet(
+            com.google.gson.JsonArray array,
+            String typeName, String fieldName) {
+        java.util.Set<String> result = new java.util.HashSet<>();
+        for (var el : array) {
+            if (!el.isJsonPrimitive()) {
+                throw new VillageTypeParseException(
+                        "Village type '" + typeName + "' field '"
+                        + fieldName + "' contains a non-string entry: "
+                        + el);
+            }
+            String s = el.getAsString();
+            if (s.isEmpty()) {
+                throw new VillageTypeParseException(
+                        "Village type '" + typeName + "' field '"
+                        + fieldName + "' contains an empty string.");
+            }
+            result.add(s);
+        }
+        return result;
+    }
+
+    private static void validateKingdomFields(VillageTypeData data,
+                                              String name) {
+        if (data.canBeCapital()
+                && data.getSettlementTier().ordinal()
+                        < SettlementTier.TOWN.ordinal()) {
+            throw new VillageTypeParseException(
+                    "Village type '" + name + "' has can_be_capital=true "
+                    + "but settlement_tier=" + data.getSettlementTier()
+                    + ". Capitals must be TOWN or larger.");
+        }
+        if (data.getTradePriority() < 0 || data.getTradePriority() > 4) {
+            throw new VillageTypeParseException(
+                    "Village type '" + name + "' has trade_priority="
+                    + data.getTradePriority() + ". Must be 0-4.");
+        }
+        if (data.getMaxPerKingdom() == 0
+                || data.getMaxPerKingdom() < -1) {
+            throw new VillageTypeParseException(
+                    "Village type '" + name + "' has max_per_kingdom="
+                    + data.getMaxPerKingdom()
+                    + ". Must be -1 (unbounded) or positive.");
+        }
+        // Empty-string checks already happen in parseStringSet.
     }
 }

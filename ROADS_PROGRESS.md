@@ -4429,5 +4429,140 @@ Notes:
   their failure modes are observed in spawn data (Phase 23
   measurement will surface candidates).
 
+---
+
+## Phase 21 — Kingdom-rework schema additions
+
+Schema-only landing. Adds the per-village-type metadata fields the
+future kingdom rework will consume (settlement tier, biome
+affinity, kingdom roles, trade priority, capital eligibility,
+max-per-kingdom). Phase 21 wires NOTHING into placement,
+expansion, spawning, or matcher — the fields sit on
+VillageTypeData waiting for a consumer.
+
+#### What changed
+
+New files:
+- `Village/SettlementTier.java` — top-level enum
+  `OUTPOST < HAMLET < VILLAGE < TOWN < CITY < CAPITAL`. Order is
+  meaningful for ordinal comparisons. Top-level (alongside
+  `VillageTag`) rather than nested in `VillageTypeData`, since
+  the kingdom rework will import it widely.
+- `Village/VillageTypeParseException.java` — `extends
+  RuntimeException`. Greppable named exception type for kingdom-
+  rework field validation failures. The registry's existing
+  top-level `catch (Exception e)` drops the bad type and logs
+  via `LOGGER.error(...)` — that's already the "fail loudly"
+  outcome since the type doesn't get registered.
+
+`VillageTypeData.java`:
+- Added six fields with the same private-field-getter-setter
+  pattern Phase 22 used for `fallbackChain`:
+  `settlementTier` (default HAMLET), `biomeAffinity` (default
+  empty Set), `kingdomRoles` (default empty Set), `tradePriority`
+  (default 1), `canBeCapital` (default false), `maxPerKingdom`
+  (default -1).
+- `culture` is NOT new — it already existed at line 111 as a
+  constructor-set final field with parser default `"default"`.
+  The Phase 21 prompt anticipated this overlap; ruling was to
+  prefer the existing field. Comment at the new fields block
+  records the skip.
+
+`VillageTypeRegistry.java`:
+- Added `parseKingdomReworkSchema(json, typeData, name)`
+  invoked between the Phase 22 `fallback_chain` block and the
+  existing `style` block. JSON keys: `settlement_tier`,
+  `biome_affinity`, `kingdom_roles`, `trade_priority`,
+  `can_be_capital`, `max_per_kingdom`. Each is optional —
+  missing keys keep the VillageTypeData default.
+- Helper `parseStringSet(arr, typeName, fieldName)` validates
+  array entries are non-empty primitives; throws
+  VillageTypeParseException on bad entries.
+- Helper `validateKingdomFields(data, name)` runs after parsing:
+  - `canBeCapital=true` → tier >= TOWN, else throw.
+  - `tradePriority` ∈ [0, 4], else throw.
+  - `maxPerKingdom` is -1 or positive (zero is rejected), else
+    throw.
+- Mixed validation style: Phase 22's `fallback_chain` parser
+  warns-and-skips on unknown ShapeType; Phase 21's parser throws.
+  Different fields can have different strictness based on
+  consequence-of-bad-value. Empty-string membership checks
+  happen inside `parseStringSet`.
+
+`VillageTypeBuilder.java`:
+- Added `.settlementTier(SettlementTier)`, `.canBeCapital(boolean)`,
+  `.tradePriority(int)`, `.maxPerKingdom(int)`,
+  `.biomeAffinity(String...)`, `.kingdomRoles(String...)` builder
+  methods. Same package as `SettlementTier`, no extra import.
+
+`Datagen/VillageTypeDatagen.java`:
+- Added an `import` for `Village.SettlementTier`.
+- Wired explicit values onto the entries where they meaningfully
+  diverge from defaults:
+  - **CITY**: `trade_city` — capital-eligible, trade_hub,
+    tradePriority=3, maxPerKingdom=1.
+  - **TOWN + can_be_capital**: `crossroads_town` (trade_hub,
+    tp=3), `border_keep` (frontier+military, forest affinity),
+    `mountain_keep` (military, mountain affinity), `twin_village`.
+  - **VILLAGE**: `default_village`, `sacred_grove` (religious_
+    center, forest, maxPerKingdom=1), `riverside_town` (river
+    affinity), `pier_village` (trade_hub, tp=3, coast affinity).
+  - **OUTPOST**: `frontier_outpost` (frontier, forest),
+    `cliff_hamlet` (mountain), `mining_camp` (industrial,
+    mountain), `sparse_holding`.
+  - **HAMLET (default)**: `farming_hamlet`, `bend_hamlet`
+    (forest affinity only), `vineyard_terrace` (mountain
+    affinity only) — kept defaulted per prompt's "other types
+    → leave defaulted" guidance.
+- Cultural taxonomy is left as `"default"` everywhere; the
+  kingdom rework will define meaningful culture strings when
+  it lands. The Phase 21 prompt's draft list ("set culture to
+  elven") was speculative and explicitly out of scope per the
+  user.
+
+`riverside_town.json` (generated artifact):
+- Hand-added `biome_affinity: ["river"]` and
+  `settlement_tier: "VILLAGE"` to match what `runData` would
+  produce. The next datagen run will rewrite this file fresh.
+
+#### Status
+
+- New schema fields parse and round-trip cleanly through
+  `VillageTypeData`.
+- All 16 datagen entries continue to compile against the new
+  builder methods.
+- Compile not run locally (sandbox blocks
+  maven.neoforged.net), spot-checked diffs.
+
+#### Validation (next steps for the user)
+
+1. Datapack reload: `runData`, then load all village type JSONs
+   in-game. Each loads cleanly with new fields parsed.
+2. Bad value: temporarily set `"settlement_tier": "MEGALOPOLIS"`
+   on a JSON file; reload. Confirm log shows
+   `VillageTypeParseException ... has invalid settlement_tier=
+   'MEGALOPOLIS'. Valid: [OUTPOST, HAMLET, VILLAGE, TOWN, CITY,
+   CAPITAL]` and the type is dropped.
+3. Bad capital combo: `"can_be_capital": true` with
+   `"settlement_tier": "HAMLET"`; reload. Confirm log shows
+   `VillageTypeParseException ... has can_be_capital=true but
+   settlement_tier=HAMLET. Capitals must be TOWN or larger.`
+4. Spawn a RADIAL village. Confirm placement is byte-identical
+   to the post-Phase-22 baseline — Phase 21 fields don't enter
+   the planner.
+5. `data.getCulture()` continues to return the existing field's
+   value (no shadowing).
+
+#### Phase 21 follow-ups
+
+- The kingdom rework consumes these fields. Phase 21 itself has
+  no direct follow-up beyond Phase 23 (exit criterion
+  measurement).
+- If `culture` ends up needing a typed registry (vs. free-form
+  String), that's a kingdom-rework decision; Phase 21 keeps the
+  existing free-form String. Likewise for `biomeAffinity` /
+  `kingdomRoles` ResourceLocation typing.
+
+
 
 

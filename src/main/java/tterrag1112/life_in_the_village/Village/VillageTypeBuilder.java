@@ -128,6 +128,47 @@ public final class VillageTypeBuilder {
         return this;
     }
 
+    // ─── Phase 21: kingdom-rework schema (data-only) ───────────────────────
+    // These fields are declared on VillageTypeData and parsed by
+    // VillageTypeRegistry but are NOT consumed by the placement,
+    // expansion, spawning, or matcher systems. The kingdom rework reads
+    // them when it lands; setting them here just gives the kingdom
+    // rework realistic data to work against.
+
+    public VillageTypeBuilder settlementTier(SettlementTier tier) {
+        root.addProperty("settlement_tier", tier.name());
+        return this;
+    }
+
+    public VillageTypeBuilder canBeCapital(boolean can) {
+        root.addProperty("can_be_capital", can);
+        return this;
+    }
+
+    public VillageTypeBuilder tradePriority(int priority) {
+        root.addProperty("trade_priority", priority);
+        return this;
+    }
+
+    public VillageTypeBuilder maxPerKingdom(int max) {
+        root.addProperty("max_per_kingdom", max);
+        return this;
+    }
+
+    public VillageTypeBuilder biomeAffinity(String... tags) {
+        JsonArray arr = new JsonArray();
+        for (String t : tags) arr.add(t);
+        root.add("biome_affinity", arr);
+        return this;
+    }
+
+    public VillageTypeBuilder kingdomRoles(String... roles) {
+        JsonArray arr = new JsonArray();
+        for (String r : roles) arr.add(r);
+        root.add("kingdom_roles", arr);
+        return this;
+    }
+
     // ─── Building entries ──────────────────────────────────────────────────
 
     /** Single instance of a building type. min/max default to 1. */
