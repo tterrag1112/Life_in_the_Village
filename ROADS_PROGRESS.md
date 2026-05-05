@@ -4065,6 +4065,183 @@ expansion is consistent with initial planning across save/reload.
 4. Expansion not yet migrated — still uses spiral. Phase 20 prompt
    is now unblocked.
 
+---
+
+### 2026-05-04 — Phase 20: BuildSiteFinder migration to graph + feature queries
+
+**Phase:** 20 — expansion stops using spiral search and starts
+respecting the same road graph + FeatureMap that initial planning
+respects.
+
+#### What landed
+
+**`BuildSiteFinder.findSite` now branches on plan presence:**
+- `village.getPlan() != null` → graph-aware `findSiteOnGraph`
+- `village.getPlan() == null` (old saves predating Phase 20a, or
+  villages whose planning failed) → `legacyFindSite` (the prior
+  ring-aware + spiral search, kept as-is)
+- Public signature unchanged: `Optional<BlockPos> findSite(level,
+  village, data, type, w, l)`. `BuilderGoal` doesn't change.
+
+**`findSiteOnGraph` flow:**
+1. `pickFeedingRoad(plan, zone)` — picks a road edge by zone
+   preference: AGRICULTURAL/DEFENSIVE → OUTER_RING → RING → SPUR/
+   SPINE; PRODUCTION → SPUR → SPINE → RING; everything else → SPINE
+   → SPUR → RING. First-matching-role wins; the road graph's
+   creation order (centre-out) means this picks the most-central
+   road of the preferred role.
+2. `getOrRebuildFeatureMap(level, village, plan)` — rebuilds the
+   FeatureMap on demand per Phase 20a Option B. Caches the result
+   on `village.debugFeatureMap` so a session of repeated expansions
+   pays the build cost once.
+3. Generate candidate positions perpendicular to the chosen road's
+   centerline. `perpOffset = roadHalfWidth + max(halfW, halfL) + 1`
+   matches the recipe-side `RecipeHelpers` formula. Stride scales
+   with footprint so candidates don't crowd each other.
+4. Filter candidates: `FeatureMap.isClearForFootprint` (water /
+   cliff / outside hull), `BuildingFootprint.isClear` against the
+   village's existing buildings + plan road reservations,
+   `overlapsPlannedPlot` against `plan.plotSlots()`, and
+   `isSiteFlat` (existing helper, max 4-block delta-Y).
+5. Return the first viable candidate (Phase 20 Open Question 2
+   default — "first viable" rather than full matcher scoring;
+   lifting `PlacementMatcher.scoreSlot` to a public static helper
+   is deferred).
+
+If `findSiteOnGraph` returns empty (no road yielded a viable
+candidate — dense buildings, terrain gates, etc.), fall back to
+`legacyFindSite`. This isn't "graph broken" signal — it's a
+permissiveness fallback. Legacy spiral can find sites the graph
+walk skipped because spiral doesn't enforce feeding-road proximity.
+
+**Plan rebuild on expansion — NOT NEEDED (Phase 20 Open Question 4
+revisited).** The original prompt's Approach A
+(`LayoutPlanBuilder.build` re-runs after every expansion commit)
+turns out unnecessary because:
+- `plan.roads()` is fixed at planning time and doesn't change.
+- `plan.plotSlots()` is fixed (FarmPlotPlacer runs at initial
+  spawn only).
+- `plan.buildings()` is the only field that would change, but
+  `BuildSiteFinder`'s overlap check uses
+  `BuildingFootprint.fromVillage(village, data)` — which reads
+  `data.getAllBuildings()`, the runtime-truth list including
+  expansion-added buildings. So the plan's stale `buildings()` view
+  is irrelevant for overlap checks.
+
+Skipping the rebuild is the simpler, correct choice. The plan
+remains the initial-spawn structural snapshot; runtime building
+state lives in `VillageSavedData` and is read where needed.
+
+**`FarmPlotPlacer.placeFootpath` migration:**
+- New helper `findFootpathOnGraph(plotGate, farmhouseEntrance, plan)`
+  picks the road edge whose centerline minimises
+  `dist(plotGate → nearest) + dist(farmhouseEntrance → nearest)`
+  and slices that edge between the two nearest points. Diagonal
+  bits at endpoints connect plotGate → firstCenterlinePoint and
+  lastCenterlinePoint → farmhouseEntrance.
+- `RoadRouter.findRoad(level, plotGate, routeStart)` is used as
+  fallback when `village.getPlan() == null` (old saves).
+- The single-edge-slice approach is intentional simplicity per the
+  original prompt's "if more than ~50 lines, surface" constraint.
+  Full BFS over the edge graph would be the next layer of polish if
+  multi-edge plot footpaths surface as a real issue. The diagonal
+  fallback at endpoints handles the multi-edge case acceptably for
+  most layouts.
+
+#### Open question dispositions
+
+- **(1) FeatureMap A vs B**: resolved by Phase 20a (Option B —
+  rebuild on demand). `getOrRebuildFeatureMap` calls
+  `FeatureMap.buildPlanning(plan.centre(), level.getSeed(), level,
+  List.of())`. Result cached on `village.debugFeatureMap`.
+- **(2) `PlacementMatcher.scoreSlot` exposure**: deferred. Used
+  "first viable" strategy. `scoreSlot` is a private instance method
+  with multi-arg dependencies; lifting it cleanly is a small
+  refactor but not in scope. Phase 22+ polish.
+- **(3) Sector caps**: ignored in expansion (Option A default).
+- **(4) Plan rebuild on expansion**: NOT NEEDED — see above.
+- **(5) ENCLAVE plot footpaths**: not yet observed as a problem.
+  ENCLAVE has limited internal connectivity (courtyard +
+  hand-rolled DECORATION reserve, no spine), so its footpath would
+  pick whichever road edge the plot/farmhouse pair sits closest to.
+  If ENCLAVE has no plan or no roads in the plan, the
+  `RoadRouter.findRoad` fallback kicks in. Deferred until observed.
+
+#### Files modified
+
+- `Village/BuildSiteFinder.java` — full rewrite; `findSite` adds
+  graph-aware branching, `findSiteOnGraph` + helpers
+  (`pickFeedingRoad`, `overlapsPlannedPlot`,
+  `getOrRebuildFeatureMap`), `legacyFindSite` preserves prior
+  ring-aware + spiral logic.
+- `Village/Planning/FarmPlotPlacer.java` — `placeFootpath` reads
+  `village.getPlan()`; `findFootpathOnGraph` + `nearestIdxOn`
+  helpers; `RoadRouter.findRoad` retained as fallback path.
+
+#### Constraints honored
+
+- `BuildSiteFinder.findSite` public signature unchanged
+  (`Optional<BlockPos>`).
+- `BuilderGoal` callsite unchanged.
+- Expansion's trigger conditions and callers untouched.
+- No new SlotTags / BuildingTypes / RoadTiers.
+- `FeatureMap` data model unchanged.
+- `LayoutPlan` record unchanged (Phase 20a froze it).
+- Matcher's tier-walking, scoring formula, avoidance rules
+  untouched.
+- `RoadRouter` not migrated beyond the FarmPlotPlacer footpath
+  call. Trade-road / patrol-route routing untouched.
+- `BuildingProfileRegistry`, `SlotTag`, `BuildingZone` semantics
+  untouched.
+- Legacy spiral code retained for old saves (no plan).
+- No expansion-triggered plan rebuilds.
+- Persistence formats unchanged (Phase 20a's wiring is the only
+  format addition this rework window).
+
+#### Build status
+
+Gradle compile gated by network access; verified by inspection.
+Notes:
+- `LayoutPlan.RoadEdge.tier()` returns `RoadShape.RoadTier`;
+  `reservedHalfWidth()` reads cleanly from there.
+- `BuildingFootprint.fromVillage(village, data)` already includes
+  every Building in `data` for that village — no double-counting
+  with `plan.buildings()`.
+- `FeatureMap.buildPlanning` takes `List<StarterBuilding>` for the
+  planning-time roster; pass `List.of()` for expansion-time
+  rebuilds (the FeatureMap's hull / water / cliff classifications
+  come from heightmap sampling and are independent of the building
+  list).
+
+#### Validation (next steps for the user)
+
+1. Spawn a fresh RADIAL village. Save world. Reload.
+2. Trigger expansion (add a HOUSE via builder NPC or test command).
+   The added building should:
+   - Land within 13 chebyshev blocks of an existing road
+     centerline.
+   - Not overlap any existing building, road reservation, or
+     planned plot.
+   - Be on FeatureMap-acceptable terrain.
+3. Spawn a village near a cliff or water. Trigger expansion. Some
+   attempts should return `Optional.empty()` cleanly (no hidden
+   placement at non-viable positions).
+4. Old save (predating Phase 20a, no persisted plan) — expansion
+   uses the legacy spiral. No errors.
+5. Plot footpath visual check: walk the path from plot gate to
+   farmhouse. The path should follow road centerlines rather than
+   cutting cross-country. ENCLAVE is an exception (no spine —
+   straight-line via fallback is fine).
+
+#### Phase 20 follow-ups
+
+- Lifting `PlacementMatcher.scoreSlot` to enable matcher-quality
+  scoring during expansion (Open Q2 deferred).
+- Multi-edge BFS in `findFootpathOnGraph` if single-edge-slice
+  produces visually unsatisfying multi-edge plot footpaths.
+- Persist `Plaza.civicSlots` (deferred from Phase 20a) so
+  expansion-time civic placement can use the plaza pool instead of
+  falling through to flat-pool.
 
 
 

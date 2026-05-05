@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Planning.LayoutPlan;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
@@ -687,10 +688,20 @@ public class FarmPlotPlacer {
             routeStart = farmhouseEntrance;
         }
 
-        // Route from the plot gate to the branch point
-        List<BlockPos> route = tterrag1112.life_in_the_village.Village
-                .Economy.Trade.RoadRouter.findRoad(
-                        level, plotGate, routeStart);
+        // Route from the plot gate to the branch point.
+        // Phase 20: prefer the village's road graph (via village.getPlan())
+        // so the footpath actually follows the road network instead of
+        // cutting cross-country. RoadRouter.findRoad falls back when no
+        // plan is available (old saves).
+        LayoutPlan layoutPlan = village.getPlan();
+        List<BlockPos> route;
+        if (layoutPlan != null && !layoutPlan.roads().isEmpty()) {
+            route = findFootpathOnGraph(plotGate, routeStart, layoutPlan);
+        } else {
+            route = tterrag1112.life_in_the_village.Village
+                    .Economy.Trade.RoadRouter.findRoad(
+                            level, plotGate, routeStart);
+        }
 
         if (route.isEmpty()) return;
 
@@ -857,5 +868,66 @@ public class FarmPlotPlacer {
         }
     }
 
+    // =========================================================================
+    // Phase 20: graph-aware footpath routing
+    // =========================================================================
 
+    /**
+     * Builds a footpath route using the village's persisted road graph.
+     * Picks the road edge whose centerline minimises {@code dist(plotGate
+     * → nearest) + dist(farmhouseEntrance → nearest)} and slices that
+     * edge between the two nearest points. The diagonal bits at start /
+     * end (plotGate → firstCenterlinePoint, lastCenterlinePoint →
+     * farmhouseEntrance) cover any off-road segments.
+     *
+     * <p>This is intentionally a single-edge slice rather than full
+     * BFS-over-edges. For typical villages the plot's gate and its owning
+     * farmhouse share an obvious feeding road; the multi-edge case (plot
+     * across the village from its farmhouse) is rare and the diagonal
+     * fallback at endpoints still produces a connected path.
+     */
+    private static List<BlockPos> findFootpathOnGraph(
+            BlockPos plotGate, BlockPos farmhouseEntrance, LayoutPlan plan) {
+        LayoutPlan.RoadEdge bestEdge = null;
+        double bestScore = Double.MAX_VALUE;
+        int bestPlotIdx = -1;
+        int bestHouseIdx = -1;
+        for (LayoutPlan.RoadEdge edge : plan.roads()) {
+            if (edge.centerline().isEmpty()) continue;
+            int plotIdx  = nearestIdxOn(edge.centerline(), plotGate);
+            int houseIdx = nearestIdxOn(edge.centerline(), farmhouseEntrance);
+            double plotD  = Math.sqrt(edge.centerline().get(plotIdx).distSqr(plotGate));
+            double houseD = Math.sqrt(edge.centerline().get(houseIdx).distSqr(farmhouseEntrance));
+            double score = plotD + houseD;
+            if (score < bestScore) {
+                bestScore = score;
+                bestEdge = edge;
+                bestPlotIdx = plotIdx;
+                bestHouseIdx = houseIdx;
+            }
+        }
+        if (bestEdge == null) {
+            return List.of(plotGate, farmhouseEntrance);
+        }
+        List<BlockPos> route = new ArrayList<>();
+        route.add(plotGate);
+        List<BlockPos> cl = bestEdge.centerline();
+        if (bestPlotIdx <= bestHouseIdx) {
+            for (int i = bestPlotIdx; i <= bestHouseIdx; i++) route.add(cl.get(i));
+        } else {
+            for (int i = bestPlotIdx; i >= bestHouseIdx; i--) route.add(cl.get(i));
+        }
+        route.add(farmhouseEntrance);
+        return route;
+    }
+
+    private static int nearestIdxOn(List<BlockPos> centerline, BlockPos target) {
+        int best = 0;
+        double bestDistSq = centerline.get(0).distSqr(target);
+        for (int i = 1; i < centerline.size(); i++) {
+            double d = centerline.get(i).distSqr(target);
+            if (d < bestDistSq) { bestDistSq = d; best = i; }
+        }
+        return best;
+    }
 }
