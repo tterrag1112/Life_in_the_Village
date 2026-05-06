@@ -319,6 +319,12 @@ public class VillagePlanner {
         registerSectors(blueprint.sectors(), pctx);
         populateNamedAnchors(blueprint.namedAnchors(), layout);
 
+        // Phase C.1: post-realisation snapshot — fires unconditionally
+        // before the SlotEmitter runs so the diagnostic surface includes
+        // realised-geometry state on any abort path (including the
+        // SlotsDropped abort which never reaches dumpPlan).
+        logRealisationSnapshot(pctx);
+
         // Phase B: real SlotEmitter with six resolvers wired in.
         // PlazaPerimeter / RoadAlong / AllSpurs / RingValidated /
         // NamedAnchor / RegionalGather; routes civic slots to
@@ -327,22 +333,40 @@ public class VillagePlanner {
                 .Adaptive.SlotEmitter();
         var emitterReport = emitter.emit(
                 blueprint.slotIntentions(), layout, pctx.features, pctx);
+
+        System.out.println("[Plan-DropRatio] post-emit dropRatio="
+                + String.format("%.3f", emitterReport.dropRatio())
+                + " threshold=" + SLOTS_DROPPED_THRESHOLD
+                + " willTriggerCascade="
+                + (emitterReport.dropRatio() > SLOTS_DROPPED_THRESHOLD)
+                + " flatPool=" + pctx.slotPoolSize()
+                + " plazaCivic=" + (layout.getPlazas().isEmpty() ? 0
+                        : layout.getPlazas().get(0).civicSlots().size()));
+
         if (emitterReport.dropRatio() > SLOTS_DROPPED_THRESHOLD) {
+            System.out.println("[Plan-DropRatio] SlotsDropped cascade firing");
             blueprint = handleSlotsDropped(blueprint, pctx, emitterReport);
             if (blueprint == null) {
+                System.out.println("[Plan-DropRatio] reEmit returned null — "
+                        + "chain advance / abort");
                 return finalizeUnplannable(pctx, layout, origin, typeData,
                         initialBuildingCount, requestedShape,
                         "cascade exhausted (slots dropped)");
             }
             // Phase A: re-emission re-realises geometry and re-runs the
             // emitter. Phase B/C tunes the recursion bound.
+            System.out.println("[Plan-DropRatio] reEmit returned a fresh "
+                    + "blueprint — re-realising and re-running emitter");
             pctx.setCurrentBlueprint(blueprint);
             realiseRoads(blueprint.roads(), pctx);
             realisePlazas(blueprint.plazas(), pctx);
             registerSectors(blueprint.sectors(), pctx);
             populateNamedAnchors(blueprint.namedAnchors(), layout);
+            logRealisationSnapshot(pctx);
             emitterReport = emitter.emit(
                     blueprint.slotIntentions(), layout, pctx.features, pctx);
+            System.out.println("[Plan-DropRatio] post-reemit dropRatio="
+                    + String.format("%.3f", emitterReport.dropRatio()));
         }
 
         // Phase 16b: site may have been marked unplannable during
@@ -819,6 +843,62 @@ public class VillagePlanner {
     }
 
     /**
+     * Phase C.1: snapshot of post-realisation state. Fires
+     * unconditionally between {@code populateNamedAnchors} and
+     * {@code SlotEmitter.emit}, so observability covers all abort
+     * paths (including SlotsDropped which never reaches
+     * {@code dumpPlan}'s VALIDATION SUMMARY).
+     *
+     * <p>Logs realised edges (ref / role / tier / completeness /
+     * centerline-size), plazas (count / vertex count / civicSlots
+     * size), sectors (id / role / capacity / parentEdgeId), and the
+     * flat-pool count. Once-per-spawn (twice on re-emission).
+     */
+    private static void logRealisationSnapshot(PlanContext pctx) {
+        var edges = pctx.realisedEdges();
+        System.out.println("[Realisation-Snapshot] edges=" + edges.size());
+        for (var e : edges) {
+            System.out.println("[Realisation-Snapshot]   edge ref="
+                    + e.ref().id()
+                    + " edgeId=" + e.edgeId()
+                    + " role=" + e.role()
+                    + " tier=" + e.tier()
+                    + " centerline=" + e.centerline().size() + "pts"
+                    + " complete=" + e.isComplete()
+                    + " reason=" + e.result().reason());
+        }
+        var plazas = pctx.layout.getPlazas();
+        System.out.println("[Realisation-Snapshot] plazas=" + plazas.size());
+        for (int i = 0; i < plazas.size(); i++) {
+            var p = plazas.get(i);
+            String regionInfo = p.region() != null
+                    ? "vertices=" + p.region().footprint().vertices().size()
+                            + " shape=" + p.region().shape()
+                            + " purpose=" + p.region().purpose()
+                    : "marker (no polygon)";
+            System.out.println("[Realisation-Snapshot]   plaza[" + i + "] "
+                    + "centre=" + p.centre()
+                    + " townSquareR=" + p.townSquareRadius()
+                    + " civicRingR=" + p.civicRingRadius()
+                    + " civicSlots=" + p.civicSlots().size()
+                    + " " + regionInfo);
+        }
+        var sectors = pctx.offeredSectors();
+        System.out.println("[Realisation-Snapshot] sectors=" + sectors.size());
+        for (var s : sectors) {
+            System.out.println("[Realisation-Snapshot]   sector id="
+                    + s.id()
+                    + " role=" + s.role()
+                    + " zone=" + s.zoneHint()
+                    + " capacity=" + s.capacity()
+                    + " parentEdgeId=" + s.parentEdgeId()
+                    + " maxFp=" + s.expectedMaxFootprint());
+        }
+        System.out.println("[Realisation-Snapshot] flatPool="
+                + pctx.slotPoolSize());
+    }
+
+    /**
      * Threads named anchors from blueprint to layout. Phase 19's
      * AnchorKind enum has TOWN_SQUARE, MAIN_GATE, SECONDARY_GATE,
      * RIVER_LANDING, HIGH_GROUND, BRIDGE_HEAD, HARBOR, KEEP — the
@@ -996,7 +1076,21 @@ public class VillagePlanner {
             // same cap by construction.
             int allowed = maxRoadDistance(
                     slot.getFootprintWidth(), slot.getFootprintLength());
-            if (distance > allowed) {
+            boolean pass = distance <= allowed;
+            // Phase C.1: per-slot validator log, INFO regardless of
+            // pass/fail so the diagnostic surface includes both
+            // accepted and rejected buildings. The original failure
+            // message below preserves prior behavior on rejection.
+            System.out.println("[Validator] type=" + slot.getBuildingType()
+                    + " pos=" + centre
+                    + " fp=" + slot.getFootprintWidth() + "x"
+                    + slot.getFootprintLength()
+                    + " mode=road"
+                    + " feedingRoad=" + feedingRoad.size() + "pts"
+                    + " dist=" + distance
+                    + " cap=" + allowed
+                    + " pass=" + pass);
+            if (!pass) {
                 System.out.println("VillagePlanner: building " + slot.getBuildingType()
                         + " at " + centre + " is " + distance
                         + " blocks from feeding road (max " + allowed
@@ -1015,7 +1109,17 @@ public class VillagePlanner {
         int dz = centre.getZ() - villageCentre.getZ();
         int distance = (int) Math.round(Math.sqrt((double) dx * dx + (double) dz * dz));
         int allowed = ring2 + footprintHalf + VALIDATOR_HULL_SLACK;
-        if (distance > allowed) {
+        boolean pass = distance <= allowed;
+        System.out.println("[Validator] type=" + slot.getBuildingType()
+                + " pos=" + centre
+                + " fp=" + slot.getFootprintWidth() + "x"
+                + slot.getFootprintLength()
+                + " mode=hull"
+                + " feedingRoad=null"
+                + " dist=" + distance
+                + " cap=" + allowed
+                + " pass=" + pass);
+        if (!pass) {
             System.out.println("VillagePlanner: building " + slot.getBuildingType()
                     + " at " + centre + " is " + distance
                     + " blocks from village centre (max " + allowed

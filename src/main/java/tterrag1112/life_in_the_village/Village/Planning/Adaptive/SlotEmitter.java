@@ -54,6 +54,21 @@ public final class SlotEmitter {
             FeatureMap fmap,
             PlanContext pctx) {
 
+        // Phase C.1: log the intention list before dispatching so the
+        // user can correlate per-resolver logs with the recipe's
+        // declared intentions.
+        System.out.println("[SlotEmitter] emit() entry: intentions="
+                + intentions.size());
+        for (int i = 0; i < intentions.size(); i++) {
+            SlotIntention si = intentions.get(i);
+            System.out.println("[SlotEmitter]   intent[" + i + "] sector="
+                    + si.sector().id()
+                    + " anchor=" + si.anchor().getClass().getSimpleName()
+                    + " desired=" + si.desiredCount()
+                    + " maxFp=" + si.maxFootprint()
+                    + " tags=" + si.tags());
+        }
+
         int totalRequested = 0;
         int totalEmitted = 0;
         Map<SlotIntention, Integer> perIntention = new IdentityHashMap<>();
@@ -91,8 +106,32 @@ public final class SlotEmitter {
             }
         }
 
-        return new EmitterReport(totalRequested, totalEmitted,
+        EmitterReport report = new EmitterReport(totalRequested, totalEmitted,
                 perIntention, drops);
+
+        // Phase C.1: dump the full report for the user to inspect
+        // alongside the per-resolver logs.
+        System.out.println("[SlotEmitter] EmitterReport totalRequested="
+                + report.totalRequested()
+                + " totalEmitted=" + report.totalEmitted()
+                + " dropRatio=" + String.format("%.3f", report.dropRatio()));
+        for (var entry : report.perIntentionEmitted().entrySet()) {
+            SlotIntention intent = entry.getKey();
+            int emitted = entry.getValue();
+            System.out.println("[SlotEmitter]   per-intent sector="
+                    + intent.sector().id()
+                    + " anchor=" + intent.anchor().getClass().getSimpleName()
+                    + " desired=" + intent.desiredCount()
+                    + " emitted=" + emitted);
+        }
+        for (var drop : report.drops()) {
+            System.out.println("[SlotEmitter]   DROP sector="
+                    + drop.intention().sector().id()
+                    + " anchor=" + drop.intention().anchor().getClass().getSimpleName()
+                    + " emitted=" + drop.emittedCount()
+                    + " reason=\"" + drop.dropReason() + "\"");
+        }
+        return report;
     }
 
     // =========================================================================
@@ -114,12 +153,24 @@ public final class SlotEmitter {
             SlotIntention intention, Anchor.PlazaPerimeter anchor,
             VillageLayout layout, FeatureMap fmap, PlanContext pctx) {
 
+        System.out.println("[SlotEmitter] resolvePlazaPerimeter sector="
+                + intention.sector().id()
+                + " avoidSpurExit=" + anchor.avoidSpurExitChebDist()
+                + " desired=" + intention.desiredCount()
+                + " fp=" + intention.maxFootprint());
+
         Plaza plaza = layout.getPlazas().isEmpty() ? null
                 : layout.getPlazas().get(0);
-        if (plaza == null || plaza.region() == null) return List.of();
+        if (plaza == null || plaza.region() == null) {
+            System.out.println("[SlotEmitter]   REJECT-ALL plaza=null or region=null");
+            return List.of();
+        }
         var region = plaza.region();
         List<BlockPos> vertices = region.footprint().vertices();
-        if (vertices.isEmpty()) return List.of();
+        if (vertices.isEmpty()) {
+            System.out.println("[SlotEmitter]   REJECT-ALL plaza has 0 vertices");
+            return List.of();
+        }
 
         // Spur exits: first centerline point that lies outside the
         // plaza polygon for each SPUR-role realised edge.
@@ -133,15 +184,20 @@ public final class SlotEmitter {
                 }
             }
         }
+        System.out.println("[SlotEmitter]   vertices=" + vertices.size()
+                + " spurExits=" + spurExits.size());
 
         int fp = intention.maxFootprint();
         int halfW = fp / 2;
         int halfL = fp / 2;
         int maxRoadDist = VillagePlanner.maxRoadDistance(fp, fp);
         int needed = intention.desiredCount();
+        System.out.println("[SlotEmitter]   maxRoadDist=" + maxRoadDist
+                + " halfW=" + halfW + " halfL=" + halfL);
 
         List<PlacementSlot> result = new ArrayList<>();
         int emittedIdx = 0;
+        int rejSpurExit = 0, rejFmap = 0, rejFootprint = 0, rejCap = 0;
         for (int i = 0; i < vertices.size() && result.size() < needed; i++) {
             BlockPos v = vertices.get(i);
 
@@ -151,16 +207,38 @@ public final class SlotEmitter {
                 int d = chebDist(v, s);
                 if (d < minSpurDist) minSpurDist = d;
             }
-            if (minSpurDist < anchor.avoidSpurExitChebDist()) continue;
+            if (minSpurDist < anchor.avoidSpurExitChebDist()) {
+                rejSpurExit++;
+                System.out.println("[SlotEmitter]     v[" + i + "]=" + v
+                        + " REJECT spurExit minSpurDist=" + minSpurDist
+                        + "<" + anchor.avoidSpurExitChebDist());
+                continue;
+            }
 
             // FeatureMap + footprint clearance.
-            if (!fmap.isClearForFootprint(v, fp, fp)) continue;
-            if (!isFootprintClear(v, halfW, halfL, layout)) continue;
+            if (!fmap.isClearForFootprint(v, fp, fp)) {
+                rejFmap++;
+                System.out.println("[SlotEmitter]     v[" + i + "]=" + v
+                        + " REJECT fmap fp=" + fp);
+                continue;
+            }
+            if (!isFootprintClear(v, halfW, halfL, layout)) {
+                rejFootprint++;
+                System.out.println("[SlotEmitter]     v[" + i + "]=" + v
+                        + " REJECT footprint");
+                continue;
+            }
 
             // Validator-cap: vertex must be within maxRoadDist of
             // some realised edge centerline.
             int distToRoad = nearestRoadDistance(v, pctx);
-            if (distToRoad > maxRoadDist) continue;
+            if (distToRoad > maxRoadDist) {
+                rejCap++;
+                System.out.println("[SlotEmitter]     v[" + i + "]=" + v
+                        + " REJECT cap distToRoad=" + distToRoad
+                        + ">" + maxRoadDist);
+                continue;
+            }
 
             // Quality: matches PlazaGenerator's deleted
             // buildPlazaCivicSlots formula (90 - i*2, floor 40) so
@@ -168,6 +246,8 @@ public final class SlotEmitter {
             // way it did pre-Phase-B.
             int quality = Math.max(40, 90 - emittedIdx * 2);
             emittedIdx++;
+            System.out.println("[SlotEmitter]     v[" + i + "]=" + v
+                    + " ACCEPT q=" + quality + " distToRoad=" + distToRoad);
 
             result.add(new PlacementSlot(
                     v,
@@ -180,6 +260,12 @@ public final class SlotEmitter {
                     /* terrainPenalty */ 0,
                     DEFAULT_DRIFT_BLOCKS));
         }
+        System.out.println("[SlotEmitter]   resolvePlazaPerimeter RESULT emitted="
+                + result.size() + "/" + needed
+                + " rej-spurExit=" + rejSpurExit
+                + " rej-fmap=" + rejFmap
+                + " rej-footprint=" + rejFootprint
+                + " rej-cap=" + rejCap);
         return result;
     }
 
@@ -197,10 +283,27 @@ public final class SlotEmitter {
             SlotIntention intention, Anchor.RoadAlong anchor,
             VillageLayout layout, FeatureMap fmap, PlanContext pctx) {
 
+        System.out.println("[SlotEmitter] resolveRoadAlong sector="
+                + intention.sector().id()
+                + " edge=" + anchor.edge().id()
+                + " spacing=" + anchor.spacing()
+                + " bothSides=" + anchor.bothSides()
+                + " desired=" + intention.desiredCount()
+                + " fp=" + intention.maxFootprint());
+
         var edge = pctx.findEdge(anchor.edge());
-        if (edge == null) return List.of();
+        if (edge == null) {
+            System.out.println("[SlotEmitter]   REJECT-ALL edge '"
+                    + anchor.edge().id() + "' not realised");
+            return List.of();
+        }
         List<BlockPos> centerline = edge.centerline();
-        if (centerline.size() < 2) return List.of();
+        if (centerline.size() < 2) {
+            System.out.println("[SlotEmitter]   REJECT-ALL centerline.size="
+                    + centerline.size() + "<2 (edgeId=" + edge.edgeId()
+                    + " complete=" + edge.isComplete() + ")");
+            return List.of();
+        }
 
         int fp = intention.maxFootprint();
         int halfW = fp / 2;
@@ -208,19 +311,34 @@ public final class SlotEmitter {
         int perpOffset = edge.tier().reservedHalfWidth()
                 + Math.max(halfW, halfL) + 1;
         int maxRoadDist = VillagePlanner.maxRoadDistance(fp, fp);
+        System.out.println("[SlotEmitter]   edge realised: tier="
+                + edge.tier() + " edgeId=" + edge.edgeId()
+                + " centerline.size=" + centerline.size()
+                + " complete=" + edge.isComplete()
+                + " perpOffset=" + perpOffset
+                + " maxRoadDist=" + maxRoadDist
+                + " headroom=" + (maxRoadDist - perpOffset));
 
         // Sanity check on the validator-cap invariant: the structural
         // offset itself must fit under the cap. If not, the recipe
         // asked for an impossible footprint on this road tier.
         // perpOffset > maxRoadDist → drop the intention; the count
         // reduction is the report's signal.
-        if (perpOffset > maxRoadDist) return List.of();
+        if (perpOffset > maxRoadDist) {
+            System.out.println("[SlotEmitter]   REJECT-ALL perpOffset="
+                    + perpOffset + ">maxRoadDist=" + maxRoadDist
+                    + " (recipe asked for fp=" + fp
+                    + " on tier " + edge.tier()
+                    + " — impossible by validator cap)");
+            return List.of();
+        }
 
         int needed = intention.desiredCount();
         int spacing = Math.max(1, anchor.spacing());
         int sides = anchor.bothSides() ? 2 : 1;
 
         List<PlacementSlot> result = new ArrayList<>();
+        int totalCandidates = 0, rejFmap = 0, rejFootprint = 0;
         for (int i = 0; i < centerline.size() && result.size() < needed;
                 i += spacing) {
             BlockPos on = centerline.get(i);
@@ -234,10 +352,25 @@ public final class SlotEmitter {
                         on.getX() + perpX * perpOffset * sign,
                         on.getY(),
                         on.getZ() + perpZ * perpOffset * sign);
+                totalCandidates++;
 
-                if (!fmap.isClearForFootprint(candidate, fp, fp)) continue;
-                if (!isFootprintClear(candidate, halfW, halfL, layout)) continue;
+                if (!fmap.isClearForFootprint(candidate, fp, fp)) {
+                    rejFmap++;
+                    System.out.println("[SlotEmitter]     i=" + i
+                            + " side=" + side + " pos=" + candidate
+                            + " REJECT fmap");
+                    continue;
+                }
+                if (!isFootprintClear(candidate, halfW, halfL, layout)) {
+                    rejFootprint++;
+                    System.out.println("[SlotEmitter]     i=" + i
+                            + " side=" + side + " pos=" + candidate
+                            + " REJECT footprint");
+                    continue;
+                }
 
+                System.out.println("[SlotEmitter]     i=" + i
+                        + " side=" + side + " pos=" + candidate + " ACCEPT");
                 result.add(new PlacementSlot(
                         candidate,
                         centerline,
@@ -250,6 +383,11 @@ public final class SlotEmitter {
                         DEFAULT_DRIFT_BLOCKS));
             }
         }
+        System.out.println("[SlotEmitter]   resolveRoadAlong RESULT emitted="
+                + result.size() + "/" + needed
+                + " candidates=" + totalCandidates
+                + " rej-fmap=" + rejFmap
+                + " rej-footprint=" + rejFootprint);
         return result;
     }
 
@@ -266,13 +404,25 @@ public final class SlotEmitter {
             SlotIntention intention, Anchor.AllSpurs anchor,
             VillageLayout layout, FeatureMap fmap, PlanContext pctx) {
 
+        System.out.println("[SlotEmitter] resolveAllSpurs sector="
+                + intention.sector().id()
+                + " spacingPerSpur=" + anchor.spacingPerSpur()
+                + " bothSides=" + anchor.bothSides()
+                + " desired=" + intention.desiredCount()
+                + " fp=" + intention.maxFootprint());
+
         List<RealisedEdge> spurs = pctx.realisedEdges().stream()
                 .filter(e -> e.role() == EdgeRole.SPUR)
                 .toList();
-        if (spurs.isEmpty()) return List.of();
+        if (spurs.isEmpty()) {
+            System.out.println("[SlotEmitter]   REJECT-ALL no SPUR-role edges");
+            return List.of();
+        }
+        System.out.println("[SlotEmitter]   spur edges: " + spurs.size());
 
         int needed = intention.desiredCount();
         int perSpur = Math.max(1, needed / spurs.size());
+        System.out.println("[SlotEmitter]   perSpur=" + perSpur);
 
         List<PlacementSlot> result = new ArrayList<>();
         for (RealisedEdge spur : spurs) {
@@ -294,6 +444,8 @@ public final class SlotEmitter {
                     (Anchor.RoadAlong) syntheticIntent.anchor(),
                     layout, fmap, pctx));
         }
+        System.out.println("[SlotEmitter]   resolveAllSpurs RESULT emitted="
+                + result.size() + "/" + needed);
         return result;
     }
 
@@ -313,13 +465,26 @@ public final class SlotEmitter {
             SlotIntention intention, Anchor.RingValidated anchor,
             VillageLayout layout, FeatureMap fmap, PlanContext pctx) {
 
+        System.out.println("[SlotEmitter] resolveRingValidated sector="
+                + intention.sector().id()
+                + " radius=" + anchor.radius()
+                + " jitter=" + anchor.radialJitter()
+                + " desired=" + intention.desiredCount()
+                + " fp=" + intention.maxFootprint());
+
         BlockPos center = layout.getCenter();
-        if (center == null) return List.of();
+        if (center == null) {
+            System.out.println("[SlotEmitter]   REJECT-ALL center=null");
+            return List.of();
+        }
         int radius = anchor.radius();
         int fp = intention.maxFootprint();
         int halfW = fp / 2;
         int halfL = fp / 2;
         int maxRoadDist = VillagePlanner.maxRoadDistance(fp, fp);
+        System.out.println("[SlotEmitter]   center=" + center
+                + " maxRoadDist=" + maxRoadDist
+                + " realisedEdges=" + pctx.realisedEdges().size());
 
         int needed = intention.desiredCount();
         // Oversample: needed × 4, min 32. Lets the resolver find
@@ -329,6 +494,7 @@ public final class SlotEmitter {
         Random rng = new Random(pctx.worldSeed ^ ((long) radius * 0x9E3779B97F4A7C15L));
 
         List<PlacementSlot> result = new ArrayList<>();
+        int rejFmap = 0, rejFootprint = 0, rejNoEdge = 0, rejCap = 0;
         for (int i = 0; i < angularSamples && result.size() < needed; i++) {
             double baseAngle = 2 * Math.PI * i / angularSamples;
             double jitter = anchor.radialJitter() != 0.0
@@ -341,16 +507,38 @@ public final class SlotEmitter {
                     center.getY(),
                     center.getZ() + (int) Math.round(Math.sin(angle) * radius));
 
-            if (!fmap.isClearForFootprint(candidate, fp, fp)) continue;
-            if (!isFootprintClear(candidate, halfW, halfL, layout)) continue;
+            if (!fmap.isClearForFootprint(candidate, fp, fp)) {
+                rejFmap++;
+                continue;
+            }
+            if (!isFootprintClear(candidate, halfW, halfL, layout)) {
+                rejFootprint++;
+                continue;
+            }
 
             // Validator-cap: position must be within maxRoadDist of
             // SOME realised edge's centerline.
             RealisedEdge nearest = nearestEdge(candidate, pctx);
-            if (nearest == null) continue;
+            if (nearest == null) {
+                rejNoEdge++;
+                continue;
+            }
             int dist = nearestPointChebyshev(candidate, nearest.centerline());
-            if (dist > maxRoadDist) continue;
+            if (dist > maxRoadDist) {
+                rejCap++;
+                System.out.println("[SlotEmitter]     i=" + i
+                        + " pos=" + candidate
+                        + " REJECT cap dist=" + dist + ">" + maxRoadDist
+                        + " (nearestEdge=" + nearest.ref().id()
+                        + " edgeId=" + nearest.edgeId() + ")");
+                continue;
+            }
 
+            System.out.println("[SlotEmitter]     i=" + i
+                    + " pos=" + candidate
+                    + " ACCEPT dist=" + dist
+                    + " (nearestEdge=" + nearest.ref().id()
+                    + " edgeId=" + nearest.edgeId() + ")");
             result.add(new PlacementSlot(
                     candidate,
                     nearest.centerline(),
@@ -362,6 +550,13 @@ public final class SlotEmitter {
                     /* terrainPenalty */ 0,
                     DEFAULT_DRIFT_BLOCKS));
         }
+        System.out.println("[SlotEmitter]   resolveRingValidated RESULT emitted="
+                + result.size() + "/" + needed
+                + " samples=" + angularSamples
+                + " rej-fmap=" + rejFmap
+                + " rej-footprint=" + rejFootprint
+                + " rej-no-edge=" + rejNoEdge
+                + " rej-cap=" + rejCap);
         return result;
     }
 
@@ -384,17 +579,35 @@ public final class SlotEmitter {
             SlotIntention intention, Anchor.NamedAnchor anchor,
             VillageLayout layout, FeatureMap fmap, PlanContext pctx) {
 
+        System.out.println("[SlotEmitter] resolveNamedAnchor sector="
+                + intention.sector().id()
+                + " kind=" + anchor.kind()
+                + " radialOffset=" + anchor.radialOffset()
+                + " desired=" + intention.desiredCount()
+                + " fp=" + intention.maxFootprint());
+
         var blueprint = pctx.getCurrentBlueprint();
-        if (blueprint == null) return List.of();
+        if (blueprint == null) {
+            System.out.println("[SlotEmitter]   REJECT-ALL currentBlueprint=null");
+            return List.of();
+        }
         BlockPos anchorPos = blueprint.namedAnchors().get(anchor.kind());
-        if (anchorPos == null) return List.of();
+        if (anchorPos == null) {
+            System.out.println("[SlotEmitter]   REJECT-ALL anchor "
+                    + anchor.kind() + " not in namedAnchors map");
+            return List.of();
+        }
 
         int fp = intention.maxFootprint();
         int halfW = fp / 2;
         int halfL = fp / 2;
 
         RealisedEdge feedingEdge = nearestEdge(anchorPos, pctx);
-        if (feedingEdge == null) return List.of();
+        if (feedingEdge == null) {
+            System.out.println("[SlotEmitter]   REJECT-ALL no realised edge near "
+                    + anchor.kind() + " at " + anchorPos);
+            return List.of();
+        }
 
         List<BlockPos> centerline = feedingEdge.centerline();
         // Centerline point nearest the anchor.
@@ -415,7 +628,18 @@ public final class SlotEmitter {
         int perpOffset = feedingEdge.tier().reservedHalfWidth()
                 + Math.max(halfW, halfL) + 1;
         int maxRoadDist = VillagePlanner.maxRoadDistance(fp, fp);
-        if (perpOffset > maxRoadDist) return List.of();
+        System.out.println("[SlotEmitter]   anchorPos=" + anchorPos
+                + " feedingEdge=" + feedingEdge.ref().id()
+                + " nearestIdx=" + nearestIdx + " (dist=" + nearestDist + ")"
+                + " targetIdx=" + targetIdx
+                + " on=" + on
+                + " perpOffset=" + perpOffset
+                + " maxRoadDist=" + maxRoadDist);
+        if (perpOffset > maxRoadDist) {
+            System.out.println("[SlotEmitter]   REJECT-ALL perpOffset>"
+                    + "maxRoadDist (impossible footprint)");
+            return List.of();
+        }
 
         // Try both sides; first viable wins.
         for (int side = 0; side < 2; side++) {
@@ -425,9 +649,20 @@ public final class SlotEmitter {
                     on.getY(),
                     on.getZ() + perp[1] * perpOffset * sign);
 
-            if (!fmap.isClearForFootprint(candidate, fp, fp)) continue;
-            if (!isFootprintClear(candidate, halfW, halfL, layout)) continue;
+            if (!fmap.isClearForFootprint(candidate, fp, fp)) {
+                System.out.println("[SlotEmitter]     side=" + side
+                        + " pos=" + candidate + " REJECT fmap");
+                continue;
+            }
+            if (!isFootprintClear(candidate, halfW, halfL, layout)) {
+                System.out.println("[SlotEmitter]     side=" + side
+                        + " pos=" + candidate + " REJECT footprint");
+                continue;
+            }
 
+            System.out.println("[SlotEmitter]     side=" + side
+                    + " pos=" + candidate + " ACCEPT");
+            System.out.println("[SlotEmitter]   resolveNamedAnchor RESULT emitted=1/1");
             return List.of(new PlacementSlot(
                     candidate,
                     centerline,
@@ -439,6 +674,8 @@ public final class SlotEmitter {
                     /* terrainPenalty */ 0,
                     DEFAULT_DRIFT_BLOCKS));
         }
+        System.out.println("[SlotEmitter]   resolveNamedAnchor RESULT emitted=0/1"
+                + " (both sides rejected)");
         return List.of();
     }
 
@@ -462,6 +699,14 @@ public final class SlotEmitter {
             SlotIntention intention, Anchor.RegionalGather anchor,
             VillageLayout layout, FeatureMap fmap, PlanContext pctx) {
 
+        System.out.println("[SlotEmitter] resolveRegionalGather sector="
+                + intention.sector().id()
+                + " center=" + anchor.center()
+                + " radius=" + anchor.radius()
+                + " minSpacing=" + anchor.minSpacing()
+                + " desired=" + intention.desiredCount()
+                + " fp=" + intention.maxFootprint());
+
         int fp = intention.maxFootprint();
         int halfW = fp / 2;
         int halfL = fp / 2;
@@ -474,6 +719,7 @@ public final class SlotEmitter {
         int minSpacing = Math.max(1, anchor.minSpacing());
         int radius = Math.max(1, anchor.radius());
 
+        int rejTooClose = 0, rejFmap = 0, rejFootprint = 0;
         for (int attempt = 0; attempt < maxAttempts && result.size() < needed; attempt++) {
             double angle = rng.nextDouble() * 2 * Math.PI;
             double r = Math.sqrt(rng.nextDouble()) * radius;
@@ -490,10 +736,19 @@ public final class SlotEmitter {
                     break;
                 }
             }
-            if (tooClose) continue;
+            if (tooClose) {
+                rejTooClose++;
+                continue;
+            }
 
-            if (!fmap.isClearForFootprint(candidate, fp, fp)) continue;
-            if (!isFootprintClear(candidate, halfW, halfL, layout)) continue;
+            if (!fmap.isClearForFootprint(candidate, fp, fp)) {
+                rejFmap++;
+                continue;
+            }
+            if (!isFootprintClear(candidate, halfW, halfL, layout)) {
+                rejFootprint++;
+                continue;
+            }
 
             // No validator-cap check by design (see Javadoc).
             result.add(new PlacementSlot(
@@ -507,6 +762,12 @@ public final class SlotEmitter {
                     /* terrainPenalty */ 0,
                     DEFAULT_DRIFT_BLOCKS));
         }
+        System.out.println("[SlotEmitter]   resolveRegionalGather RESULT emitted="
+                + result.size() + "/" + needed
+                + " maxAttempts=" + maxAttempts
+                + " rej-tooClose=" + rejTooClose
+                + " rej-fmap=" + rejFmap
+                + " rej-footprint=" + rejFootprint);
         return result;
     }
 

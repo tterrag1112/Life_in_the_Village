@@ -5335,6 +5335,109 @@ doc's CROSSROADS and HILLTOP examples as templates. Delete
 LayoutPrimitive and its subclasses (BuildingCircle,
 LinearRow, RingBand) — no caller will remain.
 
+---
+
+## Phase C.1 — observability for the SlotsDropped abort path
+
+Phase C's smoke run aborted with `cascade exhausted (slots
+dropped)` and `validated=0/15`. Diagnosed with the user as:
+`0/15` is committed/initialBuildingCount (matcher never ran);
+the SlotEmitter under-emitted enough to trigger the 0.30
+dropRatio threshold; RADIAL's reEmit returned null per Phase C
+spec; planner aborted before matcher and validator. The
+diagnostic surface needed is per-resolver emission breakdown
+(NOT per-building validator decisions, though those are added
+too for future failure modes).
+
+Pure observability — no behavioral change. Phase C.2 ships
+the actual fix once the user pastes the diagnostic log from a
+re-run at the same superflat seed.
+
+#### What changed
+
+`Village/Planning/Adaptive/SlotEmitter.java`:
+- `emit()` entry log: list of intentions with sector / anchor
+  type / desired / fp / tags.
+- `emit()` exit log: full EmitterReport dump (totalRequested,
+  totalEmitted, dropRatio, per-intent emit counts, drop list).
+- Per-resolver logging across all six (PlazaPerimeter,
+  RoadAlong, AllSpurs, RingValidated, NamedAnchor,
+  RegionalGather):
+  - Entry summary (sector, anchor params, desired, fp).
+  - perpOffset / maxRoadDist / headroom (where applicable).
+  - Per-candidate ACCEPT or REJECT-with-reason:
+    `REJECT spurExit`, `REJECT fmap`, `REJECT footprint`,
+    `REJECT cap dist=X>Y`, `REJECT no-edge`, `REJECT tooClose`.
+  - Result totals: emitted/desired + per-filter rejection
+    counts.
+
+`Village/Planning/VillagePlanner.java`:
+- `[Realisation-Snapshot]` block fires unconditionally between
+  `populateNamedAnchors` and the SlotEmitter run (and again on
+  re-emission). Fills the gap that `dumpPlan`'s VALIDATION
+  SUMMARY leaves on abort paths that don't reach the matcher.
+  Logs per-edge (ref, edgeId, role, tier, centerline.size,
+  complete, termination reason), per-plaza (centre,
+  townSquareR, civicRingR, civicSlots, vertex count), per-sector
+  (id, role, zone, capacity, parentEdgeId, maxFp), and the
+  flat-pool count.
+- `[Plan-DropRatio]` log immediately after `emitter.emit()`:
+  the actual dropRatio value, the threshold, whether cascade
+  will fire, the flat-pool count, and the plaza civicSlots
+  count. Cascade-firing branch logs `reEmit returned null`
+  vs `reEmit returned a fresh blueprint`.
+- `[Validator]` per-slot log inside `validateBuildingDistance`:
+  type, pos, fp, mode (road/hull), feedingRoad presence,
+  measured dist, cap, pass. INFO regardless of pass/fail. (The
+  existing per-failure log message stays for reject diagnostics
+  alongside the new line.)
+
+Logger pattern: `System.out.println` with bracket tags
+([SlotEmitter], [Validator], [Plan-DropRatio],
+[Realisation-Snapshot]) — matches existing diagnostic stream
+([CASCADE], [VILLAGE-SUMMARY], [LAYOUT-PLAN], [CLAMP],
+[RADIAL-RADIUS], [RADIAL-REEMIT]).
+
+#### Status
+
+- 2 files touched. Pure additive logging.
+- Compile gated by sandbox network. Spot-checked: all
+  accessors used (pctx.offeredSectors, pctx.realisedEdges,
+  pctx.slotPoolSize, layout.getPlazas, plaza.region().*,
+  RealisedEdge.result().reason, etc.) exist with the
+  signatures used.
+- Expected log volume: 200–500 lines per spawn. Acceptable
+  for one diagnostic spawn; trims to summary-only in C.2.
+
+#### Validation (next steps for the user)
+
+1. `./gradlew compileJava` (network-gated; passes in a normal
+   build).
+2. Spawn RADIAL at the same superflat seed that produced the
+   previous failure. Capture the full server log from
+   PlazaGenerator's "CIVIC CIRCLE plaza at ..." line through
+   the [VILLAGE-SUMMARY] line.
+3. Paste the log. The next cycle (Phase C.2) reads:
+   - `[Realisation-Snapshot]` to see post-realisation state
+     before SlotEmitter runs.
+   - `[SlotEmitter] resolve...` blocks per intention to see
+     which intentions under-emitted and why.
+   - `[SlotEmitter] EmitterReport ...` for the aggregate.
+   - `[Plan-DropRatio]` for the actual ratio + cascade
+     decision.
+   - `[Validator]` lines if the matcher path reaches
+     validation (it won't on the SlotsDropped abort, but will
+     on future failure modes).
+
+Phase C.2 then ships a targeted fix — most likely in:
+- A resolver's filter logic (rej-cap or rej-footprint counts
+  too high).
+- RADIAL's intentions (desired counts too greedy for the
+  geometry).
+- The 0.30 dropRatio threshold (too tight on superflat).
+- RADIAL's reEmit (a soft-landing default that reduces
+  desiredCounts proportionally rather than aborting).
+
 
 
 
