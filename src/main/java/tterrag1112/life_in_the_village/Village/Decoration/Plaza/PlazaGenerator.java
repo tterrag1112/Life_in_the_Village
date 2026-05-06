@@ -10,13 +10,10 @@ import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext;
-import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
-import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
@@ -85,26 +82,19 @@ public final class PlazaGenerator {
 
     /** Civic / PLAZA_ADJACENT slots are emitted along polygon edges
      *  at this step (in blocks of polygon perimeter). At ~6 blocks
-     *  per slot, a CITY plaza (perimeter ~75) gets ~12 slots —
-     *  enough variety for civic placement to choose from. */
-    private static final int PLAZA_ADJACENT_STEP = 6;
-
     /** Plaza-edge civic slot baseline standoff from polygon edge,
      *  before the per-village {@code maxCivicFrontFace/2} bonus is
      *  added. Matches the legacy
      *  {@code RING_ROAD_GAP + RING_ROAD_HALFWIDTH + CIVIC_CLEARANCE}
-     *  = 3 + 3 + 2 = 8 standoff. */
+     *  = 3 + 3 + 2 = 8 standoff. Still used for civicRingR
+     *  computation; SlotEmitter.PlazaPerimeter handles the actual
+     *  vertex emission. */
     private static final int PLAZA_ADJACENT_BASE_OUTSET = 8;
 
     /** Default {@code maxCivicFrontFace} when scanning
      *  {@code pctx.remaining} returns no civic candidates (e.g. a
-     *  village with no civic buildings to place). Matches the legacy
-     *  primitive's default. */
+     *  village with no civic buildings to place). */
     private static final int DEFAULT_MAX_CIVIC_FRONT_FACE = 12;
-
-    /** Maximum civic building front face for the slot footprint
-     *  budget (matches the legacy primitive's {@code +4} margin). */
-    private static final int CIVIC_FOOTPRINT_BUDGET = 16;
 
     private PlazaGenerator() {}
 
@@ -205,17 +195,21 @@ public final class PlazaGenerator {
         int civicOutset = PLAZA_ADJACENT_BASE_OUTSET + maxCivicFrontFace / 2;
         int civicRingR = polygonRadius + civicOutset;
 
-        // Phase 18: civic slots collected into a Plaza façade rather than
-        // pushed to pctx.offerSlot. The matcher's civic-first claim path
-        // consumes from Plaza.civicSlots() directly.
-        java.util.List<tterrag1112.life_in_the_village.Village.Planning.Zoning
-                .PlacementSlot> civicSlots = buildPlazaCivicSlots(
-                        region, civicOutset, maxCivicFrontFace);
-
+        // Phase B: civic-slot emission moved to
+        // SlotEmitter.PlazaPerimeter resolver per spec §3 / §6.
+        // PlazaGenerator's job is now polygon geometry only — the
+        // civicSlots list arrives empty here and is populated later
+        // by the SlotEmitter when a recipe declares a
+        // PlazaPerimeter intention with PRIME_CIVIC /
+        // SECONDARY_CIVIC tags.
+        // (Pre-Phase-B, this called buildPlazaCivicSlots() which is
+        // now deleted; the matcher's civic-first claim path
+        // tolerates an empty civicSlots list and falls through to
+        // the flat pool.)
         tterrag1112.life_in_the_village.Village.Planning.Plaza plaza =
                 new tterrag1112.life_in_the_village.Village.Planning.Plaza(
                         region, centroid, polygonRadius, civicRingR,
-                        civicSlots);
+                        java.util.List.of());
         pctx.layout.addPlaza(plaza);
 
         // Legacy field setters — downstream consumers (DecorationSlotEmitter,
@@ -234,12 +228,13 @@ public final class PlazaGenerator {
         int gpCount = registerGatheringPoints(pctx, region);
 
         LOGGER.info("PlazaGenerator: {} {} plaza at {} (area {}/{}, "
-                + "vertices {}, civic slots {}, gathering points {})",
+                + "vertices {}, gathering points {}) "
+                + "[civic slots emitted later by SlotEmitter]",
                 spec.purpose(), spec.preferredShape(),
                 centroid.toShortString(),
                 (int) finalArea, spec.targetArea(),
                 shaped.vertices().size(),
-                civicSlots.size(), gpCount);
+                gpCount);
         return Optional.of(region);
     }
 
@@ -436,75 +431,11 @@ public final class PlazaGenerator {
 
     // ── Step 6: PLAZA_ADJACENT slots ───────────────────────────────────
 
-    /**
-     * Phase 18 doc 04 §"Civic placement" — emits civic slots along
-     * the polygon edge, just outside the boundary. Replaces the
-     * legacy {@code LayoutPrimitive.TownSquare.emitSlots} so the
-     * matcher's {@code PlacementMatcher.placeTownHallPrePass}
-     * (which scans for {@link SlotTag#PRIME_CIVIC} / {@link
-     * SlotTag#SECONDARY_CIVIC}) keeps working sourced from polygon
-     * edges instead of ring perimeter.
-     *
-     * <p>The first slot (closest to the south / approach face) gets
-     * {@link SlotTag#PRIME_CIVIC} and is what the prepass tries
-     * first; remaining slots get {@link SlotTag#SECONDARY_CIVIC}
-     * and serve TOWN_HALL fallback + GUILD_HALL / TEMPLE / MARKET /
-     * INN. All slots additionally carry {@link SlotTag#PLAZA_ADJACENT}
-     * + {@link SlotTag#ROAD_ADJACENT} so non-civic profiles that
-     * prefer those tags get a small score nudge.</p>
-     *
-     * <p>Quality score decays by 2 per slot (matches the legacy
-     * primitive's {@code quality = 90 - i * 2}) so the prepass's
-     * tie-breaking lands on a stable south-first ordering.</p>
-     */
-    /**
-     * Phase 18: returns the civic slot pool for {@link Plaza#civicSlots()}
-     * instead of pushing slots into the flat pool. Geometry, tags, and
-     * quality scoring are unchanged from the prior {@code emitPlazaCivicSlots}
-     * (which used to call {@code pctx.offerSlot}).
-     */
-    private static java.util.List<PlacementSlot> buildPlazaCivicSlots(
-            PlazaRegion region,
-            int civicOutset,
-            int maxCivicFrontFace) {
-        List<BlockPos> verts = region.footprint().vertices();
-        BlockPos centroid = region.centroid();
-        int footprintBudget = Math.max(CIVIC_FOOTPRINT_BUDGET,
-                maxCivicFrontFace + 4);
-        java.util.List<PlacementSlot> out = new java.util.ArrayList<>();
-        int n = verts.size();
-        for (int i = 0; i < n; i++) {
-            BlockPos a = verts.get(i);
-            BlockPos b = verts.get((i + 1) % n);
-            double edgeLen = Math.hypot(b.getX() - a.getX(), b.getZ() - a.getZ());
-            int samples = Math.max(1, (int) Math.round(edgeLen / PLAZA_ADJACENT_STEP));
-            for (int s = 0; s < samples; s++) {
-                double t = (s + 0.5) / samples;
-                int mx = (int) Math.round(a.getX() + (b.getX() - a.getX()) * t);
-                int mz = (int) Math.round(a.getZ() + (b.getZ() - a.getZ()) * t);
-                BlockPos midpoint = new BlockPos(mx, region.floorY(), mz);
-                BlockPos outward = nudgeAwayFromCentroid(midpoint, centroid,
-                        civicOutset);
-                // First emitted slot → PRIME_CIVIC; rest →
-                // SECONDARY_CIVIC. Matches the legacy primitive's
-                // "first angle wins TOWN_HALL" convention.
-                int emitted = out.size();
-                EnumSet<SlotTag> tags = (emitted == 0)
-                        ? EnumSet.of(SlotTag.PRIME_CIVIC,
-                                SlotTag.PLAZA_ADJACENT, SlotTag.ROAD_ADJACENT)
-                        : EnumSet.of(SlotTag.SECONDARY_CIVIC,
-                                SlotTag.PLAZA_ADJACENT, SlotTag.ROAD_ADJACENT);
-                int quality = Math.max(40, 90 - emitted * 2);
-                out.add(new PlacementSlot(
-                        outward,
-                        /* feedingRoad */ null,
-                        tags,
-                        /* footprintBudget */ footprintBudget,
-                        /* qualityScore */ quality));
-            }
-        }
-        return out;
-    }
+    // Phase B: buildPlazaCivicSlots(...) deleted. Civic-slot
+    // emission is now SlotEmitter.PlazaPerimeter's responsibility
+    // (spec §3 / §6). The matcher's civic-first claim path
+    // consumes from Plaza.civicSlots() the same way; it just sees
+    // an empty list until the SlotEmitter runs.
 
     /**
      * Scans {@code pctx.remaining} for the largest civic-building
@@ -629,18 +560,5 @@ public final class PlazaGenerator {
         village.addGatheringPoint(
                 new tterrag1112.life_in_the_village.Village.Decoration
                         .TownSquare.GatheringPoint(gpId, pos, kind, capacity));
-    }
-
-    private static BlockPos nudgeAwayFromCentroid(BlockPos from, BlockPos centroid,
-                                                  int blocks) {
-        int dx = from.getX() - centroid.getX();
-        int dz = from.getZ() - centroid.getZ();
-        double len = Math.hypot(dx, dz);
-        if (len < 0.5) return from;
-        double scale = blocks / len;
-        return new BlockPos(
-                from.getX() + (int) Math.round(dx * scale),
-                from.getY(),
-                from.getZ() + (int) Math.round(dz * scale));
     }
 }

@@ -958,6 +958,15 @@ public final class PlanContext {
         return java.util.Collections.unmodifiableMap(edgesByRef);
     }
 
+    /** Phase B: Collection accessor over realised edges, for resolvers
+     *  that iterate (e.g. {@code resolveAllSpurs} filtering by
+     *  EdgeRole, {@code resolvePlazaPerimeter} scanning spur exits). */
+    public java.util.Collection<tterrag1112.life_in_the_village.Village
+            .Planning.Adaptive.RealisedEdge> realisedEdges() {
+        return java.util.Collections.unmodifiableCollection(
+                edgesByRef.values());
+    }
+
     /** Currently-active blueprint. Set by the planner at the start of
      *  realisation; updated on re-emission. May be null between
      *  recipe stages. Read by the cascade-engine helpers

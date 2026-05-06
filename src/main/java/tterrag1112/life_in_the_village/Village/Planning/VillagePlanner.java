@@ -108,6 +108,26 @@ public class VillagePlanner {
      */
     private static final double SLOTS_DROPPED_THRESHOLD = 0.30;
 
+    /**
+     * Phase B: maximum chebyshev distance from a slot's anchor to its
+     * feeding road, given the slot's largest expected building
+     * footprint. Single-sourced here; both the validator's
+     * {@link #validateBuildingDistance} and the
+     * {@code SlotEmitter}'s resolvers call this so emission and
+     * validation use the same cap by construction.
+     *
+     * <p>Formula: {@code VALIDATOR_ROAD_HALF_WIDTH + max(W,L)/2 +
+     * VALIDATOR_ROAD_SLACK}. Inputs are footprint dimensions only —
+     * no slot-tag or sector-role variation. Examples:
+     * fp=9×9 → 13, fp=16×20 → 19, fp=29×29 → 23, fp=38×18 → 28,
+     * fp=21×42 → 30. (See spec §10.1; verified against measurement
+     * log values.)
+     */
+    public static int maxRoadDistance(int footprintW, int footprintL) {
+        int footprintHalf = Math.max(footprintW, footprintL) / 2;
+        return VALIDATOR_ROAD_HALF_WIDTH + footprintHalf + VALIDATOR_ROAD_SLACK;
+    }
+
     // =========================================================================
     // Entry point
     // =========================================================================
@@ -299,7 +319,10 @@ public class VillagePlanner {
         registerSectors(blueprint.sectors(), pctx);
         populateNamedAnchors(blueprint.namedAnchors(), layout);
 
-        // SlotEmitter (Phase A stub — Phase B implements resolvers).
+        // Phase B: real SlotEmitter with six resolvers wired in.
+        // PlazaPerimeter / RoadAlong / AllSpurs / RingValidated /
+        // NamedAnchor / RegionalGather; routes civic slots to
+        // plaza.civicSlots() and everything else to the flat pool.
         var emitter = new tterrag1112.life_in_the_village.Village.Planning
                 .Adaptive.SlotEmitter();
         var emitterReport = emitter.emit(
@@ -710,9 +733,19 @@ public class VillagePlanner {
                             .BaseRecipe.computeAndRecord(decl.primitive(), pctx);
             pctx.layout.addRoad(
                     decl.primitive(), pctx.level, pctx.worldSeed, decl.role());
+            // Phase B: capture the just-added edge's id so RealisedEdge
+            // carries it (vs centerline-equality lookup at resolver
+            // time). RoadGraph assigns sequential IDs in insertion
+            // order; the most-recently-added edge is the last one.
+            int edgeId = -1;
+            for (var e : pctx.layout.getRoadGraph().allEdges()) {
+                if (e.centerline().equals(result.centerline())) {
+                    edgeId = e.id();
+                }
+            }
             var realised = new tterrag1112.life_in_the_village.Village.Planning
                     .Adaptive.RealisedEdge(
-                    decl.ref(), decl.role(), decl.tier(),
+                    decl.ref(), edgeId, decl.role(), decl.tier(),
                     result.centerline(), result);
             pctx.registerRealisedEdge(decl.ref(), realised);
         }
@@ -759,21 +792,12 @@ public class VillagePlanner {
         for (var decl : sectors) {
             int parentEdgeId = -1;
             if (decl.parentEdge() != null) {
+                // Phase B: RealisedEdge carries the edge ID directly
+                // (populated by realiseRoads). Was an O(n) centerline-
+                // equality scan in Phase A.
                 var realised = pctx.findEdge(decl.parentEdge());
                 if (realised != null) {
-                    // The road graph assigns sequential IDs in
-                    // insertion order; SectorDeclaration's parentEdge
-                    // is symbolic (string-handle) so we need to map it
-                    // to the actual edge ID. Phase B/C: lift this onto
-                    // RealisedEdge so the lookup is direct. For
-                    // Phase A, scan the graph's edges by centerline
-                    // identity.
-                    for (var e : pctx.layout.getRoadGraph().allEdges()) {
-                        if (e.centerline().equals(realised.centerline())) {
-                            parentEdgeId = e.id();
-                            break;
-                        }
-                    }
+                    parentEdgeId = realised.edgeId();
                 }
             }
             Sector s = new Sector(
@@ -965,9 +989,11 @@ public class VillagePlanner {
 
         if (feedingRoad != null && !feedingRoad.isEmpty()) {
             int distance = nearestPointChebyshev(centre, feedingRoad);
-            int allowed = VALIDATOR_ROAD_HALF_WIDTH
-                    + footprintHalf
-                    + VALIDATOR_ROAD_SLACK;
+            // Phase B: formula lifted to maxRoadDistance() so the
+            // SlotEmitter's resolvers and this validator use the
+            // same cap by construction.
+            int allowed = maxRoadDistance(
+                    slot.getFootprintWidth(), slot.getFootprintLength());
             if (distance > allowed) {
                 System.out.println("VillagePlanner: building " + slot.getBuildingType()
                         + " at " + centre + " is " + distance
@@ -1174,7 +1200,8 @@ public class VillagePlanner {
 
             if (feedingRoad != null && !feedingRoad.isEmpty()) {
                 dist = nearestPointChebyshev(slot.getPos(), feedingRoad);
-                allowed = VALIDATOR_ROAD_HALF_WIDTH + footprintHalf + VALIDATOR_ROAD_SLACK;
+                allowed = maxRoadDistance(
+                        slot.getFootprintWidth(), slot.getFootprintLength());
                 mode = "road";
                 ok = dist <= allowed;
             } else {

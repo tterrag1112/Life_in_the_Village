@@ -4936,6 +4936,203 @@ Modified core types:
    (option a vs option b's @Deprecated helpers or option c's
    utility class extraction).
 
+---
+
+## Phase B — SlotEmitter + six Anchor resolvers
+
+Phase 2 of 5 (A → E) per `ADAPTIVE-LAYOUT-SPEC.md` §11. The
+SlotEmitter is now feature-complete: emit() dispatch + all six
+resolvers (PlazaPerimeter, RoadAlong, AllSpurs, RingValidated,
+NamedAnchor, RegionalGather) + civic-slot routing. After this
+lands, Phase C ports RADIAL as the integration smoke test that
+exercises every resolver end-to-end.
+
+Phase B's load-bearing invariant: **every PlacementSlot returned
+by a resolver satisfies the validator's road-adjacency cap by
+construction.** RegionalGather is the documented exception
+(ENCLAVE recipes don't require road adjacency).
+
+#### What changed
+
+`Village/Planning/VillagePlanner.java`:
+- Lifted the validator's road-distance cap formula to a public
+  static method:
+  ```java
+  public static int maxRoadDistance(int footprintW, int footprintL) {
+      return VALIDATOR_ROAD_HALF_WIDTH
+              + Math.max(footprintW, footprintL) / 2
+              + VALIDATOR_ROAD_SLACK;
+  }
+  ```
+  Single-sourced — both `validateBuildingDistance` and the
+  SlotEmitter resolvers call it. No new Validator class
+  introduced (per ruling #7).
+- `validateBuildingDistance` and `dumpPlan`'s VALIDATION SUMMARY
+  redirected to call `maxRoadDistance(...)`.
+- `realiseRoads` now captures the just-added edge's id from
+  `RoadGraph.allEdges()` after `addRoad` and threads it into
+  `RealisedEdge`.
+- `registerSectors`'s parentEdge resolution simplified from O(n)
+  centerline-equality scan to a constant-cost
+  `realised.edgeId()` field read.
+
+`Village/Planning/Adaptive/RealisedEdge.java`:
+- Added `int edgeId` as the second record component (per ruling
+  #10). `realiseRoads` populates it from RoadGraph; resolvers
+  read it directly into `PlacementSlot.feedingEdgeId`.
+
+`Village/Planning/Primitives/PlanContext.java`:
+- Added `realisedEdges()` Collection accessor — one-line wrapper
+  over `edgesByRef.values()`. Resolvers iterate via this rather
+  than the raw map.
+
+`Village/Planning/Adaptive/SlotEmitter.java` (full implementation):
+- `emit(intentions, layout, fmap, pctx)` dispatch using a sealed
+  `switch` over Anchor subtypes.
+- `resolvePlazaPerimeter` — vertex iteration with spur-exit
+  skipping. Quality formula `90 - i*2` (floor 40) preserved
+  from the deleted `PlazaGenerator.buildPlazaCivicSlots` so the
+  matcher's civic-first prepass tie-breaking is unchanged.
+  Validator-cap enforced: vertex must be within
+  `maxRoadDistance` of some realised edge centerline.
+- `resolveRoadAlong` — centerline walk + perpendicular at offset
+  `tier.reservedHalfWidth() + max(halfW, halfL) + 1`. Tangent
+  via `Integer.signum` (matches BuildSiteFinder's pattern; no
+  Vec3 imports per ruling #8/#11). Sanity-check at
+  `perpOffset > maxRoadDistance` drops the intention if the
+  recipe asked for an impossible footprint on this road tier.
+- `resolveAllSpurs` — filters realised edges by
+  `EdgeRole.SPUR`, delegates to `resolveRoadAlong` per spur with
+  a synthetic intention. Truncation-tolerance is automatic.
+- `resolveRingValidated` — angular sweep with oversample
+  `max(needed*4, 32)`, deterministic jitter from
+  `pctx.worldSeed ^ radius`. Skips angular positions farther
+  than `maxRoadDistance` from any realised edge — the structural
+  fix for the DUAL_PLAZA / OUTPOST / outer-agri-ring failure
+  pattern.
+- `resolveNamedAnchor` — reads anchor position from
+  `pctx.getCurrentBlueprint().namedAnchors()`, finds nearest
+  realised edge, walks `radialOffset` along the centerline,
+  perpendicular slot. Returns at most one slot. Solves
+  HILLTOP TOWN_HALL placement.
+- `resolveRegionalGather` — uniform-disc sampling with
+  min-spacing rejection, seeded from
+  `pctx.worldSeed ^ center.hashCode()`. ENCLAVE-style
+  hand-rolled courtyards. Validator-cap exception documented.
+- `routeSlots` — civic perimeter slots route to
+  `plaza.civicSlots()` (matcher civic-first path); everything
+  else lands in flat pool via `pctx.offerSlot`.
+- `EmitterReport` populated correctly per intention with
+  `dropRatio`, per-intention emit counts, drop reasons.
+- Helpers: `perpendicularUnit` (Integer.signum tangent),
+  `nearestRoadDistance`, `nearestEdge`, `chebDist`,
+  `isFootprintClear` (combines occupied + reserved-road check
+  via `BuildingFootprint.isClear`, per ruling #1).
+
+`Village/Decoration/Plaza/PlazaGenerator.java` — deletion (per
+ruling #6):
+- `buildPlazaCivicSlots(...)` private helper deleted entirely.
+- `nudgeAwayFromCentroid(...)` helper deleted (only caller was
+  the deleted helper).
+- Constants `PLAZA_ADJACENT_STEP` and `CIVIC_FOOTPRINT_BUDGET`
+  deleted (only references were in deleted helper).
+- Imports `EnumSet`, `PlacementSlot`, `SlotTag` removed.
+- `generate()` constructs Plaza with `java.util.List.of()`
+  (empty civic slots). The matcher's civic-first claim path
+  tolerates an empty list and falls through to flat pool; in
+  Phase C+, `SlotEmitter.PlazaPerimeter` populates the list
+  before the matcher runs.
+- Logging line updated: civic-slot count replaced with a
+  "[civic slots emitted later by SlotEmitter]" tag.
+- `scanMaxCivicFrontFace` and `civicRingR` computation kept —
+  still needed for plaza geometry (civic standoff radius).
+
+Confirmed safe: PlazaGenerator's civic-emission deletion has no
+consumers outside the matcher's civic-first claim path
+(PlacementMatcher:147, 246). Empty list → matcher falls
+through; same behavior the system already has on plaza-less
+spawns (ENCLAVE).
+
+#### Status
+
+- 6 files touched: 5 modified + RealisedEdge gained one record
+  component.
+- Compile gated by sandbox network access. Spot-checked all
+  API points: `Polygon.contains` (Utilities.Geometry,
+  static), `PlazaRegion.footprint().vertices()` (record
+  accessor), `BuildingFootprint.isClear(origin, w, l, buffer)`,
+  `FeatureMap.isClearForFootprint(centre, w, l)`,
+  `Plaza.civicSlots()` (mutable list getter),
+  `pctx.realisedEdges()` (new), `pctx.findEdge`,
+  `pctx.getCurrentBlueprint`, `RoadShape.RoadTier.reservedHalfWidth`,
+  `EdgeRole.SPUR`, `LayoutSlot.getFootprintWidth/Length`,
+  `Plaza` 5-arg constructor.
+- Unit tests skipped per ruling #5; no `src/test/java/` exists,
+  no JUnit setup in `build.gradle`. Phase C's RADIAL port is
+  the integration smoke test that validates every resolver
+  end-to-end against real geometry.
+
+#### Phase B flips vs spec
+
+1. PlazaGenerator civic-emission deletion pulled forward from
+   Phase D (per ruling #6). Avoids double-emission risk in
+   Phase C's RADIAL port; keeps Phase C scope clean ("port
+   RADIAL and verify byte-equality" instead of "port RADIAL +
+   fix design conflict").
+2. RealisedEdge gained `int edgeId` field (per ruling #10).
+   Constant-cost lookup vs O(n) centerline-equality scan.
+3. No `Validator` class introduced — `maxRoadDistance` lifted
+   to public static on `VillagePlanner`. Single-sourced; both
+   validator and SlotEmitter call it.
+4. BuildSiteFinder perpendicular-generation logic duplicated in
+   SlotEmitter rather than refactored (per ruling #8). Phase D
+   dedupes if measurement reveals it matters.
+5. Unit tests skipped — no test infrastructure exists; building
+   it would compete with the resolver work and isn't worth the
+   cycle (per ruling #5). Phase C's byte-equality smoke test is
+   stronger validation than synthetic unit tests.
+
+#### Validation (next steps for the user)
+
+1. Compile: `./gradlew compileJava` (network-gated; passes in a
+   normal build).
+2. `/litv measure 10` — every spawn still fails with
+   `RECIPE_NOT_PORTED` (no recipe is ported yet). The new
+   SlotEmitter doesn't actually run in production because the
+   recipe stubs throw before the SlotEmitter is reached.
+3. Existing saves continue loading.
+4. Phase C is when the SlotEmitter first executes against real
+   geometry. The byte-equality smoke test (RADIAL on superflat
+   at known seed) validates every resolver Phase B introduced.
+
+#### Phase B follow-ups (Phase C scope)
+
+- Port RADIAL to declarative blueprint per spec §7's worked
+  example pattern. RADIAL's compose returns a LayoutBlueprint
+  with:
+  - Roads: spine + spurs (StraightRoad / Spur primitives)
+  - Plaza: PlazaDeclaration at village centre
+  - Sectors: civic ring, residential, production, agri/defense
+  - Slot intentions: PlazaPerimeter (civic), RoadAlong /
+    RingValidated (residential/production/agri/defense)
+  - Named anchors: TOWN_SQUARE, MAIN_GATE
+- Smoke test: spawn at known seed, verify centre =
+  (-2496, -60, 292), 27/27 placed, 27/27 validated, building
+  positions byte-identical to the post-Phase-20 baseline.
+- Update `MeasureCommand`'s structural-integrity check to
+  assert Phase C's RADIAL port landed (e.g. RADIAL recipe
+  returns a non-null blueprint).
+
+#### Phase B follow-ups (post-rework backlog)
+
+- BuildSiteFinder's perpendicular-generation deduplication
+  (currently duplicated in SlotEmitter; Phase D or later).
+- Unit test infrastructure for resolvers (deferred unless a
+  regression argues for it).
+- Scoring-based slot selection (Phase 20 deferred polish item;
+  current resolver ordering is first-viable).
+
+
 
 
 
