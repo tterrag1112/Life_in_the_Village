@@ -341,6 +341,31 @@ public final class V2FeatureMap {
                 cellWorldZ(centre, radius, j));
     }
 
+    /** Returns the cell index along the X axis containing world {@code worldX},
+     *  clamped to the grid range. */
+    public int worldXToCellI(int worldX) {
+        int i = (worldX - (centre.getX() - radius)) / CELL_SIZE;
+        return Math.max(0, Math.min(gridSize - 1, i));
+    }
+
+    /** Returns the cell index along the Z axis containing world {@code worldZ},
+     *  clamped to the grid range. */
+    public int worldZToCellJ(int worldZ) {
+        int j = (worldZ - (centre.getZ() - radius)) / CELL_SIZE;
+        return Math.max(0, Math.min(gridSize - 1, j));
+    }
+
+    /** Returns the cell containing world {@code (worldX, worldZ)},
+     *  clamped to grid edges if the position is outside the scan area. */
+    public Cell cellAt(int worldX, int worldZ) {
+        return cells[worldXToCellI(worldX)][worldZToCellJ(worldZ)];
+    }
+
+    /** Convenience: surface y at the cell containing {@code (worldX, worldZ)}. */
+    public int surfaceYAt(int worldX, int worldZ) {
+        return cellAt(worldX, worldZ).elevationY();
+    }
+
     /** Returns counts of cells per category, in declaration order. */
     public int[] categoryCounts() {
         int[] counts = new int[BlockCategory.values().length];

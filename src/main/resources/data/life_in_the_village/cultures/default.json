@@ -1,0 +1,14 @@
+{
+  "id": "default",
+  "roadMaterial": "minecraft:dirt_path",
+  "preferredCurvature": "NATURAL",
+  "preferredPlazaShape": "IRREGULAR",
+  "inclinationBias": {
+    "AGRICULTURAL": 1.0,
+    "INDUSTRIAL": 1.0,
+    "DEFENSIVE": 1.0,
+    "CIVIC": 1.0,
+    "RESIDENTIAL": 1.0,
+    "SACRED": 1.0
+  }
+}

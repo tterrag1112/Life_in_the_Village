@@ -78,6 +78,9 @@ public class ModModEvents {
         event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "variant_manifests"),
                 tterrag1112.life_in_the_village.Village.Decoration.Variants
                         .VariantManifestLoader.INSTANCE);
+        event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "cultures"),
+                tterrag1112.life_in_the_village.Village.Planning.V2.Culture
+                        .CultureRegistry.INSTANCE);
 
 
     }
@@ -273,6 +276,7 @@ public class ModModEvents {
         LayoutDebugCommand.register(event.getDispatcher());
         MeasureCommand.register(event.getDispatcher());
         FeatureMapCommand.register(event.getDispatcher());
+        SiteCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());
