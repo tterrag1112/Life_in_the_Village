@@ -303,8 +303,16 @@ public final class PlacementMatcher {
             // tryCommitBuilding) gives them the slot-tag scoring
             // bonus. Recipe-direct callers use the no-tag overload.
             pctx.rejectionLog.clear();
+            // Phase C.3: recalibrate the slot's commit position based
+            // on the candidate building's actual footprint. Slots
+            // were emitted at perpOffset for the intention's maxFp;
+            // the recalibrated target satisfies the validator-cap for
+            // the building's actual fp. Perturbation in
+            // tryCommitWithRetries then operates around the
+            // recalibrated centre.
+            BlockPos target = recalibrateSlotForBuilding(c.slot, sb);
             LayoutSlot committed = pctx.tryCommitWithRetries(
-                    c.slot.pos(), sb, bt, c.slot.feedingRoad(),
+                    target, sb, bt, c.slot.feedingRoad(),
                     c.slot.maxDriftBlocks(),
                     c.slot.tags());
             if (committed != null) {
@@ -369,8 +377,14 @@ public final class PlacementMatcher {
         List<CandidateLog> rejected = new ArrayList<>();
         for (Scored c : candidates) {
             pctx.rejectionLog.clear();
+            // Phase C.3: recalibrate. Civic-pool slots from
+            // PlazaPerimeter have feedingRoad=null, so recalibration
+            // is a no-op for them — they commit at the slot's
+            // original vertex position and validate via the
+            // hull-distance branch.
+            BlockPos target = recalibrateSlotForBuilding(c.slot, sb);
             LayoutSlot committed = pctx.tryCommitWithRetries(
-                    c.slot.pos(), sb, bt, c.slot.feedingRoad(),
+                    target, sb, bt, c.slot.feedingRoad(),
                     c.slot.maxDriftBlocks(),
                     c.slot.tags());
             if (committed != null) {
@@ -496,6 +510,123 @@ public final class PlacementMatcher {
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
+
+    /**
+     * Phase C.3: recalibrates the slot's commit position based on the
+     * candidate building's actual footprint. The slot acts as a
+     * road-anchor hint (which road, which side, roughly which spot
+     * along the road). The actual commit position is computed
+     * perpendicular to the road at the distance that satisfies BOTH
+     * the road-overlap constraint AND the validator-cap, given the
+     * building's actual footprint.
+     *
+     * <p>Why: SlotEmitter resolvers position slots at perpOffset
+     * computed from the intention's {@code maxFootprint} (e.g., 24
+     * blocks for a fp=40 production sector). When a small building
+     * (fp=9 GUARD_TOWER, STONEMASON, etc.) is committed there, the
+     * validator's cap depends on the *building's* footprint, not the
+     * intention's. The recalibration moves the building closer to
+     * the road so the validator's cap holds.
+     *
+     * <p>Returns the slot's original position when:
+     * <ul>
+     *   <li>{@code slot.feedingRoad()} is null or has fewer than 2
+     *       points (PlazaPerimeter civic slots, RegionalGather
+     *       slots — these go through the validator's hull-distance
+     *       branch, not the road-distance branch).</li>
+     *   <li>The building's footprint can't be looked up (fall back
+     *       to the slot's original position as a safe default).</li>
+     * </ul>
+     */
+    private BlockPos recalibrateSlotForBuilding(
+            PlacementSlot slot, StarterBuilding sb) {
+        java.util.List<BlockPos> feedingRoad = slot.feedingRoad();
+        if (feedingRoad == null || feedingRoad.size() < 2) {
+            return slot.pos();
+        }
+
+        // Look up the building's actual footprint. If unknown, fall
+        // back to slot.pos() — same default-12 fallback PlanContext
+        // .tryCommitWithRetries uses for unrecognised structures.
+        var sizeInfo = pctx.sizes.get(sb.structure(),
+                net.minecraft.world.level.block.Rotation.NONE);
+        if (sizeInfo == null) return slot.pos();
+        int buildingFpW = sizeInfo.width();
+        int buildingFpL = sizeInfo.length();
+
+        BlockPos slotPos = slot.pos();
+
+        // Find the centerline point nearest the slot.
+        int nearestIdx = 0;
+        int nearestDist = Integer.MAX_VALUE;
+        for (int i = 0; i < feedingRoad.size(); i++) {
+            int d = chebDist(slotPos, feedingRoad.get(i));
+            if (d < nearestDist) {
+                nearestDist = d;
+                nearestIdx = i;
+            }
+        }
+        BlockPos roadPt = feedingRoad.get(nearestIdx);
+
+        // Tangent via Integer.signum — matches BuildSiteFinder /
+        // SlotEmitter conventions. Falls back to previous-segment
+        // tangent at end of centerline.
+        int tangentX, tangentZ;
+        if (nearestIdx + 1 < feedingRoad.size()) {
+            BlockPos next = feedingRoad.get(nearestIdx + 1);
+            tangentX = Integer.signum(next.getX() - roadPt.getX());
+            tangentZ = Integer.signum(next.getZ() - roadPt.getZ());
+        } else {
+            BlockPos prev = feedingRoad.get(nearestIdx - 1);
+            tangentX = Integer.signum(roadPt.getX() - prev.getX());
+            tangentZ = Integer.signum(roadPt.getZ() - prev.getZ());
+        }
+        if (tangentX == 0 && tangentZ == 0) {
+            tangentX = 1;
+            tangentZ = 0;
+        }
+        int perpX = -tangentZ;
+        int perpZ = tangentX;
+
+        // Determine which side of the road the slot is on.
+        int slotDx = slotPos.getX() - roadPt.getX();
+        int slotDz = slotPos.getZ() - roadPt.getZ();
+        int sign = Integer.signum(slotDx * perpX + slotDz * perpZ);
+        if (sign == 0) sign = 1;
+
+        // Target perpOffset for THIS building's footprint.
+        // roadHalfWidth=3 hardcoded — matches VillagePlanner
+        // .VALIDATOR_ROAD_HALF_WIDTH and the value all current road
+        // tiers use (RoadShape.RoadTier.reservedHalfWidth() = 3 for
+        // VILLAGE_PATH and VILLAGE_ROAD). If a future tier widens
+        // its reservation, lift this constant or thread the slot's
+        // tier through.
+        int halfW = buildingFpW / 2;
+        int halfL = buildingFpL / 2;
+        int roadHalfWidth = 3;
+        int targetPerpOffset = roadHalfWidth + Math.max(halfW, halfL) + 1;
+
+        BlockPos recalibrated = new BlockPos(
+                roadPt.getX() + perpX * targetPerpOffset * sign,
+                slotPos.getY(),
+                roadPt.getZ() + perpZ * targetPerpOffset * sign);
+
+        if (!recalibrated.equals(slotPos)) {
+            int origPerpOffset = chebDist(slotPos, roadPt);
+            System.out.println("[Matcher] recalibrate type=" + sb.type()
+                    + " slot=" + slotPos + " -> " + recalibrated
+                    + " feedingRoad=" + feedingRoad.size() + "pts"
+                    + " perpOffset=" + origPerpOffset
+                    + "->" + targetPerpOffset
+                    + " buildingFp=" + buildingFpW + "x" + buildingFpL);
+        }
+        return recalibrated;
+    }
+
+    private static int chebDist(BlockPos a, BlockPos b) {
+        return Math.max(Math.abs(a.getX() - b.getX()),
+                Math.abs(a.getZ() - b.getZ()));
+    }
 
     /** Rough footprint estimate before structure lookup. Conservative. */
     private int estimateFootprint(StarterBuilding sb) {
