@@ -10,6 +10,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
@@ -55,9 +56,6 @@ public final class V2FeatureMap {
      *  surface y must be within this many blocks of the neighbour's
      *  observed water y. */
     private static final int SHORE_Y_TOLERANCE = 2;
-    /** Peak prominence: a peak's elevation must exceed the highest
-     *  neighbour by at least this many blocks. */
-    private static final int PEAK_MIN_PROMINENCE = 3;
     /** River aspect-ratio threshold: bbox.long / bbox.short ≥ this
      *  classifies a water component as a river rather than a lake. */
     private static final double RIVER_ASPECT_RATIO = 3.0;
@@ -65,6 +63,24 @@ public final class V2FeatureMap {
      *  source iff its area is at least this fraction of the scan
      *  area AND it touches the scan edge. */
     private static final double COASTLINE_AREA_FRACTION = 0.10;
+    /** High ground: a cell qualifies if its elevation exceeds the 25th
+     *  percentile of the scan elevations by at least this many blocks. */
+    private static final int HIGHGROUND_PROMINENCE_THRESHOLD = 8;
+    /** High ground: connected components below this cell count are
+     *  treated as bumps and dropped. */
+    private static final int HIGHGROUND_MIN_AREA = 4;
+    /** Forest dilation radius (cells, chebyshev) — merges nearby tree
+     *  clusters into single regions. */
+    private static final int FOREST_DILATION_RADIUS = 3;
+    /** Forest min area after dilation; smaller components are isolated
+     *  trees / tiny groves and are dropped. */
+    private static final int FOREST_MIN_AREA = 8;
+    /** Stone-exposed dilation radius (cells, chebyshev) — tighter than
+     *  forest because stone patches are more localised. */
+    private static final int STONE_DILATION_RADIUS = 2;
+    /** Stone-exposed min area after dilation; smaller components are
+     *  natural variation / cave ceilings and are dropped. */
+    private static final int STONE_MIN_AREA = 6;
 
     private final BlockPos centre;
     private final int radius;
@@ -78,9 +94,9 @@ public final class V2FeatureMap {
     private Optional<Region> largestFlatRegion;
     private Optional<List<BlockPos>> riverPath;
     private Optional<List<BlockPos>> coastline;
-    private List<BlockPos> peakPoints;
-    private List<List<BlockPos>> forestEdges;
-    private List<Region> stoneExposedRegions;
+    private List<HighGround> highGroundRegions;
+    private List<ForestRegion> forestRegions;
+    private List<StoneRegion> stoneExposedRegions;
 
     private V2FeatureMap(BlockPos centre, int radius, Cell[][] cells, long scanMs) {
         this.centre = centre;
@@ -441,80 +457,198 @@ public final class V2FeatureMap {
     }
 
     /**
-     * Cells whose elevation strictly exceeds all 8 neighbours by at
-     * least {@link #PEAK_MIN_PROMINENCE} blocks.
+     * Regions of elevated terrain ("hills"). Built by:
+     * <ol>
+     *   <li>Computing a baseline = 25th percentile of all cell
+     *       elevations in the scan (robust against a few high points
+     *       dragging the median up).</li>
+     *   <li>Marking cells with {@code elevationY > baseline +
+     *       HIGHGROUND_PROMINENCE_THRESHOLD} as highground.</li>
+     *   <li>Taking 8-connected components.</li>
+     *   <li>Dropping components smaller than {@link #HIGHGROUND_MIN_AREA}
+     *       cells (these are bumps, not hills).</li>
+     * </ol>
      */
-    public List<BlockPos> peakPoints() {
-        if (peakPoints != null) return peakPoints;
-        List<BlockPos> peaks = new ArrayList<>();
-        for (int i = 1; i < gridSize - 1; i++) {
-            for (int j = 1; j < gridSize - 1; j++) {
-                int y = cells[i][j].elevationY();
-                int maxN = Integer.MIN_VALUE;
-                for (int di = -1; di <= 1; di++) {
-                    for (int dj = -1; dj <= 1; dj++) {
-                        if (di == 0 && dj == 0) continue;
-                        int ny = cells[i + di][j + dj].elevationY();
-                        if (ny > maxN) maxN = ny;
-                    }
-                }
-                if (y - maxN >= PEAK_MIN_PROMINENCE) {
-                    peaks.add(cellWorldPos(i, j));
-                }
-            }
-        }
-        peakPoints = peaks;
-        return peakPoints;
-    }
+    public List<HighGround> highGroundRegions() {
+        if (highGroundRegions != null) return highGroundRegions;
 
-    /**
-     * Forest-edge cell groups. A cell qualifies as an edge cell if it
-     * is FOREST and has at least one non-FOREST 8-neighbour. Groups
-     * are 8-connected components of edge cells.
-     */
-    public List<List<BlockPos>> forestEdges() {
-        if (forestEdges != null) return forestEdges;
-        boolean[][] edgeMask = new boolean[gridSize][gridSize];
+        int n = gridSize * gridSize;
+        int[] elevs = new int[n];
+        int k = 0;
         for (int i = 0; i < gridSize; i++) {
             for (int j = 0; j < gridSize; j++) {
-                if (cells[i][j].category() != BlockCategory.FOREST) continue;
-                boolean hasNonForest = false;
-                for (int di = -1; di <= 1 && !hasNonForest; di++) {
-                    for (int dj = -1; dj <= 1; dj++) {
-                        if (di == 0 && dj == 0) continue;
-                        int ni = i + di, nj = j + dj;
-                        if (ni < 0 || nj < 0 || ni >= gridSize || nj >= gridSize) continue;
-                        if (cells[ni][nj].category() != BlockCategory.FOREST) {
-                            hasNonForest = true;
-                            break;
-                        }
-                    }
-                }
-                edgeMask[i][j] = hasNonForest;
+                elevs[k++] = cells[i][j].elevationY();
             }
         }
-        List<List<int[]>> comps = connectedComponentCells(edgeMask);
-        List<List<BlockPos>> result = new ArrayList<>(comps.size());
-        for (List<int[]> comp : comps) {
-            List<BlockPos> chain = new ArrayList<>(comp.size());
-            for (int[] c : comp) chain.add(cellWorldPos(c[0], c[1]));
-            result.add(chain);
-        }
-        forestEdges = result;
-        return forestEdges;
-    }
+        Arrays.sort(elevs);
+        int baseline = elevs[n / 4];
 
-    /** Connected components of STONE_EXPOSED cells. */
-    public List<Region> stoneExposedRegions() {
-        if (stoneExposedRegions != null) return stoneExposedRegions;
         boolean[][] mask = new boolean[gridSize][gridSize];
         for (int i = 0; i < gridSize; i++) {
             for (int j = 0; j < gridSize; j++) {
-                mask[i][j] = cells[i][j].category() == BlockCategory.STONE_EXPOSED;
+                mask[i][j] = cells[i][j].elevationY()
+                        > baseline + HIGHGROUND_PROMINENCE_THRESHOLD;
             }
         }
-        stoneExposedRegions = connectedComponents(mask);
+
+        List<List<int[]>> comps = connectedComponentCells(mask);
+        List<HighGround> out = new ArrayList<>();
+        for (List<int[]> comp : comps) {
+            if (comp.size() < HIGHGROUND_MIN_AREA) continue;
+
+            int[] peakCell = comp.get(0);
+            int peakY = cells[peakCell[0]][peakCell[1]].elevationY();
+            for (int[] c : comp) {
+                int y = cells[c[0]][c[1]].elevationY();
+                if (y > peakY) { peakY = y; peakCell = c; }
+            }
+            BlockPos peak = cellWorldPos(peakCell[0], peakCell[1]);
+
+            long si = 0, sj = 0;
+            for (int[] c : comp) { si += c[0]; sj += c[1]; }
+            int ci = (int) (si / comp.size());
+            int cj = (int) (sj / comp.size());
+            BlockPos centroid = cellWorldPos(ci, cj);
+
+            int[] bb = bboxOf(comp);
+            BoundingBox bbox = bboxToWorld(bb);
+
+            int prominence = peakY - baseline;
+            out.add(new HighGround(peak, centroid, comp.size(), bbox, prominence));
+        }
+        highGroundRegions = out;
+        return highGroundRegions;
+    }
+
+    /**
+     * Coherent forest patches. Built by dilating {@code FOREST} cells
+     * by {@link #FOREST_DILATION_RADIUS} cells (chebyshev) so nearby
+     * tree clusters merge, then taking 8-connected components and
+     * dropping any with fewer than {@link #FOREST_MIN_AREA} cells.
+     */
+    public List<ForestRegion> forestRegions() {
+        if (forestRegions != null) return forestRegions;
+
+        boolean[][] core = new boolean[gridSize][gridSize];
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                core[i][j] = cells[i][j].category() == BlockCategory.FOREST;
+            }
+        }
+        boolean[][] dilated = dilate(core, FOREST_DILATION_RADIUS);
+
+        List<List<int[]>> comps = connectedComponentCells(dilated);
+        List<ForestRegion> out = new ArrayList<>();
+        for (List<int[]> comp : comps) {
+            if (comp.size() < FOREST_MIN_AREA) continue;
+
+            long si = 0, sj = 0;
+            int coreCells = 0;
+            for (int[] c : comp) {
+                si += c[0]; sj += c[1];
+                if (core[c[0]][c[1]]) coreCells++;
+            }
+            int ci = (int) (si / comp.size());
+            int cj = (int) (sj / comp.size());
+            BlockPos centroid = cellWorldPos(ci, cj);
+
+            int[] bb = bboxOf(comp);
+            BoundingBox bbox = bboxToWorld(bb);
+
+            out.add(new ForestRegion(centroid, comp.size(), coreCells, bbox));
+        }
+        forestRegions = out;
+        return forestRegions;
+    }
+
+    /**
+     * Coherent regions of exposed natural stone. Built by dilating
+     * {@code STONE_EXPOSED} cells by {@link #STONE_DILATION_RADIUS}
+     * cells (smaller than forest — stone is more localised), then
+     * taking 8-connected components and dropping any with fewer than
+     * {@link #STONE_MIN_AREA} cells.
+     *
+     * <p>{@code avgSlope} captures the mean local slope across the
+     * core (un-dilated) cells so future cliff classification can
+     * distinguish flat exposed bedrock from cliff faces without
+     * re-scanning.
+     */
+    public List<StoneRegion> stoneExposedRegions() {
+        if (stoneExposedRegions != null) return stoneExposedRegions;
+
+        boolean[][] core = new boolean[gridSize][gridSize];
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                core[i][j] = cells[i][j].category() == BlockCategory.STONE_EXPOSED;
+            }
+        }
+        boolean[][] dilated = dilate(core, STONE_DILATION_RADIUS);
+
+        List<List<int[]>> comps = connectedComponentCells(dilated);
+        List<StoneRegion> out = new ArrayList<>();
+        for (List<int[]> comp : comps) {
+            if (comp.size() < STONE_MIN_AREA) continue;
+
+            long si = 0, sj = 0;
+            int coreCells = 0;
+            long slopeSum = 0;
+            for (int[] c : comp) {
+                si += c[0]; sj += c[1];
+                if (core[c[0]][c[1]]) {
+                    coreCells++;
+                    slopeSum += cells[c[0]][c[1]].localSlope();
+                }
+            }
+            int ci = (int) (si / comp.size());
+            int cj = (int) (sj / comp.size());
+            BlockPos centroid = cellWorldPos(ci, cj);
+
+            int[] bb = bboxOf(comp);
+            BoundingBox bbox = bboxToWorld(bb);
+
+            int avgSlope = coreCells > 0 ? (int) (slopeSum / coreCells) : 0;
+            out.add(new StoneRegion(centroid, comp.size(), coreCells, bbox, avgSlope));
+        }
+        stoneExposedRegions = out;
         return stoneExposedRegions;
+    }
+
+    /**
+     * Dilate {@code mask} by {@code radius} cells (chebyshev) — every
+     * cell within that range of a true cell becomes true. Implemented
+     * as a stamping pass over the source true cells, which is cheap
+     * when {@code mask} is sparse.
+     */
+    private boolean[][] dilate(boolean[][] mask, int radius) {
+        boolean[][] out = new boolean[gridSize][gridSize];
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                if (!mask[i][j]) continue;
+                int i0 = Math.max(0, i - radius);
+                int i1 = Math.min(gridSize - 1, i + radius);
+                int j0 = Math.max(0, j - radius);
+                int j1 = Math.min(gridSize - 1, j + radius);
+                for (int ii = i0; ii <= i1; ii++) {
+                    for (int jj = j0; jj <= j1; jj++) {
+                        out[ii][jj] = true;
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Convert a cell-space bbox {@code {minI, minJ, maxI, maxJ}} into
+     * a world-space {@link BoundingBox} covering the full block extent
+     * of those cells.
+     */
+    private BoundingBox bboxToWorld(int[] cellBbox) {
+        int worldMinX = cellWorldX(centre, radius, cellBbox[0]) - CELL_SIZE / 2;
+        int worldMinZ = cellWorldZ(centre, radius, cellBbox[1]) - CELL_SIZE / 2;
+        int worldMaxX = cellWorldX(centre, radius, cellBbox[2]) + CELL_SIZE / 2 - 1;
+        int worldMaxZ = cellWorldZ(centre, radius, cellBbox[3]) + CELL_SIZE / 2 - 1;
+        return new BoundingBox(worldMinX, worldMinZ, worldMaxX, worldMaxZ);
     }
 
     // =========================================================================

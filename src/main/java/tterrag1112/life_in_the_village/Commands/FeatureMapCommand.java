@@ -11,7 +11,10 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.ForestRegion;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.HighGround;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Region;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.StoneRegion;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 
 import java.util.List;
@@ -27,7 +30,7 @@ import java.util.Optional;
  * <ul>
  *   <li>Cell counts by category</li>
  *   <li>Aggregate query results (largestFlatRegion, riverPath,
- *       coastline, peakPoints, forestEdges, stoneExposedRegions)</li>
+ *       coastline, highGroundRegions, forestRegions, stoneExposedRegions)</li>
  *   <li>Viability tier preview against the design-doc thresholds</li>
  *   <li>Total scan time</li>
  * </ul>
@@ -102,44 +105,52 @@ public final class FeatureMapCommand {
             send(src, "coastline: absent");
         }
 
-        // -- Peaks ----------------------------------------------------------
-        List<BlockPos> peaks = fmap.peakPoints();
-        if (peaks.isEmpty()) {
-            send(src, "peakPoints: 0 peaks");
+        // -- High ground ----------------------------------------------------
+        List<HighGround> hills = fmap.highGroundRegions();
+        if (hills.isEmpty()) {
+            send(src, "highGround: 0 regions");
         } else {
-            int show = Math.min(5, peaks.size());
-            StringBuilder sb = new StringBuilder("peakPoints: " + peaks.size() + " peaks at:");
-            for (int i = 0; i < show; i++) {
-                BlockPos p = peaks.get(i);
-                sb.append(' ').append(p.getX()).append(',').append(p.getY())
-                        .append(',').append(p.getZ());
+            HighGround biggest = hills.get(0);
+            for (HighGround h : hills) {
+                if (h.area() > biggest.area()) biggest = h;
             }
-            if (peaks.size() > show) sb.append(" (+").append(peaks.size() - show).append(" more)");
-            send(src, sb.toString());
+            BlockPos peak = biggest.peak();
+            send(src, "highGround: " + hills.size()
+                    + " regions, biggest area=" + biggest.area()
+                    + " prominence=" + biggest.prominence()
+                    + " at " + peak.getX() + "," + peak.getY() + "," + peak.getZ());
         }
 
-        // -- Forest edges ---------------------------------------------------
-        List<List<BlockPos>> edges = fmap.forestEdges();
-        int totalEdgePoints = 0;
-        for (List<BlockPos> chain : edges) totalEdgePoints += chain.size();
-        send(src, "forestEdges: " + edges.size() + " chains, total "
-                + totalEdgePoints + " points");
+        // -- Forest regions -------------------------------------------------
+        List<ForestRegion> forests = fmap.forestRegions();
+        int totalForestArea = 0;
+        int totalForestCore = 0;
+        for (ForestRegion f : forests) {
+            totalForestArea += f.area();
+            totalForestCore += f.coreCells();
+        }
+        send(src, "forestRegions: " + forests.size()
+                + " regions, total area=" + totalForestArea
+                + " core cells=" + totalForestCore);
 
         // -- Stone-exposed regions -----------------------------------------
-        List<Region> stoneRegs = fmap.stoneExposedRegions();
+        List<StoneRegion> stoneRegs = fmap.stoneExposedRegions();
         if (stoneRegs.isEmpty()) {
             send(src, "stoneExposedRegions: 0 regions");
         } else {
-            StringBuilder sb = new StringBuilder("stoneExposedRegions: ")
-                    .append(stoneRegs.size()).append(" regions, areas:");
+            StringBuilder areas = new StringBuilder();
+            StringBuilder slopes = new StringBuilder();
             int show = Math.min(5, stoneRegs.size());
             for (int i = 0; i < show; i++) {
-                sb.append(' ').append(stoneRegs.get(i).area());
+                if (i > 0) { areas.append(", "); slopes.append(", "); }
+                areas.append(stoneRegs.get(i).area());
+                slopes.append(stoneRegs.get(i).avgSlope());
             }
-            if (stoneRegs.size() > show) {
-                sb.append(" (+").append(stoneRegs.size() - show).append(" more)");
-            }
-            send(src, sb.toString());
+            String tail = stoneRegs.size() > show
+                    ? " (+" + (stoneRegs.size() - show) + " more)" : "";
+            send(src, "stoneExposedRegions: " + stoneRegs.size()
+                    + " regions, areas=[" + areas + "]"
+                    + " avgSlopes=[" + slopes + "]" + tail);
         }
 
         // -- Viability preview ---------------------------------------------
