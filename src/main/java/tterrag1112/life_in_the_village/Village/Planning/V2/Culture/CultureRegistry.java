@@ -34,15 +34,19 @@ public final class CultureRegistry
     private static final Gson GSON = new Gson();
     public static final String DEFAULT_ID = "default";
 
-    public static final CultureRegistry INSTANCE = new CultureRegistry();
-
-    /** Hardcoded fallback so callers can run before resource reload. */
+    /** Hardcoded fallback so callers can run before resource reload.
+     *  Declared before {@link #INSTANCE}: the instance constructor's
+     *  field initializer references it via {@link Map#of}, which
+     *  rejects null. Static field initializers run in declaration
+     *  order, so this MUST stay above INSTANCE. */
     private static final Culture HARDCODED_DEFAULT = new Culture(
             DEFAULT_ID,
             "minecraft:dirt_path",
             Curvature.NATURAL,
             PlazaShape.IRREGULAR,
             uniformBias());
+
+    public static final CultureRegistry INSTANCE = new CultureRegistry();
 
     private Map<String, Culture> cultures = Map.of(DEFAULT_ID, HARDCODED_DEFAULT);
 
