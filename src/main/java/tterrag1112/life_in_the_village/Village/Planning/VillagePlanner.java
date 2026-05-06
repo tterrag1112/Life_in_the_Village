@@ -99,6 +99,15 @@ public class VillagePlanner {
      */
     private static final int VALIDATOR_HULL_SLACK = 8;
 
+    /**
+     * Phase A / spec §10.5: SlotsDropped cascade threshold. If the
+     * SlotEmitter's {@code dropRatio} exceeds this, the engine fires
+     * the {@code SlotsDropped} reason and the recipe's {@code reEmit}
+     * decides whether to recover or advance the chain. 0.30 is the
+     * spec's initial guess; Phase 23.2 measurement informs tuning.
+     */
+    private static final double SLOTS_DROPPED_THRESHOLD = 0.30;
+
     // =========================================================================
     // Entry point
     // =========================================================================
@@ -205,9 +214,9 @@ public class VillagePlanner {
         pctx.setFinalShape(requestedShape);
 
         // Phase 22: build the cascade chain — [primary, ...fallbacks]. The
-        // schema-declared fallback list is on VillageTypeData; if absent,
-        // the chain is just [primary] and the cascade engine falls back
-        // to the per-recipe BaseRecipe.fallbackShape() for one extra hop.
+        // schema-declared fallback list is on VillageTypeData. The
+        // chain-walking that used to live in BaseRecipe.runWithCascade is
+        // now in this planner (Phase A relocation per spec §8).
         java.util.List<VillageTypeData.ShapeType> cascadeChain =
                 new java.util.ArrayList<>();
         cascadeChain.add(requestedShape);
@@ -218,88 +227,165 @@ public class VillagePlanner {
         pctx.setCascadeChainPosition(0);
 
         int initialBuildingCount = expanded.size();
-
-        // Phase 22: compose+matcher+validate loop. Validator failure
-        // below the 0.6 threshold triggers a cascade chain advance + state
-        // reset + recompose with the next shape. Truncation cascade
-        // (Phase 16b) still fires INSIDE compose; we just see its outcome
-        // (markUnplannable) here and treat as terminal.
         VillageTypeData.ShapeType currentShape = requestedShape;
-        attempt:
-        while (true) {
-            try {
-                ShapeRecipe.forShape(currentShape).compose(pctx);
-            } catch (Exception e) {
-                System.out.println("VillagePlanner: recipe failed — " + e.getMessage());
-                e.printStackTrace();
-                PlacementFailureRecorder
-                        .record(PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
-                                "recipe failed",
-                                origin, typeData.getType());
-                return Optional.empty();
-            }
 
-            // Phase 16b: cascade engine may mark the site unplannable. The
-            // chain has already been walked inside runWithCascade — we
-            // don't re-attempt at the planner level. Treat as terminal.
-            if (layout.isUnplannable()) {
-                String reason = layout.unplannableReason() != null
-                        ? layout.unplannableReason() : "(no reason given)";
-                lastUnplannableReason = reason;
-                System.out.println("VillagePlanner: site unplannable — " + reason);
-                PlacementFailureRecorder
-                        .record(PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
-                                "site unplannable: " + reason,
-                                origin, typeData.getType());
-                printVillageSummary(pctx, layout, initialBuildingCount,
-                        requestedShape, "UNPLANNABLE");
-                return Optional.empty();
-            }
+        // ── Phase A adaptive orchestration (per spec §2) ─────────────────
+        // 1. recipe.compose(pctx) returns a LayoutBlueprint
+        // 2. realiseRoads(blueprint.roads, pctx)
+        // 3. checkPrimarySpine — if non-OK, handleSevereTruncation
+        // 4. realisePlazas(blueprint.plazas)
+        // 5. registerSectors(blueprint.sectors)
+        // 6. populateNamedAnchors(blueprint.namedAnchors)
+        // 7. SlotEmitter.emit (Phase A: stub returns empty)
+        // 8. SlotsDropped check — handleSlotsDropped if dropRatio > 0.30
+        // 9. matcher / farm-plot / validator (existing)
+        //
+        // Phase A: every recipe stub throws RecipeNotPortedException at
+        // step 1. The unreachable orchestration below still has to
+        // compile cleanly — Phase B/C/D will exercise it.
+        tterrag1112.life_in_the_village.Village.Planning.Adaptive.LayoutBlueprint
+                blueprint;
+        try {
+            blueprint = ShapeRecipe.forShape(currentShape).compose(pctx);
+        } catch (tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                .RecipeNotPortedException e) {
+            String reason = "recipe not ported: " + currentShape;
+            lastUnplannableReason = reason;
+            System.out.println("VillagePlanner: " + reason
+                    + " — " + e.getMessage());
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
+                    reason, origin, typeData.getType());
+            layout.markUnplannable(reason);
+            printVillageSummary(pctx, layout, initialBuildingCount,
+                    requestedShape, "RECIPE_NOT_PORTED");
+            return Optional.empty();
+        } catch (Exception e) {
+            System.out.println("VillagePlanner: recipe failed — " + e.getMessage());
+            e.printStackTrace();
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.SHAPE_RULE_REJECTED,
+                    "recipe failed", origin, typeData.getType());
+            return Optional.empty();
+        }
+        pctx.setCurrentBlueprint(blueprint);
 
-            // Phase 9: snapshot the sectors a BaseRecipe emitted so /liv
-            // layout debug show_sectors can render them. Empty for
-            // unconverted recipes.
-            layout.setDebugSectors(new java.util.ArrayList<>(pctx.offeredSectors()));
-            pctx.runMatcher();
+        realiseRoads(blueprint.roads(), pctx);
 
-            if (layout.buildings().isEmpty()) {
-                System.out.println("VillagePlanner: recipe produced no buildings");
-                PlacementFailureRecorder
-                        .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
-                                "recipe produced no buildings",
-                                origin, typeData.getType());
-                printVillageSummary(pctx, layout, initialBuildingCount,
-                        requestedShape, "NO_BUILDINGS");
-                return Optional.empty();
-            }
-
-            // 7. Validate the plan. Phase 22: significant validation loss
-            // (passed/total < 0.6) triggers a cascade chain advance.
-            if (!validatePlan(layout, pctx)) {
-                int passed = countValidatedBuildings(layout);
-                int total  = layout.buildings().size();
-                if (total > 0 && passed < total * 0.6
-                        && pctx.cascadeChainPosition() + 1 < pctx.cascadeChain().size()) {
-                    pctx.advanceCascadeChain();
-                    pctx.resetForFallback();
-                    layout.resetForFallback();
-                    currentShape = pctx.cascadeChain().get(pctx.cascadeChainPosition());
-                    pctx.setFinalShape(currentShape);
-                    System.out.println("[CASCADE] validator-triggered fallback to "
-                            + currentShape + " (passed=" + passed + "/" + total
-                            + ") chainPos=" + pctx.cascadeChainPosition());
-                    continue attempt;
+        // Phase 16b: severe-truncation cascade on the first declared road.
+        var primarySpineEdge = blueprint.roads().isEmpty() ? null
+                : pctx.findEdge(blueprint.roads().get(0).ref());
+        if (primarySpineEdge != null) {
+            var primaryResult = primarySpineEdge.result();
+            pctx.recordPrimarySpine(primaryResult);
+            var spineStatus = tterrag1112.life_in_the_village.Village
+                    .Planning.Primitives.BaseRecipe
+                    .checkPrimarySpine(primaryResult);
+            if (spineStatus != tterrag1112.life_in_the_village.Village
+                    .Planning.Primitives.BaseRecipe.RecipeStatus.OK) {
+                blueprint = handleSevereTruncation(
+                        blueprint, pctx, primaryResult);
+                if (blueprint == null) {
+                    return finalizeUnplannable(pctx, layout, origin, typeData,
+                            initialBuildingCount, requestedShape,
+                            "cascade exhausted (truncation)");
                 }
-                System.out.println("VillagePlanner: plan validation failed");
-                PlacementFailureRecorder
-                        .record(PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
-                                "plan validation failed",
-                                origin, typeData.getType());
-                printVillageSummary(pctx, layout, initialBuildingCount,
-                        requestedShape, "VALIDATION_FAILED");
-                return Optional.empty();
+                pctx.setCurrentBlueprint(blueprint);
+                realiseRoads(blueprint.roads(), pctx);
             }
-            break;  // success — exit the cascade-attempt loop
+        }
+
+        realisePlazas(blueprint.plazas(), pctx);
+        registerSectors(blueprint.sectors(), pctx);
+        populateNamedAnchors(blueprint.namedAnchors(), layout);
+
+        // SlotEmitter (Phase A stub — Phase B implements resolvers).
+        var emitter = new tterrag1112.life_in_the_village.Village.Planning
+                .Adaptive.SlotEmitter();
+        var emitterReport = emitter.emit(
+                blueprint.slotIntentions(), layout, pctx.features, pctx);
+        if (emitterReport.dropRatio() > SLOTS_DROPPED_THRESHOLD) {
+            blueprint = handleSlotsDropped(blueprint, pctx, emitterReport);
+            if (blueprint == null) {
+                return finalizeUnplannable(pctx, layout, origin, typeData,
+                        initialBuildingCount, requestedShape,
+                        "cascade exhausted (slots dropped)");
+            }
+            // Phase A: re-emission re-realises geometry and re-runs the
+            // emitter. Phase B/C tunes the recursion bound.
+            pctx.setCurrentBlueprint(blueprint);
+            realiseRoads(blueprint.roads(), pctx);
+            realisePlazas(blueprint.plazas(), pctx);
+            registerSectors(blueprint.sectors(), pctx);
+            populateNamedAnchors(blueprint.namedAnchors(), layout);
+            emitterReport = emitter.emit(
+                    blueprint.slotIntentions(), layout, pctx.features, pctx);
+        }
+
+        // Phase 16b: site may have been marked unplannable during
+        // realisation (e.g. PlazaGenerator refused the site). Treat as
+        // terminal.
+        if (layout.isUnplannable()) {
+            String reason = layout.unplannableReason() != null
+                    ? layout.unplannableReason() : "(no reason given)";
+            lastUnplannableReason = reason;
+            System.out.println("VillagePlanner: site unplannable — " + reason);
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                    "site unplannable: " + reason,
+                    origin, typeData.getType());
+            printVillageSummary(pctx, layout, initialBuildingCount,
+                    requestedShape, "UNPLANNABLE");
+            return Optional.empty();
+        }
+
+        // Phase 9: snapshot the sectors so /liv layout debug
+        // show_sectors can render them.
+        layout.setDebugSectors(new java.util.ArrayList<>(pctx.offeredSectors()));
+        pctx.runMatcher();
+
+        if (layout.buildings().isEmpty()) {
+            System.out.println("VillagePlanner: recipe produced no buildings");
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
+                    "recipe produced no buildings",
+                    origin, typeData.getType());
+            printVillageSummary(pctx, layout, initialBuildingCount,
+                    requestedShape, "NO_BUILDINGS");
+            return Optional.empty();
+        }
+
+        // 7. Validate the plan. Phase 22: significant validation loss
+        // (passed/total < 0.6) triggers ValidationFailed cascade — Phase
+        // A keeps the safety net; with pre-validated slots from Phase B
+        // it should rarely fire.
+        if (!validatePlan(layout, pctx)) {
+            int passed = countValidatedBuildings(layout);
+            int total  = layout.buildings().size();
+            if (total > 0 && passed < total * 0.6) {
+                blueprint = handleValidationFailed(
+                        blueprint, pctx, passed, total);
+                if (blueprint == null) {
+                    return finalizeUnplannable(pctx, layout, origin, typeData,
+                            initialBuildingCount, requestedShape,
+                            "cascade exhausted (validator)");
+                }
+                // Phase A: re-emission path. Unreachable in Phase A
+                // (recipes throw); Phase B/C/D tunes this.
+                pctx.setCurrentBlueprint(blueprint);
+                // Fall through to the validator's "fail" branch below
+                // — the planner doesn't recurse into a re-realisation
+                // loop here for Phase A. Phase 23.2 measurement informs
+                // whether to add full re-realisation.
+            }
+            System.out.println("VillagePlanner: plan validation failed");
+            PlacementFailureRecorder.record(
+                    PlacementFailureRecorder.Reason.INSUFFICIENT_BUILDINGS,
+                    "plan validation failed",
+                    origin, typeData.getType());
+            printVillageSummary(pctx, layout, initialBuildingCount,
+                    requestedShape, "VALIDATION_FAILED");
+            return Optional.empty();
         }
 
         // Phase 17: emit + claim + validate farm plot slots. Runs only after
@@ -589,6 +675,268 @@ public class VillagePlanner {
             if (validateBuildingDistance(slot, layout)) passed++;
         }
         return passed;
+    }
+
+    // =========================================================================
+    // Phase A: blueprint realisation helpers
+    // =========================================================================
+    //
+    // These translate the recipe's declarative LayoutBlueprint into
+    // mutations on VillageLayout / PlanContext. Phase A wires them but
+    // they're unreachable in normal operation (recipe stubs throw
+    // RecipeNotPortedException before realisation runs). Phase B/C/D
+    // exercises them.
+
+    /**
+     * Realises each road declaration: invokes the primitive's
+     * computeCenterline, builds a RealisedEdge, registers it on
+     * PlanContext (so SlotEmitter resolvers can look up edges by ref),
+     * and adds the road to the layout's RoadGraph.
+     */
+    private static void realiseRoads(
+            java.util.List<tterrag1112.life_in_the_village.Village.Planning
+                    .Adaptive.RoadDeclaration> roads,
+            PlanContext pctx) {
+        for (var decl : roads) {
+            // Probe first — gives us the RoadResult with isComplete +
+            // TerminationReason for RealisedEdge. Then commit to the
+            // graph via VillageLayout.addRoad which re-runs
+            // computeCenterline. Phase A: redundant compute is fine
+            // since this code is unreachable; Phase B/C de-dup if
+            // measurement reveals it matters.
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .RoadResult result =
+                    tterrag1112.life_in_the_village.Village.Planning.Primitives
+                            .BaseRecipe.computeAndRecord(decl.primitive(), pctx);
+            pctx.layout.addRoad(
+                    decl.primitive(), pctx.level, pctx.worldSeed, decl.role());
+            var realised = new tterrag1112.life_in_the_village.Village.Planning
+                    .Adaptive.RealisedEdge(
+                    decl.ref(), decl.role(), decl.tier(),
+                    result.centerline(), result);
+            pctx.registerRealisedEdge(decl.ref(), realised);
+        }
+    }
+
+    /**
+     * Realises each plaza declaration via PlazaGenerator.generate.
+     * Translation: PlazaDeclaration → PlazaSpec ({@code targetRadius}
+     * → {@code targetArea = πr²} approximation; the existing PlazaSpec
+     * uses target area, so we square the radius and scale by π).
+     */
+    private static void realisePlazas(
+            java.util.List<tterrag1112.life_in_the_village.Village.Planning
+                    .Adaptive.PlazaDeclaration> plazas,
+            PlanContext pctx) {
+        for (var decl : plazas) {
+            int targetArea = (int) Math.round(
+                    Math.PI * decl.targetRadius() * decl.targetRadius());
+            var spec = new tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.PlazaSpec(
+                    decl.purpose(), decl.center(), targetArea,
+                    decl.shape(), java.util.Optional.empty());
+            tterrag1112.life_in_the_village.Village.Decoration.Plaza
+                    .PlazaGenerator.generate(pctx, spec);
+            // PlazaGenerator currently registers PlazaRegions on
+            // pctx via its internal logic. The civicSector field on
+            // PlazaDeclaration is recorded for SlotEmitter's
+            // PlazaPerimeter resolver in Phase B; nothing reads it
+            // in Phase A.
+        }
+    }
+
+    /**
+     * Translates each SectorDeclaration into a Sector record and
+     * registers via {@code pctx.offerSector}. Defaults: empty slot
+     * list, canGrow=false, growth=FixedGrowth.INSTANCE,
+     * exclusionShape=null. {@code parentEdge → parentEdgeId} (-1 if
+     * null).
+     */
+    private static void registerSectors(
+            java.util.List<tterrag1112.life_in_the_village.Village.Planning
+                    .Adaptive.SectorDeclaration> sectors,
+            PlanContext pctx) {
+        for (var decl : sectors) {
+            int parentEdgeId = -1;
+            if (decl.parentEdge() != null) {
+                var realised = pctx.findEdge(decl.parentEdge());
+                if (realised != null) {
+                    // The road graph assigns sequential IDs in
+                    // insertion order; SectorDeclaration's parentEdge
+                    // is symbolic (string-handle) so we need to map it
+                    // to the actual edge ID. Phase B/C: lift this onto
+                    // RealisedEdge so the lookup is direct. For
+                    // Phase A, scan the graph's edges by centerline
+                    // identity.
+                    for (var e : pctx.layout.getRoadGraph().allEdges()) {
+                        if (e.centerline().equals(realised.centerline())) {
+                            parentEdgeId = e.id();
+                            break;
+                        }
+                    }
+                }
+            }
+            Sector s = new Sector(
+                    decl.id(),
+                    decl.role(),
+                    decl.zone(),
+                    java.util.List.of(),
+                    decl.cap(),
+                    /* canGrow */ false,
+                    tterrag1112.life_in_the_village.Village.Planning.Sectors
+                            .FixedGrowth.INSTANCE,
+                    parentEdgeId,
+                    /* exclusionShape */ null,
+                    decl.maxFp());
+            pctx.offerSector(s);
+        }
+    }
+
+    /**
+     * Threads named anchors from blueprint to layout. Phase 19's
+     * AnchorKind enum has TOWN_SQUARE, MAIN_GATE, SECONDARY_GATE,
+     * RIVER_LANDING, HIGH_GROUND, BRIDGE_HEAD, HARBOR, KEEP — the
+     * planner-side handlers below cover the two with existing layout
+     * setters; Phase B/C wires the rest as their consumers land.
+     */
+    private static void populateNamedAnchors(
+            java.util.Map<tterrag1112.life_in_the_village.Village.Planning
+                    .AnchorKind, BlockPos> namedAnchors,
+            VillageLayout layout) {
+        for (var entry : namedAnchors.entrySet()) {
+            switch (entry.getKey()) {
+                case TOWN_SQUARE -> layout.setTownSquarePos(entry.getValue());
+                case MAIN_GATE -> layout.setMainGateEndpoint(entry.getValue());
+                default -> {
+                    // Other AnchorKinds (SECONDARY_GATE, HIGH_GROUND, etc.)
+                    // surface in LayoutPlan.anchors via LayoutPlanBuilder
+                    // when their layout-side wiring lands. Phase A: no-op.
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // Phase A: cascade dispatch helpers
+    // =========================================================================
+    //
+    // The chain-walking logic that lived in BaseRecipe.runWithCascade
+    // (Phase 22) lives here now. Each handler calls recipe.reEmit;
+    // null return means "advance the schema chain to the next recipe."
+    // Returns the new blueprint or null if the chain is exhausted.
+
+    @org.jetbrains.annotations.Nullable
+    private static tterrag1112.life_in_the_village.Village.Planning.Adaptive
+            .LayoutBlueprint handleSevereTruncation(
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .LayoutBlueprint current,
+            PlanContext pctx,
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .RoadResult primary) {
+        var reason = new tterrag1112.life_in_the_village.Village.Planning
+                .Primitives.BaseRecipe.ReEmitReason.SevereTruncation(primary);
+        return dispatchReEmit(current, pctx, reason);
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private static tterrag1112.life_in_the_village.Village.Planning.Adaptive
+            .LayoutBlueprint handleSlotsDropped(
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .LayoutBlueprint current,
+            PlanContext pctx,
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .SlotEmitter.EmitterReport report) {
+        var reason = new tterrag1112.life_in_the_village.Village.Planning
+                .Primitives.BaseRecipe.ReEmitReason.SlotsDropped(
+                report.totalRequested() - report.totalEmitted(),
+                report.totalRequested());
+        return dispatchReEmit(current, pctx, reason);
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private static tterrag1112.life_in_the_village.Village.Planning.Adaptive
+            .LayoutBlueprint handleValidationFailed(
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .LayoutBlueprint current,
+            PlanContext pctx, int passed, int total) {
+        var reason = new tterrag1112.life_in_the_village.Village.Planning
+                .Primitives.BaseRecipe.ReEmitReason.ValidationFailed(
+                passed, total, java.util.List.of());
+        return dispatchReEmit(current, pctx, reason);
+    }
+
+    /**
+     * Common cascade dispatch: ask the recipe to reEmit; if it returns
+     * null, advance the Phase 22 schema chain to the next recipe and
+     * compose from scratch. Returns the new blueprint or null if the
+     * chain is exhausted.
+     */
+    @org.jetbrains.annotations.Nullable
+    private static tterrag1112.life_in_the_village.Village.Planning.Adaptive
+            .LayoutBlueprint dispatchReEmit(
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .LayoutBlueprint current,
+            PlanContext pctx,
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .BaseRecipe.ReEmitReason reason) {
+        var currentShape = current.shape();
+        var recipe = ShapeRecipe.forShape(currentShape);
+        // First chance: ask the recipe to recover with a new blueprint.
+        // BaseRecipe.reEmit is public (Phase A); default returns null
+        // (chain advance). Recipes can override for structural recovery
+        // (rotate axis, shrink ring) when their Phase C/D ports land.
+        if (recipe instanceof tterrag1112.life_in_the_village.Village.Planning
+                .Primitives.BaseRecipe br) {
+            var recovered = br.reEmit(reason, pctx);
+            if (recovered != null) {
+                return recovered;
+            }
+        }
+        // Advance the Phase 22 schema chain.
+        int nextPos = pctx.cascadeChainPosition() + 1;
+        if (nextPos >= pctx.cascadeChain().size()) {
+            return null;
+        }
+        var nextShape = pctx.cascadeChain().get(nextPos);
+        pctx.advanceCascadeChain();
+        pctx.resetForFallback();
+        pctx.layout.resetForFallback();
+        pctx.setFinalShape(nextShape);
+        System.out.println("[CASCADE] " + currentShape
+                + " -> " + nextShape
+                + " reason=" + tterrag1112.life_in_the_village.Village.Planning
+                        .Primitives.BaseRecipe.describeReason(reason)
+                + " chainPos=" + nextPos);
+        try {
+            return ShapeRecipe.forShape(nextShape).compose(pctx);
+        } catch (tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                .RecipeNotPortedException e) {
+            pctx.layout.markUnplannable("recipe not ported: " + nextShape);
+            return null;
+        }
+    }
+
+    /**
+     * Phase A: emit the failure summary and return Optional.empty for
+     * any unplannable terminal. Pulls together the markUnplannable +
+     * PlacementFailureRecorder.record + printVillageSummary calls that
+     * the old plan() body repeated at every failure path.
+     */
+    private static Optional<VillageLayout> finalizeUnplannable(
+            PlanContext pctx, VillageLayout layout, BlockPos origin,
+            VillageTypeData typeData, int initialBuildingCount,
+            VillageTypeData.ShapeType requestedShape, String reason) {
+        lastUnplannableReason = reason;
+        if (!layout.isUnplannable()) {
+            layout.markUnplannable(reason);
+        }
+        System.out.println("VillagePlanner: " + reason);
+        PlacementFailureRecorder.record(
+                PlacementFailureRecorder.Reason.TERRAIN_UNSUITABLE,
+                reason, origin, typeData.getType());
+        printVillageSummary(pctx, layout, initialBuildingCount,
+                requestedShape, "UNPLANNABLE");
+        return Optional.empty();
     }
 
     /**

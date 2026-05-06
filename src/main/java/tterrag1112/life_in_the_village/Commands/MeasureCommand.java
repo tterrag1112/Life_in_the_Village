@@ -57,7 +57,7 @@ import java.util.*;
  * <h3>Structural integrity</h3>
  * Before running, the harness reflects on a handful of fields/methods
  * that the rework's structural phases landed (LayoutPlan, cascade
- * chain, kingdom schema, runWithCascade). If any are missing the
+ * chain, kingdom schema, compose-returns-LayoutBlueprint). If any are missing the
  * harness aborts loudly — Phase 23 measurement degenerates to noise
  * if a future refactor accidentally undoes one of these.
  */
@@ -325,8 +325,13 @@ public final class MeasureCommand {
             }
         }
         if (reason != null) {
-            // Substrings match the strings actually written in
-            // BaseRecipe.runWithCascade and VillagePlanner today.
+            // Substrings match the strings actually written by the
+            // planner / cascade engine today.
+            // Phase A: RECIPE_NOT_PORTED takes precedence — every
+            // pre-Phase-D spawn hits this until its recipe ports.
+            if (reason.contains("recipe not ported")) {
+                return FailureMode.RECIPE_NOT_PORTED;
+            }
             if (reason.contains("cascade exhausted")) return FailureMode.CASCADE_EXHAUSTED;
             if (reason.contains("SevereTruncation")) return FailureMode.TRUNCATION_ABORT;
             if (reason.contains("ValidationFailed")) return FailureMode.VALIDATION_FAILED;
@@ -373,9 +378,15 @@ public final class MeasureCommand {
         // Phase 21: kingdom-rework schema
         requireField(VillageTypeData.class, "settlementTier", failures,
                 "Phase 21 (kingdom-rework schema)");
-        // Phase 16b: BaseRecipe.runWithCascade exists
-        requireMethod(BaseRecipe.class, "runWithCascade", failures,
-                "Phase 16b (cascade engine)");
+        // Phase A architectural cutover: BaseRecipe.compose returns
+        // LayoutBlueprint (was void pre-Phase-A; runWithCascade went
+        // away as part of relocating chain-walking to VillagePlanner).
+        // This assertion verifies the cutover happened and a future
+        // refactor hasn't reverted it.
+        requireMethod(BaseRecipe.class, "compose", failures,
+                "Phase A (compose returns LayoutBlueprint)");
+        requireMethod(BaseRecipe.class, "reEmit", failures,
+                "Phase A (reEmit returns LayoutBlueprint)");
         // Phase 22: PlanContext cascade chain accessor
         requireMethod(
                 tterrag1112.life_in_the_village.Village.Planning.Primitives.PlanContext.class,
@@ -557,6 +568,10 @@ public final class MeasureCommand {
         CASCADE_EXHAUSTED,
         TERRAIN_UNPLANNABLE,
         SITE_PREP_FAILED,
+        /** Phase A: recipe stub threw {@code RecipeNotPortedException}.
+         *  Dominates measurement output during the architectural cutover
+         *  cycle (Phases A–C); recedes as Phase D ports complete. */
+        RECIPE_NOT_PORTED,
         CRASH,
         UNCLASSIFIED
     }

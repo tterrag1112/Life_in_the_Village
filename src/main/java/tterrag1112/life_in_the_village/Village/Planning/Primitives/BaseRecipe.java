@@ -1,10 +1,11 @@
 package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
 import net.minecraft.core.BlockPos;
+import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaShape;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
+import tterrag1112.life_in_the_village.Village.Planning.Adaptive.LayoutBlueprint;
 import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
-import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,63 +14,84 @@ import java.util.List;
 // TerminationReason, PlanContext are in the same package — no imports needed.
 
 /**
- * Three-step lifecycle for shape recipes that fit the standard pattern:
- * prepare features, compose sectors, register named anchors.
+ * Phase A architectural cutover. The previous three-step lifecycle
+ * (prepareFeatures → composeSectors → registerAnchors) and the
+ * recipe-internal cascade engine ({@code runWithCascade},
+ * {@code composeOnce}, {@code fallbackShape}) are gone. Recipes now
+ * implement {@link #compose(PlanContext)} returning a
+ * {@link LayoutBlueprint}; the planner realises it.
  *
- * <h3>Default lifecycle (most recipes)</h3>
- * <ol>
- *   <li>{@link #prepareFeatures} — feature-aware pre-pass (default no-op).</li>
- *   <li>{@link #composeSectors} — REQUIRED. Build the road graph and
- *       emit sectors. The matcher consumes whatever this method
- *       produces.</li>
- *   <li>{@link #registerAnchors} — register named anchors (default no-op).</li>
- * </ol>
+ * <h3>What stays</h3>
+ * <ul>
+ *   <li>{@link RecipeStatus} — extended with {@code RECIPE_NOT_PORTED}
+ *       for Phase A's stub diagnostic.</li>
+ *   <li>{@link ReEmitReason} — the cascade-engine reason vocabulary
+ *       still used by VillagePlanner's relocated chain-walking.</li>
+ *   <li>{@link #checkPrimarySpine(RoadResult)} — the truncation
+ *       cascade trigger.</li>
+ *   <li>{@link #computeAndRecord(RoadPrimitive, PlanContext)} — utility
+ *       for recipes that need to probe a primitive's centerline.</li>
+ *   <li>{@link #clampToRoadReach(List, RoadResult, int)} — utility
+ *       Phase B/C resolvers may use for post-emit slot clamping.</li>
+ *   <li>{@link #describeReason(ReEmitReason)} — log helper.</li>
+ *   <li>{@link #preferredPlazaShape()} — recipe-side declaration of
+ *       plaza shape preference. Reused by Phase C/D ports until the
+ *       PlazaDeclaration absorbs it.</li>
+ * </ul>
  *
- * <h3>Cascade-aware recipes (Phase 16b)</h3>
- * Recipes that participate in the constraint-propagation engine
- * ({@link #runWithCascade}) override {@link #compose} to invoke it
- * and override {@link #composeOnce} with a probe-then-commit body.
- * The engine retries via {@link #reEmit}; recipes declare a
- * {@link #fallbackShape} for when retries are exhausted.
- *
- * <p>Currently RADIAL and LINEAR are cascade-aware. All other recipes
- * keep the default {@link #compose} (which calls
- * {@link #composeSectors} once) and ignore the engine.
- *
- * <p>The opt-in is intentional: recipes that don't have a
- * meaningful primary spine can't usefully participate, and
- * forcing them through the engine just adds latency without value.
- *
- * <p>Recipes can also override {@link #preferredPlazaShape()} to declare
- * what plaza geometry they want.
+ * <h3>What's deleted</h3>
+ * <ul>
+ *   <li>{@code runWithCascade} — chain-walking moved to
+ *       {@code VillagePlanner.handleSevereTruncation /
+ *       handleSlotsDropped / handleValidationFailed} per spec §8.</li>
+ *   <li>{@code composeOnce} — the probe-then-commit body merges into
+ *       the new {@link #compose} which returns a blueprint without
+ *       mutating the layout.</li>
+ *   <li>{@code fallbackShape} — Phase 22 chain entries on
+ *       {@code VillageTypeData.fallbackChain} are the sole source of
+ *       fallback target shapes.</li>
+ *   <li>{@code prepareFeatures}, {@code composeSectors},
+ *       {@code registerAnchors} — recipes are mostly-data now;
+ *       no shared lifecycle hooks.</li>
+ * </ul>
  */
 public abstract class BaseRecipe implements ShapeRecipe {
 
     // =========================================================================
-    // Cascade engine (Phase 16b)
+    // Cascade engine (Phase 16b, retained for VillagePlanner)
     // =========================================================================
 
     /**
      * Outcome of a constraint check. Generalizes beyond truncation —
-     * future Phase 22 / architectural-shift cases (slot loss, sector
-     * starvation) will reuse this enum verbatim.
+     * Phase 22 ValidationFailed cascade reuses the enum verbatim.
+     *
+     * <p>{@code RECIPE_NOT_PORTED} (Phase A) marks layouts that hit a
+     * {@code RecipeNotPortedException} stub before they could compose.
+     * Distinct from {@code ABORT} so the per-village summary line and
+     * MeasureCommand's classifier can identify migration-pending sites
+     * vs structurally unspawnable ones.
      */
     public enum RecipeStatus {
         /** Plan acceptable; engine returns. */
         OK,
-        /** Plan unacceptable; engine re-invokes {@link #composeOnce} with mutated state. */
+        /** Plan unacceptable; cascade should retry with mutated state. */
         RETRY,
-        /** Plan unacceptable; engine delegates to {@link #fallbackShape}. */
+        /** Plan unacceptable; cascade should fall back to next chain entry. */
         FALLBACK,
-        /** Site unsalvageable; engine marks layout unplannable and returns. */
-        ABORT
+        /** Site unsalvageable; layout marked unplannable. */
+        ABORT,
+        /** Phase A: recipe stub threw {@code RecipeNotPortedException}.
+         *  Distinct from ABORT so observability tools surface
+         *  migration-pending sites separately. */
+        RECIPE_NOT_PORTED
     }
 
     /**
      * Reason a recipe needs to re-emit. Sealed so future phases can add
-     * variants without churning every {@link #reEmit} site. Phase 16b
-     * only consumes {@link SevereTruncation}; the other variants exist
-     * as scaffolding for Phase 22 and the post-rework experiments.
+     * variants without churning every {@link #reEmit} site. Phase A
+     * keeps the existing four variants; the spec's Phase B
+     * SlotsDropped enrichment ({@code dropRatio + perIntentionDrop +
+     * dropReasons}) is a Phase B refinement, not a Phase A change.
      */
     public sealed interface ReEmitReason
             permits ReEmitReason.SevereTruncation,
@@ -80,116 +102,26 @@ public abstract class BaseRecipe implements ShapeRecipe {
         record SevereTruncation(RoadResult primary) implements ReEmitReason {}
         record SlotsDropped(int dropped, int total) implements ReEmitReason {}
         record SectorStarved(String sectorId, int unfilledMin) implements ReEmitReason {}
-        /** Phase 22: planner's validator rejected the composed plan with
-         *  passed/total below the 0.6 threshold. Fired from
-         *  VillagePlanner after validation; the recipe's reEmit decides
-         *  whether to fall back via the cascade chain. */
         record ValidationFailed(int passed, int total,
                                 java.util.List<String> failureKinds)
                 implements ReEmitReason {}
     }
 
     /**
-     * Engine entry point for cascade-aware recipes. Calls
-     * {@link #composeOnce} up to {@code maxRetries} times, dispatching
-     * on the returned {@link ReEmitReason} via {@link #reEmit}.
+     * Recipe-specific dispatch on a re-emit reason. Phase A: returns a
+     * fresh {@link LayoutBlueprint} (the recipe's adjusted intent) or
+     * {@code null} (advance the Phase 22 fallback chain to the next
+     * recipe). The planner consumes the return value in
+     * {@code handleSevereTruncation} / {@code handleSlotsDropped} /
+     * {@code handleValidationFailed}.
      *
-     * <p>Contract on {@link #composeOnce} implementations: the body
-     * MUST be probe-then-commit. No layout mutation may happen before
-     * the recipe decides whether to return a reason. Once a reason is
-     * returned, the engine assumes nothing was committed and proceeds
-     * to retry / fallback / abort. Recipes that need to commit before
-     * the viability check should not participate in the engine.
+     * <p>Default implementation returns null for every reason —
+     * vanilla recipes don't know how to recover from any constraint
+     * failure and prefer the chain advance. Recipes with structural
+     * recovery (rotate axis, shrink ring) override per reason.
      */
-    protected void runWithCascade(PlanContext pctx, int maxRetries) {
-        prepareFeatures(pctx);
-        for (int i = 0; i < maxRetries; i++) {
-            ReEmitReason reason = composeOnce(pctx);
-            if (reason == null) {
-                registerAnchors(pctx);
-                return;
-            }
-            RecipeStatus status = reEmit(reason, pctx);
-            switch (status) {
-                case OK -> {
-                    registerAnchors(pctx);
-                    return;
-                }
-                case RETRY -> {
-                    // loop; reEmit has mutated cascade state on pctx
-                }
-                case FALLBACK -> {
-                    // Phase 22: prefer the schema-declared cascade chain
-                    // on PlanContext (set by VillagePlanner from
-                    // VillageTypeData.getFallbackChain()). Fall back to
-                    // the per-recipe fallbackShape() when the chain is
-                    // unset (legacy path). The chain entry list is
-                    // [primary, ...fallbacks]; cascadeChainPosition is
-                    // the index of the CURRENT shape, so the next entry
-                    // is at position+1.
-                    ShapeType next = nextChainShape(pctx);
-                    if (next == null) {
-                        pctx.layout.markUnplannable(
-                                "cascade exhausted — "
-                                + getClass().getSimpleName()
-                                + " reason=" + describeReason(reason));
-                        return;
-                    }
-                    System.out.println("[CASCADE] "
-                            + getClass().getSimpleName()
-                            + " falling back to " + next
-                            + " reason=" + describeReason(reason)
-                            + " chainPos=" + pctx.cascadeChainPosition()
-                            + "->" + (pctx.cascadeChainPosition() + 1));
-                    // Advance position + reset mutable composition state.
-                    pctx.advanceCascadeChain();
-                    pctx.resetForFallback();
-                    pctx.layout.resetForFallback();
-                    pctx.setFinalShape(next);
-                    ShapeRecipe.forShape(next).compose(pctx);
-                    return;
-                }
-                case ABORT -> {
-                    pctx.layout.markUnplannable("ABORT reason="
-                            + describeReason(reason));
-                    return;
-                }
-            }
-        }
-        pctx.layout.markUnplannable("retry budget exhausted ("
-                + maxRetries + ") — " + getClass().getSimpleName());
-    }
-
-    /**
-     * Probe-then-commit body for cascade-aware recipes.
-     *
-     * <p>Default delegates to {@link #composeSectors} and returns
-     * {@code null} (= OK), which is the right behavior for non-cascade
-     * recipes that nonetheless route through the engine. Cascade-aware
-     * recipes override this with a probe-first body that returns a
-     * {@link ReEmitReason} when the constraint check fails (without
-     * having mutated the layout).
-     */
-    protected ReEmitReason composeOnce(PlanContext pctx) {
-        composeSectors(pctx);
-        return null;
-    }
-
-    /**
-     * Recipe-specific dispatch on a re-emit reason. Default falls back
-     * unconditionally; recipes that can recover (e.g., RADIAL on
-     * truncation: rotate axis) override.
-     */
-    protected RecipeStatus reEmit(ReEmitReason reason, PlanContext pctx) {
-        return reason == null ? RecipeStatus.OK : RecipeStatus.FALLBACK;
-    }
-
-    /**
-     * The shape this recipe falls back to when the cascade engine
-     * exhausts its retries or {@link #reEmit} returns
-     * {@link RecipeStatus#FALLBACK}. Default {@code null} = abort.
-     */
-    protected ShapeType fallbackShape() {
+    @Nullable
+    public LayoutBlueprint reEmit(ReEmitReason reason, PlanContext pctx) {
         return null;
     }
 
@@ -198,7 +130,7 @@ public abstract class BaseRecipe implements ShapeRecipe {
      * Buckets {@link RoadResult#completionRatio()} into the four
      * status levels: ≥0.6 OK, ≥0.3 RETRY, ≥0.15 FALLBACK, else ABORT.
      */
-    protected static RecipeStatus checkPrimarySpine(RoadResult primary) {
+    public static RecipeStatus checkPrimarySpine(RoadResult primary) {
         double ratio = primary.completionRatio();
         if (ratio >= 0.60) return RecipeStatus.OK;
         if (ratio >= 0.30) return RecipeStatus.RETRY;
@@ -208,12 +140,12 @@ public abstract class BaseRecipe implements ShapeRecipe {
 
     /**
      * Probes a primitive's centerline and wraps the result with
-     * intended/actual length so recipes can drive viability checks.
-     * Does NOT mutate the road graph — the caller is responsible for
-     * deciding whether to commit via {@link
-     * tterrag1112.life_in_the_village.Village.Planning.VillageLayout#addRoad}.
+     * intended/actual length so callers can drive viability checks.
+     * Does NOT mutate the road graph — the caller commits separately
+     * via {@link tterrag1112.life_in_the_village.Village.Planning
+     * .VillageLayout#addRoad}.
      */
-    protected static RoadResult computeAndRecord(RoadPrimitive p, PlanContext pctx) {
+    public static RoadResult computeAndRecord(RoadPrimitive p, PlanContext pctx) {
         CenterlineResult raw = p.computeCenterline(
                 PrimitiveContext.basic(pctx.level, pctx.worldSeed));
         return new RoadResult(p, raw.points(), raw.isComplete(),
@@ -226,13 +158,6 @@ public abstract class BaseRecipe implements ShapeRecipe {
      * filters out slots more than {@code budget} blocks (chebyshev)
      * from the nearest centerline point, where
      * {@code budget = footprintHalf + roadHalfWidth + slack}.
-     *
-     * <p>{@code roadHalfWidth} is read from the feeding road's tier
-     * via {@link RoadShape.RoadTier#reservedHalfWidth()} so the budget
-     * tracks future tier additions. {@code footprintHalf} is computed
-     * from {@link PlacementSlot#footprintBudget()} / 2 inline rather
-     * than via a new accessor on PlacementSlot (constraint: don't
-     * change PlacementSlot).
      */
     public static List<PlacementSlot> clampToRoadReach(
             List<PlacementSlot> candidates,
@@ -267,7 +192,7 @@ public abstract class BaseRecipe implements ShapeRecipe {
         return kept;
     }
 
-    private static String describeReason(ReEmitReason reason) {
+    public static String describeReason(ReEmitReason reason) {
         if (reason instanceof ReEmitReason.SevereTruncation t) {
             return "SevereTruncation primary="
                     + t.primary().actualLength() + "/"
@@ -278,26 +203,13 @@ public abstract class BaseRecipe implements ShapeRecipe {
             return "ValidationFailed " + v.passed() + "/" + v.total()
                     + " kinds=" + v.failureKinds();
         }
+        if (reason instanceof ReEmitReason.SlotsDropped s) {
+            return "SlotsDropped " + s.dropped() + "/" + s.total();
+        }
+        if (reason instanceof ReEmitReason.SectorStarved s) {
+            return "SectorStarved " + s.sectorId() + " unfilled=" + s.unfilledMin();
+        }
         return reason.getClass().getSimpleName();
-    }
-
-    /**
-     * Phase 22: returns the next chain shape, or null if the chain is
-     * exhausted. Prefers the schema chain on PlanContext; falls back to
-     * the per-recipe {@link #fallbackShape()} only when no chain is set.
-     */
-    protected ShapeType nextChainShape(PlanContext pctx) {
-        java.util.List<ShapeType> chain = pctx.cascadeChain();
-        if (chain != null && !chain.isEmpty()) {
-            int next = pctx.cascadeChainPosition() + 1;
-            return next < chain.size() ? chain.get(next) : null;
-        }
-        // Legacy per-recipe fallback (Phase 16b path). Only fires once;
-        // a second FALLBACK has nothing to advance to.
-        if (pctx.cascadeChainPosition() == 0) {
-            return fallbackShape();
-        }
-        return null;
     }
 
     // =========================================================================
@@ -305,46 +217,19 @@ public abstract class BaseRecipe implements ShapeRecipe {
     // =========================================================================
 
     /**
-     * Default lifecycle: prepareFeatures → composeSectors →
-     * registerAnchors. Cascade-aware recipes override this to call
-     * {@link #runWithCascade} instead. The override is documented and
-     * intentional — the lifecycle invariant is now a convention, not a
-     * compile-time guarantee, to enable Phase 16b's engine.
+     * Returns a declarative blueprint of the village. Phase A recipes
+     * throw {@link tterrag1112.life_in_the_village.Village.Planning
+     * .Adaptive.RecipeNotPortedException}; Phase C/D ports replace
+     * those stubs with real declarative bodies.
      */
     @Override
-    public void compose(PlanContext pctx) {
-        prepareFeatures(pctx);
-        composeSectors(pctx);
-        registerAnchors(pctx);
-    }
-
-    /**
-     * Optional pre-pass for feature-aware recipes. Default is no-op.
-     */
-    protected void prepareFeatures(PlanContext pctx) {
-        // no-op default
-    }
-
-    /**
-     * Build the road graph and emit sectors. Required for default
-     * (non-cascade) recipes. Cascade-aware recipes typically leave this
-     * empty (or unused) and put their body in
-     * {@link #composeOnce} instead.
-     */
-    protected abstract void composeSectors(PlanContext pctx);
-
-    /**
-     * Register named anchors after sectors are emitted. Default no-op.
-     * The legacy {@code mainGateEndpoint} field on VillageLayout
-     * already serves this purpose; Phase 19 introduces the proper
-     * AnchorKind registry.
-     */
-    protected void registerAnchors(PlanContext pctx) {
-        // Phase 19 wires this through to LayoutPlan.anchors.
-    }
+    public abstract LayoutBlueprint compose(PlanContext pctx);
 
     /**
      * Declares the plaza shape this recipe prefers. Default CIRCLE.
+     * Retained for Phase B/C/D ports; eventually subsumed by
+     * {@link tterrag1112.life_in_the_village.Village.Planning
+     * .Adaptive.PlazaDeclaration#shape()}.
      */
     public PlazaShape preferredPlazaShape() {
         return PlazaShape.CIRCLE;

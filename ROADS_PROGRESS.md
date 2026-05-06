@@ -4711,6 +4711,232 @@ New file `LAYOUT_OVERVIEW.md` at project root:
   promoted to active follow-up phases vs. left as
   documentation.
 
+---
+
+## Phase A — Adaptive layout architectural cutover
+
+The architectural shift Section 5 of `PLACEMENT-REWORK-STATE.md`
+deferred for empirical comparison. The Phase 23 measurement
+showed every authored non-RADIAL shape failing slot-distance
+validation; patching shape-by-shape costs more than building
+the system that makes the failure architecturally impossible.
+`ADAPTIVE-LAYOUT-SPEC.md` is the design reference; this is
+prompt 1 of 5 (A → E) in the migration plan from spec §11.
+
+Phase A's success criterion: **compile clean + spawning fails
+predictably with a clear `RECIPE_NOT_PORTED` diagnostic**. Not a
+working-spawn phase; the structural cutover is what matters.
+
+#### What changed
+
+New package `Village/Planning/Adaptive/` (11 files):
+
+- `LayoutBlueprint.java` — declarative return of
+  `BaseRecipe.compose(pctx)`. Six fields (per Phase A flip vs
+  spec §3): shape, roads, plazas, sectors, slotIntentions,
+  namedAnchors. **Dropped** the spec's
+  `Map<String, Object> recipeMetadata` — type-unsafe and
+  duplicates PlanContext's existing cascade state.
+- `RoadDeclaration.java` — `(EdgeRef ref, EdgeRole role,
+  RoadShape.RoadTier tier, RoadPrimitive primitive)`. Uses the
+  existing **EdgeRole** enum (the spec's `RoadRole` doesn't
+  exist; EdgeRole serves the same purpose).
+- `PlazaDeclaration.java` — `(BlockPos center, int targetRadius,
+  PlazaShape shape, PlazaPurpose purpose, SectorRef
+  civicSector)`.
+- `SectorDeclaration.java` — `(String id, SectorRole role,
+  BuildingZone zone, int cap, int maxFp, @Nullable EdgeRef
+  parentEdge)`. **Phase A flip vs spec**: added `parentEdge` so
+  sectors tied to specific edges (e.g. crossroads_arm_0 → edge#0)
+  preserve that linkage; the planner's `registerSectors`
+  resolves the symbolic ref to the actual edge ID.
+- `SlotIntention.java` — declarative slot specification; sector
+  ref + tags + count + footprint + Anchor. Defensive
+  `Set.copyOf` for tags.
+- `Anchor.java` — sealed interface, six implementations:
+  PlazaPerimeter, RoadAlong, AllSpurs, RingValidated,
+  NamedAnchor, RegionalGather. Phase B implements the
+  resolvers; Phase A just defines the type vocabulary.
+- `EdgeRef.java`, `SectorRef.java` — string-ID lightweight
+  handles per spec §10.4 (re-emission preserves identity by
+  string match across blueprint regenerations).
+- `RealisedEdge.java` — post-realisation snapshot
+  `(EdgeRef ref, EdgeRole role, RoadTier tier,
+  List<BlockPos> centerline, RoadResult result)`. Distinct
+  from `RoadGraph.Edge` (which lacks the RoadResult /
+  truncation status). Stored on PlanContext for SlotEmitter
+  resolvers (Phase B) to look up by ref.
+- `SlotEmitter.java` — Phase A stub. `emit` returns an empty
+  `EmitterReport` with totalRequested set so dropRatio = 1.0
+  on any non-empty intention list (would otherwise trip the
+  cascade). Phase B implements the six resolvers.
+- `RecipeNotPortedException.java` — thrown by every recipe
+  stub. Carries the shape name in its message so
+  classifier substring match (`"recipe not ported"`) is
+  reliable.
+
+Modified core types:
+
+- `BaseRecipe.java`:
+  - `compose(pctx)` now `abstract LayoutBlueprint` (was `void`).
+  - `reEmit(reason, pctx)` now `public LayoutBlueprint` /
+    nullable (was `protected RecipeStatus`). Default returns
+    null = chain advance. Public visibility so VillagePlanner
+    can dispatch reEmit from its different package.
+  - `RecipeStatus` enum gains **RECIPE_NOT_PORTED** for the
+    Phase A stub diagnostic surface.
+  - **Deleted**: `runWithCascade`, `composeOnce`,
+    `prepareFeatures`, `composeSectors`, `registerAnchors`,
+    `fallbackShape`, `nextChainShape`. Chain-walking
+    relocated to VillagePlanner per spec §8 (going with
+    option (b) per user ruling — cleaner, the open question 6
+    about runWithCascade's `maxRetries` parameter goes away).
+  - **Kept**: `RecipeStatus`, `ReEmitReason` (sealed iface +
+    4 records), `checkPrimarySpine` (now public),
+    `computeAndRecord` (now public), `clampToRoadReach` (now
+    public), `describeReason` (now public),
+    `preferredPlazaShape`. All for Phase B/C use.
+
+- `ShapeRecipe.java` interface:
+  - `compose` now declares `LayoutBlueprint compose(...)`.
+  - `forShape(ShapeType)` factory unchanged (still maps to 17
+    recipe instances + a RADIAL fallback for unmapped shapes).
+
+- All 17 concrete recipe classes stubbed. Recipe body is now
+  one method: `throw new RecipeNotPortedException("<SHAPE>")`.
+  Recipe-internal state, helpers, primitive instantiations —
+  all deleted per option (a) (per user ruling: recipes are
+  about to become mostly-data; preserved helpers don't fit).
+  Each stub kept its `extends BaseRecipe` so the factory
+  switch and class hierarchy stay intact.
+
+- `PlanContext.java`:
+  - Added `edgesByRef` map + `registerRealisedEdge` /
+    `findEdge` / `edgesByRef()` accessors.
+  - Added `currentBlueprint` field + `getCurrentBlueprint` /
+    `setCurrentBlueprint`.
+  - `resetForFallback()` clears both for chain advances.
+
+- `VillagePlanner.java`:
+  - **Signature unchanged** (per #1 ruling, option b):
+    `static Optional<VillageLayout> plan(level, origin,
+    typeData, rng, villageLevel)`. Body rewritten to spec §2's
+    flow: compose → realiseRoads → checkPrimarySpine cascade →
+    realisePlazas → registerSectors → populateNamedAnchors →
+    SlotEmitter.emit → SlotsDropped cascade → matcher → farm
+    plot pass → validator → LayoutPlanBuilder.
+  - Added helper methods:
+    - `realiseRoads(...)` — runs each primitive, populates
+      RealisedEdge map, commits to road graph.
+    - `realisePlazas(...)` — translates PlazaDeclaration to
+      PlazaSpec (target radius → π·r² area), calls
+      `PlazaGenerator.generate` (the only public method — no
+      `installPlaza` to call).
+    - `registerSectors(...)` — translates SectorDeclaration to
+      Sector with defaults (empty slots, canGrow=false,
+      growth=FixedGrowth.INSTANCE, exclusionShape=null);
+      resolves `parentEdge` ref to road graph edge ID via
+      centerline equality match.
+    - `populateNamedAnchors(...)` — wires TOWN_SQUARE and
+      MAIN_GATE to existing layout setters; other AnchorKinds
+      are no-op pending consumer wiring.
+    - `handleSevereTruncation` / `handleSlotsDropped` /
+      `handleValidationFailed` — cascade dispatch wrappers.
+    - `dispatchReEmit` — common cascade body. Calls
+      `recipe.reEmit(reason, pctx)`; if non-null returned,
+      that's the new blueprint. If null, advances Phase 22's
+      schema chain to next entry, calls
+      `ShapeRecipe.forShape(next).compose(pctx)`. Catches
+      RecipeNotPortedException on chain advance and marks
+      unplannable.
+    - `finalizeUnplannable` — common terminal: markUnplannable
+      + recorder + summary line + return Optional.empty.
+  - Added `SLOTS_DROPPED_THRESHOLD = 0.30` constant per spec
+    §10.5.
+  - Specific signature corrections vs spec pseudocode:
+    `checkPrimarySpine` takes `RoadResult` (not `pctx`);
+    `pctx.recordPrimarySpine` (not `setPrimarySpineResult`);
+    `pctx.offerSector` (not `registerSector`);
+    PlazaGenerator's only public method is `generate` (not
+    `installPlaza`).
+
+- `MeasureCommand.java`:
+  - `FailureMode.RECIPE_NOT_PORTED` (9th value).
+  - Classifier substring rule for `"recipe not ported"` —
+    takes precedence over other substring matches because
+    Phase A spawns dominate it.
+  - Structural integrity check: replaced
+    `BaseRecipe.runWithCascade` assertion (deleted in this
+    phase) with `BaseRecipe.compose` and `BaseRecipe.reEmit`
+    method assertions (Phase A's surface). Catches accidental
+    revert of the cutover in future refactors.
+
+#### Status
+
+- 33 files touched: 11 new + 22 modified.
+- Compile gated by sandbox network access
+  (maven.neoforged.net 403). Spot-checked: all 17 recipes
+  inherit BaseRecipe and override `compose` returning
+  LayoutBlueprint; no callers reference deleted methods
+  (`runWithCascade`, `composeOnce`, etc.); imports resolve
+  to actual package paths (BuildingZone, SectorRole,
+  AnchorKind, FixedGrowth all exist).
+- Phase A is a structural cutover. Spawns will fail
+  predictably with `RECIPE_NOT_PORTED` until Phase B (slot
+  emitter resolvers) + Phase C (RADIAL port) + Phase D
+  (everything else) lands.
+
+#### Validation (next steps for the user)
+
+1. Compile: `./gradlew compileJava` (network-gated; passes
+   in a normal build).
+2. Spawn one village in-game (any shape). Expect:
+   ```
+   [PlacementFailure] <type> @ x,y,z — SHAPE_RULE_REJECTED:
+     recipe not ported: <SHAPE>
+   [VILLAGE-SUMMARY] shape=<SHAPE> status=RECIPE_NOT_PORTED ...
+   ```
+3. `/litv measure 10`:
+   - Structural integrity check passes (compose/reEmit
+     methods exist).
+   - All 10 spawns fail with FailureMode.RECIPE_NOT_PORTED in
+     the classifier breakdown.
+4. Old saves with persisted LayoutPlans continue loading
+   (codec unchanged in Phase A).
+5. BuildSiteFinder expansion path still works (untouched).
+
+#### Phase A follow-ups (Phase B scope)
+
+- Implement the six Anchor resolvers in
+  `SlotEmitter.emit(...)`:
+  - `PlazaPerimeter` — vertex iteration with spur-exit
+    skipping.
+  - `RoadAlong` — centerline walk + perpendicular at offset.
+  - `AllSpurs` — RoadAlong applied per SPUR-role edge.
+  - `RingValidated` — angular sweep with validator-cap
+    filtering.
+  - `NamedAnchor` — anchor lookup + nearest-road radial
+    offset.
+  - `RegionalGather` — poisson-disc within region.
+- Each resolver enforces the validator-cap invariant by
+  construction (spec §5).
+- Unit tests against synthetic geometry per spec §11
+  Phase B validation.
+
+#### Phase A flips vs spec — recap for closeout
+
+1. SectorDeclaration adds `@Nullable EdgeRef parentEdge`.
+2. LayoutBlueprint drops `recipeMetadata: Map<String,Object>`
+   (spec's seventh field).
+3. `runWithCascade` deleted entirely (option b vs
+   option a's thin-wrapper).
+4. VillagePlanner.plan signature unchanged (option b vs
+   option a's `Village plan(PlanContext)`).
+5. All recipe stubs delete their bodies entirely
+   (option a vs option b's @Deprecated helpers or option c's
+   utility class extraction).
+
+
 
 
 

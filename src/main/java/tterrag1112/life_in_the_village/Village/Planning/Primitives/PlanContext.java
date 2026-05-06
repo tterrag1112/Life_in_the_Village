@@ -920,10 +920,64 @@ public final class PlanContext {
         outerRingCenterline = java.util.List.of();
         outerRingRadius     = 0;
         villageCenter       = null;
+        // Phase A: clear realised-edge map and current blueprint —
+        // re-emission re-realises roads against the new blueprint.
+        edgesByRef.clear();
+        currentBlueprint    = null;
         // Don't reset: typeData, styleSelection, sizeTier, ageCategory,
         // variantSelector (variant context — village-wide), rng (seed
         // continuity), cascadeChain / cascadeChainPosition (advancing,
         // not resetting).
+    }
+
+    // ── Phase A adaptive-layout state ─────────────────────────────────────────
+    // Populated by the planner during realiseRoads / compose so the
+    // SlotEmitter resolvers (Phase B) can look up a road by its
+    // declarative EdgeRef. Cleared in resetForFallback.
+    private final java.util.Map<String,
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .RealisedEdge> edgesByRef = new java.util.HashMap<>();
+
+    public void registerRealisedEdge(
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive.EdgeRef ref,
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .RealisedEdge edge) {
+        edgesByRef.put(ref.id(), edge);
+    }
+
+    @org.jetbrains.annotations.Nullable
+    public tterrag1112.life_in_the_village.Village.Planning.Adaptive
+            .RealisedEdge findEdge(
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive.EdgeRef ref) {
+        return edgesByRef.get(ref.id());
+    }
+
+    public java.util.Map<String,
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .RealisedEdge> edgesByRef() {
+        return java.util.Collections.unmodifiableMap(edgesByRef);
+    }
+
+    /** Currently-active blueprint. Set by the planner at the start of
+     *  realisation; updated on re-emission. May be null between
+     *  recipe stages. Read by the cascade-engine helpers
+     *  (handleSevereTruncation etc.) so they can compare the old
+     *  blueprint against the new one returned by reEmit. */
+    @org.jetbrains.annotations.Nullable
+    private tterrag1112.life_in_the_village.Village.Planning.Adaptive
+            .LayoutBlueprint currentBlueprint;
+
+    @org.jetbrains.annotations.Nullable
+    public tterrag1112.life_in_the_village.Village.Planning.Adaptive
+            .LayoutBlueprint getCurrentBlueprint() {
+        return currentBlueprint;
+    }
+
+    public void setCurrentBlueprint(
+            @org.jetbrains.annotations.Nullable
+            tterrag1112.life_in_the_village.Village.Planning.Adaptive
+                    .LayoutBlueprint bp) {
+        this.currentBlueprint = bp;
     }
 
     // ── Summary tracking (Phase 16b) ──────────────────────────────────────────

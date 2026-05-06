@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Village.Planning.Primitives;
 
+import tterrag1112.life_in_the_village.Village.Planning.Adaptive.LayoutBlueprint;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.Recipes.*;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.GatewayDescriptor;
 import tterrag1112.life_in_the_village.Village.Roads.Planning.VillageEdgeDescriptor;
@@ -12,15 +13,26 @@ import java.util.List;
  *
  * <p>Add a new shape by writing a new {@code ShapeRecipe} and wiring it
  * into {@link #forShape}. No other code changes needed.
+ *
+ * <p>Phase A: {@code compose} now returns a {@link LayoutBlueprint} —
+ * a declarative structure the planner realises against world geometry
+ * after the recipe returns. Recipes no longer compute slot positions
+ * or invoke road primitives directly.
  */
 public interface ShapeRecipe {
 
     /**
-     * Reads buildings from {@link PlanContext#remaining}, adds road
-     * primitives to the layout, and places building slots. Sets
-     * {@code layout.mainGateEndpoint} if the shape has a main road.
+     * Returns a declarative blueprint describing the village's roads,
+     * plazas, sectors, slot intentions, and named anchors. The planner
+     * realises the blueprint post-compose: runs road primitives,
+     * generates plaza polygons, registers sectors, runs the
+     * SlotEmitter.
+     *
+     * <p>Phase A recipes throw {@link
+     * tterrag1112.life_in_the_village.Village.Planning.Adaptive
+     * .RecipeNotPortedException} until their Phase C/D ports land.
      */
-    void compose(PlanContext pctx);
+    LayoutBlueprint compose(PlanContext pctx);
 
     /**
      * Returns gateway descriptors for this layout after {@link #compose} has run.
