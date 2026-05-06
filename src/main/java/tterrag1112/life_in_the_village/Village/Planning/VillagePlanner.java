@@ -752,29 +752,31 @@ public class VillagePlanner {
     }
 
     /**
-     * Realises each plaza declaration via PlazaGenerator.generate.
-     * Translation: PlazaDeclaration → PlazaSpec ({@code targetRadius}
-     * → {@code targetArea = πr²} approximation; the existing PlazaSpec
-     * uses target area, so we square the radius and scale by π).
+     * Realises each plaza declaration via
+     * {@link tterrag1112.life_in_the_village.Village.Planning.Primitives
+     * .Recipes.RecipeHelpers#installPlaza} — tier-aware.
+     *
+     * <p>Phase C correction: Phase A's pseudocode said
+     * "PlazaGenerator.installPlaza" but {@code installPlaza} actually
+     * lives on {@code RecipeHelpers} and contains HAMLET-tier
+     * special-casing (marker-only plaza, no polygon). Phase A's
+     * orchestration called {@code PlazaGenerator.generate} directly,
+     * which always produces a polygon — incorrect for HAMLETs. This
+     * one-line fix routes through the tier-aware path so HAMLET
+     * RADIAL spawns get the same marker behavior they had pre-rework.
      */
     private static void realisePlazas(
             java.util.List<tterrag1112.life_in_the_village.Village.Planning
                     .Adaptive.PlazaDeclaration> plazas,
             PlanContext pctx) {
         for (var decl : plazas) {
-            int targetArea = (int) Math.round(
-                    Math.PI * decl.targetRadius() * decl.targetRadius());
-            var spec = new tterrag1112.life_in_the_village.Village.Decoration
-                    .Plaza.PlazaSpec(
-                    decl.purpose(), decl.center(), targetArea,
-                    decl.shape(), java.util.Optional.empty());
-            tterrag1112.life_in_the_village.Village.Decoration.Plaza
-                    .PlazaGenerator.generate(pctx, spec);
-            // PlazaGenerator currently registers PlazaRegions on
-            // pctx via its internal logic. The civicSector field on
-            // PlazaDeclaration is recorded for SlotEmitter's
-            // PlazaPerimeter resolver in Phase B; nothing reads it
-            // in Phase A.
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .Recipes.RecipeHelpers.installPlaza(
+                    pctx, decl.center(), decl.purpose(), decl.shape(),
+                    java.util.Optional.empty());
+            // The civicSector field on PlazaDeclaration is recorded
+            // for SlotEmitter's PlazaPerimeter resolver; nothing reads
+            // it here.
         }
     }
 

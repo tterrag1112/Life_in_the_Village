@@ -5132,6 +5132,210 @@ spawns (ENCLAVE).
 - Scoring-based slot selection (Phase 20 deferred polish item;
   current resolver ordering is first-viable).
 
+---
+
+## Phase C — Port RADIAL (declarative blueprint)
+
+Phase 3 of 5 in the adaptive layout migration. RADIAL is the
+canonical baseline (post-Phase-20: 27/27 placed and validated on
+superflat at centre = (-2496, -60, 292)). After this lands the
+adaptive flow is exercised end-to-end against real geometry —
+the integration smoke test for everything Phases A and B
+introduced.
+
+The success criterion for this cycle is **structural**:
+compile-clean port + correct planner orchestration. Empirical
+validation (the byte-equality smoke run) requires live
+Minecraft and lands in the next cycle when the user runs
+`/litv measure 1` at the baseline seed and reports the dump.
+
+#### What changed
+
+`Village/Planning/VillagePlanner.realisePlazas` — Phase A
+oversight fix. Phase A's pseudocode said
+`PlazaGenerator.installPlaza` but `installPlaza` actually lives
+on `RecipeHelpers` and contains tier-aware HAMLET special-casing
+(marker-only plaza, no polygon, civicRingR=11, town square
+radius=3). The Phase A orchestration called
+`PlazaGenerator.generate` directly, which always produces a
+polygon — incorrect for HAMLET-tier spawns. One-line redirect
+to `RecipeHelpers.installPlaza(pctx, decl.center(),
+decl.purpose(), decl.shape(), Optional.empty())` restores the
+tier-aware path.
+
+`Village/Planning/Primitives/Recipes/RadialRecipe.java` — full
+declarative port.
+
+Structure preserved from the pre-Phase-A imperative version
+(549 lines → ~340 lines, the shrinkage from declarative slot
+emission):
+- 1 main road (StraightRoad, SPINE, terrain-biased direction
+  + `pctx.cascadeAxisRotation()` accumulator). Length
+  `outerR*2 + 48`. Drift 8.0.
+- N spurs (Spur primitives, SPUR role) where N depends on
+  remaining building count: `max(2, ceil(remaining/5.0))`
+  capped at `max(2, remaining/2)`. squareRooted spurs branch
+  from the plaza, mainRooted branch from points along the
+  main road at fractions {0.5}, {0.35,0.7}, {0.3,0.55,0.8},
+  {0.25,0.45,0.65,0.85}.
+- N cluster arcs (Arc primitives, one per spur, 60° centred
+  on plaza, drift 3.0).
+- 0 or 2 inner arcs if spurCount ≥ 3 (Arc primitives, 210°
+  span, intermediate radii, drift 4.0/5.5).
+- 1 outer ring (Ring, OUTER_RING role, drift 2.0, radius
+  `outerR + 20`).
+- 1 PlazaDeclaration at village centre (CIRCLE).
+- 5+ SectorDeclarations: `plaza_civic`, `radial_main_road`,
+  `radial_spur_i` per spur, `radial_arc_i` per inner arc,
+  `radial_outer_agri`, `radial_outer_defense`. Each
+  spoke/ring-bound sector carries the right `parentEdge`
+  (Phase A flip) so the matcher attributes commits to the
+  correct edge.
+
+Slot intentions (5–9 depending on spurCount):
+- PlazaPerimeter × 2 (PRIME_CIVIC count=1, SECONDARY_CIVIC
+  count=`squareCapacity-1`). avoidSpurExitChebDist=6.
+- RoadAlong on main road (count=8, fp=35, both sides).
+- RoadAlong on each spur road (count=4, fp=40, both sides) +
+  RoadAlong on each cluster arc (count=4, fp=16, both sides).
+- RoadAlong on each inner arc if present (count=6, fp=30).
+- RingValidated outer agri (count=8, radius `outerR+12`,
+  fp=18) + RingValidated outer defense (count=6, radius
+  `outerR+5`, fp=18). The RingValidated resolver skips
+  angular positions farther than `maxRoadDistance` from the
+  outer ring's centerline — the structural fix for
+  outer-agri-ring failures.
+
+Named anchors: TOWN_SQUARE = village centre, MAIN_GATE =
+main road's far endpoint.
+
+Compose-time pre-realisation: spurs branch from points along
+the main road, and cluster arcs derive radius/angle from each
+spur's tip. The recipe calls `BaseRecipe.computeAndRecord` at
+compose time to get each centerline; the planner's
+`realiseRoads` computes the same centerline again at
+realisation. The double-compute is wasted work but correct
+because `computeCenterline` is deterministic. Phase D
+dedupes if measurement reveals the cost matters.
+
+Cascade reEmit (90° axis rotation, mirrors pre-Phase-A
+behavior):
+
+```java
+case ReEmitReason.SevereTruncation t -> {
+    pctx.recordTruncation();
+    if (pctx.cascadeRetryCount() < 1) {
+        pctx.recordCascadeRetry();
+        pctx.setCascadeAxisRotation(
+                pctx.cascadeAxisRotation() + Math.PI / 2);
+        yield compose(pctx);  // re-run with rotated axis
+    }
+    yield null;  // chain advance / abort
+}
+```
+
+The compose body reads `pctx.cascadeAxisRotation()` at the
+start, so the second invocation produces a layout rotated 90°
+from the first attempt. After the rotation budget exhausts
+(`cascadeRetryCount() >= 1`), reEmit returns null —
+RADIAL has no fallback chain in datagen, so this aborts the
+spawn cleanly. Other ReEmitReasons (SlotsDropped,
+SectorStarved, ValidationFailed) return null directly.
+
+This is the first exercise of the Phase A re-emission code
+path. Phase B never touched it; the smoke run will reveal
+whether the planner re-realises roads correctly when reEmit
+returns a fresh blueprint.
+
+#### Status
+
+- 3 files touched: 2 modified (VillagePlanner, RadialRecipe).
+- 16 recipes still stubbed; only RADIAL is ported.
+- Compile gated by sandbox network access. Spot-checked: all
+  Adaptive imports resolve, all PlanContext/VillageLayout/
+  TerrainProfile/RoadPrimitive accessors exist with the
+  signatures used, sealed switch over ReEmitReason covers all
+  four variants, helper methods (mainFractions, angleDelta,
+  directionRadOf) preserve pre-Phase-A semantics.
+- `/litv measure 10` will still report
+  `RECIPE_NOT_PORTED` for non-RADIAL spawns (~94% of the
+  registry, 16 stubs out of 17 mapped shapes). RADIAL spawns
+  will exercise the new flow end-to-end.
+
+#### Phase C flips vs spec
+
+1. realisePlazas Phase A oversight pulled forward as part of
+   Phase C (one-line fix). HAMLET-tier RADIAL spawns now get
+   the marker plaza they had pre-rework instead of an
+   incorrect polygon plaza.
+2. Cluster arc slots use road-tangent perpendicular (the
+   RoadAlong resolver) instead of the old recipe's
+   radial-from-plaza perpendicular. For 60° arcs centred on
+   the plaza the two perpendiculars roughly coincide; the
+   diff catalogue in the next cycle will quantify.
+3. Outer ring slots use `RingValidated` instead of the old
+   `LayoutPrimitive.RingBand`. Validator-cap invariant is
+   enforced by the resolver.
+4. RoadAlong's structural perpOffset
+   (`tier.reservedHalfWidth + max(halfW, halfL) + 1` ≈ 21
+   for fp=35) is ~13 blocks farther from the road than the
+   old recipe's hand-tuned 8. Still passes validation
+   (cap=26 for fp=35). The new positions are
+   validator-cap-correct; the old positions relied on
+   validator slack.
+
+#### Validation (next steps for the user)
+
+1. Compile: `./gradlew compileJava` (network-gated; passes in
+   a normal build).
+2. Spawn RADIAL at the post-Phase-20 baseline seed (centre =
+   (-2496, -60, 292), superflat). Expected:
+   ```
+   [VILLAGE-SUMMARY] shape=RADIAL status=OK
+     truncations=0 retries=0 finalShape=RADIAL validated=27/27
+   ```
+3. Dump the plan to a file. Compare against the post-Phase-20
+   baseline dump. Catalogue position differences per intention
+   in the next cycle's prompt.
+4. `/litv measure 10` at seeds derived from the baseline.
+   Expect 10/10 RADIAL spawns at ~27/27 each. Small variation
+   in count is acceptable if the matcher commits fewer
+   buildings than the recipe declares (e.g. 25/27 if a few
+   slots fail validation due to position differences).
+5. Spawn a non-RADIAL village (any other type) — confirm
+   RECIPE_NOT_PORTED for those continues to fire correctly.
+6. Existing saves continue loading (BuildSiteFinder
+   unaffected).
+
+#### Phase C follow-ups (next cycle scope)
+
+- Catalogue position differences from the baseline dump.
+  Each diff should trace to:
+  - A specific resolver iteration choice (deterministic),
+    OR
+  - A perpOffset formula change (structural), OR
+  - A missing parameter the new SlotIntention should
+    declare differently.
+- If diffs reveal a Phase B resolver bug, fix it and
+  re-run the smoke test.
+- If diffs reveal the validator still rejects despite the
+  resolver's pre-validation, that's a SlotEmitter
+  invariant violation — fix urgently before Phase D.
+- Test the 90° rotation cascade by spawning RADIAL on
+  rough terrain (Lithosphere or a hilly default-Minecraft
+  biome). Confirm `[RADIAL-REEMIT] rotating axis 90°` log
+  fires; confirm the second attempt produces a viable
+  layout.
+
+#### Phase D scope (after Phase C smoke test passes)
+
+Port the remaining 16 recipes to declarative blueprints.
+Each port follows the same pattern as RADIAL, with the spec
+doc's CROSSROADS and HILLTOP examples as templates. Delete
+LayoutPrimitive and its subclasses (BuildingCircle,
+LinearRow, RingBand) — no caller will remain.
+
+
 
 
 
