@@ -188,16 +188,14 @@ public final class SlotEmitter {
                 + " spurExits=" + spurExits.size());
 
         int fp = intention.maxFootprint();
-        int halfW = fp / 2;
-        int halfL = fp / 2;
         int maxRoadDist = VillagePlanner.maxRoadDistance(fp, fp);
         int needed = intention.desiredCount();
         System.out.println("[SlotEmitter]   maxRoadDist=" + maxRoadDist
-                + " halfW=" + halfW + " halfL=" + halfL);
+                + " fp=" + fp);
 
         List<PlacementSlot> result = new ArrayList<>();
         int emittedIdx = 0;
-        int rejSpurExit = 0, rejFmap = 0, rejFootprint = 0, rejCap = 0;
+        int rejSpurExit = 0, rejFmap = 0, rejOnRoad = 0, rejCap = 0;
         for (int i = 0; i < vertices.size() && result.size() < needed; i++) {
             BlockPos v = vertices.get(i);
 
@@ -215,17 +213,21 @@ public final class SlotEmitter {
                 continue;
             }
 
-            // FeatureMap + footprint clearance.
+            // FeatureMap terrain check (full footprint — terrain
+            // unsuitability at any corner of the building rejects).
             if (!fmap.isClearForFootprint(v, fp, fp)) {
                 rejFmap++;
                 System.out.println("[SlotEmitter]     v[" + i + "]=" + v
                         + " REJECT fmap fp=" + fp);
                 continue;
             }
-            if (!isFootprintClear(v, halfW, halfL, layout)) {
-                rejFootprint++;
+            // Slot-center sanity check: vertex must not itself sit
+            // inside a road reservation. Full-footprint conflicts
+            // are resolved by the matcher at commit time.
+            if (!isSlotCenterClear(v, layout)) {
+                rejOnRoad++;
                 System.out.println("[SlotEmitter]     v[" + i + "]=" + v
-                        + " REJECT footprint");
+                        + " REJECT on-road");
                 continue;
             }
 
@@ -264,7 +266,7 @@ public final class SlotEmitter {
                 + result.size() + "/" + needed
                 + " rej-spurExit=" + rejSpurExit
                 + " rej-fmap=" + rejFmap
-                + " rej-footprint=" + rejFootprint
+                + " rej-on-road=" + rejOnRoad
                 + " rej-cap=" + rejCap);
         return result;
     }
@@ -338,7 +340,7 @@ public final class SlotEmitter {
         int sides = anchor.bothSides() ? 2 : 1;
 
         List<PlacementSlot> result = new ArrayList<>();
-        int totalCandidates = 0, rejFmap = 0, rejFootprint = 0;
+        int totalCandidates = 0, rejFmap = 0, rejOnRoad = 0;
         for (int i = 0; i < centerline.size() && result.size() < needed;
                 i += spacing) {
             BlockPos on = centerline.get(i);
@@ -361,11 +363,11 @@ public final class SlotEmitter {
                             + " REJECT fmap");
                     continue;
                 }
-                if (!isFootprintClear(candidate, halfW, halfL, layout)) {
-                    rejFootprint++;
+                if (!isSlotCenterClear(candidate, layout)) {
+                    rejOnRoad++;
                     System.out.println("[SlotEmitter]     i=" + i
                             + " side=" + side + " pos=" + candidate
-                            + " REJECT footprint");
+                            + " REJECT on-road");
                     continue;
                 }
 
@@ -387,7 +389,7 @@ public final class SlotEmitter {
                 + result.size() + "/" + needed
                 + " candidates=" + totalCandidates
                 + " rej-fmap=" + rejFmap
-                + " rej-footprint=" + rejFootprint);
+                + " rej-on-road=" + rejOnRoad);
         return result;
     }
 
@@ -479,8 +481,6 @@ public final class SlotEmitter {
         }
         int radius = anchor.radius();
         int fp = intention.maxFootprint();
-        int halfW = fp / 2;
-        int halfL = fp / 2;
         int maxRoadDist = VillagePlanner.maxRoadDistance(fp, fp);
         System.out.println("[SlotEmitter]   center=" + center
                 + " maxRoadDist=" + maxRoadDist
@@ -494,7 +494,7 @@ public final class SlotEmitter {
         Random rng = new Random(pctx.worldSeed ^ ((long) radius * 0x9E3779B97F4A7C15L));
 
         List<PlacementSlot> result = new ArrayList<>();
-        int rejFmap = 0, rejFootprint = 0, rejNoEdge = 0, rejCap = 0;
+        int rejFmap = 0, rejOnRoad = 0, rejNoEdge = 0, rejCap = 0;
         for (int i = 0; i < angularSamples && result.size() < needed; i++) {
             double baseAngle = 2 * Math.PI * i / angularSamples;
             double jitter = anchor.radialJitter() != 0.0
@@ -511,8 +511,8 @@ public final class SlotEmitter {
                 rejFmap++;
                 continue;
             }
-            if (!isFootprintClear(candidate, halfW, halfL, layout)) {
-                rejFootprint++;
+            if (!isSlotCenterClear(candidate, layout)) {
+                rejOnRoad++;
                 continue;
             }
 
@@ -554,7 +554,7 @@ public final class SlotEmitter {
                 + result.size() + "/" + needed
                 + " samples=" + angularSamples
                 + " rej-fmap=" + rejFmap
-                + " rej-footprint=" + rejFootprint
+                + " rej-on-road=" + rejOnRoad
                 + " rej-no-edge=" + rejNoEdge
                 + " rej-cap=" + rejCap);
         return result;
@@ -654,9 +654,9 @@ public final class SlotEmitter {
                         + " pos=" + candidate + " REJECT fmap");
                 continue;
             }
-            if (!isFootprintClear(candidate, halfW, halfL, layout)) {
+            if (!isSlotCenterClear(candidate, layout)) {
                 System.out.println("[SlotEmitter]     side=" + side
-                        + " pos=" + candidate + " REJECT footprint");
+                        + " pos=" + candidate + " REJECT on-road");
                 continue;
             }
 
@@ -708,8 +708,6 @@ public final class SlotEmitter {
                 + " fp=" + intention.maxFootprint());
 
         int fp = intention.maxFootprint();
-        int halfW = fp / 2;
-        int halfL = fp / 2;
         int needed = intention.desiredCount();
         Random rng = new Random(
                 pctx.worldSeed ^ ((long) anchor.center().hashCode()));
@@ -719,7 +717,7 @@ public final class SlotEmitter {
         int minSpacing = Math.max(1, anchor.minSpacing());
         int radius = Math.max(1, anchor.radius());
 
-        int rejTooClose = 0, rejFmap = 0, rejFootprint = 0;
+        int rejTooClose = 0, rejFmap = 0, rejOnRoad = 0;
         for (int attempt = 0; attempt < maxAttempts && result.size() < needed; attempt++) {
             double angle = rng.nextDouble() * 2 * Math.PI;
             double r = Math.sqrt(rng.nextDouble()) * radius;
@@ -745,8 +743,8 @@ public final class SlotEmitter {
                 rejFmap++;
                 continue;
             }
-            if (!isFootprintClear(candidate, halfW, halfL, layout)) {
-                rejFootprint++;
+            if (!isSlotCenterClear(candidate, layout)) {
+                rejOnRoad++;
                 continue;
             }
 
@@ -767,7 +765,7 @@ public final class SlotEmitter {
                 + " maxAttempts=" + maxAttempts
                 + " rej-tooClose=" + rejTooClose
                 + " rej-fmap=" + rejFmap
-                + " rej-footprint=" + rejFootprint);
+                + " rej-on-road=" + rejOnRoad);
         return result;
     }
 
@@ -870,20 +868,25 @@ public final class SlotEmitter {
                 Math.abs(a.getZ() - b.getZ()));
     }
 
-    /** Footprint clearance test combining occupied-building and
-     *  reserved-road checks. {@code BuildingFootprint.isClear} tests
-     *  both at once (the spec's pseudocode split into two methods,
-     *  but the actual API combines them — single call is cleaner).
-     *  {@code BuildingFootprint.isClear} takes the top-left origin
-     *  and full width/length, so we offset from the centre by half. */
-    private static boolean isFootprintClear(BlockPos centre,
-            int halfW, int halfL, VillageLayout layout) {
-        BlockPos origin = new BlockPos(
-                centre.getX() - halfW, centre.getY(),
-                centre.getZ() - halfL);
+    /** Phase C.2: minimal "slot is on a road reservation" sanity
+     *  check. Returns true if the slot center cell itself is NOT
+     *  inside a road reservation or an existing building footprint.
+     *  A 1x1 check is enough to catch slots emitted directly on a
+     *  road centerline; full-footprint conflicts (building extends
+     *  into adjacent reservation) are the matcher's job at commit
+     *  time, not the resolver's at emit time.
+     *
+     *  <p>Phase B's {@code isFootprintClear} did the matcher's full
+     *  conflict check at emit time, which over-rejected in dense
+     *  road graphs (RADIAL had ~80-100% rej-footprint rates per
+     *  resolver). The validator-cap invariant is about
+     *  road-adjacency distance, not about footprint clearance —
+     *  Phase C.2 separates them. */
+    private static boolean isSlotCenterClear(BlockPos pos,
+            VillageLayout layout) {
         BuildingFootprint fp = layout.getRoadFootprint();
         if (fp == null) return true;
-        return fp.isClear(origin, halfW * 2, halfL * 2, /* buffer */ 1);
+        return fp.isClear(pos, 1, 1, /* buffer */ 0);
     }
 
     // =========================================================================
