@@ -272,6 +272,7 @@ public class ModModEvents {
         RoadGraphDebugCommand.register(event.getDispatcher());
         LayoutDebugCommand.register(event.getDispatcher());
         MeasureCommand.register(event.getDispatcher());
+        FeatureMapCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());
