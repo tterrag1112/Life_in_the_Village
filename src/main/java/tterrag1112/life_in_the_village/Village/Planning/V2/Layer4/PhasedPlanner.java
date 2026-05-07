@@ -57,19 +57,20 @@ public final class PhasedPlanner {
     private static final int MAX_SLOPE = 3;
     /** Hard cap on cross streets per village. */
     private static final int CROSS_STREET_CAP = 6;
-    /** Min useful cross-street length (sum of both sides). */
-    private static final int MIN_CROSS_STREET_LENGTH = 12;
     /** Cross-street walk step in blocks (matches cellSize x 1). */
     private static final int CROSS_STREET_STEP = 2;
     /** Phase 5 spine trim floor — never trim shorter than this. */
     private static final int MIN_SPINE_LENGTH = 20;
-    /** Phase 4a clustering threshold (chebyshev blocks). Centroids
-     *  within this distance merge into one cluster. */
-    private static final int CLUSTER_THRESHOLD = 30;
     /** Phase 4a junction-dedup distance — two cross streets within
      *  this many blocks of each other on the spine would have
      *  overlapping intersection cells. */
     private static final int JUNCTION_DEDUP_DISTANCE = 6;
+    /** Phase 4a window radius (as fraction of spine length) around
+     *  each ideal cross-street position. The terrain-best junction
+     *  inside the window is chosen. */
+    private static final double JUNCTION_SEARCH_WINDOW = 0.10;
+    /** Number of sample positions to evaluate per window. */
+    private static final int JUNCTION_SAMPLES = 7;
 
     private PhasedPlanner() {}
 
@@ -127,112 +128,164 @@ public final class PhasedPlanner {
     // =========================================================================
 
     /**
-     * Phase 4a — proactive cross-street planning.
+     * Phase 4a — capacity-driven cross-street planning.
      *
-     * <p>For each remaining BuildingType:
-     * <ol>
-     *   <li>Compute its preferred terrain centroid (terrain-only
-     *       weighted average, ignoring road requirements).</li>
-     *   <li>Skip if the centroid sits within the building's
-     *       {@code frontage_distance} of the spine (already served).</li>
-     *   <li>Cluster off-spine centroids by chebyshev distance
-     *       (threshold {@link #CLUSTER_THRESHOLD}); cluster size
-     *       weighted by building multiplicity.</li>
-     *   <li>For each cluster (largest first, capped at
-     *       {@link #CROSS_STREET_CAP}): project cluster centroid onto
-     *       spine for the junction; skip if a junction already exists
-     *       within {@link #JUNCTION_DEDUP_DISTANCE}; otherwise insert
-     *       a perpendicular cross-street capped per-side at
-     *       {@code villageRadius}.</li>
-     * </ol>
+     * <p>Sums remaining building frontage, subtracts spine capacity
+     * already consumed by Phase 3 foundation placements, and
+     * computes how many cross streets are needed to host the
+     * overflow. Each cross-street can supply
+     * {@code 2 × villageRadius × 2 sides = 4 × villageRadius}
+     * frontage blocks at full extension.
+     *
+     * <p>Cross streets are placed at evenly-spaced parameters along
+     * the spine ({@code i / (N+1)} for {@code i} in 1..N), each
+     * refined within a {@code ±10%} window by terrain extension
+     * capacity. Junctions within {@link #JUNCTION_DEDUP_DISTANCE} of
+     * an existing cross street are skipped. Cross streets shorter
+     * than {@link #minUsefulLength}{@code (tier)} are skipped.
      */
     private static void planCrossStreetsProactively(State state,
                                                     List<BuildingType> sortedSelection,
                                                     Set<BuildingType> foundationTypes) {
-        // Count remaining (non-foundation) by type.
-        EnumMap<BuildingType, Integer> remaining = new EnumMap<>(BuildingType.class);
-        for (BuildingType t : sortedSelection) {
-            if (foundationTypes.contains(t)) continue;
-            remaining.merge(t, 1, Integer::sum);
+        // 1. Capacity math.
+        int countRemaining = 0;
+        int totalRemainingFrontage = 0;
+        for (BuildingType type : sortedSelection) {
+            if (foundationTypes.contains(type)) continue;
+            countRemaining++;
+            totalRemainingFrontage += estimatedFpAlongRoad(state, type);
         }
 
-        // Step 1+2: per-type preferred terrain centroid, then filter
-        // to off-spine.
         Spine spine = state.skeleton.spine();
-        List<TypeCluster> offSpine = new ArrayList<>();
-        for (Map.Entry<BuildingType, Integer> e : remaining.entrySet()) {
-            BuildingType type = e.getKey();
-            BlockPos centroid = computePreferredTerrainCentroid(state, type);
-            if (centroid == null) continue;
-            int frontageDist = frontageDistanceFor(state, type);
-            BlockPos cp = projectOntoSegment(centroid, spine.start(), spine.end());
-            if (distance(centroid, cp) <= frontageDist) continue;  // served by spine
-            offSpine.add(new TypeCluster(type, e.getValue(), centroid));
-        }
+        int spineLength = (int) Math.round(distance(spine.start(), spine.end()));
+        int spineCapacity = spineLength * 2;  // both sides
 
-        if (offSpine.isEmpty()) return;
-
-        // Step 3: simple distance clustering.
-        List<List<TypeCluster>> clusters = simpleDistanceCluster(offSpine, CLUSTER_THRESHOLD);
-
-        // Step 4: sort by total building count desc, insert up to cap.
-        clusters.sort((a, b) -> totalCount(b) - totalCount(a));
-        for (List<TypeCluster> cluster : clusters) {
-            if (state.skeleton.crossStreets().size() >= CROSS_STREET_CAP) {
-                state.events.add(PhaseEvent.proactiveSkipped(cluster, "cap reached"));
-                continue;
+        int spineConsumed = 0;
+        for (PlacedBuilding pb : state.placed) {
+            if (pb.facingRoad() instanceof Spine) {
+                spineConsumed += pb.frontage().length();
             }
-            BlockPos clusterCentroid = average(cluster.stream()
-                    .map(tc -> tc.centroid).toList());
-            BlockPos junction = projectOntoSegment(clusterCentroid,
-                    spine.start(), spine.end());
+        }
+        int spineAvailable = Math.max(0, spineCapacity - spineConsumed);
+        int overflow = Math.max(0, totalRemainingFrontage - spineAvailable);
+
+        // Each cross-street: 2 * villageRadius total length × 2 sides.
+        int crossStreetCapacity = 4 * state.villageRadius;
+        int crossStreetsNeeded = crossStreetCapacity > 0
+                ? (int) Math.ceil((double) overflow / crossStreetCapacity)
+                : 0;
+        crossStreetsNeeded = Math.min(crossStreetsNeeded, CROSS_STREET_CAP);
+
+        state.events.add(PhaseEvent.capacityPlan(countRemaining, spineCapacity,
+                spineConsumed, spineAvailable, totalRemainingFrontage,
+                overflow, crossStreetsNeeded, CROSS_STREET_CAP));
+
+        if (crossStreetsNeeded == 0) return;
+
+        // 2. Spread along spine: ideal parameters = i / (N+1).
+        int minLen = minUsefulLength(state.ctx.tier());
+        for (int i = 1; i <= crossStreetsNeeded; i++) {
+            double idealParam = (double) i / (crossStreetsNeeded + 1);
+            BlockPos junction = findBestJunctionInWindow(state, spine, idealParam,
+                    JUNCTION_SEARCH_WINDOW);
+
             if (junctionTooClose(junction, state.skeleton.crossStreets(),
                     JUNCTION_DEDUP_DISTANCE)) {
-                state.events.add(PhaseEvent.proactiveSkipped(cluster,
+                state.events.add(PhaseEvent.proactiveSkippedAtParam(idealParam,
                         "within " + JUNCTION_DEDUP_DISTANCE
                                 + " blocks of existing junction"));
                 continue;
             }
-            Optional<CrossStreet> cs = generateCrossStreet(state, clusterCentroid);
+
+            Optional<CrossStreet> cs = generateCrossStreetAtJunction(state, junction);
             if (cs.isEmpty()) {
-                state.events.add(PhaseEvent.proactiveSkipped(cluster,
-                        "no viable perpendicular extension"));
+                state.events.add(PhaseEvent.proactiveSkippedAtParam(idealParam,
+                        "terrain unviable (zero perpendicular extension)"));
+                continue;
+            }
+            int totalLen = (int) Math.round(distance(cs.get().start(), cs.get().end()));
+            if (totalLen < minLen) {
+                state.events.add(PhaseEvent.proactiveSkippedAtParam(idealParam,
+                        "extension " + totalLen + " < tier min " + minLen));
                 continue;
             }
             state.skeleton.addCrossStreet(cs.get());
-            state.events.add(PhaseEvent.proactiveInserted(cs.get(), cluster,
-                    clusterCentroid));
+            state.events.add(PhaseEvent.proactiveInsertedAt(cs.get(), idealParam, totalLen));
         }
     }
 
-    private static List<List<TypeCluster>> simpleDistanceCluster(List<TypeCluster> items,
-                                                                  double threshold) {
-        List<List<TypeCluster>> clusters = new ArrayList<>();
-        for (TypeCluster tc : items) {
-            boolean joined = false;
-            for (List<TypeCluster> cluster : clusters) {
-                for (TypeCluster member : cluster) {
-                    if (chebDist(tc.centroid, member.centroid) <= threshold) {
-                        cluster.add(tc);
-                        joined = true;
-                        break;
-                    }
-                }
-                if (joined) break;
-            }
-            if (!joined) {
-                List<TypeCluster> nu = new ArrayList<>();
-                nu.add(tc);
-                clusters.add(nu);
-            }
-        }
-        return clusters;
+    /** Building's footprint dimension along the road. The building can
+     *  rotate to put either {@code width} or {@code length} along the
+     *  road, so we use the smaller — the most-favourable estimate. */
+    private static int estimatedFpAlongRoad(State state, BuildingType type) {
+        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture, Style.RURAL,
+                type,
+                tterrag1112.life_in_the_village.Village.Decoration.Variants
+                        .BuildingVariant.defaultVariantId(type),
+                LEVEL, Rotation.NONE);
+        return Math.min(info.width(), info.length());
     }
 
-    private static int totalCount(List<TypeCluster> cluster) {
-        int n = 0;
-        for (TypeCluster tc : cluster) n += tc.count;
-        return n;
+    /** Sample {@link #JUNCTION_SAMPLES} positions across
+     *  {@code [idealParam - windowFrac, idealParam + windowFrac]} on
+     *  the spine, score each by total perpendicular extension, return
+     *  the best. */
+    private static BlockPos findBestJunctionInWindow(State state, Spine spine,
+                                                     double idealParam, double windowFrac) {
+        double tMin = Math.max(0, idealParam - windowFrac);
+        double tMax = Math.min(1, idealParam + windowFrac);
+        Vec3 spineDir = unit(spine.start(), spine.end());
+        double perpX = -spineDir.z;
+        double perpZ = spineDir.x;
+
+        BlockPos best = pointAlong(spine.start(), spine.end(), idealParam);
+        int bestExtension = -1;
+        for (int s = 0; s < JUNCTION_SAMPLES; s++) {
+            double t = JUNCTION_SAMPLES <= 1
+                    ? idealParam
+                    : tMin + (tMax - tMin) * s / (double) (JUNCTION_SAMPLES - 1);
+            BlockPos cand = pointAlong(spine.start(), spine.end(), t);
+            int sideA = walkPerp(state, cand, perpX, perpZ, +1, state.villageRadius);
+            int sideB = walkPerp(state, cand, perpX, perpZ, -1, state.villageRadius);
+            int total = sideA + sideB;
+            if (total > bestExtension) {
+                bestExtension = total;
+                best = cand;
+            }
+        }
+        return best;
+    }
+
+    /** Build a perpendicular cross street at {@code junction}. Walks
+     *  both sides up to {@code villageRadius} blocks; returns
+     *  {@code Optional.empty} only if the total extension is zero.
+     *  Tier-min check is the caller's responsibility (Phase 4a uses
+     *  {@link #minUsefulLength}). */
+    private static Optional<CrossStreet> generateCrossStreetAtJunction(State state,
+                                                                       BlockPos junction) {
+        Spine spine = state.skeleton.spine();
+        Vec3 spineDir = unit(spine.start(), spine.end());
+        double perpX = -spineDir.z;
+        double perpZ = spineDir.x;
+        int sideA = walkPerp(state, junction, perpX, perpZ, +1, state.villageRadius);
+        int sideB = walkPerp(state, junction, perpX, perpZ, -1, state.villageRadius);
+        if (sideA + sideB <= 0) return Optional.empty();
+        BlockPos endA = endpoint(junction, perpX, perpZ, +1, sideA);
+        BlockPos endB = endpoint(junction, perpX, perpZ, -1, sideB);
+        return Optional.of(new CrossStreet(endA, endB, SpinePlanner.SPINE_WIDTH, junction));
+    }
+
+    /** Tier-scaled minimum useful cross-street total length.
+     *  HAMLET still admits 12-block streets (~6 per side) since each
+     *  one adds frontage for 1-2 buildings. */
+    private static int minUsefulLength(ViabilityTier tier) {
+        return switch (tier) {
+            case CITY -> 30;
+            case TOWN -> 20;
+            case HAMLET -> 12;
+            case OUTPOST -> 8;
+            case UNVIABLE -> 12;  // shouldn't reach Phase 4 but a safe default
+        };
     }
 
     private static boolean junctionTooClose(BlockPos candidate,
@@ -241,56 +294,6 @@ public final class PhasedPlanner {
             if (distance(candidate, cs.spineJunction()) <= threshold) return true;
         }
         return false;
-    }
-
-    private static int frontageDistanceFor(State state, BuildingType type) {
-        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture, Style.RURAL,
-                type,
-                tterrag1112.life_in_the_village.Village.Decoration.Variants
-                        .BuildingVariant.defaultVariantId(type),
-                LEVEL, Rotation.NONE);
-        int fpPerp = info.length();
-        return (state.skeleton.spine().width() + 1) / 2 + (fpPerp + 1) / 2;
-    }
-
-    /**
-     * Terrain-score-weighted centroid across cells matching the type's
-     * terrain prefs (no road, no slope reservation considerations
-     * other than the basic admissibility filter). Returns {@code null}
-     * if no positive-scoring cell exists in the scan area.
-     */
-    private static BlockPos computePreferredTerrainCentroid(State state, BuildingType type) {
-        PlacementProfile profile = PlacementDefaults.get(type);
-        if (profile == null) return null;
-        long sumX = 0, sumZ = 0;
-        double sumWeight = 0;
-        for (int i = 0; i < state.fmap.gridSize(); i++) {
-            for (int j = 0; j < state.fmap.gridSize(); j++) {
-                Cell cell = state.fmap.cell(i, j);
-                BlockCategory cat = cell.category();
-                if (cat != BlockCategory.OPEN && cat != BlockCategory.SHORE) continue;
-                if (cell.localSlope() > MAX_SLOPE) continue;
-                BlockPos pos = state.fmap.cellWorldPos(i, j);
-                double s = 0;
-                for (Map.Entry<TerrainFactor, Double> e : profile.terrainWeights().entrySet()) {
-                    s += e.getValue() * Scoring.terrainFactor(e.getKey(), pos,
-                            state.fmap, state.villageRadius);
-                }
-                if (s <= 0) continue;
-                sumX += (long) (pos.getX() * s);
-                sumZ += (long) (pos.getZ() * s);
-                sumWeight += s;
-            }
-        }
-        if (sumWeight <= 0) return null;
-        return new BlockPos((int) Math.round(sumX / sumWeight),
-                state.ctx.anchor().getY(),
-                (int) Math.round(sumZ / sumWeight));
-    }
-
-    private static int chebDist(BlockPos a, BlockPos b) {
-        return Math.max(Math.abs(a.getX() - b.getX()),
-                Math.abs(a.getZ() - b.getZ()));
     }
 
     /** Tries to place one instance of {@code type}; returns true on
@@ -400,35 +403,8 @@ public final class PhasedPlanner {
     }
 
     // =========================================================================
-    // Cross-street insertion
+    // Cross-street walk helpers
     // =========================================================================
-
-    private static Optional<CrossStreet> generateCrossStreet(State state, BlockPos target) {
-        Spine spine = state.skeleton.spine();
-        // Project target onto spine to find junction.
-        BlockPos junction = projectOntoSegment(target, spine.start(), spine.end());
-        // Perpendicular to spine.
-        Vec3 spineDir = unit(spine.start(), spine.end());
-        double perpX = -spineDir.z;
-        double perpZ = spineDir.x;
-        // Side of spine the target is on.
-        double sideDot = (target.getX() - junction.getX()) * perpX
-                + (target.getZ() - junction.getZ()) * perpZ;
-        int side = sideDot >= 0 ? 1 : -1;
-
-        // Per-side cap = villageRadius. Total cap = 2 * villageRadius.
-        // Walks now also terminate when the next sample falls outside
-        // the scan grid — the previous code used cellAt() which clamps
-        // to edge, producing infinite "admissible" walks past the
-        // boundary.
-        int posSide = walkPerp(state, junction, perpX, perpZ, side, state.villageRadius);
-        int negSide = walkPerp(state, junction, perpX, perpZ, -side, state.villageRadius);
-        if (posSide + negSide < MIN_CROSS_STREET_LENGTH) return Optional.empty();
-
-        BlockPos endA = endpoint(junction, perpX, perpZ, side, posSide);
-        BlockPos endB = endpoint(junction, perpX, perpZ, -side, negSide);
-        return Optional.of(new CrossStreet(endA, endB, SpinePlanner.SPINE_WIDTH, junction));
-    }
 
     /** Walk in {@code (perpX, perpZ) * side} from {@code start}, stepping
      *  {@link #CROSS_STREET_STEP} blocks at a time. Terminates on:
@@ -794,7 +770,7 @@ public final class PhasedPlanner {
     public record PhaseEvent(Kind kind, BuildingType type, String detail,
                              ScoreBreakdown score) {
         public enum Kind { PLACED_FOUNDATION, PLACED_ITERATIVE,
-                           PROACTIVE_CROSS_STREET, PROACTIVE_SKIPPED,
+                           CAPACITY_PLAN, PROACTIVE_CROSS_STREET, PROACTIVE_SKIPPED,
                            ISOLATED, TRIM, REMOVED_CROSS_STREET }
 
         static PhaseEvent placed(BuildingType type, boolean foundation, ScoreBreakdown s) {
@@ -803,28 +779,38 @@ public final class PhasedPlanner {
                     type, null, s);
         }
 
-        static PhaseEvent proactiveInserted(CrossStreet cs, List<TypeCluster> cluster,
-                                            BlockPos clusterCentroid) {
-            int len = (int) Math.round(Math.sqrt(
-                    Math.pow(cs.start().getX() - cs.end().getX(), 2)
-                            + Math.pow(cs.start().getZ() - cs.end().getZ(), 2)));
-            int total = 0;
-            for (TypeCluster tc : cluster) total += tc.count;
+        /** Multi-line capacity-math summary; LayoutCommand splits on
+         *  '\n' to print each line as its own row under "phase 4a". */
+        static PhaseEvent capacityPlan(int remaining, int spineCapacity,
+                                       int spineConsumed, int spineAvailable,
+                                       int totalRemainingFrontage, int overflow,
+                                       int crossStreetsNeeded, int cap) {
+            String detail = "remaining buildings: " + remaining
+                    + "\nspine capacity: " + spineCapacity
+                    + " (already used: " + spineConsumed
+                    + ", available: " + spineAvailable + ")"
+                    + "\nremaining frontage needed: " + totalRemainingFrontage
+                    + "\noverflow: " + overflow
+                    + "\ncross-streets needed: " + crossStreetsNeeded
+                    + " (capped at " + cap + ")";
+            return new PhaseEvent(Kind.CAPACITY_PLAN, null, detail, null);
+        }
+
+        static PhaseEvent proactiveInsertedAt(CrossStreet cs, double idealParam,
+                                              int totalLen) {
+            int pct = (int) Math.round(idealParam * 100);
             return new PhaseEvent(Kind.PROACTIVE_CROSS_STREET, null,
-                    "cluster size=" + total
-                            + " at centroid (" + clusterCentroid.getX() + ","
-                            + clusterCentroid.getZ() + ")"
-                            + " junction=(" + cs.spineJunction().getX() + ","
+                    "junction=(" + cs.spineJunction().getX() + ","
                             + cs.spineJunction().getZ() + ")"
-                            + " length=" + len,
+                            + " length=" + totalLen
+                            + " (terrain window " + pct + "%)",
                     null);
         }
 
-        static PhaseEvent proactiveSkipped(List<TypeCluster> cluster, String reason) {
-            int total = 0;
-            for (TypeCluster tc : cluster) total += tc.count;
+        static PhaseEvent proactiveSkippedAtParam(double idealParam, String reason) {
+            int pct = (int) Math.round(idealParam * 100);
             return new PhaseEvent(Kind.PROACTIVE_SKIPPED, null,
-                    "cluster size=" + total + " — " + reason, null);
+                    "window " + pct + "% — " + reason, null);
         }
 
         static PhaseEvent isolated(BuildingType type) {
@@ -848,10 +834,6 @@ public final class PhasedPlanner {
         public double total() { return terrain + adjacency + centrality; }
     }
 
-    /** Phase 4a per-type cluster entry: a building's preferred terrain
-     *  centroid plus the multiplicity in the selection list. */
-    private record TypeCluster(BuildingType type, int count, BlockPos centroid) {}
-
     private record NearestRoad(RoadSegment segment, BlockPos point, double distance) {}
 
     private record Best(BlockPos pos, Footprint footprint, Rotation rotation,
@@ -870,9 +852,8 @@ public final class PhasedPlanner {
 
     private record Span(double tMin, double tMax) {}
 
-    /** Inline replacement for the old PlacementSolver's score helpers.
-     *  Also reused by {@link PhasedPlanner#computePreferredTerrainCentroid}
-     *  for Phase 4a's terrain-only weighting. */
+    /** Inline replacement for the old PlacementSolver's score
+     *  helpers. Used by the candidate-scoring loop in {@code placeOne}. */
     private static final class Scoring {
         private Scoring() {}
 
