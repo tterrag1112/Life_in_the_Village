@@ -388,27 +388,53 @@ public final class PhasedPlanner {
                 Vec3 frontDir = cardinalFrontDir(rotation);
 
                 // Compute the building's geometric centre offset
-                // perpendicular FROM the road by the required clearance:
-                //   road_half + frontage_strip_depth + fp_perp / 2
-                // V2's frontage strip depth = road width (see
-                // FrontageStrip and computeFrontageStrip). The cell
-                // itself is the scoring sample + side determinant; the
-                // actual centre is derived so the AABB sits cleanly
-                // outside the road corridor (audit-clean by
-                // construction).
-                int requiredOffset =
-                        (nr.segment.width() + 1) / 2  // road half-width
-                        + nr.segment.width()           // frontage strip depth
-                        + (fpPerp + 1) / 2;            // half the building's perp dim
+                // perpendicular FROM the road. Cardinal-snapped frontDir
+                // (driving NBT rotation) is NOT a valid basis for
+                // geometric offset on diagonal spines — it can decompose
+                // mostly along-spine. Use the segment's TRUE
+                // perpendicular instead, with the AABB extent PROJECTED
+                // onto that perpendicular so the clearance is correct
+                // regardless of spine angle.
+                double sdx = nr.segment.end().getX() - nr.segment.start().getX();
+                double sdz = nr.segment.end().getZ() - nr.segment.start().getZ();
+                double slen = Math.sqrt(sdx * sdx + sdz * sdz);
+                if (slen < 1e-9) continue;  // degenerate segment
+                double pX = -sdz / slen;
+                double pZ = sdx / slen;
+
+                // Side: which sign of perpendicular is the cell on?
+                double cellPerp = (pos.getX() - nr.point.getX()) * pX
+                        + (pos.getZ() - nr.point.getZ()) * pZ;
+                int side = cellPerp >= 0 ? +1 : -1;
+
+                // Post-rotation AABB half-extents.
+                boolean swap = rotation == Rotation.CLOCKWISE_90
+                        || rotation == Rotation.COUNTERCLOCKWISE_90;
+                double halfX = (swap ? fp.length() : fp.width()) / 2.0;
+                double halfZ = (swap ? fp.width() : fp.length()) / 2.0;
+
+                // AABB projection extent along the true perpendicular.
+                // Conservative for diagonal spines (the building's
+                // axis-aligned AABB pokes farther into the perpendicular
+                // direction than its half-side suggests).
+                double extentPerp = Math.abs(halfX * pX) + Math.abs(halfZ * pZ);
+
+                double frontageDepth = nr.segment.width();
+                double requiredOffset = nr.segment.width() / 2.0
+                        + frontageDepth
+                        + extentPerp
+                        + 0.5;  // round-up safety margin
+
                 int centreX = nr.point.getX()
-                        - (int) Math.round(frontDir.x * requiredOffset);
+                        + (int) Math.round(pX * side * requiredOffset);
                 int centreZ = nr.point.getZ()
-                        - (int) Math.round(frontDir.z * requiredOffset);
+                        + (int) Math.round(pZ * side * requiredOffset);
 
                 // Verify the computed centre is in scan bounds and on
                 // admissible terrain. The cell passed the OPEN/SHORE +
-                // slope filter; the centre may be ~17 blocks away and
-                // could land in water / forest / off-grid.
+                // slope filter; the centre may be ~25 blocks away on a
+                // diagonal spine and could land in water / forest /
+                // off-grid.
                 if (!state.fmap.inBounds(centreX, centreZ)) continue;
                 Cell centreCell = state.fmap.cellAt(centreX, centreZ);
                 BlockCategory centreCat = centreCell.category();
@@ -427,9 +453,9 @@ public final class PhasedPlanner {
                 if (overlapsAnyReservation(fpAabb, stripAabb, state.reservations)) continue;
 
                 // Score uses the cell's position (the original sampling
-                // point) — fp_perp is small relative to the village
-                // radius so the score difference between cell and
-                // computed centre is negligible at V1 thresholds.
+                // point). Cell and computed centre are within the same
+                // scoring band so the difference is negligible at V1
+                // thresholds.
                 ScoreBreakdown score = scorePosition(pos, type, profile, state);
                 if (score.total() <= 0) continue;
 
