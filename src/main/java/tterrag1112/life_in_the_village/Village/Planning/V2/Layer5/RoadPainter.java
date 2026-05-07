@@ -10,24 +10,29 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
 
 /**
- * V2 Layer 5 — paint road blocks along skeleton centerlines.
+ * V2 Layer 5 — paint road blocks along the skeleton.
  *
- * <p>Walks each segment at 1-block resolution, places
- * {@code culture.roadMaterial} (resolved from the block registry,
- * fallback {@link Blocks#DIRT_PATH}) in a {@code width}-wide
- * perpendicular strip at surface y - 1 (the solid block one
- * below the heightmap result).
+ * <p>Two passes:
+ * <ul>
+ *   <li>Spine path: iterate {@code skeleton.spinePath().segments()},
+ *       dispatch by primitive type. {@code StraightRoad} →
+ *       chord-walk; {@code CurvedRoad} → bezier-bow walk;
+ *       {@code Arc} → polar walk. At each centerline sample, paint
+ *       a {@code SpineSegment.width()}-wide perpendicular strip
+ *       perpendicular to the LOCAL tangent.</li>
+ *   <li>Cross-streets: chord-walk; cross-streets are always
+ *       cardinal-aligned per Layer 4.</li>
+ * </ul>
  *
- * <p>Crude vs V1's {@code OrganicRoadPlacer}: no drift, no organic
- * edge fade, no biome-aware material variants. Trade-off: simpler
- * code, no dependency on V1's PathMaterial / BuildingFootprint
- * types. Swap to OrganicRoadPlacer in a follow-up cycle if V1
- * villages need the visual quality.
+ * <p>Material from {@code culture.roadMaterial()} (fallback
+ * {@link Blocks#DIRT_PATH}). Air clearance above the new pave to
+ * remove leftover vegetation.
  */
 public final class RoadPainter {
 
@@ -42,48 +47,153 @@ public final class RoadPainter {
     public static int paintAll(ServerLevel level, RoadNetwork roads, Culture culture) {
         BlockState material = resolveMaterial(culture.roadMaterial());
         int total = 0;
-        for (RoadSegment seg : roads.skeleton().allSegments()) {
-            total += paintSegment(level, seg, material);
+        // Spine path: per-primitive painting (handles drift / arcs).
+        int spineWidth = roads.skeleton().spineSegments().isEmpty()
+                ? 3
+                : roads.skeleton().spineSegments().get(0).width();
+        for (RoadPrimitive prim : roads.skeleton().spinePath().segments()) {
+            total += paintPrimitive(level, prim, spineWidth, material);
+        }
+        // Cross-streets: straight-strip paint.
+        for (CrossStreet cs : roads.skeleton().crossStreets()) {
+            total += paintStraight(level, cs.start(), cs.end(), cs.width(), material);
         }
         return total;
     }
 
-    private static int paintSegment(ServerLevel level, RoadSegment seg, BlockState material) {
-        BlockPos a = seg.start();
-        BlockPos b = seg.end();
+    private static int paintPrimitive(ServerLevel level, RoadPrimitive prim,
+                                      int width, BlockState material) {
+        if (prim instanceof RoadPrimitive.StraightRoad sr) {
+            return paintStraight(level, sr.from(), sr.to(), width, material);
+        }
+        if (prim instanceof RoadPrimitive.CurvedRoad cr) {
+            return paintCurvedBow(level, cr.from(), cr.to(), cr.curvature(),
+                    width, material);
+        }
+        if (prim instanceof RoadPrimitive.Arc arc) {
+            return paintArc(level, arc, width, material);
+        }
+        // Other primitive types not produced by SpinePathPlanner in
+        // V1; fall through with chord-walk approximation.
+        return 0;
+    }
+
+    /** Walk start→end at 1-block resolution; at each centerline
+     *  sample paint a perpendicular strip perpendicular to the
+     *  chord direction. */
+    private static int paintStraight(ServerLevel level, BlockPos a, BlockPos b,
+                                     int width, BlockState material) {
         double dx = b.getX() - a.getX();
         double dz = b.getZ() - a.getZ();
         double len = Math.sqrt(dx * dx + dz * dz);
         if (len < 1e-9) return 0;
         int steps = Math.max(1, (int) Math.round(len));
-
-        // Perpendicular unit vector in XZ.
         double perpX = -dz / len;
         double perpZ = dx / len;
-        int half = (seg.width() + 1) / 2;
+        int half = (width + 1) / 2;
         int painted = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-
         for (int i = 0; i <= steps; i++) {
             double t = i / (double) steps;
             int cx = (int) Math.round(a.getX() + dx * t);
             int cz = (int) Math.round(a.getZ() + dz * t);
-            for (int p = -half; p <= half; p++) {
-                int x = cx + (int) Math.round(perpX * p);
-                int z = cz + (int) Math.round(perpZ * p);
-                int surfY = level.getHeight(
-                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-                int paveY = surfY - 1;
-                cursor.set(x, paveY, z);
-                level.setBlock(cursor, material, 2);
-                painted++;
-                // Air clearance above the new pave.
-                for (int dy = 1; dy <= ROAD_HEAD_CLEARANCE; dy++) {
-                    cursor.set(x, paveY + dy, z);
-                    BlockState bs = level.getBlockState(cursor);
-                    if (!bs.isAir()) {
-                        level.setBlock(cursor, Blocks.AIR.defaultBlockState(), 2);
-                    }
+            painted += paintStripAt(level, cx, cz, perpX, perpZ, half, material, cursor);
+        }
+        return painted;
+    }
+
+    /** Walk a quadratic-bezier bow (CurvedRoad's geometry: midpoint
+     *  pulled along chord-perpendicular by {@code curvature * chord}).
+     *  Local tangent recomputed per sample. */
+    private static int paintCurvedBow(ServerLevel level, BlockPos a, BlockPos b,
+                                      double curvature, int width, BlockState material) {
+        double dx = b.getX() - a.getX();
+        double dz = b.getZ() - a.getZ();
+        double chord = Math.sqrt(dx * dx + dz * dz);
+        if (chord < 1) return 0;
+        double pX = -dz / chord;
+        double pZ = dx / chord;
+        double bow = curvature * chord;
+        int steps = Math.max(2, (int) Math.ceil(chord));
+        int half = (width + 1) / 2;
+        int painted = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        // Track previous sample for tangent computation.
+        double prevX = a.getX(), prevZ = a.getZ();
+        for (int i = 0; i <= steps; i++) {
+            double t = i / (double) steps;
+            double s = 4 * t * (1 - t);  // 0 at ends, 1 at middle
+            double xd = a.getX() + dx * t + pX * bow * s;
+            double zd = a.getZ() + dz * t + pZ * bow * s;
+            // Local tangent = (this - prev) for i > 0; chord direction
+            // for i == 0.
+            double tx, tz;
+            if (i == 0) { tx = dx; tz = dz; }
+            else { tx = xd - prevX; tz = zd - prevZ; }
+            double tlen = Math.sqrt(tx * tx + tz * tz);
+            if (tlen < 1e-9) { tx = dx; tz = dz; tlen = chord; }
+            double localPerpX = -tz / tlen;
+            double localPerpZ = tx / tlen;
+            int cx = (int) Math.round(xd);
+            int cz = (int) Math.round(zd);
+            painted += paintStripAt(level, cx, cz, localPerpX, localPerpZ, half,
+                    material, cursor);
+            prevX = xd;
+            prevZ = zd;
+        }
+        return painted;
+    }
+
+    /** Walk an arc by polar sampling. Local tangent at each sample
+     *  is perpendicular to the radius. */
+    private static int paintArc(ServerLevel level, RoadPrimitive.Arc arc,
+                                int width, BlockState material) {
+        int samples = Math.max(8,
+                (int) Math.ceil(Math.abs(arc.arcSpan()) * arc.radius()));
+        int half = (width + 1) / 2;
+        int painted = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int i = 0; i <= samples; i++) {
+            double t = i / (double) samples;
+            double angle = arc.startAngle() + arc.arcSpan() * t;
+            int cx = arc.centre().getX()
+                    + (int) Math.round(Math.cos(angle) * arc.radius());
+            int cz = arc.centre().getZ()
+                    + (int) Math.round(Math.sin(angle) * arc.radius());
+            // Tangent at this point on the circle: perpendicular to
+            // radius, direction depends on arcSpan sign.
+            double tx = -Math.sin(angle) * Math.signum(arc.arcSpan());
+            double tz = Math.cos(angle) * Math.signum(arc.arcSpan());
+            // Perpendicular to the tangent (= radial).
+            double perpX = -tz;
+            double perpZ = tx;
+            painted += paintStripAt(level, cx, cz, perpX, perpZ, half,
+                    material, cursor);
+        }
+        return painted;
+    }
+
+    /** Paint a perpendicular strip of total width 2*half+1 at the
+     *  given (cx, cz), aligned along (perpX, perpZ). Returns blocks
+     *  painted. */
+    private static int paintStripAt(ServerLevel level, int cx, int cz,
+                                    double perpX, double perpZ, int half,
+                                    BlockState material, BlockPos.MutableBlockPos cursor) {
+        int painted = 0;
+        for (int p = -half; p <= half; p++) {
+            int x = cx + (int) Math.round(perpX * p);
+            int z = cz + (int) Math.round(perpZ * p);
+            int surfY = level.getHeight(
+                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+            int paveY = surfY - 1;
+            cursor.set(x, paveY, z);
+            level.setBlock(cursor, material, 2);
+            painted++;
+            for (int dy = 1; dy <= ROAD_HEAD_CLEARANCE; dy++) {
+                cursor.set(x, paveY + dy, z);
+                BlockState bs = level.getBlockState(cursor);
+                if (!bs.isAir()) {
+                    level.setBlock(cursor, Blocks.AIR.defaultBlockState(), 2);
                 }
             }
         }

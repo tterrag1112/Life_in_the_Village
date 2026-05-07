@@ -10,7 +10,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.phys.Vec3;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.CultureRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
@@ -78,17 +77,30 @@ public final class SiteCommand {
         send(src, "inclination chosen: " + id.inclination().name()
                 + " (" + id.reason() + ")");
 
-        // Anchor
+        // Anchor (initial)
         SiteAnalyzer.AnchorDecision ad = result.diagnostics().anchor();
         BlockPos anchor = ad.anchor();
         send(src, "anchor: " + anchor.getX() + "," + anchor.getY() + "," + anchor.getZ()
                 + " (chosen by: " + ad.reason() + ")");
 
-        // Spine
-        SiteAnalyzer.SpineDecision sd = result.diagnostics().spine();
-        Vec3 dir = sd.direction();
-        send(src, String.format("spine direction: (%.3f, %.3f) (chosen by: %s)",
-                dir.x, dir.z, sd.reason()));
+        // Anchor adjustment
+        SiteAnalyzer.AnchorAdjustment adj = result.diagnostics().adjustment();
+        if (adj.adjusted() != null) {
+            BlockPos a2 = adj.adjusted();
+            send(src, "anchor adjusted: " + a2.getX() + "," + a2.getY() + "," + a2.getZ()
+                    + " (chosen by: " + adj.reason() + ")");
+        } else {
+            send(src, "anchor adjusted: (none) (" + adj.reason() + ")");
+        }
+
+        // Primary axis
+        SiteAnalyzer.AxisDecision axd = result.diagnostics().axis();
+        send(src, "primary axis: " + axd.axis()
+                + " (chosen by: " + axd.reason() + ")");
+
+        // Spine path summary
+        send(src, "spine path: " + result.context().spinePath().segments().size()
+                + " segments, totalLength=" + result.context().spinePath().totalLength());
 
         send(src, "total time: " + (t1 - t0) + " ms");
         return 1;

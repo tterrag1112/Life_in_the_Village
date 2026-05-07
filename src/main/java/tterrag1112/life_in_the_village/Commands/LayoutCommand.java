@@ -10,13 +10,15 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.phys.Vec3;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.CultureRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingSelector;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DependencyResolver;
@@ -30,15 +32,15 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Junction;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Skeleton;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Spine;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.SpineSegment;
 
 import java.util.List;
 
 /**
  * {@code /litv layout [<radius>]} — runs the full V2 stack
- * (L1+L2+L3+L4) and prints a phase-by-phase breakdown of placement,
- * cross-street insertion, reassessment trims, and the final road
- * skeleton with junction marks.
+ * (L1+L2+L3+L4) and prints a phase-by-phase breakdown including
+ * the cardinal-aligned spine path, hub designations, cross-street
+ * insertion, reassessment trims, and the final road skeleton.
  */
 public final class LayoutCommand {
 
@@ -64,7 +66,7 @@ public final class LayoutCommand {
         long seed = level.getSeed();
 
         long t0 = System.currentTimeMillis();
-        send(src, "[litv-layout] running L1+L2+L3+L4 (phased) radius=" + radius
+        send(src, "[litv-layout] running L1+L2+L3+L4 (cardinal) radius=" + radius
                 + " at " + centre.getX() + "," + centre.getZ() + " ...");
 
         V2FeatureMap fmap = V2FeatureMap.scan(level, centre, radius);
@@ -72,9 +74,14 @@ public final class LayoutCommand {
         SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
         send(src, "site: tier=" + siteCtx.tier()
                 + " inclination=" + siteCtx.inclination()
-                + " anchor=" + posStr(siteCtx.anchor())
-                + " spineDir=" + spineDirStr(siteCtx.primarySpineDirection())
+                + " primaryAxis=" + siteCtx.primaryAxis()
                 + " culture=" + culture.id());
+        if (!siteCtx.anchor().equals(siteCtx.originalAnchor())) {
+            send(src, "anchor: original " + posStr(siteCtx.originalAnchor())
+                    + " → adjusted " + posStr(siteCtx.anchor()));
+        } else {
+            send(src, "anchor: " + posStr(siteCtx.anchor()) + " (no adjustment)");
+        }
 
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             send(src, "tier=UNVIABLE — skipping phased planner");
@@ -100,21 +107,23 @@ public final class LayoutCommand {
         RoadNetwork network = phased.network();
         Skeleton skeleton = network.skeleton();
 
-        // Phase 2 — spine.
-        Spine spine = skeleton.spine();
-        send(src, "phase 2: spine length=" + segLength(spine.start(), spine.end())
-                + " from " + posStr(spine.start()) + " to " + posStr(spine.end()));
+        // Phase 2 — spine path (multi-segment).
+        SpinePath path = skeleton.spinePath();
+        send(src, "phase 2: spine path " + path.segments().size()
+                + " segments, totalLength=" + path.totalLength()
+                + " from " + posStr(path.start()) + " to " + posStr(path.end()));
+        for (int i = 0; i < path.segments().size(); i++) {
+            RoadPrimitive prim = path.segments().get(i);
+            send(src, "  seg-" + (i + 1) + ": " + describePrimitive(prim));
+        }
 
-        // Phase 3 + 4 events from the planner's diagnostics.
+        // Phase 3 + 4 events.
         int placedFoundation = countByKind(phased.events(),
                 PhasedPlanner.PhaseEvent.Kind.PLACED_FOUNDATION);
         int placedIterative = countByKind(phased.events(),
                 PhasedPlanner.PhaseEvent.Kind.PLACED_ITERATIVE);
         send(src, "phase 3 foundation placed (" + placedFoundation + ")");
 
-        // Phase 4a — capacity-driven cross-street planning.
-        // The CAPACITY_PLAN event carries the multi-line math summary;
-        // PROACTIVE_CROSS_STREET / PROACTIVE_SKIPPED follow.
         int proactiveInserted = countByKind(phased.events(),
                 PhasedPlanner.PhaseEvent.Kind.PROACTIVE_CROSS_STREET);
         int proactiveSkipped = countByKind(phased.events(),
@@ -139,7 +148,6 @@ public final class LayoutCommand {
 
         send(src, "phase 4b placed (" + placedIterative + ")");
 
-        // Per-placement detail.
         for (PlacedBuilding pb : placement.placed()) {
             send(src, "  " + pb.type().name() + " at " + posStr(pb.centre())
                     + " variant=" + pb.variantId()
@@ -148,7 +156,6 @@ public final class LayoutCommand {
                     + " facing " + segLabel(pb.facingRoad()));
         }
 
-        // Phase 5 events.
         send(src, "phase 5 reassess:");
         for (PhasedPlanner.PhaseEvent e : phased.events()) {
             switch (e.kind()) {
@@ -158,7 +165,6 @@ public final class LayoutCommand {
             }
         }
 
-        // Drops.
         if (!placement.dropped().isEmpty()) {
             send(src, "dropped (" + placement.dropped().size() + "):");
             for (DroppedBuilding db : placement.dropped()) {
@@ -167,13 +173,14 @@ public final class LayoutCommand {
             }
         }
 
-        // Final skeleton.
-        int totalSegments = 1 + skeleton.crossStreets().size();
+        int totalSegments = path.segments().size() + skeleton.crossStreets().size();
         send(src, "roads (" + totalSegments + " segments + "
                 + skeleton.junctions().size() + " junctions):");
-        send(src, "  spine: width=" + spine.width() + " length="
-                + segLength(spine.start(), spine.end())
-                + " from " + posStr(spine.start()) + " to " + posStr(spine.end()));
+        for (int i = 0; i < skeleton.spineSegments().size(); i++) {
+            SpineSegment seg = skeleton.spineSegments().get(i);
+            send(src, "  spine-" + (i + 1) + ": width=" + seg.width()
+                    + " from " + posStr(seg.start()) + " to " + posStr(seg.end()));
+        }
         for (int i = 0; i < skeleton.crossStreets().size(); i++) {
             CrossStreet cs = skeleton.crossStreets().get(i);
             send(src, "  cross-street-" + (i + 1) + ": width=" + cs.width()
@@ -185,12 +192,42 @@ public final class LayoutCommand {
                     + " (" + j.segments().size() + " segments)");
         }
 
+        // Hubs.
+        if (!siteCtx.hubs().isEmpty()) {
+            send(src, "hubs (" + siteCtx.hubs().size() + "):");
+            for (int i = 0; i < siteCtx.hubs().size(); i++) {
+                Hub h = siteCtx.hubs().get(i);
+                String label = i == 0 ? "main" : "secondary";
+                send(src, String.format(
+                        "  %s: at %s direction=(%.2f,%.2f) openness=%.2f",
+                        label, posStr(h.position()),
+                        h.direction().x, h.direction().z, h.openness()));
+            }
+        }
+
         send(src, "village viable: " + placement.villageViable());
         send(src, "total time: " + (t1 - t0) + " ms");
         return 1;
     }
 
     // =========================================================================
+
+    private static String describePrimitive(RoadPrimitive prim) {
+        if (prim instanceof RoadPrimitive.StraightRoad sr) {
+            return "StraightRoad " + posStr(sr.from()) + " → " + posStr(sr.to())
+                    + " drift=" + sr.driftAmplitude();
+        }
+        if (prim instanceof RoadPrimitive.CurvedRoad cr) {
+            return "CurvedRoad " + posStr(cr.from()) + " → " + posStr(cr.to())
+                    + " curvature=" + String.format("%.2f", cr.curvature())
+                    + " drift=" + cr.driftAmplitude();
+        }
+        if (prim instanceof RoadPrimitive.Arc arc) {
+            return "Arc centre=" + posStr(arc.centre()) + " radius=" + arc.radius()
+                    + " span=" + String.format("%.2f", Math.toDegrees(arc.arcSpan())) + "°";
+        }
+        return prim.typeKey();
+    }
 
     private static int countByKind(List<PhasedPlanner.PhaseEvent> events,
                                    PhasedPlanner.PhaseEvent.Kind kind) {
@@ -206,7 +243,7 @@ public final class LayoutCommand {
     }
 
     private static String segLabel(Object segment) {
-        return segment instanceof Spine ? "spine"
+        return segment instanceof SpineSegment ? "spine"
                 : segment instanceof CrossStreet ? "cross-street"
                 : segment.getClass().getSimpleName();
     }
@@ -237,10 +274,6 @@ public final class LayoutCommand {
 
     private static String posStr(BlockPos p) {
         return "(" + p.getX() + "," + p.getY() + "," + p.getZ() + ")";
-    }
-
-    private static String spineDirStr(Vec3 v) {
-        return String.format("(%.2f, %.2f)", v.x, v.z);
     }
 
     private static void send(CommandSourceStack src, String msg) {

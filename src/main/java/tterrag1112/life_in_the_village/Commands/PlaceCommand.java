@@ -122,7 +122,7 @@ public final class PlaceCommand {
 
     private static String segLabel(PlacedBuilding pb) {
         return pb.facingRoad() instanceof
-                tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Spine
+                tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.SpineSegment
                 ? "spine" : "cross-street";
     }
 

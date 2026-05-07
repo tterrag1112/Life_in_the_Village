@@ -1,27 +1,57 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer2;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.phys.Vec3;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * V2 Layer 2 → Layer 3 hand-off. Carries the four decisions Layer 2
- * makes for a candidate village site.
+ * V2 Layer 2 → Layers 3+4 hand-off. Carries the cardinal-aligned
+ * site decisions plus mutable hooks for hubs (populated at the end
+ * of Layer 4).
  *
- * <p>{@code primarySpineDirection} is a unit vector in the XZ plane
- * (y = 0). Layer 4 may discretise to cardinals if needed; Layer 2
- * keeps it continuous.
+ * <p>{@code anchor} is the adjusted anchor (post-snap toward terrain
+ * seams). {@code originalAnchor} is the pre-snap anchor preserved
+ * for debug output.
  *
- * <p>If {@code tier == UNVIABLE}, the other fields are populated for
- * debug-output convenience but the planner should bail before
+ * <p>{@code primaryAxis} replaces the old {@code primarySpineDirection}
+ * Vec3. Spines now run along a cardinal — diagonal layouts are not
+ * produced.
+ *
+ * <p>{@code spinePath} carries the planned spine: an ordered list
+ * of road primitives with cardinal mean direction and reactive arc
+ * deflections where terrain forced bending. Populated by
+ * {@link SiteAnalyzer}.
+ *
+ * <p>{@code hubs} is mutated by Layer 4's hub designator after the
+ * skeleton is finalised. Initially empty. Records aren't strictly
+ * immutable here because hubs are a Layer 4 output that needs to be
+ * accessible via the SiteContext per the design spec.
+ *
+ * <p>If {@code tier == UNVIABLE}, the other fields are populated
+ * for debug-output convenience but the planner should bail before
  * Layer 3.
  */
 public record SiteContext(
         BlockPos anchor,
-        Vec3 primarySpineDirection,
+        BlockPos originalAnchor,
+        CardinalAxis primaryAxis,
+        SpinePath spinePath,
         ViabilityTier tier,
         Inclination inclination,
         Culture culture,
-        long seed) {
+        long seed,
+        List<Hub> hubs) {
+
+    /** Convenience: create a context with an empty mutable hubs
+     *  list. Layer 4 populates after finalising the skeleton. */
+    public static SiteContext withEmptyHubs(BlockPos anchor, BlockPos originalAnchor,
+                                            CardinalAxis primaryAxis, SpinePath spinePath,
+                                            ViabilityTier tier, Inclination inclination,
+                                            Culture culture, long seed) {
+        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+                tier, inclination, culture, seed, new ArrayList<>());
+    }
 }

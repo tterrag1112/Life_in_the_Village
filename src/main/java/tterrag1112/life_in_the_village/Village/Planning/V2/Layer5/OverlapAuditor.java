@@ -76,7 +76,7 @@ public final class OverlapAuditor {
                             b.centre(),
                             label(b),
                             seg instanceof tterrag1112.life_in_the_village.Village
-                                    .Planning.V2.Layer4.Spine ? "spine" : "cross-street"));
+                                    .Planning.V2.Layer4.SpineSegment ? "spine" : "cross-street"));
                 }
             }
         }

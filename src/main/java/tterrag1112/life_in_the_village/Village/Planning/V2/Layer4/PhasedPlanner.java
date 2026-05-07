@@ -10,7 +10,9 @@ import tterrag1112.life_in_the_village.Village.Planning.StructureSizeCache;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Cell;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.AdjacencyFactor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DropReason;
@@ -38,8 +40,10 @@ import java.util.Set;
 /**
  * V2 Phased Planner — Phases 3 through 6.
  *
- * <p>Phase 2 (spine) is run by {@link SpinePlanner} before this
- * orchestrator is invoked. Phase 3 places foundation buildings
+ * <p>Phase 2 (spine path) is produced by {@code SpinePathPlanner}
+ * inside {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer}
+ * and arrives on the {@code SiteContext} before this orchestrator
+ * is invoked. Phase 3 places foundation buildings
  * (TOWN_HALL + buildings with terrain aggregates) along the spine.
  * Phase 4 iterates the remaining selection, inserting perpendicular
  * cross streets when a cluster of K consecutive buildings fails for
@@ -55,6 +59,15 @@ public final class PhasedPlanner {
     private static final int LEVEL = 1;
     /** Max localSlope for a candidate cell. */
     private static final int MAX_SLOPE = 3;
+    /** V1 spine width (logical, for frontage math). Distinct from
+     *  the painted width V1 RoadShape applies at decoration time. */
+    public static final int SPINE_WIDTH = 3;
+    /** Hub openness fan length (blocks). */
+    private static final int HUB_FAN_LENGTH = 50;
+    /** Hub openness fan half-angle (degrees). */
+    private static final double HUB_FAN_HALF_ANGLE_DEG = 20;
+    /** Hub openness fan sample step. */
+    private static final int HUB_FAN_SAMPLE_STEP = 4;
     /** Hard cap on cross streets per village. */
     private static final int CROSS_STREET_CAP = 6;
     /** Cross-street walk step in blocks (matches cellSize x 1). */
@@ -82,9 +95,10 @@ public final class PhasedPlanner {
                              List<BuildingType> sortedSelection,
                              List<UnavailableBuilding> unavailable,
                              ServerLevel level) {
-        int villageRadius = villageRadiusFor(ctx.tier());
-        Spine spine = SpinePlanner.plan(ctx, sortedSelection, villageRadius, level);
-        State state = new State(ctx, fmap, level, spine);
+        // Spine path is now planned by SiteAnalyzer (Layer 2) and
+        // arrives on the SiteContext. Skeleton wraps it as a list of
+        // SpineSegments (one per primitive in the path).
+        State state = new State(ctx, fmap, level);
         Set<BuildingType> foundationTypes = computeFoundationTypes(sortedSelection);
 
         // Phase 4a — proactive cross-street planning.
@@ -112,6 +126,9 @@ public final class PhasedPlanner {
 
         // Phase 5.
         reassess(state);
+
+        // Hub designation (post-Phase-5; spine path is final).
+        designateHubs(state);
 
         // Phase 6 — emit.
         EnumMap<BuildingType, Integer> counts = new EnumMap<>(BuildingType.class);
@@ -162,8 +179,8 @@ public final class PhasedPlanner {
             totalRemainingFrontage += estimatedFpAlongRoad(state, type);
         }
 
-        Spine spine = state.skeleton.spine();
-        int spineLength = (int) Math.round(distance(spine.start(), spine.end()));
+        SpinePath spinePath = state.skeleton.spinePath();
+        int spineLength = spinePath.totalLength();
         int spineCapacity = spineLength * 2;  // both sides
 
         // Phase 4a runs BEFORE Phase 3, so state.placed is empty.
@@ -193,10 +210,13 @@ public final class PhasedPlanner {
         if (crossStreetsNeeded == 0) return;
 
         // 2. Spread along spine: ideal parameters = i / (N+1).
+        // For multi-segment spine paths, the parameter is along the
+        // straight start→end chord (close enough for V1; the spine
+        // hasn't deflected very far on the chord scale).
         int minLen = minUsefulLength(state.ctx.tier());
         for (int i = 1; i <= crossStreetsNeeded; i++) {
             double idealParam = (double) i / (crossStreetsNeeded + 1);
-            BlockPos junction = findBestJunctionInWindow(state, spine, idealParam,
+            BlockPos junction = findBestJunctionInWindow(state, idealParam,
                     JUNCTION_SEARCH_WINDOW);
 
             if (junctionTooClose(junction, state.skeleton.crossStreets(),
@@ -238,23 +258,31 @@ public final class PhasedPlanner {
 
     /** Sample {@link #JUNCTION_SAMPLES} positions across
      *  {@code [idealParam - windowFrac, idealParam + windowFrac]} on
-     *  the spine, score each by total perpendicular extension, return
-     *  the best. */
-    private static BlockPos findBestJunctionInWindow(State state, Spine spine,
+     *  the spine path's chord (start→end), score each by total
+     *  perpendicular extension along {@code primaryAxis.perpUnit()},
+     *  return the best.
+     *
+     *  <p>Cross-streets are always perpendicular to {@code primaryAxis}
+     *  regardless of where they meet the spine — this keeps them
+     *  cardinal even when the spine has a small arc deflection. */
+    private static BlockPos findBestJunctionInWindow(State state,
                                                      double idealParam, double windowFrac) {
+        SpinePath spinePath = state.skeleton.spinePath();
+        BlockPos chordStart = spinePath.start();
+        BlockPos chordEnd = spinePath.end();
+        Vec3 perpUnit = state.ctx.primaryAxis().perpUnit();
+        double perpX = perpUnit.x;
+        double perpZ = perpUnit.z;
+
         double tMin = Math.max(0, idealParam - windowFrac);
         double tMax = Math.min(1, idealParam + windowFrac);
-        Vec3 spineDir = unit(spine.start(), spine.end());
-        double perpX = -spineDir.z;
-        double perpZ = spineDir.x;
-
-        BlockPos best = pointAlong(spine.start(), spine.end(), idealParam);
+        BlockPos best = pointAlong(chordStart, chordEnd, idealParam);
         int bestExtension = -1;
         for (int s = 0; s < JUNCTION_SAMPLES; s++) {
             double t = JUNCTION_SAMPLES <= 1
                     ? idealParam
                     : tMin + (tMax - tMin) * s / (double) (JUNCTION_SAMPLES - 1);
-            BlockPos cand = pointAlong(spine.start(), spine.end(), t);
+            BlockPos cand = pointAlong(chordStart, chordEnd, t);
             int sideA = walkPerp(state, cand, perpX, perpZ, +1, state.villageRadius);
             int sideB = walkPerp(state, cand, perpX, perpZ, -1, state.villageRadius);
             int total = sideA + sideB;
@@ -273,16 +301,18 @@ public final class PhasedPlanner {
      *  {@link #minUsefulLength}). */
     private static Optional<CrossStreet> generateCrossStreetAtJunction(State state,
                                                                        BlockPos junction) {
-        Spine spine = state.skeleton.spine();
-        Vec3 spineDir = unit(spine.start(), spine.end());
-        double perpX = -spineDir.z;
-        double perpZ = spineDir.x;
+        // Cardinal perpendicular: independent of the spine's local
+        // tangent at the junction. A cross-street's geometry is
+        // axis-aligned to {@code primaryAxis.perpUnit()}.
+        Vec3 perpUnit = state.ctx.primaryAxis().perpUnit();
+        double perpX = perpUnit.x;
+        double perpZ = perpUnit.z;
         int sideA = walkPerp(state, junction, perpX, perpZ, +1, state.villageRadius);
         int sideB = walkPerp(state, junction, perpX, perpZ, -1, state.villageRadius);
         if (sideA + sideB <= 0) return Optional.empty();
         BlockPos endA = endpoint(junction, perpX, perpZ, +1, sideA);
         BlockPos endB = endpoint(junction, perpX, perpZ, -1, sideB);
-        return Optional.of(new CrossStreet(endA, endB, SpinePlanner.SPINE_WIDTH, junction));
+        return Optional.of(new CrossStreet(endA, endB, SPINE_WIDTH, junction));
     }
 
     /** Tier-scaled minimum useful cross-street total length.
@@ -363,7 +393,7 @@ public final class PhasedPlanner {
     private static Best findBestCandidate(State state, BuildingType type,
                                           PlacementProfile profile, boolean foundation) {
         List<RoadSegment> roads = foundation
-                ? List.of(state.skeleton.spine())
+                ? new java.util.ArrayList<>(state.skeleton.spineSegments())
                 : state.skeleton.allSegments();
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
@@ -529,6 +559,158 @@ public final class PhasedPlanner {
     // Phase 5 — reassessment
     // =========================================================================
 
+    /** Designate two hubs at spine path endpoints, ranked by
+     *  openness (average admissibility in a forward fan). The hub
+     *  with higher openness is the village's "main" hub; trade-road
+     *  graph extension (future cycle) attaches there. */
+    private static void designateHubs(State state) {
+        SpinePath path = state.skeleton.spinePath();
+        BlockPos startPos = path.start();
+        BlockPos endPos = path.end();
+        if (path.segments().isEmpty()) return;
+
+        // Local tangent at the path's "start" endpoint = direction of
+        // the FIRST segment, pointing OUTWARD (away from anchor).
+        Vec3 startDir = unsignedTangentAtStart(path.segments().get(0));
+        // Tangent at "end" endpoint = direction of the LAST segment,
+        // outward. The path's segments are ordered start → end, so the
+        // last segment's natural direction (from→to) IS outward.
+        Vec3 endDir = unsignedTangentAtEnd(
+                path.segments().get(path.segments().size() - 1));
+
+        double startOpenness = fanOpenness(state, startPos, startDir);
+        double endOpenness = fanOpenness(state, endPos, endDir);
+
+        Hub startHub = new Hub(startPos, startDir, startOpenness);
+        Hub endHub = new Hub(endPos, endDir, endOpenness);
+        // Higher-openness hub first (the village's "main" hub).
+        if (startOpenness >= endOpenness) {
+            state.ctx.hubs().add(startHub);
+            state.ctx.hubs().add(endHub);
+        } else {
+            state.ctx.hubs().add(endHub);
+            state.ctx.hubs().add(startHub);
+        }
+    }
+
+    /** Outward tangent from a primitive at its starting endpoint
+     *  (pointing AWAY from the anchor side of the spine path).
+     *  For V2's planner output, segments[0]'s "start" IS the path's
+     *  starting endpoint, and the natural from→to direction points
+     *  INTO the path (toward anchor) — so the outward tangent is
+     *  the negative. */
+    private static Vec3 unsignedTangentAtStart(
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .RoadPrimitive prim) {
+        BlockPos a, b;
+        if (prim instanceof tterrag1112.life_in_the_village.Village
+                .Planning.Primitives.RoadPrimitive.StraightRoad sr) {
+            a = sr.from(); b = sr.to();
+        } else {
+            // Arc / CurvedRoad: approximate via chord endpoints.
+            // SpineSegment's chord endpoints are stored in skeleton,
+            // but this path uses primitives directly; use a chord
+            // approximation off the primitive's metadata.
+            a = chordStart(prim); b = chordEnd(prim);
+        }
+        // segments[0] points from path.start INTO the path; outward
+        // tangent at start = (a - b) normalised.
+        return unitOf(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    /** Outward tangent from a primitive at its ending endpoint
+     *  (pointing AWAY from the anchor side). For segments[N-1],
+     *  the natural from→to direction IS outward. */
+    private static Vec3 unsignedTangentAtEnd(
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .RoadPrimitive prim) {
+        BlockPos a, b;
+        if (prim instanceof tterrag1112.life_in_the_village.Village
+                .Planning.Primitives.RoadPrimitive.StraightRoad sr) {
+            a = sr.from(); b = sr.to();
+        } else {
+            a = chordStart(prim); b = chordEnd(prim);
+        }
+        return unitOf(b.getX() - a.getX(), b.getZ() - a.getZ());
+    }
+
+    private static BlockPos chordStart(
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .RoadPrimitive prim) {
+        if (prim instanceof tterrag1112.life_in_the_village.Village
+                .Planning.Primitives.RoadPrimitive.CurvedRoad cr) {
+            return cr.from();
+        }
+        if (prim instanceof tterrag1112.life_in_the_village.Village
+                .Planning.Primitives.RoadPrimitive.Arc arc) {
+            int sx = arc.centre().getX()
+                    + (int) Math.round(Math.cos(arc.startAngle()) * arc.radius());
+            int sz = arc.centre().getZ()
+                    + (int) Math.round(Math.sin(arc.startAngle()) * arc.radius());
+            return new BlockPos(sx, arc.centre().getY(), sz);
+        }
+        return BlockPos.ZERO;
+    }
+
+    private static BlockPos chordEnd(
+            tterrag1112.life_in_the_village.Village.Planning.Primitives
+                    .RoadPrimitive prim) {
+        if (prim instanceof tterrag1112.life_in_the_village.Village
+                .Planning.Primitives.RoadPrimitive.CurvedRoad cr) {
+            return cr.to();
+        }
+        if (prim instanceof tterrag1112.life_in_the_village.Village
+                .Planning.Primitives.RoadPrimitive.Arc arc) {
+            int ex = arc.centre().getX()
+                    + (int) Math.round(Math.cos(arc.startAngle() + arc.arcSpan())
+                    * arc.radius());
+            int ez = arc.centre().getZ()
+                    + (int) Math.round(Math.sin(arc.startAngle() + arc.arcSpan())
+                    * arc.radius());
+            return new BlockPos(ex, arc.centre().getY(), ez);
+        }
+        return BlockPos.ZERO;
+    }
+
+    private static Vec3 unitOf(double dx, double dz) {
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len < 1e-9) return new Vec3(1, 0, 0);
+        return new Vec3(dx / len, 0, dz / len);
+    }
+
+    /** Average admissibility (0..1) in a {@link #HUB_FAN_LENGTH}-long
+     *  fan with half-angle {@link #HUB_FAN_HALF_ANGLE_DEG} extending
+     *  from {@code origin} along {@code direction}. Sampled at
+     *  {@link #HUB_FAN_SAMPLE_STEP}-block intervals. Higher = more
+     *  open / better trade-road extension target. */
+    private static double fanOpenness(State state, BlockPos origin, Vec3 direction) {
+        double halfAngle = Math.toRadians(HUB_FAN_HALF_ANGLE_DEG);
+        // Three rays: -halfAngle, 0, +halfAngle.
+        double[] rayOffsets = {-halfAngle, 0, +halfAngle};
+        int totalSamples = 0;
+        int admissibleSamples = 0;
+        double dirAngle = Math.atan2(direction.z, direction.x);
+        for (double offset : rayOffsets) {
+            double rayAngle = dirAngle + offset;
+            double rx = Math.cos(rayAngle), rz = Math.sin(rayAngle);
+            for (int d = HUB_FAN_SAMPLE_STEP; d <= HUB_FAN_LENGTH;
+                    d += HUB_FAN_SAMPLE_STEP) {
+                int x = origin.getX() + (int) Math.round(rx * d);
+                int z = origin.getZ() + (int) Math.round(rz * d);
+                totalSamples++;
+                if (!state.fmap.inBounds(x, z)) continue;
+                Cell c = state.fmap.cellAt(x, z);
+                BlockCategory cat = c.category();
+                if ((cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
+                        && c.localSlope() <= MAX_SLOPE) {
+                    admissibleSamples++;
+                }
+            }
+        }
+        if (totalSamples == 0) return 0;
+        return (double) admissibleSamples / totalSamples;
+    }
+
     private static void reassess(State state) {
         connectivityAudit(state);
         trimUnusedSegments(state);
@@ -564,25 +746,12 @@ public final class PhasedPlanner {
         }
     }
 
-    /** Trim each segment to the range covered by frontage. Spine clamped
-     *  to {@link #MIN_SPINE_LENGTH}; cross streets with no frontage are
-     *  removed entirely. */
+    /** Trim cross streets that no buildings face. Spine path trimming
+     *  is deferred — the multi-segment spine path produced by
+     *  SpinePathPlanner already truncates on terrain failure, and
+     *  finer trimming would require segment-level frontage span
+     *  arithmetic that's out of scope for this cycle. */
     private static void trimUnusedSegments(State state) {
-        Spine spine = state.skeleton.spine();
-        Span spineSpan = frontageSpanAlong(state.placed, spine);
-        if (spineSpan != null) {
-            BlockPos newStart = pointAlong(spine.start(), spine.end(), spineSpan.tMin);
-            BlockPos newEnd = pointAlong(spine.start(), spine.end(), spineSpan.tMax);
-            int newLen = (int) Math.round(distance(newStart, newEnd));
-            if (newLen >= MIN_SPINE_LENGTH) {
-                Spine trimmed = new Spine(newStart, newEnd, spine.width());
-                state.skeleton.replaceSpine(trimmed);
-                state.events.add(PhaseEvent.trimmed("spine", newLen));
-            }
-        }
-
-        // Cross streets — drop if no frontage; otherwise leave (V1
-        // doesn't attempt finer trim on cross streets).
         List<CrossStreet> toRemove = new ArrayList<>();
         for (CrossStreet cs : state.skeleton.crossStreets()) {
             Span span = frontageSpanAlong(state.placed, cs);
@@ -595,13 +764,22 @@ public final class PhasedPlanner {
     }
 
     private static void markJunctions(State state) {
-        List<RoadSegment> all = state.skeleton.allSegments();
         Skeleton sk = state.skeleton;
-        // Anchor + spine: implicit "village centre" junction.
-        sk.addJunction(new Junction(state.ctx.anchor(), List.of(sk.spine())));
+        // Anchor "village centre" junction — record without enumerating
+        // segments. The anchor sits at the seam between the
+        // backward-walk and forward-walk spine pieces; any spine
+        // segment containing it is reachable via skeleton.spineSegments().
+        sk.addJunction(new Junction(state.ctx.anchor(), List.of()));
         for (CrossStreet cs : sk.crossStreets()) {
+            // Cross-street junctions list the cross-street and the
+            // first spine segment as a stand-in (the precise spine
+            // segment that the cross-street meets isn't tracked in
+            // V1 — junction membership is mostly for downstream
+            // plaza/decoration code).
             List<RoadSegment> meeting = new ArrayList<>();
-            meeting.add(sk.spine());
+            if (!sk.spineSegments().isEmpty()) {
+                meeting.add(sk.spineSegments().get(0));
+            }
             meeting.add(cs);
             sk.addJunction(new Junction(cs.spineJunction(), meeting));
         }
@@ -635,7 +813,8 @@ public final class PhasedPlanner {
         double adjacency = 0;
         for (Map.Entry<AdjacencyFactor, Double> e : profile.adjacencyWeights().entrySet()) {
             adjacency += e.getValue() * Scoring.adjacencyFactor(e.getKey(), pos, type,
-                    state.ctx, state.placed, state.skeleton.spine(), state.villageRadius);
+                    state.ctx, state.placed, state.skeleton.spineSegments(),
+                    state.villageRadius);
         }
         double dist = distance(pos, state.ctx.anchor());
         double radial = 1.0 - Math.min(1.0, dist / Math.max(1, state.villageRadius));
@@ -766,7 +945,7 @@ public final class PhasedPlanner {
             BlockPos cp = projectOntoSegment(pos, seg.start(), seg.end());
             double d = distance(pos, cp);
             if (best == null || d < best.distance
-                    || (d == best.distance && seg instanceof Spine)) {
+                    || (d == best.distance && seg instanceof SpineSegment)) {
                 best = new NearestRoad(seg, cp, d);
             }
         }
@@ -840,14 +1019,14 @@ public final class PhasedPlanner {
         final List<PhaseEvent> events = new ArrayList<>();
         boolean viable = true;
 
-        State(SiteContext ctx, V2FeatureMap fmap, ServerLevel level, Spine spine) {
+        State(SiteContext ctx, V2FeatureMap fmap, ServerLevel level) {
             this.ctx = ctx;
             this.fmap = fmap;
             this.level = level;
             this.sizes = new StructureSizeCache(level);
             this.villageRadius = villageRadiusFor(ctx.tier());
             this.culture = ctx.culture().id();
-            this.skeleton = new Skeleton(spine);
+            this.skeleton = new Skeleton(ctx.spinePath(), SPINE_WIDTH);
         }
     }
 
@@ -970,13 +1149,22 @@ public final class PhasedPlanner {
 
         static double adjacencyFactor(AdjacencyFactor f, BlockPos pos, BuildingType type,
                                       SiteContext ctx, List<PlacedBuilding> placed,
-                                      Spine spine, int villageRadius) {
+                                      List<SpineSegment> spineSegments, int villageRadius) {
             return switch (f) {
                 case NEAR_ANCHOR, NEAR_CIVIC_CENTRE -> 1.0
                         / (1.0 + euclidean(pos, ctx.anchor()) / Math.max(1, villageRadius));
                 case NEAR_MAIN_ROAD -> {
-                    BlockPos cp = projectOntoSegmentStatic(pos, spine.start(), spine.end());
-                    yield 1.0 / (1.0 + euclidean(pos, cp) / Math.max(1, villageRadius));
+                    // Multi-segment spine: take the closest segment's
+                    // closest-point distance. Project onto each, pick
+                    // the minimum.
+                    double bestDist = Double.MAX_VALUE;
+                    for (SpineSegment seg : spineSegments) {
+                        BlockPos cp = projectOntoSegmentStatic(pos, seg.start(), seg.end());
+                        double d = euclidean(pos, cp);
+                        if (d < bestDist) bestDist = d;
+                    }
+                    if (bestDist == Double.MAX_VALUE) bestDist = 0;
+                    yield 1.0 / (1.0 + bestDist / Math.max(1, villageRadius));
                 }
                 case FAR_FROM_ANCHOR, FAR_FROM_CIVIC_CENTRE -> {
                     double d = euclidean(pos, ctx.anchor());

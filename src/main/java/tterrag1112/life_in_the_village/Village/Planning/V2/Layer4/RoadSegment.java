@@ -3,14 +3,18 @@ package tterrag1112.life_in_the_village.Village.Planning.V2.Layer4;
 import net.minecraft.core.BlockPos;
 
 /**
- * V2 road segment — primary spine, perpendicular cross street.
+ * V2 road segment — one piece of the spine path, or a perpendicular
+ * cross street.
  *
- * <p>Sealed at two implementations: {@link Spine} and
- * {@link CrossStreet}. The phased planner attaches building
- * frontage to whichever segment they face; reassessment may
- * trim or remove segments based on actual usage.
+ * <p>Sealed at two implementations: {@link SpineSegment} and
+ * {@link CrossStreet}. The full spine is a list of {@code
+ * SpineSegment}s held by {@link Skeleton#spinePath}; on flat terrain
+ * that's typically just two pieces (forward + backward from the
+ * anchor). The phased planner attaches building frontage to whichever
+ * segment a building faces; reassessment may trim or remove segments
+ * based on actual usage.
  */
-public sealed interface RoadSegment permits Spine, CrossStreet {
+public sealed interface RoadSegment permits SpineSegment, CrossStreet {
 
     BlockPos start();
 
