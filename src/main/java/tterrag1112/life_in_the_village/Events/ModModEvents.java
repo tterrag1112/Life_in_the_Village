@@ -282,6 +282,7 @@ public class ModModEvents {
         FeatureMapCommand.register(event.getDispatcher());
         SiteCommand.register(event.getDispatcher());
         PlaceCommand.register(event.getDispatcher());
+        LayoutCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());
