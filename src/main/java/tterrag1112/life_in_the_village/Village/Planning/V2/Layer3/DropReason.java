@@ -22,5 +22,8 @@ public enum DropReason {
      *  overlap any road segment connected to the anchor, and the
      *  short-connector rescue couldn't reach without crossing
      *  another footprint. */
-    ISOLATED_AFTER_REASSESS
+    ISOLATED_AFTER_REASSESS,
+    /** Layer 5 TerrainAdapter: terrain under the building's footprint
+     *  is too steep to level or platform within the V1 thresholds. */
+    TERRAIN_UNADAPTABLE
 }
