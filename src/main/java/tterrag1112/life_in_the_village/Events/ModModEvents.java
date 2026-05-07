@@ -277,6 +277,7 @@ public class ModModEvents {
         MeasureCommand.register(event.getDispatcher());
         FeatureMapCommand.register(event.getDispatcher());
         SiteCommand.register(event.getDispatcher());
+        PlaceCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());
