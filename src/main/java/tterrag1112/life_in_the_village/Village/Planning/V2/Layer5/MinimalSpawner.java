@@ -12,6 +12,7 @@ import tterrag1112.life_in_the_village.Village.CultureResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DropReason;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Footprint;
@@ -67,7 +68,8 @@ public final class MinimalSpawner {
                                     PlacementResult placement,
                                     RoadNetwork roads,
                                     Culture culture,
-                                    String villageName) {
+                                    String villageName,
+                                    ViabilityTier tier) {
         long t0 = System.currentTimeMillis();
 
         // 1. Overlap audit.
@@ -75,7 +77,7 @@ public final class MinimalSpawner {
                 OverlapAuditor.audit(placement.placed(), roads);
         if (audit.fatal()) {
             return SpawnResult.aborted(audit, "fatal overlap conflict",
-                    System.currentTimeMillis() - t0);
+                    List.of(), System.currentTimeMillis() - t0);
         }
 
         // 2. Terrain adaptation. Mutate placement: move DROP
@@ -95,8 +97,26 @@ public final class MinimalSpawner {
                             DropReason.TERRAIN_UNADAPTABLE,
                             d.reason().orElse("terrain too steep")));
                     dropCount++;
+                    LOGGER.info("terrain drop {}: {}",
+                            d.building().type(), d.reason().orElse("range > threshold"));
                 }
             }
+        }
+        LOGGER.info("terrain decisions: {} LEVEL, {} PLATFORM, {} DROP",
+                levelCount, platformCount, dropCount);
+
+        // 2b. Viability gate. Build the post-terrain placement view
+        //     and validate against tier minimums. If not viable,
+        //     abort BEFORE painting anything in the world.
+        PlacementResult postTerrain = applyTerrainDrops(placement, survivors, additionalDrops);
+        ViabilityValidator.ViabilityCheck check =
+                ViabilityValidator.validate(postTerrain, tier);
+        if (!check.viable()) {
+            LOGGER.info("aborting spawn (NOT VIABLE) at {} reasons={}",
+                    villageName, check.failureReasons());
+            return SpawnResult.aborted(audit, "village not viable post-terrain",
+                    check.failureReasons(),
+                    System.currentTimeMillis() - t0);
         }
 
         // 3. Vegetation clearing — building footprints + road corridors.
@@ -145,7 +165,25 @@ public final class MinimalSpawner {
         long elapsed = System.currentTimeMillis() - t0;
         return new SpawnResult(placedOk, placeFail, dropCount, levelCount, platformCount,
                 roadBlocks, veg, additionalDrops, audit, elapsed,
-                /*aborted*/ false, /*abortReason*/ null);
+                /*aborted*/ false, /*abortReason*/ null, /*viabilityFailures*/ List.of());
+    }
+
+    /** Build a PlacementResult that reflects the post-terrain
+     *  state: surviving placements only, with terrain drops added
+     *  to the dropped list. Counts are recomputed from survivors. */
+    private static PlacementResult applyTerrainDrops(PlacementResult original,
+                                                     List<PlacedBuilding> survivors,
+                                                     List<DroppedBuilding> additionalDrops) {
+        java.util.EnumMap<tterrag1112.life_in_the_village.Village.Buildings.BuildingType, Integer>
+                counts = new java.util.EnumMap<>(
+                tterrag1112.life_in_the_village.Village.Buildings.BuildingType.class);
+        for (PlacedBuilding pb : survivors) counts.merge(pb.type(), 1, Integer::sum);
+        List<DroppedBuilding> mergedDropped =
+                new ArrayList<>(original.dropped().size() + additionalDrops.size());
+        mergedDropped.addAll(original.dropped());
+        mergedDropped.addAll(additionalDrops);
+        return new PlacementResult(List.copyOf(survivors), List.copyOf(mergedDropped),
+                original.unavailable(), Map.copyOf(counts), original.villageViable());
     }
 
     /**
@@ -198,12 +236,16 @@ public final class MinimalSpawner {
                               OverlapAuditor.OverlapReport overlapReport,
                               long elapsedMs,
                               boolean aborted,
-                              String abortReason) {
+                              String abortReason,
+                              List<String> viabilityFailures) {
 
         static SpawnResult aborted(OverlapAuditor.OverlapReport audit,
-                                   String reason, long elapsedMs) {
+                                   String reason,
+                                   List<String> viabilityFailures,
+                                   long elapsedMs) {
             return new SpawnResult(0, 0, 0, 0, 0, 0, 0,
-                    List.of(), audit, elapsedMs, true, reason);
+                    List.of(), audit, elapsedMs, true, reason,
+                    List.copyOf(viabilityFailures));
         }
     }
 }

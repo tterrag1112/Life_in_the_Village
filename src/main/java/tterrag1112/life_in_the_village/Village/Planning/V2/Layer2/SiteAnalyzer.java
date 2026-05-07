@@ -1,6 +1,8 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer2;
 
 import net.minecraft.core.BlockPos;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
@@ -40,6 +42,7 @@ import java.util.Random;
  */
 public final class SiteAnalyzer {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(SiteAnalyzer.class);
     private static final long INCLINATION_SAMPLE_SALT = 0x5A17_E105_5A1FL;
     /** Search radius for anchor-adjustment seam-snapping. */
     private static final int ANCHOR_ADJUST_RADIUS = 25;
@@ -89,6 +92,17 @@ public final class SiteAnalyzer {
                 finalAnchor, anchorDec.anchor, axisDec.axis, spinePath,
                 tier.tier, inc.inclination, culture, seed);
         Diagnostics diag = new Diagnostics(tier, inc, anchorDec, axisDec, adj);
+
+        LOGGER.info("site: tier={} inclination={} culture={} seed={}",
+                tier.tier, inc.inclination, culture.id(), seed);
+        LOGGER.info("anchor: original=({},{},{}) adjusted=({},{},{}) reason={}",
+                anchorDec.anchor.getX(), anchorDec.anchor.getY(), anchorDec.anchor.getZ(),
+                finalAnchor.getX(), finalAnchor.getY(), finalAnchor.getZ(),
+                adj.reason);
+        LOGGER.info("primary axis: {} ({})", axisDec.axis, axisDec.reason);
+        LOGGER.info("spine path: {} segments, totalLength={}",
+                spinePath.segments().size(), spinePath.totalLength());
+
         return new Result(ctx, diag);
     }
 

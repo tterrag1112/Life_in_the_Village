@@ -4,6 +4,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Planning.StructureSizeCache;
@@ -56,6 +58,7 @@ import java.util.Set;
  */
 public final class PhasedPlanner {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(PhasedPlanner.class);
     private static final int LEVEL = 1;
     /** Max localSlope for a candidate cell. */
     private static final int MAX_SLOPE = 3;
@@ -100,6 +103,18 @@ public final class PhasedPlanner {
         // SpineSegments (one per primitive in the path).
         State state = new State(ctx, fmap, level);
         Set<BuildingType> foundationTypes = computeFoundationTypes(sortedSelection);
+        LOGGER.info("PhasedPlanner.run: tier={} axis={} anchor=({},{},{})"
+                + " selection={} foundation={} unavailable={}",
+                ctx.tier(), ctx.primaryAxis(), ctx.anchor().getX(),
+                ctx.anchor().getY(), ctx.anchor().getZ(),
+                sortedSelection.size(), foundationTypes.size(), unavailable.size());
+        EnumMap<BuildingType, Integer> selectionCounts = new EnumMap<>(BuildingType.class);
+        for (BuildingType t : sortedSelection) selectionCounts.merge(t, 1, Integer::sum);
+        LOGGER.info("selection: {}", selectionCounts);
+        if (!unavailable.isEmpty()) {
+            LOGGER.info("unavailable (no NBT): {}",
+                    unavailable.stream().map(u -> u.type().name()).toList());
+        }
 
         // Phase 4a — proactive cross-street planning.
         // Runs BEFORE Phase 3 so foundation buildings (TOWN_HALL etc.)
@@ -142,6 +157,10 @@ public final class PhasedPlanner {
             frontageOwners.put(pb.frontage().buildingFront(), pb.type());
         }
         RoadNetwork network = new RoadNetwork(state.skeleton, Map.copyOf(frontageOwners));
+
+        LOGGER.info("PhasedPlanner.run done: placed={} dropped={} crossStreets={} viable={}",
+                state.placed.size(), state.dropped.size(),
+                state.skeleton.crossStreets().size(), state.viable);
 
         return new Result(placement, network, List.copyOf(state.events));
     }
@@ -203,10 +222,36 @@ public final class PhasedPlanner {
                 : 0;
         crossStreetsNeeded = Math.min(crossStreetsNeeded, CROSS_STREET_CAP);
 
+        // 1b. Spacing-floor cap. Two adjacent cross-streets need a
+        // buildable strip between them — minimum spacing is the
+        // worst-case rotated footprint along the spine plus a
+        // frontage strip on each side (frontage = SPINE_WIDTH = 3).
+        int maxFpAlongSpine = 0;
+        for (BuildingType type : sortedSelection) {
+            if (foundationTypes.contains(type)) continue;
+            int fp = estimatedFpMaxAlongRoad(state, type);
+            if (fp > maxFpAlongSpine) maxFpAlongSpine = fp;
+        }
+        if (maxFpAlongSpine == 0) maxFpAlongSpine = 20;  // defensive fallback
+        int minCrossStreetSpacing = maxFpAlongSpine + 2 * SPINE_WIDTH;
+        int maxCrossStreetsThatFit = Math.max(0,
+                (spineLength / minCrossStreetSpacing) - 1);
+        int spacingCappedCount = Math.min(crossStreetsNeeded, maxCrossStreetsThatFit);
+
         state.events.add(PhaseEvent.capacityPlan(countRemaining, spineCapacity,
                 spineConsumed, spineAvailable, totalRemainingFrontage,
-                overflow, crossStreetsNeeded, CROSS_STREET_CAP));
+                overflow, crossStreetsNeeded, CROSS_STREET_CAP,
+                maxFpAlongSpine, minCrossStreetSpacing,
+                maxCrossStreetsThatFit, spacingCappedCount));
+        LOGGER.info("phase 4a: remaining={} spineLen={} spineCap={} (used={} avail={})"
+                + " frontageNeeded={} overflow={} needed={} cap={}"
+                + " maxFp={} minSpacing={} fits={} using={}",
+                countRemaining, spineLength, spineCapacity, spineConsumed,
+                spineAvailable, totalRemainingFrontage, overflow,
+                crossStreetsNeeded, CROSS_STREET_CAP, maxFpAlongSpine,
+                minCrossStreetSpacing, maxCrossStreetsThatFit, spacingCappedCount);
 
+        crossStreetsNeeded = spacingCappedCount;
         if (crossStreetsNeeded == 0) return;
 
         // 2. Spread along spine: ideal parameters = i / (N+1).
@@ -224,6 +269,8 @@ public final class PhasedPlanner {
                 state.events.add(PhaseEvent.proactiveSkippedAtParam(idealParam,
                         "within " + JUNCTION_DEDUP_DISTANCE
                                 + " blocks of existing junction"));
+                LOGGER.info("cross-street {} skipped (idealParam={}): junction-dedup",
+                        i, String.format("%.2f", idealParam));
                 continue;
             }
 
@@ -231,16 +278,23 @@ public final class PhasedPlanner {
             if (cs.isEmpty()) {
                 state.events.add(PhaseEvent.proactiveSkippedAtParam(idealParam,
                         "terrain unviable (zero perpendicular extension)"));
+                LOGGER.info("cross-street {} skipped (idealParam={}): zero extension",
+                        i, String.format("%.2f", idealParam));
                 continue;
             }
             int totalLen = (int) Math.round(distance(cs.get().start(), cs.get().end()));
             if (totalLen < minLen) {
                 state.events.add(PhaseEvent.proactiveSkippedAtParam(idealParam,
                         "extension " + totalLen + " < tier min " + minLen));
+                LOGGER.info("cross-street {} skipped (idealParam={}): len {} < min {}",
+                        i, String.format("%.2f", idealParam), totalLen, minLen);
                 continue;
             }
             state.skeleton.addCrossStreet(cs.get());
             state.events.add(PhaseEvent.proactiveInsertedAt(cs.get(), idealParam, totalLen));
+            LOGGER.info("cross-street {} inserted: junction=({},{}) length={} (idealParam={})",
+                    i, cs.get().spineJunction().getX(), cs.get().spineJunction().getZ(),
+                    totalLen, String.format("%.2f", idealParam));
         }
     }
 
@@ -254,6 +308,19 @@ public final class PhasedPlanner {
                         .BuildingVariant.defaultVariantId(type),
                 LEVEL, Rotation.NONE);
         return Math.min(info.width(), info.length());
+    }
+
+    /** Worst-case footprint dimension along the spine — used by the
+     *  cross-street spacing floor where two adjacent cross-streets
+     *  must permit any rotation of the largest remaining building
+     *  between them. */
+    private static int estimatedFpMaxAlongRoad(State state, BuildingType type) {
+        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture, Style.RURAL,
+                type,
+                tterrag1112.life_in_the_village.Village.Decoration.Variants
+                        .BuildingVariant.defaultVariantId(type),
+                LEVEL, Rotation.NONE);
+        return Math.max(info.width(), info.length());
     }
 
     /** Sample {@link #JUNCTION_SAMPLES} positions across
@@ -357,17 +424,21 @@ public final class PhasedPlanner {
             state.dropped.add(new DroppedBuilding(type, DropReason.DEPENDENCY_MISSING,
                     "missing: " + missing));
             if (profile.required()) state.viable = false;
+            LOGGER.info("dropped {}: DEPENDENCY_MISSING missing={} required={}",
+                    type, missing, profile.required());
             return false;
         }
 
         // Find the best frontage-eligible candidate cell.
         Best best = findBestCandidate(state, type, profile, foundation);
         if (best == null) {
-            state.dropped.add(new DroppedBuilding(type, DropReason.NO_VIABLE_CANDIDATE,
-                    foundation
-                            ? "no terrain-admissible cell within frontage distance of spine"
-                            : "no positive-scoring cell within frontage distance of any segment"));
+            String detail = foundation
+                    ? "no terrain-admissible cell within frontage distance of spine"
+                    : "no positive-scoring cell within frontage distance of any segment";
+            state.dropped.add(new DroppedBuilding(type, DropReason.NO_VIABLE_CANDIDATE, detail));
             if (profile.required()) state.viable = false;
+            LOGGER.info("dropped {}: NO_VIABLE_CANDIDATE phase={} required={} ({})",
+                    type, foundation ? "3" : "4b", profile.required(), detail);
             return false;
         }
 
@@ -378,6 +449,16 @@ public final class PhasedPlanner {
         state.placed.add(pb);
         state.reservations.add(new Reservation(best.footprintAabb, best.frontageAabb, type));
         state.events.add(PhaseEvent.placed(type, foundation, best.score));
+        LOGGER.info("placed {}: phase={} centre=({},{},{}) variant={} fp={}x{} rot={}"
+                + " score={} (terrain={} adjacency={} centrality={})",
+                type, foundation ? "3" : "4b",
+                best.pos.getX(), best.pos.getY(), best.pos.getZ(),
+                best.variantId, best.footprint.width(), best.footprint.length(),
+                best.rotation,
+                String.format("%.2f", best.score.total()),
+                String.format("%.2f", best.score.terrain()),
+                String.format("%.2f", best.score.adjacency()),
+                String.format("%.2f", best.score.centrality()));
         return true;
     }
 
@@ -743,6 +824,8 @@ public final class PhasedPlanner {
                     DropReason.ISOLATED_AFTER_REASSESS,
                     "frontage road no longer in connected skeleton"));
             state.events.add(PhaseEvent.isolated(pb.type()));
+            LOGGER.info("phase 5 isolated: dropped {} (frontage road disconnected)",
+                    pb.type());
         }
     }
 
@@ -758,6 +841,8 @@ public final class PhasedPlanner {
             if (span == null) {
                 toRemove.add(cs);
                 state.events.add(PhaseEvent.removedCrossStreet(cs));
+                LOGGER.info("phase 5 removed cross-street: junction=({},{}) (no frontage)",
+                        cs.spineJunction().getX(), cs.spineJunction().getZ());
             }
         }
         for (CrossStreet cs : toRemove) state.skeleton.removeCrossStreet(cs);
@@ -1061,15 +1146,20 @@ public final class PhasedPlanner {
         static PhaseEvent capacityPlan(int remaining, int spineCapacity,
                                        int spineConsumed, int spineAvailable,
                                        int totalRemainingFrontage, int overflow,
-                                       int crossStreetsNeeded, int cap) {
+                                       int crossStreetsNeeded, int cap,
+                                       int maxFpAlongSpine, int minCrossStreetSpacing,
+                                       int maxCrossStreetsThatFit, int actualCount) {
             String detail = "remaining buildings: " + remaining
                     + "\nspine capacity: " + spineCapacity
                     + " (already used: " + spineConsumed
                     + ", available: " + spineAvailable + ")"
                     + "\nremaining frontage needed: " + totalRemainingFrontage
                     + "\noverflow: " + overflow
-                    + "\ncross-streets needed: " + crossStreetsNeeded
-                    + " (capped at " + cap + ")";
+                    + "\ncross-streets needed (capacity): " + crossStreetsNeeded
+                    + " (capped at " + cap + ")"
+                    + "\ncross-streets allowed (spacing floor=" + minCrossStreetSpacing
+                    + " from maxFp=" + maxFpAlongSpine + "): " + maxCrossStreetsThatFit
+                    + "\ncross-streets using: " + actualCount;
             return new PhaseEvent(Kind.CAPACITY_PLAN, null, detail, null);
         }
 

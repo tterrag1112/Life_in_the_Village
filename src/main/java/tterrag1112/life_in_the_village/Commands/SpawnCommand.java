@@ -104,7 +104,7 @@ public final class SpawnCommand {
         String villageName = "v2_" + Long.toHexString(seed) + "_"
                 + centre.getX() + "_" + centre.getZ();
         MinimalSpawner.SpawnResult spawnResult = MinimalSpawner.spawn(
-                level, placement, phased.network(), culture, villageName);
+                level, placement, phased.network(), culture, villageName, siteCtx.tier());
         long t1 = System.currentTimeMillis();
 
         // Audit summary.
@@ -116,6 +116,14 @@ public final class SpawnCommand {
                 send(src, "  " + c.description() + " — "
                         + c.aDesc() + " vs " + c.bDesc());
             }
+            return 0;
+        }
+        if (spawnResult.aborted()) {
+            send(src, "spawn ABORTED: " + spawnResult.abortReason());
+            for (String r : spawnResult.viabilityFailures()) {
+                send(src, "  - " + r);
+            }
+            send(src, "  no vegetation cleared, no roads painted, no buildings placed");
             return 0;
         }
         send(src, "phase 5 audit: " + audit.conflicts().size() + " conflicts (non-fatal)");
