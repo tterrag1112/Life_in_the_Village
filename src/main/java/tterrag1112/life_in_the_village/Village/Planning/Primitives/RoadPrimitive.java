@@ -896,13 +896,13 @@ public sealed interface RoadPrimitive
      * similar values, which is what makes the wander smooth rather
      * than jittery.
      */
-    final class DriftNoise {
+    public final class DriftNoise {
         private DriftNoise() {}
 
         /** Number of control points along the road's parameter. */
         private static final int CONTROL_POINTS = 8;
 
-        static long localSeed(long worldSeed, BlockPos a, BlockPos b) {
+        public static long localSeed(long worldSeed, BlockPos a, BlockPos b) {
             long h = worldSeed;
             h = h * 6364136223846793005L + a.getX() * 2862933555777941757L;
             h = h * 6364136223846793005L + a.getZ() * 2862933555777941757L;
@@ -915,7 +915,7 @@ public sealed interface RoadPrimitive
          * Samples smoothed noise at {@code t} in [0, 1]. Value at t=0
          * and t=1 is always 0 so road endpoints meet their targets exactly.
          */
-        static double sample(double t, long localSeed) {
+        public static double sample(double t, long localSeed) {
             if (t <= 0 || t >= 1) return 0;
             double scaled = t * (CONTROL_POINTS - 1);
             int idx = (int) Math.floor(scaled);

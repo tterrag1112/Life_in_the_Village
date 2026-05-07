@@ -4,6 +4,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.EnumMap;
@@ -11,6 +12,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 /**
@@ -36,7 +38,26 @@ public final class DependencyResolver {
 
     private DependencyResolver() {}
 
+    /** Salt mixed into the seed so the topo-tie shuffle doesn't share
+     *  Random state with the cross-street, selection, or spine
+     *  samplers. */
+    private static final long TOPO_SHUFFLE_SALT = 0x70_70_50_5F_5F_5FL;
+
     public static List<BuildingType> topoSort(List<BuildingType> buildings) {
+        return topoSort(buildings, (Random) null);
+    }
+
+    /** Convenience overload: derive a {@link Random} from the village's
+     *  {@code seed} so callers don't have to import the Random class. */
+    public static List<BuildingType> topoSort(List<BuildingType> buildings, long seed) {
+        return topoSort(buildings, new Random(seed ^ TOPO_SHUFFLE_SALT));
+    }
+
+    /** Variation-aware overload. {@code rng} is non-null in production;
+     *  ties within the same priority bucket are shuffled so HOUSE etc.
+     *  don't always sort to the very end where they're most likely to
+     *  drop. Pass {@code null} for the deterministic legacy ordering. */
+    public static List<BuildingType> topoSort(List<BuildingType> buildings, Random rng) {
         // Count multiplicities + collect distinct.
         EnumMap<BuildingType, Integer> counts = new EnumMap<>(BuildingType.class);
         for (BuildingType t : buildings) counts.merge(t, 1, Integer::sum);
@@ -70,11 +91,17 @@ public final class DependencyResolver {
                 .thenComparingInt(Enum::ordinal);
 
         // Kahn's: ready = all present types with indegree 0, sorted.
-        Deque<BuildingType> ready = new ArrayDeque<>();
+        // Within each priority bucket, shuffle if rng is non-null —
+        // that interleaves tied types (HOUSE / FARMHOUSE / ...) across
+        // the placement order rather than letting hashmap iteration
+        // order cluster them at the end.
+        List<BuildingType> initialReady = new ArrayList<>();
         present.stream()
                 .filter(t -> indegree.get(t) == 0)
                 .sorted(tieBreak)
-                .forEach(ready::addLast);
+                .forEach(initialReady::add);
+        shuffleTies(initialReady, rng);
+        Deque<BuildingType> ready = new ArrayDeque<>(initialReady);
 
         List<BuildingType> sortedDistinct = new ArrayList<>();
         while (!ready.isEmpty()) {
@@ -88,6 +115,7 @@ public final class DependencyResolver {
                 if (newDeg == 0) newlyReady.add(u);
             }
             newlyReady.sort(tieBreak);
+            shuffleTies(newlyReady, rng);
             for (BuildingType u : newlyReady) ready.addLast(u);
         }
 
@@ -104,5 +132,25 @@ public final class DependencyResolver {
             for (int i = 0; i < n; i++) out.add(t);
         }
         return out;
+    }
+
+    /** In-place shuffle of contiguous runs that share priority. The
+     *  list is assumed pre-sorted by {@code tieBreak} so equal-priority
+     *  runs are already adjacent. {@code rng == null} → no-op. */
+    private static void shuffleTies(List<BuildingType> ordered, Random rng) {
+        if (rng == null || ordered.size() < 2) return;
+        int i = 0;
+        while (i < ordered.size()) {
+            int j = i + 1;
+            int prio = priorityOrdinal(ordered.get(i));
+            while (j < ordered.size() && priorityOrdinal(ordered.get(j)) == prio) j++;
+            if (j - i > 1) Collections.shuffle(ordered.subList(i, j), rng);
+            i = j;
+        }
+    }
+
+    private static int priorityOrdinal(BuildingType t) {
+        PlacementProfile pp = PlacementDefaults.get(t);
+        return pp != null ? pp.priority().ordinal() : Integer.MAX_VALUE;
     }
 }

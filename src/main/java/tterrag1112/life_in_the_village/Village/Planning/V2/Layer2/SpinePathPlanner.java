@@ -1,6 +1,8 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer2;
 
 import net.minecraft.core.BlockPos;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
@@ -9,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 /**
  * V2 Phase 2c — spine path planning.
@@ -31,10 +34,13 @@ import java.util.List;
  */
 public final class SpinePathPlanner {
 
-    /** Subtle meandering drift on straight spine segments. V1 linear
-     *  used 8.0 (between visible and hairpin per the primitive's own
-     *  doc); V2 prefers a quieter 3.0 (= "subtle wander"). */
-    public static final double SPINE_DRIFT = 3.0;
+    private static final Logger LOGGER = LoggerFactory.getLogger(SpinePathPlanner.class);
+
+    /** Meandering drift on straight spine segments. V1 linear used
+     *  8.0 (visible-but-not-hairpin); V2 uses 4.0 — visible enough
+     *  to read as natural at a glance, half V1's amplitude so longer
+     *  segments don't wander noticeably off the cardinal axis. */
+    public static final double SPINE_DRIFT = 4.0;
     /** Per-segment forward step in blocks. Smaller = finer arc
      *  decisions; larger = less recompute. */
     private static final int STEP_LENGTH = 20;
@@ -56,13 +62,50 @@ public final class SpinePathPlanner {
 
     private SpinePathPlanner() {}
 
+    /** Triangular distribution between {@code lo} and {@code hi}, mode
+     *  at {@code mid}. Endpoints don't get sampled exactly which is
+     *  fine — terrain truncation does the actual clamping. Returns
+     *  {@code mid} when {@code rng} is null. */
+    private static int sampleHalfLength(int lo, int mid, int hi, Random rng) {
+        if (rng == null || hi <= lo) return mid;
+        double u = rng.nextDouble();
+        double f = (mid - lo) / (double) (hi - lo);
+        double x;
+        if (u < f) x = lo + Math.sqrt(u * (hi - lo) * (mid - lo));
+        else x = hi - Math.sqrt((1 - u) * (hi - lo) * (hi - mid));
+        return (int) Math.round(x);
+    }
+
     public static SpinePath plan(V2FeatureMap fmap, BlockPos anchor,
                                  CardinalAxis primaryAxis, int tierHalfLength) {
+        // Backwards-compat overload — no variation. Forward callers
+        // should use the Random overload.
+        return plan(fmap, anchor, primaryAxis, tierHalfLength, tierHalfLength,
+                tierHalfLength, null);
+    }
+
+    /** Variation-aware planner. {@code halfLengthMin} / {@code halfLengthMax}
+     *  bracket the per-direction walk length; if {@code rng} is null
+     *  or the bracket is degenerate the planner uses {@code halfLengthTarget}.
+     *  Each direction samples independently so the village isn't always
+     *  symmetric. */
+    public static SpinePath plan(V2FeatureMap fmap, BlockPos anchor,
+                                 CardinalAxis primaryAxis,
+                                 int halfLengthMin, int halfLengthTarget,
+                                 int halfLengthMax, Random rng) {
+        int forwardHalf = sampleHalfLength(halfLengthMin, halfLengthTarget,
+                halfLengthMax, rng);
+        int backwardHalf = sampleHalfLength(halfLengthMin, halfLengthTarget,
+                halfLengthMax, rng);
+        LOGGER.info("spine length: tier-half range [{}, {}] target={}"
+                + " sampled forward={} backward={} → total={}",
+                halfLengthMin, halfLengthMax, halfLengthTarget,
+                forwardHalf, backwardHalf, forwardHalf + backwardHalf);
         // Walk forward from anchor.
-        WalkResult forward = walk(fmap, anchor, primaryAxis.axisUnit(), tierHalfLength);
+        WalkResult forward = walk(fmap, anchor, primaryAxis.axisUnit(), forwardHalf);
         // Walk backward (negate axis vector).
         WalkResult backward = walk(fmap, anchor,
-                primaryAxis.axisUnit().scale(-1), tierHalfLength);
+                primaryAxis.axisUnit().scale(-1), backwardHalf);
 
         // Combine: backward segments (reversed order) + forward segments.
         List<RoadPrimitive> all = new ArrayList<>();

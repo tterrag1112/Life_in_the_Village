@@ -54,16 +54,22 @@ public final class SiteAnalyzer {
     private static final int COAST_INLAND_OFFSET = 6;
     /** Highground prominence required to override anchor for DEFENSIVE. */
     private static final int DEFENSIVE_PROMINENCE_THRESHOLD = 8;
-    /** Spine length per direction by tier (half-spine). */
-    private static final EnumMap<ViabilityTier, Integer> TIER_HALF_LENGTH;
+    /** Spine length per direction by tier (half-spine, total = 2x).
+     *  Each tier carries (min, target, max) — Layer 2 samples a half
+     *  per direction so the village isn't always symmetric. Total
+     *  spine target per spec: CITY 160, TOWN 100, HAMLET 40, OUTPOST 20. */
+    private static final EnumMap<ViabilityTier, int[]> TIER_HALF_LENGTH_RANGE;
     static {
-        TIER_HALF_LENGTH = new EnumMap<>(ViabilityTier.class);
-        TIER_HALF_LENGTH.put(ViabilityTier.CITY, 80);
-        TIER_HALF_LENGTH.put(ViabilityTier.TOWN, 50);
-        TIER_HALF_LENGTH.put(ViabilityTier.HAMLET, 20);
-        TIER_HALF_LENGTH.put(ViabilityTier.OUTPOST, 10);
-        TIER_HALF_LENGTH.put(ViabilityTier.UNVIABLE, 10);
+        TIER_HALF_LENGTH_RANGE = new EnumMap<>(ViabilityTier.class);
+        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.CITY,    new int[]{60, 80, 90});
+        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.TOWN,    new int[]{40, 50, 65});
+        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.HAMLET,  new int[]{15, 20, 25});
+        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.OUTPOST, new int[]{ 8, 10, 12});
+        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.UNVIABLE, new int[]{10, 10, 10});
     }
+    /** Salt for the spine-length sampler so it's independent of the
+     *  inclination sampler. */
+    private static final long SPINE_LENGTH_SALT = 0x571E_DEC1_DEAD_BEEFL;
 
     private SiteAnalyzer() {}
 
@@ -84,15 +90,20 @@ public final class SiteAnalyzer {
         AnchorAdjustment adj = adjustAnchor(fmap, anchorDec.anchor);
 
         BlockPos finalAnchor = adj.adjusted != null ? adj.adjusted : anchorDec.anchor;
-        int halfLength = TIER_HALF_LENGTH.getOrDefault(tier.tier, 20);
+        int[] halfRange = TIER_HALF_LENGTH_RANGE.getOrDefault(tier.tier,
+                new int[]{20, 20, 20});
+        Random spineRng = new Random(seed ^ SPINE_LENGTH_SALT);
         SpinePath spinePath = SpinePathPlanner.plan(fmap, finalAnchor,
-                axisDec.axis, halfLength);
+                axisDec.axis, halfRange[0], halfRange[1], halfRange[2], spineRng);
 
         SiteContext ctx = SiteContext.withEmptyHubs(
                 finalAnchor, anchorDec.anchor, axisDec.axis, spinePath,
                 tier.tier, inc.inclination, culture, seed);
         Diagnostics diag = new Diagnostics(tier, inc, anchorDec, axisDec, adj);
 
+        LOGGER.info("variation: seed={} (drives inclination sampling, spine length,"
+                + " cross-street count + position, building selection,"
+                + " topo-tie shuffle)", seed);
         LOGGER.info("site: tier={} inclination={} culture={} seed={}",
                 tier.tier, inc.inclination, culture.id(), seed);
         LOGGER.info("anchor: original=({},{},{}) adjusted=({},{},{}) reason={}",

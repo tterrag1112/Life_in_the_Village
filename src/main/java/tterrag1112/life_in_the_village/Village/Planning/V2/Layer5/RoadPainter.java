@@ -11,6 +11,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive.DriftNoise;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
@@ -46,43 +47,51 @@ public final class RoadPainter {
 
     public static int paintAll(ServerLevel level, RoadNetwork roads, Culture culture) {
         BlockState material = resolveMaterial(culture.roadMaterial());
+        long worldSeed = level.getSeed();
         int total = 0;
         // Spine path: per-primitive painting (handles drift / arcs).
         int spineWidth = roads.skeleton().spineSegments().isEmpty()
                 ? 3
                 : roads.skeleton().spineSegments().get(0).width();
         for (RoadPrimitive prim : roads.skeleton().spinePath().segments()) {
-            total += paintPrimitive(level, prim, spineWidth, material);
+            total += paintPrimitive(level, prim, spineWidth, material, worldSeed);
         }
-        // Cross-streets: straight-strip paint.
+        // Cross-streets: straight-strip paint, no drift (cross-streets
+        // are short and cardinal — meandering reads as a layout error).
         for (CrossStreet cs : roads.skeleton().crossStreets()) {
-            total += paintStraight(level, cs.start(), cs.end(), cs.width(), material);
+            total += paintStraight(level, cs.start(), cs.end(), cs.width(),
+                    material, /*driftAmplitude*/ 0, worldSeed);
         }
         return total;
     }
 
     private static int paintPrimitive(ServerLevel level, RoadPrimitive prim,
-                                      int width, BlockState material) {
+                                      int width, BlockState material, long worldSeed) {
         if (prim instanceof RoadPrimitive.StraightRoad sr) {
-            return paintStraight(level, sr.from(), sr.to(), width, material);
+            return paintStraight(level, sr.from(), sr.to(), width, material,
+                    sr.driftAmplitude(), worldSeed);
         }
         if (prim instanceof RoadPrimitive.CurvedRoad cr) {
             return paintCurvedBow(level, cr.from(), cr.to(), cr.curvature(),
-                    width, material);
+                    cr.driftAmplitude(), width, material, worldSeed);
         }
         if (prim instanceof RoadPrimitive.Arc arc) {
-            return paintArc(level, arc, width, material);
+            return paintArc(level, arc, width, material, worldSeed);
         }
         // Other primitive types not produced by SpinePathPlanner in
         // V1; fall through with chord-walk approximation.
         return 0;
     }
 
-    /** Walk start→end at 1-block resolution; at each centerline
-     *  sample paint a perpendicular strip perpendicular to the
-     *  chord direction. */
+    /** Walk start→end at 1-block resolution. At each centerline
+     *  sample, displace perpendicular to the chord by
+     *  {@code DriftNoise.sample(t) * driftAmplitude * ampScale}, then
+     *  paint a strip perpendicular to the LOCAL tangent (chord +
+     *  drift derivative). Endpoints meet exactly because
+     *  {@link DriftNoise#sample} returns 0 at {@code t=0} and {@code t=1}. */
     private static int paintStraight(ServerLevel level, BlockPos a, BlockPos b,
-                                     int width, BlockState material) {
+                                     int width, BlockState material,
+                                     double driftAmplitude, long worldSeed) {
         double dx = b.getX() - a.getX();
         double dz = b.getZ() - a.getZ();
         double len = Math.sqrt(dx * dx + dz * dz);
@@ -91,22 +100,46 @@ public final class RoadPainter {
         double perpX = -dz / len;
         double perpZ = dx / len;
         int half = (width + 1) / 2;
+        boolean drift = driftAmplitude > 0 && len >= 8;
+        long localSeed = drift ? DriftNoise.localSeed(worldSeed, a, b) : 0L;
+        double ampScale = drift ? Math.min(1.0, len / 64.0) : 0.0;
         int painted = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        double prevX = a.getX(), prevZ = a.getZ();
         for (int i = 0; i <= steps; i++) {
             double t = i / (double) steps;
-            int cx = (int) Math.round(a.getX() + dx * t);
-            int cz = (int) Math.round(a.getZ() + dz * t);
-            painted += paintStripAt(level, cx, cz, perpX, perpZ, half, material, cursor);
+            double driftOff = drift
+                    ? DriftNoise.sample(t, localSeed) * driftAmplitude * ampScale
+                    : 0.0;
+            double xd = a.getX() + dx * t + perpX * driftOff;
+            double zd = a.getZ() + dz * t + perpZ * driftOff;
+            int cx = (int) Math.round(xd);
+            int cz = (int) Math.round(zd);
+            // Local tangent for the strip perpendicular: chord for i=0,
+            // (this − prev) afterwards. With drift this rotates the
+            // strip slightly — the painted band tracks the centerline.
+            double lpX, lpZ;
+            if (i == 0 || !drift) { lpX = perpX; lpZ = perpZ; }
+            else {
+                double tx = xd - prevX, tz = zd - prevZ;
+                double tlen = Math.sqrt(tx * tx + tz * tz);
+                if (tlen < 1e-9) { lpX = perpX; lpZ = perpZ; }
+                else { lpX = -tz / tlen; lpZ = tx / tlen; }
+            }
+            painted += paintStripAt(level, cx, cz, lpX, lpZ, half, material, cursor);
+            prevX = xd;
+            prevZ = zd;
         }
         return painted;
     }
 
     /** Walk a quadratic-bezier bow (CurvedRoad's geometry: midpoint
      *  pulled along chord-perpendicular by {@code curvature * chord}).
-     *  Local tangent recomputed per sample. */
+     *  Local tangent recomputed per sample; drift added in the local
+     *  perpendicular direction. */
     private static int paintCurvedBow(ServerLevel level, BlockPos a, BlockPos b,
-                                      double curvature, int width, BlockState material) {
+                                      double curvature, double driftAmplitude,
+                                      int width, BlockState material, long worldSeed) {
         double dx = b.getX() - a.getX();
         double dz = b.getZ() - a.getZ();
         double chord = Math.sqrt(dx * dx + dz * dz);
@@ -116,6 +149,9 @@ public final class RoadPainter {
         double bow = curvature * chord;
         int steps = Math.max(2, (int) Math.ceil(chord));
         int half = (width + 1) / 2;
+        boolean drift = driftAmplitude > 0 && chord >= 8;
+        long localSeed = drift ? DriftNoise.localSeed(worldSeed, a, b) : 0L;
+        double ampScale = drift ? Math.min(1.0, chord / 64.0) : 0.0;
         int painted = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         // Track previous sample for tangent computation.
@@ -123,8 +159,11 @@ public final class RoadPainter {
         for (int i = 0; i <= steps; i++) {
             double t = i / (double) steps;
             double s = 4 * t * (1 - t);  // 0 at ends, 1 at middle
-            double xd = a.getX() + dx * t + pX * bow * s;
-            double zd = a.getZ() + dz * t + pZ * bow * s;
+            double driftOff = drift
+                    ? DriftNoise.sample(t, localSeed) * driftAmplitude * ampScale
+                    : 0.0;
+            double xd = a.getX() + dx * t + pX * (bow * s + driftOff);
+            double zd = a.getZ() + dz * t + pZ * (bow * s + driftOff);
             // Local tangent = (this - prev) for i > 0; chord direction
             // for i == 0.
             double tx, tz;
@@ -145,21 +184,26 @@ public final class RoadPainter {
     }
 
     /** Walk an arc by polar sampling. Local tangent at each sample
-     *  is perpendicular to the radius. */
+     *  is perpendicular to the radius. Drift, if any, displaces
+     *  radially. */
     private static int paintArc(ServerLevel level, RoadPrimitive.Arc arc,
-                                int width, BlockState material) {
+                                int width, BlockState material, long worldSeed) {
         int samples = Math.max(8,
                 (int) Math.ceil(Math.abs(arc.arcSpan()) * arc.radius()));
         int half = (width + 1) / 2;
+        double driftAmplitude = arc.driftAmplitude();
+        double arcLen = Math.abs(arc.arcSpan()) * arc.radius();
+        boolean drift = driftAmplitude > 0 && arcLen >= 8;
+        long localSeed = drift
+                ? DriftNoise.localSeed(worldSeed, arc.centre(), arc.centre())
+                ^ Double.doubleToLongBits(arc.startAngle())
+                : 0L;
+        double ampScale = drift ? Math.min(1.0, arcLen / 64.0) : 0.0;
         int painted = 0;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int i = 0; i <= samples; i++) {
             double t = i / (double) samples;
             double angle = arc.startAngle() + arc.arcSpan() * t;
-            int cx = arc.centre().getX()
-                    + (int) Math.round(Math.cos(angle) * arc.radius());
-            int cz = arc.centre().getZ()
-                    + (int) Math.round(Math.sin(angle) * arc.radius());
             // Tangent at this point on the circle: perpendicular to
             // radius, direction depends on arcSpan sign.
             double tx = -Math.sin(angle) * Math.signum(arc.arcSpan());
@@ -167,6 +211,13 @@ public final class RoadPainter {
             // Perpendicular to the tangent (= radial).
             double perpX = -tz;
             double perpZ = tx;
+            double driftOff = drift
+                    ? DriftNoise.sample(t, localSeed) * driftAmplitude * ampScale
+                    : 0.0;
+            int cx = arc.centre().getX()
+                    + (int) Math.round(Math.cos(angle) * arc.radius() + perpX * driftOff);
+            int cz = arc.centre().getZ()
+                    + (int) Math.round(Math.sin(angle) * arc.radius() + perpZ * driftOff);
             painted += paintStripAt(level, cx, cz, perpX, perpZ, half,
                     material, cursor);
         }

@@ -99,7 +99,7 @@ public final class LayoutCommand {
         }
         send(src, "selected: " + summariseCounts(sel.selected()));
 
-        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected());
+        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected(), seed);
         PhasedPlanner.Result phased =
                 PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
         long t1 = System.currentTimeMillis();

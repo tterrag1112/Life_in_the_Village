@@ -86,7 +86,7 @@ public final class SpawnCommand {
         BuildingSelector.SelectionResult sel =
                 BuildingSelector.select(siteCtx, fmap, profile);
         List<UnavailableBuilding> unavailable = sel.unavailable();
-        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected());
+        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected(), seed);
         PhasedPlanner.Result phased =
                 PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
         PlacementResult placement = phased.placement();

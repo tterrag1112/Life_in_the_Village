@@ -82,11 +82,12 @@ public final class PhasedPlanner {
      *  overlapping intersection cells. */
     private static final int JUNCTION_DEDUP_DISTANCE = 6;
     /** Phase 4a window radius (as fraction of spine length) around
-     *  each ideal cross-street position. The terrain-best junction
-     *  inside the window is chosen. */
-    private static final double JUNCTION_SEARCH_WINDOW = 0.10;
+     *  each ideal cross-street position. Widened for Cycle 2's
+     *  stochastic positioning — the random draw needs enough room
+     *  to produce visibly different layouts across seeds. */
+    private static final double JUNCTION_SEARCH_WINDOW = 0.15;
     /** Number of sample positions to evaluate per window. */
-    private static final int JUNCTION_SAMPLES = 7;
+    private static final int JUNCTION_SAMPLES = 5;
 
     private PhasedPlanner() {}
 
@@ -238,20 +239,28 @@ public final class PhasedPlanner {
                 (spineLength / minCrossStreetSpacing) - 1);
         int spacingCappedCount = Math.min(crossStreetsNeeded, maxCrossStreetsThatFit);
 
+        // A1: stochastic count. Sample uniformly from
+        // [target-1, target+1] clamped to [0, spacing-allowed].
+        int targetCount = spacingCappedCount;
+        int low = Math.max(0, targetCount - 1);
+        int high = Math.min(maxCrossStreetsThatFit, targetCount + 1);
+        int actualCount = high >= low ? low + state.rng.nextInt(high - low + 1) : 0;
+
         state.events.add(PhaseEvent.capacityPlan(countRemaining, spineCapacity,
                 spineConsumed, spineAvailable, totalRemainingFrontage,
                 overflow, crossStreetsNeeded, CROSS_STREET_CAP,
                 maxFpAlongSpine, minCrossStreetSpacing,
-                maxCrossStreetsThatFit, spacingCappedCount));
+                maxCrossStreetsThatFit, actualCount));
         LOGGER.info("phase 4a: remaining={} spineLen={} spineCap={} (used={} avail={})"
-                + " frontageNeeded={} overflow={} needed={} cap={}"
-                + " maxFp={} minSpacing={} fits={} using={}",
+                + " frontageNeeded={} overflow={} capacity={} cap={}"
+                + " maxFp={} minSpacing={} fits={} target={} sampled=[{},{}]→{}",
                 countRemaining, spineLength, spineCapacity, spineConsumed,
                 spineAvailable, totalRemainingFrontage, overflow,
                 crossStreetsNeeded, CROSS_STREET_CAP, maxFpAlongSpine,
-                minCrossStreetSpacing, maxCrossStreetsThatFit, spacingCappedCount);
+                minCrossStreetSpacing, maxCrossStreetsThatFit, targetCount,
+                low, high, actualCount);
 
-        crossStreetsNeeded = spacingCappedCount;
+        crossStreetsNeeded = actualCount;
         if (crossStreetsNeeded == 0) return;
 
         // 2. Spread along spine: ideal parameters = i / (N+1).
@@ -327,7 +336,9 @@ public final class PhasedPlanner {
      *  {@code [idealParam - windowFrac, idealParam + windowFrac]} on
      *  the spine path's chord (start→end), score each by total
      *  perpendicular extension along {@code primaryAxis.perpUnit()},
-     *  return the best.
+     *  and pick weighted-random by score (Cycle 2 A2). The terrain
+     *  weighting keeps positioning sensible; the random draw adds
+     *  per-seed variation.
      *
      *  <p>Cross-streets are always perpendicular to {@code primaryAxis}
      *  regardless of where they meet the spine — this keeps them
@@ -341,10 +352,13 @@ public final class PhasedPlanner {
         double perpX = perpUnit.x;
         double perpZ = perpUnit.z;
 
-        double tMin = Math.max(0, idealParam - windowFrac);
-        double tMax = Math.min(1, idealParam + windowFrac);
-        BlockPos best = pointAlong(chordStart, chordEnd, idealParam);
+        double tMin = Math.max(0.05, idealParam - windowFrac);
+        double tMax = Math.min(0.95, idealParam + windowFrac);
+        BlockPos[] cands = new BlockPos[JUNCTION_SAMPLES];
+        int[] extensions = new int[JUNCTION_SAMPLES];
+        long totalWeight = 0;
         int bestExtension = -1;
+        BlockPos best = pointAlong(chordStart, chordEnd, idealParam);
         for (int s = 0; s < JUNCTION_SAMPLES; s++) {
             double t = JUNCTION_SAMPLES <= 1
                     ? idealParam
@@ -353,10 +367,25 @@ public final class PhasedPlanner {
             int sideA = walkPerp(state, cand, perpX, perpZ, +1, state.villageRadius);
             int sideB = walkPerp(state, cand, perpX, perpZ, -1, state.villageRadius);
             int total = sideA + sideB;
+            cands[s] = cand;
+            extensions[s] = total;
+            // Weight on a curve so good candidates dominate but we
+            // still occasionally pick a slightly-worse spot.
+            totalWeight += Math.max(1, total) * (long) Math.max(1, total);
             if (total > bestExtension) {
                 bestExtension = total;
                 best = cand;
             }
+        }
+        // Weighted-random pick. If everything has zero extension we
+        // fall back to the geometric ideal.
+        if (bestExtension <= 0 || totalWeight <= 0) return best;
+        long pick = (long) (state.rng.nextDouble() * totalWeight);
+        long cum = 0;
+        for (int s = 0; s < JUNCTION_SAMPLES; s++) {
+            int e = extensions[s];
+            cum += Math.max(1, e) * (long) Math.max(1, e);
+            if (pick < cum) return cands[s];
         }
         return best;
     }
@@ -1098,6 +1127,7 @@ public final class PhasedPlanner {
         final int villageRadius;
         final String culture;
         final Skeleton skeleton;
+        final java.util.Random rng;
         final List<PlacedBuilding> placed = new ArrayList<>();
         final List<DroppedBuilding> dropped = new ArrayList<>();
         final List<Reservation> reservations = new ArrayList<>();
@@ -1112,8 +1142,14 @@ public final class PhasedPlanner {
             this.villageRadius = villageRadiusFor(ctx.tier());
             this.culture = ctx.culture().id();
             this.skeleton = new Skeleton(ctx.spinePath(), SPINE_WIDTH);
+            // Salted with PHASED_PLANNER_SALT so cross-street decisions
+            // don't share Random state with SiteAnalyzer's inclination
+            // sampler (which uses a different salt off the same seed).
+            this.rng = new java.util.Random(ctx.seed() ^ PHASED_PLANNER_SALT);
         }
     }
+
+    private static final long PHASED_PLANNER_SALT = 0x504C_414E_4E45_5200L;
 
     public static int villageRadiusFor(ViabilityTier tier) {
         return switch (tier) {

@@ -1,5 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer3;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
@@ -8,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 
 /**
@@ -32,8 +35,13 @@ import java.util.Set;
  */
 public final class BuildingSelector {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(BuildingSelector.class);
+
     /** All V1 placement happens at level 1. */
     private static final int LEVEL = 1;
+    /** Salt mixed into the seed for selection-count sampling so it
+     *  doesn't share Random state with other variation samplers. */
+    private static final long SELECTION_SALT = 0x5E1E_C710_BABE_500AL;
 
     private BuildingSelector() {}
 
@@ -56,10 +64,11 @@ public final class BuildingSelector {
 
         String culture = ctx.culture().id();
         Style style = Style.RURAL;
+        Random rng = new Random(ctx.seed() ^ SELECTION_SALT);
 
         for (BuildingType type : profile.baseCounts().keySet()) {
-            int count = profile.countFor(type, tier);
-            if (count <= 0) continue;
+            int target = profile.countFor(type, tier);
+            if (target <= 0) continue;
 
             PlacementProfile pp = PlacementDefaults.get(type);
             if (pp == null) continue;
@@ -74,9 +83,36 @@ public final class BuildingSelector {
                 continue;
             }
 
+            // A3: sample the actual count from an auto-derived range
+            // around the profile target. Floor preserves required
+            // singletons (target=1 stays 1).
+            int count = sampleCount(target, rng);
+            if (count != target) {
+                LOGGER.info("selection {}: target={} sampled={}", type, target, count);
+            }
             for (int i = 0; i < count; i++) selected.add(type);
         }
         return new SelectionResult(selected, unavailable);
+    }
+
+    /** Triangular-ish range sampler with the profile target as the
+     *  mode. Range derived as
+     *  {@code [ceil(t*0.7), floor(t*1.25)]} per Cycle 2 spec; required
+     *  singletons (target=1) collapse to 1 so TOWN_HALL etc. stay
+     *  exact. */
+    private static int sampleCount(int target, Random rng) {
+        if (target <= 1) return target;
+        int lo = (int) Math.ceil(target * 0.7);
+        int hi = (int) Math.floor(target * 1.25);
+        if (hi <= lo) return target;
+        // Triangular: u<f → lo + sqrt(u*(hi-lo)*(target-lo));
+        // u≥f → hi - sqrt((1-u)*(hi-lo)*(hi-target)).
+        double u = rng.nextDouble();
+        double f = (target - lo) / (double) (hi - lo);
+        double x = u < f
+                ? lo + Math.sqrt(u * (hi - lo) * (target - lo))
+                : hi - Math.sqrt((1 - u) * (hi - lo) * (hi - target));
+        return Math.max(lo, Math.min(hi, (int) Math.round(x)));
     }
 
     private static boolean aggregatesPresent(Set<TerrainAggregate> required,
