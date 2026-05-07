@@ -171,8 +171,14 @@ public final class MinimalSpawner {
         int halfW = rotW / 2;
         int halfL = rotL / 2;
         BlockPos centre = pb.centre();
+        // centre.getY() is the surface BLOCK (heightmap - 1, set in
+        // PhasedPlanner from Cell.elevationY). NBT placement places
+        // the structure's bottom layer at pos.getY(), so shipping
+        // the surface block here would replace the ground. Add 1 so
+        // buildings sit ON the ground, not in it.
+        int placementY = centre.getY() + 1;
         BlockPos targetNW = new BlockPos(
-                centre.getX() - halfW, centre.getY(), centre.getZ() - halfL);
+                centre.getX() - halfW, placementY, centre.getZ() - halfL);
         return switch (rot) {
             case CLOCKWISE_90 -> targetNW.offset(rawL - 1, 0, 0);
             case COUNTERCLOCKWISE_90 -> targetNW.offset(0, 0, rawW - 1);

@@ -18,12 +18,15 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding
  * fill from current ground up to {@code targetY} with that
  * column's surface block.
  *
- * <p>{@link TerrainAdapter.AdaptationMode#PLATFORM}: place a
- * cobblestone block at {@code targetY} for every footprint cell.
- * For corner / edge cells, fill a column from surface y up to
- * {@code targetY} with cobblestone (visible support pillars).
- * Interior cells: just the {@code targetY} block — fast and
- * cheap; the building NBT covers it anyway.
+ * <p>{@link TerrainAdapter.AdaptationMode#PLATFORM}: solid stone
+ * pad. EVERY cell in the footprint is filled from
+ * {@code surfaceY + 1} up through {@code targetY} with stone
+ * bricks (matching the mod's great-roads palette — see
+ * {@code RoadSupportBuilder.java:159} and
+ * {@code RetainingWallBuilder.java:157} which fall back to
+ * {@code Blocks.STONE_BRICKS}). Produces a solid pad with
+ * full-column support down to natural ground — no floating
+ * slabs.
  *
  * <p>{@link TerrainAdapter.AdaptationMode#DROP} is a no-op (the
  * spawner removes the building from the placement list before
@@ -31,10 +34,11 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding
  */
 public final class PadBuilder {
 
-    /** Fill block for PLATFORM pads. V1 uses cobblestone for
-     *  visibility; tune later (stone bricks, retaining walls, etc.). */
+    /** Fill block for PLATFORM pads. Stone bricks match the mod's
+     *  great-roads palette (RoadSupportBuilder, RetainingWallBuilder
+     *  default fallbacks). */
     private static final BlockState PLATFORM_FILL =
-            Blocks.COBBLESTONE.defaultBlockState();
+            Blocks.STONE_BRICKS.defaultBlockState();
 
     private PadBuilder() {}
 
@@ -92,21 +96,14 @@ public final class PadBuilder {
 
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
-                boolean edge = (x == minX || x == maxX || z == minZ || z == maxZ);
-
-                // Always place the platform cap at targetY.
-                cursor.set(x, targetY, z);
-                level.setBlock(cursor, PLATFORM_FILL, 2);
-
-                // Edge cells: fill the column from surface y up to
-                // targetY with cobblestone (visible support pillars).
-                if (edge) {
-                    int surfY = level.getHeight(
-                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
-                    for (int y = surfY + 1; y < targetY; y++) {
-                        cursor.set(x, y, z);
-                        level.setBlock(cursor, PLATFORM_FILL, 2);
-                    }
+                // Solid stone pad: fill EVERY cell from one block above
+                // natural ground all the way up to targetY (inclusive).
+                // No floating slabs — full-column support.
+                int surfY = level.getHeight(
+                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                for (int y = surfY + 1; y <= targetY; y++) {
+                    cursor.set(x, y, z);
+                    level.setBlock(cursor, PLATFORM_FILL, 2);
                 }
 
                 // Clear any leftover blocks above the pad cap.

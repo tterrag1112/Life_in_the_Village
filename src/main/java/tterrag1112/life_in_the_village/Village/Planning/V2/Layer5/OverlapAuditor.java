@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Rotation;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Footprint;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadCorridors;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Skeleton;
@@ -24,7 +25,11 @@ import java.util.List;
  *   <li>Building footprint AABB vs another building's footprint
  *       AABB.</li>
  *   <li>Building footprint AABB vs a road segment's corridor
- *       (segment polyline expanded by {@code segment.width()/2}).</li>
+ *       (segment polyline expanded by {@code segment.width()/2})
+ *       — uses the shared {@link RoadCorridors#intersects}
+ *       utility so this audit and the candidate-rejection check
+ *       in {@code PhasedPlanner.findBestCandidate} share one
+ *       implementation.</li>
  * </ul>
  *
  * <p>If any conflict involves a {@code required:true} type
@@ -32,9 +37,6 @@ import java.util.List;
  * aborts.
  */
 public final class OverlapAuditor {
-
-    /** Road-corridor sample step (1-block resolution). */
-    private static final int CORRIDOR_SAMPLE_STEP = 1;
 
     private OverlapAuditor() {}
 
@@ -60,13 +62,15 @@ public final class OverlapAuditor {
             }
         }
 
-        // Building × Road corridor.
+        // Building × Road corridor (shared with candidate-rejection
+        // in PhasedPlanner.findBestCandidate via RoadCorridors).
         Skeleton skeleton = roads.skeleton();
         for (RoadSegment seg : skeleton.allSegments()) {
             int corridorHalf = (seg.width() + 1) / 2;
             for (PlacedBuilding b : placed) {
-                if (segmentCrossesAabb(seg.start(), seg.end(), corridorHalf,
-                        footprintAabb(b))) {
+                int[] aabb = footprintAabb(b);
+                if (RoadCorridors.intersects(seg.start(), seg.end(), corridorHalf,
+                        aabb[0], aabb[1], aabb[2], aabb[3])) {
                     conflicts.add(new Conflict(
                             "building footprint inside road corridor",
                             b.centre(),
@@ -102,32 +106,6 @@ public final class OverlapAuditor {
 
     private static boolean aabbsOverlap(int[] a, int[] b) {
         return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
-    }
-
-    /** Walk the segment at {@link #CORRIDOR_SAMPLE_STEP}-block intervals;
-     *  if any sample (expanded by {@code corridorHalf} perpendicular to
-     *  the segment) lands inside {@code aabb}, the corridor crosses the
-     *  building. Approximate but sufficient for V1's short segments. */
-    private static boolean segmentCrossesAabb(BlockPos a, BlockPos b,
-                                              int corridorHalf, int[] aabb) {
-        double dx = b.getX() - a.getX();
-        double dz = b.getZ() - a.getZ();
-        double len = Math.sqrt(dx * dx + dz * dz);
-        if (len < 1e-9) return aabbContains(aabb, a.getX(), a.getZ());
-        int steps = Math.max(1, (int) Math.round(len / CORRIDOR_SAMPLE_STEP));
-        for (int i = 0; i <= steps; i++) {
-            double t = i / (double) steps;
-            int x = (int) Math.round(a.getX() + dx * t);
-            int z = (int) Math.round(a.getZ() + dz * t);
-            int[] expanded = {aabb[0] - corridorHalf, aabb[1] - corridorHalf,
-                    aabb[2] + corridorHalf, aabb[3] + corridorHalf};
-            if (aabbContains(expanded, x, z)) return true;
-        }
-        return false;
-    }
-
-    private static boolean aabbContains(int[] aabb, int x, int z) {
-        return x >= aabb[0] && x <= aabb[2] && z >= aabb[1] && z <= aabb[3];
     }
 
     public record OverlapReport(List<Conflict> conflicts, boolean fatal) {}

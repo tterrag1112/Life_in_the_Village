@@ -87,18 +87,24 @@ public final class PhasedPlanner {
         State state = new State(ctx, fmap, level, spine);
         Set<BuildingType> foundationTypes = computeFoundationTypes(sortedSelection);
 
-        // Phase 3.
+        // Phase 4a — proactive cross-street planning.
+        // Runs BEFORE Phase 3 so foundation buildings (TOWN_HALL etc.)
+        // can avoid junctions during candidate scoring. Spine_consumed
+        // is estimated from foundation types' frontage rather than read
+        // from state.placed (Phase 3 hasn't run yet).
+        planCrossStreetsProactively(state, sortedSelection, foundationTypes);
+
+        // Phase 3 — foundation placement. Skeleton already has the
+        // spine + cross-streets, so corridor-rejection in
+        // findBestCandidate keeps foundation buildings clear of
+        // junctions.
         for (BuildingType type : sortedSelection) {
             if (foundationTypes.contains(type)) placeOne(state, type, /*foundation*/ true);
         }
 
-        // Phase 4a — proactive cross-street planning.
-        planCrossStreetsProactively(state, sortedSelection, foundationTypes);
-
-        // Phase 4b — single-shot placement, no insertion, no retry.
-        // Buildings either fit on the spine or one of the planned
-        // cross-streets, or they drop. The skeleton was designed to
-        // serve them in 4a so the drop rate should stay low.
+        // Phase 4b — iterative placement. Single-shot, no insertion,
+        // no retry. Buildings either fit on the planned skeleton or
+        // drop.
         for (BuildingType type : sortedSelection) {
             if (foundationTypes.contains(type)) continue;
             placeOne(state, type, /*foundation*/ false);
@@ -160,10 +166,14 @@ public final class PhasedPlanner {
         int spineLength = (int) Math.round(distance(spine.start(), spine.end()));
         int spineCapacity = spineLength * 2;  // both sides
 
+        // Phase 4a runs BEFORE Phase 3, so state.placed is empty.
+        // Estimate spine consumption from foundation types' frontage
+        // — they're the only buildings that will land on the spine
+        // by the time Phase 4b starts iterating.
         int spineConsumed = 0;
-        for (PlacedBuilding pb : state.placed) {
-            if (pb.facingRoad() instanceof Spine) {
-                spineConsumed += pb.frontage().length();
+        for (BuildingType type : sortedSelection) {
+            if (foundationTypes.contains(type)) {
+                spineConsumed += estimatedFpAlongRoad(state, type);
             }
         }
         int spineAvailable = Math.max(0, spineCapacity - spineConsumed);
@@ -452,6 +462,15 @@ public final class PhasedPlanner {
 
                 if (overlapsAnyReservation(fpAabb, stripAabb, state.reservations)) continue;
 
+                // Reject candidates whose AABB intersects ANY road
+                // corridor in the skeleton (not just the segment the
+                // building is facing). Prevents foundation buildings
+                // at the anchor when the anchor is also a junction
+                // — TOWN_HALL gets pushed slightly along the spine
+                // away from the cross-street. Uses the same shared
+                // RoadCorridors utility as OverlapAuditor.
+                if (intersectsAnyCorridor(fpAabb, state.skeleton.allSegments())) continue;
+
                 // Score uses the cell's position (the original sampling
                 // point). Cell and computed centre are within the same
                 // scoring band so the difference is negligible at V1
@@ -722,6 +741,19 @@ public final class PhasedPlanner {
         for (Reservation r : reservations) {
             if (fpAabb.overlaps(r.footprint) || fpAabb.overlaps(r.frontage)) return true;
             if (stripAabb.overlaps(r.footprint) || stripAabb.overlaps(r.frontage)) return true;
+        }
+        return false;
+    }
+
+    /** True iff {@code fpAabb} intersects any road segment's corridor.
+     *  Shared with {@code OverlapAuditor} via {@link RoadCorridors}. */
+    private static boolean intersectsAnyCorridor(Aabb fpAabb, List<RoadSegment> segments) {
+        for (RoadSegment seg : segments) {
+            int corridorHalf = (seg.width() + 1) / 2;
+            if (RoadCorridors.intersects(seg.start(), seg.end(), corridorHalf,
+                    fpAabb.minX(), fpAabb.minZ(), fpAabb.maxX(), fpAabb.maxZ())) {
+                return true;
+            }
         }
         return false;
     }
