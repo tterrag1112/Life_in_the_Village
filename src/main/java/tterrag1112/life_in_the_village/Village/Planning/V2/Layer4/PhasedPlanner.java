@@ -374,6 +374,9 @@ public final class PhasedPlanner {
 
                 NearestRoad nr = nearestRoadOf(pos, roads);
                 if (nr == null) continue;
+                // Cells exactly on the road centerline can't determine
+                // a side reliably; skip.
+                if (nr.distance < 1) continue;
 
                 // Frontage distance check: does the cell sit within the
                 // building's frontage_distance of the road segment?
@@ -383,18 +386,55 @@ public final class PhasedPlanner {
 
                 Rotation rotation = chooseFacing(pos, nr.point);
                 Vec3 frontDir = cardinalFrontDir(rotation);
-                Aabb fpAabb = footprintAabb(pos, fp, rotation);
-                FrontageStrip strip = computeFrontageStrip(pos, fp, rotation,
+
+                // Compute the building's geometric centre offset
+                // perpendicular FROM the road by the required clearance:
+                //   road_half + frontage_strip_depth + fp_perp / 2
+                // V2's frontage strip depth = road width (see
+                // FrontageStrip and computeFrontageStrip). The cell
+                // itself is the scoring sample + side determinant; the
+                // actual centre is derived so the AABB sits cleanly
+                // outside the road corridor (audit-clean by
+                // construction).
+                int requiredOffset =
+                        (nr.segment.width() + 1) / 2  // road half-width
+                        + nr.segment.width()           // frontage strip depth
+                        + (fpPerp + 1) / 2;            // half the building's perp dim
+                int centreX = nr.point.getX()
+                        - (int) Math.round(frontDir.x * requiredOffset);
+                int centreZ = nr.point.getZ()
+                        - (int) Math.round(frontDir.z * requiredOffset);
+
+                // Verify the computed centre is in scan bounds and on
+                // admissible terrain. The cell passed the OPEN/SHORE +
+                // slope filter; the centre may be ~17 blocks away and
+                // could land in water / forest / off-grid.
+                if (!state.fmap.inBounds(centreX, centreZ)) continue;
+                Cell centreCell = state.fmap.cellAt(centreX, centreZ);
+                BlockCategory centreCat = centreCell.category();
+                if (centreCat != BlockCategory.OPEN
+                        && centreCat != BlockCategory.SHORE) continue;
+                if (centreCell.localSlope() > MAX_SLOPE) continue;
+
+                BlockPos centre = new BlockPos(centreX,
+                        centreCell.elevationY(), centreZ);
+
+                Aabb fpAabb = footprintAabb(centre, fp, rotation);
+                FrontageStrip strip = computeFrontageStrip(centre, fp, rotation,
                         frontDir, nr.segment.width());
                 Aabb stripAabb = frontageAabb(strip);
 
                 if (overlapsAnyReservation(fpAabb, stripAabb, state.reservations)) continue;
 
+                // Score uses the cell's position (the original sampling
+                // point) — fp_perp is small relative to the village
+                // radius so the score difference between cell and
+                // computed centre is negligible at V1 thresholds.
                 ScoreBreakdown score = scorePosition(pos, type, profile, state);
                 if (score.total() <= 0) continue;
 
                 if (best == null || score.total() > best.score.total()) {
-                    best = new Best(pos, fp, rotation, variantId, strip,
+                    best = new Best(centre, fp, rotation, variantId, strip,
                             nr.segment, fpAabb, stripAabb, score);
                 }
             }
