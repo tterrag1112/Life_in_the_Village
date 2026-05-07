@@ -8,7 +8,7 @@ import java.util.Set;
 
 /**
  * Per-{@code BuildingType} placement profile. Drives the
- * {@link PlacementSolver}'s candidate scoring.
+ * {@code PhasedPlanner}'s candidate scoring.
  *
  * <p>{@code centrality}: 0 = wants outskirts, 1 = wants anchor.
  * Implemented as {@code 1 - |centrality - normDistFromAnchor|},

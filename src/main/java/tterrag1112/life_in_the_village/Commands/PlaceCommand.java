@@ -10,11 +10,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.phys.Vec3;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.CultureRegistry;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
@@ -25,17 +23,18 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuildin
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.InclinationProfile;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementSolver;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * {@code /litv place [<radius>]} — runs V2 Layers 1 + 2 + 3 at the
- * player's position and prints the resulting {@link PlacementResult}
- * with per-placement score breakdowns.
+ * {@code /litv place [<radius>]} — runs V2 Layers 1+2 then the phased
+ * planner (replacing the old PlacementSolver), printing the placement
+ * summary only. {@code /litv layout} prints the full L1-L4 phase
+ * breakdown.
  */
 public final class PlaceCommand {
 
@@ -61,78 +60,72 @@ public final class PlaceCommand {
         long seed = level.getSeed();
 
         long t0 = System.currentTimeMillis();
-        send(src, "[litv-place] running L1+L2+L3 radius=" + radius
+        send(src, "[litv-place] running L1+L2+L3 (phased) radius=" + radius
                 + " at " + centre.getX() + "," + centre.getZ() + " ...");
 
-        // Layer 1.
         V2FeatureMap fmap = V2FeatureMap.scan(level, centre, radius);
-        send(src, "featuremap: cells=" + (fmap.gridSize() * fmap.gridSize())
-                + " scanTime=" + fmap.scanTimeMs() + "ms");
-
-        // Layer 2.
         Culture culture = CultureRegistry.INSTANCE.getDefault();
         SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
         send(src, "site: tier=" + siteCtx.tier()
                 + " inclination=" + siteCtx.inclination()
-                + " anchor=" + posStr(siteCtx.anchor())
-                + " spine=" + spineStr(siteCtx.primarySpineDirection())
-                + " culture=" + culture.id());
+                + " anchor=(" + siteCtx.anchor().getX() + ","
+                + siteCtx.anchor().getY() + "," + siteCtx.anchor().getZ() + ")");
 
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
-            send(src, "tier=UNVIABLE — skipping Layer 3");
+            send(src, "tier=UNVIABLE — skipping phased planner");
             send(src, "total time: " + (System.currentTimeMillis() - t0) + " ms");
             return 1;
         }
 
-        // Layer 3.
         InclinationProfile profile = InclinationProfile.forInclination(siteCtx.inclination());
-        BuildingSelector.SelectionResult selResult =
+        BuildingSelector.SelectionResult sel =
                 BuildingSelector.select(siteCtx, fmap, profile);
-        List<BuildingType> selected = selResult.selected();
-        List<UnavailableBuilding> unavailable = selResult.unavailable();
-
+        List<UnavailableBuilding> unavailable = sel.unavailable();
         if (!unavailable.isEmpty()) {
             send(src, "unavailable (" + unavailable.size() + "): "
                     + summariseUnavailable(unavailable));
         }
-        send(src, "selected: " + summariseCounts(selected));
+        send(src, "selected: " + summariseCounts(sel.selected()));
 
-        List<BuildingType> sorted = DependencyResolver.topoSort(selected);
-        send(src, "topological order: " + summariseDistinctOrder(sorted));
-
-        PlacementSolver.SolveResult solveResult =
-                PlacementSolver.solveWithDiagnostics(siteCtx, fmap, sorted, unavailable, level);
-        PlacementResult result = solveResult.result();
+        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected());
+        PhasedPlanner.Result phased =
+                PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
+        PlacementResult result = phased.placement();
         long t1 = System.currentTimeMillis();
 
         send(src, "placed (" + result.placed().size() + "):");
-        for (int i = 0; i < result.placed().size(); i++) {
-            PlacedBuilding pb = result.placed().get(i);
-            PlacementSolver.PlacedDiagnostic d = solveResult.diagnostics().get(i);
-            send(src, String.format("  %s at %s variant=%s fp=%dx%d score=%.2f"
-                            + " (terrain=%.2f adj=%.2f cent=%.2f)",
-                    pb.type().name(), posStr(pb.centre()), pb.variantId(),
-                    pb.footprint().width(), pb.footprint().length(),
-                    d.score().total(),
-                    d.score().terrain(), d.score().adjacency(), d.score().centrality()));
+        for (PlacedBuilding pb : result.placed()) {
+            send(src, "  " + pb.type().name() + " at (" + pb.centre().getX()
+                    + "," + pb.centre().getY() + "," + pb.centre().getZ() + ")"
+                    + " variant=" + pb.variantId()
+                    + " fp=" + pb.footprint().width() + "x" + pb.footprint().length()
+                    + " facing=" + facingDir(pb)
+                    + " on " + segLabel(pb));
         }
-
-        send(src, "dropped (" + result.dropped().size() + "):");
-        for (DroppedBuilding db : result.dropped()) {
-            send(src, "  " + db.type().name() + ": " + db.reason()
-                    + " (" + db.detail() + ")");
+        if (!result.dropped().isEmpty()) {
+            send(src, "dropped (" + result.dropped().size() + "):");
+            for (DroppedBuilding db : result.dropped()) {
+                send(src, "  " + db.type().name() + ": " + db.reason()
+                        + " (" + db.detail() + ")");
+            }
         }
-
         send(src, "village viable: " + result.villageViable());
         send(src, "total time: " + (t1 - t0) + " ms");
         return 1;
     }
 
-    // =========================================================================
+    private static String facingDir(PlacedBuilding pb) {
+        var d = pb.frontage().frontDirection();
+        if (Math.abs(d.x) > Math.abs(d.z)) return d.x > 0 ? "E" : "W";
+        return d.z > 0 ? "S" : "N";
+    }
 
-    /** Compact "TYPE_A, TYPE_B, ... (reason)" rendering. Reasons are
-     *  identical for every entry today (one culture); collapse them
-     *  into a trailing parenthetical. */
+    private static String segLabel(PlacedBuilding pb) {
+        return pb.facingRoad() instanceof
+                tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Spine
+                ? "spine" : "cross-street";
+    }
+
     private static String summariseUnavailable(List<UnavailableBuilding> unavailable) {
         if (unavailable.isEmpty()) return "(none)";
         StringBuilder sb = new StringBuilder();
@@ -156,31 +149,6 @@ public final class PlaceCommand {
             first = false;
         }
         return sb.toString();
-    }
-
-    /** Single-pass walk that emits each distinct type the first time
-     *  it appears in the topo-sorted list. Reflects the
-     *  resolver's distinct-type order; multiplicity is in the
-     *  earlier "selected" line. */
-    private static String summariseDistinctOrder(List<BuildingType> sorted) {
-        if (sorted.isEmpty()) return "(none)";
-        java.util.LinkedHashSet<BuildingType> seen = new java.util.LinkedHashSet<>(sorted);
-        StringBuilder sb = new StringBuilder();
-        boolean first = true;
-        for (BuildingType t : seen) {
-            if (!first) sb.append(" → ");
-            sb.append(t.name());
-            first = false;
-        }
-        return sb.toString();
-    }
-
-    private static String posStr(BlockPos p) {
-        return "(" + p.getX() + "," + p.getY() + "," + p.getZ() + ")";
-    }
-
-    private static String spineStr(Vec3 v) {
-        return String.format("(%.2f, %.2f)", v.x, v.z);
     }
 
     private static void send(CommandSourceStack src, String msg) {

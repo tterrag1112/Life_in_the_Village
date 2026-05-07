@@ -17,5 +17,10 @@ public enum DropReason {
     NO_VIABLE_CANDIDATE,
     /** The building was {@code required: true} (only TOWN_HALL in V1)
      *  and dropped — village fails entirely. */
-    REQUIRED_FAILED
+    REQUIRED_FAILED,
+    /** Phase 5 connectivity audit: the building's frontage doesn't
+     *  overlap any road segment connected to the anchor, and the
+     *  short-connector rescue couldn't reach without crossing
+     *  another footprint. */
+    ISOLATED_AFTER_REASSESS
 }
