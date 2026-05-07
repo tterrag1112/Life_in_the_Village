@@ -41,7 +41,9 @@ public final class PlacementDefaults {
                 List.of(),
                 terrain(Map.of(TerrainFactor.FLAT, 2.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_ANCHOR, 2.0)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.CIVIC_AUTHORITY, 1)),
+                List.of(new Requires(Category.HOUSING, 3, false))));
 
         m.put(BuildingType.MARKET, new PlacementProfile(
                 false, Priority.CIVIC, SizeClass.MEDIUM, 0.7,
@@ -49,7 +51,9 @@ public final class PlacementDefaults {
                 terrain(Map.of(TerrainFactor.FLAT, 1.5)),
                 adj(Map.of(AdjacencyFactor.NEAR_ANCHOR, 1.0,
                         AdjacencyFactor.NEAR_MAIN_ROAD, 1.0)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.COMMERCE, 3)),
+                List.of()));
 
         m.put(BuildingType.INN, new PlacementProfile(
                 false, Priority.CIVIC, SizeClass.MEDIUM, 0.6,
@@ -57,21 +61,33 @@ public final class PlacementDefaults {
                 terrain(Map.of(TerrainFactor.FLAT, 1.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_ANCHOR, 0.5,
                         AdjacencyFactor.NEAR_MAIN_ROAD, 1.5)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.HOUSING, 2),
+                        new Provides(Category.COMMERCE, 1),
+                        new Provides(Category.FOOD, 1)),
+                List.of(new Requires(Category.FOOD, 1, true))));
 
         m.put(BuildingType.CHAPEL, new PlacementProfile(
                 false, Priority.CIVIC, SizeClass.SMALL, 0.5,
                 List.of(),
                 terrain(Map.of(TerrainFactor.FLAT, 1.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_CIVIC_CENTRE, 0.5)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.RELIGIOUS, 1),
+                        new Provides(Category.EMPLOYMENT, 1)),
+                List.of(new Requires(Category.HOUSING, 1, false))));
 
         m.put(BuildingType.SHRINE, new PlacementProfile(
                 false, Priority.CIVIC, SizeClass.SMALL, 0.3,
                 List.of(),
                 terrain(Map.of(TerrainFactor.FLAT, 0.5)),
                 adj(Map.of(AdjacencyFactor.FAR_FROM_CIVIC_CENTRE, 0.5)),
-                Set.of()));
+                Set.of(),
+                // SHRINE provides a partial unit of religious supply —
+                // capacity floors at 0 elsewhere. Use 0 here and rely
+                // on CHAPEL for the meaningful religious supply.
+                List.of(new Provides(Category.RELIGIOUS, 0)),
+                List.of()));
 
         // Infrastructure ----------------------------------------------
         m.put(BuildingType.WELL, new PlacementProfile(
@@ -90,7 +106,10 @@ public final class PlacementDefaults {
                         TerrainFactor.NEAR_WATER, 0.5)),
                 adj(Map.of(AdjacencyFactor.FAR_FROM_CIVIC_CENTRE, 0.5,
                         AdjacencyFactor.FAR_FROM_SAME_TYPE, 0.5)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.FOOD, 3),
+                        new Provides(Category.EMPLOYMENT, 2)),
+                List.of(new Requires(Category.HOUSING, 2, false))));
 
         // MILLER needs a river — no river → not selected.
         m.put(BuildingType.MILLER, new PlacementProfile(
@@ -99,15 +118,25 @@ public final class PlacementDefaults {
                 terrain(Map.of(TerrainFactor.NEAR_WATER, 3.0,
                         TerrainFactor.FLAT, 1.0)),
                 adj(Map.of()),
-                Set.of(TerrainAggregate.RIVER)));
+                Set.of(TerrainAggregate.RIVER),
+                List.of(new Provides(Category.FLOUR, 3),
+                        new Provides(Category.EMPLOYMENT, 1)),
+                List.of(new Requires(Category.HOUSING, 1, false))));
 
-        // BAKERY depends on MILLER being present.
+        // BAKERY depends on MILLER being present (legacy
+        // requires_present); categorical FLOUR demand is tradeable
+        // so HAMLET+ stays viable even without a local MILLER.
         m.put(BuildingType.BAKERY, new PlacementProfile(
                 false, Priority.PRODUCTION, SizeClass.SMALL, 0.4,
                 List.of(BuildingType.MILLER),
                 terrain(Map.of(TerrainFactor.FLAT, 1.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_MAIN_ROAD, 1.0)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.FOOD, 2),
+                        new Provides(Category.COMMERCE, 1),
+                        new Provides(Category.EMPLOYMENT, 1)),
+                List.of(new Requires(Category.HOUSING, 1, false),
+                        new Requires(Category.FLOUR, 1, true))));
 
         m.put(BuildingType.STABLE, new PlacementProfile(
                 false, Priority.PRODUCTION, SizeClass.MEDIUM, 0.3,
@@ -115,15 +144,24 @@ public final class PlacementDefaults {
                 terrain(Map.of(TerrainFactor.FLAT, 1.5)),
                 adj(Map.of(AdjacencyFactor.FAR_FROM_CIVIC_CENTRE, 0.3,
                         AdjacencyFactor.NEAR_MAIN_ROAD, 0.5)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.LIVESTOCK, 1)),
+                List.of(new Requires(Category.HOUSING, 1, false))));
 
-        // BLACKSMITH depends on MINE.
+        // BLACKSMITH depends on MINE (legacy); categorical METAL_ORE
+        // and FUEL are both tradeable so HAMLET+ trade fills the
+        // gap when no local MINE / WOODCUTTER.
         m.put(BuildingType.BLACKSMITH, new PlacementProfile(
                 false, Priority.PRODUCTION, SizeClass.MEDIUM, 0.5,
                 List.of(BuildingType.MINE),
                 terrain(Map.of(TerrainFactor.FLAT, 1.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_MAIN_ROAD, 1.0)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.METALWORKING, 1),
+                        new Provides(Category.EMPLOYMENT, 2)),
+                List.of(new Requires(Category.HOUSING, 2, false),
+                        new Requires(Category.METAL_ORE, 1, true),
+                        new Requires(Category.FUEL, 1, true))));
 
         // MINE needs exposed stone — no stone → not selected.
         m.put(BuildingType.MINE, new PlacementProfile(
@@ -131,7 +169,10 @@ public final class PlacementDefaults {
                 List.of(),
                 terrain(Map.of(TerrainFactor.NEAR_STONE, 3.0)),
                 adj(Map.of()),
-                Set.of(TerrainAggregate.STONE_REGION)));
+                Set.of(TerrainAggregate.STONE_REGION),
+                List.of(new Provides(Category.METAL_ORE, 3),
+                        new Provides(Category.EMPLOYMENT, 3)),
+                List.of(new Requires(Category.HOUSING, 3, false))));
 
         // CARPENTRY — wants forest if available, but doesn't require it.
         m.put(BuildingType.CARPENTRY, new PlacementProfile(
@@ -140,7 +181,11 @@ public final class PlacementDefaults {
                 terrain(Map.of(TerrainFactor.FLAT, 1.0,
                         TerrainFactor.NEAR_FOREST, 0.5)),
                 adj(Map.of(AdjacencyFactor.NEAR_MAIN_ROAD, 0.5)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.CRAFTING, 1),
+                        new Provides(Category.EMPLOYMENT, 2)),
+                List.of(new Requires(Category.HOUSING, 2, false),
+                        new Requires(Category.WOOD, 1, true))));
 
         // WOODCUTTER — requires a forest region in the scan.
         m.put(BuildingType.WOODCUTTER, new PlacementProfile(
@@ -149,7 +194,11 @@ public final class PlacementDefaults {
                 terrain(Map.of(TerrainFactor.NEAR_FOREST, 2.0,
                         TerrainFactor.FLAT, 0.5)),
                 adj(Map.of()),
-                Set.of(TerrainAggregate.FOREST_REGION)));
+                Set.of(TerrainAggregate.FOREST_REGION),
+                List.of(new Provides(Category.WOOD, 3),
+                        new Provides(Category.FUEL, 3),
+                        new Provides(Category.EMPLOYMENT, 2)),
+                List.of(new Requires(Category.HOUSING, 2, false))));
 
         m.put(BuildingType.WAREHOUSE, new PlacementProfile(
                 false, Priority.PRODUCTION, SizeClass.LARGE, 0.4,
@@ -163,7 +212,11 @@ public final class PlacementDefaults {
                 List.of(),
                 terrain(Map.of(TerrainFactor.FLAT, 1.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_MAIN_ROAD, 0.5)),
-                Set.of()));
+                Set.of(),
+                // V1: STOCKPILE has no clear provides yet; spec leaves
+                // it empty. Still consumes housing for its keeper.
+                List.of(),
+                List.of(new Requires(Category.HOUSING, 1, false))));
 
         // Residential -------------------------------------------------
         m.put(BuildingType.HOUSE, new PlacementProfile(
@@ -172,7 +225,9 @@ public final class PlacementDefaults {
                 terrain(Map.of(TerrainFactor.FLAT, 1.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_MAIN_ROAD, 0.5,
                         AdjacencyFactor.FAR_FROM_SAME_TYPE, 0.3)),
-                Set.of()));
+                Set.of(),
+                List.of(new Provides(Category.HOUSING, 4)),
+                List.of()));
 
         return Map.copyOf(m);
     }

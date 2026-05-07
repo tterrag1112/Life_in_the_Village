@@ -26,6 +26,8 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuildin
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.InclinationProfile;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.ReconciliationEngine;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Junction;
@@ -99,7 +101,25 @@ public final class LayoutCommand {
         }
         send(src, "selected: " + summariseCounts(sel.selected()));
 
-        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected(), seed);
+        ReconciliationEngine.ReconciliationResult recon = ReconciliationEngine.reconcile(
+                sel.selected(), siteCtx.tier(), culture.id(),
+                StructureAvailabilityRegistry.INSTANCE);
+        if (!recon.drops().isEmpty() || !recon.tradeFulfilled().isEmpty()) {
+            send(src, "reconciliation: " + recon.drops().size() + " drops, "
+                    + recon.tradeFulfilled().size() + " trade-fulfilled");
+            for (ReconciliationEngine.DropDetail d : recon.drops()) {
+                send(src, "  drop " + d.type().name() + ": " + d.reason());
+            }
+            for (ReconciliationEngine.TradeFulfillment t : recon.tradeFulfilled()) {
+                send(src, "  trade " + t.requiringType().name() + " ← "
+                        + t.category() + " ×" + t.amount());
+            }
+        } else {
+            send(src, "reconciliation: stable (no drops, no trade)");
+        }
+        List<BuildingType> reconciled = recon.finalSelection();
+
+        List<BuildingType> sorted = DependencyResolver.topoSort(reconciled, seed);
         PhasedPlanner.Result phased =
                 PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
         long t1 = System.currentTimeMillis();

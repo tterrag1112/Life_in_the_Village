@@ -23,6 +23,8 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuildin
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.InclinationProfile;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.ReconciliationEngine;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 
@@ -87,7 +89,16 @@ public final class PlaceCommand {
         }
         send(src, "selected: " + summariseCounts(sel.selected()));
 
-        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected(), seed);
+        ReconciliationEngine.ReconciliationResult recon = ReconciliationEngine.reconcile(
+                sel.selected(), siteCtx.tier(), culture.id(),
+                StructureAvailabilityRegistry.INSTANCE);
+        if (!recon.drops().isEmpty()) {
+            send(src, "reconciliation dropped " + recon.drops().size() + ":");
+            for (ReconciliationEngine.DropDetail d : recon.drops()) {
+                send(src, "  " + d.type().name() + ": " + d.reason());
+            }
+        }
+        List<BuildingType> sorted = DependencyResolver.topoSort(recon.finalSelection(), seed);
         PhasedPlanner.Result phased =
                 PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
         PlacementResult result = phased.placement();

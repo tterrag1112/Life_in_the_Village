@@ -22,6 +22,8 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DependencyReso
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.InclinationProfile;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.ReconciliationEngine;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.MinimalSpawner;
@@ -86,7 +88,14 @@ public final class SpawnCommand {
         BuildingSelector.SelectionResult sel =
                 BuildingSelector.select(siteCtx, fmap, profile);
         List<UnavailableBuilding> unavailable = sel.unavailable();
-        List<BuildingType> sorted = DependencyResolver.topoSort(sel.selected(), seed);
+        ReconciliationEngine.ReconciliationResult recon = ReconciliationEngine.reconcile(
+                sel.selected(), siteCtx.tier(), culture.id(),
+                StructureAvailabilityRegistry.INSTANCE);
+        if (!recon.drops().isEmpty() || !recon.tradeFulfilled().isEmpty()) {
+            send(src, "reconciliation: " + recon.drops().size() + " drops, "
+                    + recon.tradeFulfilled().size() + " trade-fulfilled");
+        }
+        List<BuildingType> sorted = DependencyResolver.topoSort(recon.finalSelection(), seed);
         PhasedPlanner.Result phased =
                 PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
         PlacementResult placement = phased.placement();
