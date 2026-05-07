@@ -81,6 +81,10 @@ public class ModModEvents {
         event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "cultures"),
                 tterrag1112.life_in_the_village.Village.Planning.V2.Culture
                         .CultureRegistry.INSTANCE);
+        event.addListener(Identifier.fromNamespaceAndPath(
+                        Life_in_the_village.MODID, "v2_structure_availability"),
+                tterrag1112.life_in_the_village.Village.Planning.V2.Layer3
+                        .StructureAvailabilityRegistry.INSTANCE);
 
 
     }

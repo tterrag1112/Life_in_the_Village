@@ -6,8 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * V2 Layer 3 result. Carries placed and dropped buildings along with
- * a per-type count and the village-viability flag.
+ * V2 Layer 3 result. Carries placed and dropped buildings, the
+ * unavailable list (filtered out at selection because no NBT was
+ * authored), per-type counts, and the village-viability flag.
  *
  * <p>{@code villageViable} is {@code false} if any
  * {@code required:true} building dropped. Layer 2 should ordinarily
@@ -17,6 +18,7 @@ import java.util.Map;
 public record PlacementResult(
         List<PlacedBuilding> placed,
         List<DroppedBuilding> dropped,
+        List<UnavailableBuilding> unavailable,
         Map<BuildingType, Integer> placedCounts,
         boolean villageViable) {
 }

@@ -26,6 +26,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.InclinationPro
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementSolver;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -85,14 +86,22 @@ public final class PlaceCommand {
 
         // Layer 3.
         InclinationProfile profile = InclinationProfile.forInclination(siteCtx.inclination());
-        List<BuildingType> selected = BuildingSelector.select(siteCtx, fmap, profile);
+        BuildingSelector.SelectionResult selResult =
+                BuildingSelector.select(siteCtx, fmap, profile);
+        List<BuildingType> selected = selResult.selected();
+        List<UnavailableBuilding> unavailable = selResult.unavailable();
+
+        if (!unavailable.isEmpty()) {
+            send(src, "unavailable (" + unavailable.size() + "): "
+                    + summariseUnavailable(unavailable));
+        }
         send(src, "selected: " + summariseCounts(selected));
 
         List<BuildingType> sorted = DependencyResolver.topoSort(selected);
         send(src, "topological order: " + summariseDistinctOrder(sorted));
 
         PlacementSolver.SolveResult solveResult =
-                PlacementSolver.solveWithDiagnostics(siteCtx, fmap, sorted, level);
+                PlacementSolver.solveWithDiagnostics(siteCtx, fmap, sorted, unavailable, level);
         PlacementResult result = solveResult.result();
         long t1 = System.currentTimeMillis();
 
@@ -120,6 +129,20 @@ public final class PlaceCommand {
     }
 
     // =========================================================================
+
+    /** Compact "TYPE_A, TYPE_B, ... (reason)" rendering. Reasons are
+     *  identical for every entry today (one culture); collapse them
+     *  into a trailing parenthetical. */
+    private static String summariseUnavailable(List<UnavailableBuilding> unavailable) {
+        if (unavailable.isEmpty()) return "(none)";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < unavailable.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(unavailable.get(i).type().name());
+        }
+        sb.append(" (").append(unavailable.get(0).reason()).append(')');
+        return sb.toString();
+    }
 
     private static String summariseCounts(List<BuildingType> selected) {
         if (selected.isEmpty()) return "(none)";

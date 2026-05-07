@@ -72,14 +72,19 @@ public final class PlacementSolver {
     }
 
     public static PlacementResult solve(SiteContext ctx, V2FeatureMap fmap,
-                                        List<BuildingType> sorted, ServerLevel level) {
-        return solveWithDiagnostics(ctx, fmap, sorted, level).result;
+                                        List<BuildingType> sorted,
+                                        List<UnavailableBuilding> unavailable,
+                                        ServerLevel level) {
+        return solveWithDiagnostics(ctx, fmap, sorted, unavailable, level).result;
     }
 
     /** Variant of {@link #solve} that also returns per-placement
-     *  score breakdowns for the debug command. */
+     *  score breakdowns for the debug command. {@code unavailable}
+     *  is forwarded into the {@link PlacementResult} unchanged
+     *  (selection-time skips never reach the solver). */
     public static SolveResult solveWithDiagnostics(SiteContext ctx, V2FeatureMap fmap,
                                                    List<BuildingType> sorted,
+                                                   List<UnavailableBuilding> unavailable,
                                                    ServerLevel level) {
         List<PlacedBuilding> placed = new ArrayList<>();
         List<DroppedBuilding> dropped = new ArrayList<>();
@@ -137,6 +142,7 @@ public final class PlacementSolver {
 
         PlacementResult result = new PlacementResult(
                 List.copyOf(placed), List.copyOf(dropped),
+                List.copyOf(unavailable),
                 Map.copyOf(counts), villageViable);
         return new SolveResult(result, diagnostics);
     }
@@ -163,7 +169,11 @@ public final class PlacementSolver {
                 BlockPos pos = fmap.cellWorldPos(i, j);
 
                 // Per-candidate variant pick (cheap; cache hits).
-                String variantId = VariantPicker.pick(type, pos, ctx.anchor(), villageRadius);
+                // Variant picker is guaranteed by the selector to
+                // return an authored variantId — no fallback to a
+                // missing NBT can happen here.
+                String variantId = VariantPicker.pick(type, pos, ctx.anchor(),
+                        villageRadius, culture, Style.RURAL);
                 StructureSizeCache.FootprintInfo info = sizes.get(culture, Style.RURAL,
                         type, variantId, /*level*/ 1, Rotation.NONE);
                 Footprint fp = new Footprint(info.width(), info.length());
@@ -198,8 +208,11 @@ public final class PlacementSolver {
                     e.getKey(), pos, type, ctx, placed, villageRadius);
         }
         double dist = euclidean(pos, ctx.anchor());
-        double normDist = Math.min(1.0, dist / Math.max(1, villageRadius));
-        double centrality = Math.max(0, 1 - Math.abs(profile.centrality() - normDist));
+        // Radial position: 1.0 at anchor, 0.0 at village_radius and
+        // beyond. Centrality 1.0 (TOWN_HALL) peaks at anchor;
+        // centrality 0.2 (FARMHOUSE) peaks near boundary.
+        double radialPosition = 1.0 - Math.min(1.0, dist / Math.max(1, villageRadius));
+        double centrality = Math.max(0, 1 - Math.abs(profile.centrality() - radialPosition));
         return new ScoreBreakdown(terrain, adjacency, centrality);
     }
 
