@@ -16,6 +16,8 @@ import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Caches the XZ footprint dimensions of structure NBT files so
@@ -60,6 +62,13 @@ public class StructureSizeCache {
 
     private static final String DEFAULT_CULTURE = "default";
 
+    /** Resolved Identifiers we've already warned about. Mirrors the
+     *  per-key dedupe pattern in {@code CultureResolver
+     *  .WARNED_DEFAULT_FALLBACK}. Keeps the missing-NBT warning to
+     *  one line per absent file instead of one per planning lookup. */
+    private static final Set<String> WARNED_MISSING_NBT =
+            ConcurrentHashMap.newKeySet();
+
     private final ServerLevel level;
     private final Map<CacheKey, FootprintInfo> cache = new HashMap<>();
 
@@ -97,6 +106,9 @@ public class StructureSizeCache {
      * @param rotation      the rotation that will be applied at placement
      */
     public FootprintInfo get(String structurePath, Rotation rotation) {
+        // Known: type-default variant assumption. Resolved by V2 Layer 3,
+        // which selects variant at placement time. See
+        // ADAPTIVE-VILLAGE-DESIGN.md.
         CultureResolver.LegacyTypeLevel parsed =
                 CultureResolver.parseLegacyTypeLevel(structurePath);
         if (parsed != null) {
@@ -145,9 +157,16 @@ public class StructureSizeCache {
                                   String diagnosticName) {
         var templateOpt = BuildingPlacer.loadTemplate(level, id);
         if (templateOpt.isEmpty()) {
-            LOGGER.warn("StructureSizeCache: could not load '{}' "
-                    + "(resolved to {}) — using default radius",
-                    diagnosticName, id);
+            // Once-per-key dedupe: the same NBT gets queried many times
+            // per planning pass (one lookup per slot for that type), and
+            // pre-V2 the warning could fire hundreds of times for a
+            // single missing file. Mirrors CultureResolver's WARNED_*
+            // pattern.
+            if (WARNED_MISSING_NBT.add(id.toString())) {
+                LOGGER.warn("StructureSizeCache: no NBT authored for '{}' "
+                        + "(resolved to {}) — using fallback footprint",
+                        diagnosticName, id);
+            }
             return new FootprintInfo(
                     DEFAULT_RADIUS * 2, DEFAULT_RADIUS * 2,
                     DEFAULT_RADIUS);
