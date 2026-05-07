@@ -55,18 +55,21 @@ public final class PhasedPlanner {
     private static final int LEVEL = 1;
     /** Max localSlope for a candidate cell. */
     private static final int MAX_SLOPE = 3;
-    /** K consecutive failures before a cross street is considered. */
-    private static final int FAILURE_CLUSTER_TRIGGER = 2;
     /** Hard cap on cross streets per village. */
     private static final int CROSS_STREET_CAP = 6;
     /** Min useful cross-street length (sum of both sides). */
     private static final int MIN_CROSS_STREET_LENGTH = 12;
     /** Cross-street walk step in blocks (matches cellSize x 1). */
     private static final int CROSS_STREET_STEP = 2;
-    /** Reassessment connector attempt distance cap (= road width). */
-    private static final int REASSESS_CONNECTOR_CAP = SpinePlanner.SPINE_WIDTH;
     /** Phase 5 spine trim floor — never trim shorter than this. */
     private static final int MIN_SPINE_LENGTH = 20;
+    /** Phase 4a clustering threshold (chebyshev blocks). Centroids
+     *  within this distance merge into one cluster. */
+    private static final int CLUSTER_THRESHOLD = 30;
+    /** Phase 4a junction-dedup distance — two cross streets within
+     *  this many blocks of each other on the spine would have
+     *  overlapping intersection cells. */
+    private static final int JUNCTION_DEDUP_DISTANCE = 6;
 
     private PhasedPlanner() {}
 
@@ -78,7 +81,8 @@ public final class PhasedPlanner {
                              List<BuildingType> sortedSelection,
                              List<UnavailableBuilding> unavailable,
                              ServerLevel level) {
-        Spine spine = SpinePlanner.plan(ctx, sortedSelection, level);
+        int villageRadius = villageRadiusFor(ctx.tier());
+        Spine spine = SpinePlanner.plan(ctx, sortedSelection, villageRadius, level);
         State state = new State(ctx, fmap, level, spine);
         Set<BuildingType> foundationTypes = computeFoundationTypes(sortedSelection);
 
@@ -87,19 +91,16 @@ public final class PhasedPlanner {
             if (foundationTypes.contains(type)) placeOne(state, type, /*foundation*/ true);
         }
 
-        // Phase 4.
-        List<FailedBuilding> failedCluster = new ArrayList<>();
+        // Phase 4a — proactive cross-street planning.
+        planCrossStreetsProactively(state, sortedSelection, foundationTypes);
+
+        // Phase 4b — single-shot placement, no insertion, no retry.
+        // Buildings either fit on the spine or one of the planned
+        // cross-streets, or they drop. The skeleton was designed to
+        // serve them in 4a so the drop rate should stay low.
         for (BuildingType type : sortedSelection) {
             if (foundationTypes.contains(type)) continue;
-            placeIterative(state, type, failedCluster);
-        }
-        // Drop any remaining failed-cluster entries that never triggered an
-        // insertion — they're stuck without a road to attach to.
-        for (FailedBuilding fb : failedCluster) {
-            state.dropped.add(new DroppedBuilding(fb.type,
-                    DropReason.NO_VIABLE_CANDIDATE,
-                    "no road frontage available; cross-street pool exhausted or unviable"));
-            if (PlacementDefaults.get(fb.type).required()) state.viable = false;
+            placeOne(state, type, /*foundation*/ false);
         }
 
         // Phase 5.
@@ -125,48 +126,171 @@ public final class PhasedPlanner {
     // Phase 3 + 4 — placement
     // =========================================================================
 
-    private static void placeIterative(State state, BuildingType type,
-                                       List<FailedBuilding> failedCluster) {
-        boolean placed = placeOne(state, type, /*foundation*/ false);
-        if (placed) {
-            failedCluster.clear();
-            return;
+    /**
+     * Phase 4a — proactive cross-street planning.
+     *
+     * <p>For each remaining BuildingType:
+     * <ol>
+     *   <li>Compute its preferred terrain centroid (terrain-only
+     *       weighted average, ignoring road requirements).</li>
+     *   <li>Skip if the centroid sits within the building's
+     *       {@code frontage_distance} of the spine (already served).</li>
+     *   <li>Cluster off-spine centroids by chebyshev distance
+     *       (threshold {@link #CLUSTER_THRESHOLD}); cluster size
+     *       weighted by building multiplicity.</li>
+     *   <li>For each cluster (largest first, capped at
+     *       {@link #CROSS_STREET_CAP}): project cluster centroid onto
+     *       spine for the junction; skip if a junction already exists
+     *       within {@link #JUNCTION_DEDUP_DISTANCE}; otherwise insert
+     *       a perpendicular cross-street capped per-side at
+     *       {@code villageRadius}.</li>
+     * </ol>
+     */
+    private static void planCrossStreetsProactively(State state,
+                                                    List<BuildingType> sortedSelection,
+                                                    Set<BuildingType> foundationTypes) {
+        // Count remaining (non-foundation) by type.
+        EnumMap<BuildingType, Integer> remaining = new EnumMap<>(BuildingType.class);
+        for (BuildingType t : sortedSelection) {
+            if (foundationTypes.contains(t)) continue;
+            remaining.merge(t, 1, Integer::sum);
         }
 
-        // Could it have placed if a road existed?
-        BlockPos terrainCentroid = bestTerrainCellIgnoringRoad(state, type);
-        if (terrainCentroid == null) {
-            // Terrain itself rejects the type — already dropped by placeOne.
-            return;
+        // Step 1+2: per-type preferred terrain centroid, then filter
+        // to off-spine.
+        Spine spine = state.skeleton.spine();
+        List<TypeCluster> offSpine = new ArrayList<>();
+        for (Map.Entry<BuildingType, Integer> e : remaining.entrySet()) {
+            BuildingType type = e.getKey();
+            BlockPos centroid = computePreferredTerrainCentroid(state, type);
+            if (centroid == null) continue;
+            int frontageDist = frontageDistanceFor(state, type);
+            BlockPos cp = projectOntoSegment(centroid, spine.start(), spine.end());
+            if (distance(centroid, cp) <= frontageDist) continue;  // served by spine
+            offSpine.add(new TypeCluster(type, e.getValue(), centroid));
         }
-        failedCluster.add(new FailedBuilding(type, terrainCentroid));
 
-        if (failedCluster.size() < FAILURE_CLUSTER_TRIGGER) return;
-        if (state.skeleton.crossStreets().size() >= CROSS_STREET_CAP) return;
+        if (offSpine.isEmpty()) return;
 
-        // Average the failed-building terrain centroids → cross-street target.
-        BlockPos target = average(failedCluster.stream().map(f -> f.centroid).toList());
-        Optional<CrossStreet> cs = generateCrossStreet(state, target);
-        if (cs.isEmpty()) return;
-        state.skeleton.addCrossStreet(cs.get());
-        state.events.add(PhaseEvent.crossStreetInserted(cs.get(), failedCluster.size()));
+        // Step 3: simple distance clustering.
+        List<List<TypeCluster>> clusters = simpleDistanceCluster(offSpine, CLUSTER_THRESHOLD);
 
-        // Retry the failed cluster — buildings may now fit on the new street.
-        // We don't revisit drops from prior buildings; only the current
-        // cluster is given a second chance.
-        List<FailedBuilding> retryList = new ArrayList<>(failedCluster);
-        failedCluster.clear();
-        // The current building (already in retryList) was dropped above by
-        // placeOne; remove that drop entry before retrying.
-        state.dropped.removeIf(d -> d.type() == type
-                && d.reason() == DropReason.NO_VIABLE_CANDIDATE);
-        for (FailedBuilding fb : retryList) {
-            // Same removeIf for older types in the cluster (they were also
-            // appended to dropped by placeOne).
-            state.dropped.removeIf(d -> d.type() == fb.type
-                    && d.reason() == DropReason.NO_VIABLE_CANDIDATE);
-            placeOne(state, fb.type, /*foundation*/ false);
+        // Step 4: sort by total building count desc, insert up to cap.
+        clusters.sort((a, b) -> totalCount(b) - totalCount(a));
+        for (List<TypeCluster> cluster : clusters) {
+            if (state.skeleton.crossStreets().size() >= CROSS_STREET_CAP) {
+                state.events.add(PhaseEvent.proactiveSkipped(cluster, "cap reached"));
+                continue;
+            }
+            BlockPos clusterCentroid = average(cluster.stream()
+                    .map(tc -> tc.centroid).toList());
+            BlockPos junction = projectOntoSegment(clusterCentroid,
+                    spine.start(), spine.end());
+            if (junctionTooClose(junction, state.skeleton.crossStreets(),
+                    JUNCTION_DEDUP_DISTANCE)) {
+                state.events.add(PhaseEvent.proactiveSkipped(cluster,
+                        "within " + JUNCTION_DEDUP_DISTANCE
+                                + " blocks of existing junction"));
+                continue;
+            }
+            Optional<CrossStreet> cs = generateCrossStreet(state, clusterCentroid);
+            if (cs.isEmpty()) {
+                state.events.add(PhaseEvent.proactiveSkipped(cluster,
+                        "no viable perpendicular extension"));
+                continue;
+            }
+            state.skeleton.addCrossStreet(cs.get());
+            state.events.add(PhaseEvent.proactiveInserted(cs.get(), cluster,
+                    clusterCentroid));
         }
+    }
+
+    private static List<List<TypeCluster>> simpleDistanceCluster(List<TypeCluster> items,
+                                                                  double threshold) {
+        List<List<TypeCluster>> clusters = new ArrayList<>();
+        for (TypeCluster tc : items) {
+            boolean joined = false;
+            for (List<TypeCluster> cluster : clusters) {
+                for (TypeCluster member : cluster) {
+                    if (chebDist(tc.centroid, member.centroid) <= threshold) {
+                        cluster.add(tc);
+                        joined = true;
+                        break;
+                    }
+                }
+                if (joined) break;
+            }
+            if (!joined) {
+                List<TypeCluster> nu = new ArrayList<>();
+                nu.add(tc);
+                clusters.add(nu);
+            }
+        }
+        return clusters;
+    }
+
+    private static int totalCount(List<TypeCluster> cluster) {
+        int n = 0;
+        for (TypeCluster tc : cluster) n += tc.count;
+        return n;
+    }
+
+    private static boolean junctionTooClose(BlockPos candidate,
+                                            List<CrossStreet> existing, int threshold) {
+        for (CrossStreet cs : existing) {
+            if (distance(candidate, cs.spineJunction()) <= threshold) return true;
+        }
+        return false;
+    }
+
+    private static int frontageDistanceFor(State state, BuildingType type) {
+        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture, Style.RURAL,
+                type,
+                tterrag1112.life_in_the_village.Village.Decoration.Variants
+                        .BuildingVariant.defaultVariantId(type),
+                LEVEL, Rotation.NONE);
+        int fpPerp = info.length();
+        return (state.skeleton.spine().width() + 1) / 2 + (fpPerp + 1) / 2;
+    }
+
+    /**
+     * Terrain-score-weighted centroid across cells matching the type's
+     * terrain prefs (no road, no slope reservation considerations
+     * other than the basic admissibility filter). Returns {@code null}
+     * if no positive-scoring cell exists in the scan area.
+     */
+    private static BlockPos computePreferredTerrainCentroid(State state, BuildingType type) {
+        PlacementProfile profile = PlacementDefaults.get(type);
+        if (profile == null) return null;
+        long sumX = 0, sumZ = 0;
+        double sumWeight = 0;
+        for (int i = 0; i < state.fmap.gridSize(); i++) {
+            for (int j = 0; j < state.fmap.gridSize(); j++) {
+                Cell cell = state.fmap.cell(i, j);
+                BlockCategory cat = cell.category();
+                if (cat != BlockCategory.OPEN && cat != BlockCategory.SHORE) continue;
+                if (cell.localSlope() > MAX_SLOPE) continue;
+                BlockPos pos = state.fmap.cellWorldPos(i, j);
+                double s = 0;
+                for (Map.Entry<TerrainFactor, Double> e : profile.terrainWeights().entrySet()) {
+                    s += e.getValue() * Scoring.terrainFactor(e.getKey(), pos,
+                            state.fmap, state.villageRadius);
+                }
+                if (s <= 0) continue;
+                sumX += (long) (pos.getX() * s);
+                sumZ += (long) (pos.getZ() * s);
+                sumWeight += s;
+            }
+        }
+        if (sumWeight <= 0) return null;
+        return new BlockPos((int) Math.round(sumX / sumWeight),
+                state.ctx.anchor().getY(),
+                (int) Math.round(sumZ / sumWeight));
+    }
+
+    private static int chebDist(BlockPos a, BlockPos b) {
+        return Math.max(Math.abs(a.getX() - b.getX()),
+                Math.abs(a.getZ() - b.getZ()));
     }
 
     /** Tries to place one instance of {@code type}; returns true on
@@ -275,30 +399,6 @@ public final class PhasedPlanner {
         return best;
     }
 
-    private static BlockPos bestTerrainCellIgnoringRoad(State state, BuildingType type) {
-        PlacementProfile profile = PlacementDefaults.get(type);
-        if (profile == null) return null;
-        BlockPos best = null;
-        double bestScore = 0;
-        for (int i = 0; i < state.fmap.gridSize(); i++) {
-            for (int j = 0; j < state.fmap.gridSize(); j++) {
-                Cell cell = state.fmap.cell(i, j);
-                BlockCategory cat = cell.category();
-                if (cat != BlockCategory.OPEN && cat != BlockCategory.SHORE) continue;
-                if (cell.localSlope() > MAX_SLOPE) continue;
-                BlockPos pos = state.fmap.cellWorldPos(i, j);
-                // Terrain-only score (skip adjacency factors).
-                double s = 0;
-                for (Map.Entry<TerrainFactor, Double> e : profile.terrainWeights().entrySet()) {
-                    s += e.getValue() * Scoring.terrainFactor(e.getKey(), pos,
-                            state.fmap, state.villageRadius);
-                }
-                if (s > bestScore) { bestScore = s; best = pos; }
-            }
-        }
-        return best;
-    }
-
     // =========================================================================
     // Cross-street insertion
     // =========================================================================
@@ -316,9 +416,13 @@ public final class PhasedPlanner {
                 + (target.getZ() - junction.getZ()) * perpZ;
         int side = sideDot >= 0 ? 1 : -1;
 
-        int spineLength = (int) Math.round(distance(spine.start(), spine.end()));
-        int posSide = walkPerp(state, junction, perpX, perpZ, side, spineLength);
-        int negSide = walkPerp(state, junction, perpX, perpZ, -side, spineLength);
+        // Per-side cap = villageRadius. Total cap = 2 * villageRadius.
+        // Walks now also terminate when the next sample falls outside
+        // the scan grid — the previous code used cellAt() which clamps
+        // to edge, producing infinite "admissible" walks past the
+        // boundary.
+        int posSide = walkPerp(state, junction, perpX, perpZ, side, state.villageRadius);
+        int negSide = walkPerp(state, junction, perpX, perpZ, -side, state.villageRadius);
         if (posSide + negSide < MIN_CROSS_STREET_LENGTH) return Optional.empty();
 
         BlockPos endA = endpoint(junction, perpX, perpZ, side, posSide);
@@ -327,14 +431,22 @@ public final class PhasedPlanner {
     }
 
     /** Walk in {@code (perpX, perpZ) * side} from {@code start}, stepping
-     *  {@link #CROSS_STREET_STEP} blocks at a time, until terrain becomes
-     *  unviable or {@code maxLength} is reached. Returns the walked length. */
+     *  {@link #CROSS_STREET_STEP} blocks at a time. Terminates on:
+     *  <ul>
+     *    <li>{@code length >= maxLength}</li>
+     *    <li>next sample is outside the {@link V2FeatureMap}'s scan
+     *        grid (use {@link V2FeatureMap#inBounds} — cellAt would
+     *        clamp to the edge cell and falsely report "admissible")</li>
+     *    <li>cell is not OPEN/SHORE or {@code localSlope > MAX_SLOPE}</li>
+     *  </ul>
+     *  Returns the walked length. */
     private static int walkPerp(State state, BlockPos start,
                                 double perpX, double perpZ, int side, int maxLength) {
         int len = 0;
         while (len + CROSS_STREET_STEP <= maxLength) {
             int nextLen = len + CROSS_STREET_STEP;
             BlockPos sample = endpoint(start, perpX, perpZ, side, nextLen);
+            if (!state.fmap.inBounds(sample.getX(), sample.getZ())) break;
             Cell cell = state.fmap.cellAt(sample.getX(), sample.getZ());
             BlockCategory cat = cell.category();
             if ((cat != BlockCategory.OPEN && cat != BlockCategory.SHORE)
@@ -681,8 +793,9 @@ public final class PhasedPlanner {
 
     public record PhaseEvent(Kind kind, BuildingType type, String detail,
                              ScoreBreakdown score) {
-        public enum Kind { PLACED_FOUNDATION, PLACED_ITERATIVE, CROSS_STREET, ISOLATED,
-                           TRIM, REMOVED_CROSS_STREET }
+        public enum Kind { PLACED_FOUNDATION, PLACED_ITERATIVE,
+                           PROACTIVE_CROSS_STREET, PROACTIVE_SKIPPED,
+                           ISOLATED, TRIM, REMOVED_CROSS_STREET }
 
         static PhaseEvent placed(BuildingType type, boolean foundation, ScoreBreakdown s) {
             return new PhaseEvent(
@@ -690,14 +803,28 @@ public final class PhasedPlanner {
                     type, null, s);
         }
 
-        static PhaseEvent crossStreetInserted(CrossStreet cs, int triggeringFailures) {
+        static PhaseEvent proactiveInserted(CrossStreet cs, List<TypeCluster> cluster,
+                                            BlockPos clusterCentroid) {
             int len = (int) Math.round(Math.sqrt(
                     Math.pow(cs.start().getX() - cs.end().getX(), 2)
                             + Math.pow(cs.start().getZ() - cs.end().getZ(), 2)));
-            return new PhaseEvent(Kind.CROSS_STREET, null,
-                    "junction=" + cs.spineJunction().getX() + "," + cs.spineJunction().getZ()
-                            + " length=" + len + " (" + triggeringFailures + " failed)",
+            int total = 0;
+            for (TypeCluster tc : cluster) total += tc.count;
+            return new PhaseEvent(Kind.PROACTIVE_CROSS_STREET, null,
+                    "cluster size=" + total
+                            + " at centroid (" + clusterCentroid.getX() + ","
+                            + clusterCentroid.getZ() + ")"
+                            + " junction=(" + cs.spineJunction().getX() + ","
+                            + cs.spineJunction().getZ() + ")"
+                            + " length=" + len,
                     null);
+        }
+
+        static PhaseEvent proactiveSkipped(List<TypeCluster> cluster, String reason) {
+            int total = 0;
+            for (TypeCluster tc : cluster) total += tc.count;
+            return new PhaseEvent(Kind.PROACTIVE_SKIPPED, null,
+                    "cluster size=" + total + " — " + reason, null);
         }
 
         static PhaseEvent isolated(BuildingType type) {
@@ -721,7 +848,9 @@ public final class PhasedPlanner {
         public double total() { return terrain + adjacency + centrality; }
     }
 
-    private record FailedBuilding(BuildingType type, BlockPos centroid) {}
+    /** Phase 4a per-type cluster entry: a building's preferred terrain
+     *  centroid plus the multiplicity in the selection list. */
+    private record TypeCluster(BuildingType type, int count, BlockPos centroid) {}
 
     private record NearestRoad(RoadSegment segment, BlockPos point, double distance) {}
 
@@ -741,9 +870,9 @@ public final class PhasedPlanner {
 
     private record Span(double tMin, double tMax) {}
 
-    /** Inline replacement for the old PlacementSolver's score helpers
-     *  (lifted to static methods for reuse here and in
-     *  {@link PhasedPlanner#bestTerrainCellIgnoringRoad}). */
+    /** Inline replacement for the old PlacementSolver's score helpers.
+     *  Also reused by {@link PhasedPlanner#computePreferredTerrainCentroid}
+     *  for Phase 4a's terrain-only weighting. */
     private static final class Scoring {
         private Scoring() {}
 

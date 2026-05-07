@@ -111,12 +111,25 @@ public final class LayoutCommand {
         int placedIterative = countByKind(phased.events(),
                 PhasedPlanner.PhaseEvent.Kind.PLACED_ITERATIVE);
         send(src, "phase 3 foundation placed (" + placedFoundation + ")");
-        send(src, "phase 4 iterative placed (" + placedIterative + ")");
-        for (PhasedPlanner.PhaseEvent e : phased.events()) {
-            if (e.kind() == PhasedPlanner.PhaseEvent.Kind.CROSS_STREET) {
-                send(src, "  cross-street inserted: " + e.detail());
+
+        // Phase 4a — proactive cross-street planning.
+        int proactiveInserted = countByKind(phased.events(),
+                PhasedPlanner.PhaseEvent.Kind.PROACTIVE_CROSS_STREET);
+        int proactiveSkipped = countByKind(phased.events(),
+                PhasedPlanner.PhaseEvent.Kind.PROACTIVE_SKIPPED);
+        if (proactiveInserted + proactiveSkipped > 0) {
+            send(src, "phase 4a cross-street planning: inserted="
+                    + proactiveInserted + " skipped=" + proactiveSkipped);
+            for (PhasedPlanner.PhaseEvent e : phased.events()) {
+                switch (e.kind()) {
+                    case PROACTIVE_CROSS_STREET -> send(src, "  inserted: " + e.detail());
+                    case PROACTIVE_SKIPPED -> send(src, "  skipped: " + e.detail());
+                    default -> {}
+                }
             }
         }
+
+        send(src, "phase 4b placed (" + placedIterative + ")");
 
         // Per-placement detail.
         for (PlacedBuilding pb : placement.placed()) {

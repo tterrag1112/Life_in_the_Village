@@ -361,6 +361,16 @@ public final class V2FeatureMap {
         return cells[worldXToCellI(worldX)][worldZToCellJ(worldZ)];
     }
 
+    /** True iff {@code (worldX, worldZ)} sits inside the scan area
+     *  (i.e. unclamped indices are in {@code [0, gridSize)}). Use
+     *  this — not {@link #cellAt} — when "outside scan" must
+     *  terminate a walk rather than fall back to the edge cell. */
+    public boolean inBounds(int worldX, int worldZ) {
+        int i = (worldX - (centre.getX() - radius)) / CELL_SIZE;
+        int j = (worldZ - (centre.getZ() - radius)) / CELL_SIZE;
+        return i >= 0 && i < gridSize && j >= 0 && j < gridSize;
+    }
+
     /** Convenience: surface y at the cell containing {@code (worldX, worldZ)}. */
     public int surfaceYAt(int worldX, int worldZ) {
         return cellAt(worldX, worldZ).elevationY();

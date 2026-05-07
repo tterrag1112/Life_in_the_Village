@@ -46,7 +46,7 @@ public final class SpinePlanner {
     private SpinePlanner() {}
 
     public static Spine plan(SiteContext ctx, List<BuildingType> selected,
-                             ServerLevel level) {
+                             int villageRadius, ServerLevel level) {
         StructureSizeCache sizes = new StructureSizeCache(level);
         String culture = ctx.culture().id();
 
@@ -63,8 +63,13 @@ public final class SpinePlanner {
                 townHallMaxSide = Math.max(info.width(), info.length());
             }
         }
-        int spineLength = Math.max(MIN_SPINE_LENGTH,
+        // Cap at 2 * villageRadius so villages stay compact on the
+        // tier scale; without this, total_frontage * 0.5 produces
+        // ~300-block spines for CITY tier and elongates the village
+        // beyond the radius the viability check assumed.
+        int idealLength = Math.max(MIN_SPINE_LENGTH,
                 (int) Math.round(totalFrontage * 0.5));
+        int spineLength = Math.min(idealLength, 2 * villageRadius);
 
         BlockPos anchor = ctx.anchor();
         Vec3 dir = unit(ctx.primarySpineDirection());
