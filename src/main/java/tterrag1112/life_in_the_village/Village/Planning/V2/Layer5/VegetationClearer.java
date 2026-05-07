@@ -121,7 +121,7 @@ public final class VegetationClearer {
         if (state.is(BlockTags.SAPLINGS)) return true;
         if (state.is(BlockTags.FLOWERS)) return true;
         if (state.is(BlockTags.SMALL_FLOWERS)) return true;
-        if (state.is(BlockTags.TALL_FLOWERS)) return true;
+        if (state.is(BlockTags.FLOWERS)) return true;
         if (state.is(BlockTags.REPLACEABLE_BY_TREES)) return true;
         if (state.is(Blocks.SHORT_GRASS)
                 || state.is(Blocks.TALL_GRASS)
