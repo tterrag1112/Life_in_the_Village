@@ -1145,9 +1145,21 @@ public final class PhasedPlanner {
         // Default-culture entries are the fallback inside the registry.
         List<AdjunctPlotType> registered =
                 AdjunctPlotRegistry.getPlotsForBuilding(type, state.culture);
-        if (registered.isEmpty()) return AdjunctPlanOutcome.NONE;
 
-        AdjunctPlotType plotType = registered.get(0);
+        // B2.6 — HOUSE is intentionally absent from the registry
+        // (doc 02 §"HOMESTEAD_*"). When the registry returns no
+        // entries for HOUSE, fall through to the probability-gated
+        // homestead roll: per-tier dice → weighted draw across
+        // HOMESTEAD_* types from the culture's bias table.
+        AdjunctPlotType plotType;
+        if (registered.isEmpty()) {
+            if (type != BuildingType.HOUSE) return AdjunctPlanOutcome.NONE;
+            AdjunctPlotType rolled = rollHomesteadType(state);
+            if (rolled == null) return AdjunctPlanOutcome.NONE;
+            plotType = rolled;
+        } else {
+            plotType = registered.get(0);
+        }
         AdjunctPreference pref = (variant != null) ? variant.adjunct() : null;
 
         // Geometry: manifest preference overrides registry defaults.
@@ -1179,6 +1191,64 @@ public final class PhasedPlanner {
         }
 
         return required ? AdjunctPlanOutcome.REQUIRED_FAILED : AdjunctPlanOutcome.NONE;
+    }
+
+    /**
+     * B2.6 — HOUSE-only homestead roll. The registry intentionally
+     * omits HOUSE so most houses don't end up with adjuncts. This
+     * helper performs the doc-11 probability gate (per-tier
+     * inclusion) and, on success, does a weighted draw across the
+     * 7 {@code HOMESTEAD_*} {@link AdjunctPlotType}s using the
+     * culture's {@code homesteadPlotWeights}.
+     *
+     * <p>Per-tier inclusion (matches doc 11 §"Probability gating"):</p>
+     * <ul>
+     *   <li>HAMLET — 80%</li>
+     *   <li>VILLAGE — 60%</li>
+     *   <li>TOWN — 30%</li>
+     *   <li>CITY — 10%</li>
+     * </ul>
+     *
+     * <p>Returns null on probability miss or on empty draw — the
+     * caller treats null as {@code AdjunctPlanOutcome.NONE} and the
+     * HOUSE places without an adjunct.</p>
+     */
+    private static AdjunctPlotType rollHomesteadType(State state) {
+        double inclusion = switch (state.ctx.tier()) {
+            case HAMLET    -> 0.80;
+            case VILLAGE   -> 0.60;
+            case TOWN      -> 0.30;
+            case CITY      -> 0.10;
+            default        -> 0.0;
+        };
+        if (state.rng.nextDouble() >= inclusion) return null;
+
+        // Weighted draw across the 7 HOMESTEAD_* types.
+        AdjunctPlotType[] pool = new AdjunctPlotType[]{
+                AdjunctPlotType.HOMESTEAD_COOP,
+                AdjunctPlotType.HOMESTEAD_GARDEN,
+                AdjunctPlotType.HOMESTEAD_PEN,
+                AdjunctPlotType.HOMESTEAD_BEES,
+                AdjunctPlotType.HOMESTEAD_WORKSHOP,
+                AdjunctPlotType.HOMESTEAD_ORCHARD,
+                AdjunctPlotType.HOMESTEAD_WOODSHED};
+        var bias = state.ctx.culture().planningBias();
+        double total = 0.0;
+        double[] weights = new double[pool.length];
+        for (int i = 0; i < pool.length; i++) {
+            double w = bias.homesteadPlotWeightFor(pool[i].name());
+            if (w < 0) w = 0;
+            weights[i] = w;
+            total += w;
+        }
+        if (total <= 0.0) return null;
+        double draw = state.rng.nextDouble() * total;
+        double acc = 0.0;
+        for (int i = 0; i < pool.length; i++) {
+            acc += weights[i];
+            if (draw < acc) return pool[i];
+        }
+        return pool[pool.length - 1];
     }
 
     /** Computes the adjunct AABB for a single candidate face and

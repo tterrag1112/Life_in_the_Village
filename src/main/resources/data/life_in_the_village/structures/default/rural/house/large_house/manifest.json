@@ -9,5 +9,10 @@
   "tags": ["multi_family", "wealthy"],
   "preferredTags": ["RESIDENTIAL_CORE", "CIVIC_ADJACENT"],
   "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
-  "maxPerVillage": 4
+  "maxPerVillage": 4,
+  "adjunct": {
+    "size": [7, 7],
+    "side": "BACK",
+    "required": false
+  }
 }

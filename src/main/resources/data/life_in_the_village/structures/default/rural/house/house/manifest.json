@@ -9,5 +9,10 @@
   "tags": ["single_family"],
   "preferredTags": [],
   "colorSlots": ["PRIMARY"],
-  "maxPerVillage": 999
+  "maxPerVillage": 999,
+  "adjunct": {
+    "size": [5, 5],
+    "side": "BACK",
+    "required": false
+  }
 }

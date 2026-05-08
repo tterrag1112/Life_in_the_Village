@@ -30,6 +30,7 @@ spec matches reality.
 | B2.3 | Industry adjuncts + building gardens | Implemented | AdjunctPlotRegistry culture-keyed (default-only); 15 rural manifests gain doc 07/08 adjunct preferences; ARMORER/TOOLSMITH/LIBRARY/MINE registered. FISHERY skipped (no manifest folder); MILLER skipped (malformed path). |
 | B2.4 | Parks and gardens | Implemented | Layer 4 post-pass `ParkCandidateFinder` reserves up to 3 GardenPlots per village (HAMLET 0 / VILLAGE 0–1 / TOWN 1 / CITY 1–3); `ParkRenderer` runs preserve-vs-compose with procedural primitives + NBT-skip. 5 doc-09 styles. CulturePlanningBias gains parkPriority + parkPreferenceWeight. |
 | B2.5 | Farm plot rework | Implemented | `FarmSector` + 4-vertex terrain-trimmed polygon plots. Doc-10 tier-only sector radius (HAMLET 15/VILLAGE 20/TOWN 25/CITY 30) with farmPriority slack. Per-farmhouse plot count (HAMLET 2/VILLAGE 2-3/TOWN 3-4/CITY 4-6). FarmCropPicker uses CulturePlanningBias.cropPreference. New FarmSectorRenderer replaces legacy FarmPlotPlacer in the V2 path; placer parked. |
+| B2.6 | Homesteading | Implemented | 7 HOMESTEAD_* AdjunctPlotTypes (added WORKSHOP/ORCHARD/WOODSHED to B2.1's 4). PhasedPlanner.rollHomesteadType probability-gates HOUSE adjuncts (HAMLET 80%/VILLAGE 60%/TOWN 30%/CITY 10%) + weighted draw from `CulturePlanningBias.homesteadPlotWeights`. AbstractHomesteadGoal.Spouse (WORK_*) + .Child (SOCIAL) dispatch to HomesteadHandlerRegistry handlers. HouseholdData gains `homesteadPlotType`. **Track B complete.** |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -1580,3 +1581,183 @@ Next: B2.6 (homesteading) per UNIFIED_REWORK_PLAN — wires the
 HOMESTEAD_* AdjunctPlotTypes that B2.1 declared but B2.3 didn't
 register (HOUSE buildings get coops / gardens / pens / bees with
 probability gating).
+
+### 2026-05-08 — B2.6 landed (homesteading) — Track B COMPLETE
+
+Track B's final phase. Wires the HOMESTEAD_* AdjunctPlotTypes that
+B2.1 declared but B2.3 intentionally left unregistered, plus three
+new HOMESTEAD_* values per the user's "6 plot types" decision. The
+roll is probability-gated per village size tier so most large
+cities show no homesteads while hamlets show many. SPOUSE NPCs
+work the homestead during any WORK_* DayPhase, CHILDREN during
+SOCIAL — HEAD's profession goals stay untouched. Goal dispatch
+goes through a fresh AbstractHomesteadGoal + HomesteadHandler
+pattern so future B2.6+1 polish can drop in better animations or
+content without re-architecting.
+
+**Scope decisions (user-confirmed):**
+
+- Plot pool — *6 types* (prompt's literal list). Added
+  HOMESTEAD_WORKSHOP, HOMESTEAD_ORCHARD, HOMESTEAD_WOODSHED to the
+  AdjunctPlotType enum alongside the 4 from B2.1
+  (HOMESTEAD_COOP / HOMESTEAD_GARDEN / HOMESTEAD_PEN /
+  HOMESTEAD_BEES). Total: 7.
+- Goal pattern — *AbstractHomesteadGoal + handler registry*. Two
+  thin Spouse / Child subclasses pin the FamilyRole filter; all
+  per-tick work routes through HomesteadHandlerRegistry's
+  per-AdjunctPlotType handler.
+- Family role extension — *filter on existing SPOUSE / CHILD*. No
+  HOMESTEADER / HOMEMAKER role additions in B2.6. canUse()
+  predicates handle the filter cleanly.
+- Probability roll — *inside PhasedPlanner.planAdjunct*. HOUSE is
+  detected via the `registered.isEmpty()` short-circuit (HOUSE is
+  intentionally absent from AdjunctPlotRegistry per doc 02);
+  PhasedPlanner falls through to a per-tier probability gate, then
+  a weighted draw from `CulturePlanningBias.homesteadPlotWeights`.
+
+**Schema additions:**
+
+- `Village/Decoration/Adjunct/AdjunctPlotType.java` — three new
+  enum values appended (codec stable; existing saves load
+  unchanged because the codec is StringRepresentable).
+- `Cultures/CultureBundles.java` —
+  `CulturePlanningBias.homesteadPlotWeights:
+  Map<String, Double>`. Default weights bias toward COOP / GARDEN
+  (1.3) and away from BEES (0.6). Codec adds an optionalFieldOf;
+  legacy cultures load unchanged. Backwards-compat constructors
+  preserved (4-arg, B2.4-shape, and B2.5-shape all delegate to
+  the canonical 10-arg).
+- `Entities/HouseholdData.java` — `homesteadPlotType:
+  AdjunctPlotType?` field plus codec optionalFieldOf. Set once
+  by `setHomesteadPlotType` (no-op if already set, so the
+  one-roll-per-house contract is enforced at the data layer).
+
+**HOUSE manifest extensions** (3 manifests):
+
+- `cottage` — 4×4 BACK adjunct preference.
+- `house` — 5×5 BACK.
+- `large_house` — 7×7 BACK (larger HOUSEs accommodate larger
+  homesteads).
+
+All `required: false` so HOUSEs that fail the probability gate or
+can't fit a homestead place without one — no building drops.
+
+**Probability gate** (PhasedPlanner.rollHomesteadType):
+
+```
+HAMLET   → 80% inclusion
+VILLAGE  → 60%
+TOWN     → 30%
+CITY     → 10%
+```
+
+On inclusion success, weighted draw across the 7 HOMESTEAD_*
+types using `bias.homesteadPlotWeightFor(typeName)`. Returns
+null on either probability miss or zero-total weights; caller
+treats null as `AdjunctPlanOutcome.NONE` and the HOUSE places
+without an adjunct.
+
+**Household formation hook** (VillageInhabitantPopulator):
+
+When a household is created via `HouseholdData.create`, the
+populator scans `data.getAdjunctPlotsForBuilding(buildingId)` for
+any HOMESTEAD_*-prefixed AdjunctPlot and stamps the household's
+`homesteadPlotType` once. Subsequent NPC bootstrap reads the
+field via `data.getHouseholdForNpc(uuid).getHomesteadPlotType()`
+to wire dispatch.
+
+**Goal hierarchy** (`Entities/Goals/Homestead/`):
+
+- `HomesteadHandler` interface — `tick(Context)`, optional
+  `onArrive` / `onStop`. Context bundles npc, level, data, parent
+  house, household, plot, tickInGoal — keeps handler signatures
+  short.
+- `HomesteadHandlerRegistry` — static `EnumMap<AdjunctPlotType,
+  HomesteadHandler>` populated at class init; `getOrFallback`
+  returns `GENERIC_CHORES` for null / unregistered types.
+- `AbstractHomesteadGoal` — base class. `canUse` filters on
+  FamilyRole + DayPhase + household resolution. `start`
+  dispatches to the registered handler. `tick` forwards the
+  Context; handler returns true to end the cycle.
+- `Spouse` (concrete subclass) — runs during any
+  `DayPhase.isWork()` phase.
+- `Child` (concrete subclass) — runs during `DayPhase.SOCIAL`.
+
+**Shipping handlers** (under `Handlers/`):
+
+| Handler | Cycle | Output |
+|---------|-------|--------|
+| ChickenCoopHandler  | 100 ticks | 1 EGG |
+| VegetableGardenHandler | 110 ticks | 1 CARROT or POTATO (alternates) |
+| PenHandler          | 130 ticks | 1 LEATHER or WHITE_WOOL |
+| BeehivesHandler     | 160 ticks | 1 HONEY_BOTTLE or HONEYCOMB |
+| WorkshopHandler     |  90 ticks | 1 STICK (placeholder craft scrap) |
+| OrchardHandler      | 120 ticks | 1 APPLE |
+| WoodshedHandler     | 140 ticks | 2 OAK_PLANKS |
+| GenericChoresHandler |  80 ticks idle | — (fallback when no plot) |
+
+Handlers walk to the plot origin during the first 20 ticks, then
+"work" until the cycle tick. Output deposits to the NPC's
+`getPersonalInventory()`; existing profession-economy logic
+periodically transfers to household storage. Production rates
+are deliberately lower than profession goals — homesteads are
+family-scale, not commercial.
+
+**Goal registration** (TownspersonMob.registerGoals):
+
+```java
+this.goalSelector.addGoal(15,
+        new AbstractHomesteadGoal.Spouse(this));
+this.goalSelector.addGoal(15,
+        new AbstractHomesteadGoal.Child(this));
+```
+
+Priority slot 15 — below profession goals (which sit higher) so
+HEAD's work always wins. SPOUSE / CHILD have no profession goals
+competing.
+
+**Debug command:** `/liv homestead <village>` lists every HOUSE,
+its rolled plot type (or "—" / "(no household yet)"), member
+count. Header reports total HOUSEs and how many won the
+probability gate.
+
+**Smoke test contract (live, in-world):**
+
+1. Spawn a HAMLET-tier village. Run `/liv homestead <name>` —
+   expect ~80% of HOUSEs to show a rolled plot type. Variety
+   across types should reflect the weighted draw (COOP and
+   GARDEN most common; BEES rare).
+2. Spawn a CITY-tier village. Expect ~10% rolled — most HOUSEs
+   show "—". Verify city houses still place cleanly without an
+   adjunct.
+3. `/save-all` + restart + `/liv homestead <name>` — rolled
+   plot types persist on HouseholdData via the codec
+   optionalFieldOf.
+4. Watch a SPOUSE NPC during WORK_PRIMARY phase. Should walk to
+   its plot origin and idle for ~100 ticks before producing an
+   item into its personal inventory.
+5. Watch a CHILD NPC during SOCIAL phase. Same loop with
+   GenericChoresHandler if the household has no plot.
+6. Spawn a HOUSE in cramped terrain — confirm the HOUSE places
+   without an adjunct (`required: false` on the manifest), the
+   household forms with `homesteadPlotType=null`, and SPOUSE /
+   CHILD run `GenericChoresHandler`.
+
+**NBT authoring (user task):**
+
+Each HOMESTEAD_* AdjunctPlotType gets its own NBT path under
+`structures/{culture}/decoration/homestead/{type}.nbt`. The
+existing AdjunctPlot rendering pass logs deferred NBT placements;
+B2.6 doesn't add per-type renderers (handlers ship the
+functional loop only). Visual polish — coop blocks, beehive
+geometry, workshop tools, orchard saplings — lives in the NBT
+files when authored.
+
+**Cumulative pending verification:** A1a + A2 + A3 + A4 + A1b + B1
++ B2.1 + B2.2 + B2.3 + B2.4 + B2.5 + B2.6 in a single live run.
+
+Track B is **COMPLETE**. Decoration phases 0-3 from doc 01 onward
+all ship: framework (B2.1), street furniture + welcome marker +
+noticeboard (B2.2), industry + garden adjuncts (B2.3), parks
+(B2.4), farms (B2.5), homesteads (B2.6). Track C and beyond
+proceed independently.

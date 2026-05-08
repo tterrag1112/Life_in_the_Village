@@ -62,7 +62,15 @@ public enum AdjunctPlotType implements StringRepresentable {
     /** Pig / sheep pen attached to a house. */
     HOMESTEAD_PEN       (5, 5, 2),
     /** Beehives attached to a house. */
-    HOMESTEAD_BEES      (3, 3, 1);
+    HOMESTEAD_BEES      (3, 3, 1),
+    /** B2.6 — small workshop annex (workbench + storage; tinkerer's
+     *  shed). Spouse runs idle craft animations here during WORK
+     *  phases. */
+    HOMESTEAD_WORKSHOP  (4, 4, 2),
+    /** B2.6 — household orchard: a few fruit trees, plot-scale. */
+    HOMESTEAD_ORCHARD   (5, 5, 2),
+    /** B2.6 — log-and-plank stockpile attached to a house. */
+    HOMESTEAD_WOODSHED  (4, 4, 1);
 
     private final int defaultHalfWidthX;
     private final int defaultHalfLengthZ;

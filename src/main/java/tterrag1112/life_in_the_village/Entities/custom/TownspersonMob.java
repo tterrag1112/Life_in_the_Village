@@ -299,6 +299,19 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     @Override
     protected void registerGoals() {
         ProfessionGoalFactory.register(this);
+        // B2.6 — homestead goals dispatch to per-plot-type handlers
+        // for SPOUSE (any WORK_* phase) and CHILD (SOCIAL phase). The
+        // goal is registered for all NPCs; canUse() filters by
+        // FamilyRole + DayPhase so HEAD-role NPCs and other phases
+        // skip cleanly. Priority slot lower than profession goals
+        // so HEAD's profession always wins; SPOUSE / CHILD don't
+        // have profession goals competing.
+        this.goalSelector.addGoal(15,
+                new tterrag1112.life_in_the_village.Entities.Goals
+                        .Homestead.AbstractHomesteadGoal.Spouse(this));
+        this.goalSelector.addGoal(15,
+                new tterrag1112.life_in_the_village.Entities.Goals
+                        .Homestead.AbstractHomesteadGoal.Child(this));
     }
 
     // =========================================================================

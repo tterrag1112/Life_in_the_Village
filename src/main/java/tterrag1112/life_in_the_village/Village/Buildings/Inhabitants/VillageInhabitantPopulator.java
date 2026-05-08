@@ -178,6 +178,16 @@ public final class VillageInhabitantPopulator {
             for (TownspersonMob npc : houseResidents) memberIds.add(npc.getUUID());
             HouseholdData household = HouseholdData.create(
                     building.getId(), memberIds, childCount, tick);
+            // B2.6 — pull the rolled HOMESTEAD_* type off the
+            // building's AdjunctPlot (if one was reserved for HOUSE
+            // by PhasedPlanner) so the household goal stack knows
+            // which homestead handler to dispatch.
+            for (var plot : data.getAdjunctPlotsForBuilding(building.getId())) {
+                if (plot.type().name().startsWith("HOMESTEAD_")) {
+                    household.setHomesteadPlotType(plot.type());
+                    break;
+                }
+            }
             data.addHousehold(household);
             data.markDirty();
         }

@@ -9,5 +9,10 @@
   "tags": ["compact", "cottage", "single_family"],
   "preferredTags": [],
   "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
-  "maxPerVillage": 999
+  "maxPerVillage": 999,
+  "adjunct": {
+    "size": [4, 4],
+    "side": "BACK",
+    "required": false
+  }
 }

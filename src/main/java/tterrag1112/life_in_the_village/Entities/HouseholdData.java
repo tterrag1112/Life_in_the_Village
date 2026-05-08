@@ -4,6 +4,7 @@ package tterrag1112.life_in_the_village.Entities;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.UUIDUtil;
+import tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlotType;
 
 import java.util.*;
 
@@ -59,9 +60,17 @@ public class HouseholdData {
                     Codec.LONG.fieldOf("formedTick")
                             .forGetter(h -> h.formedTick),
                     Codec.LONG.optionalFieldOf("pooledWealth", 0L)
-                            .forGetter(h -> h.pooledWealth)
-
-            ).apply(i, HouseholdData::new));
+                            .forGetter(h -> h.pooledWealth),
+                    // B2.6 — homestead plot type rolled at HOUSE
+                    // placement; legacy households load with empty.
+                    AdjunctPlotType.CODEC
+                            .optionalFieldOf("homesteadPlotType")
+                            .forGetter(h -> Optional.ofNullable(h.homesteadPlotType))
+            ).apply(i, (id, bid, members, type, tick, wealth, plot) -> {
+                HouseholdData hh = new HouseholdData(id, bid, members, type, tick, wealth);
+                plot.ifPresent(hh::setHomesteadPlotType);
+                return hh;
+            }));
 
     // -------------------------------------------------------------------------
     // Fields
@@ -73,6 +82,10 @@ public class HouseholdData {
     private       HouseholdType     type;
     private final long              formedTick;
     private long pooledWealth = 0L;
+    /** B2.6 — rolled at HOUSE placement; null when the HOUSE didn't
+     *  win the probability gate or when the manifest declared no
+     *  adjunct preference. Once set, never reassigned. */
+    private       AdjunctPlotType   homesteadPlotType;
 
 
     // -------------------------------------------------------------------------
@@ -160,6 +173,14 @@ public class HouseholdData {
     public long           getFormedTick()   { return formedTick; }
 
     public long getPooledWealth()         { return pooledWealth; }
+
+    /** B2.6 — rolled plot type, or null if this household has no
+     *  homestead. Once set, never reassigned. */
+    public AdjunctPlotType getHomesteadPlotType()  { return homesteadPlotType; }
+    public void setHomesteadPlotType(AdjunctPlotType plotType) {
+        if (this.homesteadPlotType == null) this.homesteadPlotType = plotType;
+    }
+    public boolean hasHomestead() { return homesteadPlotType != null; }
 
     public void depositToPool(long bronze) {
         if (bronze > 0) pooledWealth += bronze;
