@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Village.Decoration.Framework;
 import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -111,16 +112,18 @@ public final class DecorationProfileRegistry {
      */
     public List<DecorationProfile> eligibleFor(DecorationSlot slot,
                                                String culture,
+                                               VillageSizeTier villageTier,
                                                Optional<Identifier> slotBiome) {
         if (slot == null) return List.of();
         // Doc 01 edge case: slot without tags carries no signal.
         if (slot.tags().isEmpty()) return List.of();
 
-        // Pass 1: hard filters (slot-tag + footprint + biome).
+        // Pass 1: hard filters (slot-tag + footprint + biome + tier).
         List<DecorationProfile> matches = new ArrayList<>();
         for (DecorationProfile p : byPieceId.values()) {
             if (!p.matchesSlot(slot)) continue;
             if (!biomeMatches(p, slotBiome)) continue;
+            if (!p.tierAllows(villageTier)) continue;
             matches.add(p);
         }
         if (matches.isEmpty()) return List.of();
@@ -139,11 +142,20 @@ public final class DecorationProfileRegistry {
         return Collections.unmodifiableList(defaultCulture);
     }
 
+    /** Backwards-compat overload — assumes the village is at
+     *  {@link VillageSizeTier#CITY} so tier gating is permissive
+     *  (matches every profile that would have matched pre-B2.2). */
+    public List<DecorationProfile> eligibleFor(DecorationSlot slot,
+                                               String culture,
+                                               Optional<Identifier> slotBiome) {
+        return eligibleFor(slot, culture, VillageSizeTier.CITY, slotBiome);
+    }
+
     /** Convenience overload when biome data isn't available — the
      *  matcher passes {@link Optional#empty()} and any profile with
      *  a biome constraint is filtered out. */
     public List<DecorationProfile> eligibleFor(DecorationSlot slot, String culture) {
-        return eligibleFor(slot, culture, Optional.empty());
+        return eligibleFor(slot, culture, VillageSizeTier.CITY, Optional.empty());
     }
 
     // ── Diagnostics ──────────────────────────────────────────────────────

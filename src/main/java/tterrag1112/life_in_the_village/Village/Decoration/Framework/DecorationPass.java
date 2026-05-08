@@ -67,8 +67,10 @@ public final class DecorationPass {
 
         long started = System.nanoTime();
 
+        DecorationDensityProfile density = DecorationDensityRegistry.INSTANCE
+                .resolve(cultureFor(village), village.getSizeTier());
         DecorationSlotEmitter.Context ctx =
-                new DecorationSlotEmitter.Context(village, data, layout);
+                new DecorationSlotEmitter.Context(village, data, layout, density);
         List<DecorationSlot> slots = DecorationSlotEmitter.emit(ctx);
         long emitNanos = System.nanoTime() - started;
 
@@ -78,6 +80,7 @@ public final class DecorationPass {
                 DecorationProfileRegistry.INSTANCE,
                 village.getId(),
                 cultureFor(village),
+                village.getSizeTier(),
                 /* slotBiomes */ Map.of(),
                 level.getGameTime());
         long matchNanos = System.nanoTime() - matchStart;
@@ -91,6 +94,21 @@ public final class DecorationPass {
         for (DecorationPlacement placement : placements) {
             stamp(level, placement);
             data.addDecorationPlacement(placement);
+        }
+
+        // B2.2 — initial-write the village's noticeboard. Without a
+        // user-authored notice_board NBT, stamp() has burned the
+        // slot above; NoticeboardWriter places a vanilla sign at
+        // PLAZA_NOTICE_BOARD positions and populates four lines from
+        // VillagePolicy / RequestBoard / kingdom decrees.
+        // NoticeboardTickHandler keeps the content fresh on a 24000-
+        // tick poll thereafter.
+        try {
+            tterrag1112.life_in_the_village.Village.Decoration.StreetFurniture
+                    .NoticeboardWriter.writeForVillage(level, village, data);
+        } catch (Exception e) {
+            LOGGER.warn("DecorationPass: NoticeboardWriter failed for {}: {}",
+                    village.getName(), e.getMessage());
         }
 
         LOGGER.info("DecorationPass: village {} — {} slots emitted, {} placed "

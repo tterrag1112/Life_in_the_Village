@@ -73,9 +73,26 @@ public final class DecorationSlotEmitter {
 
     /** Bundle of emitter inputs — keeps the entry point's signature
      *  short while letting the algorithms reach village + buildings
-     *  + roads. */
+     *  + roads. B2.2: optional {@link DecorationDensityProfile}
+     *  overrides the legacy hardcoded density constants; passing
+     *  {@code null} leaves emission at {@link DecorationDensityProfile#LEGACY_DEFAULT}. */
     public record Context(Village village, VillageSavedData data,
-                          @Nullable VillageLayout layout) {}
+                          @Nullable VillageLayout layout,
+                          @Nullable DecorationDensityProfile density) {
+
+        /** Backwards-compat constructor — keeps pre-B2.2 callers
+         *  (debug commands, tests) compiling with the legacy density. */
+        public Context(Village village, VillageSavedData data,
+                       @Nullable VillageLayout layout) {
+            this(village, data, layout, null);
+        }
+
+        /** Density to use, falling back to {@link DecorationDensityProfile#LEGACY_DEFAULT}
+         *  when the caller didn't supply one. */
+        public DecorationDensityProfile densityOrDefault() {
+            return density != null ? density : DecorationDensityProfile.LEGACY_DEFAULT;
+        }
+    }
 
     /**
      * Doc 01 entry point. Returns slots in deterministic emission
@@ -110,6 +127,9 @@ public final class DecorationSlotEmitter {
     private static void emitRoadSide(Context ctx, @Nullable BlockPos centre,
                                      List<DecorationSlot> out) {
         if (ctx.layout() == null) return; // no road centerlines reachable
+        DecorationDensityProfile density = ctx.densityOrDefault();
+        int sampleStep = Math.max(1, density.roadSideSampleStep());
+        int sideOffset = density.roadSideOffset();
         boolean alternate = false;
         // VillageLayout backs centerlines with an IdentityHashMap whose
         // iteration order is JVM-dependent. Sort by the first point of
@@ -130,9 +150,9 @@ public final class DecorationSlotEmitter {
         });
         for (List<BlockPos> centerline : centerlines) {
             if (centerline == null || centerline.size() < 2) continue;
-            for (int i = ROAD_SIDE_SAMPLE_STEP;
+            for (int i = sampleStep;
                  i < centerline.size() - 1;
-                 i += ROAD_SIDE_SAMPLE_STEP) {
+                 i += sampleStep) {
                 BlockPos on = centerline.get(i);
                 BlockPos prev = centerline.get(Math.max(0, i - 1));
                 BlockPos next = centerline.get(Math.min(centerline.size() - 1, i + 1));
@@ -142,8 +162,8 @@ public final class DecorationSlotEmitter {
                 int perpX = -headZ, perpZ = headX;
 
                 for (int side : new int[]{+1, -1}) {
-                    BlockPos pos = on.offset(perpX * ROAD_SIDE_OFFSET * side, 0,
-                            perpZ * ROAD_SIDE_OFFSET * side);
+                    BlockPos pos = on.offset(perpX * sideOffset * side, 0,
+                            perpZ * sideOffset * side);
                     DecorationTag tag = alternate
                             ? DecorationTag.ROAD_SIDE_LARGE
                             : DecorationTag.ROAD_SIDE_SMALL;
@@ -168,6 +188,9 @@ public final class DecorationSlotEmitter {
     private static void emitBuildingGaps(Context ctx, List<Building> buildings,
                                          @Nullable BlockPos centre,
                                          List<DecorationSlot> out) {
+        DecorationDensityProfile density = ctx.densityOrDefault();
+        int gapMin = density.buildingGapMin();
+        int gapMax = density.buildingGapMax();
         for (int i = 0; i < buildings.size(); i++) {
             Building a = buildings.get(i);
             BlockPos aFront = frontFaceCentre(a);
@@ -178,7 +201,7 @@ public final class DecorationSlotEmitter {
                 int dx = bFront.getX() - aFront.getX();
                 int dz = bFront.getZ() - aFront.getZ();
                 double d = Math.sqrt(dx * (double) dx + dz * (double) dz);
-                if (d < BUILDING_GAP_MIN || d > BUILDING_GAP_MAX) continue;
+                if (d < gapMin || d > gapMax) continue;
 
                 BlockPos mid = new BlockPos(
                         (aFront.getX() + bFront.getX()) / 2,
@@ -242,6 +265,9 @@ public final class DecorationSlotEmitter {
 
     private static void emitFacadeOrnaments(Context ctx, List<Building> buildings,
                                             List<DecorationSlot> out) {
+        DecorationDensityProfile density = ctx.densityOrDefault();
+        int ornamentsPerWall = Math.max(0, density.facadeOrnamentsPerWall());
+        if (ornamentsPerWall == 0) return;
         for (Building b : buildings) {
             Direction facing = frontFacingOf(b);
             int wallLength = wallLengthAlongFacing(b, facing);
@@ -249,8 +275,8 @@ public final class DecorationSlotEmitter {
             BlockPos[] wallEnds = frontWallEnds(b);
             BlockPos start = wallEnds[0];
             BlockPos end = wallEnds[1];
-            for (int n = 1; n <= FACADE_ORNAMENTS_PER_WALL; n++) {
-                double t = n / (double) (FACADE_ORNAMENTS_PER_WALL + 1);
+            for (int n = 1; n <= ornamentsPerWall; n++) {
+                double t = n / (double) (ornamentsPerWall + 1);
                 int x = (int) Math.round(start.getX() + (end.getX() - start.getX()) * t);
                 int z = (int) Math.round(start.getZ() + (end.getZ() - start.getZ()) * t);
                 BlockPos onWall = new BlockPos(x, b.getShape().getOrigin().getY(), z);
@@ -274,12 +300,15 @@ public final class DecorationSlotEmitter {
                                                    @Nullable BlockPos centre,
                                                    List<DecorationSlot> out) {
         if (centre == null || buildings.isEmpty()) return;
+        DecorationDensityProfile density = ctx.densityOrDefault();
+        double angleStep = density.villageBoundaryAngleStepDeg();
+        if (angleStep <= 0.0) return;
         // Sample at every angular step. For each angle, find the
         // outermost building roughly in that direction and emit a
         // slot just outside it.
-        int steps = (int) Math.round(360.0 / VILLAGE_BOUNDARY_ANGLE_STEP_DEG);
+        int steps = (int) Math.round(360.0 / angleStep);
         for (int i = 0; i < steps; i++) {
-            double angle = Math.toRadians(i * VILLAGE_BOUNDARY_ANGLE_STEP_DEG);
+            double angle = Math.toRadians(i * angleStep);
             double cx = Math.cos(angle), cz = Math.sin(angle);
             int outerR = outerRingRadiusInDirection(centre, buildings, cx, cz);
             if (outerR <= 0) continue;

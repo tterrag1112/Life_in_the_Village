@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Village.Decoration.Framework;
 import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -85,6 +86,7 @@ public final class DecorationMatcher {
             DecorationProfileRegistry registry,
             UUID villageId,
             String villageCulture,
+            VillageSizeTier villageTier,
             Map<UUID, net.minecraft.resources.Identifier> slotBiomes,
             long tickNow) {
 
@@ -97,6 +99,8 @@ public final class DecorationMatcher {
         }
         Map<UUID, net.minecraft.resources.Identifier> biomes =
                 slotBiomes != null ? slotBiomes : Map.of();
+        VillageSizeTier resolvedTier = villageTier != null
+                ? villageTier : VillageSizeTier.CITY;
 
         // ── Pass 1: enumerate scored candidates ──────────────────────────
         record Candidate(DecorationSlot slot, DecorationProfile profile, double score) {}
@@ -105,7 +109,7 @@ public final class DecorationMatcher {
             Optional<net.minecraft.resources.Identifier> biome =
                     Optional.ofNullable(biomes.get(slot.slotId()));
             List<DecorationProfile> eligible =
-                    registry.eligibleFor(slot, villageCulture, biome);
+                    registry.eligibleFor(slot, villageCulture, resolvedTier, biome);
             for (DecorationProfile p : eligible) {
                 candidates.add(new Candidate(slot, p, score(slot, p)));
             }

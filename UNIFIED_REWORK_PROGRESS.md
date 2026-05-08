@@ -26,6 +26,7 @@ spec matches reality.
 | B1-04 | MarketStallPlacer subbuilding migration (P0d-04) | Implemented | Routed through SubBuildingScanner / SubBuildingType.STALL. Market NBTs need re-authoring with SubBuildingAnchorBlock. |
 | B1-12 | GuildHall colour fields | Implemented | AbstractGuild gains palette field; GuildPalettes table per GuildType; VariantResolver.planTint accepts forced overrides; V2 adapter wires guild halls. |
 | B2.1 | V2 envelope extension (adjunct planning + framework refactor) | Implemented | Layer 4 reserves AdjunctPlot rectangles; AdjunctPlotPlacer probe→render-only; FaceProbeOrder + PlacementStrategy deleted; manifest schema gains optional `adjunct` field. |
+| B2.2 | Street furniture + welcome marker + noticeboard content | Implemented | 14 doc-05 furniture pieces registered (tier-gated); welcome marker; sign-based noticeboard reading laws/requests/decrees on a 24000-tick refresh. DecorationProfile gains `minTier`; DecorationDensityProfile threaded through emitter. |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -857,3 +858,174 @@ Next: B2.2 (decoration profile registry population), B2.3 (industry
 adjuncts content), or wherever doc-15 ordering points. B2.1 ships
 the planning surface; content phases now have a reserved rectangle
 to render into.
+
+### 2026-05-08 — B2.2 landed (street furniture + welcome marker + noticeboard)
+
+Track B's first content phase. Populates the
+`DecorationProfileRegistry` for the road-side / building-gap /
+plaza-noticeboard / trade-road-endpoint sub-algorithms; tunes
+density per (culture × village size tier); wires the noticeboard
+to live content from `VillagePolicy` + `RequestBoard` + kingdom
+laws. NBT authoring for furniture and welcome marker pieces remains
+a user task per the prompt's scope.
+
+**Scope decisions (user-confirmed):**
+
+- Piece list — full doc-05 kit (14 pieces) over the prompt's
+  narrower 5-piece suggestion. Tier-gated per doc 05 §"Tier
+  gating".
+- Density mechanism — *both* axes. `DecorationProfile.minTier`
+  governs which pieces are eligible at each tier; new
+  `DecorationDensityProfile` (per culture × tier) governs slot
+  emission rate. Together the two produce HAMLET villages with
+  3 piece variants at 14-block road spacing and CITY villages with
+  the full 14 piece variants at 6-block road spacing.
+- Noticeboard surface — vanilla sign for now. The user asked to
+  defer the custom BlockEntity. Doc 06 originally specified a
+  lectern with a multi-tab right-click UI; B2.2 ships a 4-line sign
+  populated by `NoticeboardWriter`. When the BE lands,
+  `NoticeboardWriter#generateContent` is the only call site that
+  needs to switch output format.
+- Welcome marker — single profile, all tiers. Doc 06's 4 tier-gated
+  variants (simple_post / arch / stone_marker / gate_structure) are
+  deferred. The emitter still emits one `WELCOME_MARKER` slot per
+  gate (main + capital); the matcher's clustering check produces
+  one piece per gate.
+
+**Schema extensions:**
+
+- `DecorationProfile` gains `minTier: VillageSizeTier`. Codec
+  optional-with-default to HAMLET so legacy persisted profiles
+  load unchanged. New `tierAllows(VillageSizeTier)` predicate.
+  Backwards-compat 10-arg constructor preserved.
+- `DecorationProfileRegistry.eligibleFor(slot, culture, tier,
+  slotBiome)` — new 4-arg form filters by tier. Old 3-arg form
+  delegates with `CITY` (permissive) so callers that don't yet
+  know the tier still work.
+- `DecorationMatcher.match(...)` — gains a `villageTier` parameter;
+  the only call site is `DecorationPass`, which passes
+  `village.getSizeTier()`.
+- `DecorationDensityProfile` — new record carrying
+  `roadSideSampleStep`, `roadSideOffset`, `buildingGapMin`,
+  `buildingGapMax`, `facadeOrnamentsPerWall`,
+  `villageBoundaryAngleStepDeg`. `LEGACY_DEFAULT` matches the
+  pre-B2.2 hardcoded constants.
+- `DecorationDensityRegistry` — singleton keyed by (culture, tier),
+  default-culture entries for HAMLET / VILLAGE / TOWN / CITY.
+  Lookup falls back culture → "default" culture → LEGACY_DEFAULT.
+- `DecorationSlotEmitter.Context` — gains an optional
+  `DecorationDensityProfile`; sub-algorithms read from
+  `densityOrDefault()` instead of the public constants. The legacy
+  3-arg `Context` constructor stays for the debug command.
+
+**Content registrations (default culture):**
+
+`StreetFurnitureProfiles.registerDefaults()` registers 14 pieces:
+- HAMLET-tier: bench, planter, signpost, stacked_crates.
+- VILLAGE-tier: lamppost, notice_board.
+- TOWN-tier: handcart, woodpile, well_variant, hitching_post,
+  water_trough.
+- CITY-tier: small_shrine, communal_oven, mounting_block.
+
+Each piece declares its target tag (`ROAD_SIDE_SMALL`,
+`ROAD_SIDE_LARGE`, `BUILDING_GAP`, or `PLAZA_NOTICE_BOARD`),
+weights (primary/secondary/backfill), footprint, and
+`AnchorRule.ON_GROUND`.
+
+`WelcomeMarkerProfiles.registerDefaults()` registers the single
+welcome-marker piece targeting `WELCOME_MARKER` slots, eligible
+from HAMLET up.
+
+**Density curves (default culture):**
+
+| Tier    | road step | gap min/max | facade orn. | boundary step |
+|---------|-----------|-------------|-------------|---------------|
+| HAMLET  | 14        | 5 / 14      | 1           | 30°           |
+| VILLAGE | 10        | 4 / 13      | 2           | 20°           |
+| TOWN    |  8        | 4 / 12      | 2           | 15°           |
+| CITY    |  6        | 4 / 12      | 2           | 12°           |
+
+**Noticeboard content path (`NoticeboardWriter`):**
+
+- Locates noticeboards by filtering
+  `data.getDecorationsForVillage(villageId)` for placements whose
+  `pieceId` ends in `/sign/notice_board`.
+- For each, places a vanilla `OAK_SIGN` (rotated to match the
+  placement's facing) only over air or replaceable blocks — leaves
+  user-authored NBTs alone.
+- Generates 4 lines: village name; first active village law +
+  count; open-request count for this village; first kingdom law +
+  count. Long enum names are Title-Cased and truncated to 15
+  glyphs per line so heavy fonts don't clip awkwardly.
+- Writes via `SignBlockEntity.getFrontText` → `setMessage` →
+  `setText(text, true)` (matches the convention in
+  `DynamicSignUpdater.writeLines`).
+
+**Update mechanism:**
+
+`NoticeboardTickHandler` subscribes to `ServerTickEvent.Post` and
+calls `NoticeboardWriter.writeForVillage` for every village once
+per 24000 ticks (one in-game day). Cheap because the modulo check
+short-circuits 23999/24000 ticks. Also-runs at tick 0, giving
+noticeboards their initial content shortly after world load.
+
+The tick poll is a stopgap. `NpcLifeEventBus` doesn't yet emit
+law / request / decree events; when those land (target B2.5+ as
+part of NPC Phase 5 follow-up), `NoticeboardTickHandler` should
+swap to event subscriptions. The `NoticeboardWriter` API is
+unchanged in either case.
+
+**Wiring:**
+
+- `Life_in_the_village.commonSetup`: registers
+  `StreetFurnitureProfiles` + `WelcomeMarkerProfiles`.
+- `DecorationPass.run`: after stamping placements, calls
+  `NoticeboardWriter.writeForVillage` for the initial content
+  write.
+- `NoticeboardTickHandler` is `@EventBusSubscriber`-discovered.
+
+**NBT authoring (user task):**
+
+Profiles point at resource paths like
+`structures/default/decoration/street/{name}.nbt`,
+`structures/default/decoration/sign/welcome_marker.nbt`, and
+`structures/default/decoration/sign/notice_board.nbt`. Without
+NBTs `DecorationPass.stamp` logs "NBT not found" and burns the
+slot, but the placement record persists so
+`NoticeboardWriter` still places + populates a vanilla sign for
+the noticeboard slot. Other slots remain empty until NBTs are
+authored.
+
+**Smoke test contract (live, in-world):**
+
+Without authored NBTs:
+1. Spawn a CITY-tier village. Run `/liv decoration slots <village>`
+   and confirm the tag breakdown shows ROAD_SIDE_SMALL +
+   ROAD_SIDE_LARGE slots at ~6-block intervals along centerlines,
+   with WELCOME_MARKER slots at gates and a single
+   PLAZA_NOTICE_BOARD slot at plaza centre.
+2. Run `/liv decoration list <village>` and confirm placements at
+   the noticeboard, welcome marker, and many street-furniture
+   slots — all referencing the new piece IDs.
+3. Walk to the plaza. A vanilla oak sign should be present at the
+   noticeboard position with at minimum the village name on line 1.
+4. `/liv village law enact OPEN_TRADE` (or whatever law command
+   exists) — wait one in-game day; the sign's content should refresh
+   to include the law.
+5. Spawn a HAMLET-tier village. Confirm `/liv decoration slots`
+   shows ~3× fewer ROAD_SIDE_* slots (14-block step vs 6) and the
+   noticeboard slot is absent (HAMLETs gate noticeboards behind
+   VILLAGE tier).
+
+With user-authored NBTs at the documented paths, the same villages
+should render visible benches, planters, lampposts, etc. at the
+listed positions, plus a real welcome marker piece at each gate
+and a custom noticeboard surface (sign or NBT depending on the
+author's choice).
+
+**Cumulative pending verification:** A1a + A2 + A3 + A4 + A1b + B1
++ B2.1 + B2.2 in a single live run.
+
+Next: B2.3 (industry adjunct content) per UNIFIED_REWORK_PLAN —
+B2.1 reserved rectangles + B2.2 furniture-kit infrastructure
+together unblock the per-AdjunctPlotType content registries.

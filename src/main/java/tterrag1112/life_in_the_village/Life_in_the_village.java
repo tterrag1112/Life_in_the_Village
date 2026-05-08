@@ -87,6 +87,15 @@ public class Life_in_the_village {
         // DecorationProfiles in later phases; the polygon plaza model
         // doesn't use a per-tier kit registry.
 
+        // B2.2 — register street furniture + welcome marker +
+        // notice_board DecorationProfiles. NBTs are user-authored;
+        // the registry survives missing files (DecorationPass logs
+        // and burns the slot).
+        tterrag1112.life_in_the_village.Village.Decoration.StreetFurniture
+                .StreetFurnitureProfiles.registerDefaults();
+        tterrag1112.life_in_the_village.Village.Decoration.StreetFurniture
+                .WelcomeMarkerProfiles.registerDefaults();
+
         // Phase 10 — register placeholder road events when -Dlitv.testEvents=true
         PlaceholderEvents.registerIfEnabled();
     }

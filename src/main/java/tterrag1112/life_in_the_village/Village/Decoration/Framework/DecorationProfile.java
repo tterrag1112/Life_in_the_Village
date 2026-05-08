@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Village.Decoration.Framework;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.resources.Identifier;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -39,6 +40,17 @@ import java.util.Set;
  *                         piece in slots whose biome equals the id
  * @param anchorRule       structural-attachment requirement
  *                         (see {@link AnchorRule})
+ * @param minTier          B2.2 — minimum
+ *                         {@link VillageSizeTier} the piece is
+ *                         eligible for. The matcher discards profiles
+ *                         whose {@code minTier} is strictly above the
+ *                         village's current tier. Defaults to
+ *                         {@link VillageSizeTier#HAMLET} (always
+ *                         eligible). Doc 05 §"Tier gating": "Hamlets
+ *                         get a minimal subset; villages add
+ *                         lampposts and notice boards; towns add
+ *                         handcarts, woodpiles, wells; cities add
+ *                         shrines, communal ovens, mounting blocks."
  *
  * <p><b>Deviation from doc 01 spec.</b> The doc lists
  * {@code Optional<Biome> biomeConstraint}. {@link
@@ -58,7 +70,8 @@ public record DecorationProfile(
         int footprintSize,
         String culture,
         Optional<Identifier> biomeConstraint,
-        AnchorRule anchorRule) {
+        AnchorRule anchorRule,
+        VillageSizeTier minTier) {
 
     public DecorationProfile {
         if (pieceId == null || pieceId.isBlank()) {
@@ -82,6 +95,32 @@ public record DecorationProfile(
         biomeConstraint = biomeConstraint == null
                 ? Optional.empty() : biomeConstraint;
         if (footprintSize < 0) footprintSize = 0;
+        if (minTier == null) minTier = VillageSizeTier.HAMLET;
+    }
+
+    /** Backwards-compatible constructor — preserves call sites that
+     *  predate B2.2's tier gating. Defaults {@code minTier} to
+     *  {@link VillageSizeTier#HAMLET} (always eligible). */
+    public DecorationProfile(String pieceId,
+                             Set<DecorationTag> requiredTags,
+                             Set<DecorationTag> preferredTags,
+                             int primaryWeight, int secondaryWeight,
+                             int backfillWeight, int footprintSize,
+                             String culture,
+                             Optional<Identifier> biomeConstraint,
+                             AnchorRule anchorRule) {
+        this(pieceId, requiredTags, preferredTags,
+                primaryWeight, secondaryWeight, backfillWeight,
+                footprintSize, culture, biomeConstraint, anchorRule,
+                VillageSizeTier.HAMLET);
+    }
+
+    /** True iff this profile is allowed at {@code villageTier} —
+     *  i.e. {@code minTier} is at or below the village's current
+     *  size tier. */
+    public boolean tierAllows(VillageSizeTier villageTier) {
+        if (villageTier == null) return true;
+        return minTier.ordinal() <= villageTier.ordinal();
     }
 
     /** True iff the slot satisfies this profile's hard filters
@@ -122,6 +161,9 @@ public record DecorationProfile(
                     Identifier.CODEC.optionalFieldOf("biomeConstraint")
                             .forGetter(DecorationProfile::biomeConstraint),
                     AnchorRule.CODEC.fieldOf("anchorRule")
-                            .forGetter(DecorationProfile::anchorRule)
+                            .forGetter(DecorationProfile::anchorRule),
+                    Codec.STRING.xmap(VillageSizeTier::valueOf, Enum::name)
+                            .optionalFieldOf("minTier", VillageSizeTier.HAMLET)
+                            .forGetter(DecorationProfile::minTier)
             ).apply(instance, DecorationProfile::new));
 }
