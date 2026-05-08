@@ -78,9 +78,9 @@ public class ModModEvents {
         event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "variant_manifests"),
                 tterrag1112.life_in_the_village.Village.Decoration.Variants
                         .VariantManifestLoader.INSTANCE);
-        event.addListener(Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "cultures"),
-                tterrag1112.life_in_the_village.Village.Planning.V2.Culture
-                        .CultureRegistry.INSTANCE);
+        // Track A2 — V2 CultureRegistry deleted; cultures register from
+        // CultureRegistry.ensureInit() (Java starters) until NPC Phase 6
+        // re-introduces JSON-driven custom cultures.
         event.addListener(Identifier.fromNamespaceAndPath(
                         Life_in_the_village.MODID, "v2_structure_availability"),
                 tterrag1112.life_in_the_village.Village.Planning.V2.Layer3

@@ -27,7 +27,8 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementProfi
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.TerrainFactor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.VariantPicker;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantResolver;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -516,8 +517,10 @@ public final class PhasedPlanner {
                 BlockPos pos = state.fmap.cellWorldPos(i, j);
 
                 // Variant + footprint + rotation against the nearest road.
-                String variantId = VariantPicker.pick(type, pos, state.ctx.anchor(),
-                        state.villageRadius, state.culture, Style.RURAL);
+                String variantId = state.variantResolver.pickVariantIdForV2(
+                        type, pos, state.ctx.anchor(), state.villageRadius,
+                        state.culture, Style.RURAL, state.rng,
+                        StructureAvailabilityRegistry.INSTANCE);
                 StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
                         Style.RURAL, type, variantId, LEVEL, Rotation.NONE);
                 Footprint fp = new Footprint(info.width(), info.length());
@@ -1128,6 +1131,7 @@ public final class PhasedPlanner {
         final String culture;
         final Skeleton skeleton;
         final java.util.Random rng;
+        final VariantResolver variantResolver = new VariantResolver();
         final List<PlacedBuilding> placed = new ArrayList<>();
         final List<DroppedBuilding> dropped = new ArrayList<>();
         final List<Reservation> reservations = new ArrayList<>();

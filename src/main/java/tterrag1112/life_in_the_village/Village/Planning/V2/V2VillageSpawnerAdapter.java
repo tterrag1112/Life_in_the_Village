@@ -13,15 +13,22 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingPlacer;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.CultureResolver;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.NeighborColorIndex;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantResolver;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillagePaletteResolver;
+import tterrag1112.life_in_the_village.Village.VillageTypeData;
+import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
+import net.minecraft.world.item.DyeColor;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutDensityProfile;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.CultureRegistry;
+import tterrag1112.life_in_the_village.Cultures.Culture;
+import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
@@ -107,7 +114,7 @@ public final class V2VillageSpawnerAdapter {
 
         // ── V2 Layers 1-4 ───────────────────────────────────────────────
         V2FeatureMap fmap = V2FeatureMap.scan(level, origin, FEATURE_MAP_RADIUS);
-        Culture culture = CultureRegistry.INSTANCE.getDefault();
+        Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
         SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             LOGGER.info("V2: site UNVIABLE at {}; aborting", origin);
@@ -197,6 +204,11 @@ public final class V2VillageSpawnerAdapter {
         Map<BuildingType, List<Building>> placedBuildingsAll = new LinkedHashMap<>();
         EnumMap<BuildingType, Integer> typeCounters = new EnumMap<>(BuildingType.class);
         BuildingFootprint footprint = new BuildingFootprint();
+        // A3 — neighbour-soft-exclude colour planning. Mirrors V1
+        // VillageSpawner's per-village NeighborColorIndex usage.
+        NeighborColorIndex neighborIndex = new NeighborColorIndex();
+        VillageTypeData typeData =
+                VillageTypeRegistry.INSTANCE.getType(villageType);
         int placedOk = 0, placedFail = 0;
 
         for (PlacedBuilding b : survivors) {
@@ -207,10 +219,19 @@ public final class V2VillageSpawnerAdapter {
             String name = villageName + "_" + b.type().name().toLowerCase()
                     + "_" + idx;
 
+            // A3 — resolve full BuildingVariant (for tint colour-slots)
+            // and plan the per-building tint via VariantResolver.
+            BuildingVariant variant = VariantResolver.findById(
+                    culture.id(), Style.RURAL, b.type(), b.variantId());
+            Set<DyeColor> neighborColors = neighborIndex.colorsWithin(
+                    b.centre(), VillagePaletteResolver.NEIGHBOUR_RADIUS);
+            TintPass.Plan tintPlan = VariantResolver.planTint(
+                    typeData, variant, rng, neighborColors);
+
             try {
                 Optional<Building> placedOpt = BuildingPlacer.placeAndRegister(
                         level, buildPos, structureId, name, b.type(),
-                        b.rotation(), b.variantId(), TintPass.Plan.NONE);
+                        b.rotation(), b.variantId(), tintPlan);
                 if (placedOpt.isEmpty()) { placedFail++; continue; }
 
                 Building placedBuilding = placedOpt.get();
@@ -220,6 +241,7 @@ public final class V2VillageSpawnerAdapter {
                         k -> new ArrayList<>()).add(placedBuilding);
                 footprint.occupyBuilding(placedBuilding,
                         BuildingFootprint.DEFAULT_BUFFER);
+                neighborIndex.add(b.centre(), placedBuilding.getPrimaryColor());
 
                 LayoutSlot slot = synthSlot(b, structureId);
                 synth.addForced(slot);

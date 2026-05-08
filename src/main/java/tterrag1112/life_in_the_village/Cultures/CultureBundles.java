@@ -2,9 +2,12 @@ package tterrag1112.life_in_the_village.Cultures;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import tterrag1112.life_in_the_village.Cultures.Planning.Curvature;
+import tterrag1112.life_in_the_village.Cultures.Planning.PlazaShape;
 import tterrag1112.life_in_the_village.Npc.Office.SelectionMethod;
 import tterrag1112.life_in_the_village.Npc.Visitor.VisitorType;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Simulation.ResourceCategory;
 
 import java.util.EnumMap;
@@ -288,6 +291,77 @@ public final class CultureBundles {
                 Codec.STRING.listOf().optionalFieldOf("ritePreferences", List.of())
                         .forGetter(CultureReligion::ritePreferences)
         ).apply(i, CultureReligion::new));
+    }
+
+    // ── Planning bias (Track A2 — V2 culture absorption) ────────────────
+
+    /**
+     * Track A2 — culture-level planning preferences consumed by the
+     * V2 planner. Folds the four fields of the deleted
+     * {@code V2.Culture.Culture} record into the canonical
+     * {@link Culture}: road material for surface painting (V2 Layer 5),
+     * curvature preference for road-primitive selection (V2 Layer 4),
+     * plaza shape preference for plaza geometry (V2 Layer 3), and
+     * inclination bias multipliers (V2 Layer 2 weighted sample).
+     *
+     * <p>Defaults match the original {@code default.json}:
+     * {@code minecraft:dirt_path} road, {@link Curvature#NATURAL},
+     * {@link PlazaShape#IRREGULAR}, uniform 1.0 across all
+     * inclinations.
+     */
+    public record CulturePlanningBias(
+            String roadMaterial,
+            Curvature preferredCurvature,
+            PlazaShape preferredPlazaShape,
+            Map<Inclination, Double> inclinationBias
+    ) {
+        public CulturePlanningBias {
+            if (roadMaterial == null) roadMaterial = "minecraft:dirt_path";
+            if (preferredCurvature == null) preferredCurvature = Curvature.NATURAL;
+            if (preferredPlazaShape == null) preferredPlazaShape = PlazaShape.IRREGULAR;
+            inclinationBias = inclinationBias == null ? Map.of()
+                    : Map.copyOf(inclinationBias);
+        }
+
+        public static final CulturePlanningBias DEFAULT =
+                new CulturePlanningBias(
+                        "minecraft:dirt_path",
+                        Curvature.NATURAL,
+                        PlazaShape.IRREGULAR,
+                        uniformInclinationBias());
+
+        /** Bias for {@code inc}, defaulting to 1.0 — mirrors the
+         *  deleted {@code V2.Culture.Culture#biasFor}. */
+        public double biasFor(Inclination inc) {
+            Double v = inclinationBias.get(inc);
+            return v != null ? v : 1.0;
+        }
+
+        private static Map<Inclination, Double> uniformInclinationBias() {
+            EnumMap<Inclination, Double> m = new EnumMap<>(Inclination.class);
+            for (Inclination inc : Inclination.values()) m.put(inc, 1.0);
+            return m;
+        }
+
+        public static final Codec<CulturePlanningBias> CODEC = RecordCodecBuilder.create(i -> i.group(
+                Codec.STRING.optionalFieldOf("roadMaterial", "minecraft:dirt_path")
+                        .forGetter(CulturePlanningBias::roadMaterial),
+                Codec.STRING.xmap(s -> Curvature.valueOf(s.toUpperCase(Locale.ROOT)),
+                                Curvature::name)
+                        .optionalFieldOf("preferredCurvature", Curvature.NATURAL)
+                        .forGetter(CulturePlanningBias::preferredCurvature),
+                Codec.STRING.xmap(s -> PlazaShape.valueOf(s.toUpperCase(Locale.ROOT)),
+                                PlazaShape::name)
+                        .optionalFieldOf("preferredPlazaShape", PlazaShape.IRREGULAR)
+                        .forGetter(CulturePlanningBias::preferredPlazaShape),
+                Codec.unboundedMap(
+                                Codec.STRING.xmap(
+                                        s -> Inclination.valueOf(s.toUpperCase(Locale.ROOT)),
+                                        Inclination::name),
+                                Codec.DOUBLE)
+                        .optionalFieldOf("inclinationBias", Map.of())
+                        .forGetter(CulturePlanningBias::inclinationBias)
+        ).apply(i, CulturePlanningBias::new));
     }
 
     /** Suppresses unused-import warning on EnumMap (used in helpers). */

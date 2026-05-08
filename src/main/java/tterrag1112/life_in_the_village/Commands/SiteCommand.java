@@ -10,8 +10,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.CultureRegistry;
+import tterrag1112.life_in_the_village.Cultures.Culture;
+import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
@@ -49,7 +49,7 @@ public final class SiteCommand {
                 + " at " + centre.getX() + "," + centre.getZ() + " ...");
 
         V2FeatureMap fmap = V2FeatureMap.scan(level, centre, radius);
-        Culture culture = CultureRegistry.INSTANCE.getDefault();
+        Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
         SiteAnalyzer.Result result = SiteAnalyzer.analyzeWithDiagnostics(fmap, culture, seed);
         long t1 = System.currentTimeMillis();
 
@@ -70,7 +70,7 @@ public final class SiteCommand {
         for (Inclination inc : Inclination.values()) {
             int raw = id.rawScores().get(inc);
             double weighted = id.weightedScores().get(inc);
-            double bias = culture.biasFor(inc);
+            double bias = culture.planningBias().biasFor(inc);
             send(src, String.format("  %-13s %3d × %.2f = %.2f",
                     inc.name() + ":", raw, bias, weighted));
         }

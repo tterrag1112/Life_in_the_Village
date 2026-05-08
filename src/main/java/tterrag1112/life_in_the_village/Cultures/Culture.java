@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureEconomicNo
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureHobbyWeights;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureLawDefaults;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureOfficeRules;
+import tterrag1112.life_in_the_village.Cultures.CultureBundles.CulturePlanningBias;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureReligion;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureSchedule;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureVisitorAffinity;
@@ -18,7 +19,7 @@ import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureVisitorAff
  * for its hook point; subsystems read via {@link CultureResolver}
  * rather than reaching into the record directly.
  *
- * <p>Outer codec arity = 13 fields, well under DFU's 16-field
+ * <p>Outer codec arity = 14 fields, well under DFU's 16-field
  * {@code RecordCodecBuilder} cap (the same wall doc 26 hit). Each
  * sub-record carries its own focused codec.</p>
  *
@@ -41,7 +42,8 @@ public record Culture(
         CultureHobbyWeights hobbyWeights,
         CultureVisitorAffinity visitorAffinity,
         CultureApprenticeshipNorms apprenticeshipNorms,
-        CultureAestheticTokens aesthetics
+        CultureAestheticTokens aesthetics,
+        CulturePlanningBias planningBias
 ) {
     public Culture {
         if (id == null) throw new IllegalArgumentException("culture id required");
@@ -57,6 +59,7 @@ public record Culture(
         if (visitorAffinity == null)     visitorAffinity     = CultureVisitorAffinity.NEUTRAL;
         if (apprenticeshipNorms == null) apprenticeshipNorms = CultureApprenticeshipNorms.DEFAULT;
         if (aesthetics == null)          aesthetics          = CultureAestheticTokens.DEFAULT;
+        if (planningBias == null)        planningBias        = CulturePlanningBias.DEFAULT;
     }
 
     /** Convenience: a barebones culture for the {@code "default"}
@@ -74,7 +77,8 @@ public record Culture(
                 CultureHobbyWeights.NEUTRAL,
                 CultureVisitorAffinity.NEUTRAL,
                 CultureApprenticeshipNorms.DEFAULT,
-                CultureAestheticTokens.DEFAULT);
+                CultureAestheticTokens.DEFAULT,
+                CulturePlanningBias.DEFAULT);
     }
 
     public static final Codec<Culture> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -90,6 +94,7 @@ public record Culture(
             CultureHobbyWeights.CODEC.optionalFieldOf("hobbyWeights", CultureHobbyWeights.NEUTRAL).forGetter(Culture::hobbyWeights),
             CultureVisitorAffinity.CODEC.optionalFieldOf("visitorAffinity", CultureVisitorAffinity.NEUTRAL).forGetter(Culture::visitorAffinity),
             CultureApprenticeshipNorms.CODEC.optionalFieldOf("apprenticeshipNorms", CultureApprenticeshipNorms.DEFAULT).forGetter(Culture::apprenticeshipNorms),
-            CultureAestheticTokens.CODEC.optionalFieldOf("aesthetics", CultureAestheticTokens.DEFAULT).forGetter(Culture::aesthetics)
+            CultureAestheticTokens.CODEC.optionalFieldOf("aesthetics", CultureAestheticTokens.DEFAULT).forGetter(Culture::aesthetics),
+            CulturePlanningBias.CODEC.optionalFieldOf("planningBias", CulturePlanningBias.DEFAULT).forGetter(Culture::planningBias)
     ).apply(i, Culture::new));
 }

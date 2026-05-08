@@ -18,6 +18,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.Variants.NeighborColor
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantRegistry;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantSelector;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VillagePaletteResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
@@ -287,26 +288,19 @@ public class VillageSpawner {
 
             // P0a-10/11: build the TintPass.Plan.
             //   * Variant drives which colour slots are populated.
-            //   * Palette comes from VillagePaletteResolver's resolution
+            //   * Palette comes from VariantResolver's resolution
             //     chain (village colorPalette → culture default → NONE).
             //   * Neighbour index supplies the soft-exclusion set so a
             //     row of houses doesn't all roll the same primary colour.
-            BuildingVariant variant = VariantRegistry.INSTANCE
-                    .find(typeData.getCulture(), variantStyle,
-                            buildingType, variantId)
-                    .or(() -> VariantRegistry.INSTANCE
-                            .defaultVariant(buildingType,
-                                    typeData.getCulture(), variantStyle))
-                    .or(() -> VariantRegistry.INSTANCE
-                            .defaultVariant(buildingType,
-                                    "default", variantStyle))
-                    .orElseGet(() -> VariantSelector.Fallback
-                            .syntheticDefault(buildingType, variantStyle));
+            // Track A3: routes through VariantResolver.findById +
+            // planTint so V1 and V2 spawn paths share one resolver.
+            BuildingVariant variant = VariantResolver.findById(
+                    typeData.getCulture(), variantStyle, buildingType, variantId);
             java.util.Set<net.minecraft.world.item.DyeColor> neighborColors =
                     neighborIndex.colorsWithin(slotCentre,
                             VillagePaletteResolver.NEIGHBOUR_RADIUS);
-            TintPass.Plan tintPlan = VillagePaletteResolver
-                    .planFor(typeData, variant, rng, neighborColors);
+            TintPass.Plan tintPlan = VariantResolver.planTint(
+                    typeData, variant, rng, neighborColors);
 
             try {
                 Optional<Building> placed = BuildingPlacer.placeAndRegister(

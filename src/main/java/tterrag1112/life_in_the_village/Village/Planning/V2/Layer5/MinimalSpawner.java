@@ -11,7 +11,7 @@ import tterrag1112.life_in_the_village.Village.BuildingPlacer;
 import tterrag1112.life_in_the_village.Village.CultureResolver;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
+import tterrag1112.life_in_the_village.Cultures.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DropReason;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;

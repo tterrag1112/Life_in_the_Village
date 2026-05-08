@@ -12,8 +12,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.CultureRegistry;
+import tterrag1112.life_in_the_village.Cultures.Culture;
+import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
@@ -72,7 +72,7 @@ public final class LayoutCommand {
                 + " at " + centre.getX() + "," + centre.getZ() + " ...");
 
         V2FeatureMap fmap = V2FeatureMap.scan(level, centre, radius);
-        Culture culture = CultureRegistry.INSTANCE.getDefault();
+        Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
         SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
         send(src, "site: tier=" + siteCtx.tier()
                 + " inclination=" + siteCtx.inclination()

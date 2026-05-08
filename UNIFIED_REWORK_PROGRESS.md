@@ -12,8 +12,8 @@ spec matches reality.
 |---|---|---|---|
 | A1a | Wire V2 into VillageSpawner (parallel branch) | Implemented | Flag + adapter landed; smoke test pending user run. |
 | A1b | V1 cleanup + ZoneRegistry migration | Not-Started | Gates B/C/D. Unblocks decoration P0a-18. Reordered after A2/A3. |
-| A2 | Culture unification | Not-Started | Depends A1a. |
-| A3 | Variant unification | Not-Started | Depends A2. User to investigate codepaths first. |
+| A2 | Culture unification | Implemented | Sub-bundle landed; V2 Culture/CultureRegistry deleted; smoke test pending. |
+| A3 | Variant unification | Implemented | VariantResolver landed; VariantPicker deleted; V1 + V2 paths route through it; smoke test pending. |
 | A4 | VillageSpawner → MinimalSpawner wiring (flag deletion) | Not-Started | Depends A1b. Original A4: collapse branch; default-on. |
 | A5 | Measurement run vs V1 baseline | Not-Started | Depends A4. |
 
@@ -182,3 +182,162 @@ toolchain plugin requires network the sandbox blocks; same issue
 recorded across NPC_PROGRESS.md).
 
 Next: smoke-test feedback. Then A2 (Culture unification).
+
+### 2026-05-08 — A2 + A3 landed (one cycle)
+
+A2 Culture unification + A3 Variant unification shipped together.
+Both paths still need smoke-test confirmation; failures should be
+treated as bugs in the merge, not behaviour deltas.
+
+**A2 — Culture unification.**
+
+Sub-bundle name: `CulturePlanningBias` — matches the
+`Culture<NounPhrase>` pattern. Lives in `Cultures/CultureBundles.java`
+alongside the other 10 sub-bundles. Codec uses `optionalFieldOf` with
+`DEFAULT` so older saves load cleanly.
+
+Value-type relocation: `Curvature` and `PlazaShape` moved to a new
+`tterrag1112.life_in_the_village.Cultures.Planning` package (separate
+from V1's renderer enum `Village.Decoration.Plaza.PlazaShape`, which
+keeps its `LINEAR` value and its codec).
+
+Culture-id mapping: V2 only ever registered `default`. All four NPC
+starter cultures (Plainfolk, Highmarch, Silkwood, Tidereach) gained
+the new sub-bundle as `CulturePlanningBias.DEFAULT` — same dirt-path
++ NATURAL + IRREGULAR + uniform-bias as the deleted V2 default. **No
+per-culture customization yet** — flagged here for later authoring.
+
+Files created:
+- `Cultures/Planning/Curvature.java`
+- `Cultures/Planning/PlazaShape.java`
+
+Files modified:
+- `Cultures/Culture.java` — 14-field record (was 13); +planningBias.
+- `Cultures/CultureBundles.java` — +CulturePlanningBias record.
+- `Cultures/CultureRegistry.java` — 5 starter builders + neutralDefault
+  pass `CulturePlanningBias.DEFAULT` as the new arg.
+- `Events/ModModEvents.java` — removed the V2 `cultures` reload-listener
+  registration. (NPC Phase 6 will reintroduce JSON-driven cultures.)
+- 5 V2 callsites + 4 /litv commands: import switched from
+  `V2.Culture.Culture` / `V2.Culture.CultureRegistry` to
+  `Cultures.Culture` / `Cultures.CultureRegistry`. `culture.biasFor(inc)`
+  → `culture.planningBias().biasFor(inc)`. `culture.roadMaterial()`
+  → `culture.planningBias().roadMaterial()`.
+  `CultureRegistry.INSTANCE.getDefault()` →
+  `CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID)`.
+
+Files deleted:
+- `Village/Planning/V2/Culture/Culture.java`
+- `Village/Planning/V2/Culture/CultureRegistry.java`
+- `Village/Planning/V2/Culture/Curvature.java`
+- `Village/Planning/V2/Culture/PlazaShape.java`
+- `data/life_in_the_village/cultures/default.json`
+
+Verification: `git grep V2.Culture` returns only doc comments inside
+`CultureBundles.java` referencing the deleted record by name. No
+`import` or symbol references survive.
+
+**A3 — Variant unification.**
+
+Per user direction: build `VariantResolver` as a clean combined class;
+migrate `VariantSelector` features into it where they fit; leave
+unused `VariantSelector` methods alone for V1 (dies in A1b). Both V1
+and V2 paths now pull from `VariantResolver`. `VariantPicker` deleted.
+
+`VariantResolver` interface:
+```java
+class VariantResolver {
+    // Per-village state for diminishing returns + maxPerVillage.
+    String pickVariantIdForV2(BuildingType, BlockPos pos, BlockPos anchor,
+                              int villageRadius, String culture, Style,
+                              Random, BuildingAvailability);
+    static BuildingVariant findById(String culture, Style, BuildingType,
+                                     String variantId);
+    static TintPass.Plan planTint(VillageTypeData, BuildingVariant,
+                                   Random, Set<DyeColor> neighborColors);
+}
+```
+
+Capabilities migrated **into** `VariantResolver`:
+- From `VariantSelector`: same-culture preference + default fallback;
+  `maxPerVillage` cap; diminishing returns (× pow(0.7, count));
+  weighted-random pick; synthetic-default fallback.
+- From the deleted `VariantPicker`: HOUSE distance-banded preference
+  (large near anchor, cottage at edge, with cap-skipping); explicit
+  availability check via `BuildingAvailability`.
+
+Capabilities **not** migrated (don't fit V2's flow; corresponding
+methods on `VariantSelector` retained, unused by the new resolver):
+- Slot-tag scoring (V2 has no slots).
+- Village-preferred-tag scoring (V2 doesn't propagate the tag set).
+- Style/age preference scoring (V2 is always RURAL/FRESH).
+
+Wiring:
+- `V2/Layer4/PhasedPlanner.java` — `State` gains a `VariantResolver`
+  instance. Per-building `VariantPicker.pick(...)` → `state
+  .variantResolver.pickVariantIdForV2(..., StructureAvailabilityRegistry.INSTANCE)`.
+- `Village/Planning/V2/V2VillageSpawnerAdapter.java` — per-PlacedBuilding
+  `TintPass.Plan.NONE` replaced with `VariantResolver.findById` +
+  `VariantResolver.planTint` against a `NeighborColorIndex`. V2 villages
+  now get tinted variants like V1's.
+- `Village/VillageSpawner.java` (V1 path) — inline `VariantRegistry.find`
+  chain + `VillagePaletteResolver.planFor` replaced with
+  `VariantResolver.findById` + `VariantResolver.planTint`. Behaviour
+  unchanged; same registry chain runs inside `findById`, same logic
+  inside `planTint` (delegates to `VillagePaletteResolver.planFor`).
+
+Files created:
+- `Village/Decoration/Variants/VariantResolver.java`
+
+Files modified:
+- `Village/Planning/V2/Layer4/PhasedPlanner.java` — import swap +
+  `State.variantResolver` field + one call-site change.
+- `Village/Planning/V2/V2VillageSpawnerAdapter.java` — imports +
+  `NeighborColorIndex` + per-building tint planning.
+- `Village/VillageSpawner.java` — V1 spawn loop inline-chain replaced.
+- `Village/Planning/V2/Layer3/BuildingAvailability.java` — javadoc
+  updated to reference `VariantResolver#pickVariantIdForV2`.
+
+Files deleted:
+- `Village/Planning/V2/Layer3/VariantPicker.java`
+
+Verification: `git grep VariantPicker` returns nothing.
+
+**Capability gaps documented (per user note "neither system does
+exactly what's needed"):**
+
+The combined `VariantResolver` is V1∪V2 capability-wise (color
+planning + scoring + diversity + HOUSE distance-banding +
+availability) but does NOT add new capability beyond either source.
+Specifically, the user note left undefined what's missing — when
+that's known, it lands as a follow-up resolver method or a new
+`Resolution` shape without re-touching every call site.
+
+**Carryover left for A1b cleanup:**
+- `VillagePaletteResolver.planFor` is now only invoked through
+  `VariantResolver.planTint`. After A1b's V1 deletion, the delegating
+  call can be inlined and `VillagePaletteResolver` retired.
+- `VariantSelector` still has `select()` (used by V1's `PlanContext`)
+  and `Fallback.syntheticDefault` (used by `VariantResolver.findById`).
+  The first goes when V1 dies in A1b; the second can move into
+  `VariantResolver` at that point or stay where it is.
+- Unused imports in `VillageSpawner.java` (now-orphaned `VariantRegistry`
+  / `VariantSelector` references at the top) left in place for the V1
+  matcher path that still uses them.
+
+**Smoke test (pending user-run):**
+- `adaptive_v2=false`: V1 spawn produces visually identical villages
+  pre-A2/A3 vs post-A2/A3. Same road material, same plaza shape,
+  same building variants, same colours.
+- `adaptive_v2=true`: V2 spawn now applies tints (was always-NONE
+  pre-A3) — colour exclusion / forced TEMPLE-white / TOWN_HALL
+  signature should kick in. Same building set per (seed, origin, name)
+  modulo the new diminishing-returns weighting on non-HOUSE picks.
+- Save / restart / reload with both flag states: cultures persist;
+  the new `planningBias` field round-trips through codec.
+
+Differences beyond RNG-from-seed-plumbing on the V2 path are
+regressions to investigate.
+
+Next: smoke-test feedback for A1a + A2 + A3. Then A1b — V1 deletion
++ ZoneRegistry migration.

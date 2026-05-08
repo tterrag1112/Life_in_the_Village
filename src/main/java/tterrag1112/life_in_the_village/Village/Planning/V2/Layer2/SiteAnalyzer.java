@@ -3,7 +3,7 @@ package tterrag1112.life_in_the_village.Village.Planning.V2.Layer2;
 import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
+import tterrag1112.life_in_the_village.Cultures.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BoundingBox;
@@ -246,7 +246,7 @@ public final class SiteAnalyzer {
         EnumMap<Inclination, Double> weighted = new EnumMap<>(Inclination.class);
         double total = 0;
         for (Inclination inc : Inclination.values()) {
-            double w = raw.get(inc) * culture.biasFor(inc);
+            double w = raw.get(inc) * culture.planningBias().biasFor(inc);
             weighted.put(inc, w);
             total += w;
         }

@@ -12,7 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive.DriftNoise;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
+import tterrag1112.life_in_the_village.Cultures.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 
@@ -46,7 +46,7 @@ public final class RoadPainter {
     private RoadPainter() {}
 
     public static int paintAll(ServerLevel level, RoadNetwork roads, Culture culture) {
-        BlockState material = resolveMaterial(culture.roadMaterial());
+        BlockState material = resolveMaterial(culture.planningBias().roadMaterial());
         long worldSeed = level.getSeed();
         int total = 0;
         // Spine path: per-primitive painting (handles drift / arcs).

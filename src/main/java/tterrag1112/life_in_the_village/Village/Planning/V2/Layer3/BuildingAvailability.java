@@ -11,8 +11,8 @@ import java.util.Set;
  *
  * <p>{@link BuildingSelector} consults this at selection time so
  * unauthored {@code BuildingType}s never reach the solver.
- * {@link VariantPicker} consults it so V2 only ever names a variant
- * id whose NBT actually exists — partial authoring degrades
+ * {@code VariantResolver#pickVariantIdForV2} consults it so V2 only
+ * ever names a variant id whose NBT actually exists — partial authoring degrades
  * gracefully (a culture with only {@code cottage} authored for HOUSE
  * gets every HOUSE as a cottage).
  *

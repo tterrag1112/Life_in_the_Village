@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureEconomicNo
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureHobbyWeights;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureLawDefaults;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureOfficeRules;
+import tterrag1112.life_in_the_village.Cultures.CultureBundles.CulturePlanningBias;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureReligion;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureSchedule;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureVisitorAffinity;
@@ -141,7 +142,8 @@ public final class CultureRegistry {
                 new CultureAestheticTokens(
                         List.of("brown", "tan", "ochre", "natural_linen"),
                         List.of("straw_hat", "wool_scarf"),
-                        "default", Optional.empty()));
+                        "default", Optional.empty()),
+                CulturePlanningBias.DEFAULT);
     }
 
     // ── Highmarch ─────────────────────────────────────────────────────────
@@ -193,7 +195,8 @@ public final class CultureRegistry {
                 new CultureAestheticTokens(
                         List.of("dark_grey", "iron_black", "deep_red", "leather_brown"),
                         List.of("iron_pauldron", "heraldic_cape"),
-                        "broad", Optional.of("kingdom_heraldry")));
+                        "broad", Optional.of("kingdom_heraldry")),
+                CulturePlanningBias.DEFAULT);
     }
 
     // ── Silkwood ──────────────────────────────────────────────────────────
@@ -247,7 +250,8 @@ public final class CultureRegistry {
                 new CultureAestheticTokens(
                         List.of("forest_green", "moss", "muted_blue", "ivory"),
                         List.of("scholar_robe", "embroidered_sash"),
-                        "tall", Optional.of("geometric")));
+                        "tall", Optional.of("geometric")),
+                CulturePlanningBias.DEFAULT);
     }
 
     // ── Tidereach ─────────────────────────────────────────────────────────
@@ -300,6 +304,7 @@ public final class CultureRegistry {
                 new CultureAestheticTokens(
                         List.of("ocean_blue", "sailcloth_white", "sun_bleached", "rope_hemp"),
                         List.of("fishing_cap", "sea_pendant"),
-                        "lean", Optional.of("wave")));
+                        "lean", Optional.of("wave")),
+                CulturePlanningBias.DEFAULT);
     }
 }

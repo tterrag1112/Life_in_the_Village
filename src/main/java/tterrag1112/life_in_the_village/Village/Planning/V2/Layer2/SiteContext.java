@@ -1,7 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer2;
 
 import net.minecraft.core.BlockPos;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Culture.Culture;
+import tterrag1112.life_in_the_village.Cultures.Culture;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 
 import java.util.ArrayList;
