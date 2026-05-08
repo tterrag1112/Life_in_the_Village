@@ -271,9 +271,11 @@ public class ModModEvents {
         DebugTickCommand.register(event.getDispatcher());
         FarmCommands.register(event.getDispatcher());
         BalanceTestCommands.register(event.getDispatcher());
-        AtlasRegionDebugCommand.register(event.getDispatcher());
+        AtlasDebugCommand.register(event.getDispatcher());
         VillageTagsDebugCommand.register(event.getDispatcher());
         KingdomClaimDebugCommand.register(event.getDispatcher());
+        // B2.7 — centralized help directory under /liv help + /litv help.
+        LivHelpCommand.register(event.getDispatcher());
         PlacementFailuresDebugCommand.register(event.getDispatcher());
         RoadDebugCommand.register(event.getDispatcher());
         RoadGraphDebugCommand.register(event.getDispatcher());

@@ -1,53 +1,83 @@
 package tterrag1112.life_in_the_village.Commands;
 
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
-import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.World.Atlas.BiomeCategory;
+import tterrag1112.life_in_the_village.World.Atlas.Regions.AtlasOcean;
+import tterrag1112.life_in_the_village.World.Atlas.Regions.AtlasRegion;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
 /**
- * Debug commands for inspecting the World Atlas.
+ * Debug commands for inspecting the World Atlas. B2.7 consolidated
+ * the previously-split {@code /atlas} (here / stats / sample) and
+ * {@code /liv atlas region} trees into a single
+ * {@code /liv atlas <subcommand>} surface.
  *
- * <h3>Commands</h3>
+ * <h3>Subcommands</h3>
  * <ul>
- *   <li>{@code /atlas here} — show the cell at the player's current position</li>
- *   <li>{@code /atlas stats} — show total filled cells in this dimension</li>
- *   <li>{@code /atlas sample} — force-sample the cell at the player and report it</li>
- *   <li>{@code /atlas region &lt;radius&gt;} — count and summarise cells within
- *       a radius (in blocks) of the player</li>
+ *   <li>{@code /liv atlas here} — show the cell at the player's
+ *       current position.</li>
+ *   <li>{@code /liv atlas stats} — total filled cells in this
+ *       dimension.</li>
+ *   <li>{@code /liv atlas sample} — force-sample the cell at the
+ *       player and report it.</li>
+ *   <li>{@code /liv atlas region [&lt;radius&gt;]} — bare form
+ *       reports region/ocean info at the player; with {@code radius}
+ *       counts cells within {@code radius} blocks of the player.</li>
  * </ul>
+ *
+ * <p>Registered through {@link tterrag1112.life_in_the_village.Events.ModModEvents}
+ * to align with the rest of the command surface (the legacy
+ * {@code @EventBusSubscriber} self-registration was dropped during
+ * B2.7's command consolidation).</p>
  */
-@EventBusSubscriber(modid = Life_in_the_village.MODID)
-public class AtlasDebugCommand {
+public final class AtlasDebugCommand {
 
-    @SubscribeEvent
-    public static void onRegisterCommands(RegisterCommandsEvent event) {
-        event.getDispatcher().register(
-                Commands.literal("atlas")
-                        .then(Commands.literal("here").executes(AtlasDebugCommand::here))
-                        .then(Commands.literal("stats").executes(AtlasDebugCommand::stats))
-                        .then(Commands.literal("sample").executes(AtlasDebugCommand::sample))
+    private AtlasDebugCommand() {}
+
+    public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("liv")
+                .then(Commands.literal("atlas")
+                        .executes(AtlasDebugCommand::help)
+                        .then(Commands.literal("here")
+                                .executes(AtlasDebugCommand::here))
+                        .then(Commands.literal("stats")
+                                .executes(AtlasDebugCommand::stats))
+                        .then(Commands.literal("sample")
+                                .executes(AtlasDebugCommand::sample))
                         .then(Commands.literal("region")
+                                .executes(AtlasDebugCommand::regionAtPlayer)
                                 .then(Commands.argument("radius",
-                                                com.mojang.brigadier.arguments.IntegerArgumentType
-                                                        .integer(64, 8192))
-                                        .executes(ctx -> region(ctx,
-                                                com.mojang.brigadier.arguments.IntegerArgumentType
-                                                        .getInteger(ctx, "radius")))))
-        );
+                                                IntegerArgumentType.integer(64, 8192))
+                                        .executes(ctx -> regionWithinRadius(ctx,
+                                                IntegerArgumentType.getInteger(ctx, "radius")))))));
     }
 
     // =========================================================================
-    // Handlers
+    // Bare-invocation help
+    // =========================================================================
+
+    private static int help(CommandContext<CommandSourceStack> ctx) {
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "/liv atlas — World Atlas inspection\n"
+                        + "  here              show cell at player position\n"
+                        + "  stats             total filled cells\n"
+                        + "  sample            force-sample cell here\n"
+                        + "  region            region/ocean at player\n"
+                        + "  region <radius>   tally cells within radius (64-8192)"),
+                false);
+        return 1;
+    }
+
+    // =========================================================================
+    // Subcommand handlers
     // =========================================================================
 
     private static int here(CommandContext<CommandSourceStack> ctx) {
@@ -60,7 +90,7 @@ public class AtlasDebugCommand {
 
         if (cell == null) {
             ctx.getSource().sendSuccess(() -> Component.literal(
-                    "§eNo atlas cell here yet — try /atlas sample"), false);
+                    "§eNo atlas cell here yet — try /liv atlas sample"), false);
             return 0;
         }
         sendCell(ctx, cell);
@@ -97,7 +127,54 @@ public class AtlasDebugCommand {
         return 1;
     }
 
-    private static int region(CommandContext<CommandSourceStack> ctx, int radius) {
+    /** Reports region / ocean info at the player's current position
+     *  (folds in the legacy {@code AtlasRegionDebugCommand}). */
+    private static int regionAtPlayer(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        if (!(src.getEntity() instanceof ServerPlayer player)) {
+            src.sendFailure(Component.literal("Must be run by a player"));
+            return 0;
+        }
+        ServerLevel level = player.level();
+        WorldAtlas atlas = WorldAtlas.get(level);
+
+        int bx = player.blockPosition().getX();
+        int bz = player.blockPosition().getZ();
+        int cx = WorldAtlas.blockToCell(bx);
+        int cz = WorldAtlas.blockToCell(bz);
+
+        atlas.ensureRegionFilled(level, bx, bz, 800, 50_000_000L);
+        atlas.ensureRegionsIndexed(cx, cz, 20);
+
+        AtlasCell cell = atlas.getCellByCoord(cx, cz);
+        if (cell == null) {
+            src.sendFailure(Component.literal("Cell not sampled at " + cx + "," + cz));
+            return 0;
+        }
+
+        AtlasRegion region = atlas.getRegionAt(cx, cz);
+        AtlasOcean  ocean  = atlas.getOceanAt(cx, cz);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Cell (").append(cx).append(",").append(cz).append(") ")
+                .append(cell.category()).append("\n");
+        if (region != null) {
+            sb.append("Region #").append(region.id())
+                    .append(" (").append(region.category()).append("), ")
+                    .append(region.size()).append(" cells");
+        } else if (ocean != null) {
+            sb.append("Ocean #").append(ocean.id())
+                    .append(", ").append(ocean.size()).append(" cells");
+        } else {
+            sb.append("Not indexed (no region or ocean)");
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString()), false);
+        return 1;
+    }
+
+    /** Tallies cells in a radius (legacy {@code /atlas region <r>} form). */
+    private static int regionWithinRadius(CommandContext<CommandSourceStack> ctx,
+                                          int radius) {
         if (!(ctx.getSource().getEntity() instanceof ServerPlayer p)) return 0;
         ServerLevel level = (ServerLevel) p.level();
         WorldAtlas atlas = WorldAtlas.get(level);
@@ -107,7 +184,6 @@ public class AtlasDebugCommand {
                 p.blockPosition().getZ(),
                 radius);
 
-        // Tally categories
         java.util.EnumMap<BiomeCategory, Integer> tally
                 = new java.util.EnumMap<>(BiomeCategory.class);
         int coast = 0, river = 0, steep = 0;

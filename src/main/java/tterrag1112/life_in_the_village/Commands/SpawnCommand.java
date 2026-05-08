@@ -1,7 +1,6 @@
 package tterrag1112.life_in_the_village.Commands;
 
 import com.mojang.brigadier.CommandDispatcher;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.minecraft.commands.CommandSourceStack;
@@ -10,159 +9,65 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Cultures.Culture;
-import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingSelector;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DependencyResolver;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.InclinationProfile;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.ReconciliationEngine;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.MinimalSpawner;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.OverlapAuditor;
+import tterrag1112.life_in_the_village.Village.Planning.V2.V2VillageSpawnerAdapter;
+import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.List;
+import java.util.Optional;
 
 /**
- * {@code /litv spawn [<radius>]} — runs the full V2 stack
- * (L1+L2+L3+L4+L5) at the player's position and physically
- * spawns the village in the world via {@link MinimalSpawner}.
+ * {@code /litv spawn} — runs the full V2 stack at the player's
+ * position and physically spawns the village with all post-passes
+ * (decoration, parks, farms, homesteads, NPC population, trade
+ * routes, simulation baseline, guild bootstrap, history seeding,
+ * initial laws).
  *
- * <p>This is V1 of V2 spawn integration: deliberately scoped to
- * buildings + roads + per-building pads + scoped vegetation
- * clearing only. NPC population, broad terrain modification,
- * decoration, plaza paving, and trade-route hookup are NOT
- * triggered.
+ * <p><b>B2.7 fix:</b> previously this command duplicated Layers
+ * 1–4 manually and called {@code MinimalSpawner} directly,
+ * skipping every Layer 4 post-pass that B2.1–B2.6 wired into
+ * {@link V2VillageSpawnerAdapter}. The duplication is gone; the
+ * command is now a thin wrapper that delegates to the canonical
+ * adapter the same way {@code VillageSpawner.spawn} does.</p>
  */
 public final class SpawnCommand {
 
-    private static final int DEFAULT_RADIUS = 100;
+    private static final String DEFAULT_VILLAGE_TYPE = "default";
 
     private SpawnCommand() {}
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("litv")
                 .then(Commands.literal("spawn")
-                        .executes(ctx -> run(ctx, DEFAULT_RADIUS))
-                        .then(Commands.argument("radius", IntegerArgumentType.integer(8, 512))
-                                .executes(ctx -> run(ctx,
-                                        IntegerArgumentType.getInteger(ctx, "radius"))))));
+                        .executes(SpawnCommand::run)));
     }
 
-    private static int run(CommandContext<CommandSourceStack> ctx, int radius)
+    private static int run(CommandContext<CommandSourceStack> ctx)
             throws CommandSyntaxException {
         CommandSourceStack src = ctx.getSource();
         ServerPlayer player = src.getPlayerOrException();
         ServerLevel level = src.getLevel();
         BlockPos centre = player.blockPosition();
-        long seed = level.getSeed();
 
         long t0 = System.currentTimeMillis();
-        send(src, "[litv-spawn] running L1+L2+L3+L4+L5 radius=" + radius
-                + " at " + centre.getX() + "," + centre.getZ() + " ...");
+        String villageName = "v2_" + Long.toHexString(level.getSeed())
+                + "_" + centre.getX() + "_" + centre.getZ();
+        send(src, "[litv-spawn] running full V2 pipeline at "
+                + centre.getX() + "," + centre.getZ() + " ...");
 
-        // Layers 1 + 2.
-        V2FeatureMap fmap = V2FeatureMap.scan(level, centre, radius);
-        Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
-        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
-        send(src, "site: tier=" + siteCtx.tier()
-                + " inclination=" + siteCtx.inclination()
-                + " anchor=(" + siteCtx.anchor().getX() + ","
-                + siteCtx.anchor().getY() + "," + siteCtx.anchor().getZ() + ")");
+        Optional<Village> result = V2VillageSpawnerAdapter.spawn(
+                level, centre, DEFAULT_VILLAGE_TYPE, villageName);
+        long elapsed = System.currentTimeMillis() - t0;
 
-        if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
-            send(src, "tier=UNVIABLE — aborting spawn");
+        if (result.isEmpty()) {
+            send(src, "[litv-spawn] no village spawned (check log for "
+                    + "site-too-close-to-existing-village or unviable terrain)");
             return 0;
         }
-
-        // Layers 3 + 4.
-        InclinationProfile profile = InclinationProfile.forInclination(siteCtx.inclination());
-        BuildingSelector.SelectionResult sel =
-                BuildingSelector.select(siteCtx, fmap, profile);
-        List<UnavailableBuilding> unavailable = sel.unavailable();
-        ReconciliationEngine.ReconciliationResult recon = ReconciliationEngine.reconcile(
-                sel.selected(), siteCtx.tier(), culture.id(),
-                StructureAvailabilityRegistry.INSTANCE);
-        if (!recon.drops().isEmpty() || !recon.tradeFulfilled().isEmpty()) {
-            send(src, "reconciliation: " + recon.drops().size() + " drops, "
-                    + recon.tradeFulfilled().size() + " trade-fulfilled");
-        }
-        List<BuildingType> sorted = DependencyResolver.topoSort(recon.finalSelection(), seed);
-        PhasedPlanner.Result phased =
-                PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
-        PlacementResult placement = phased.placement();
-        send(src, "planner: placed=" + placement.placed().size()
-                + " dropped=" + placement.dropped().size()
-                + " unavailable=" + placement.unavailable().size()
-                + " viable=" + placement.villageViable());
-
-        if (!placement.villageViable()) {
-            send(src, "village not viable — aborting spawn");
-            return 0;
-        }
-
-        // Layer 5 — physical spawn.
-        String villageName = "v2_" + Long.toHexString(seed) + "_"
-                + centre.getX() + "_" + centre.getZ();
-        MinimalSpawner.SpawnResult spawnResult = MinimalSpawner.spawn(
-                level, placement, phased.network(), culture, villageName, siteCtx.tier());
-        long t1 = System.currentTimeMillis();
-
-        // Audit summary.
-        OverlapAuditor.OverlapReport audit = spawnResult.overlapReport();
-        if (audit.fatal()) {
-            send(src, "phase 5 audit: " + audit.conflicts().size()
-                    + " conflicts (fatal — spawn ABORTED)");
-            for (OverlapAuditor.Conflict c : audit.conflicts()) {
-                send(src, "  " + c.description() + " — "
-                        + c.aDesc() + " vs " + c.bDesc());
-            }
-            return 0;
-        }
-        if (spawnResult.aborted()) {
-            send(src, "spawn ABORTED: " + spawnResult.abortReason());
-            for (String r : spawnResult.viabilityFailures()) {
-                send(src, "  - " + r);
-            }
-            send(src, "  no vegetation cleared, no roads painted, no buildings placed");
-            return 0;
-        }
-        send(src, "phase 5 audit: " + audit.conflicts().size() + " conflicts (non-fatal)");
-        for (OverlapAuditor.Conflict c : audit.conflicts()) {
-            send(src, "  " + c.description() + " — "
-                    + c.aDesc() + " vs " + c.bDesc());
-        }
-        send(src, "terrain: " + spawnResult.padsLevel() + " LEVEL, "
-                + spawnResult.padsPlatform() + " PLATFORM, "
-                + spawnResult.buildingsDroppedTerrain() + " DROP");
-
-        send(src, "spawning:");
-        send(src, "  cleared " + spawnResult.vegetationCleared() + " vegetation blocks");
-        send(src, "  built " + (spawnResult.padsLevel() + spawnResult.padsPlatform())
-                + " pads (" + spawnResult.padsPlatform() + " platforms)");
-        send(src, "  placed " + spawnResult.buildingsPlaced() + " buildings"
-                + (spawnResult.buildingsFailedPlacement() > 0
-                        ? " (" + spawnResult.buildingsFailedPlacement() + " NBT load failures)"
-                        : ""));
-        send(src, "  painted " + spawnResult.roadBlocksPainted() + " road blocks");
-
-        if (!spawnResult.additionalDrops().isEmpty()) {
-            send(src, "terrain drops (" + spawnResult.additionalDrops().size() + "):");
-            for (DroppedBuilding db : spawnResult.additionalDrops()) {
-                send(src, "  " + db.type().name() + ": " + db.detail());
-            }
-        }
-
-        send(src, "done in " + spawnResult.elapsedMs()
-                + " ms (total " + (t1 - t0) + " ms)");
+        Village village = result.get();
+        send(src, "[litv-spawn] spawned '" + village.getName() + "' tier="
+                + village.getSizeTier() + " buildings=" + village.getBuildingIds().size()
+                + " in " + elapsed + "ms");
+        send(src, "  full pipeline ran: roads + buildings + decoration + parks + "
+                + "farms + homesteads + NPCs + trade routes + simulation baseline");
         return 1;
     }
 

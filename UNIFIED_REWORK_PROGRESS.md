@@ -31,6 +31,7 @@ spec matches reality.
 | B2.4 | Parks and gardens | Implemented | Layer 4 post-pass `ParkCandidateFinder` reserves up to 3 GardenPlots per village (HAMLET 0 / VILLAGE 0–1 / TOWN 1 / CITY 1–3); `ParkRenderer` runs preserve-vs-compose with procedural primitives + NBT-skip. 5 doc-09 styles. CulturePlanningBias gains parkPriority + parkPreferenceWeight. |
 | B2.5 | Farm plot rework | Implemented | `FarmSector` + 4-vertex terrain-trimmed polygon plots. Doc-10 tier-only sector radius (HAMLET 15/VILLAGE 20/TOWN 25/CITY 30) with farmPriority slack. Per-farmhouse plot count (HAMLET 2/VILLAGE 2-3/TOWN 3-4/CITY 4-6). FarmCropPicker uses CulturePlanningBias.cropPreference. New FarmSectorRenderer replaces legacy FarmPlotPlacer in the V2 path; placer parked. |
 | B2.6 | Homesteading | Implemented | 7 HOMESTEAD_* AdjunctPlotTypes (added WORKSHOP/ORCHARD/WOODSHED to B2.1's 4). PhasedPlanner.rollHomesteadType probability-gates HOUSE adjuncts (HAMLET 80%/VILLAGE 60%/TOWN 30%/CITY 10%) + weighted draw from `CulturePlanningBias.homesteadPlotWeights`. AbstractHomesteadGoal.Spouse (WORK_*) + .Child (SOCIAL) dispatch to HomesteadHandlerRegistry handlers. HouseholdData gains `homesteadPlotType`. **Track B complete.** |
+| B2.7 | Command consolidation + spawn pipeline fix | Implemented | `/litv spawn` now delegates to V2VillageSpawnerAdapter (was bypassing all B2 post-passes). `/atlas` consolidated under `/liv atlas`. New `/liv adjuncts <village>`. New `/liv help` + `/litv help` master directory. |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -1761,3 +1762,138 @@ all ship: framework (B2.1), street furniture + welcome marker +
 noticeboard (B2.2), industry + garden adjuncts (B2.3), parks
 (B2.4), farms (B2.5), homesteads (B2.6). Track C and beyond
 proceed independently.
+
+### 2026-05-08 — B2.7 landed (command consolidation + spawn pipeline fix)
+
+Closing-out cleanup after Track B's main shipment. Two issues
+testing surfaced: command-surface debris and a wrong-orchestrator
+bug on `/litv spawn`.
+
+**The spawn bug.** `/litv spawn` duplicated Layers 1–4 inline and
+called {@code MinimalSpawner.spawn} directly. {@code MinimalSpawner}
+is the Layer-5 stamper only; it doesn't run any of the post-passes
+B2.1–B2.6 wired into {@code V2VillageSpawnerAdapter} (decoration
+profiles, parks, farms, homesteads, NPC population, trade routes,
+simulation baseline, guild bootstrap, history seeding). The
+adapter is the canonical orchestrator that {@code VillageSpawner}
+already routes through; `/litv spawn` was the only call site that
+duplicated the pipeline. **Fix:** rewrite SpawnCommand as a thin
+~70-line wrapper around {@code V2VillageSpawnerAdapter.spawn} —
+parse args, resolve culture defaults, delegate. The `radius`
+argument is gone (the adapter has its own scan radius constant);
+diagnostic output is reduced because the adapter logs the same
+information through SLF4J.
+
+**Scope decisions (user-confirmed):**
+
+- Spawn fix — *route /litv spawn through V2VillageSpawnerAdapter*.
+  Cleanest of the three options; matches what
+  {@code VillageSpawner.spawn} already does (line 86).
+- Atlas consolidation — *single `/liv atlas <subcommand>` tree*.
+  Folded the legacy {@code AtlasRegionDebugCommand} into
+  {@code AtlasDebugCommand}; deleted the legacy file; updated
+  {@code ModModEvents} reference. New tree:
+  `/liv atlas here|stats|sample|region [radius]`.
+- B2 debug commands registration — *leave self-registered*. The
+  inconsistency with {@code ModModEvents.onRegisterCommands()}
+  (other ~47 commands) is cosmetic; both patterns fire on the
+  same {@code RegisterCommandsEvent}.
+- Help text — *every command*, delivered via a centralized
+  {@code LivHelpCommand} (`/liv help` + `/litv help`) listing
+  all 53 commands by category. Avoids touching 50+ files
+  individually.
+
+**Command surface findings (recon):**
+
+- 53 commands total across `/litv`, `/liv`, `/building`, `/castle`,
+  `/atlas`, `/kingdom`, `/guild`, `/npc`, ... etc.
+- Zero V1-dead references (no ShapeType, ZoneRegistry, recipes).
+- One duplicate (`/atlas` vs `/liv atlas region`) — consolidated.
+- `/litv spawn` was the only command bypassing B2.1–B2.6 wiring.
+- 4 B2 debug commands (decoration / parks / farms / homestead) use
+  `@EventBusSubscriber` self-registration; verified all fire.
+- {@code AdjunctDebugCommand} (`/liv adjuncts <village>`) was
+  referenced in the prompt but didn't exist. Authored in B2.7.
+
+**Final command list:**
+
+| Path                                | Status | Source |
+|-------------------------------------|--------|--------|
+| `/litv spawn`                       | FIX→KEEP | SpawnCommand.java (rewritten thin) |
+| `/litv site`                        | KEEP | SiteCommand.java |
+| `/litv place`                       | KEEP | PlaceCommand.java |
+| `/litv layout`                      | KEEP | LayoutCommand.java |
+| `/litv help`                        | NEW | LivHelpCommand.java |
+| `/liv help [<category>]`            | NEW | LivHelpCommand.java |
+| `/liv decoration`                   | KEEP | DecorationDebugCommand.java |
+| `/liv parks <village>`              | KEEP | ParkDebugCommand.java |
+| `/liv farms <village>`              | KEEP | FarmDebugCommand.java |
+| `/liv homestead <village>`          | KEEP | HomesteadDebugCommand.java |
+| `/liv adjuncts <village>`           | NEW | AdjunctDebugCommand.java |
+| `/liv atlas here\|stats\|sample\|region` | REPLACE→KEEP | AtlasDebugCommand.java (consolidated) |
+| `/building place\|village create\|spawn\|house\|needs` | KEEP | BuildingCommand.java |
+| `/castle spawn\|design`              | KEEP | CastleCommand.java |
+| `/kingdom`, `/kingdom-claim`, `/village-tags` | KEEP | KingdomCommands.java |
+| `/guild`, `/guilds`, `/party`        | KEEP | various |
+| `/npc`, `/dialogue`, `/verb`, `/gossip`, `/office`, `/request`, `/visitor`, `/apprentice`, `/scribe`, `/letter`, `/appearance` | KEEP | NPC commands |
+| `/business`, `/economy`, `/order`, `/farm`, `/farmbalance`, `/farmplot` | KEEP | economy commands |
+| `/law`, `/crime`, `/religion`, `/health`, `/history`, `/event`, `/plague`, `/sim`, `/culture`, `/company` | KEEP | civic / lifecycle |
+
+**Files deleted:**
+- `Commands/AtlasRegionDebugCommand.java` — folded into
+  `AtlasDebugCommand`.
+
+**Files added (B2.7):**
+- `Commands/AdjunctDebugCommand.java` — `/liv adjuncts <village>`.
+- `Commands/LivHelpCommand.java` — central help directory.
+
+**Files rewritten:**
+- `Commands/SpawnCommand.java` — thin delegator (was 173 lines,
+  now 75).
+- `Commands/AtlasDebugCommand.java` — consolidated tree under
+  `/liv atlas`; dropped `@EventBusSubscriber` (registers via
+  ModModEvents).
+
+**Pipeline verification:**
+
+After B2.7, `/litv spawn` runs (in order, via V2VillageSpawnerAdapter):
+
+1. {@code V2FeatureMap.scan} — Layer 1 terrain.
+2. {@code SiteAnalyzer.analyze} — Layer 2 culture / inclination /
+   tier.
+3. {@code BuildingSelector.select} → {@code ReconciliationEngine}
+   → {@code DependencyResolver} — Layer 3 selection.
+4. {@code PhasedPlanner.run} — Layer 4 buildings + roads. Includes
+   B2.1 adjunct rectangle planning (HOMESTEAD_* roll lives here
+   for HOUSE).
+5. Layer 5 inline: {@code OverlapAuditor}, {@code TerrainAdapter},
+   {@code VegetationClearer}, {@code PadBuilder},
+   {@code BuildingPlacer.placeAndRegister}, {@code RoadPainter}.
+6. B2.5 {@code FarmSectorPlanner.plan} — between buildings and
+   {@code runDownstream}.
+7. {@code runDownstream} — {@code FarmPlotPlacer} (parked),
+   {@code VillageInhabitantPopulator} (stamps homesteadPlotType
+   from B2.6), {@code VillageDecorator},
+   {@code AdjunctPlotRealiser}, {@code DecorationPass} (B2.2),
+   {@code ParkRenderer} (B2.4), {@code FarmSectorRenderer} (B2.5),
+   {@code TradeRouteManager}, {@code ConnectorPlanner} (when
+   `useGraphConnector`), {@code VillageSimEngine.buildBaseline},
+   {@code GuildBootstrap}, {@code HistoryProducer},
+   {@code InitialLaws}.
+
+Post-spawn the village should have: roads, buildings, road-side
+decoration, building-gap fillers, plaza noticeboard with live
+content, gate welcome markers, industry / garden adjuncts on
+profession buildings, homesteads on HOUSEs (per probability
+gate), parks where terrain affords them, farm sectors when
+AGRICULTURAL.
+
+**Cumulative pending verification:** A1a + A2 + A3 + A4 + A1b + B1
++ B2.1 + B2.2 + B2.3 + B2.4 + B2.5 + B2.6 + B2.7 in a single live
+run. With B2.7's spawn fix, the user's report ("spawned villages
+are missing parks, homesteads, farm sectors") should resolve —
+those subsystems were always implemented; the command just
+wasn't invoking them.
+
+Track B is now fully closed out. Track C / Track D proceed
+independently.
