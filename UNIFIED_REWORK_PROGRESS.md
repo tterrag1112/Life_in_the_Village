@@ -10,11 +10,11 @@ spec matches reality.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| A1a | Wire V2 into VillageSpawner (parallel branch) | Implemented | Flag + adapter landed; smoke test pending user run. |
-| A1b | V1 cleanup + ZoneRegistry migration | Not-Started | Gates B/C/D. Unblocks decoration P0a-18. Reordered after A2/A3. |
+| A1a | Wire V2 into VillageSpawner (parallel branch) | Superseded by A4 | Flag + adapter landed; absorbed into unconditional A4 routing. |
+| A1b | V1 cleanup + ZoneRegistry migration | Not-Started | Gates B/C/D. Unblocks decoration P0a-18. Reordered after A2/A3/A4. |
 | A2 | Culture unification | Implemented | Sub-bundle landed; V2 Culture/CultureRegistry deleted; smoke test pending. |
 | A3 | Variant unification | Implemented | VariantResolver landed; VariantPicker deleted; V1 + V2 paths route through it; smoke test pending. |
-| A4 | VillageSpawner → MinimalSpawner wiring (flag deletion) | Not-Started | Depends A1b. Original A4: collapse branch; default-on. |
+| A4 | VillageSpawner → V2 unconditional + flag deletion | Implemented | V1 branch removed; adaptive_v2 flag + V2Settings + ConfigCommand deleted; V1 caller inventory recorded; smoke test pending. |
 | A5 | Measurement run vs V1 baseline | Not-Started | Depends A4. |
 
 ## Track B — Decoration finishing
@@ -341,3 +341,135 @@ regressions to investigate.
 
 Next: smoke-test feedback for A1a + A2 + A3. Then A1b — V1 deletion
 + ZoneRegistry migration.
+
+### 2026-05-08 — A4 landed (V2 default; V1 branch removed)
+
+User explicitly accepted the smoke-test risk: A1a / A2 / A3 had not
+yet been run against a live world before A4. If a regression hides
+in those tracks, A4 amplifies it from "flip the flag back" to
+"revert several commits." Recorded so the eventual smoke run knows
+to test all of A1a + A2 + A3 + A4 together.
+
+**Code changed:**
+- `Village/VillageSpawner.java` — body shrunk from 549 lines to 208.
+  `spawnVillage` now performs the unknown-type guard then unconditionally
+  returns `V2VillageSpawnerAdapter.spawn(...)`. The 350-line V1
+  spawn loop (V1 planner call, refinement retry, V1 placement loop,
+  downstream pipeline) was deleted from this file. V1 source files
+  (`VillagePlanner`, recipes, `Adaptive` package, `ZoneRegistry`,
+  `PlacementMatcher`, etc.) remain on disk pending Track A1b.
+- Helpers in `VillageSpawner` are now mostly unused: `findBetterLocalSite`,
+  `setupMerchantStalls`, `deriveVillageLevel`, `findSurface` are
+  private/package-private and dead. `isFarEnoughFromExistingVillages`
+  remains public — still called by `V2VillageSpawnerAdapter`.
+
+**Files deleted:**
+- `Village/Planning/V2/V2Settings.java` — flag holder.
+- `Commands/ConfigCommand.java` — `/litv config adaptive_v2 <on|off>` toggle.
+
+**Files modified:**
+- `Events/ModModEvents.java` — removed `ConfigCommand.register` line;
+  left a one-line comment noting where it used to live.
+
+**Verification (Step 4 done criteria):**
+- `git grep adaptive_v2 -- src/` → empty. ✓
+- `git grep V2Settings -- src/` → only the historical-reference comment
+  in `ModModEvents.java`. ✓
+- `git grep ConfigCommand -- src/` → only the historical-reference
+  comment in `ModModEvents.java`. ✓
+- Doc files (UNIFIED_REWORK_PLAN, UNIFIED_REWORK_PROGRESS,
+  CONSOLIDATION_INVENTORY, ADAPTIVE-VILLAGE-DESIGN) still mention
+  the flag in historical sections — left as-is per the
+  "don't restructure docs" constraint.
+
+**Step 2 — V1 caller inventory (for A1b decisions):**
+
+*Spawn entry callers (all auto-route to V2 via spawnVillage):*
+- `Events/VillageRealisationSystem.java:265` — normal worldgen
+  realisation of planned villages.
+- `Kingdom/KingdomSpawner.java:173, 535, 568` — three sites for
+  kingdom-driven spawns (capital, vassal, fallback).
+
+These are NOT V1-specific; they go through the renamed entry point
+and now hit V2 unconditionally. Safe.
+
+*Direct V1 planner callers (bypass spawnVillage, will compile-break
+when V1 dies in A1b):*
+- `Commands/MeasureCommand.java` — `/litv measure` (Phase 23.1
+  measurement harness) calls `VillagePlanner.plan` directly to
+  dry-run plans without spawning. **A1b decision needed:** rewrite
+  for V2's pipeline, retire the harness, or replace with a V2
+  measurement command. After A4 this is the only thing actively
+  exercising V1 plans in production.
+
+*ZoneRegistry consumers (the four call sites listed in
+UNIFIED_REWORK_PLAN's A1 plan, plus a fifth):*
+- `Village/BuildSiteFinder.java:104, 312` — TWO consumer calls
+  (`ZoneRegistry.zoneOf(buildingType)`). Used by post-spawn
+  expansion code, see below.
+- `Village/Planning/Rules/RuleContext.java` — V1 shape-rule context.
+- `Village/Planning/Zoning/BuildingProfileRegistry.java` — V1 placement
+  matcher tier defaults.
+- `Village/Decoration/Plaza/PlazaGenerator.java:452` — fifth caller
+  not in the original four. Decoration-side query of a building
+  type's zone for civic-ring placement. **Either decoration migrates
+  off ZoneRegistry or the migration absorbs PlazaGenerator.**
+- `Village/Planning/Zoning/PlacementMatcher.java`,
+  `Village/Planning/Primitives/PlanContext.java` — both V1-internal,
+  die with V1.
+
+*Expansion / growth code (post-spawn V1 dependency):*
+- `Entities/Goals/Profession/Builder/BuilderGoal.java:540` — calls
+  `BuildSiteFinder.findSite(...)` for the BUILDER profession to find
+  new building sites in existing villages. **Critical for A1b:**
+  `BuildSiteFinder` uses `ZoneRegistry`, so when V1 dies the
+  BUILDER profession's expansion path stops compiling unless A1b
+  migrates `BuildSiteFinder` first or retires the BUILDER goal.
+- `Village/Village.java` — only references `BuildSiteFinder` in
+  comments (Phase 20 / Phase 20a documentation). No code path.
+
+*VillagePlanHelper (false alarm):*
+- `Village/Planning/VillagePlanHelper.java` — javadoc mentions
+  `VillagePlanner.plan` but the code only creates planned-village
+  records (`Village` + `setPlannedOrigin` + `setRealised(false)`).
+  Does NOT actually call V1 planning. Safe to keep.
+
+**Categorized for A1b:**
+
+Must rewrite or retire BEFORE deleting V1 (or the codebase won't
+compile after V1 deletion):
+1. `MeasureCommand` — direct `VillagePlanner.plan` caller.
+2. `BuildSiteFinder` — uses `ZoneRegistry`; consumed by `BuilderGoal`.
+3. `Planning/Rules/RuleContext` — uses `ZoneRegistry`.
+4. `Planning/Zoning/BuildingProfileRegistry` — uses `ZoneRegistry`.
+5. `Decoration/Plaza/PlazaGenerator` — uses `ZoneRegistry`.
+
+Dies with V1 in A1b (no external consumer):
+- `Village/Planning/Primitives/Recipes/*` (17 recipe classes).
+- `Village/Planning/Primitives/{LayoutPrimitive, BaseRecipe,
+  ShapeRecipe, PlanContext, ...}` and the slot/intention/anchor
+  machinery.
+- `Village/Planning/Adaptive/*` (Phase A-D adaptive package).
+- `Village/Planning/Sectors/*` (V1 sector machinery — verify before
+  delete; some sector references survive in V2 layouts).
+- `Village/Planning/Zoning/PlacementMatcher.java`.
+- `Village/Planning/VillagePlanner.java`.
+- `Village/Planning/ZoneRegistry.java` (after the five callers
+  above migrate).
+
+**Step 5 — smoke test:** pending user-run. The expansion path
+(BUILDER profession) is currently still live and uses V1's
+`BuildSiteFinder` — **expansion will continue working after A4**
+because `BuildSiteFinder` and `ZoneRegistry` were not deleted by A4.
+A1b is the breaking change for that path.
+
+**Open questions for A1b sequencing:**
+- Should `BuildSiteFinder` be ported onto V2 vocabulary (recommend),
+  or should `BuilderGoal`'s site-finding be rewritten?
+- Is `PlazaGenerator` zoning use a real dependency or a stale
+  reference? Decoration is meant to be V1-decoupled.
+- Does `/litv measure` matter for A1b, or is the V2 measurement
+  command in `LayoutCommand` / `PlaceCommand` enough?
+
+Next: smoke-test feedback for A1a + A2 + A3 + A4 together. Then A1b
+when ready.

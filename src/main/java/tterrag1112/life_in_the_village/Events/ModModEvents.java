@@ -284,7 +284,9 @@ public class ModModEvents {
         PlaceCommand.register(event.getDispatcher());
         LayoutCommand.register(event.getDispatcher());
         SpawnCommand.register(event.getDispatcher());
-        ConfigCommand.register(event.getDispatcher());
+        // Track A4 — ConfigCommand registered the V2 toggle subcommand
+        // and was deleted along with V2Settings when V2 became the
+        // only planner.
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());
