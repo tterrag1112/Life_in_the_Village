@@ -3,7 +3,6 @@ package tterrag1112.life_in_the_village.Village.Planning.Terrain;
 
 import net.minecraft.core.BlockPos;
 import org.jetbrains.annotations.Nullable;
-import tterrag1112.life_in_the_village.Village.Planning.VillagePlanner;
 import tterrag1112.life_in_the_village.Village.VillageTag;
 
 import java.util.List;
@@ -11,8 +10,8 @@ import java.util.Set;
 
 /**
  * Immutable snapshot of the terrain analysis around a village origin.
- * Produced by {@link TerrainAnalyzer} and consumed by
- * {@link VillagePlanner} to make layout decisions.
+ * Produced by {@link TerrainAnalyzer} and consumed by the planner to
+ * make layout decisions.
  */
 public record TerrainProfile(
         BlockPos origin,

@@ -4,7 +4,6 @@ package tterrag1112.life_in_the_village.Village;
 import net.minecraft.world.item.DyeColor;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.ColorPalette;
-import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRule;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 
 import java.util.EnumSet;
@@ -78,10 +77,10 @@ public class VillageTypeData {
     }
 
     /**
-     * All currently implemented village layouts. Adding a new layout
-     * means adding a constant here, registering a recipe in
-     * {@link tterrag1112.life_in_the_village.Village.Planning.Primitives.ShapeRecipe},
-     * and writing the recipe class.
+     * All currently implemented village layouts. After Track A1b,
+     * the V1 ShapeRecipe registry is gone; V2 maps these via its own
+     * culture/shape pipeline. Constants are retained for JSON
+     * back-compat and for V2's mapping table.
      */
     public enum ShapeType {
         RADIAL,
@@ -114,7 +113,6 @@ public class VillageTypeData {
     private final VillageShapeProfile shapeProfile;
     private final TerrainStrategy terrainStrategy;
     private final int townSquareCapacity;
-    private List<ShapeRule> shapeRules = List.of();
     private final Set<VillageTag> tags;
     /**
      * Doc 15 — variant style profile. One of {@code "rural"},
@@ -214,10 +212,6 @@ public class VillageTypeData {
     public TerrainStrategy getTerrainStrategy() { return terrainStrategy; }
     public int getTownSquareCapacity() { return townSquareCapacity; }
 
-    public List<ShapeRule> getShapeRules() { return shapeRules; }
-    public void setShapeRules(List<ShapeRule> rules) {
-        this.shapeRules = List.copyOf(rules);
-    }
     public Set<VillageTag> getTags() { return tags;}
 
     // ── Phase 22 cascade fallback chain ────────────────────────────────────

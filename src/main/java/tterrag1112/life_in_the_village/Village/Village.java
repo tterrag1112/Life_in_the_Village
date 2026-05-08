@@ -75,11 +75,6 @@ public class Village {
     // persisted FeatureMap. For now this is for debug visualization only.
     @Nullable private transient tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap debugFeatureMap;
 
-    // Transient — not persisted. Phase 19 replaces this with LayoutPlan's
-    // persisted sectors. For now this is for debug visualization only.
-    @Nullable private transient List<tterrag1112.life_in_the_village.Village
-            .Planning.Sectors.Sector> debugSectors;
-
     // Phase 20a — persisted LayoutPlan. Set by applyLayout from the
     // composed VillageLayout's getPlan(); round-trips through Village.CODEC.
     // BuildSiteFinder (Phase 20) reads via getPlan(); falls back to legacy
@@ -617,17 +612,6 @@ public class Village {
     public void setDebugFeatureMap(
             tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap fm) {
         this.debugFeatureMap = fm;
-    }
-
-    @Nullable
-    public List<tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector>
-            getDebugSectors() {
-        return debugSectors;
-    }
-
-    public void setDebugSectors(
-            List<tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector> s) {
-        this.debugSectors = s;
     }
 
     // ── Plaza geometry + gathering points (Phase 1 doc 04) ──────────────

@@ -11,11 +11,8 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.VillagePath;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
-import tterrag1112.life_in_the_village.Village.Planning.BuildingZone;
 import tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutPlan;
-import tterrag1112.life_in_the_village.Village.Planning.ZoneRegistry;
-import tterrag1112.life_in_the_village.Village.VillageTypeData;
 
 import java.util.List;
 import java.util.Optional;
@@ -23,44 +20,39 @@ import java.util.Optional;
 /**
  * Finds a suitable placement site for an expansion building.
  *
- * <h3>Phase 20 — graph-aware path</h3>
- * When the village has a persisted {@link LayoutPlan} (Phase 20a),
- * the finder walks the plan's road graph + queries the FeatureMap to
- * produce a placement decision consistent with initial planning:
+ * <h3>Track A1b — V2 vocabulary</h3>
+ * BuildingZone-aware placement preferences from V1 are gone. The
+ * graph-aware path now picks the first viable road from the plan and
+ * tries perpendicular candidates along it; the ring fallback iterates
+ * all rings and all angles without zone filters.
  *
  * <ol>
- *   <li>Pick a feeding road of an appropriate tier for the building's
- *       {@link BuildingZone}.</li>
+ *   <li>Pick the first non-empty road edge from the plan.</li>
  *   <li>Generate transient candidate positions perpendicularly along
  *       the road's centerline, sized to the building's footprint plus
  *       road reservation + 1-block gap.</li>
  *   <li>Reject candidates the FeatureMap classifies as on water / on
  *       cliff / outside hull.</li>
- *   <li>Reject candidates whose footprint overlaps existing buildings
- *       (read from {@link VillageSavedData} so expansion-added
- *       buildings count too), road reservations, or planned plots.</li>
+ *   <li>Reject candidates whose footprint overlaps existing buildings,
+ *       road reservations, or planned plots.</li>
  *   <li>Reject candidates whose terrain isn't flat enough.</li>
- *   <li>Return the first viable candidate (Phase 20 Open Question 2
- *       default — full matcher scoring lifted to expansion is
- *       deferred).</li>
+ *   <li>Return the first viable candidate.</li>
  * </ol>
  *
  * <h3>Legacy fallback</h3>
- * Villages with no persisted plan ({@code village.getPlan() == null}
- * — old saves predating Phase 20a, or villages whose planning failed)
+ * Villages with no persisted plan ({@code village.getPlan() == null})
  * use {@link #legacyFindSite(ServerLevel, Village, VillageSavedData,
- * BuildingType, int, int)}: the prior ring-aware + spiral
- * implementation, kept as-is.
+ * BuildingType, int, int)}: a zone-agnostic ring scan + spiral fallback.
  *
  * <h3>Y convention</h3>
  * Uses {@code MOTION_BLOCKING_NO_LEAVES} throughout — same heightmap
- * as {@code RoadRouter} and {@code VillagePlanner}.
+ * as {@code RoadRouter}.
  */
 public class BuildSiteFinder {
 
     private static final int MAX_HEIGHT_VARIATION = 4;
     private static final int RING_ANGLE_STEP      = 15;
-    private static final int RING_OVERFLOW        = 1;
+    private static final int RING_OVERFLOW        = 2;
     private static final int MAX_SPIRAL_RADIUS    = 128;
     private static final int SPIRAL_STEP          = 8;
 
@@ -81,7 +73,7 @@ public class BuildSiteFinder {
                     requiredWidth, requiredLength);
         }
         Optional<BlockPos> graphSite = findSiteOnGraph(
-                level, village, data, plan, buildingType,
+                level, village, data, plan,
                 requiredWidth, requiredLength);
         if (graphSite.isPresent()) return graphSite;
         // Graph-aware path failed — fall back to legacy. This isn't a
@@ -93,17 +85,15 @@ public class BuildSiteFinder {
     }
 
     // =========================================================================
-    // Phase 20 graph-aware path
+    // Graph-aware path (V2 vocabulary — zone-agnostic)
     // =========================================================================
 
     private static Optional<BlockPos> findSiteOnGraph(
             ServerLevel level, Village village, VillageSavedData data,
-            LayoutPlan plan, BuildingType buildingType,
+            LayoutPlan plan,
             int requiredWidth, int requiredLength) {
 
-        BuildingZone zone = ZoneRegistry.zoneOf(buildingType);
-
-        Optional<LayoutPlan.RoadEdge> feederOpt = pickFeedingRoad(plan, zone);
+        Optional<LayoutPlan.RoadEdge> feederOpt = pickFeedingRoad(plan);
         if (feederOpt.isEmpty()) return Optional.empty();
         LayoutPlan.RoadEdge feeder = feederOpt.get();
 
@@ -166,52 +156,13 @@ public class BuildSiteFinder {
     }
 
     /**
-     * Picks the feeding road for a zone. CIVIC types prefer SPINE
-     * (closest to plaza); AGRICULTURAL prefer OUTER_RING; PRODUCTION
-     * prefer SPUR; everything else prefers SPINE then SPUR.
-     *
-     * <p>Returns the first matching edge — order in {@code plan.roads()}
-     * is creation order, which for cascade-aware recipes is centre-out
-     * (spine → spurs → arcs → outer ring), so "first matching" picks the
-     * most-central road of the preferred role.
+     * Picks the first non-empty road edge from the plan. V1's zone-aware
+     * preferences are gone; iteration order in {@code plan.roads()} is
+     * creation order, which for cascade-aware planners is centre-out
+     * (spine → spurs → arcs → outer ring), so the first non-empty edge
+     * tends to be the most-central road.
      */
-    private static Optional<LayoutPlan.RoadEdge> pickFeedingRoad(
-            LayoutPlan plan, BuildingZone zone) {
-        tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole[] preferredRoles =
-                switch (zone) {
-            case AGRICULTURAL -> new tterrag1112.life_in_the_village.Village.Planning
-                    .Graph.EdgeRole[]{
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.OUTER_RING,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.RING,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.SPUR
-            };
-            case DEFENSIVE -> new tterrag1112.life_in_the_village.Village.Planning
-                    .Graph.EdgeRole[]{
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.OUTER_RING,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.RING,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.SPINE
-            };
-            case PRODUCTION -> new tterrag1112.life_in_the_village.Village.Planning
-                    .Graph.EdgeRole[]{
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.SPUR,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.SPINE,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.RING
-            };
-            default -> new tterrag1112.life_in_the_village.Village.Planning
-                    .Graph.EdgeRole[]{
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.SPINE,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.SPUR,
-                tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole.RING
-            };
-        };
-        for (var role : preferredRoles) {
-            for (LayoutPlan.RoadEdge edge : plan.roads()) {
-                if (edge.role() == role && !edge.centerline().isEmpty()) {
-                    return Optional.of(edge);
-                }
-            }
-        }
-        // Last-resort: any road.
+    private static Optional<LayoutPlan.RoadEdge> pickFeedingRoad(LayoutPlan plan) {
         for (LayoutPlan.RoadEdge edge : plan.roads()) {
             if (!edge.centerline().isEmpty()) return Optional.of(edge);
         }
@@ -256,11 +207,6 @@ public class BuildSiteFinder {
             ServerLevel level, Village village, LayoutPlan plan) {
         FeatureMap cached = village.getDebugFeatureMap();
         if (cached != null) return cached;
-        // Phase 20a: rebuild on demand. The buildPlanning signature takes
-        // a List<StarterBuilding> (the planning-time roster); for an
-        // expansion-time rebuild we pass an empty list — the FeatureMap's
-        // hull / water / cliff classifications come from heightmap
-        // sampling and are independent of the building list.
         FeatureMap fm = FeatureMap.buildPlanning(
                 plan.centre(),
                 level.getSeed(),
@@ -293,8 +239,8 @@ public class BuildSiteFinder {
         BlockPos centre = village.getVillageCentre();
         if (centre != null && village.getRing1Radius() > 0) {
             Optional<BlockPos> ringSite = findSiteOnRing(
-                    level, village, data, buildingType,
-                    requiredWidth, requiredLength, centre, footprint);
+                    level, requiredWidth, requiredLength,
+                    centre, footprint, village);
             if (ringSite.isPresent()) return ringSite;
         }
 
@@ -304,44 +250,41 @@ public class BuildSiteFinder {
                 requiredWidth, requiredLength, footprint, centre);
     }
 
+    /**
+     * Zone-agnostic ring scan: iterates all rings (1..1+RING_OVERFLOW)
+     * and all angles in {@code RING_ANGLE_STEP} increments. Returns the
+     * first candidate that clears footprint + flatness checks.
+     */
     private static Optional<BlockPos> findSiteOnRing(
-            ServerLevel level, Village village, VillageSavedData data,
-            BuildingType buildingType, int w, int l,
-            BlockPos centre, BuildingFootprint footprint) {
-
-        BuildingZone zone = ZoneRegistry.zoneOf(buildingType);
-        int preferredRing = zone.preferredRing;
+            ServerLevel level, int w, int l,
+            BlockPos centre, BuildingFootprint footprint, Village village) {
 
         for (int ringOffset = 0; ringOffset <= RING_OVERFLOW; ringOffset++) {
-            int ringIndex = preferredRing + ringOffset;
+            int ringIndex = 1 + ringOffset;
             int radius    = ringRadiusFor(village, ringIndex);
 
-            for (int pass = 0; pass < 2; pass++) {
-                boolean sectorOnly = (pass == 0);
-                for (int angle = 0; angle < 360; angle += RING_ANGLE_STEP) {
-                    double rad = Math.toRadians(angle);
-                    if (sectorOnly && !zone.containsAngle(angle)) continue;
-                    int cx = centre.getX() + (int)(Math.cos(rad) * radius);
-                    int cz = centre.getZ() + (int)(Math.sin(rad) * radius);
-                    int surfY = level.getHeight(
-                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, cx, cz);
-                    if (surfY < 0) continue;
-                    BlockPos candidate = new BlockPos(cx, surfY, cz);
-                    if (!footprint.isClear(candidate, w, l,
-                            BuildingFootprint.DEFAULT_BUFFER)) {
-                        candidate = footprint.findClearPosition(
-                                candidate, centre, w, l,
-                                BuildingFootprint.DEFAULT_BUFFER, 30);
-                        if (candidate == null) continue;
-                        surfY = level.getHeight(
-                                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                                candidate.getX(), candidate.getZ());
-                        candidate = new BlockPos(
-                                candidate.getX(), surfY, candidate.getZ());
-                    }
-                    if (!isSiteFlat(level, candidate, w, l)) continue;
-                    return Optional.of(candidate);
+            for (int angle = 0; angle < 360; angle += RING_ANGLE_STEP) {
+                double rad = Math.toRadians(angle);
+                int cx = centre.getX() + (int)(Math.cos(rad) * radius);
+                int cz = centre.getZ() + (int)(Math.sin(rad) * radius);
+                int surfY = level.getHeight(
+                        Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, cx, cz);
+                if (surfY < 0) continue;
+                BlockPos candidate = new BlockPos(cx, surfY, cz);
+                if (!footprint.isClear(candidate, w, l,
+                        BuildingFootprint.DEFAULT_BUFFER)) {
+                    candidate = footprint.findClearPosition(
+                            candidate, centre, w, l,
+                            BuildingFootprint.DEFAULT_BUFFER, 30);
+                    if (candidate == null) continue;
+                    surfY = level.getHeight(
+                            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                            candidate.getX(), candidate.getZ());
+                    candidate = new BlockPos(
+                            candidate.getX(), surfY, candidate.getZ());
                 }
+                if (!isSiteFlat(level, candidate, w, l)) continue;
+                return Optional.of(candidate);
             }
         }
         return Optional.empty();

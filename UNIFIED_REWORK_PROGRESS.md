@@ -11,7 +11,7 @@ spec matches reality.
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | A1a | Wire V2 into VillageSpawner (parallel branch) | Superseded by A4 | Flag + adapter landed; absorbed into unconditional A4 routing. |
-| A1b | V1 cleanup + ZoneRegistry migration | Not-Started | Gates B/C/D. Unblocks decoration P0a-18. Reordered after A2/A3/A4. |
+| A1b | V1 cleanup + ZoneRegistry migration | Implemented | V1 deletions complete. BuildSiteFinder rewritten zone-agnostic. Rules/Sectors entanglement untangled. Smoke test pending. |
 | A2 | Culture unification | Implemented | Sub-bundle landed; V2 Culture/CultureRegistry deleted; smoke test pending. |
 | A3 | Variant unification | Implemented | VariantResolver landed; VariantPicker deleted; V1 + V2 paths route through it; smoke test pending. |
 | A4 | VillageSpawner → V2 unconditional + flag deletion | Implemented | V1 branch removed; adaptive_v2 flag + V2Settings + ConfigCommand deleted; V1 caller inventory recorded; smoke test pending. |
@@ -473,3 +473,95 @@ A1b is the breaking change for that path.
 
 Next: smoke-test feedback for A1a + A2 + A3 + A4 together. Then A1b
 when ready.
+
+### A1b — V1 cleanup + ZoneRegistry migration (2026-05-08)
+
+Bulk deletions and entanglement cleanup for the V1 planning stack.
+Compile is the user's job — sandbox blocks the gradle toolchain.
+
+**Deleted:**
+- `Village/Planning/Primitives/Recipes/` (17 recipes + RecipeHelpers).
+- `Village/Planning/Adaptive/` (Anchor, EdgeRef, LayoutBlueprint,
+  PlazaDeclaration, RealisedEdge, RecipeNotPortedException,
+  RoadDeclaration, SectorDeclaration, SectorRef, SlotEmitter,
+  SlotIntention).
+- `Village/Planning/Rules/` (BuiltinRules, RuleContext, ShapeRule,
+  ShapeRuleRegistration). The RuleContext.AdjacencyReq inner record
+  moved into BuildingAdjacencySpec to keep BuildingInhabitantRegistry
+  alive.
+- `Village/Planning/Sectors/` (AddRing, AddSpur, ExtendAlongEdge,
+  FixedGrowth, GrowthPolicy, Sector, SectorRole).
+- `Village/Planning/Primitives/{BaseRecipe, ShapeRecipe, PlanContext,
+  RoadResult}.java`. TerminationReason kept (CenterlineResult uses it).
+- `Village/Planning/{VillagePlanner, VillageSitePreparer,
+  LayoutPlanBuilder, ZoneRegistry, BuildingZone}.java`.
+- `Village/Planning/Zoning/PlacementMatcher.java`.
+- `Village/Decoration/Plaza/{PlazaGenerator, PlazaSpec}.java`.
+- `Commands/{MeasureCommand, ShapeRuleDebugCommand}.java`.
+
+**Survives, contrary to the original task list (had real Java
+consumers):**
+- `Village/Planning/Zoning/{AnchorPolicy, AvoidanceRule,
+  PlacementSlot, SlotPreference}` — used by surviving
+  BuildingProfile + BuildingProfileRegistry + Plaza.
+- `Village/Planning/Primitives/TerminationReason` — used by
+  CenterlineResult, which is consumed by surviving Roads/Realization
+  + RouteRealisationSystem + V2.
+
+**Rewrote:**
+- `Village/BuildSiteFinder.java` — dropped BuildingZone /
+  ZoneRegistry. Graph-aware path picks first non-empty road instead
+  of zone-preferred role; ring fallback iterates all rings/angles
+  without zone filter.
+- `Village/Roads/Planning/GatewayDescriptor.java` — removed
+  `deriveFromLayout(PlanContext)`; only V1 ShapeRecipe consumed it.
+- `Village/Buildings/BuildingAdjacencySpec.java` — moved AdjacencyReq
+  inner record onto itself to drop the Rules dependency.
+
+**Edited:**
+- `Life_in_the_village.java` — dropped ShapeRuleRegistration import
+  + commonSetup call.
+- `Village/VillageTypeData.java` — dropped shape_rules field, codec,
+  getter, setter, ShapeRule import.
+- `Village/VillageTypeRegistry.java` — dropped shape_rules JSON
+  parsing (no surviving JSON file ships the key).
+- `Village/Village.java` — dropped debugSectors field +
+  getter/setter.
+- `Village/Planning/VillageLayout.java` — dropped debugSectors;
+  reset path no longer touches it.
+- `Village/Planning/LayoutPlan.java` — dropped sectors field +
+  SectorView record + SECTOR_ROLE/BUILDING_ZONE codecs. Codec arity
+  drops from 13 to 12.
+- `Commands/LayoutDebugCommand.java` — dropped show_sectors
+  subcommand + helpers; show_graph / show_hull / show_features /
+  determinism_test survive.
+- `Events/ModModEvents.java` — dropped MeasureCommand.register call.
+- `Village/Planning/Terrain/TerrainProfile.java` — javadoc only,
+  dropped VillagePlanner import.
+
+**Survivors that look stale:**
+- `LayoutPlanBuilder` deleted — only consumer was VillagePlanner.
+  The original A1b task listed it as a survivor; deleting it
+  preserved the "no orphan classes" invariant. V2's adapter feeds
+  Village.applyLayout via a synthetic VillageLayout, not via this
+  builder.
+- `VillagePlanHelper` survives — used by Events/* + KingdomSpawner
+  for plan-village bookkeeping; is V2-clean.
+
+**Verification:**
+- `git grep ZoneRegistry` → only doc comments in BuildingProfileRegistry
+  and VillageSpawner. No imports.
+- `git grep VillagePlanner` → only doc comments in surviving code.
+- `git grep BaseRecipe / ShapeRecipe / PlanContext / RuleContext /
+  Sector / SectorRole / BuildingZone / RadialRecipe` → only
+  doc-comment leftovers, no live Java.
+- `Village/Planning/{Adaptive,Recipes,Rules,Sectors}` directories
+  gone.
+
+**Items left for follow-up:**
+- Doc comments throughout the codebase still mention deleted
+  classes (PlanContext, BaseRecipe, ShapeRecipe, VillagePlanner,
+  PlazaGenerator). Compiler tolerates broken @link refs; cleanup
+  is cosmetic and out of scope for A1b.
+- A5 measurement command — `MeasureCommand` died with V1; A5
+  needs a V2-native replacement (out of A1b scope).

@@ -1,7 +1,5 @@
 package tterrag1112.life_in_the_village.Village.Buildings;
 
-import tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -30,9 +28,8 @@ import java.util.List;
  * adjacency rule with {@code optional: true}.
  *
  * <h3>Features supported</h3>
- * The {@code feature} string is the same vocabulary as
- * {@link tterrag1112.life_in_the_village.Village.Planning.Rules.RuleContext.AdjacencyReq}:
- * {@code river}, {@code coast}, {@code water}, {@code forest}.
+ * The {@code feature} string vocabulary: {@code river}, {@code coast},
+ * {@code water}, {@code forest}.
  */
 public final class BuildingAdjacencySpec {
 
@@ -40,17 +37,31 @@ public final class BuildingAdjacencySpec {
     public static final BuildingAdjacencySpec EMPTY =
             new BuildingAdjacencySpec(Collections.emptyList());
 
-    private final List<RuleContext.AdjacencyReq> requirements;
+    private final List<AdjacencyReq> requirements;
 
-    public BuildingAdjacencySpec(List<RuleContext.AdjacencyReq> requirements) {
+    public BuildingAdjacencySpec(List<AdjacencyReq> requirements) {
         this.requirements = List.copyOf(requirements);
     }
 
-    public List<RuleContext.AdjacencyReq> getRequirements() {
+    public List<AdjacencyReq> getRequirements() {
         return requirements;
     }
 
     public boolean isEmpty() { return requirements.isEmpty(); }
+
+    /**
+     * An adjacency requirement — the building must be within
+     * {@code maxDist} blocks of the named feature.
+     *
+     * <p>Supported features:
+     * <ul>
+     *   <li>{@code river} — freshwater adjacency (river biome or swamp)</li>
+     *   <li>{@code coast} — ocean adjacency</li>
+     *   <li>{@code water} — either river or coast</li>
+     *   <li>{@code forest} — dense tree coverage</li>
+     * </ul>
+     */
+    public record AdjacencyReq(String feature, int maxDist, boolean required) {}
 
     // =========================================================================
     // Builder
@@ -59,17 +70,17 @@ public final class BuildingAdjacencySpec {
     public static Builder builder() { return new Builder(); }
 
     public static final class Builder {
-        private final List<RuleContext.AdjacencyReq> reqs = new ArrayList<>();
+        private final List<AdjacencyReq> reqs = new ArrayList<>();
 
         /** Hard requirement: building is dropped if not satisfied. */
         public Builder requires(String feature, int maxDist) {
-            reqs.add(new RuleContext.AdjacencyReq(feature, maxDist, true));
+            reqs.add(new AdjacencyReq(feature, maxDist, true));
             return this;
         }
 
         /** Soft preference: building tries to honour it but is not dropped. */
         public Builder prefers(String feature, int maxDist) {
-            reqs.add(new RuleContext.AdjacencyReq(feature, maxDist, false));
+            reqs.add(new AdjacencyReq(feature, maxDist, false));
             return this;
         }
 

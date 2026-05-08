@@ -8,7 +8,6 @@ import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
 import net.minecraft.util.profiling.ProfilerFiller;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tterrag1112.life_in_the_village.Village.Planning.Rules.ShapeRule;
 import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 
 import java.io.InputStreamReader;
@@ -78,16 +77,9 @@ public class VillageTypeRegistry
                             shapeType, forcedAxis, maxRings, streetDensity, walledByDefault);
                 }
 
-                // Shape rules
-                List<ShapeRule> shapeRules = new ArrayList<>();
-                if (json.has("shape_rules")) {
-                    shapeRules = new ArrayList<>();
-                    for (var el : json.getAsJsonArray("shape_rules")) {
-                        if (!el.isJsonObject()) continue;
-                        ShapeRule rule = ShapeRule.Registry.parse(el.getAsJsonObject());
-                        if (rule != null) shapeRules.add(rule);
-                    }
-                }
+                // Track A1b — shape_rules removed alongside the V1
+                // Rules package; surviving JSONs that still carry the
+                // key are silently ignored.
 
                 // Terrain strategy
                 String strategyName = json.has("terrain_strategy")
@@ -134,7 +126,6 @@ public class VillageTypeRegistry
                         type, culture, buildings,
                         shapeProfile, farmPlotConfig, strategy, townSquareCapacity,
                         manualTags);
-                typeData.setShapeRules(shapeRules);
 
                 // Phase 22: optional fallback_chain. JSON: an array of
                 // ShapeType names. Empty / missing means no schema-declared

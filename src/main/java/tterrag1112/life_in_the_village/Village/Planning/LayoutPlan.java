@@ -11,7 +11,6 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
-import tterrag1112.life_in_the_village.Village.Planning.Sectors.SectorRole;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
 import java.util.List;
@@ -63,8 +62,6 @@ public record LayoutPlan(
 
         List<PlannedPlot> plotSlots,
 
-        List<SectorView> sectors,
-
         Map<AnchorKind, BlockPos> anchors,
 
         /** OK if planning succeeded; ABORT if marked unplannable. */
@@ -96,10 +93,6 @@ public record LayoutPlan(
     private static final Codec<FarmPlot.PlotSubtype> PLOT_SUBTYPE_CODEC =
             Codec.STRING.xmap(FarmPlot.PlotSubtype::valueOf,
                               FarmPlot.PlotSubtype::name);
-    private static final Codec<SectorRole> SECTOR_ROLE_CODEC =
-            Codec.STRING.xmap(SectorRole::valueOf, SectorRole::name);
-    private static final Codec<BuildingZone> BUILDING_ZONE_CODEC =
-            Codec.STRING.xmap(BuildingZone::valueOf, BuildingZone::name);
     private static final Codec<ShapeType> SHAPE_TYPE_CODEC =
             Codec.STRING.xmap(ShapeType::valueOf, ShapeType::name);
     private static final Codec<AnchorKind> ANCHOR_KIND_CODEC =
@@ -119,8 +112,6 @@ public record LayoutPlan(
                     .forGetter(LayoutPlan::buildings),
             PlannedPlot.CODEC.listOf().optionalFieldOf("plotSlots", List.of())
                     .forGetter(LayoutPlan::plotSlots),
-            SectorView.CODEC.listOf().optionalFieldOf("sectors", List.of())
-                    .forGetter(LayoutPlan::sectors),
             Codec.unboundedMap(ANCHOR_KIND_CODEC, BlockPos.CODEC)
                     .optionalFieldOf("anchors", Map.of())
                     .forGetter(LayoutPlan::anchors),
@@ -130,10 +121,10 @@ public record LayoutPlan(
             Codec.STRING.optionalFieldOf("unplannableReason")
                     .forGetter(p -> Optional.ofNullable(p.unplannableReason()))
     ).apply(i, (centre, finalShape, plaza, plazaRegions, roads, buildings,
-                plotSlots, sectors, anchors, status, truncations, retries,
+                plotSlots, anchors, status, truncations, retries,
                 reason) -> new LayoutPlan(
                     centre, finalShape, plaza.orElse(null), plazaRegions,
-                    roads, buildings, plotSlots, sectors, anchors,
+                    roads, buildings, plotSlots, anchors,
                     status, truncations, retries, reason.orElse(null))));
 
     /**
@@ -224,29 +215,4 @@ public record LayoutPlan(
         ).apply(i, PlannedPlot::new));
     }
 
-    /**
-     * Sector metadata for decoration / debug. Slot positions are NOT
-     * inlined — committed positions are on {@link PlacedBuilding} via
-     * {@link PlacedBuilding#sectorId()}, and uncommitted positions
-     * aren't structurally interesting after the matcher has run.
-     */
-    public record SectorView(
-            String id,
-            SectorRole role,
-            BuildingZone zone,
-            int slotCount,
-            int capacity,
-            int parentEdgeId,
-            int expectedMaxFootprint) {
-
-        public static final Codec<SectorView> CODEC = RecordCodecBuilder.create(i -> i.group(
-                Codec.STRING.fieldOf("id").forGetter(SectorView::id),
-                SECTOR_ROLE_CODEC.fieldOf("role").forGetter(SectorView::role),
-                BUILDING_ZONE_CODEC.fieldOf("zone").forGetter(SectorView::zone),
-                Codec.INT.fieldOf("slotCount").forGetter(SectorView::slotCount),
-                Codec.INT.fieldOf("capacity").forGetter(SectorView::capacity),
-                Codec.INT.fieldOf("parentEdgeId").forGetter(SectorView::parentEdgeId),
-                Codec.INT.fieldOf("expectedMaxFootprint").forGetter(SectorView::expectedMaxFootprint)
-        ).apply(i, SectorView::new));
-    }
 }

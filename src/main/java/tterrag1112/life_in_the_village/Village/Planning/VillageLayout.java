@@ -99,27 +99,6 @@ public class VillageLayout {
         this.features = f;
     }
 
-    /**
-     * Phase 9 debug-only: snapshot of the sectors a BaseRecipe emitted
-     * during compose. Captured by VillagePlanner; surfaced via
-     * VillageSpawner onto Village.debugSectors so /liv layout debug
-     * show_sectors can render them. Phase 19 replaces this transient
-     * field with persisted LayoutPlan state.
-     */
-    @Nullable private transient List<tterrag1112.life_in_the_village.Village
-            .Planning.Sectors.Sector> debugSectors;
-
-    @Nullable
-    public List<tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector>
-            getDebugSectors() {
-        return debugSectors;
-    }
-
-    public void setDebugSectors(
-            List<tterrag1112.life_in_the_village.Village.Planning.Sectors.Sector> s) {
-        this.debugSectors = s;
-    }
-
     private BlockPos center;
     private BlockPos townSquarePos;
     private int townSquareRadius = 0;
@@ -201,7 +180,6 @@ public class VillageLayout {
         plan = null;
         unplannable = false;
         unplannableReason = null;
-        debugSectors = null;
         // Don't reset: terrain, density, features (FeatureMap),
         // debugRoadGraph / debugFeatureMap (transient debug fields).
     }
