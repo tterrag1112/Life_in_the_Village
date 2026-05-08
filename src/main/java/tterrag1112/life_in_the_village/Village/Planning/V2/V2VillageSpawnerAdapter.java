@@ -199,6 +199,32 @@ public final class V2VillageSpawnerAdapter {
         data.addVillage(village);
         VillageRoadsSavedData.get(level).getOrCreate(village.getId());
 
+        // B2.4 — reserve garden plots from the FeatureMap before the
+        // building loop runs. Buildings can't overlap parks because
+        // they were already planned in PhasedPlanner; parks fit into
+        // the leftover space the planner didn't claim. Registering
+        // the plots here gives the renderer (post-decoration) a
+        // VillageSavedData entry to walk.
+        try {
+            tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier
+                    sizeTier = village.getSizeTier();
+            java.util.List<tterrag1112.life_in_the_village.Village.Decoration
+                    .Parks.GardenPlot> plots = tterrag1112.life_in_the_village
+                            .Village.Decoration.Parks.ParkCandidateFinder.find(
+                            fmap,
+                            placement.placed(),
+                            culture,
+                            siteCtx.inclination(),
+                            sizeTier,
+                            village.getId(),
+                            seed,
+                            level.getGameTime());
+            for (var plot : plots) data.addGardenPlot(plot);
+        } catch (Exception e) {
+            LOGGER.warn("V2: ParkCandidateFinder failed for {}: {}",
+                    village.getName(), e.getMessage());
+        }
+
         // ── Place buildings, capture refs ───────────────────────────────
         Map<BuildingType, Building> placedBuildings = new LinkedHashMap<>();
         Map<BuildingType, List<Building>> placedBuildingsAll = new LinkedHashMap<>();
@@ -444,6 +470,9 @@ public final class V2VillageSpawnerAdapter {
         guard("DecorationPass", () ->
                 tterrag1112.life_in_the_village.Village.Decoration.Framework
                         .DecorationPass.run(level, village, data, synth));
+        guard("ParkRenderer", () ->
+                tterrag1112.life_in_the_village.Village.Decoration.Parks
+                        .ParkRenderer.run(level, village, data));
         guard("TradeRouteManager", () ->
                 tterrag1112.life_in_the_village.Village.Economy.Trade
                         .TradeRouteManager.establishRoutes(level, village, data));

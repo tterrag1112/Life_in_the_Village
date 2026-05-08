@@ -313,7 +313,19 @@ public final class CultureBundles {
             String roadMaterial,
             Curvature preferredCurvature,
             PlazaShape preferredPlazaShape,
-            Map<Inclination, Double> inclinationBias
+            Map<Inclination, Double> inclinationBias,
+            /** B2.4 — culture's overall push for parks, 0..1. Default
+             *  0.5. Multiplies the per-tier reservation cap; high
+             *  values fill closer to the cap, low values leave parks
+             *  rare. Hard tier caps in
+             *  {@code ParkCandidateFinder} are not exceeded. */
+            double parkPriority,
+            /** B2.4 — per-style preference weights consumed by
+             *  {@code ParkCandidateFinder} when choosing a style for
+             *  each candidate area. Keys are
+             *  {@link tterrag1112.life_in_the_village.Village.Decoration.Parks.GardenStyle}
+             *  enum names; missing styles default to weight 1.0. */
+            Map<String, Double> parkPreferenceWeight
     ) {
         public CulturePlanningBias {
             if (roadMaterial == null) roadMaterial = "minecraft:dirt_path";
@@ -321,6 +333,21 @@ public final class CultureBundles {
             if (preferredPlazaShape == null) preferredPlazaShape = PlazaShape.IRREGULAR;
             inclinationBias = inclinationBias == null ? Map.of()
                     : Map.copyOf(inclinationBias);
+            if (parkPriority < 0.0) parkPriority = 0.0;
+            if (parkPriority > 1.0) parkPriority = 1.0;
+            parkPreferenceWeight = parkPreferenceWeight == null ? Map.of()
+                    : Map.copyOf(parkPreferenceWeight);
+        }
+
+        /** Backwards-compat constructor — pre-B2.4 callers don't
+         *  carry park bias. Defaults to {@code 0.5} priority and
+         *  the canonical default-culture preference map. */
+        public CulturePlanningBias(String roadMaterial,
+                                   Curvature preferredCurvature,
+                                   PlazaShape preferredPlazaShape,
+                                   Map<Inclination, Double> inclinationBias) {
+            this(roadMaterial, preferredCurvature, preferredPlazaShape,
+                    inclinationBias, 0.5, defaultParkPreferenceWeights());
         }
 
         public static final CulturePlanningBias DEFAULT =
@@ -328,7 +355,9 @@ public final class CultureBundles {
                         "minecraft:dirt_path",
                         Curvature.NATURAL,
                         PlazaShape.IRREGULAR,
-                        uniformInclinationBias());
+                        uniformInclinationBias(),
+                        0.5,
+                        defaultParkPreferenceWeights());
 
         /** Bias for {@code inc}, defaulting to 1.0 — mirrors the
          *  deleted {@code V2.Culture.Culture#biasFor}. */
@@ -337,9 +366,34 @@ public final class CultureBundles {
             return v != null ? v : 1.0;
         }
 
+        /** Park-style preference weight for {@code styleName}
+         *  (typically a {@code GardenStyle} enum name). Default
+         *  1.0 when unset — neutral preference. */
+        public double parkPreferenceFor(String styleName) {
+            if (styleName == null) return 1.0;
+            Double v = parkPreferenceWeight.get(styleName);
+            return v != null ? v : 1.0;
+        }
+
         private static Map<Inclination, Double> uniformInclinationBias() {
             EnumMap<Inclination, Double> m = new EnumMap<>(Inclination.class);
             for (Inclination inc : Inclination.values()) m.put(inc, 1.0);
+            return m;
+        }
+
+        /** B2.4 — author the doc-09-recommended default-culture
+         *  preference: balanced across styles with a slight emphasis
+         *  on COTTAGE_GREEN and FORMAL_PARK. Mirrored in
+         *  {@code GardenStyle.defaultPreferenceWeights}; this method
+         *  exists so {@code CulturePlanningBias} doesn't need to
+         *  import the parks package. */
+        private static Map<String, Double> defaultParkPreferenceWeights() {
+            Map<String, Double> m = new java.util.LinkedHashMap<>();
+            m.put("COTTAGE_GREEN", 1.2);
+            m.put("FORMAL_PARK",   1.2);
+            m.put("ZEN_GARDEN",    1.0);
+            m.put("SACRED_GROVE",  1.0);
+            m.put("MEMORIAL_PARK", 0.9);
             return m;
         }
 
@@ -360,7 +414,13 @@ public final class CultureBundles {
                                         Inclination::name),
                                 Codec.DOUBLE)
                         .optionalFieldOf("inclinationBias", Map.of())
-                        .forGetter(CulturePlanningBias::inclinationBias)
+                        .forGetter(CulturePlanningBias::inclinationBias),
+                Codec.DOUBLE.optionalFieldOf("parkPriority", 0.5)
+                        .forGetter(CulturePlanningBias::parkPriority),
+                Codec.unboundedMap(Codec.STRING, Codec.DOUBLE)
+                        .optionalFieldOf("parkPreferenceWeight",
+                                defaultParkPreferenceWeights())
+                        .forGetter(CulturePlanningBias::parkPreferenceWeight)
         ).apply(i, CulturePlanningBias::new));
     }
 

@@ -28,6 +28,7 @@ spec matches reality.
 | B2.1 | V2 envelope extension (adjunct planning + framework refactor) | Implemented | Layer 4 reserves AdjunctPlot rectangles; AdjunctPlotPlacer probe→render-only; FaceProbeOrder + PlacementStrategy deleted; manifest schema gains optional `adjunct` field. |
 | B2.2 | Street furniture + welcome marker + noticeboard content | Implemented | 14 doc-05 furniture pieces registered (tier-gated); welcome marker; sign-based noticeboard reading laws/requests/decrees on a 24000-tick refresh. DecorationProfile gains `minTier`; DecorationDensityProfile threaded through emitter. |
 | B2.3 | Industry adjuncts + building gardens | Implemented | AdjunctPlotRegistry culture-keyed (default-only); 15 rural manifests gain doc 07/08 adjunct preferences; ARMORER/TOOLSMITH/LIBRARY/MINE registered. FISHERY skipped (no manifest folder); MILLER skipped (malformed path). |
+| B2.4 | Parks and gardens | Implemented | Layer 4 post-pass `ParkCandidateFinder` reserves up to 3 GardenPlots per village (HAMLET 0 / VILLAGE 0–1 / TOWN 1 / CITY 1–3); `ParkRenderer` runs preserve-vs-compose with procedural primitives + NBT-skip. 5 doc-09 styles. CulturePlanningBias gains parkPriority + parkPreferenceWeight. |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -1193,3 +1194,194 @@ Stamping each adjunct will land in B2.3's content-authoring pass
 Next: B2.4 (parks and gardens) per UNIFIED_REWORK_PLAN — village-
 scope (not building-scope) decoration that places parks in
 leftover space using a Layer 4 post-pass.
+
+### 2026-05-08 — B2.4 landed (parks and gardens)
+
+Track B's third content phase. Introduces parks as a Layer 4
+post-pass output: scan leftover FeatureMap cells, score for
+park-suitability, cluster into rectangular candidate areas, pick a
+{@link GardenStyle} per culture × inclination, reserve as
+{@link GardenPlot}, and render at decoration time. Per the user's
+"natural-feature-first" direction, the renderer prefers preserving
+existing trees / water / flowers and adds minimal procedural
+primitives (paths, flower beds, hedges, ponds) plus NBT-backed
+complex pieces (benches, statues, arches) — the latter skipped if
+the user hasn't authored the NBT yet.
+
+**Scope decisions (user-confirmed):**
+
+- GardenStyle list — *doc-09's 5 styles*: COTTAGE_GREEN, FORMAL_PARK,
+  ZEN_GARDEN, SACRED_GROVE, MEMORIAL_PARK. Skipped the prompt's
+  ORCHARD / POND_GARDEN / MEDITATION rename in favor of doc-09's
+  canonical naming.
+- Park count per tier — *hybrid* per the user: HAMLET 0 always;
+  VILLAGE 0 or 1 weighted by parkPriority; TOWN 1; CITY 1–3 scaled
+  by parkPriority. Hard caps don't budge for high priority.
+- Primitive nature — *mix*. GRAVEL_PATH, FLOWER_BED, HEDGEROW, POND
+  ship as procedural block stamps (always render). BENCH,
+  STATUE_PEDESTAL, TRELLIS, TOPIARY, STANDING_STONE, WOODEN_ARCH,
+  LAMPPOST ship as NBT slots (skipped + logged when the user
+  hasn't authored the NBT).
+- View-vista signal — *deferred*. FeatureMap doesn't expose a
+  per-cell openness; PhasedPlanner's `fanOpenness` is post-hoc
+  hub-only. ParkCandidateFinder scores cells on slope + water
+  proximity + forest proximity instead. View-vista revisited if a
+  later phase ships a per-cell signal.
+
+**Schema additions:**
+
+- `Village/Decoration/Parks/GardenStyle.java` — enum (5 values)
+  with hardcoded preserveBias, min/max size, terrain affinity,
+  weighted piece pool, inclination affinity.
+- `Village/Decoration/Parks/ParkPrimitive.java` — enum (11 values)
+  with `Kind` (PROCEDURAL/NBT) and footprint.
+- `Village/Decoration/Parks/GardenPlot.java` — record (plotId,
+  villageId, bounds, style, preserveBias, preservedFeatures,
+  composedPrimitives, createdTick) + `Bounds` + `ComposedPrimitive`
+  sub-records + Mojang codec.
+- `Village/Decoration/Parks/ParkCandidateFinder.java` — Layer 4
+  post-pass static. Implements the scoring + clustering algorithm
+  + per-tier cap + style selection.
+- `Village/Decoration/Parks/ParkRenderer.java` — renders reserved
+  plots; preserve-mode survey of natural features, compose-mode
+  pool sampler, procedural block stamps, NBT-skip with log line.
+- `Commands/ParkDebugCommand.java` — `/liv parks <village>` listing.
+
+**CulturePlanningBias extension:**
+
+Two new fields on the existing record:
+- `double parkPriority` (0..1, default 0.5) — multiplies the
+  per-tier cap; high values fill closer to the cap, low values
+  leave parks rare. Hard tier caps not exceeded.
+- `Map<String, Double> parkPreferenceWeight` — per-style
+  preference (keys = `GardenStyle` enum names; missing styles
+  default to 1.0).
+
+Codec extends with two `optionalFieldOf` entries; legacy JSONs
+load unchanged. A 4-arg backwards-compat constructor delegates to
+the 6-arg canonical with `parkPriority=0.5` and the doc-09 default
+preference weights.
+
+Default-culture preferences: COTTAGE_GREEN 1.2, FORMAL_PARK 1.2,
+ZEN_GARDEN 1.0, SACRED_GROVE 1.0, MEMORIAL_PARK 0.9 — balanced
+with a slight emphasis on cottage and formal styles per the
+prompt's "balanced across styles, slight emphasis on formal"
+direction.
+
+**Persistence:**
+
+`VillageSavedData` gains a 10th sub-record `VillageGardenData`,
+adds a 13th slot to the top-level `CODEC` (`gardenData`), and
+extends `fromCodec` with a `VillageGardenData` argument. New
+authoritative map `Map<UUID, GardenPlot> gardenPlots` plus
+denormalised `Map<UUID, List<UUID>> gardenPlotsByVillage` index
+rebuilt from the flat list on load. Public API:
+`addGardenPlot`, `updateGardenPlot` (so the renderer can patch in
+preservedFeatures + composedPrimitives without remove/add),
+`getGardenPlot`, `getGardenPlotsForVillage`, `getAllGardenPlots`,
+`removeGardenPlotsForVillage`. Mirrors the `VillageAdjunctData`
+pattern from B2.1.
+
+**Layer 4 hook (V2VillageSpawnerAdapter):**
+
+ParkCandidateFinder runs *between Village registration and the
+building-placement loop* (line ~200) — after PhasedPlanner's
+designateHubs but before any blocks land. Inputs: `fmap`,
+`placement.placed()`, `culture`, `siteCtx.inclination()`,
+`village.getSizeTier()`, `village.getId()`, `seed`,
+`level.getGameTime()`. The result list is persisted via
+`data.addGardenPlot(plot)`.
+
+ParkRenderer runs *inside `runDownstream` after `DecorationPass`*
+— buildings, decorations, and street furniture are all placed by
+then, and the renderer's procedural primitives (paths, flower
+beds) drop on top.
+
+**Scoring algorithm (ParkCandidateFinder):**
+
+Per-cell composite score in [0..1]:
+```
+0.45 * slopeScore     // 1 - localSlope/4
++ 0.25 * forestScore  // 1 - distToForest*cellSize / 12
++ 0.15 * waterScore   // 1 - distToWater*cellSize / 16
++ 0.15 if FOREST cell // category bonus
+```
+
+Cells in WATER, STONE_EXPOSED, or STRUCTURE categories score 0.
+Cells inside a placed footprint (with 2-block buffer) score 0.
+
+Cluster growth: greedy rectangular expansion from any seed cell
+(score ≥ 0.55) while neighbouring edges average ≥ 0.35. Diameter
+capped at 32 blocks.
+
+Style selection: filters by `minSize ≤ span ≤ maxSize`, then
+`prefWeight × inclinationBonus` (1.5× when style's
+`inclinationAffinity` matches the village's inclination; 1.0
+otherwise). Top N by `areaScore × styleScore` reserved (no
+overlap).
+
+**Renderer policy (ParkRenderer):**
+
+1. Survey naturals — sample every 2 blocks, classify each surface
+   as preserve-worthy (logs / leaves / water / lily pad / poppy /
+   dandelion / azure_bluet / cornflower / oxeye_daisy).
+2. Decision — *preserve mode* if `preserveBias ≥ 0.6` AND
+   preserved.size() ≥ 4; *compose mode* otherwise.
+3. Always — stamp a single-block-wide gravel path along the
+   longer axis through the centre.
+4. Preserve mode — try one BENCH NBT placement near path centre
+   (skipped + logged if NBT missing).
+5. Compose mode — sample primitives from the style's piecePool
+   weighted bag for `area / 20` budget. Procedural primitives
+   stamp blocks; NBT primitives log + record placement only.
+6. Always — return the populated GardenPlot for save/reload
+   determinism via `updateGardenPlot`.
+
+Procedural stamps: FLOWER_BED scatters poppy/dandelion/cornflower/
+azure_bluet across a 3×3, HEDGEROW lays 5 oak_leaves in a row,
+POND fills a 3×3 patch with water at floor-1.
+
+**Smoke test contract (live, in-world):**
+
+Without authored NBTs (everything except procedural primitives):
+1. Spawn a CITY rural village in plains/forest. Run
+   `/liv parks <name>`. Confirm 1–3 entries with style names,
+   bounds, sizes 12–30, preserveBias values matching the styles.
+2. Walk to a park's bounds — gravel path stripe should be visible;
+   in compose mode, scattered flowers / hedge segments should
+   appear; preserved trees should still stand if SACRED_GROVE was
+   selected.
+3. Spawn a CITY village in superflat. Confirm parks reserve via
+   `/liv parks` but the renderer logs few preserved features and
+   composes more aggressively (no trees to keep).
+4. Spawn an AGRICULTURAL-inclined village. Confirm COTTAGE_GREEN
+   styles dominate the picks (inclination affinity bonus).
+5. Spawn a SACRED-inclined village. Confirm SACRED_GROVE or
+   ZEN_GARDEN styles preferred.
+6. `/save-all` + restart + `/liv parks <name>` — entries persist
+   with the same bounds, styles, and composedPrimitives lists.
+7. Confirm `/liv parks` reports 0 plots for HAMLET-tier villages
+   (hard cap = 0).
+
+Visual smoke testing for full park aesthetics requires the user to
+author the NBT primitives at:
+- `structures/default/decoration/park/bench.nbt`
+- `structures/default/decoration/park/statue_pedestal.nbt`
+- `structures/default/decoration/park/topiary.nbt`
+- `structures/default/decoration/park/trellis.nbt`
+- `structures/default/decoration/park/standing_stone.nbt`
+- `structures/default/decoration/park/wooden_arch.nbt`
+- `structures/default/decoration/park/lamppost.nbt`
+
+Each is small (1-2 blocks footprint per `ParkPrimitive.footprint()`).
+Until authored, the renderer logs `[ParkRenderer] NBT primitive
+{type} stamping deferred` once per attempted placement and skips
+the block stamp; the placement record is still added so the same
+positions are tried again on re-render rather than re-rolling.
+
+**Cumulative pending verification:** A1a + A2 + A3 + A4 + A1b + B1
++ B2.1 + B2.2 + B2.3 + B2.4 in a single live run.
+
+Next: B2.5 (farm plot rework) per UNIFIED_REWORK_PLAN — completes
+the village-scope decoration triple (parks + farm plots + later
+homesteads).

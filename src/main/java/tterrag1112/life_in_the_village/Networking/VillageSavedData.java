@@ -320,6 +320,26 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillageAdjunctData::new));
     }
 
+    // ── 10. Garden plots (B2.4) ──────────────────────────────────────────────
+
+    /**
+     * B2.4 — durable park / garden plots keyed by plotId. Mirrors
+     * the {@link VillageAdjunctData} pattern: flat list persists,
+     * per-village denormalisation rebuilt on load.
+     */
+    public record VillageGardenData(
+            List<tterrag1112.life_in_the_village.Village.Decoration
+                    .Parks.GardenPlot> plots
+    ) {
+        public static final Codec<VillageGardenData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        tterrag1112.life_in_the_village.Village.Decoration
+                                .Parks.GardenPlot.CODEC.listOf()
+                                .optionalFieldOf("plots", List.of())
+                                .forGetter(VillageGardenData::plots)
+                ).apply(i, VillageGardenData::new));
+    }
+
     // ── 8. Decoration ─────────────────────────────────────────────────────────
 
     /**
@@ -410,7 +430,12 @@ public class VillageSavedData extends SavedData implements
                             .optionalFieldOf("subBuildingData",
                                     new VillageSubBuildingData(List.of()))
                             .forGetter(d -> new VillageSubBuildingData(
-                                    List.copyOf(d.subBuildings.values())))
+                                    List.copyOf(d.subBuildings.values()))),
+                    VillageGardenData.CODEC
+                            .optionalFieldOf("gardenData",
+                                    new VillageGardenData(List.of()))
+                            .forGetter(d -> new VillageGardenData(
+                                    List.copyOf(d.gardenPlots.values())))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -429,7 +454,8 @@ public class VillageSavedData extends SavedData implements
             VillageScribalData    scribalData,
             VillageDecorationData decorationData,
             VillageAdjunctData    adjunctData,
-            VillageSubBuildingData subBuildingData) {
+            VillageSubBuildingData subBuildingData,
+            VillageGardenData     gardenData) {
 
         VillageSavedData data = new VillageSavedData();
 
@@ -513,6 +539,18 @@ public class VillageSavedData extends SavedData implements
                         .computeIfAbsent(sub.parentBuildingId(),
                                 k -> new ArrayList<>())
                         .add(sub.subBuildingId());
+            }
+        }
+
+        // Garden plots (B2.4). Authoritative store + per-village
+        // denormalisation rebuilt from it.
+        if (gardenData != null) {
+            for (var plot : gardenData.plots()) {
+                data.gardenPlots.put(plot.plotId(), plot);
+                data.gardenPlotsByVillage
+                        .computeIfAbsent(plot.villageId(),
+                                k -> new ArrayList<>())
+                        .add(plot.plotId());
             }
         }
 
@@ -612,6 +650,12 @@ public class VillageSavedData extends SavedData implements
     private final Map<UUID, tterrag1112.life_in_the_village.Village
             .Decoration.Subbuilding.SubBuilding> subBuildings = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> subBuildingsByParent = new HashMap<>();
+
+    // Garden plots (B2.4). Authoritative store keyed by plotId; the
+    // per-village denormalisation map is rebuilt from this on load.
+    private final Map<UUID, tterrag1112.life_in_the_village.Village
+            .Decoration.Parks.GardenPlot> gardenPlots = new LinkedHashMap<>();
+    private final Map<UUID, List<UUID>> gardenPlotsByVillage = new HashMap<>();
 
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
@@ -942,6 +986,68 @@ public class VillageSavedData extends SavedData implements
     public Collection<tterrag1112.life_in_the_village.Village.Decoration
             .Subbuilding.SubBuilding> getAllSubBuildings() {
         return Collections.unmodifiableCollection(subBuildings.values());
+    }
+
+    // ── Garden plots (B2.4 — doc 09) ─────────────────────────────────────
+
+    public void addGardenPlot(tterrag1112.life_in_the_village.Village
+                                      .Decoration.Parks.GardenPlot plot) {
+        if (plot == null) return;
+        gardenPlots.put(plot.plotId(), plot);
+        gardenPlotsByVillage
+                .computeIfAbsent(plot.villageId(),
+                        k -> new ArrayList<>())
+                .add(plot.plotId());
+        markDirty();
+    }
+
+    /** Replaces an existing plot (same {@code plotId}) so the
+     *  renderer can update {@code preservedFeatures} /
+     *  {@code composedPrimitives} after rendering without a
+     *  remove-then-add dance. */
+    public void updateGardenPlot(tterrag1112.life_in_the_village.Village
+                                         .Decoration.Parks.GardenPlot plot) {
+        if (plot == null) return;
+        var prior = gardenPlots.get(plot.plotId());
+        if (prior == null) {
+            addGardenPlot(plot);
+            return;
+        }
+        gardenPlots.put(plot.plotId(), plot);
+        markDirty();
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Village.Decoration
+            .Parks.GardenPlot> getGardenPlot(UUID plotId) {
+        if (plotId == null) return Optional.empty();
+        return Optional.ofNullable(gardenPlots.get(plotId));
+    }
+
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Parks.GardenPlot> getGardenPlotsForVillage(UUID villageId) {
+        if (villageId == null) return List.of();
+        List<UUID> ids = gardenPlotsByVillage.get(villageId);
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<tterrag1112.life_in_the_village.Village.Decoration
+                .Parks.GardenPlot> out = new ArrayList<>(ids.size());
+        for (UUID id : ids) {
+            var plot = gardenPlots.get(id);
+            if (plot != null) out.add(plot);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    public Collection<tterrag1112.life_in_the_village.Village.Decoration
+            .Parks.GardenPlot> getAllGardenPlots() {
+        return Collections.unmodifiableCollection(gardenPlots.values());
+    }
+
+    public void removeGardenPlotsForVillage(UUID villageId) {
+        if (villageId == null) return;
+        List<UUID> ids = gardenPlotsByVillage.remove(villageId);
+        if (ids == null || ids.isEmpty()) return;
+        for (UUID id : ids) gardenPlots.remove(id);
+        markDirty();
     }
 
     public void removeSubBuilding(UUID subId) {
