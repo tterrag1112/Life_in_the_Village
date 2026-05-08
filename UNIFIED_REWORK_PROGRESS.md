@@ -15,7 +15,7 @@ spec matches reality.
 | A2 | Culture unification | Implemented | Sub-bundle landed; V2 Culture/CultureRegistry deleted; smoke test pending. |
 | A3 | Variant unification | Implemented | VariantResolver landed; VariantPicker deleted; V1 + V2 paths route through it; smoke test pending. |
 | A4 | VillageSpawner → V2 unconditional + flag deletion | Implemented | V1 branch removed; adaptive_v2 flag + V2Settings + ConfigCommand deleted; V1 caller inventory recorded; smoke test pending. |
-| A5 | Measurement run vs V1 baseline | Not-Started | Depends A4. |
+| A5 | Measurement run vs V1 baseline | Deferred | Harness deleted in A1b; V1 baseline never recorded; V1-shaped metrics don't translate to V2. Track A is functionally complete without it. Re-open if a V2-native harness is built. |
 
 ## Track B — Decoration finishing
 
@@ -565,3 +565,35 @@ consumers):**
   is cosmetic and out of scope for A1b.
 - A5 measurement command — `MeasureCommand` died with V1; A5
   needs a V2-native replacement (out of A1b scope).
+
+### 2026-05-08 — A5 deferred
+
+User skipped A5 by direction. The original A5 plan ("run `/litv
+measure` and record results in PLACEMENT-REWORK-STATE.md Section
+9.1") is not actionable as written:
+
+- The harness (`Commands/MeasureCommand.java`) was deleted in A1b
+  because its only entry point was `VillagePlanner.plan()` (V1).
+- V1 Phase 22 baseline was never recorded — Section 9.1 has been
+  blank since 23.1 shipped, so there is nothing to compare against.
+- The Section 9.1 column structure (Primary-shape success,
+  Fallback-rescued success, RADIAL primary-success) describes
+  V1-only concepts that don't translate to V2 (no shapes, no
+  fallback chains).
+- I cannot run Minecraft from this environment regardless.
+
+Track A is functionally complete: V2 is the only planner running,
+V1 source is gone, A1a + A2 + A3 + A4 + A1b all landed in source.
+A5 stays open as a deferred task; B/C/D can proceed on the basis
+of "V2 ships and the codebase compiles," with smoke-test discovery
+of any V2 regressions handled per-track.
+
+Re-open A5 if and when (a) a V2-native measurement harness is
+built, AND (b) a baseline corpus is defined for V2-shaped metrics
+(tier distribution, inclination distribution, viable/unviable,
+drop counts, timing). Section 9.1 should be rewritten with V2
+columns at that point.
+
+Track A: A1a Superseded, A2/A3/A4/A1b Implemented, A5 Deferred.
+Net effect: V2 is the sole planner; downstream B/C/D unblocked
+modulo smoke-test confirmation of cumulative A1a+A2+A3+A4+A1b.
