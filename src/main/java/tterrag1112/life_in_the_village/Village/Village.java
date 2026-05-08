@@ -362,7 +362,13 @@ public class Village {
             List<tterrag1112.life_in_the_village.Village.Decoration
                     .Plaza.PlazaRegion> plazaRegions,
             Optional<tterrag1112.life_in_the_village.Village.Decoration
-                    .Plaza.VillageCenterMarker> villageCenterMarker
+                    .Plaza.VillageCenterMarker> villageCenterMarker,
+            // B2.8 — folded into the existing meta sub-record because
+            // the top-level Village codec was already at the 16-arg
+            // RecordCodecBuilder.group() ceiling. The name says "Plaza"
+            // for backwards-compat with persisted JSON; the field
+            // carries any V2-derived classification meta from now on.
+            Optional<tterrag1112.life_in_the_village.Village.Planning.V2.Inclination> v2Inclination
     ) {
         static final Codec<VillagePlazaMeta> CODEC = RecordCodecBuilder.create(i -> i.group(
                 tterrag1112.life_in_the_village.Village.Decoration
@@ -372,17 +378,24 @@ public class Village {
                 tterrag1112.life_in_the_village.Village.Decoration
                         .Plaza.VillageCenterMarker.CODEC
                         .optionalFieldOf("villageCenterMarker")
-                        .forGetter(VillagePlazaMeta::villageCenterMarker)
+                        .forGetter(VillagePlazaMeta::villageCenterMarker),
+                Codec.STRING.xmap(
+                                s -> tterrag1112.life_in_the_village.Village.Planning.V2.Inclination
+                                        .valueOf(s),
+                                Enum::name)
+                        .optionalFieldOf("v2Inclination")
+                        .forGetter(VillagePlazaMeta::v2Inclination)
         ).apply(i, VillagePlazaMeta::new));
 
         static VillagePlazaMeta empty() {
-            return new VillagePlazaMeta(new ArrayList<>(), Optional.empty());
+            return new VillagePlazaMeta(new ArrayList<>(), Optional.empty(), Optional.empty());
         }
 
         static VillagePlazaMeta from(Village v) {
             return new VillagePlazaMeta(
                     new ArrayList<>(v.plazaRegions),
-                    Optional.ofNullable(v.villageCenterMarker));
+                    Optional.ofNullable(v.villageCenterMarker),
+                    Optional.ofNullable(v.inclination));
         }
 
         void applyTo(Village v) {
@@ -391,6 +404,7 @@ public class Village {
                 v.plazaRegions.addAll(plazaRegions);
             }
             v.villageCenterMarker = villageCenterMarker.orElse(null);
+            v2Inclination.ifPresent(i -> v.inclination = i);
         }
     }
 
@@ -491,21 +505,13 @@ public class Village {
                     // polygon generator.
                     VillagePlazaMeta.CODEC
                             .optionalFieldOf("plazaMeta", VillagePlazaMeta.empty())
-                            .forGetter(VillagePlazaMeta::from),
-                    // B2.8 — persisted V2 inclination, set at spawn.
-                    // Optional so legacy saves load with null.
-                    Codec.STRING.xmap(
-                                    s -> tterrag1112.life_in_the_village.Village.Planning.V2.Inclination
-                                            .valueOf(s),
-                                    Enum::name)
-                            .optionalFieldOf("v2Inclination")
-                            .forGetter(v -> Optional.ofNullable(v.inclination))
+                            .forGetter(VillagePlazaMeta::from)
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
                                layoutMeta, villageType, dockNodeId,
                                useGraphConnector, offices, policy,
-                               plazaMeta, v2Inclination) -> {
+                               plazaMeta) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -535,7 +541,6 @@ public class Village {
                 }
                 v.policy = policy != null ? policy : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy();
                 if (plazaMeta != null) plazaMeta.applyTo(v);
-                v2Inclination.ifPresent(v::setInclination);
                 return v;
             })
     );
