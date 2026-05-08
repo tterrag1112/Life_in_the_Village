@@ -325,7 +325,19 @@ public final class CultureBundles {
              *  each candidate area. Keys are
              *  {@link tterrag1112.life_in_the_village.Village.Decoration.Parks.GardenStyle}
              *  enum names; missing styles default to weight 1.0. */
-            Map<String, Double> parkPreferenceWeight
+            Map<String, Double> parkPreferenceWeight,
+            /** B2.5 — culture's overall push for farm sectors, 0..1.
+             *  Default 0.7 (default culture is agricultural-leaning).
+             *  Drives radius scaling slack within the doc-10 tier
+             *  bands. */
+            double farmPriority,
+            /** B2.5 — fraction of plots that should be PASTURE /
+             *  ORCHARD vs cultivated. Default 0.2 — mostly cultivated. */
+            double pastureRatio,
+            /** B2.5 — per-{@link FarmPlot.CropType} preference weights
+             *  consumed by {@code FarmCropPicker}. Keys are CropType
+             *  enum names; missing types default to weight 1.0. */
+            Map<String, Double> cropPreference
     ) {
         public CulturePlanningBias {
             if (roadMaterial == null) roadMaterial = "minecraft:dirt_path";
@@ -337,17 +349,40 @@ public final class CultureBundles {
             if (parkPriority > 1.0) parkPriority = 1.0;
             parkPreferenceWeight = parkPreferenceWeight == null ? Map.of()
                     : Map.copyOf(parkPreferenceWeight);
+            if (farmPriority < 0.0) farmPriority = 0.0;
+            if (farmPriority > 1.0) farmPriority = 1.0;
+            if (pastureRatio < 0.0) pastureRatio = 0.0;
+            if (pastureRatio > 1.0) pastureRatio = 1.0;
+            cropPreference = cropPreference == null ? Map.of()
+                    : Map.copyOf(cropPreference);
         }
 
         /** Backwards-compat constructor — pre-B2.4 callers don't
-         *  carry park bias. Defaults to {@code 0.5} priority and
-         *  the canonical default-culture preference map. */
+         *  carry park or farm bias. Defaults parks to 0.5 priority
+         *  and farms to 0.7 priority + 0.2 pasture, all with the
+         *  canonical default-culture preference maps. */
         public CulturePlanningBias(String roadMaterial,
                                    Curvature preferredCurvature,
                                    PlazaShape preferredPlazaShape,
                                    Map<Inclination, Double> inclinationBias) {
             this(roadMaterial, preferredCurvature, preferredPlazaShape,
-                    inclinationBias, 0.5, defaultParkPreferenceWeights());
+                    inclinationBias,
+                    0.5, defaultParkPreferenceWeights(),
+                    0.7, 0.2, defaultCropPreferenceWeights());
+        }
+
+        /** B2.4-shape backwards-compat constructor — kept so call
+         *  sites authored between B2.4 and B2.5 don't break. */
+        public CulturePlanningBias(String roadMaterial,
+                                   Curvature preferredCurvature,
+                                   PlazaShape preferredPlazaShape,
+                                   Map<Inclination, Double> inclinationBias,
+                                   double parkPriority,
+                                   Map<String, Double> parkPreferenceWeight) {
+            this(roadMaterial, preferredCurvature, preferredPlazaShape,
+                    inclinationBias,
+                    parkPriority, parkPreferenceWeight,
+                    0.7, 0.2, defaultCropPreferenceWeights());
         }
 
         public static final CulturePlanningBias DEFAULT =
@@ -357,7 +392,10 @@ public final class CultureBundles {
                         PlazaShape.IRREGULAR,
                         uniformInclinationBias(),
                         0.5,
-                        defaultParkPreferenceWeights());
+                        defaultParkPreferenceWeights(),
+                        0.7,
+                        0.2,
+                        defaultCropPreferenceWeights());
 
         /** Bias for {@code inc}, defaulting to 1.0 — mirrors the
          *  deleted {@code V2.Culture.Culture#biasFor}. */
@@ -372,6 +410,14 @@ public final class CultureBundles {
         public double parkPreferenceFor(String styleName) {
             if (styleName == null) return 1.0;
             Double v = parkPreferenceWeight.get(styleName);
+            return v != null ? v : 1.0;
+        }
+
+        /** B2.5 — crop-type preference weight (typically a
+         *  {@code CropType} enum name). Default 1.0. */
+        public double cropPreferenceFor(String cropName) {
+            if (cropName == null) return 1.0;
+            Double v = cropPreference.get(cropName);
             return v != null ? v : 1.0;
         }
 
@@ -394,6 +440,24 @@ public final class CultureBundles {
             m.put("ZEN_GARDEN",    1.0);
             m.put("SACRED_GROVE",  1.0);
             m.put("MEMORIAL_PARK", 0.9);
+            return m;
+        }
+
+        /** B2.5 — default-culture crop preference: WHEAT highest,
+         *  CARROTS / POTATOES medium, MIXED rotation as fallback,
+         *  ORCHARD / PASTURE light. Ratios match doc 10's
+         *  "agricultural-leaning" default. */
+        private static Map<String, Double> defaultCropPreferenceWeights() {
+            Map<String, Double> m = new java.util.LinkedHashMap<>();
+            m.put("WHEAT",     1.4);
+            m.put("CARROTS",   1.0);
+            m.put("POTATOES",  1.0);
+            m.put("BEETROOT",  0.6);
+            m.put("MIXED",     1.2);
+            m.put("GRAIN",     1.0);
+            m.put("VEGETABLE", 0.9);
+            m.put("ORCHARD",   0.7);
+            m.put("PASTURE",   0.7);
             return m;
         }
 
@@ -420,7 +484,15 @@ public final class CultureBundles {
                 Codec.unboundedMap(Codec.STRING, Codec.DOUBLE)
                         .optionalFieldOf("parkPreferenceWeight",
                                 defaultParkPreferenceWeights())
-                        .forGetter(CulturePlanningBias::parkPreferenceWeight)
+                        .forGetter(CulturePlanningBias::parkPreferenceWeight),
+                Codec.DOUBLE.optionalFieldOf("farmPriority", 0.7)
+                        .forGetter(CulturePlanningBias::farmPriority),
+                Codec.DOUBLE.optionalFieldOf("pastureRatio", 0.2)
+                        .forGetter(CulturePlanningBias::pastureRatio),
+                Codec.unboundedMap(Codec.STRING, Codec.DOUBLE)
+                        .optionalFieldOf("cropPreference",
+                                defaultCropPreferenceWeights())
+                        .forGetter(CulturePlanningBias::cropPreference)
         ).apply(i, CulturePlanningBias::new));
     }
 

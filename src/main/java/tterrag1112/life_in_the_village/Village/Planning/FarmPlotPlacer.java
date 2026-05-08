@@ -51,6 +51,17 @@ import java.util.*;
  * <h3>Y convention</h3>
  * Uses {@code MOTION_BLOCKING_NO_LEAVES} throughout, consistent with
  * {@code RoadRouter} and {@code VillagePlanner}.
+ *
+ * <h3>B2.5 — parked</h3>
+ * As of B2.5 the V2 spawn path no longer calls
+ * {@link #placeAll}; {@code FarmSectorPlanner} +
+ * {@code FarmSectorRenderer} replace its planning + rendering
+ * roles. The class survives in tree as parked legacy code so a
+ * future fallback or comparison run can wire it back in with a
+ * one-line revert in
+ * {@code V2VillageSpawnerAdapter.runDownstream}. Methods kept
+ * package-public for that reason; new code should call the new
+ * sector pipeline instead.
  */
 public class FarmPlotPlacer {
 

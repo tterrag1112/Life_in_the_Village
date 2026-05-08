@@ -5,7 +5,9 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
+import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -200,10 +202,25 @@ public class FarmPlot {
                             .forGetter(p -> Optional.ofNullable(p.farmhouseId)),
                     Codec.STRING.xmap(PlotSubtype::valueOf, PlotSubtype::name)
                             .optionalFieldOf("subtype", PlotSubtype.CROP_FIELD)
-                            .forGetter(FarmPlot::getSubtype)
-            ).apply(instance, (id, name, origin, radius, cropType, farmhouseId, subtype) -> {
+                            .forGetter(FarmPlot::getSubtype),
+                    // B2.5 — sector membership; legacy plots load with no sector.
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                            .optionalFieldOf("sectorId")
+                            .forGetter(p -> Optional.ofNullable(p.sectorId)),
+                    // B2.5 — polygon bounds; legacy plots fall back to a
+                    // rectangular polygon derived from origin+radius.
+                    BlockPos.CODEC.listOf()
+                            .optionalFieldOf("polygonVertices", List.of())
+                            .forGetter(p -> p.polygon == null ? List.of()
+                                    : p.polygon.vertices())
+            ).apply(instance, (id, name, origin, radius, cropType, farmhouseId,
+                              subtype, sectorId, polygonVertices) -> {
                 FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
+                sectorId.ifPresent(plot::setSectorId);
+                if (polygonVertices != null && polygonVertices.size() >= 3) {
+                    plot.setPolygon(new Polygon(polygonVertices));
+                }
                 return plot;
             })
     );
@@ -219,6 +236,12 @@ public class FarmPlot {
     private       CropType  cropType;
     private       UUID      farmhouseId; // nullable until assigned
     private PlotSubtype subtype;
+    /** B2.5 — owning sector. Null for legacy plots placed before the
+     *  sector planner shipped. */
+    private       UUID      sectorId;
+    /** B2.5 — terrain-following polygon. Null falls back to the
+     *  legacy circle-via-origin/radius used by {@link #contains}. */
+    private       Polygon   polygon;
 
 
     public FarmPlot(UUID id, String name, BlockPos origin,
@@ -236,6 +259,11 @@ public class FarmPlot {
     // =========================================================================
 
     public boolean contains(BlockPos pos) {
+        // B2.5 — polygon takes precedence; legacy circle fallback
+        // applies for plots without polygon bounds set.
+        if (polygon != null && !polygon.vertices().isEmpty()) {
+            return Polygon.contains(polygon, pos);
+        }
         double dx = pos.getX() - origin.getX();
         double dz = pos.getZ() - origin.getZ();
         return dx * dx + dz * dz <= (double) radius * radius;
@@ -244,8 +272,27 @@ public class FarmPlot {
     public java.util.List<BlockPos> getFarmlandBlocks(
             net.minecraft.server.level.ServerLevel level) {
         java.util.List<BlockPos> result = new java.util.ArrayList<>();
-        for (int x = origin.getX() - radius; x <= origin.getX() + radius; x++) {
-            for (int z = origin.getZ() - radius; z <= origin.getZ() + radius; z++) {
+        // B2.5 — when polygon is set, walk the polygon's bbox so the
+        // search covers vertices that may sit past the legacy
+        // origin±radius envelope. Polygon-less plots fall back to the
+        // legacy circle-in-square walk below.
+        int minX, maxX, minZ, maxZ;
+        if (polygon != null && !polygon.vertices().isEmpty()) {
+            int xmn = Integer.MAX_VALUE, xmx = Integer.MIN_VALUE;
+            int zmn = Integer.MAX_VALUE, zmx = Integer.MIN_VALUE;
+            for (BlockPos v : polygon.vertices()) {
+                xmn = Math.min(xmn, v.getX()); xmx = Math.max(xmx, v.getX());
+                zmn = Math.min(zmn, v.getZ()); zmx = Math.max(zmx, v.getZ());
+            }
+            minX = xmn; maxX = xmx; minZ = zmn; maxZ = zmx;
+        } else {
+            minX = origin.getX() - radius;
+            maxX = origin.getX() + radius;
+            minZ = origin.getZ() - radius;
+            maxZ = origin.getZ() + radius;
+        }
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
                 BlockPos surface = new BlockPos(x, origin.getY(), z);
                 if (!contains(surface)) continue;
                 for (int dy = -3; dy <= 3; dy++) {
@@ -295,4 +342,10 @@ public class FarmPlot {
     public boolean isAssigned() { return farmhouseId != null; }
     public PlotSubtype getSubtype() { return subtype; }
     public void setSubtype(PlotSubtype subtype) { this.subtype = subtype; }
+
+    public UUID getSectorId() { return sectorId; }
+    public void setSectorId(UUID sectorId) { this.sectorId = sectorId; }
+
+    public Polygon getPolygon() { return polygon; }
+    public void setPolygon(Polygon polygon) { this.polygon = polygon; }
 }

@@ -340,6 +340,24 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillageGardenData::new));
     }
 
+    // ── 11. Farm sectors (B2.5) ──────────────────────────────────────────────
+
+    /**
+     * B2.5 — durable farm sectors keyed by sectorId. Mirrors the
+     * garden / adjunct pattern.
+     */
+    public record VillageFarmData(
+            List<tterrag1112.life_in_the_village.Village.Farms.FarmSector> sectors
+    ) {
+        public static final Codec<VillageFarmData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        tterrag1112.life_in_the_village.Village.Farms
+                                .FarmSector.CODEC.listOf()
+                                .optionalFieldOf("sectors", List.of())
+                                .forGetter(VillageFarmData::sectors)
+                ).apply(i, VillageFarmData::new));
+    }
+
     // ── 8. Decoration ─────────────────────────────────────────────────────────
 
     /**
@@ -435,7 +453,12 @@ public class VillageSavedData extends SavedData implements
                             .optionalFieldOf("gardenData",
                                     new VillageGardenData(List.of()))
                             .forGetter(d -> new VillageGardenData(
-                                    List.copyOf(d.gardenPlots.values())))
+                                    List.copyOf(d.gardenPlots.values()))),
+                    VillageFarmData.CODEC
+                            .optionalFieldOf("farmSectorData",
+                                    new VillageFarmData(List.of()))
+                            .forGetter(d -> new VillageFarmData(
+                                    List.copyOf(d.farmSectors.values())))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -455,7 +478,8 @@ public class VillageSavedData extends SavedData implements
             VillageDecorationData decorationData,
             VillageAdjunctData    adjunctData,
             VillageSubBuildingData subBuildingData,
-            VillageGardenData     gardenData) {
+            VillageGardenData     gardenData,
+            VillageFarmData       farmSectorData) {
 
         VillageSavedData data = new VillageSavedData();
 
@@ -551,6 +575,18 @@ public class VillageSavedData extends SavedData implements
                         .computeIfAbsent(plot.villageId(),
                                 k -> new ArrayList<>())
                         .add(plot.plotId());
+            }
+        }
+
+        // Farm sectors (B2.5). Authoritative store + per-village
+        // denormalisation rebuilt from it.
+        if (farmSectorData != null) {
+            for (var sector : farmSectorData.sectors()) {
+                data.farmSectors.put(sector.sectorId(), sector);
+                data.farmSectorsByVillage
+                        .computeIfAbsent(sector.villageId(),
+                                k -> new ArrayList<>())
+                        .add(sector.sectorId());
             }
         }
 
@@ -656,6 +692,12 @@ public class VillageSavedData extends SavedData implements
     private final Map<UUID, tterrag1112.life_in_the_village.Village
             .Decoration.Parks.GardenPlot> gardenPlots = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> gardenPlotsByVillage = new HashMap<>();
+
+    // Farm sectors (B2.5). Authoritative store keyed by sectorId;
+    // per-village denormalisation rebuilt on load.
+    private final Map<UUID, tterrag1112.life_in_the_village.Village
+            .Farms.FarmSector> farmSectors = new LinkedHashMap<>();
+    private final Map<UUID, List<UUID>> farmSectorsByVillage = new HashMap<>();
 
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
@@ -1047,6 +1089,52 @@ public class VillageSavedData extends SavedData implements
         List<UUID> ids = gardenPlotsByVillage.remove(villageId);
         if (ids == null || ids.isEmpty()) return;
         for (UUID id : ids) gardenPlots.remove(id);
+        markDirty();
+    }
+
+    // ── Farm sectors (B2.5 — doc 10) ─────────────────────────────────────
+
+    public void addFarmSector(tterrag1112.life_in_the_village.Village
+                                      .Farms.FarmSector sector) {
+        if (sector == null) return;
+        farmSectors.put(sector.sectorId(), sector);
+        farmSectorsByVillage
+                .computeIfAbsent(sector.villageId(),
+                        k -> new ArrayList<>())
+                .add(sector.sectorId());
+        markDirty();
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Village
+            .Farms.FarmSector> getFarmSector(UUID sectorId) {
+        if (sectorId == null) return Optional.empty();
+        return Optional.ofNullable(farmSectors.get(sectorId));
+    }
+
+    public List<tterrag1112.life_in_the_village.Village
+            .Farms.FarmSector> getFarmSectorsForVillage(UUID villageId) {
+        if (villageId == null) return List.of();
+        List<UUID> ids = farmSectorsByVillage.get(villageId);
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<tterrag1112.life_in_the_village.Village
+                .Farms.FarmSector> out = new ArrayList<>(ids.size());
+        for (UUID id : ids) {
+            var s = farmSectors.get(id);
+            if (s != null) out.add(s);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    public Collection<tterrag1112.life_in_the_village.Village
+            .Farms.FarmSector> getAllFarmSectors() {
+        return Collections.unmodifiableCollection(farmSectors.values());
+    }
+
+    public void removeFarmSectorsForVillage(UUID villageId) {
+        if (villageId == null) return;
+        List<UUID> ids = farmSectorsByVillage.remove(villageId);
+        if (ids == null || ids.isEmpty()) return;
+        for (UUID id : ids) farmSectors.remove(id);
         markDirty();
     }
 

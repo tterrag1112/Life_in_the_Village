@@ -29,6 +29,7 @@ spec matches reality.
 | B2.2 | Street furniture + welcome marker + noticeboard content | Implemented | 14 doc-05 furniture pieces registered (tier-gated); welcome marker; sign-based noticeboard reading laws/requests/decrees on a 24000-tick refresh. DecorationProfile gains `minTier`; DecorationDensityProfile threaded through emitter. |
 | B2.3 | Industry adjuncts + building gardens | Implemented | AdjunctPlotRegistry culture-keyed (default-only); 15 rural manifests gain doc 07/08 adjunct preferences; ARMORER/TOOLSMITH/LIBRARY/MINE registered. FISHERY skipped (no manifest folder); MILLER skipped (malformed path). |
 | B2.4 | Parks and gardens | Implemented | Layer 4 post-pass `ParkCandidateFinder` reserves up to 3 GardenPlots per village (HAMLET 0 / VILLAGE 0–1 / TOWN 1 / CITY 1–3); `ParkRenderer` runs preserve-vs-compose with procedural primitives + NBT-skip. 5 doc-09 styles. CulturePlanningBias gains parkPriority + parkPreferenceWeight. |
+| B2.5 | Farm plot rework | Implemented | `FarmSector` + 4-vertex terrain-trimmed polygon plots. Doc-10 tier-only sector radius (HAMLET 15/VILLAGE 20/TOWN 25/CITY 30) with farmPriority slack. Per-farmhouse plot count (HAMLET 2/VILLAGE 2-3/TOWN 3-4/CITY 4-6). FarmCropPicker uses CulturePlanningBias.cropPreference. New FarmSectorRenderer replaces legacy FarmPlotPlacer in the V2 path; placer parked. |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -1385,3 +1386,197 @@ positions are tried again on re-render rather than re-rolling.
 Next: B2.5 (farm plot rework) per UNIFIED_REWORK_PLAN — completes
 the village-scope decoration triple (parks + farm plots + later
 homesteads).
+
+### 2026-05-08 — B2.5 landed (farm plot rework)
+
+Track B's fourth content phase. Reworks farms onto a sector-level
+model: a Layer 4 post-pass identifies arable land outside placed
+buildings + parks, reserves a {@code FarmSector} polygon at the
+doc-10 tier-only base radius, allocates {@code FarmPlot}s per
+farmhouse using the prompt's per-tier counts, and renders fields
+with farmland + crop blocks + perimeter fences + procedural
+scarecrows. The legacy {@code FarmPlotPlacer} is parked (no V2
+callers); a new {@code FarmSectorRenderer} replaces its rendering
+role. {@code FarmerGoal} stays plot-shape-agnostic — the polygon
+support lives on {@code FarmPlot.contains} / {@code
+getFarmlandBlocks}, not in the goal.
+
+**Scope decisions (user-confirmed):**
+
+- Sector size — *doc-10 tier-only*: HAMLET 15, VILLAGE 20, TOWN 25,
+  CITY 30 blocks radius. Culture's {@code farmPriority} adds ±20%
+  slack but doesn't fight the doc-10 base.
+- Plot count per farmhouse — *prompt's per-farmhouse N*: HAMLET 2,
+  VILLAGE 2–3, TOWN 3–4, CITY 4–6 (RNG within the band). Each
+  farmhouse owns its plots; allocation round-robins quotas.
+- Plot polygons — *4-vertex terrain-trimmed rectangles*. Plots
+  start as {@code MIN_PLOT_SIDE × MIN_PLOT_SIDE} squares centred
+  on grid points inside the sector polygon; corners pull inward
+  if they land on slope or buildings.
+- FarmPlotPlacer relationship — *replace* the planning + render
+  roles; legacy placer parked in tree with a deprecation javadoc.
+  V2 spawn calls the new sector pipeline. Reverting is one line in
+  {@code V2VillageSpawnerAdapter.runDownstream}.
+
+**Schema additions:**
+
+- {@code Village/Farms/FarmSector.java} — record with sectorId,
+  villageId, polygon bounds (terrain-trimmed quad), plotIds,
+  farmhouseIds, toolShedPositions, createdTick + Mojang codec.
+- {@code Village/Farms/FarmCropPicker.java} — culture-weighted
+  draw across cultivated crops; PASTURE rolled by
+  {@code pastureRatio}; ORCHARD forced on slope or forest-edge.
+- {@code Village/Farms/FarmSectorPlanner.java} — Layer 4 post-pass.
+  Skips non-AGRICULTURAL villages and zero-farmhouse villages.
+- {@code Village/Farms/FarmSectorRenderer.java} — stamps farmland
+  + crops per plot, perimeter fences, procedural scarecrows; logs
+  + skips tool-shed NBT placements.
+- {@code Commands/FarmDebugCommand.java} — `/liv farms <village>`.
+
+**FarmPlot extension (existing class):**
+
+- New fields: {@code UUID sectorId} (nullable; legacy plots load
+  with no sector), {@code Polygon polygon} (nullable; legacy plots
+  fall back to circle-via-origin/radius).
+- Codec gains two {@code optionalFieldOf} entries; pre-B2.5 saves
+  load unchanged.
+- {@code contains(BlockPos)} prefers polygon when set; falls back
+  to legacy circle when the polygon field is null.
+- {@code getFarmlandBlocks} walks the polygon's bounding box when
+  set so vertices that extend past origin±radius aren't missed.
+
+**CulturePlanningBias extension:**
+
+Three new fields:
+- {@code double farmPriority} (0..1, default 0.7) — slack on the
+  doc-10 base radius.
+- {@code double pastureRatio} (0..1, default 0.2) — fraction of
+  plots PASTURE-allocated by {@code FarmCropPicker.rollPasture}.
+- {@code Map<String, Double> cropPreference} — per-CropType weight,
+  default 1.0.
+
+Codec extends with three {@code optionalFieldOf} entries.
+Backwards-compat constructors preserve B2.0/B2.4-shape callers.
+
+Default-culture crop preference (mirrors prompt § 5):
+| Crop      | Weight |
+|-----------|--------|
+| WHEAT     | 1.4 |
+| MIXED     | 1.2 |
+| CARROTS   | 1.0 |
+| POTATOES  | 1.0 |
+| GRAIN     | 1.0 |
+| VEGETABLE | 0.9 |
+| ORCHARD   | 0.7 |
+| PASTURE   | 0.7 |
+| BEETROOT  | 0.6 |
+
+**Persistence:**
+
+VillageSavedData gains an 11th sub-record {@code VillageFarmData}
+(14th top-level codec slot). Authoritative {@code Map<UUID,
+FarmSector> farmSectors} + per-village denormalisation rebuilt
+from the flat list on load. Mirrors the B2.1/B2.4 patterns
+exactly.
+
+API: {@code addFarmSector}, {@code getFarmSector},
+{@code getFarmSectorsForVillage}, {@code getAllFarmSectors},
+{@code removeFarmSectorsForVillage}.
+
+**Layer 4 hooks (V2VillageSpawnerAdapter):**
+
+1. {@code FarmSectorPlanner.plan} runs in {@code spawn} *after the
+   building loop* (so we have concrete {@code Building} UUIDs for
+   {@code farmhouseIds}) and *after parks* (so the planner masks
+   against reserved {@code GardenPlot} bounds). Inputs: fmap,
+   resolved village buildings, garden plots, culture, inclination,
+   tier, villageId, seed, tick, data.
+2. {@code FarmSectorRenderer.run} is wired into {@code
+   runDownstream} replacing the {@code FarmPlotPlacer} guard line.
+
+**Scoring algorithm (FarmSectorPlanner):**
+
+Per-cell composite score:
+```
+0.5 * slopeScore     // 1 - localSlope/4
++ 0.35 * waterScore  // 1 - distToWater*cellSize / 24
++ 0.15 * forestScore // 1 - distToForest*cellSize / 32
+```
+Cells outside OPEN/SHORE category, or with localSlope &gt; 3, or
+inside obstacle-buffer of buildings/parks, score 0.
+
+Centre selection: highest-scoring cell within {@code 2 × radius}
+of the farmhouse centroid. Polygon corners start at the radius
+square and pull inward step-by-step until they land on valid
+arable terrain.
+
+**Plot allocation:**
+
+For each farmhouse, draw a per-tier plot quota. Walk a grid of
+candidate centres (step = MIN_PLOT_SIDE+1) inside the sector
+polygon; shuffle deterministically (per-sector seed); assign
+round-robin to the next farmhouse with remaining quota until
+quota is exhausted. Each plot gets a {@code FarmCropPicker} draw
+constrained by terrain (sloped → ORCHARD, pasture roll → PASTURE,
+otherwise weighted draw across cultivated crops).
+
+**Renderer policy:**
+
+- Per plot: walks the polygon's bbox, filters cells via
+  {@code Polygon.contains}; resamples Y via
+  {@code MOTION_BLOCKING_NO_LEAVES}. Cells at non-water surfaces
+  get farmland (moisture 7) + crop block placed; the centre block
+  becomes a water source for irrigation. Pasture plots stamp
+  dirt + occasional hay.
+- Sector perimeter: oak fence stamped along each polygon edge via
+  Bresenham line-walk; skips cells whose surface is water/lava.
+- Plot perimeter: same line stamper on the plot polygon.
+- Scarecrow: 60% chance per plot; oak fence post + carved pumpkin
+  at a random inside-polygon position.
+- Tool sheds: NBT-deferred. Renderer logs the hint position at
+  edge midpoint 0; persists nothing into {@code toolShedPositions}
+  for now (sector record stays mutable for future content).
+- Inter-plot paths: deferred. Sector + plot fences provide the
+  visual structure; cart-paths added when the user authors path
+  NBTs alongside tool sheds.
+
+**Smoke test contract (live, in-world):**
+
+1. Spawn an AGRICULTURAL CITY in plains. Run `/liv farms <name>`
+   and confirm one sector entry with 4 vertices, ~30-block radius,
+   `plots = farmhouseCount × 4..6`. Walk the sector — perimeter
+   fences should appear; each plot inside should be tilled with
+   crop blocks and bordered with a small fence.
+2. Spawn a TOWN-tier village near forest. Confirm
+   `FarmCropPicker` selects ORCHARD for plots whose centre cell is
+   forest-adjacent (`/liv farms` shows `crop=ORCHARD`).
+3. Spawn a HAMLET. Confirm 2 plots per farmhouse, smaller sector
+   radius (15 blocks).
+4. Spawn a CIVIC or INDUSTRIAL village. Confirm `/liv farms`
+   reports zero sectors (planner skipped).
+5. Spawn a hilly map. Confirm the planner's sector polygon avoids
+   slopes; corners pulled inward; no plots on cells with
+   {@code localSlope > 3}.
+6. `/save-all` + restart + `/liv farms <name>` — sector record
+   persists, plots round-trip with sectorId + polygon vertices.
+7. FarmerGoal smoke: confirm a farmer NPC walks to one of the new
+   polygon plots, harvests via the polygon-aware
+   {@code FarmPlot.getFarmlandBlocks}, replants. (No goal changes
+   beyond plot-shape pickup.)
+
+**NBT authoring (user task):**
+
+- {@code structures/{culture}/decoration/farm/tool_shed.nbt} —
+  one per culture; renderer logs hint positions but doesn't stamp
+  until the file exists.
+- Optional future: {@code scarecrow.nbt}, {@code composter.nbt},
+  {@code cart_path_marker.nbt} as procedural-replacement fallbacks
+  if the user wants finer aesthetics.
+
+**Cumulative pending verification:** A1a + A2 + A3 + A4 + A1b + B1
++ B2.1 + B2.2 + B2.3 + B2.4 + B2.5 in a single live run.
+
+Next: B2.6 (homesteading) per UNIFIED_REWORK_PLAN — wires the
+HOMESTEAD_* AdjunctPlotTypes that B2.1 declared but B2.3 didn't
+register (HOUSE buildings get coops / gardens / pens / bees with
+probability gating).

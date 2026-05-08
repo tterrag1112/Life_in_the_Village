@@ -329,6 +329,32 @@ public final class V2VillageSpawnerAdapter {
             LOGGER.warn("V2: RoadPainter failed: {}", e.getMessage());
         }
 
+        // B2.5 — plan a farm sector (zero or one per village). Runs
+        // AFTER the building loop because FarmSector needs concrete
+        // Building UUIDs for farmhouseIds, and AFTER parks because
+        // the planner masks against reserved GardenPlots so farms
+        // don't trample on park footprints.
+        try {
+            java.util.List<Building> villageBuildings = new java.util.ArrayList<>();
+            for (java.util.UUID bid : village.getBuildingIds()) {
+                data.getBuildingById(bid).ifPresent(villageBuildings::add);
+            }
+            tterrag1112.life_in_the_village.Village.Farms.FarmSectorPlanner.plan(
+                    fmap,
+                    villageBuildings,
+                    data.getGardenPlotsForVillage(village.getId()),
+                    culture,
+                    siteCtx.inclination(),
+                    village.getSizeTier(),
+                    village.getId(),
+                    seed,
+                    level.getGameTime(),
+                    data);
+        } catch (Exception e) {
+            LOGGER.warn("V2: FarmSectorPlanner failed for {}: {}",
+                    village.getName(), e.getMessage());
+        }
+
         // ── V1 downstream, each section guarded ─────────────────────────
         runDownstream(level, village, data, synth, footprint,
                 placedBuildingsAll, rng);
@@ -453,9 +479,14 @@ public final class V2VillageSpawnerAdapter {
                                       BuildingFootprint footprint,
                                       Map<BuildingType, List<Building>> placedBuildingsAll,
                                       Random rng) {
-        guard("FarmPlotPlacer", () ->
-                tterrag1112.life_in_the_village.Village.Planning
-                        .FarmPlotPlacer.placeAll(level, synth, village, data, rng));
+        // B2.5 — FarmSectorRenderer replaces the legacy
+        // FarmPlotPlacer in the V2 spawn path. The legacy placer
+        // remains in tree as parked code (no callers from V2);
+        // re-enabling it is a one-line revert if the new renderer
+        // proves insufficient.
+        guard("FarmSectorRenderer", () ->
+                tterrag1112.life_in_the_village.Village.Farms
+                        .FarmSectorRenderer.run(level, village, data));
         guard("VillageInhabitantPopulator", () ->
                 tterrag1112.life_in_the_village.Village.Buildings.Inhabitants
                         .VillageInhabitantPopulator.populate(level, village, data,
