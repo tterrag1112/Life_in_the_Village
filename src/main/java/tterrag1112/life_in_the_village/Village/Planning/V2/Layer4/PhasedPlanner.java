@@ -1214,12 +1214,17 @@ public final class PhasedPlanner {
      * HOUSE places without an adjunct.</p>
      */
     private static AdjunctPlotType rollHomesteadType(State state) {
+        // V2 plans on ViabilityTier (CITY/TOWN/HAMLET/OUTPOST/UNVIABLE),
+        // not VillageSizeTier. Doc 11's per-tier rates map onto the
+        // viability tiers as: HAMLET 80% / TOWN 30% / CITY 10%; OUTPOST
+        // and UNVIABLE skip the roll entirely (homesteads don't fit
+        // into early outposts).
         double inclusion = switch (state.ctx.tier()) {
             case HAMLET    -> 0.80;
-            case VILLAGE   -> 0.60;
             case TOWN      -> 0.30;
             case CITY      -> 0.10;
-            default        -> 0.0;
+            case OUTPOST,
+                 UNVIABLE  -> 0.0;
         };
         if (state.rng.nextDouble() >= inclusion) return null;
 

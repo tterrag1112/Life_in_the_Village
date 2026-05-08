@@ -267,7 +267,8 @@ public final class VariantSelector {
                     m.tags(),
                     m.maxPerVillage(),
                     m.colorSlots(),
-                    m.ruinationLevel());
+                    m.ruinationLevel(),
+                    m.adjunct());
         }
     }
 }

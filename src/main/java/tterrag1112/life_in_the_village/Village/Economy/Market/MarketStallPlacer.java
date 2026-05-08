@@ -98,7 +98,10 @@ public final class MarketStallPlacer {
         return data.getSubBuildingsForBuilding(marketBuilding.getId()).stream()
                 .filter(sb -> sb.type() == SubBuildingType.STALL)
                 .map(SubBuilding::origin)
-                .sorted(Comparator.comparingInt(BlockPos::getZ)
+                // Witness <BlockPos> on the first comparator —
+                // chain inference trips on Vec3i bridge methods
+                // otherwise.
+                .sorted(Comparator.<BlockPos>comparingInt(BlockPos::getZ)
                         .thenComparingInt(BlockPos::getX))
                 .collect(Collectors.toList());
     }
