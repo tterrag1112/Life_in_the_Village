@@ -1,4 +1,9 @@
 {
   "id": "mine",
-  "stylePreference": "RURAL"
+  "stylePreference": "RURAL",
+  "adjunct": {
+    "size": [5, 5],
+    "side": "ANY",
+    "required": false
+  }
 }

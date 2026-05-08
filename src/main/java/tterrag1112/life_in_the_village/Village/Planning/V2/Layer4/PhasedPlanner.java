@@ -1140,8 +1140,11 @@ public final class PhasedPlanner {
                                                   Direction parentFront,
                                                   BuildingVariant variant,
                                                   State state) {
+        // B2.3 — registry is culture-keyed; pass the village's
+        // culture so future per-culture overrides resolve cleanly.
+        // Default-culture entries are the fallback inside the registry.
         List<AdjunctPlotType> registered =
-                AdjunctPlotRegistry.getPlotsForBuilding(type);
+                AdjunctPlotRegistry.getPlotsForBuilding(type, state.culture);
         if (registered.isEmpty()) return AdjunctPlanOutcome.NONE;
 
         AdjunctPlotType plotType = registered.get(0);

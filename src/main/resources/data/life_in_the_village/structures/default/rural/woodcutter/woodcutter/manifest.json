@@ -1,4 +1,9 @@
 {
   "id": "woodcutter",
-  "stylePreference": "RURAL"
+  "stylePreference": "RURAL",
+  "adjunct": {
+    "size": [6, 6],
+    "side": "ANY",
+    "required": false
+  }
 }

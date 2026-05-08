@@ -1,4 +1,9 @@
 {
   "id": "noble_manor",
-  "stylePreference": "RURAL"
+  "stylePreference": "RURAL",
+  "adjunct": {
+    "size": [10, 10],
+    "side": "BACK",
+    "required": false
+  }
 }

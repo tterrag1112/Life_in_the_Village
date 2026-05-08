@@ -27,6 +27,7 @@ spec matches reality.
 | B1-12 | GuildHall colour fields | Implemented | AbstractGuild gains palette field; GuildPalettes table per GuildType; VariantResolver.planTint accepts forced overrides; V2 adapter wires guild halls. |
 | B2.1 | V2 envelope extension (adjunct planning + framework refactor) | Implemented | Layer 4 reserves AdjunctPlot rectangles; AdjunctPlotPlacer probe→render-only; FaceProbeOrder + PlacementStrategy deleted; manifest schema gains optional `adjunct` field. |
 | B2.2 | Street furniture + welcome marker + noticeboard content | Implemented | 14 doc-05 furniture pieces registered (tier-gated); welcome marker; sign-based noticeboard reading laws/requests/decrees on a 24000-tick refresh. DecorationProfile gains `minTier`; DecorationDensityProfile threaded through emitter. |
+| B2.3 | Industry adjuncts + building gardens | Implemented | AdjunctPlotRegistry culture-keyed (default-only); 15 rural manifests gain doc 07/08 adjunct preferences; ARMORER/TOOLSMITH/LIBRARY/MINE registered. FISHERY skipped (no manifest folder); MILLER skipped (malformed path). |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -1029,3 +1030,166 @@ author's choice).
 Next: B2.3 (industry adjunct content) per UNIFIED_REWORK_PLAN —
 B2.1 reserved rectangles + B2.2 furniture-kit infrastructure
 together unblock the per-AdjunctPlotType content registries.
+
+### 2026-05-08 — B2.3 landed (industry adjuncts + building gardens)
+
+Track B's second content phase. Populates the AdjunctPlot registry
+with profession-tied working yards (doc 07) and decorative gardens
+(doc 08); augments rural variant manifests with doc-prescribed
+adjunct preferences (size + side + required=false); extends
+`AdjunctPlotRegistry` to be culture-keyed per the prompt's
+"per-culture registries from day one" direction. NBT authoring for
+yards and gardens remains a user task.
+
+**Inventory findings:**
+
+- BuildingType coverage — every prompt-listed type exists in the
+  enum: BLACKSMITH, WEAVER, FISHERY, STONEMASON, CANDLEMAKER,
+  STABLE, BAKERY, CARPENTRY, WOODCUTTER, APOTHECARY, INN, TEMPLE,
+  NOBLE_MANOR. Doc 07/08 also references ARMORER, TOOLSMITH,
+  LIBRARY, MINE, MILLER, VINEYARD — all also in the enum.
+- AdjunctPlotType coverage — all 14 values from B2.1 cover doc
+  07/08's spec (FORGE_YARD, KILN_YARD, DRYING_RACK_YARD, LOG_YARD,
+  PADDOCK, OVEN_SHED, HERB_GARDEN, KITCHEN_GARDEN,
+  MEDITATION_GARDEN, FORMAL_GARDEN). No new enum values needed.
+- Manifest folders — all needed RURAL manifests exist except
+  `rural/fishery/...` (no folder). MILLER's manifest lives at the
+  malformed `rural/miller/manifest.json` path (missing variant
+  subfolder); skipped for now and flagged as a content cleanup
+  task.
+- TEMPLE vs CHAPEL vs SHRINE — doc 08 explicitly lists only TEMPLE
+  for MEDITATION_GARDEN. Registered TEMPLE only; CHAPEL and SHRINE
+  remain garden-less (matches doc).
+- HOUSE — intentionally absent per doc 02 §"HOMESTEAD_*" (subsystem
+  11 / B2.6 wires homestead probability gating separately).
+- VINEYARD — doc 07 marks this as "uses FarmPlot, no adjunct"; not
+  registered.
+
+**Schema decision — culture-keyed registry:**
+
+Doc 02 §"Open decisions" + the prompt's "per-culture registries
+from day one" direction motivated extending `AdjunctPlotRegistry`
+from a flat `Map<BuildingType, List<AdjunctPlotType>>` to a nested
+`LinkedHashMap<String culture, EnumMap<BuildingType,
+List<AdjunctPlotType>>>`. Lookups follow culture → "default"
+fallback; the per-culture cap of {@link
+AdjunctPlotRegistry#MAX_PLOTS_PER_BUILDING} stays at 3.
+
+The prior 1-arg `getPlotsForBuilding(type)` overload survives as
+the default-culture shortcut for callers that don't yet carry
+culture context (debug commands). New code paths (V2 Layer 4
+`PhasedPlanner.planAdjunct`) call the 2-arg form with
+`state.culture` — pulled from the village's culture id, no
+hardcoded "default" literal in dispatch.
+
+**Default-culture registrations (B2.3 additions vs B2.1 baseline):**
+
+| Building Type | Plot Type(s)                 | Source     | Notes |
+|---------------|------------------------------|------------|-------|
+| BLACKSMITH    | FORGE_YARD                   | doc 07     |       |
+| ARMORER       | FORGE_YARD                   | doc 07 NEW |       |
+| TOOLSMITH     | FORGE_YARD                   | doc 07 NEW |       |
+| WEAVER        | DRYING_RACK_YARD             | doc 07     |       |
+| FISHERY       | DRYING_RACK_YARD             | doc 07     | manifest pending |
+| CARPENTRY     | LOG_YARD                     | doc 07     |       |
+| WOODCUTTER    | LOG_YARD                     | doc 07     |       |
+| MILLER        | LOG_YARD                     | doc 07     | manifest path malformed |
+| STONEMASON    | KILN_YARD                    | doc 07     |       |
+| CANDLEMAKER   | KILN_YARD                    | doc 07     |       |
+| MINE          | KILN_YARD                    | doc 07 NEW |       |
+| STABLE        | PADDOCK                      | doc 07     |       |
+| BAKERY        | OVEN_SHED                    | doc 07     |       |
+| APOTHECARY    | HERB_GARDEN                  | doc 08     |       |
+| INN           | KITCHEN_GARDEN               | doc 08     |       |
+| TEMPLE        | MEDITATION_GARDEN            | doc 08     |       |
+| LIBRARY       | MEDITATION_GARDEN            | doc 08 NEW |       |
+| NOBLE_MANOR   | FORMAL_GARDEN, PADDOCK       | doc 08     | two-plot building |
+
+NEW marks entries added in B2.3 that weren't in B2.1's baseline
+skeleton.
+
+**Manifest extensions (15 rural manifests):**
+
+Sizes follow doc 07/08 (which override the prompt's suggested
+defaults where they conflict — e.g. doc says BLACKSMITH 5×5, prompt
+suggested 6×6; doc wins). Side preferences: BACK for all working
+yards; ANY for log yards / herb gardens / weaver / mine where doc
+07/08 doesn't pin a face. {@code required=false} throughout —
+B2.1's contract: tight sites place without the adjunct rather than
+dropping the building.
+
+| Variant       | Size  | Side | NBT path (user task)                                                |
+|---------------|-------|------|---------------------------------------------------------------------|
+| blacksmith    | 5×5   | BACK | `structures/default/decoration/industry/forge_yard_*.nbt`           |
+| armorer       | 5×5   | BACK | `structures/default/decoration/industry/forge_yard_*.nbt` (variant) |
+| toolsmith     | 5×5   | BACK | `structures/default/decoration/industry/forge_yard_*.nbt` (variant) |
+| weaver        | 5×5   | ANY  | `structures/default/decoration/industry/drying_rack_*.nbt`          |
+| carpentry     | 6×6   | ANY  | `structures/default/decoration/industry/log_yard_*.nbt`             |
+| woodcutter    | 6×6   | ANY  | `structures/default/decoration/industry/log_yard_*.nbt`             |
+| stonemason    | 5×5   | BACK | `structures/default/decoration/industry/kiln_yard_*.nbt`            |
+| candlemaker   | 4×4   | BACK | `structures/default/decoration/industry/kiln_yard_*.nbt` (variant)  |
+| mine          | 5×5   | ANY  | `structures/default/decoration/industry/kiln_yard_*.nbt` (raw var.) |
+| stable        | 8×8   | BACK | piece-kit; subsystem 11 (B2.6) renders                              |
+| bakery        | 4×4   | BACK | `structures/default/decoration/industry/oven_shed_*.nbt`            |
+| apothecary    | 5×5   | ANY  | `structures/default/decoration/garden/herb_garden_*.nbt`            |
+| inn           | 5×5   | BACK | `structures/default/decoration/garden/kitchen_garden_*.nbt`         |
+| temple        | 6×6   | BACK | `structures/default/decoration/garden/meditation_garden_*.nbt`      |
+| library       | 5×5   | BACK | `structures/default/decoration/garden/meditation_garden_*.nbt` (sm) |
+| noble_manor   | 10×10 | BACK | `structures/default/decoration/garden/formal_garden_*.nbt`          |
+
+B2.1's BLACKSMITH stub at 6×6 was reduced to 5×5 to align with doc
+07.
+
+**Skipped registrations (flagged for follow-up):**
+
+- FISHERY — registry maps to DRYING_RACK_YARD, but no
+  `rural/fishery/...` manifest folder exists. V2 selector's NBT
+  availability check drops FISHERY before adjunct planning runs;
+  no smoke-test impact today. Folder + manifest is a user
+  authoring task before fisheries appear in villages.
+- MILLER — manifest sits at `rural/miller/manifest.json` (no
+  variant subfolder), which doesn't match
+  `StructureAvailabilityRegistry`'s 5-segment path parser. Either
+  the file should be `rural/miller/miller/manifest.json` (matching
+  the convention) or removed. Treated as a pre-existing content
+  cleanup item, not a B2.3 blocker.
+- DOCKS — present in the enum and as a manifest folder, but doc 07
+  doesn't list it. Not registered.
+- CHAPEL / SHRINE — temple-adjacent buildings; doc 08 ties
+  MEDITATION_GARDEN to TEMPLE only. Not registered; their
+  manifests carry no adjunct preference.
+
+**Smoke test contract (live, in-world):**
+
+Per-village checks via `/liv decoration` (or equivalent V2 state
+debug command):
+
+1. Spawn a CITY-tier rural village with industrial inclination.
+   Confirm BLACKSMITH places with a 5×5 FORGE_YARD reservation
+   logged: `placed BLACKSMITH: ... adjunct=FORGE_YARD@<face>`.
+2. Spawn a village with INN. Confirm 5×5 KITCHEN_GARDEN
+   reservation log line.
+3. Spawn a village with CARPENTRY + WOODCUTTER. Confirm both get
+   distinct 6×6 LOG_YARD adjuncts; the V2 Layer 4 collision check
+   should keep them from overlapping.
+4. Spawn a NOBLE_MANOR. Confirm it picks up FORMAL_GARDEN as the
+   first plot type (planner registers only the primary registry
+   entry per building today; PADDOCK secondary will become real
+   when the planner adds multi-plot iteration in a future phase).
+5. Tight-site test: shrink the buildable area. Confirm blacksmith
+   etc. place without adjuncts (the placement log shows no
+   `adjunct=` suffix). All registered manifests use
+   `required=false` so no building drops for adjunct-fit failures.
+
+NBT authoring is a user task. Without authored content, smoke
+testing verifies *planning + reservation*, not block output.
+Stamping each adjunct will land in B2.3's content-authoring pass
+(user side) and the per-AdjunctPlotType renderers in B2.6
+(homesteading) / future industry-content phases.
+
+**Cumulative pending verification:** A1a + A2 + A3 + A4 + A1b + B1
++ B2.1 + B2.2 + B2.3 in a single live run.
+
+Next: B2.4 (parks and gardens) per UNIFIED_REWORK_PLAN — village-
+scope (not building-scope) decoration that places parks in
+leftover space using a Layer 4 post-pass.

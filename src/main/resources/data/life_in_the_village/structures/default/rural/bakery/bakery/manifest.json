@@ -1,4 +1,9 @@
 {
   "id": "bakery",
-  "stylePreference": "RURAL"
+  "stylePreference": "RURAL",
+  "adjunct": {
+    "size": [4, 4],
+    "side": "BACK",
+    "required": false
+  }
 }

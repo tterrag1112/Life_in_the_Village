@@ -1,4 +1,9 @@
 {
   "id": "stonemason",
-  "stylePreference": "RURAL"
+  "stylePreference": "RURAL",
+  "adjunct": {
+    "size": [5, 5],
+    "side": "BACK",
+    "required": false
+  }
 }

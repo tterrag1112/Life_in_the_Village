@@ -1,4 +1,9 @@
 {
   "id": "stable",
-  "stylePreference": "RURAL"
+  "stylePreference": "RURAL",
+  "adjunct": {
+    "size": [8, 8],
+    "side": "BACK",
+    "required": false
+  }
 }
