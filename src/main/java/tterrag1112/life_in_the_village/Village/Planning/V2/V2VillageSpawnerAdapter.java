@@ -225,8 +225,23 @@ public final class V2VillageSpawnerAdapter {
                     culture.id(), Style.RURAL, b.type(), b.variantId());
             Set<DyeColor> neighborColors = neighborIndex.colorsWithin(
                     b.centre(), VillagePaletteResolver.NEIGHBOUR_RADIUS);
+            // B1 (P0a-12) — guild-hall identity tint. The actual
+            // AbstractGuild for this village doesn't exist yet
+            // (GuildBootstrap runs in runDownstream below), so the
+            // type's default palette stands in. Per-instance overrides
+            // would only diverge from this default for rebuilt halls,
+            // which the V2 spawn path doesn't generate.
+            tterrag1112.life_in_the_village.Guilds.Common.GuildPalette guildPalette =
+                    tterrag1112.life_in_the_village.Guilds.Common.GuildHallTypes
+                                    .isGuildHall(b.type())
+                            ? tterrag1112.life_in_the_village.Guilds.Common
+                                    .GuildPalettes.forType(
+                                            tterrag1112.life_in_the_village.Guilds.Common
+                                                    .GuildHallTypes.guildTypeForHall(b.type()))
+                            : tterrag1112.life_in_the_village.Guilds.Common
+                                    .GuildPalette.NONE;
             TintPass.Plan tintPlan = VariantResolver.planTint(
-                    typeData, variant, rng, neighborColors);
+                    typeData, variant, rng, neighborColors, guildPalette);
 
             try {
                 Optional<Building> placedOpt = BuildingPlacer.placeAndRegister(

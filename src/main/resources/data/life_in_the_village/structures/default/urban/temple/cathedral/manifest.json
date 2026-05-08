@@ -1,0 +1,12 @@
+{
+  "id": "cathedral",
+  "displayName": "Cathedral",
+  "minTier": "CITY",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["sacred", "monumental", "civic_landmark"],
+  "preferredTags": ["PRIME_CIVIC", "PLAZA_ADJACENT"],
+  "colorSlots": [],
+  "maxPerVillage": 1
+}

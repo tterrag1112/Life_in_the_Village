@@ -1,0 +1,12 @@
+{
+  "id": "townhouse",
+  "displayName": "Townhouse",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.2,
+  "stylePreference": "URBAN",
+  "tags": ["townhouse"],
+  "preferredTags": ["RESIDENTIAL_CORE"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 999
+}

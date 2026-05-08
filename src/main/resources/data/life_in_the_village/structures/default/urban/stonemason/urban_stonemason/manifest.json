@@ -1,0 +1,11 @@
+{
+  "id": "urban_stonemason",
+  "displayName": "Urban Stonemason",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["urban_workshop", "industrial", "stone_construction"],
+  "colorSlots": ["ACCENT"],
+  "maxPerVillage": 1
+}

@@ -1,0 +1,12 @@
+{
+  "id": "tenement",
+  "displayName": "Tenement",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 0.7,
+  "stylePreference": "URBAN",
+  "tags": ["multi_family", "tenement"],
+  "preferredTags": ["RESIDENTIAL_CORE"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 6
+}

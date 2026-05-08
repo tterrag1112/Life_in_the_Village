@@ -1,0 +1,12 @@
+{
+  "id": "coaching_inn",
+  "displayName": "Coaching Inn",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 0.6,
+  "stylePreference": "URBAN",
+  "tags": ["lodging", "urban_inn", "coaching", "paddock"],
+  "preferredTags": ["GATE_ADJACENT", "ROAD_ADJACENT"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 1
+}

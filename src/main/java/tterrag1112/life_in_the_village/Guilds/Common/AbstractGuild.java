@@ -3,6 +3,8 @@ package tterrag1112.life_in_the_village.Guilds.Common;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.UUIDUtil;
+import net.minecraft.world.item.DyeColor;
+import org.jspecify.annotations.Nullable;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeState;
 import tterrag1112.life_in_the_village.Npc.Office.OrgType;
 
@@ -45,6 +47,11 @@ public class AbstractGuild {
     private OfficeState offices;
     private final long foundedTick;
     private long lastQuestRefreshTick;
+    /** Track B1 (P0a-12) — guild identity colours forwarded to the
+     *  variant resolver as forced overrides on the guild hall. Stored
+     *  per-guild so individual guilds can deviate from the type
+     *  default. Defaults populated from {@link GuildPalettes}. */
+    private GuildPalette palette;
 
     public AbstractGuild(UUID guildId, String name, GuildType type,
                          UUID homeVillageId, UUID guildHallBuildingId,
@@ -58,6 +65,7 @@ public class AbstractGuild {
         this.foundedTick         = foundedTick;
         this.treasury            = new GuildTreasury(guildId);
         this.offices             = OfficeState.emptyFor(OrgType.GUILD, guildId);
+        this.palette             = GuildPalettes.forType(type);
     }
 
     /** Codec entry point — rebuilds an instance from persisted state. */
@@ -65,7 +73,8 @@ public class AbstractGuild {
                           UUID homeVillageId, Optional<UUID> hallId,
                           GuildLevel level, List<GuildMemberRef> memberList,
                           GuildTreasury treasury, Optional<OfficeState> offices,
-                          long foundedTick, long lastQuestRefreshTick) {
+                          long foundedTick, long lastQuestRefreshTick,
+                          Optional<GuildPalette> palette) {
         this.guildId             = guildId;
         this.name                = name;
         this.type                = type;
@@ -77,6 +86,7 @@ public class AbstractGuild {
         this.treasury            = treasury != null
                 ? treasury : new GuildTreasury(guildId);
         this.offices             = offices.orElseGet(() -> OfficeState.emptyFor(OrgType.GUILD, guildId));
+        this.palette             = palette.orElseGet(() -> GuildPalettes.forType(type));
         if (memberList != null) {
             for (GuildMemberRef m : memberList) members.put(m.memberId(), m);
         }
@@ -147,6 +157,22 @@ public class AbstractGuild {
     public OfficeState offices()    { return offices; }
     public void setOffices(OfficeState s) { if (s != null) this.offices = s; }
 
+    // ── Identity palette (Track B1, P0a-12) ──────────────────────────────
+
+    /** Never null — falls back to {@link GuildPalettes#forType} on null. */
+    public GuildPalette palette() {
+        return palette != null ? palette : GuildPalettes.forType(type);
+    }
+    public @Nullable DyeColor primaryColor() { return palette().primaryColor(); }
+    public @Nullable DyeColor accentColor()  { return palette().accentColor();  }
+    public @Nullable DyeColor roofColor()    { return palette().roofColor();    }
+
+    /** Override the type-default palette for this specific guild
+     *  instance. Pass {@link GuildPalette#NONE} to clear. */
+    public void setPalette(GuildPalette p) {
+        this.palette = p != null ? p : GuildPalettes.forType(type);
+    }
+
     // ── Level + hall transitions ─────────────────────────────────────────
 
     /**
@@ -197,6 +223,8 @@ public class AbstractGuild {
                     .forGetter(g -> Optional.ofNullable(g.offices)),
             Codec.LONG.optionalFieldOf("foundedTick", 0L).forGetter(AbstractGuild::foundedTick),
             Codec.LONG.optionalFieldOf("lastQuestRefreshTick", 0L)
-                    .forGetter(AbstractGuild::lastQuestRefreshTick)
+                    .forGetter(AbstractGuild::lastQuestRefreshTick),
+            GuildPalette.CODEC.optionalFieldOf("palette")
+                    .forGetter(g -> Optional.ofNullable(g.palette))
     ).apply(i, AbstractGuild::new));
 }

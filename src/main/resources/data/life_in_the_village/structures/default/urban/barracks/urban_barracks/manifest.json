@@ -1,0 +1,12 @@
+{
+  "id": "urban_barracks",
+  "displayName": "Urban Barracks",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["defensive", "garrison", "multi_family"],
+  "preferredTags": ["WALL_ADJACENT", "PRIME_CIVIC"],
+  "colorSlots": ["PRIMARY", "ACCENT"],
+  "maxPerVillage": 1
+}

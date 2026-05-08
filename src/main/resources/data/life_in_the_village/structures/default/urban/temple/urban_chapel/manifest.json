@@ -1,0 +1,12 @@
+{
+  "id": "urban_chapel",
+  "displayName": "Urban Chapel",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["sacred", "civic_landmark"],
+  "preferredTags": ["CIVIC_ADJACENT"],
+  "colorSlots": [],
+  "maxPerVillage": 1
+}

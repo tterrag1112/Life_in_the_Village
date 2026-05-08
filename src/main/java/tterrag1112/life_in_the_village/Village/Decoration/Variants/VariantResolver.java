@@ -242,7 +242,7 @@ public final class VariantResolver {
      * forced-override + palette-sampling logic that previously lived
      * in {@code VillagePaletteResolver.planFor}.
      *
-     * <p>Forced overrides:
+     * <p>Forced overrides applied by {@code VillagePaletteResolver}:
      * <ul>
      *   <li>{@code TEMPLE} → primary = {@link DyeColor#WHITE}, accent
      *       and roof null.</li>
@@ -258,11 +258,52 @@ public final class VariantResolver {
                                          BuildingVariant variant,
                                          Random rng,
                                          Set<DyeColor> neighborColors) {
-        // Delegate to the existing implementation. Both paths
-        // (V1 spawn loop, V2 spawn adapter) now route through this
-        // method instead of calling VillagePaletteResolver directly.
-        return VillagePaletteResolver.planFor(typeData, variant, rng,
+        return planTint(typeData, variant, rng, neighborColors,
+                tterrag1112.life_in_the_village.Guilds.Common.GuildPalette.NONE);
+    }
+
+    /**
+     * Track B1 overload — adds caller-supplied forced overrides on
+     * top of the doc-15 type-derived overrides. Used by the V2 spawn
+     * adapter for guild halls: P0a-12 wires the guild's
+     * {@link tterrag1112.life_in_the_village.Guilds.Common.GuildPalette}
+     * into this slot so the hall paints in the guild's identity
+     * colours regardless of the village palette.
+     *
+     * <p>Precedence: type-derived TEMPLE / TOWN_HALL overrides apply
+     * first (delegated to {@code VillagePaletteResolver.planFor});
+     * then {@code forced} overrides any non-null colour in the result
+     * — so a guild hall whose type isn't TEMPLE / TOWN_HALL takes
+     * the guild's colours as its final tint.
+     *
+     * <p>Pass {@link tterrag1112.life_in_the_village.Guilds.Common.GuildPalette#NONE}
+     * (or {@code null}) for no forced overrides — equivalent to the
+     * 4-arg overload.
+     */
+    public static TintPass.Plan planTint(
+            VillageTypeData typeData,
+            BuildingVariant variant,
+            Random rng,
+            Set<DyeColor> neighborColors,
+            tterrag1112.life_in_the_village.Guilds.Common.GuildPalette forced) {
+        TintPass.Plan base = VillagePaletteResolver.planFor(typeData, variant, rng,
                 neighborColors != null ? neighborColors : Set.of());
+        if (forced == null || forced.isEmpty() || variant == null) {
+            return base;
+        }
+        // Forced overrides only paint slots the variant actually
+        // declares; if the variant has no ROOF slot, a forced roof
+        // colour is irrelevant.
+        DyeColor primary = forced.primaryColor() != null
+                && variant.colorSlots().contains(ColorSlot.PRIMARY)
+                ? forced.primaryColor() : base.primaryColor();
+        DyeColor accent = forced.accentColor() != null
+                && variant.colorSlots().contains(ColorSlot.ACCENT)
+                ? forced.accentColor() : base.accentColor();
+        DyeColor roof = forced.roofColor() != null
+                && variant.colorSlots().contains(ColorSlot.ROOF)
+                ? forced.roofColor() : base.roofColor();
+        return new TintPass.Plan(primary, accent, roof);
     }
 
     // =========================================================================

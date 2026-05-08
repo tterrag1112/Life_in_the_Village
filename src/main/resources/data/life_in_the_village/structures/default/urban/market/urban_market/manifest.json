@@ -1,0 +1,12 @@
+{
+  "id": "urban_market",
+  "displayName": "Urban Market",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["civic_landmark", "market"],
+  "preferredTags": ["PLAZA_ADJACENT", "PRIME_CIVIC"],
+  "colorSlots": ["PRIMARY", "ROOF"],
+  "maxPerVillage": 1
+}

@@ -1,0 +1,12 @@
+{
+  "id": "urban_manor",
+  "displayName": "Urban Manor",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["wealthy", "noble"],
+  "preferredTags": ["CIVIC_ADJACENT"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 1
+}

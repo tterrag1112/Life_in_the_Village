@@ -21,10 +21,10 @@ spec matches reality.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| B1-15 | HOUSE pilot NBTs (P0a-15) | Not-Started | Hard-fails placement until landed. |
-| B1-16 | URBAN variant pack (P0a-16) | Not-Started | |
-| B1-04 | MarketStallPlacer subbuilding migration (P0d-04) | Not-Started | |
-| B1-12 | GuildHall colour fields | Not-Started | Wires P0a-12 overrides. |
+| B1-15 | HOUSE pilot NBTs (P0a-15) | User-task | Manifests exist (RURAL pack); NBT files pending user authoring. Paths documented in log. |
+| B1-16 | URBAN variant pack manifests (P0a-16) | Implemented | 22 URBAN manifest.json files authored from doc 16 §4. NBT files pending user authoring. |
+| B1-04 | MarketStallPlacer subbuilding migration (P0d-04) | Implemented | Routed through SubBuildingScanner / SubBuildingType.STALL. Market NBTs need re-authoring with SubBuildingAnchorBlock. |
+| B1-12 | GuildHall colour fields | Implemented | AbstractGuild gains palette field; GuildPalettes table per GuildType; VariantResolver.planTint accepts forced overrides; V2 adapter wires guild halls. |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -597,3 +597,144 @@ columns at that point.
 Track A: A1a Superseded, A2/A3/A4/A1b Implemented, A5 Deferred.
 Net effect: V2 is the sole planner; downstream B/C/D unblocked
 modulo smoke-test confirmation of cumulative A1a+A2+A3+A4+A1b.
+
+### 2026-05-08 — B1 landed (Phase 0a content gaps)
+
+Track B's first phase. Closes the three actionable Phase 0a gaps
+(P0a-12, P0a-16 manifests, P0d-04). Leaves HOUSE pilot NBTs and the
+URBAN NBTs themselves as user authoring tasks.
+
+**T1 — MarketStallPlacer migration (P0d-04).**
+
+Refactored `MarketStallPlacer` onto the subbuilding scanner pattern:
+- `findAnchorSlots` now reads `data.getSubBuildingsForBuilding(...)`
+  filtered by `SubBuildingType.STALL`, sorted by (Z, X) of anchor
+  origin. The runtime `CHISELED_STONE_BRICKS` block scan is gone.
+- `claimSlot` no longer clears the anchor block (the scanner already
+  replaced it with air at building-placement time).
+- `reclaimStall` no longer restores an anchor block — the
+  `SubBuilding` record persists; the slot becomes available again
+  because no active `MarketStall` references it.
+- `ANCHOR_BLOCK` constant removed from the placer.
+- New 2-arg overload `findAnchorSlots(Building, VillageSavedData)`
+  for callers (V2 spawn adapter, NPC interaction handlers) that
+  already have `data` in scope.
+
+**Market NBT re-authoring required (user task):** existing market
+NBTs use `CHISELED_STONE_BRICKS` markers and will produce zero stalls
+under the new code. To re-enable stalls, replace each anchor block in
+the market NBT with a `SubBuildingAnchorBlock` whose
+`subBuildingType` field is set to `STALL`. Flow:
+1. Build the market NBT in-world.
+2. Place `SubBuildingAnchorBlock` instances (creative inventory or
+   `/give`) at every position a stall should occupy.
+3. Save the structure block.
+4. Open the resulting `.nbt` in an NBT editor; for each anchor block
+   entity, set `subbuilding.subBuildingType = "STALL"`.
+5. Drop the file at
+   `data/life_in_the_village/structures/default/<style>/market/...`
+   matching the existing market template path.
+
+**T2 — GuildHall colour overrides (P0a-12).**
+
+Wires P0a-12's forced colour overrides for guild halls through the
+new `VariantResolver` mechanism. Decision: place colours on
+`AbstractGuild` (canonical post-NPC-Phase-4 record) with a static
+`GuildPalettes` table keyed by `GuildType`.
+
+Files added:
+- `Guilds/Common/GuildPalette.java` — record carrying optional
+  primary / accent / roof `DyeColor`s; codec; `NONE` singleton;
+  `isEmpty()` predicate.
+- `Guilds/Common/GuildPalettes.java` — static `EnumMap<GuildType,
+  GuildPalette>` with reasonable per-type defaults: ADVENTURER red /
+  black / gray, CRAFTSMEN gray / red / black, MERCHANTS blue / yellow
+  / brown, AGRICULTURAL brown / green / yellow, RELIGIOUS white /
+  purple / null, SCHOLARLY light_blue / white / gray.
+
+Files modified:
+- `Guilds/Common/AbstractGuild.java` — `palette` field with codec;
+  constructor canonicalizes null → `GuildPalettes.forType(type)`;
+  setter for runtime override.
+- `Village/Decoration/Variants/VariantResolver.java` — new 5-arg
+  `planTint(typeData, variant, rng, neighborColors, GuildPalette
+  forced)` overload. Forced colours apply on top of the doc-15
+  type-derived overrides (TEMPLE / TOWN_HALL stay handled inside
+  `VillagePaletteResolver`); only paint slots the variant actually
+  declares; old 4-arg overload delegates with `GuildPalette.NONE`.
+- `Village/Planning/V2/V2VillageSpawnerAdapter.java` — per
+  `PlacedBuilding`, if `GuildHallTypes.isGuildHall(type)` then look
+  up `GuildPalettes.forType(GuildHallTypes.guildTypeForHall(type))`
+  and pass to `VariantResolver.planTint`. Uses type defaults rather
+  than per-instance overrides because `AbstractGuild` instances for
+  the new village haven't been created yet at building-placement time
+  (`GuildBootstrap.scanAndCreateImplicit` runs in `runDownstream`).
+
+**T3 — URBAN variant pack manifests (P0a-16).**
+
+Authored 22 manifest.json files at
+`data/life_in_the_village/structures/default/urban/<type>/<variant>/manifest.json`
+covering every URBAN variant in doc 16 §4:
+
+- HOUSE: `townhouse`, `tenement`, `row_house`.
+- BLACKSMITH: `urban_smithy`. CARPENTRY: `urban_carpentry`. WEAVER:
+  `urban_weaver`. BAKERY: `urban_bakery`. APOTHECARY:
+  `urban_apothecary`. STONEMASON: `urban_stonemason`. CANDLEMAKER:
+  `urban_candlemaker`.
+- INN: `urban_inn`, `coaching_inn`. TEMPLE: `cathedral`,
+  `urban_chapel`. LIBRARY: `urban_library`. GUILD_HALL:
+  `urban_guildhall`. TOWN_HALL: `urban_townhall`. NOBLE_MANOR:
+  `urban_manor`. MARKET: `urban_market`.
+- GUARD_TOWER: `urban_tower`. WATCHTOWER: `urban_watchtower`.
+  BARRACKS: `urban_barracks`.
+
+Schema mapping notes for `preferredTags`: doc 16 specs use a few
+labels that aren't in the `SlotTag` enum (`DENSE`, `PERIMETER`,
+`CIVIC_CORE`, `ROAD_SIDE`, `HILLTOP`). Substitutions made in the
+manifests:
+- `CIVIC_CORE` → `PRIME_CIVIC`
+- `ROAD_SIDE` → `ROAD_ADJACENT`
+- `HILLTOP` → `HILLTOP_PEAK`
+- `DENSE`, `PERIMETER` → omitted (no current analogue; can be
+  added to `SlotTag` later if scoring needs them).
+
+**URBAN NBTs (user task):** each variant folder has a manifest only;
+the corresponding `level_1.nbt` (and any higher-tier `level_N.nbt`)
+must be authored against doc 16 §4's per-variant footprint / height /
+materials / anchor specs. NBTs land at the same folder paths as the
+manifests.
+
+**T4 — HOUSE pilot NBT gap (P0a-15).**
+
+The RURAL HOUSE pack manifests are authored in doc 16 §3 but not yet
+on disk under `data/life_in_the_village/structures/default/rural/house/`.
+The 21.1 inventory snapshot recorded "manifests authored, NBTs
+missing" but a fresh check of the resource tree shows neither
+manifests nor NBTs are present for any RURAL variant. Both are user
+tasks. Per-variant authoring spec lives in doc 16 §3 (`cottage`,
+`house`, `big_house`, `longhouse`).
+
+Expected paths once authored:
+- `data/life_in_the_village/structures/default/rural/house/cottage/manifest.json`
+  + `level_1.nbt` (and optional `level_2.nbt`, etc.).
+- Same shape for `house`, `big_house`, `longhouse`.
+- And for every other RURAL building type (BLACKSMITH, BAKERY,
+  CARPENTRY, FARMER, FISHERY, INN, TEMPLE, LIBRARY, GUILD_HALL,
+  TOWN_HALL, NOBLE_MANOR, MARKET, GUARD_TOWER, WATCHTOWER, BARRACKS,
+  STABLE, STONEMASON, WEAVER, WOODCUTTER, MILLER, APOTHECARY,
+  CANDLEMAKER) — see doc 16 §3.
+
+**Smoke test (pending user-run):**
+- V2 spawn with a guild hall: hall paints in the guild type's
+  palette (ADVENTURER hall → red primary, black accent, gray roof).
+- Save / restart / reload: `palette` field on `AbstractGuild` round-
+  trips through codec.
+- Market re-authored with SubBuildingAnchorBlock + STALL: stalls
+  populate from scanner output. Stall reclaim works without
+  attempting to restore a chiseled-stone marker.
+
+Cumulative pending verification: all of A1a + A2 + A3 + A4 + A1b +
+B1 from a single live run.
+
+Next: Track B2 (decoration phases 1-3 V2 vocabulary pass +
+implementation). B1 unblocks B2 by closing the Phase 0a content gaps.

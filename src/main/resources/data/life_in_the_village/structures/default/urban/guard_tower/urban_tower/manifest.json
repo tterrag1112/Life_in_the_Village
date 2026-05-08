@@ -1,0 +1,12 @@
+{
+  "id": "urban_tower",
+  "displayName": "Urban Guard Tower",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["defensive", "wall_integration"],
+  "preferredTags": ["WALL_ADJACENT", "GATE_ADJACENT"],
+  "colorSlots": ["ACCENT"],
+  "maxPerVillage": 8
+}

@@ -1,0 +1,11 @@
+{
+  "id": "urban_apothecary",
+  "displayName": "Urban Apothecary",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["combined_workshop_residence", "urban_workshop", "shopfront"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 1
+}

@@ -1,0 +1,12 @@
+{
+  "id": "urban_watchtower",
+  "displayName": "Urban Watchtower",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["defensive", "observation", "monumental"],
+  "preferredTags": ["HILLTOP_PEAK", "PRIME_CIVIC"],
+  "colorSlots": [],
+  "maxPerVillage": 1
+}

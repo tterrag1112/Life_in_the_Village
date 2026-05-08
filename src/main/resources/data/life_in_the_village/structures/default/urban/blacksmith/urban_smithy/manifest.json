@@ -1,0 +1,11 @@
+{
+  "id": "urban_smithy",
+  "displayName": "Urban Smithy",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["combined_workshop_residence", "urban_workshop"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 2
+}

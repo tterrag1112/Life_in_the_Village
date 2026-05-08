@@ -1,0 +1,12 @@
+{
+  "id": "urban_guildhall",
+  "displayName": "Urban Guild Hall",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["civic_landmark", "guild"],
+  "preferredTags": ["PRIME_CIVIC", "PLAZA_ADJACENT"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 4
+}

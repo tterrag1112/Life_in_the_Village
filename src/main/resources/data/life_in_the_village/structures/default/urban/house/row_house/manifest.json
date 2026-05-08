@@ -1,0 +1,12 @@
+{
+  "id": "row_house",
+  "displayName": "Row House",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 0.6,
+  "stylePreference": "URBAN",
+  "tags": ["townhouse", "narrow", "share_wall_ready"],
+  "preferredTags": ["RESIDENTIAL_CORE"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 999
+}

@@ -1,0 +1,12 @@
+{
+  "id": "urban_townhall",
+  "displayName": "Urban Town Hall",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["civic_landmark", "monumental", "town_hall"],
+  "preferredTags": ["PRIME_CIVIC", "PLAZA_ADJACENT"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 1
+}

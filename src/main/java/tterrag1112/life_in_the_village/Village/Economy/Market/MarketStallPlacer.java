@@ -17,18 +17,27 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingPlacer;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.DynamicSignUpdater;
+import tterrag1112.life_in_the_village.Village.Decoration.Subbuilding.SubBuilding;
+import tterrag1112.life_in_the_village.Village.Decoration.Subbuilding.SubBuildingType;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Manages the physical placement of market stall NBT structures.
  *
- * <h3>Anchor convention</h3>
- * The {@code market/stall_1.nbt} contains **Chiseled Stone Brick** blocks at
- * positions where stalls can be placed. Each such block is one anchor slot,
- * numbered 0-N in the order they appear when sorted by (Z, X). The stall NBT
- * ({@code market/stall/stall_1.nbt}) is stamped with its origin at the anchor
- * position (the Chiseled Stone Brick is replaced by the stall structure).
+ * <h3>Anchor convention (Track B1, P0d-04)</h3>
+ * Market NBTs author {@code SubBuildingAnchorBlock} instances tagged
+ * {@link SubBuildingType#STALL} at each stall position. The
+ * {@code SubBuildingScanner} runs at building-placement time, replaces
+ * each anchor with air, and registers a {@link SubBuilding} record on
+ * {@code VillageSavedData}. This class then queries those records;
+ * the runtime scan for chiseled stone bricks that the legacy P0d-04-pre
+ * code used has been removed.
+ *
+ * <p>Slot numbering is the deterministic sort order of the stall
+ * subbuildings by their anchor (Z, X). A stall record's
+ * {@code slotIndex} is its position in that sorted list.
  *
  * <h3>Chest detection</h3>
  * After placing a stall NBT, this class scans the stall footprint for a
@@ -45,10 +54,6 @@ import java.util.*;
  * </pre>
  */
 public final class MarketStallPlacer {
-
-    /** Anchor marker block in the market NBT. Change this to match your build. */
-    public static final net.minecraft.world.level.block.Block ANCHOR_BLOCK =
-            Blocks.CHISELED_STONE_BRICKS;
 
     /** Stall structure template path. */
     private static final Identifier STALL_TEMPLATE =
@@ -68,33 +73,34 @@ public final class MarketStallPlacer {
     // =========================================================================
 
     /**
-     * Scans the market building for unclaimed anchor slots and returns their
-     * absolute world positions, sorted by (Z then X) for consistent numbering.
+     * Returns the anchor positions of every {@link SubBuildingType#STALL}
+     * subbuilding registered against this market, sorted by (Z, X) for
+     * consistent slot numbering. P0d-04: queries {@code VillageSavedData}
+     * for scanner output rather than walking blocks at runtime.
      *
      * <p>Call this once after a market is placed to know how many slots
      * are available, or to display slot availability to a player.</p>
      */
     public static List<BlockPos> findAnchorSlots(ServerLevel level,
                                                  Building marketBuilding) {
-        List<BlockPos> anchors = new ArrayList<>();
-        BlockPos min = marketBuilding.getShape().getMin();
-        BlockPos max = marketBuilding.getShape().getMax();
+        return findAnchorSlots(marketBuilding,
+                VillageSavedData.get(level));
+    }
 
-        for (int x = min.getX(); x <= max.getX(); x++) {
-            for (int y = min.getY(); y <= max.getY(); y++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (level.getBlockState(pos).is(ANCHOR_BLOCK)) {
-                        anchors.add(pos);
-                    }
-                }
-            }
-        }
-
-        // Stable sort: Z first, then X — consistent slot numbering
-        anchors.sort(Comparator.comparingInt((BlockPos p) -> p.getZ())
-                .thenComparingInt(p -> p.getX()));
-        return anchors;
+    /**
+     * Overload that takes an explicit {@link VillageSavedData}, for
+     * callers (V2 spawn adapter, NPC interaction handlers) that already
+     * have one.
+     */
+    public static List<BlockPos> findAnchorSlots(Building marketBuilding,
+                                                 VillageSavedData data) {
+        if (marketBuilding == null || data == null) return List.of();
+        return data.getSubBuildingsForBuilding(marketBuilding.getId()).stream()
+                .filter(sb -> sb.type() == SubBuildingType.STALL)
+                .map(SubBuilding::origin)
+                .sorted(Comparator.comparingInt(BlockPos::getZ)
+                        .thenComparingInt(BlockPos::getX))
+                .collect(Collectors.toList());
     }
 
     /**
@@ -113,7 +119,7 @@ public final class MarketStallPlacer {
             long rentUntilTick,
             VillageSavedData data) {
 
-        List<BlockPos> allAnchors = findAnchorSlots(level, marketBuilding);
+        List<BlockPos> allAnchors = findAnchorSlots(marketBuilding, data);
         if (allAnchors.isEmpty()) return Optional.empty();
 
         // Find which slot indices are already occupied
@@ -143,8 +149,9 @@ public final class MarketStallPlacer {
             return Optional.empty();
         }
 
-        // Remove the anchor marker block before stamping
-        level.setBlock(anchorPos, Blocks.AIR.defaultBlockState(), 3);
+        // P0d-04: anchor block has already been replaced with air by
+        // SubBuildingScanner at building-placement time, so no extra
+        // clearing is required before stamping.
 
         Rotation stallRotation = facingRotation(anchorPos, marketBuilding);
 
@@ -188,7 +195,12 @@ public final class MarketStallPlacer {
 
     /**
      * Reclaims a stall: clears the stall structure from the world and
-     * restores the anchor marker block so the slot is available again.
+     * marks the {@link MarketStall} record inactive. P0d-04: the stall
+     * slot's {@link SubBuilding} record persists on
+     * {@code VillageSavedData} unchanged — the slot becomes available
+     * again because no active {@link MarketStall} references its
+     * slot index. No anchor block needs to be restored (the legacy
+     * chiseled-stone-brick marker has been removed entirely).
      */
     public static void reclaimStall(ServerLevel level, MarketStall stall) {
 
@@ -212,9 +224,6 @@ public final class MarketStallPlacer {
         // Reset signs to "For Rent"
         updateStallSigns(level, stall.getStallOrigin(),
                 size, stall.getSlotIndex(), stall, 0L);
-
-        // Restore anchor marker
-        level.setBlock(origin, ANCHOR_BLOCK.defaultBlockState(), 3);
 
         stall.setActive(false);
     }

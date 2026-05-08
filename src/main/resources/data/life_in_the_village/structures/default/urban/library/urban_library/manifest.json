@@ -1,0 +1,12 @@
+{
+  "id": "urban_library",
+  "displayName": "Urban Library",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 1.0,
+  "stylePreference": "URBAN",
+  "tags": ["scholarly", "civic_landmark"],
+  "preferredTags": ["CIVIC_ADJACENT"],
+  "colorSlots": ["PRIMARY", "ROOF"],
+  "maxPerVillage": 1
+}
