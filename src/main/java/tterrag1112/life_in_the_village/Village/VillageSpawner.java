@@ -74,6 +74,16 @@ public class VillageSpawner {
             return Optional.empty();
         }
 
+        // Track A1a — runtime branch to V2 planner. V1 path below is
+        // unchanged. The V2 adapter ignores typeData (V2 derives layout
+        // from terrain) but receives villageType so it lands on the
+        // resulting Village record.
+        if (tterrag1112.life_in_the_village.Village.Planning.V2.V2Settings
+                .adaptiveV2Enabled()) {
+            return tterrag1112.life_in_the_village.Village.Planning.V2
+                    .V2VillageSpawnerAdapter.spawn(level, origin, villageType, villageName);
+        }
+
         VillageSavedData data = VillageSavedData.get(level);
         if (!isFarEnoughFromExistingVillages(level, origin)) {
             System.out.println("VillageSpawner: too close to existing village");

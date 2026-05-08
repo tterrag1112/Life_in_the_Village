@@ -284,6 +284,7 @@ public class ModModEvents {
         PlaceCommand.register(event.getDispatcher());
         LayoutCommand.register(event.getDispatcher());
         SpawnCommand.register(event.getDispatcher());
+        ConfigCommand.register(event.getDispatcher());
         NpcDebugCommand.register(event.getDispatcher());
         OfficeDebugCommand.register(event.getDispatcher());
         DialogueDebugCommand.register(event.getDispatcher());
