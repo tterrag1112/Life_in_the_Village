@@ -234,6 +234,15 @@ public final class V2VillageSpawnerAdapter {
         // commands and reload-time reads can branch on it without
         // re-running SiteAnalyzer.
         village.setInclination(siteCtx.inclination());
+        // B2.9 — persist the tier override (if the caller supplied
+        // one). Without this, getSizeTier recomputes from building
+        // count and reports HAMLET right after spawn even if the
+        // user asked for CITY.
+        if (tierOverride != null) {
+            village.setSizeTierOverride(
+                    tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier
+                            .fromViabilityTier(tierOverride));
+        }
         data.addVillage(village);
         VillageRoadsSavedData.get(level).getOrCreate(village.getId());
 

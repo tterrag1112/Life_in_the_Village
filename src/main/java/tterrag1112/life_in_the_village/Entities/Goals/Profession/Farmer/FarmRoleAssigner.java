@@ -1,6 +1,8 @@
 package tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer;
 
 import net.minecraft.server.level.ServerLevel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmRole;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -9,6 +11,8 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -16,6 +20,13 @@ import java.util.stream.Collectors;
  * Storage is handled by {@link ProfessionRoleManager}.
  */
 public final class FarmRoleAssigner {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(FarmRoleAssigner.class);
+
+    /** B2.9 — per-farmhouse signature of the last applied assignment.
+     *  Skip the work + log when nothing changed. */
+    private static final ConcurrentHashMap<UUID, String> LAST_ASSIGNMENT =
+            new ConcurrentHashMap<>();
 
     private FarmRoleAssigner() {}
 
@@ -25,7 +36,19 @@ public final class FarmRoleAssigner {
                 ProfessionRoleManager.findWorkersForBuilding(level, farmhouse);
 
         int total = workers.size();
-        if (total == 0) return;
+        if (total == 0) {
+            LAST_ASSIGNMENT.remove(farmhouse.getId());
+            return;
+        }
+        // Idempotence — sorted worker UUIDs as signature.
+        StringBuilder sig = new StringBuilder().append(total).append(':');
+        workers.stream()
+                .map(w -> w.getUUID().toString())
+                .sorted()
+                .forEach(s -> sig.append(s).append(';'));
+        if (sig.toString().equals(LAST_ASSIGNMENT.put(farmhouse.getId(), sig.toString()))) {
+            return;
+        }
 
         List<FarmPlot> all      = data.getFarmPlotsForFarmhouse(farmhouse.getId());
         List<FarmPlot> crops    = all.stream()
@@ -78,8 +101,8 @@ public final class FarmRoleAssigner {
             }
         }
 
-        System.out.println("[FarmRoleAssigner] Assigned roles to " + total
-                + " workers for " + farmhouse.getName());
+        LOGGER.debug("[FarmRoleAssigner] Assigned roles to {} workers for {}",
+                total, farmhouse.getName());
     }
 
     private static void assignPlot(TownspersonMob npc,

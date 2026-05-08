@@ -1996,3 +1996,128 @@ ParkDebugCommand, FarmDebugCommand, HomesteadDebugCommand.
 disconnects (zero HOUSEs visible, missing farm sectors, misleading
 status messages, BLACKSMITH/BAKERY incorrectly dropped, log
 spam) should all resolve.
+
+---
+
+## B2.9 — round-two diagnostic + perf fixes (2026-05-08)
+
+Round-two response to B2.8 live testing. Eight findings, eight
+fixes. No new abstractions; all changes are diff-local to the
+files that owned the misbehaviour.
+
+**T1 — Tier override didn't propagate.** `/building village spawn
+... CITY` produced HAMLET-shaped layouts because `Village` re-
+derived its tier from `buildingIds.size()` on every getter call.
+- `Village.tierOverride` field added; `getSizeTier()` short-
+  circuits to it when present.
+- `Village.setSizeTierOverride(VillageSizeTier)` — null clears.
+- `VillagePlazaMeta` extended to four fields (the existing sub-
+  record workaround for the codec 16-arg ceiling), now carries
+  `v2TierOverride`.
+- `VillageSizeTier.fromViabilityTier(ViabilityTier)` — pass-
+  through for CITY/TOWN/HAMLET; OUTPOST/UNVIABLE collapse to
+  HAMLET.
+- `V2VillageSpawnerAdapter.spawn(...)` now calls
+  `village.setSizeTierOverride(...)` after the planner runs.
+
+**T2 — Hot-loop log spam masked actual progress.** Two role
+assigners reprinted the same assignment table every server tick
+when the assignment didn't change.
+- `WorkshopRoleAssigner` and `FarmRoleAssigner` gained
+  `static ConcurrentHashMap<UUID, String> LAST_ASSIGNMENT`. The
+  signature is `total + ":" + sortedWorkerUUIDs joined by ";"`;
+  identical signature ⇒ skip the body.
+- The remaining log lines demoted to `LOGGER.debug`.
+- `VillageLeaderGoal` and `PostJobGoal` followed the same
+  System.out → SLF4J debug demotion. The original guards (one-
+  shot leader assignment; idempotent posting check) were already
+  correct — the logs were the only spam.
+
+**T3 — Six distinct InclinationProfile rosters.** Until now
+`forInclination(...)` returned the AGRICULTURAL roster for
+everything.
+- AGRICULTURAL: FARMHOUSE outnumbers HOUSE roughly 2:1 at every
+  tier (CITY: 25 farmhouses vs 12 houses).
+- INDUSTRIAL: BLACKSMITH / CARPENTRY / STONEMASON / WOODCUTTER /
+  MINE emphasis; TOOLSMITH + ARMORER + ATELIER on the secondary
+  shelf; GUILD_HALL_CRAFTSMEN at CITY.
+- RESIDENTIAL: HOUSE-dominant (CITY: 40 houses); thin civic
+  shell.
+- CIVIC: MARKET / INN / LIBRARY / BELL_TOWER tripled; CITY adds
+  CHANCELLERY, TREASURY, GUILD_HALL_MERCHANTS, SCRIBE_WORKSHOP.
+- SACRED: CHAPEL / SHRINE / TEMPLE / BELL_TOWER emphasis;
+  SCHOLARS_RETREAT + GUILD_HALL_RELIGIOUS at CITY; HEALER_HUT and
+  CANDLEMAKER reinforced.
+- DEFENSIVE: GUARD_TOWER / WATCHTOWER / BARRACKS triad;
+  CASTLE + PRISON at CITY; ARMORER / TOOLSMITH support tier.
+- `forInclination(...)` is now a switch over all six values; every
+  inclination resolves to its own static `InclinationProfile`.
+
+**T4 — Plaza emitter conflicting with B2.4 parks.** Every plaza
+emitted FOUNTAIN / LAMPS / BENCHES / FLOWERBEDS / GAZEBO /
+MONUMENT / VENDOR_ZONE slots that competed with the new park
+adjuncts.
+- `DecorationSlotEmitter.emitPlazaSubSlots(...)` stripped to emit
+  only `PLAZA_NOTICE_BOARD` (one per qualifying plaza). The
+  amenity-style slots are now park territory.
+- Removed the corresponding `hasBenches` / `hasGazebo` /
+  `hasFountain` / `hasMonument` / `hasFlowerbeds` flag locals
+  that fed the deleted branches.
+
+**T5 — Boundary markers fired before paths were stable.** Slot
+emitter was producing edge-of-village markers on partial road
+graphs; deferred to a later phase.
+- `DecorationSlotEmitter.emit(...)` line 118: the
+  `emitVillageBoundaryMarkers(...)` call is commented out with a
+  TODO pointing back to this entry. Method body retained in case
+  a future phase re-enables it.
+
+**T6 — `FarmSectorPlanner` arable threshold too strict.**
+`arableScore` weighed slope/water/forest so heavily that flat
+OPEN ground scored under the 0.5 threshold and farm sectors
+never planted on plains.
+- `arableScore` rebalanced — flat OPEN cells now have a 0.55
+  baseline; slope (×0.25), water proximity (×0.15) and forest
+  (×0.05) only nudge upward. Math.min(1.0, …) caps the total.
+
+**T7 — Homestead roll rate too low at CITY.** PhasedPlanner was
+rolling adjuncts at 0.10 for CITY, so CITY villages produced ~0
+homesteads in practice.
+- `PhasedPlanner.rollHomesteadType(...)` per-tier rates updated:
+  HAMLET 0.95 / TOWN 0.80 / CITY 0.67. Was 0.80 / 0.30 / 0.10.
+
+**T8 — `/liv decoration slots` syntax error without village
+arg.** Brigadier rejected the bare form because there was no
+zero-arg executor.
+- `DecorationDebugCommand` now registers an `.executes(...)` on
+  the `slots` literal (handler: `slotsAtPlayer(ctx)`) in addition
+  to the existing argument branch.
+- New `slotsAtPlayer(ctx)` resolves the village via
+  `data.getVillageAt(BlockPos.containing(source.getPosition()))`;
+  fails with a friendly hint if the source isn't standing in a
+  village.
+- Original body refactored into shared `slotsForVillage(...)`;
+  both bare and explicit-name forms call it.
+
+**API additions:**
+
+- `Village.setSizeTierOverride(@Nullable VillageSizeTier)`
+- `Village.tierOverride` field (codec'd through VillagePlazaMeta)
+- `VillageSizeTier.fromViabilityTier(ViabilityTier)`
+- `InclinationProfile.{INDUSTRIAL, RESIDENTIAL, CIVIC, SACRED,
+  DEFENSIVE}` static fields (AGRICULTURAL was already public)
+
+**Files touched:**
+
+Modified: Village, VillageSizeTier, V2VillageSpawnerAdapter,
+WorkshopRoleAssigner, FarmRoleAssigner, VillageLeaderGoal,
+PostJobGoal, DecorationSlotEmitter, FarmSectorPlanner,
+PhasedPlanner, InclinationProfile, DecorationDebugCommand.
+
+**Cumulative pending verification:** B1 + B2.1–B2.9 in a live
+run. After B2.9, CITY-spawned villages should pick the requested
+tier, role-assigner spam should be gone, every inclination should
+produce a recognisably different roster, plaza slots should no
+longer collide with parks, farm sectors should plant on plains,
+CITY homesteads should roll regularly, and `/liv decoration slots`
+should work bare.

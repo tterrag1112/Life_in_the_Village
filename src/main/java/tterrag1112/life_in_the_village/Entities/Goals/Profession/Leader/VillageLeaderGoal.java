@@ -322,9 +322,13 @@ public class VillageLeaderGoal extends Goal {
             npc.setAssignedBuildingId(building.getId());
             npc.setAssignedVillageName(village.getName());
 
-            System.out.println("Village leader assigned "
-                    + npc.getNpcName() + " as " + prof
-                    + " to " + building.getName());
+            // B2.9 — demoted from System.out to SLF4J debug. The
+            // leader's assignment loop runs steady-state; per-tick
+            // log spam was confused for re-assignment churn during
+            // testing.
+            org.slf4j.LoggerFactory.getLogger(VillageLeaderGoal.class).debug(
+                    "Village leader assigned {} as {} to {}",
+                    npc.getNpcName(), prof, building.getName());
         }
     }
 

@@ -72,6 +72,12 @@ public class Village {
      *  codec optional-field round-trip keeps them loadable. */
     @Nullable private tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclination = null;
 
+    /** B2.9 — persisted tier override. When non-null, getSizeTier
+     *  returns this instead of recomputing from building count. Set
+     *  by /building village spawn's tier arg so status commands
+     *  read the explicit tier rather than the building-count tier. */
+    @Nullable private VillageSizeTier tierOverride = null;
+
     // Transient — not persisted. Phase 19 replaces this with LayoutPlan's
     // persisted graph. For now this is for debug visualization only.
     @Nullable private transient tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph debugRoadGraph;
@@ -368,7 +374,12 @@ public class Village {
             // RecordCodecBuilder.group() ceiling. The name says "Plaza"
             // for backwards-compat with persisted JSON; the field
             // carries any V2-derived classification meta from now on.
-            Optional<tterrag1112.life_in_the_village.Village.Planning.V2.Inclination> v2Inclination
+            Optional<tterrag1112.life_in_the_village.Village.Planning.V2.Inclination> v2Inclination,
+            // B2.9 — persisted tier override (set by /building village
+            // spawn or any caller that hands V2 an explicit tier). When
+            // present, getSizeTier returns this instead of recomputing
+            // from building count. Legacy saves load with empty.
+            Optional<VillageSizeTier> v2TierOverride
     ) {
         static final Codec<VillagePlazaMeta> CODEC = RecordCodecBuilder.create(i -> i.group(
                 tterrag1112.life_in_the_village.Village.Decoration
@@ -384,18 +395,23 @@ public class Village {
                                         .valueOf(s),
                                 Enum::name)
                         .optionalFieldOf("v2Inclination")
-                        .forGetter(VillagePlazaMeta::v2Inclination)
+                        .forGetter(VillagePlazaMeta::v2Inclination),
+                Codec.STRING.xmap(VillageSizeTier::valueOf, Enum::name)
+                        .optionalFieldOf("v2TierOverride")
+                        .forGetter(VillagePlazaMeta::v2TierOverride)
         ).apply(i, VillagePlazaMeta::new));
 
         static VillagePlazaMeta empty() {
-            return new VillagePlazaMeta(new ArrayList<>(), Optional.empty(), Optional.empty());
+            return new VillagePlazaMeta(new ArrayList<>(), Optional.empty(),
+                    Optional.empty(), Optional.empty());
         }
 
         static VillagePlazaMeta from(Village v) {
             return new VillagePlazaMeta(
                     new ArrayList<>(v.plazaRegions),
                     Optional.ofNullable(v.villageCenterMarker),
-                    Optional.ofNullable(v.inclination));
+                    Optional.ofNullable(v.inclination),
+                    Optional.ofNullable(v.tierOverride));
         }
 
         void applyTo(Village v) {
@@ -405,6 +421,7 @@ public class Village {
             }
             v.villageCenterMarker = villageCenterMarker.orElse(null);
             v2Inclination.ifPresent(i -> v.inclination = i);
+            v2TierOverride.ifPresent(t -> v.tierOverride = t);
         }
     }
 
@@ -815,10 +832,21 @@ public class Village {
     }
 
     public VillageSizeTier getSizeTier() {
+        // B2.9 — explicit override (set by /building village spawn)
+        // wins over the building-count recomputation. Without this,
+        // status commands report HAMLET for a village a tester just
+        // spawned as CITY because building count hasn't caught up.
+        if (tierOverride != null) return tierOverride;
         if (storedSizeTier == null) {
             storedSizeTier = VillageSizeTier.fromBuildingCount(buildingIds.size());
         }
         return storedSizeTier;
+    }
+
+    /** B2.9 — set the persisted tier override. Pass null to clear
+     *  and revert to building-count derivation. */
+    public void setSizeTierOverride(@Nullable VillageSizeTier override) {
+        this.tierOverride = override;
     }
 
     /**

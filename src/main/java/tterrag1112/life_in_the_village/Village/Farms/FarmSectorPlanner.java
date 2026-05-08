@@ -243,13 +243,23 @@ public final class FarmSectorPlanner {
         BlockCategory cat = cell.category();
         if (cat != BlockCategory.OPEN && cat != BlockCategory.SHORE) return 0.0;
         if (cell.localSlope() > MAX_INTERIOR_SLOPE) return 0.0;
+        // B2.9 — rebalanced to allow flat OPEN cells far from water
+        // to pass the threshold. Pre-B2.9 weights (0.5 slope + 0.35
+        // water + 0.15 forest) capped a flat plains cell with no
+        // water nearby at score 0.5 — below the 0.55 threshold —
+        // so AGRICULTURAL CITY in plains rejected every candidate.
+        // The new weights make flat OPEN terrain inherently
+        // arable; water + forest add bonuses but aren't required.
         double slopeScore = Math.max(0.0, 1.0 - cell.localSlope() / 4.0);
         double waterScore = bfsScore(cell.distToWater(), cellSize, 24);
         double forestScore = bfsScore(cell.distToForest(), cellSize, 32);
-        // Forest proximity is mildly desirable (orchard / shade) but
-        // the cell itself must be OPEN/SHORE so dense forest is filtered.
+        double openBase = 0.55;  // baseline for any OPEN cell that
+                                  // passes the slope filter; clears
+                                  // the threshold (also 0.55) on its
+                                  // own. Water / forest add bonuses
+                                  // up to ~0.4 more.
         return Math.min(1.0,
-                0.5 * slopeScore + 0.35 * waterScore + 0.15 * forestScore);
+                openBase + 0.25 * slopeScore + 0.15 * waterScore + 0.05 * forestScore);
     }
 
     private static double bfsScore(int distCells, int cellSize, int falloffBlocks) {

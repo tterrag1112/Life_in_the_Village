@@ -115,7 +115,12 @@ public final class DecorationSlotEmitter {
         emitBuildingGaps(ctx, buildings, centre, out);
         emitBuildingCornerAccents(ctx, buildings, out);
         emitFacadeOrnaments(ctx, buildings, out);
-        emitVillageBoundaryMarkers(ctx, buildings, centre, out);
+        // B2.9 — boundary markers deferred to subsystem 12 (walls).
+        // The pre-B2.9 emitter was producing 24 VILLAGE_BOUNDARY
+        // slots clustered around the perimeter; until walls land
+        // there are no profiles to fill them, so the slots are
+        // dead-weight burning matcher cycles.
+        // emitVillageBoundaryMarkers(ctx, buildings, centre, out);
         emitTradeRoadEndpoints(ctx, centre, out);
         emitPlazaSubSlots(ctx, out);
 
@@ -565,101 +570,25 @@ public final class DecorationSlotEmitter {
 
         if (centre == null || radius <= 0) return;
 
-        // Reverse-derive tier from radius so VILLAGE+ gates work even
-        // when sizeTier isn't reachable here. Match the canonical
-        // values from TownSquareTier (HAMLET=3, VILLAGE=5, TOWN=8,
-        // CITY=12) using thresholds for robustness against off-canonical
-        // radii (e.g. enclave-overridden plazas).
-        boolean hasBenches      = radius >= 5;
-        boolean hasGazebo       = radius >= 8;
-        boolean hasMonument     = radius >= 12;
-        boolean hasFlowerbeds   = radius >= 5;
-        boolean hasVendorZone   = radius >= 5;
-
         UUID parentId = v.getId();
 
-        // FOUNTAIN_CENTER — always present.
-        out.add(plazaSlot(parentId, centre, Direction.SOUTH,
-                EnumSet.of(DecorationTag.PARK_FEATURE,
-                        DecorationTag.PLAZA_FOUNTAIN),
-                /* footprint */ Math.max(1, radius - 1),
-                /* quality */ 100));
-
-        // LAMP_CORNER — four corners regardless of tier.
-        BlockPos[] lamps = PlazaSubSlotPositions.lampCornerPositions(centre, radius);
-        for (BlockPos lp : lamps) {
-            out.add(plazaSlot(parentId, lp, facingTowardCentre(centre, lp),
-                    EnumSet.of(DecorationTag.PARK_FEATURE,
-                            DecorationTag.PLAZA_LAMP),
-                    /* footprint */ 1,
-                    /* quality */ 60));
-        }
-
-        // NOTICE_BOARD on the south edge (road-facing).
+        // B2.9 — narrowed plaza emission to PLAZA_NOTICE_BOARD only.
+        // Pre-B2.9 this method emitted FOUNTAIN_CENTER, four
+        // LAMP_CORNERs, four BENCH_PERIMETERs, FLOWERBED_EDGEs,
+        // GAZEBO_SPOT, MONUMENT_ACCENT, VENDOR_ZONE — 15+ slots
+        // clustered at the village centre. Per B2.4 design parks
+        // are reserved by ParkCandidateFinder from natural-feature
+        // analysis, NOT by stamping a fixed plaza composition.
+        // The noticeboard remains here because B2.2's
+        // NoticeboardWriter wires content (laws / requests /
+        // decrees) to the slot; PARK_FEATURE+PLAZA_NOTICE_BOARD is
+        // its discovery key.
         BlockPos notice = PlazaSubSlotPositions.noticeBoardPosition(centre, radius);
         out.add(plazaSlot(parentId, notice, Direction.NORTH,
                 EnumSet.of(DecorationTag.PARK_FEATURE,
                         DecorationTag.PLAZA_NOTICE_BOARD),
                 /* footprint */ 1,
                 /* quality */ 70));
-
-        // BENCH_PERIMETER — VILLAGE+. Up to 4 benches.
-        if (hasBenches) {
-            BlockPos[] benches = PlazaSubSlotPositions.benchPositions(centre, radius, 4);
-            for (BlockPos bp : benches) {
-                out.add(plazaSlot(parentId, bp, facingTowardCentre(centre, bp),
-                        EnumSet.of(DecorationTag.PARK_FEATURE,
-                                DecorationTag.PLAZA_BENCH),
-                        /* footprint */ 2,
-                        /* quality */ 80));
-            }
-        }
-
-        // FLOWERBED_EDGE — VILLAGE+. Diagonals between benches.
-        if (hasFlowerbeds) {
-            // Use placeholder tier resolution from radius for the
-            // composer call; the helper ignores tier when called via
-            // hasFlowerbeds path.
-            BlockPos[] beds = PlazaSubSlotPositions.flowerbedPositions(
-                    centre, radius, VillageSizeTier.VILLAGE);
-            for (BlockPos fp : beds) {
-                out.add(plazaSlot(parentId, fp, facingTowardCentre(centre, fp),
-                        EnumSet.of(DecorationTag.PARK_FEATURE,
-                                DecorationTag.PLAZA_FLOWERBED),
-                        /* footprint */ 2,
-                        /* quality */ 55));
-            }
-        }
-
-        // GAZEBO_SPOT — TOWN+ only.
-        if (hasGazebo) {
-            BlockPos gazebo = PlazaSubSlotPositions.gazeboPosition(centre, radius);
-            out.add(plazaSlot(parentId, gazebo, facingTowardCentre(centre, gazebo),
-                    EnumSet.of(DecorationTag.PARK_FEATURE,
-                            DecorationTag.PLAZA_GAZEBO),
-                    /* footprint */ 5,
-                    /* quality */ 90));
-        }
-
-        // MONUMENT_ACCENT — CITY only.
-        if (hasMonument) {
-            BlockPos monument = PlazaSubSlotPositions.monumentPosition(centre, radius);
-            out.add(plazaSlot(parentId, monument, Direction.SOUTH,
-                    EnumSet.of(DecorationTag.PARK_FEATURE,
-                            DecorationTag.PLAZA_MONUMENT),
-                    /* footprint */ 3,
-                    /* quality */ 90));
-        }
-
-        // VENDOR_ZONE — VILLAGE+. Reserved; no profile in Phase 1.
-        if (hasVendorZone) {
-            BlockPos vendor = PlazaSubSlotPositions.vendorZonePosition(centre, radius);
-            out.add(plazaSlot(parentId, vendor, Direction.SOUTH,
-                    EnumSet.of(DecorationTag.PARK_FEATURE,
-                            DecorationTag.PLAZA_VENDOR_ZONE),
-                    /* footprint */ 3,
-                    /* quality */ 50));
-        }
     }
 
     private static DecorationSlot plazaSlot(UUID parentId, BlockPos pos,

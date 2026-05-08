@@ -61,6 +61,11 @@ public final class DecorationDebugCommand {
                                                 .executes(ctx -> list(ctx,
                                                         StringArgumentType.getString(ctx, "village")))))
                                 .then(Commands.literal("slots")
+                                        // B2.9 — bare /liv decoration slots
+                                        // resolves the village at the player's
+                                        // position; the explicit-name form
+                                        // remains for cross-village debugging.
+                                        .executes(ctx -> slotsAtPlayer(ctx))
                                         .then(Commands.argument("village",
                                                         StringArgumentType.string())
                                                 .executes(ctx -> slots(ctx,
@@ -120,6 +125,27 @@ public final class DecorationDebugCommand {
 
     // ── /liv decoration slots <village> ──────────────────────────────────
 
+    /** B2.9 — bare-form handler. Resolves the village at the
+     *  command source's position (Player or block-pos source).
+     *  Falls back to a friendly error if the source isn't standing
+     *  inside a village. */
+    private static int slotsAtPlayer(CommandContext<CommandSourceStack> ctx) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            return failServerOnly(ctx);
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.containing(
+                ctx.getSource().getPosition());
+        Village village = data.getVillageAt(pos).orElse(null);
+        if (village == null) {
+            ctx.getSource().sendFailure(net.minecraft.network.chat.Component.literal(
+                    "No village at " + pos.getX() + "," + pos.getZ()
+                            + ". Provide a village name: /liv decoration slots <name>"));
+            return 0;
+        }
+        return slotsForVillage(ctx, level, data, village);
+    }
+
     private static int slots(CommandContext<CommandSourceStack> ctx,
                              String villageName) {
         if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
@@ -128,6 +154,15 @@ public final class DecorationDebugCommand {
         VillageSavedData data = VillageSavedData.get(level);
         Village village = data.getVillageByName(villageName).orElse(null);
         if (village == null) return failUnknownVillage(ctx, villageName);
+        return slotsForVillage(ctx, level, data, village);
+    }
+
+    /** Shared body extracted in B2.9 so both bare and explicit-name
+     *  forms call the same emitter. */
+    private static int slotsForVillage(CommandContext<CommandSourceStack> ctx,
+                                       ServerLevel level,
+                                       VillageSavedData data,
+                                       Village village) {
 
         // Re-run the emitter without committing. Layout is null
         // because runtime debug commands don't have planning context;

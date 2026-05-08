@@ -74,4 +74,21 @@ public enum VillageSizeTier {
         return HAMLET;
     }
 
+    /** B2.9 — V2 ViabilityTier → VillageSizeTier mapping. V2 has
+     *  HAMLET / TOWN / CITY / OUTPOST / UNVIABLE; the size enum has
+     *  HAMLET / VILLAGE / TOWN / CITY. OUTPOST and UNVIABLE collapse
+     *  to HAMLET. Used by /building village spawn to persist a tier
+     *  override on Village from the V2 viability arg. */
+    public static VillageSizeTier fromViabilityTier(
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier vt) {
+        if (vt == null) return HAMLET;
+        return switch (vt) {
+            case CITY     -> CITY;
+            case TOWN     -> TOWN;
+            case HAMLET   -> HAMLET;
+            case OUTPOST,
+                 UNVIABLE -> HAMLET;
+        };
+    }
+
 }

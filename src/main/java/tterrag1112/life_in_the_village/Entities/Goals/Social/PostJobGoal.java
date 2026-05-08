@@ -242,7 +242,12 @@ public class PostJobGoal extends Goal {
                 currentTick
         );
         data.addJobPosting(posting);
-        System.out.println("Farmer: posted farmhand job at tick " + currentTick);
+        // B2.9 — demoted to SLF4J debug. Posting is already
+        // idempotent (the open-posting check at line ~218 returns
+        // early); the per-60s steady-state log was confused for
+        // hot-loop spam during testing.
+        org.slf4j.LoggerFactory.getLogger(PostJobGoal.class).debug(
+                "Farmer: posted farmhand job at tick {}", currentTick);
     }
 
     // --- Helpers ---
