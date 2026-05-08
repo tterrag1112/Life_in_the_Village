@@ -438,14 +438,25 @@ public final class ConnectorPlanner {
 
         WorldRoadSavedData.get(level).markDirty();
 
-        // Validate
+        // Validate. B2.8 — most warnings are pre-existing graph state
+        // (duplicate edges, degenerate cellPaths from old connectors)
+        // surfaced again on every validation. They're informational,
+        // not actionable per-spawn. Log a single summary line at INFO
+        // and detail at DEBUG so the spawn log isn't flooded.
         List<String> warnings = GraphInvariantValidator.validate(graph);
         if (warnings.isEmpty()) {
-            System.out.println("[ConnectorPlanner] Graph OK — "
-                    + graph.allNodes().size() + " nodes, "
-                    + graph.allEdges().size() + " edges.");
+            org.slf4j.LoggerFactory.getLogger(ConnectorPlanner.class).info(
+                    "[ConnectorPlanner] Graph OK — {} nodes, {} edges",
+                    graph.allNodes().size(), graph.allEdges().size());
         } else {
-            warnings.forEach(w -> System.out.println("[ConnectorPlanner] WARN: " + w));
+            org.slf4j.LoggerFactory.getLogger(ConnectorPlanner.class).info(
+                    "[ConnectorPlanner] Graph has {} validator warnings "
+                            + "(graph state has {} nodes, {} edges; details at DEBUG)",
+                    warnings.size(), graph.allNodes().size(), graph.allEdges().size());
+            org.slf4j.Logger debugLog = org.slf4j.LoggerFactory.getLogger(ConnectorPlanner.class);
+            if (debugLog.isDebugEnabled()) {
+                warnings.forEach(w -> debugLog.debug("[ConnectorPlanner] WARN: {}", w));
+            }
         }
 
         String summary = buildSummary(village, candidate, connectorCellPath,

@@ -54,4 +54,16 @@ public record SiteContext(
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
                 tier, inclination, culture, seed, new ArrayList<>());
     }
+
+    /** B2.8 — copy-with overrides for /building village spawn's
+     *  inclination + tier injection. Terrain analysis still ran;
+     *  only the derived classification is replaced. Pass null for
+     *  either field to keep the analyzed value. */
+    public SiteContext withOverrides(Inclination newInclination, ViabilityTier newTier) {
+        return new SiteContext(
+                anchor, originalAnchor, primaryAxis, spinePath,
+                newTier        != null ? newTier        : tier,
+                newInclination != null ? newInclination : inclination,
+                culture, seed, hubs);
+    }
 }

@@ -67,6 +67,11 @@ public class Village {
     /** Transient: last computed size tier. Null until first access; recomputed after building count changes. */
     @Nullable private transient VillageSizeTier storedSizeTier = null;
 
+    /** B2.8 — persisted inclination derived from V2 SiteAnalyzer at
+     *  spawn. Null on legacy villages that predate the field; the
+     *  codec optional-field round-trip keeps them loadable. */
+    @Nullable private tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclination = null;
+
     // Transient — not persisted. Phase 19 replaces this with LayoutPlan's
     // persisted graph. For now this is for debug visualization only.
     @Nullable private transient tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph debugRoadGraph;
@@ -486,13 +491,21 @@ public class Village {
                     // polygon generator.
                     VillagePlazaMeta.CODEC
                             .optionalFieldOf("plazaMeta", VillagePlazaMeta.empty())
-                            .forGetter(VillagePlazaMeta::from)
+                            .forGetter(VillagePlazaMeta::from),
+                    // B2.8 — persisted V2 inclination, set at spawn.
+                    // Optional so legacy saves load with null.
+                    Codec.STRING.xmap(
+                                    s -> tterrag1112.life_in_the_village.Village.Planning.V2.Inclination
+                                            .valueOf(s),
+                                    Enum::name)
+                            .optionalFieldOf("v2Inclination")
+                            .forGetter(v -> Optional.ofNullable(v.inclination))
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
                                layoutMeta, villageType, dockNodeId,
                                useGraphConnector, offices, policy,
-                               plazaMeta) -> {
+                               plazaMeta, v2Inclination) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -522,6 +535,7 @@ public class Village {
                 }
                 v.policy = policy != null ? policy : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy();
                 if (plazaMeta != null) plazaMeta.applyTo(v);
+                v2Inclination.ifPresent(v::setInclination);
                 return v;
             })
     );
@@ -781,6 +795,20 @@ public class Village {
     // =========================================================================
 
     /** Returns the current size tier, computed from the current building count. */
+    /** B2.8 — village inclination, set by V2 spawn after
+     *  SiteAnalyzer derives it (or by /building village spawn
+     *  override). Null on legacy villages and on test paths that
+     *  don't run V2; callers should null-check. */
+    @Nullable
+    public tterrag1112.life_in_the_village.Village.Planning.V2.Inclination getInclination() {
+        return inclination;
+    }
+
+    public void setInclination(
+            tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclination) {
+        this.inclination = inclination;
+    }
+
     public VillageSizeTier getSizeTier() {
         if (storedSizeTier == null) {
             storedSizeTier = VillageSizeTier.fromBuildingCount(buildingIds.size());

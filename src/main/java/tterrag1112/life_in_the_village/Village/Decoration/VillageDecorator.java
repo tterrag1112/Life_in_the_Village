@@ -77,37 +77,27 @@ public class VillageDecorator {
                     plazaRadius * 2, plazaRadius * 2, 1);
         }
 
-        // ── Step 2: Road network ──────────────────────────────────────────────
-        Set<Long> allPathXZ;
-
-            // Normal village: new organic road system
-            if (footprint == null) {
-                footprint = BuildingFootprint.fromVillage(village, data);
-            }
-
-            PathMaterial material = PathMaterial.forBiomeAndTier(
-                    style, village.getPathTier());
-            RoadShape.RoadTier roadTier = RoadShape.fromPathTier(
-                    village.getPathTier());
-
-        VillageRoadNetwork roads = new VillageRoadNetwork(squareCenter);
-        allPathXZ = roads.buildInitialNetwork(
-                level, village, data, layout, material, roadTier,
-                footprint, level.getRandom());
-
-            // Add square pavement
-            for (BlockPos p : squarePavement) {
-                allPathXZ.add(xzKey(p.getX(), p.getZ()));
-
+        // ── Step 2: Plaza polygon paving (B2.8 — V1 road network removed) ─────
+        // The V1 VillageRoadNetwork.buildInitialNetwork pass + its
+        // VillagePath bookkeeping has been removed. V2 spawns paint
+        // roads via the road graph (EdgeRealizer / RoadPainter); the
+        // V1 path system was producing 0 paths against the V2 layout
+        // (causing the "0 VillagePaths" log + a downstream
+        // TerrainSmoother no-op). Plaza polygon paving stays — it's
+        // a separate decoration concern unrelated to road graph
+        // realization.
+        if (footprint == null) {
+            footprint = BuildingFootprint.fromVillage(village, data);
         }
+        PathMaterial material = PathMaterial.forBiomeAndTier(
+                style, village.getPathTier());
+        RoadShape.RoadTier roadTier = RoadShape.fromPathTier(
+                village.getPathTier());
 
-        // ── Phase 17 doc 04 — Plaza polygon paving ────────────────────────────
-        // Runs after the road network so polygon interior overwrites any
-        // road centerlines crossing the plaza. Same PathMaterial palette
-        // as the road realiser, so the overwrite is visually benign.
-        // The legacy stamped-square pavement (above) sits at village
-        // centre and stays — for villages where the polygon is also at
-        // centre, both passes paint the same area with the same palette.
+        Set<Long> allPathXZ = new java.util.HashSet<>();
+        for (BlockPos p : squarePavement) {
+            allPathXZ.add(xzKey(p.getX(), p.getZ()));
+        }
         for (var region : village.getPlazaRegions()) {
             Set<BlockPos> plazaPaved = tterrag1112.life_in_the_village
                     .Village.Decoration.Plaza.PlazaPaver.pave(
@@ -116,24 +106,22 @@ public class VillageDecorator {
                 allPathXZ.add(xzKey(p.getX(), p.getZ()));
             }
         }
-        System.out.println("VillageDecorator: road network produced "
-                + allPathXZ.size() + " path XZ positions across "
-                + data.getPathsForVillage(village.getId()).size() + " VillagePaths");
-        int totalBlocks = 0;
-        for (VillagePath path : data.getPathsForVillage(village.getId())) {
-            totalBlocks += path.getBlocks().size();
-        }
-        System.out.println("VillageDecorator: total placed road blocks = " + totalBlocks);
 
         village.setPathHubPos(squareCenter);
         data.setDirty();
 
-        // ── Step 3: Support hollow ground ─────────────────────────────────────
+        // ── Step 3: Support hollow ground (B2.8 — V1 paths only) ─────────────
+        // V2 road realizer handles its own foundation under road
+        // blocks; the V1 path-supporting pass below is now a no-op
+        // for V2 villages (no V1 VillagePaths registered) and a
+        // safety net for any legacy data that still has them.
         List<BlockPos> allPathBlocks = new ArrayList<>();
         for (VillagePath path : data.getPathsForVillage(village.getId())) {
             allPathBlocks.addAll(path.getBlocks());
         }
-        TerrainSmoother.supportPathBlocks(level, allPathBlocks);
+        if (!allPathBlocks.isEmpty()) {
+            TerrainSmoother.supportPathBlocks(level, allPathBlocks);
+        }
 
         // ── Step 4: Perimeter ─────────────────────────────────────────────────
         //VillagePerimeter.place(level, village, data, style, tier, allPathXZ);

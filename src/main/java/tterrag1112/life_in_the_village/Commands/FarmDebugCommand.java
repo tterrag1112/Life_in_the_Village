@@ -58,18 +58,35 @@ public final class FarmDebugCommand {
         }
 
         List<FarmSector> sectors = data.getFarmSectorsForVillage(village.getId());
+        var tier = village.getSizeTier();
+        var inclination = village.getInclination();
+        String tierStr = "tier=" + tier
+                + " inclination=" + (inclination != null ? inclination.name() : "(unset)");
+        // B2.8 — count farmhouses to narrow empty-state reason.
+        int farmhouseCount = 0;
+        for (java.util.UUID bid : village.getBuildingIds()) {
+            var b = data.getBuildingById(bid).orElse(null);
+            if (b != null && b.getType() == tterrag1112.life_in_the_village
+                    .Village.Buildings.BuildingType.FARMHOUSE) {
+                farmhouseCount++;
+            }
+        }
         if (sectors.isEmpty()) {
+            String reason = farmhouseCount == 0
+                    ? "no FARMHOUSE buildings in this village (sectors gate on farmhouseCount >= 1)"
+                    : "FarmSectorPlanner found no arable centre — terrain may be too steep / wet / "
+                            + "obstructed. Farmhouses present: " + farmhouseCount;
             ctx.getSource().sendSuccess(() -> Component.literal(
-                    "Village " + villageName + " has no reserved farm sectors.\n"
-                            + "(Expected for non-AGRICULTURAL villages or villages "
-                            + "with zero farmhouses.)"),
+                    "Village " + villageName + ": no reserved farm sectors.\n"
+                            + "  " + tierStr + "\n"
+                            + "  reason: " + reason),
                     false);
             return 0;
         }
 
         StringBuilder sb = new StringBuilder();
         sb.append(sectors.size()).append(" farm sector(s) in ")
-                .append(villageName).append(":\n");
+                .append(villageName).append(" (").append(tierStr).append("):\n");
         for (FarmSector s : sectors) {
             sb.append("  Sector ").append(s.sectorId().toString().substring(0, 8))
                     .append(" — ").append(s.bounds().vertices().size()).append(" vertices, ")

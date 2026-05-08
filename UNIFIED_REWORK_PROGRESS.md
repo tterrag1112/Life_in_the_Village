@@ -32,6 +32,7 @@ spec matches reality.
 | B2.5 | Farm plot rework | Implemented | `FarmSector` + 4-vertex terrain-trimmed polygon plots. Doc-10 tier-only sector radius (HAMLET 15/VILLAGE 20/TOWN 25/CITY 30) with farmPriority slack. Per-farmhouse plot count (HAMLET 2/VILLAGE 2-3/TOWN 3-4/CITY 4-6). FarmCropPicker uses CulturePlanningBias.cropPreference. New FarmSectorRenderer replaces legacy FarmPlotPlacer in the V2 path; placer parked. |
 | B2.6 | Homesteading | Implemented | 7 HOMESTEAD_* AdjunctPlotTypes (added WORKSHOP/ORCHARD/WOODSHED to B2.1's 4). PhasedPlanner.rollHomesteadType probability-gates HOUSE adjuncts (HAMLET 80%/VILLAGE 60%/TOWN 30%/CITY 10%) + weighted draw from `CulturePlanningBias.homesteadPlotWeights`. AbstractHomesteadGoal.Spouse (WORK_*) + .Child (SOCIAL) dispatch to HomesteadHandlerRegistry handlers. HouseholdData gains `homesteadPlotType`. **Track B complete.** |
 | B2.7 | Command consolidation + spawn pipeline fix | Implemented | `/litv spawn` now delegates to V2VillageSpawnerAdapter (was bypassing all B2 post-passes). `/atlas` consolidated under `/liv atlas`. New `/liv adjuncts <village>`. New `/liv help` + `/litv help` master directory. |
+| B2.8 | Connection diagnostics + test-spawn affordances | Implemented | FarmSectorPlanner gates on farmhouse count, not inclination. Village.inclination persisted. Park/farm/homestead status commands report actual tier+inclination+concrete reason. PhasedPlanner respects ReconciliationEngine's tradeFulfilled set. VillageDecorator's V1 road-walking removed. ConnectorPlanner warning storm demoted to DEBUG. `/building village spawn <inclination> <tier> [name]` restored with V2 vocabulary. |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -1897,3 +1898,101 @@ wasn't invoking them.
 
 Track B is now fully closed out. Track C / Track D proceed
 independently.
+
+### 2026-05-08 — B2.8 landed (connection diagnostics + test-spawn affordances)
+
+Surgical fix-up after user testing of B2.7 surfaced six concrete
+disconnects + one missing affordance. Each finding addressed
+without redesigning subsystems.
+
+**Findings + fixes:**
+
+- **T1 — HOUSE query**: `/litv homestead` reported zero HOUSEs even
+  when V2 placed them. The filter (`b.getType() != BuildingType.HOUSE`)
+  was correct; the empty-state output was misleading. Fix:
+  empty-state now dumps the building-type breakdown so the user
+  sees what types ARE present, plus a concrete reason ("V2
+  BuildingSelector did not include HOUSE in this (tier,
+  inclination), or ReconciliationEngine dropped it during
+  cascade"). Combined with T3 it's actionable.
+
+- **T2 — FarmSectorPlanner gating**: changed from
+  "inclination != AGRICULTURAL → skip" to "farmhouseCount == 0 →
+  skip". RESIDENTIAL / CIVIC villages with farmhouses now reserve
+  sectors. Sector size formula was already inclination-agnostic
+  (B2.5 doc-10 tier-only) so no downstream impact.
+
+- **T3 — Status command messaging**: park / farm / homestead
+  empty-state output now shows actual tier + inclination, plus a
+  narrowed reason. ParkDebugCommand: "tier limit: HAMLET caps
+  parks at 0" vs "ParkCandidateFinder found no candidates in
+  this terrain". FarmDebugCommand: "no FARMHOUSE buildings
+  (sectors gate on farmhouseCount >= 1)" vs "FarmSectorPlanner
+  found no arable centre — ... Farmhouses present: N".
+
+- **Inclination persistence**: Village gains an optional
+  `Inclination` field with codec round-trip. V2 spawn adapter
+  calls `village.setInclination(siteCtx.inclination())` after
+  village construction. Legacy saves load with null inclination;
+  status commands display "(unset)" for those.
+
+- **T4 — Road state disconnect**: VillageDecorator was running
+  V1 `VillageRoadNetwork.buildInitialNetwork` on V2 villages,
+  producing 0 VillagePaths but logging confusingly. Removed the
+  V1 road-network call + the misleading System.out.println pair;
+  kept plaza polygon paving (separate concern) and TerrainSmoother
+  (now no-op for V2 villages, safety-net for legacy).
+
+- **T5 — Trade fulfillment vs DEPENDENCY_MISSING**: ReconciliationEngine
+  marked `BLACKSMITH<-MINE` and `BAKERY<-MILLER` as trade-fulfilled
+  but PhasedPlanner dropped them anyway. PhasedPlanner.run gains
+  an overload that takes `Set<BuildingType> tradeFulfilledTypes`;
+  placeOne skips DEPENDENCY_MISSING when a building is in that
+  set. V2 adapter derives the set from
+  `recon.tradeFulfilled().requiringType()`.
+
+- **T6 — ConnectorPlanner warning storm**: hundreds of duplicate-
+  edge / degenerate-cellPath warnings during spawn (graph
+  invariants surface every validation pass; mostly pre-existing
+  state). Demoted to DEBUG with one INFO summary line per
+  validation: `[ConnectorPlanner] Graph has N validator
+  warnings ... details at DEBUG`.
+
+- **T7 — `/building village spawn` restored** with V2 vocabulary:
+  `/building village spawn <inclination> <tier> [name]`.
+  - `<inclination>`: any V2 `Inclination` enum value (tab-completes).
+  - `<tier>`: any `ViabilityTier` value (tab-completes).
+  - `[name]`: optional; auto-generates from
+    `test_<inclination>_<tier>_<seedHex>` when omitted.
+  - Both args are passed as overrides into a new
+    `V2VillageSpawnerAdapter.spawn(...)` overload, which calls
+    `siteCtx.withOverrides(inc, tier)` post-SiteAnalyzer. Terrain
+    analysis (anchor, spine, axis) still runs from FeatureMap;
+    only the classification fields the planner branches on are
+    replaced.
+
+**API additions:**
+
+- `SiteContext.withOverrides(Inclination, ViabilityTier)` — copy-with
+  for the two classification fields. Pass null for either to
+  keep the analyzed value.
+- `V2VillageSpawnerAdapter.spawn(level, origin, type, name,
+  inclinationOverride, tierOverride)` — 6-arg overload. Old 4-arg
+  delegates with both overrides null.
+- `PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level,
+  tradeFulfilledTypes)` — 6-arg overload. Old 5-arg delegates with
+  empty set.
+- `Village.getInclination()` / `setInclination(Inclination)`.
+
+**Files touched:**
+
+Modified: VillageDecorator, FarmSectorPlanner, PhasedPlanner,
+ReconciliationEngine call site (V2 adapter), SiteContext, Village,
+V2VillageSpawnerAdapter, ConnectorPlanner, BuildingCommand,
+ParkDebugCommand, FarmDebugCommand, HomesteadDebugCommand.
+
+**Cumulative pending verification:** A1a + A2 + A3 + A4 + A1b + B1
++ B2.1–B2.8 in a single live run. After B2.8, the user's reported
+disconnects (zero HOUSEs visible, missing farm sectors, misleading
+status messages, BLACKSMITH/BAKERY incorrectly dropped, log
+spam) should all resolve.

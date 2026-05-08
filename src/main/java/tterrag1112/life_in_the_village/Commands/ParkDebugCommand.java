@@ -58,17 +58,32 @@ public final class ParkDebugCommand {
         }
 
         List<GardenPlot> plots = data.getGardenPlotsForVillage(village.getId());
+        var tier = village.getSizeTier();
+        var inclination = village.getInclination();
+        String tierStr = "tier=" + tier
+                + " inclination=" + (inclination != null ? inclination.name() : "(unset)");
         if (plots.isEmpty()) {
+            // B2.8 — narrow the empty-state reason to the actual
+            // gating that fired.
+            String reason;
+            if (tier == tterrag1112.life_in_the_village.Village.Decoration
+                    .VillageSizeTier.HAMLET) {
+                reason = "tier limit: HAMLET caps parks at 0";
+            } else {
+                reason = "ParkCandidateFinder found no candidates in this terrain "
+                        + "(check forest / water proximity, slope < 3)";
+            }
             ctx.getSource().sendSuccess(() -> Component.literal(
-                    "Village " + villageName + " has no reserved garden plots.\n"
-                            + "(Expected for HAMLET tier or low parkPriority cultures.)"),
+                    "Village " + villageName + ": no reserved garden plots.\n"
+                            + "  " + tierStr + "\n"
+                            + "  reason: " + reason),
                     false);
             return 0;
         }
 
         StringBuilder sb = new StringBuilder();
         sb.append(plots.size()).append(" garden plots in ")
-                .append(villageName).append(":\n");
+                .append(villageName).append(" (").append(tierStr).append("):\n");
         for (GardenPlot p : plots) {
             sb.append("  ").append(p.style().name())
                     .append(" @ (")

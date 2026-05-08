@@ -100,6 +100,26 @@ public final class V2VillageSpawnerAdapter {
                                           BlockPos origin,
                                           String villageType,
                                           String villageName) {
+        return spawn(level, origin, villageType, villageName, null, null);
+    }
+
+    /**
+     * B2.8 — overload that accepts inclination + tier overrides for
+     * /building village spawn's test-spawn affordances. Terrain
+     * analysis still runs (so anchor / spine / primary axis stay
+     * derived); only the classification fields are replaced.
+     *
+     * <p>Pass null for either override to keep the SiteAnalyzer
+     * value. Common case: an explicit inclination + tier from the
+     * command, anchored at the player's position.
+     */
+    public static Optional<Village> spawn(
+            ServerLevel level,
+            BlockPos origin,
+            String villageType,
+            String villageName,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclinationOverride,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier tierOverride) {
         long t0 = System.currentTimeMillis();
         VillageSavedData data = VillageSavedData.get(level);
 
@@ -116,6 +136,14 @@ public final class V2VillageSpawnerAdapter {
         V2FeatureMap fmap = V2FeatureMap.scan(level, origin, FEATURE_MAP_RADIUS);
         Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
         SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
+        // B2.8 — apply inclination/tier overrides post-analysis. Terrain
+        // outputs (anchor, spine, axis) stay derived; only the
+        // classification fields the planner branches on get replaced.
+        if (inclinationOverride != null || tierOverride != null) {
+            siteCtx = siteCtx.withOverrides(inclinationOverride, tierOverride);
+            LOGGER.info("V2: site overrides applied — tier={} inclination={}",
+                    siteCtx.tier(), siteCtx.inclination());
+        }
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             LOGGER.info("V2: site UNVIABLE at {}; aborting", origin);
             return Optional.empty();
@@ -131,9 +159,15 @@ public final class V2VillageSpawnerAdapter {
         List<BuildingType> sorted =
                 DependencyResolver.topoSort(recon.finalSelection(), seed);
         List<UnavailableBuilding> unavailable = sel.unavailable();
+        // B2.8 — surface trade-fulfilled types so PhasedPlanner can
+        // skip DEPENDENCY_MISSING drops for buildings whose supply
+        // chain runs over trade routes (BLACKSMITH<-MINE,
+        // BAKERY<-MILLER, etc.).
+        java.util.Set<BuildingType> tradeFulfilled = new java.util.HashSet<>();
+        for (var tf : recon.tradeFulfilled()) tradeFulfilled.add(tf.requiringType());
 
         PhasedPlanner.Result phased =
-                PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level);
+                PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level, tradeFulfilled);
         PlacementResult placement = phased.placement();
         RoadNetwork roads = phased.network();
 
@@ -196,6 +230,10 @@ public final class V2VillageSpawnerAdapter {
         village.applyLayout(synth, BUILDING_LEVEL);
         village.setDebugRoadGraph(synth.getRoadGraph());
         village.setMainGateEndpoint(synth.getMainGateEndpoint());
+        // B2.8 — persist the V2-derived inclination so post-spawn
+        // commands and reload-time reads can branch on it without
+        // re-running SiteAnalyzer.
+        village.setInclination(siteCtx.inclination());
         data.addVillage(village);
         VillageRoadsSavedData.get(level).getOrCreate(village.getId());
 

@@ -107,10 +107,28 @@ public final class PhasedPlanner {
                              List<BuildingType> sortedSelection,
                              List<UnavailableBuilding> unavailable,
                              ServerLevel level) {
+        return run(ctx, fmap, sortedSelection, unavailable, level, Set.of());
+    }
+
+    /**
+     * B2.8 — overload that accepts the set of {@link BuildingType}s
+     * whose missing dependencies were resolved by trade in
+     * {@code ReconciliationEngine}. Those types skip the
+     * {@code DEPENDENCY_MISSING} drop in {@link #placeOne} so a
+     * BLACKSMITH that gets metal_ore via a trade route still places
+     * even when no MINE is in the village.
+     */
+    public static Result run(SiteContext ctx, V2FeatureMap fmap,
+                             List<BuildingType> sortedSelection,
+                             List<UnavailableBuilding> unavailable,
+                             ServerLevel level,
+                             Set<BuildingType> tradeFulfilledTypes) {
         // Spine path is now planned by SiteAnalyzer (Layer 2) and
         // arrives on the SiteContext. Skeleton wraps it as a list of
         // SpineSegments (one per primitive in the path).
         State state = new State(ctx, fmap, level);
+        state.tradeFulfilledTypes = tradeFulfilledTypes != null
+                ? Set.copyOf(tradeFulfilledTypes) : Set.of();
         Set<BuildingType> foundationTypes = computeFoundationTypes(sortedSelection);
         LOGGER.info("PhasedPlanner.run: tier={} axis={} anchor=({},{},{})"
                 + " selection={} foundation={} unavailable={}",
@@ -456,6 +474,16 @@ public final class PhasedPlanner {
         List<BuildingType> missing = new ArrayList<>();
         for (BuildingType dep : profile.requiresPresent()) {
             if (!placedTypes.contains(dep)) missing.add(dep);
+        }
+        // B2.8 — ReconciliationEngine may have already accepted that
+        // this building's category requirement is fulfilled via
+        // trade. When reconciliation flagged it, skip the
+        // DEPENDENCY_MISSING drop — the building places fine, and
+        // its supply chain runs over the trade-route system.
+        if (!missing.isEmpty() && state.tradeFulfilledTypes.contains(type)) {
+            LOGGER.info("placed {} despite missing dependency {}: trade-fulfilled "
+                    + "by ReconciliationEngine", type, missing);
+            missing.clear();
         }
         if (!missing.isEmpty()) {
             state.dropped.add(new DroppedBuilding(type, DropReason.DEPENDENCY_MISSING,
@@ -1471,6 +1499,11 @@ public final class PhasedPlanner {
         final List<Reservation> reservations = new ArrayList<>();
         final List<PhaseEvent> events = new ArrayList<>();
         boolean viable = true;
+        /** B2.8 — building types whose missing dependencies were
+         *  resolved by trade in ReconciliationEngine; placeOne
+         *  skips DEPENDENCY_MISSING drops for these. Set by
+         *  {@code run} after construction. */
+        Set<BuildingType> tradeFulfilledTypes = Set.of();
 
         State(SiteContext ctx, V2FeatureMap fmap, ServerLevel level) {
             this.ctx = ctx;

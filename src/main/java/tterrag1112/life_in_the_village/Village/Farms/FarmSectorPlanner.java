@@ -92,12 +92,16 @@ public final class FarmSectorPlanner {
                                   long createdTick,
                                   VillageSavedData data) {
         if (fmap == null || tier == null || data == null) return null;
-        if (inclination != Inclination.AGRICULTURAL) {
-            LOGGER.debug("FarmSectorPlanner: village {} not AGRICULTURAL; skipping", villageId);
+        // B2.8 — gate purely on farmhouse count, not inclination. A
+        // RESIDENTIAL or CIVIC village that ended up with farmhouses
+        // (V2 selection allows this for various reasons) still needs
+        // its sector reserved. Inclination biases sector size /
+        // density but doesn't gate existence.
+        List<Building> farmhouses = collectFarmhouses(placedBuildings);
+        if (farmhouses.isEmpty()) {
+            LOGGER.debug("FarmSectorPlanner: village {} has no farmhouses; skipping", villageId);
             return null;
         }
-        List<Building> farmhouses = collectFarmhouses(placedBuildings);
-        if (farmhouses.isEmpty()) return null;
 
         Random rng = new Random(seed ^ FARM_RNG_SALT);
 

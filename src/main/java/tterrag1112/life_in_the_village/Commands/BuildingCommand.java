@@ -126,28 +126,30 @@ public class BuildingCommand {
                                         .then(Commands.literal("resetroads")
                                                 .executes(ctx -> resetRoads(ctx.getSource())))
                                 .then(Commands.literal("spawn")
-                                        .then(Commands.argument("name", StringArgumentType.word())
-                                                .then(Commands.argument("type", StringArgumentType.word())
-                                                        .executes(ctx -> {
-                                                            ServerLevel level = ctx.getSource().getLevel();
-                                                            BlockPos pos = BlockPos.containing(
-                                                                    ctx.getSource().getPosition());
-                                                            String name = StringArgumentType.getString(ctx, "name");
-                                                            String type = StringArgumentType.getString(ctx, "type");
-
-                                                            VillageSpawner.spawnVillage(level, pos, type, name)
-                                                                    .ifPresentOrElse(
-                                                                            v -> ctx.getSource().sendSuccess(() ->
-                                                                                            Component.literal("Spawned village '"
-                                                                                                    + name + "' of type '" + type + "'"),
-                                                                                    true),
-                                                                            () -> ctx.getSource().sendFailure(
-                                                                                    Component.literal("Failed to spawn village"))
-                                                                    );
-                                                            return 1;
+                                        // B2.8 — restored with V2 vocabulary:
+                                        //   /building village spawn <inclination> <tier> [name]
+                                        // Inclination + tier flow as overrides into
+                                        // V2VillageSpawnerAdapter; terrain analysis still runs.
+                                        .then(Commands.argument("inclination", StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (var i : tterrag1112.life_in_the_village
+                                                            .Village.Planning.V2.Inclination.values()) {
+                                                        b.suggest(i.name());
+                                                    }
+                                                    return b.buildFuture();
+                                                })
+                                                .then(Commands.argument("tier", StringArgumentType.word())
+                                                        .suggests((c, b) -> {
+                                                            for (var t : tterrag1112.life_in_the_village
+                                                                    .Village.Planning.V2.Layer2.ViabilityTier.values()) {
+                                                                b.suggest(t.name());
+                                                            }
+                                                            return b.buildFuture();
                                                         })
-                                                )
-                                        )
+                                                        .executes(ctx -> spawnWithOverrides(ctx, null))
+                                                        .then(Commands.argument("name", StringArgumentType.word())
+                                                                .executes(ctx -> spawnWithOverrides(ctx,
+                                                                        StringArgumentType.getString(ctx, "name"))))))
                                 )
                                 // Add force event command
                                 .then(Commands.literal("event")
@@ -458,6 +460,65 @@ public class BuildingCommand {
                                                                         .getInteger(ctx, "rate")))))));
     }
 
+
+    /** B2.8 — `/building village spawn <inclination> <tier> [name]`
+     *  delegates to V2VillageSpawnerAdapter.spawn with overrides.
+     *  Site analysis still runs (anchor / spine / axis derived from
+     *  terrain); only inclination + tier are replaced. */
+    private static int spawnWithOverrides(
+            com.mojang.brigadier.context.CommandContext<CommandSourceStack> ctx,
+            String nameOrNull) {
+        ServerLevel level = ctx.getSource().getLevel();
+        BlockPos pos = BlockPos.containing(ctx.getSource().getPosition());
+        String inclinationStr = StringArgumentType.getString(ctx, "inclination");
+        String tierStr = StringArgumentType.getString(ctx, "tier");
+
+        tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclination;
+        tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier tier;
+        try {
+            inclination = tterrag1112.life_in_the_village.Village.Planning.V2.Inclination
+                    .valueOf(inclinationStr.toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown inclination '" + inclinationStr + "'. Valid: "
+                            + java.util.Arrays.toString(
+                                    tterrag1112.life_in_the_village.Village.Planning.V2
+                                            .Inclination.values())));
+            return 0;
+        }
+        try {
+            tier = tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier
+                    .valueOf(tierStr.toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown tier '" + tierStr + "'. Valid: "
+                            + java.util.Arrays.toString(
+                                    tterrag1112.life_in_the_village.Village.Planning.V2
+                                            .Layer2.ViabilityTier.values())));
+            return 0;
+        }
+
+        String name = nameOrNull != null ? nameOrNull
+                : "test_" + inclination.name().toLowerCase()
+                        + "_" + tier.name().toLowerCase()
+                        + "_" + Long.toHexString(level.getSeed() ^ pos.hashCode());
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Spawning " + tier + " " + inclination + " village '" + name + "'..."),
+                true);
+        var result = tterrag1112.life_in_the_village.Village.Planning.V2
+                .V2VillageSpawnerAdapter.spawn(level, pos, "default", name, inclination, tier);
+        if (result.isPresent()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "Spawned '" + name + "' (" + tier + " " + inclination + ", "
+                            + result.get().getBuildingIds().size() + " buildings)"),
+                    true);
+            return 1;
+        } else {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Spawn failed (check log for too-close-to-existing-village or unviable terrain)"));
+            return 0;
+        }
+    }
 
     private static int villageNeeds(CommandSourceStack src, String villageName) {
         ServerLevel level = src.getLevel();
