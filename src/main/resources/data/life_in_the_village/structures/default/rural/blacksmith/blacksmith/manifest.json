@@ -1,4 +1,9 @@
 {
   "id": "blacksmith",
-  "stylePreference": "RURAL"
+  "stylePreference": "RURAL",
+  "adjunct": {
+    "size": [6, 6],
+    "side": "BACK",
+    "required": false
+  }
 }

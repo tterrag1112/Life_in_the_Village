@@ -41,7 +41,8 @@ public record BuildingVariant(
         Set<String> tags,
         int maxPerVillage,
         Set<ColorSlot> colorSlots,
-        float ruinationLevel) {
+        float ruinationLevel,
+        AdjunctPreference adjunct) {
 
     /**
      * The default-variant id for a {@link BuildingType} — doc 15:
@@ -77,6 +78,7 @@ public record BuildingVariant(
                 manifest.tags(),
                 manifest.maxPerVillage(),
                 manifest.colorSlots(),
-                manifest.ruinationLevel());
+                manifest.ruinationLevel(),
+                manifest.adjunct());
     }
 }

@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Village.Decoration.Variants;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
@@ -9,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Zoning.SlotTag;
 
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -36,6 +38,8 @@ import java.util.Set;
  *   <li>{@code maxPerVillage} — {@code 0} means "no cap"
  *   <li>{@code colorSlots} — {@link ColorSlot#PRIMARY} only
  *   <li>{@code ruinationLevel} — {@code 0.0} (pristine)
+ *   <li>{@code adjunct} — {@code null} (no adjunct preference; the
+ *       planner falls back to {@code AdjunctPlotRegistry} defaults)
  * </ul>
  *
  * <p><b>Footprint:</b> not parsed. Doc 15 §"Footprint resolution"
@@ -45,6 +49,13 @@ import java.util.Set;
  * that still carry a {@code footprint} block load fine — JSON
  * unknown-field tolerance is unchanged — and the value is
  * silently ignored.</p>
+ *
+ * <p><b>B2.1 — adjunct preference:</b> optional nested object that
+ * declares the variant's preferred geometry for an attached
+ * {@link tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlot}.
+ * See {@link AdjunctPreference} for the JSON shape and the
+ * planner's interpretation. Variants with no preference fall back
+ * to the registry's default geometry.</p>
  */
 public record VariantManifest(
         String id,
@@ -58,7 +69,8 @@ public record VariantManifest(
         Set<String> tags,
         int maxPerVillage,
         Set<ColorSlot> colorSlots,
-        float ruinationLevel) {
+        float ruinationLevel,
+        AdjunctPreference adjunct) {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(VariantManifest.class);
 
@@ -79,7 +91,8 @@ public record VariantManifest(
                 Set.of(),
                 0,
                 EnumSet.of(ColorSlot.PRIMARY),
-                0.0f);
+                0.0f,
+                null);
     }
 
     /**
@@ -126,6 +139,8 @@ public record VariantManifest(
         if (ruination < 0) ruination = 0;
         if (ruination > 1) ruination = 1;
 
+        AdjunctPreference adjunct = optAdjunct(json);
+
         return new VariantManifest(
                 id, displayName,
                 minTier, maxTier,
@@ -135,7 +150,53 @@ public record VariantManifest(
                 tags,
                 maxPerVillage,
                 colorSlots,
-                ruination);
+                ruination,
+                adjunct);
+    }
+
+    /** Reads the optional {@code adjunct} nested object. Missing →
+     *  {@code null}; malformed → warning logged + {@code null}. */
+    private static AdjunctPreference optAdjunct(JsonObject o) {
+        JsonElement e = o.get("adjunct");
+        if (e == null || !e.isJsonObject()) return null;
+        JsonObject ao = e.getAsJsonObject();
+
+        JsonElement sizeEl = ao.get("size");
+        int width = 5, depth = 5;
+        if (sizeEl != null && sizeEl.isJsonArray()) {
+            JsonArray arr = sizeEl.getAsJsonArray();
+            if (arr.size() >= 2
+                    && arr.get(0).isJsonPrimitive()
+                    && arr.get(1).isJsonPrimitive()) {
+                try {
+                    width = arr.get(0).getAsInt();
+                    depth = arr.get(1).getAsInt();
+                } catch (NumberFormatException ex) {
+                    LOGGER.warn("VariantManifest: malformed adjunct.size '{}', "
+                            + "defaulting to 5x5", arr);
+                }
+            }
+        }
+
+        AdjunctSide side = AdjunctSide.ANY;
+        JsonElement sideEl = ao.get("side");
+        if (sideEl != null && sideEl.isJsonPrimitive()) {
+            String raw = sideEl.getAsString().toUpperCase(Locale.ROOT);
+            try { side = AdjunctSide.valueOf(raw); }
+            catch (IllegalArgumentException ex) {
+                LOGGER.warn("VariantManifest: unrecognized adjunct.side '{}', "
+                        + "defaulting to ANY", raw);
+            }
+        }
+
+        boolean required = false;
+        JsonElement reqEl = ao.get("required");
+        if (reqEl != null && reqEl.isJsonPrimitive()) {
+            try { required = reqEl.getAsBoolean(); }
+            catch (Exception ex) { /* leave at default */ }
+        }
+
+        return new AdjunctPreference(width, depth, side, required);
     }
 
     // ── JSON helpers ──────────────────────────────────────────────────────

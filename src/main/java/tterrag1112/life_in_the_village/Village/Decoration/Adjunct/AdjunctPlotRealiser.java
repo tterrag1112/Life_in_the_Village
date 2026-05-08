@@ -4,33 +4,28 @@ import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Doc 02 §"Integration points" — orchestrates the AdjunctPlot
- * realiser pass. Sits between {@code BuildingFoundation} (which
- * stamps each building's NBT) and {@code DecorationPass} (which
- * emits decoration slots that need to skip plot footprints).
+ * B2.1 — orchestrates the AdjunctPlot rendering pass.
  *
- * <p>Per-building flow:</p>
- * <ol>
- *   <li>Look up the registered {@link AdjunctPlotType} list via
- *       {@link AdjunctPlotRegistry#getPlotsForBuilding}.</li>
- *   <li>For each plot type in priority order, call
- *       {@link AdjunctPlotPlacer#tryPlace}.</li>
- *   <li>Persist successful placements via
- *       {@link VillageSavedData#addAdjunctPlot}; skip-and-log
- *       silent drops (the placer already logs INFO on failure).</li>
- * </ol>
+ * <p>Pre-B2.1 the realiser ran the probe-and-place flow: it walked
+ * the {@link AdjunctPlotRegistry} per building, asked the placer to
+ * search for a free face, and persisted successes. B2.1 moves
+ * reservation up into V2 Layer 4: by the time this realiser runs,
+ * every {@link AdjunctPlot} record has been planned, validated, and
+ * persisted to {@link VillageSavedData} during the V2 spawn adapter's
+ * post-{@code BuildingPlacer.placeAndRegister} loop. The realiser's
+ * remaining job is to render content into each reserved
+ * rectangle.</p>
  *
- * <p>Phase 0c materialises plot bounds only — no NBT stamping or
- * piece-kit assembly happens here. Subsystems 07 / 08 / 11 will
- * walk the persisted plot list and stamp content from their own
- * realisers in later phases.</p>
+ * <p>Phase 0c content is intentionally absent — subsystems 07
+ * (industry adjuncts), 08 (gardens), and 11 (homesteading) supply
+ * their own renderers in B2.3 and beyond. Until then,
+ * {@link AdjunctPlotPlacer#render} is a logging stub and this pass
+ * is observable only via log lines.</p>
  */
 public final class AdjunctPlotRealiser {
 
@@ -39,53 +34,29 @@ public final class AdjunctPlotRealiser {
     private AdjunctPlotRealiser() {}
 
     /**
-     * Runs the realiser pass for {@code village}. Iterates the
-     * village's buildings, attempts every registered plot type in
-     * order, and persists successes onto {@code data}.
+     * Iterates every {@link AdjunctPlot} reserved for {@code village}
+     * during V2 Layer 4 planning and dispatches the per-plot renderer.
      *
-     * <p>Idempotent for re-runs: clears the village's prior plots
-     * before placing new ones. Real re-running isn't yet exposed
-     * via a debug command (deferred to Phase 1 alongside content),
-     * but the safeguard is in place.</p>
+     * @return number of plots rendered (currently equals the count
+     *         passed to the placeholder renderer; once content phases
+     *         land, the count tracks plots whose render produced
+     *         actual blocks).
      */
     public static int run(ServerLevel level, Village village, VillageSavedData data) {
         if (level == null || village == null || data == null) return 0;
 
         long started = System.nanoTime();
-        int placed = 0;
-        int dropped = 0;
-        int considered = 0;
-
+        int rendered = 0;
         for (UUID buildingId : village.getBuildingIds()) {
-            Optional<Building> bOpt = data.getBuildingById(buildingId);
-            if (bOpt.isEmpty()) continue;
-            Building building = bOpt.get();
-            var spec = AdjunctPlotRegistry.getPlotsForBuilding(building.getType());
-            if (spec.isEmpty()) continue;
-
-            // Per-building: walk plot types in priority order. Each
-            // tryPlace consults already-placed plots in this pass
-            // (added to VillageSavedData immediately on success), so
-            // secondary plots see and avoid the primary's footprint.
-            for (AdjunctPlotType type : spec) {
-                considered++;
-                Optional<AdjunctPlot> plotOpt = AdjunctPlotPlacer
-                        .tryPlace(building, type, level, data);
-                if (plotOpt.isEmpty()) {
-                    dropped++;
-                    continue;
-                }
-                data.addAdjunctPlot(plotOpt.get());
-                placed++;
+            for (AdjunctPlot plot : data.getAdjunctPlotsForBuilding(buildingId)) {
+                AdjunctPlotPlacer.render(plot, level, data);
+                rendered++;
             }
         }
 
         long nanos = System.nanoTime() - started;
-        LOGGER.info("AdjunctPlotRealiser: village {} — considered {} "
-                + "(plot-type, building) pairs, placed {}, dropped {} "
-                + "({}ms)",
-                village.getName(), considered, placed, dropped,
-                nanos / 1_000_000);
-        return placed;
+        LOGGER.info("AdjunctPlotRealiser: village {} — rendered {} reserved "
+                + "plots ({}ms)", village.getName(), rendered, nanos / 1_000_000);
+        return rendered;
     }
 }

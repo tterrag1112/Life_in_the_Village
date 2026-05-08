@@ -25,6 +25,7 @@ spec matches reality.
 | B1-16 | URBAN variant pack manifests (P0a-16) | Implemented | 22 URBAN manifest.json files authored from doc 16 §4. NBT files pending user authoring. |
 | B1-04 | MarketStallPlacer subbuilding migration (P0d-04) | Implemented | Routed through SubBuildingScanner / SubBuildingType.STALL. Market NBTs need re-authoring with SubBuildingAnchorBlock. |
 | B1-12 | GuildHall colour fields | Implemented | AbstractGuild gains palette field; GuildPalettes table per GuildType; VariantResolver.planTint accepts forced overrides; V2 adapter wires guild halls. |
+| B2.1 | V2 envelope extension (adjunct planning + framework refactor) | Implemented | Layer 4 reserves AdjunctPlot rectangles; AdjunctPlotPlacer probe→render-only; FaceProbeOrder + PlacementStrategy deleted; manifest schema gains optional `adjunct` field. |
 | B2-pass | V2 vocabulary pass on docs 05–11 | Not-Started | Doc-only. Depends A4. |
 | B2-05 | Street furniture impl | Not-Started | P1-06..08. |
 | B2-06 | Signs and markers impl | Not-Started | P1-09..13. |
@@ -738,3 +739,121 @@ B1 from a single live run.
 
 Next: Track B2 (decoration phases 1-3 V2 vocabulary pass +
 implementation). B1 unblocks B2 by closing the Phase 0a content gaps.
+
+### 2026-05-08 — B2.1 landed (V2 envelope extension)
+
+Track B's first infrastructure phase: extend V2 Layer 4's
+`PhasedPlanner` to plan optional adjunct rectangles alongside
+footprint + frontage; retire the legacy probe-and-place flow inside
+`AdjunctPlotPlacer`; add an `adjunct` field to the manifest schema
+so per-variant geometry preferences flow into the planner.
+
+**Scope decisions taken before coding** (recorded for the audit
+trail; all user-confirmed):
+
+- AMENITY priority class — *removed from B2.1.* The existing
+  `Priority` enum (`CIVIC, INFRASTRUCTURE, PRODUCTION, RESIDENTIAL`)
+  is a dependency-resolution category, not a placement-priority
+  hierarchy. Park placement is better modelled as a Layer-4 post-
+  pass scoring leftover space against culture-weighted park
+  preferences. Deferred to B2.4.
+- Frontage subdivision (entrance / roadside / side) — *deferred.*
+  The entrance corridor needs a door anchor that today's
+  `FrontageStrip` doesn't carry (door placement deferred to Layer 5
+  facade). For B2.1, decoration consumers treat the full
+  `FrontageStrip` as eligible territory; door-aware filtering is a
+  later concern (handle at render time when Layer 5 lands).
+- Probe migration — *all five legacy checks moved to Layer 4*
+  (parent-overlap, no-extension-past-front-face, sibling overlap,
+  plot overlap, slope tolerance via `V2FeatureMap` instead of
+  `ServerLevel.getHeight`). The renderer is unconditional. The
+  `FaceProbeOrder` and `PlacementStrategy` enums become dead code
+  and are deleted; `AdjunctPlotPlacer.tryPlace` is gone.
+- BLACKSMITH stub — *real manifest, single file.* The pre-B2.1
+  RURAL pack already had `default/rural/blacksmith/blacksmith/manifest.json`
+  and `level_1.nbt`. The manifest is augmented with a 6×6 BACK
+  adjunct preference (`required: false`) — minimum viable smoke
+  test; can stay or be reverted by the user without affecting other
+  systems.
+
+**Manifest schema extension** —
+`Variants/AdjunctPreference.java` (record:
+`width, depth, AdjunctSide, required`),
+`Variants/AdjunctSide.java` (BACK / LEFT / RIGHT / ANY).
+`VariantManifest` gains a nullable `adjunct` field; parser reads
+`{ "size": [w, d], "side": "BACK", "required": false }`. Missing →
+`null`; malformed values warn and fall back to defaults.
+`BuildingVariant` propagates the field to consumers
+(`PhasedPlanner` reads it via `VariantResolver.findById`).
+
+**V2 Layer 4 envelope extension** — `PhasedPlanner.findBestCandidate`
+now calls `planAdjunct` after computing each candidate's footprint
++ frontage. Resolution order: manifest preference > registry
+default > none. Five validations per candidate side: front-face
+extension, reservation collision (including prior adjuncts), road
+corridor intersection, FeatureMap bounds, and slope tolerance
+(sampled per cell). `Reservation` records gain an optional
+`adjunct` AABB so subsequent buildings see and avoid prior
+adjuncts. `Best` carries the planned `PlannedAdjunct` and AABB
+through to placement. `Required: true` failures invalidate the
+candidate; `required: false` failures place the building without
+the adjunct.
+
+**PlacedBuilding hand-off** — gains a nullable `adjunct`
+(`PlannedAdjunct` lite record carrying type, origin, half-extents,
+side direction). Backwards-compat 8-arg constructor preserved for
+hypothetical future call sites.
+
+**AdjunctPlot framework refactor** —
+`AdjunctPlotPlacer.tryPlace` deleted; new
+`AdjunctPlotPlacer.render(plot, level, data)` is a logging stub
+(real content rendering arrives in B2.3 industry / B2.6
+homesteading subsystems).
+`AdjunctPlotRealiser.run` rewritten: iterates
+`data.getAdjunctPlotsForBuilding(buildingId)` per village building
+and dispatches the renderer. No probing.
+`AdjunctPlotType` cleaned: fields reduced to
+`defaultHalfWidthX / defaultHalfLengthZ / slopeTolerance`. Codec
+unchanged (enum-name based).
+`FaceProbeOrder` and `PlacementStrategy` source files deleted.
+
+**V2 spawn adapter materialisation** — after each
+`BuildingPlacer.placeAndRegister` returns the `Building` (and the
+parent's UUID), the adapter constructs a persisted `AdjunctPlot`
+from the planned reservation and calls `data.addAdjunctPlot(...)`.
+`AdjunctPlotRealiser` runs later in `runDownstream` and finds the
+plots already persisted.
+
+**Smoke test contract (live, in-world):**
+
+Smoke test gated on the user having already authored the BLACKSMITH
+NBT (which exists; `default/rural/blacksmith/blacksmith/level_1.nbt`).
+With this build, spawning a tier ≥ HAMLET rural village in superflat
+should:
+
+1. Log `placed BLACKSMITH: ... adjunct=FORGE_YARD@<face>`
+   (or no `adjunct=` suffix if the back face didn't fit).
+2. Log `[adjunct] B2.1 placeholder render for FORGE_YARD plot ...
+   parent=<uuid> origin=(...) size=5x5` once per blacksmith.
+3. `VillageSavedData` round-trips: save / restart /
+   `data.getAdjunctPlotsForBuilding(blacksmithId)` returns the
+   planned plot.
+
+Tight-site test (small buildable area): blacksmith should still
+place; the `required: false` path drops the adjunct and the
+`adjunct=` suffix is absent in the placement log.
+
+Required-edge test (manual: temporarily flip `required: true` in
+the BLACKSMITH manifest): tight sites should drop the blacksmith
+with `NO_VIABLE_CANDIDATE`. Revert to false after testing.
+
+Multi-blacksmith test: second blacksmith's adjunct doesn't overlap
+the first (the planner's reservation list rejects).
+
+**Cumulative pending verification:** all of A1a + A2 + A3 + A4 +
+A1b + B1 + B2.1 in a single live run.
+
+Next: B2.2 (decoration profile registry population), B2.3 (industry
+adjuncts content), or wherever doc-15 ordering points. B2.1 ships
+the planning surface; content phases now have a reserved rectangle
+to render into.

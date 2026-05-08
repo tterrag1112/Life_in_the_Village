@@ -17,9 +17,12 @@ import java.util.UUID;
  * <p>Persisted on {@code VillageSavedData} alongside
  * {@code FarmPlot}. Lifecycle:</p>
  * <ul>
- *   <li>Created by {@link AdjunctPlotPlacer#tryPlace} during the
- *       realiser pass between building foundation and the
- *       decoration pass.</li>
+ *   <li>Created by V2 Layer 4's {@code PhasedPlanner} during
+ *       building placement (B2.1) and materialised onto
+ *       {@link tterrag1112.life_in_the_village.Networking.VillageSavedData}
+ *       by {@code V2VillageSpawnerAdapter} once the parent's UUID
+ *       is known. The legacy probe-and-place flow in
+ *       {@code AdjunctPlotPlacer} was retired in B2.1.</li>
  *   <li>Stored under {@code adjunctPlots} keyed by
  *       {@link #plotId}; denormalised by
  *       {@code parentBuildingId} for fast per-building lookup.</li>

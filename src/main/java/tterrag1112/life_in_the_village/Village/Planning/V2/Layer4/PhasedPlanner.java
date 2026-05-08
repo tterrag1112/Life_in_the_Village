@@ -1,12 +1,18 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer4;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlotRegistry;
+import tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlotType;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.AdjunctPreference;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.AdjunctSide;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Planning.StructureSizeCache;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
@@ -22,6 +28,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuildin
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Footprint;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.FrontageStrip;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlannedAdjunct;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementDefaults;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementProfile;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
@@ -475,12 +482,13 @@ public final class PhasedPlanner {
         // Materialise the placement.
         PlacedBuilding pb = new PlacedBuilding(type, best.pos, best.footprint,
                 best.rotation, profile.priority(), best.variantId,
-                best.frontage, best.facingRoad);
+                best.frontage, best.facingRoad, best.adjunct);
         state.placed.add(pb);
-        state.reservations.add(new Reservation(best.footprintAabb, best.frontageAabb, type));
+        state.reservations.add(new Reservation(best.footprintAabb,
+                best.frontageAabb, best.adjunctAabb, type));
         state.events.add(PhaseEvent.placed(type, foundation, best.score));
         LOGGER.info("placed {}: phase={} centre=({},{},{}) variant={} fp={}x{} rot={}"
-                + " score={} (terrain={} adjacency={} centrality={})",
+                + " score={} (terrain={} adjacency={} centrality={}){}",
                 type, foundation ? "3" : "4b",
                 best.pos.getX(), best.pos.getY(), best.pos.getZ(),
                 best.variantId, best.footprint.width(), best.footprint.length(),
@@ -488,7 +496,10 @@ public final class PhasedPlanner {
                 String.format("%.2f", best.score.total()),
                 String.format("%.2f", best.score.terrain()),
                 String.format("%.2f", best.score.adjacency()),
-                String.format("%.2f", best.score.centrality()));
+                String.format("%.2f", best.score.centrality()),
+                best.adjunct != null
+                        ? " adjunct=" + best.adjunct.type() + "@" + best.adjunct.facingFromParent()
+                        : "");
         return true;
     }
 
@@ -621,9 +632,21 @@ public final class PhasedPlanner {
                 ScoreBreakdown score = scorePosition(pos, type, profile, state);
                 if (score.total() <= 0) continue;
 
+                // B2.1 — adjunct rectangle planning. Resolves manifest
+                // preference + registry default into a reserved AABB
+                // beside the building (or null if none). A required
+                // adjunct that doesn't fit invalidates the candidate.
+                BuildingVariant variantRecord = VariantResolver.findById(
+                        state.culture, Style.RURAL, type, variantId);
+                Direction parentFrontDir = frontDirToDirection(frontDir);
+                AdjunctPlanOutcome adjunctOutcome = planAdjunct(
+                        type, centre, fpAabb, parentFrontDir, variantRecord, state);
+                if (adjunctOutcome.requiredFailed) continue;
+
                 if (best == null || score.total() > best.score.total()) {
                     best = new Best(centre, fp, rotation, variantId, strip,
-                            nr.segment, fpAabb, stripAabb, score);
+                            nr.segment, fpAabb, stripAabb, score,
+                            adjunctOutcome.planned, adjunctOutcome.aabb);
                 }
             }
         }
@@ -1037,8 +1060,241 @@ public final class PhasedPlanner {
         for (Reservation r : reservations) {
             if (fpAabb.overlaps(r.footprint) || fpAabb.overlaps(r.frontage)) return true;
             if (stripAabb.overlaps(r.footprint) || stripAabb.overlaps(r.frontage)) return true;
+            if (r.adjunct != null
+                    && (fpAabb.overlaps(r.adjunct) || stripAabb.overlaps(r.adjunct))) {
+                return true;
+            }
         }
         return false;
+    }
+
+    /** B2.1 adjunct AABB collision check — same logic as
+     *  {@link #overlapsAnyReservation} but for the candidate adjunct
+     *  rectangle. Checks against every prior reservation's footprint,
+     *  frontage, AND adjunct so adjuncts can't pile up on each other. */
+    private static boolean adjunctOverlapsAnyReservation(Aabb adjunctAabb,
+                                                         List<Reservation> reservations) {
+        for (Reservation r : reservations) {
+            if (adjunctAabb.overlaps(r.footprint)) return true;
+            if (adjunctAabb.overlaps(r.frontage))  return true;
+            if (r.adjunct != null && adjunctAabb.overlaps(r.adjunct)) return true;
+        }
+        return false;
+    }
+
+    // =========================================================================
+    // B2.1 — adjunct rectangle planning
+    // =========================================================================
+
+    /** Buffer between parent footprint and adjunct AABB, in blocks.
+     *  Mirrors the legacy {@code AdjunctPlotPlacer.PARENT_BUFFER}. */
+    private static final int ADJUNCT_PARENT_BUFFER = 1;
+
+    /**
+     * Outcome of planning an adjunct rectangle for a candidate
+     * placement. {@code planned} non-null when a side fit; null when
+     * the building has no adjunct preference, no registered plot
+     * type, or no side fits AND the preference is non-required.
+     * {@code requiredFailed} signals a required adjunct that could
+     * not fit — the candidate must be skipped entirely.
+     */
+    private record AdjunctPlanOutcome(PlannedAdjunct planned, Aabb aabb,
+                                      boolean requiredFailed) {
+        static final AdjunctPlanOutcome NONE = new AdjunctPlanOutcome(null, null, false);
+        static final AdjunctPlanOutcome REQUIRED_FAILED =
+                new AdjunctPlanOutcome(null, null, true);
+        static AdjunctPlanOutcome of(PlannedAdjunct p, Aabb a) {
+            return new AdjunctPlanOutcome(p, a, false);
+        }
+    }
+
+    /**
+     * Plans an adjunct rectangle for a placement candidate. Resolution
+     * order:
+     * <ol>
+     *   <li>Variant manifest's {@link AdjunctPreference} → use the
+     *       declared size + side; map the building's first registered
+     *       plot type to {@link PlannedAdjunct#type}.</li>
+     *   <li>{@link AdjunctPlotRegistry} fallback when no manifest
+     *       preference exists → use the registered type's default
+     *       half-extents and side {@link AdjunctSide#ANY}.</li>
+     *   <li>Otherwise → no adjunct planned.</li>
+     * </ol>
+     *
+     * <p>For each candidate side, the rectangle is validated against:</p>
+     * <ul>
+     *   <li>existing reservations (footprint + frontage + prior
+     *       adjuncts);</li>
+     *   <li>road corridors (so adjuncts don't bleed onto streets);</li>
+     *   <li>parent's front face (must not extend in the +front
+     *       direction past the parent's own front edge);</li>
+     *   <li>{@code V2FeatureMap} bounds and slope tolerance — sampled
+     *       at each grid cell intersecting the AABB; max-min Y must
+     *       not exceed the plot type's
+     *       {@link AdjunctPlotType#slopeTolerance()}.</li>
+     * </ul>
+     */
+    private static AdjunctPlanOutcome planAdjunct(BuildingType type,
+                                                  BlockPos centre,
+                                                  Aabb fpAabb,
+                                                  Direction parentFront,
+                                                  BuildingVariant variant,
+                                                  State state) {
+        List<AdjunctPlotType> registered =
+                AdjunctPlotRegistry.getPlotsForBuilding(type);
+        if (registered.isEmpty()) return AdjunctPlanOutcome.NONE;
+
+        AdjunctPlotType plotType = registered.get(0);
+        AdjunctPreference pref = (variant != null) ? variant.adjunct() : null;
+
+        // Geometry: manifest preference overrides registry defaults.
+        int halfWidth, halfDepth;
+        AdjunctSide preferredSide;
+        boolean required;
+        if (pref != null) {
+            halfWidth     = pref.halfWidth();
+            halfDepth     = pref.halfDepth();
+            preferredSide = pref.side();
+            required      = pref.required();
+        } else {
+            halfWidth     = plotType.defaultHalfWidthX();
+            halfDepth     = plotType.defaultHalfLengthZ();
+            preferredSide = AdjunctSide.ANY;
+            required      = false;
+        }
+
+        List<AdjunctSide> attempts = preferredSide == AdjunctSide.ANY
+                ? List.of(AdjunctSide.BACK, AdjunctSide.LEFT, AdjunctSide.RIGHT)
+                : List.of(preferredSide);
+
+        for (AdjunctSide side : attempts) {
+            Direction faceDir = side.toAbsolute(parentFront);
+            AdjunctPlanOutcome fit = tryFitAdjunctOnSide(
+                    faceDir, parentFront, centre, fpAabb,
+                    halfWidth, halfDepth, plotType, state);
+            if (fit.planned != null) return fit;
+        }
+
+        return required ? AdjunctPlanOutcome.REQUIRED_FAILED : AdjunctPlanOutcome.NONE;
+    }
+
+    /** Computes the adjunct AABB for a single candidate face and
+     *  validates every constraint. Returns {@link AdjunctPlanOutcome#NONE}
+     *  on rejection, a fitted outcome on success. */
+    private static AdjunctPlanOutcome tryFitAdjunctOnSide(
+            Direction faceDir, Direction parentFront,
+            BlockPos centre, Aabb fpAabb,
+            int halfWidth, int halfDepth, AdjunctPlotType plotType,
+            State state) {
+
+        // Parent's half-extent along the outward axis.
+        int parentHalfAlongFace = (faceDir.getAxis() == Direction.Axis.X)
+                ? (fpAabb.maxX() - fpAabb.minX()) / 2
+                : (fpAabb.maxZ() - fpAabb.minZ()) / 2;
+
+        // Outward step from parent centre to adjunct origin.
+        int outward = parentHalfAlongFace + ADJUNCT_PARENT_BUFFER + halfDepth + 1;
+        int originX = centre.getX() + faceDir.getStepX() * outward;
+        int originZ = centre.getZ() + faceDir.getStepZ() * outward;
+
+        // World-axis half-extents — manifest's "depth" is outward,
+        // "width" is perpendicular to the face direction.
+        int worldHalfX, worldHalfZ;
+        if (faceDir.getAxis() == Direction.Axis.Z) {
+            worldHalfX = halfWidth;
+            worldHalfZ = halfDepth;
+        } else {
+            worldHalfX = halfDepth;
+            worldHalfZ = halfWidth;
+        }
+
+        Aabb adjunct = new Aabb(originX - worldHalfX, originZ - worldHalfZ,
+                originX + worldHalfX, originZ + worldHalfZ);
+
+        // Front-face rule: adjunct must not extend past parent's
+        // front edge in the parent-front direction.
+        boolean extendsBeyondFront = switch (parentFront) {
+            case SOUTH -> adjunct.maxZ() > fpAabb.maxZ();
+            case NORTH -> adjunct.minZ() < fpAabb.minZ();
+            case EAST  -> adjunct.maxX() > fpAabb.maxX();
+            case WEST  -> adjunct.minX() < fpAabb.minX();
+            default    -> false;
+        };
+        if (extendsBeyondFront) return AdjunctPlanOutcome.NONE;
+
+        // Reservation collisions.
+        if (adjunctOverlapsAnyReservation(adjunct, state.reservations)) {
+            return AdjunctPlanOutcome.NONE;
+        }
+        // Road corridors.
+        if (intersectsAnyCorridor(adjunct, state.skeleton.allSegments())) {
+            return AdjunctPlanOutcome.NONE;
+        }
+        // FeatureMap bounds + slope tolerance.
+        if (!adjunctTerrainOk(state.fmap, adjunct, plotType.slopeTolerance())) {
+            return AdjunctPlanOutcome.NONE;
+        }
+
+        BlockPos origin = new BlockPos(originX, centre.getY(), originZ);
+        PlannedAdjunct planned = new PlannedAdjunct(plotType, origin,
+                worldHalfX, worldHalfZ, faceDir);
+        return AdjunctPlanOutcome.of(planned, adjunct);
+    }
+
+    /** Sample the {@link V2FeatureMap} at each cell-aligned grid
+     *  position covered by {@code aabb}. Reject if any cell is out
+     *  of bounds, not OPEN/SHORE, or if the max-min elevation drop
+     *  exceeds {@code slopeTolerance}. */
+    private static boolean adjunctTerrainOk(V2FeatureMap fmap, Aabb aabb,
+                                            int slopeTolerance) {
+        int step = Math.max(1, fmap.cellSize());
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        // Sample on a coarse grid plus the four corners (to catch
+        // edges that fall between sample steps for small adjuncts).
+        int[] xs = sampleAxis(aabb.minX(), aabb.maxX(), step);
+        int[] zs = sampleAxis(aabb.minZ(), aabb.maxZ(), step);
+        for (int x : xs) {
+            for (int z : zs) {
+                if (!fmap.inBounds(x, z)) return false;
+                Cell c = fmap.cellAt(x, z);
+                BlockCategory cat = c.category();
+                if (cat != BlockCategory.OPEN && cat != BlockCategory.SHORE) return false;
+                int y = c.elevationY();
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+        return minY != Integer.MAX_VALUE && (maxY - minY) <= slopeTolerance;
+    }
+
+    /** Returns {min, ..., max} stepping by {@code step}, always
+     *  including the endpoints. */
+    private static int[] sampleAxis(int min, int max, int step) {
+        if (max <= min) return new int[]{min, max};
+        int n = ((max - min) / step) + 1;
+        // +1 to ensure max is included if it doesn't divide evenly.
+        int[] out = new int[n + 1];
+        int k = 0;
+        for (int v = min; v < max && k < n; v += step) out[k++] = v;
+        out[k++] = max;
+        // Trim trailing duplicates.
+        if (k < out.length) {
+            int[] trimmed = new int[k];
+            System.arraycopy(out, 0, trimmed, 0, k);
+            return trimmed;
+        }
+        return out;
+    }
+
+    /** Cardinal unit-vector → world {@link Direction}. The planner's
+     *  {@code chooseFacing} produces axis-aligned vectors only, so
+     *  diagonal cases collapse cleanly to whichever axis dominates. */
+    private static Direction frontDirToDirection(Vec3 frontDir) {
+        if (Math.abs(frontDir.x) >= Math.abs(frontDir.z)) {
+            return frontDir.x >= 0 ? Direction.EAST : Direction.WEST;
+        }
+        return frontDir.z >= 0 ? Direction.SOUTH : Direction.NORTH;
     }
 
     /** True iff {@code fpAabb} intersects any road segment's corridor.
@@ -1246,9 +1502,15 @@ public final class PhasedPlanner {
     private record Best(BlockPos pos, Footprint footprint, Rotation rotation,
                         String variantId, FrontageStrip frontage,
                         RoadSegment facingRoad, Aabb footprintAabb, Aabb frontageAabb,
-                        ScoreBreakdown score) {}
+                        ScoreBreakdown score, PlannedAdjunct adjunct, Aabb adjunctAabb) {}
 
-    private record Reservation(Aabb footprint, Aabb frontage, BuildingType type) {}
+    /** B2.1 — adjunct AABB is nullable (most buildings have no adjunct). */
+    private record Reservation(Aabb footprint, Aabb frontage, Aabb adjunct,
+                               BuildingType type) {
+        Reservation(Aabb footprint, Aabb frontage, BuildingType type) {
+            this(footprint, frontage, null, type);
+        }
+    }
 
     private record Aabb(int minX, int minZ, int maxX, int maxZ) {
         boolean overlaps(Aabb o) {
