@@ -15,7 +15,6 @@ import tterrag1112.life_in_the_village.Gui.Map.Kingdom.ContinentMapScope;
 import tterrag1112.life_in_the_village.Gui.Map.Kingdom.ContinentMapScreen;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.ClientTradeConnectionCache;
-import tterrag1112.life_in_the_village.Village.Economy.Trade.SeaRoute;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.ClientAtlasCache;
 

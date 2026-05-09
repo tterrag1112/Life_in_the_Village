@@ -34,6 +34,9 @@ public final class RoadSpeedModifier {
             case TRUNK      -> 0.20;
             case CONNECTOR  -> 0.15;
             case LOCAL      -> 0.08;
+            // Track C3.3 — SEA edges have no walked surface; players
+            // don't get speed bonuses from them.
+            case SEA        -> 0.0;
         };
     }
 
@@ -43,6 +46,7 @@ public final class RoadSpeedModifier {
             case TRUNK      -> 0.10;
             case CONNECTOR  -> 0.05;
             case LOCAL      -> 0.02;
+            case SEA        -> 0.0;
         };
     }
 

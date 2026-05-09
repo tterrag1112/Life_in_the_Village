@@ -101,6 +101,13 @@ public final class CulturePaletteResolver {
                 String dock = dockCulture(edge, graph, data);
                 return dock != null ? dock : "default";
             }
+            // Track C3.3 — SEA edges paint no blocks, so culture is
+            // irrelevant. EdgeMaterialResolver short-circuits before
+            // calling this for SEA edges; "default" keeps the switch
+            // exhaustive defensively.
+            case SEA -> {
+                return "default";
+            }
         }
         return "default";
     }

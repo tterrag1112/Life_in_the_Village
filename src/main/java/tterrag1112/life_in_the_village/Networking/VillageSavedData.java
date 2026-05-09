@@ -171,7 +171,7 @@ public class VillageSavedData extends SavedData implements
 
     public record VillageEconomyData(
             List<TradeRoute>      tradeRoutes,
-            List<SeaRoute>        seaRoutes,
+            List<SeaRouteMigration.LegacySeaRoute> seaRoutes,
             List<VillageTreasury> treasuries,
             List<FarmBusinessLevel> farmBusinessLevels,
             List<MarketStall>     marketStalls,
@@ -185,7 +185,7 @@ public class VillageSavedData extends SavedData implements
                         TradeRoute.CODEC.listOf()
                                 .optionalFieldOf("tradeRoutes", new ArrayList<>())
                                 .forGetter(VillageEconomyData::tradeRoutes),
-                        SeaRoute.CODEC.listOf()
+                        SeaRouteMigration.LegacySeaRoute.CODEC.listOf()
                                 .optionalFieldOf("seaRoutes", new ArrayList<>())
                                 .forGetter(VillageEconomyData::seaRoutes),
                         VillageTreasury.CODEC.listOf()
@@ -501,7 +501,7 @@ public class VillageSavedData extends SavedData implements
 
         // Economy
         economyData.tradeRoutes().forEach(r -> data.tradeRoutes.put(r.getRouteId(), r));
-        economyData.seaRoutes().forEach(s -> data.seaRoutes.put(s.getConnectionId(), s));
+        economyData.seaRoutes().forEach(s -> data.seaRoutes.put(s.seaRouteId(), s));
         economyData.treasuries().forEach(t  -> data.treasuries.put(t.getVillageId(), t));
         economyData.marketStalls().forEach(s -> {
             data.marketStalls.add(s);
@@ -627,7 +627,16 @@ public class VillageSavedData extends SavedData implements
 
     // Economy
     private final Map<UUID, TradeRoute> tradeRoutes = new HashMap<>();
-    private final Map<UUID, SeaRoute> seaRoutes = new HashMap<>();
+    /**
+     * Track C3.3 — legacy sea-route storage retained only so saves
+     * authored before Phase 13 can be migrated to SEA-tier
+     * {@link tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge}s.
+     * {@link SeaRouteMigration#migrateIfNeeded} drains this map on
+     * first server tick and never repopulates it. Code that previously
+     * used {@code addSeaRoute} / {@code getAllSeaRoutes} should use
+     * the world graph's SEA-tier edges instead.
+     */
+    private final Map<UUID, SeaRouteMigration.LegacySeaRoute> seaRoutes = new HashMap<>();
 
     private final Map<UUID, VillageTreasury> treasuries = new LinkedHashMap<>();
     private final Map<UUID, FarmBusinessLevel> farmBusinessLevels = new HashMap<>();
@@ -1647,21 +1656,23 @@ public class VillageSavedData extends SavedData implements
         }
         return null;
     }
-    public void addSeaRoute(SeaRoute route) {
-        seaRoutes.put(route.getConnectionId(), route);
-        setDirty();
-    }
-
-    public void removeSeaRoute(UUID id) {
-        if (seaRoutes.remove(id) != null) setDirty();
-    }
-
-    public Optional<SeaRoute> getSeaRouteById(UUID id) {
-        return Optional.ofNullable(seaRoutes.get(id));
-    }
-
-    public List<SeaRoute> getAllSeaRoutes() {
+    /**
+     * Track C3.3 — snapshot of the legacy sea-route map. Used by
+     * {@link SeaRouteMigration} to convert pre-Phase-13 records into
+     * SEA-tier RoadEdges. The map is not cleared here; the migration
+     * calls {@link #clearLegacySeaRoutes()} only after it has
+     * successfully created the corresponding edges.
+     */
+    public List<SeaRouteMigration.LegacySeaRoute> peekLegacySeaRoutes() {
         return List.copyOf(seaRoutes.values());
+    }
+
+    /** Track C3.3 — clears the legacy sea-route map post-migration. */
+    public void clearLegacySeaRoutes() {
+        if (!seaRoutes.isEmpty()) {
+            seaRoutes.clear();
+            setDirty();
+        }
     }
 
     // =========================================================================
@@ -1724,15 +1735,5 @@ public class VillageSavedData extends SavedData implements
         return Collections.unmodifiableMap(libraryCatalogues);
     }
 
-    /**
-     * Looks up a trade connection by UUID. Only sea routes carry a connection
-     * ID; land routes are addressed by {@link TradeRoute#getEdgeIds()} on the
-     * road graph and are not represented here.
-     */
-    public Optional<TradeConnection> getConnectionById(UUID id) {
-        SeaRoute sea = seaRoutes.get(id);
-        if (sea != null) return Optional.of(sea);
-        return Optional.empty();
-    }
 }
 

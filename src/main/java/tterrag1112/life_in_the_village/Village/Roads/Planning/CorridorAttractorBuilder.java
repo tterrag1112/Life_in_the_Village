@@ -116,6 +116,10 @@ public final class CorridorAttractorBuilder {
             case TRUNK      -> 0.25f;
             case CONNECTOR  -> 0.40f;
             case LOCAL      -> 0.60f;
+            // Track C3.3 — SEA edges aren't on the land routing graph.
+            // 1.0 means no discount; the sea-route routing pipeline
+            // doesn't reach this code path.
+            case SEA        -> 1.0f;
         };
     }
 

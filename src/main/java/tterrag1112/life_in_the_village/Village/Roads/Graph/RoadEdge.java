@@ -42,10 +42,22 @@ public class RoadEdge {
         /** Village-to-network connector. Village-maintained. */
         CONNECTOR,
         /** Internal village arm or minor spur. */
-        LOCAL;
+        LOCAL,
+        /**
+         * Track C3.3 — open-water route between two coastal villages'
+         * dock buildings. cellPath holds atlas cell-keys identical to
+         * land tiers but the cells are ocean / coastal instead of land.
+         * No block path is realised — boat caravans interpolate cell
+         * centres at sea level. EdgeRealizer, decoration, lighting,
+         * shelters, and material resolution all skip SEA edges.
+         */
+        SEA;
 
         public static final Codec<EdgeTier> CODEC =
                 Codec.STRING.xmap(EdgeTier::valueOf, EdgeTier::name);
+
+        /** True for SEA edges only. */
+        public boolean isWater() { return this == SEA; }
     }
 
     /**

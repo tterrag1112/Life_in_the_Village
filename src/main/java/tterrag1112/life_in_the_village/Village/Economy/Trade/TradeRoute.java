@@ -76,8 +76,12 @@ public class TradeRoute {
     private final UUID villageA;
     private final UUID villageB;
     /**
-     * For SEA routes, the {@link SeaRoute} connection ID. Null for LAND
-     * routes — those are graph-only and addressed by {@link #edgeIds}.
+     * Track C3.3 — pre-Phase-13 sea routes carried a SeaRoute
+     * connection ID here. Post-migration this field stays as a
+     * fossil for save compat (it equals the SEA-tier RoadEdge's
+     * UUID, since the migration reused the legacy UUID); the
+     * dispatcher disambiguates land vs sea by inspecting the first
+     * edge's tier instead.
      */
     private final UUID connectionId;
     private RouteStatus status;
@@ -113,7 +117,7 @@ public class TradeRoute {
         this.segments         = new ArrayList<>(segments);
     }
 
-    /** Sea-route constructor — uses a {@link SeaRoute} connection ID. */
+    /** Track C3.3 — legacy sea-route constructor, kept for codec compatibility. */
     public TradeRoute(UUID routeId, UUID villageA, UUID villageB,
                       UUID seaConnectionId, RouteStatus status,
                       RouteType routeType, long establishedTick,
@@ -242,7 +246,7 @@ public class TradeRoute {
     public UUID getRouteId()               { return routeId; }
     public UUID getVillageA()              { return villageA; }
     public UUID getVillageB()              { return villageB; }
-    /** Returns the {@link SeaRoute} connection ID for sea routes, or null for land routes. */
+    /** Track C3.3 — legacy sea-route connection ID, equal to the SEA-tier edge's UUID post-migration; null for land routes. */
     public UUID getConnectionId()          { return connectionId; }
     /** Returns the ordered edge IDs for land (graph) routes. Empty for sea routes. */
     public List<UUID> getEdgeIds()         { return Collections.unmodifiableList(edgeIds); }

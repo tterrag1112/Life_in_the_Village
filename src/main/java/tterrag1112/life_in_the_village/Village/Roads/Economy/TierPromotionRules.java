@@ -67,6 +67,10 @@ public final class TierPromotionRules {
             case CONNECTOR  -> 1;
             case TRUNK      -> 2;
             case GREAT_ROAD -> 3;
+            // Track C3.3 — SEA edges aren't part of the land tier
+            // hierarchy; never promoted to / from. A sentinel rank
+            // keeps comparisons safe.
+            case SEA        -> -1;
         };
     }
 }

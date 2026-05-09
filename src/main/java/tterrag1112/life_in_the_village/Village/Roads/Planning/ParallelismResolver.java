@@ -221,6 +221,10 @@ public final class ParallelismResolver {
             case CONNECTOR  -> 1;
             case LOCAL      -> 2;
             case GREAT_ROAD -> 3;
+            // Track C3.3 — SEA edges aren't included in the
+            // parallelism detector; sentinel rank keeps the switch
+            // exhaustive.
+            case SEA        -> 4;
         };
     }
 

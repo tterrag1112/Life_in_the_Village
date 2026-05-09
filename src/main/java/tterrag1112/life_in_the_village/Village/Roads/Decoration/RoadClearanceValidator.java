@@ -28,6 +28,9 @@ public final class RoadClearanceValidator {
             case TRUNK      -> 4;  // TOWN_ROAD half-width 3 + 1
             case CONNECTOR  -> 3;  // VILLAGE_ROAD half-width 2 + 1
             case LOCAL      -> 3;  // VILLAGE_PATH minimal footpath + 2 clearance
+            // Track C3.3 — SEA edges place no blocks; no clearance
+            // is meaningful.
+            case SEA        -> 0;
         };
     }
 

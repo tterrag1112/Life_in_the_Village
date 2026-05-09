@@ -55,6 +55,12 @@ public class ServerTickDispatcher {
         // ── One-time initialization on first tick ────────────────────────────
         if (!initialized) {
             TickSubsystemRegistry.registerDefaults();
+            // Track C3.3 — one-shot, idempotent migration of legacy
+            // SeaRoute records to SEA-tier RoadEdges. Gated by
+            // WorldRoadSavedData.isSeaRoutesMigrated; safe to call on
+            // every load (cheap when already migrated).
+            tterrag1112.life_in_the_village.Village.Economy.Trade
+                    .SeaRouteMigration.migrateIfNeeded(overworld);
             initialized = true;
             LOGGER.info("ServerTickDispatcher: subsystem registry initialized");
         }

@@ -54,6 +54,12 @@ public final class RoadProposalCalculator {
             case CONNECTOR  -> 1.5;
             case TRUNK      -> 2.5;
             case GREAT_ROAD -> 4.0;
+            // Track C3.3 — players can't propose sea routes through
+            // the road-engineer system this phase. The /litv road
+            // propose command rejects SEA at the argument layer; if
+            // a future phase enables it, raise this multiplier.
+            case SEA        -> throw new IllegalArgumentException(
+                    "SEA tier is not supported for player road proposals.");
         };
     }
 }

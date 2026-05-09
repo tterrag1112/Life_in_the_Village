@@ -337,6 +337,12 @@ public class CaravanSavedData extends SavedData {
 
             // LAND-only here. Sea routes go through BoatCaravanSavedData.
             if (!route.hasGraphPath()) continue;
+            // Track C3.3 — both land and sea routes now have edgeIds
+            // (sea routes carry one SEA-tier edge), so the LAND-only
+            // guard now also inspects the first edge's tier.
+            RoadEdge firstEdgeProbe = graph.getEdge(route.getEdgeIds().get(0));
+            if (firstEdgeProbe != null
+                    && firstEdgeProbe.getTier() == RoadEdge.EdgeTier.SEA) continue;
 
             int quality      = avgEdgeMaintenance(graph, route);
             int lengthBlocks = totalEdgeBlockLength(graph, route);

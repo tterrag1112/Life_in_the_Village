@@ -14,7 +14,6 @@ import tterrag1112.life_in_the_village.Village.Travel.TravellingGroupEngine;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Owns all active {@link BoatCaravan}s. Parallels
@@ -160,77 +159,86 @@ public class BoatCaravanSavedData extends SavedData {
     // Dispatch
     // =========================================================================
 
+    /**
+     * Track C3.3 — boat-caravan dispatch is now driven by the unified
+     * world graph. The dispatcher iterates {@link TradeRoute}s whose
+     * first edge is SEA-tier, treating land-vs-sea as an inspect-the-
+     * first-edge fork. Land caravan dispatch in {@code CaravanSavedData}
+     * does the inverse: skip routes whose first edge is SEA.
+     */
     private void dispatchNewBoatCaravans(ServerLevel level,
                                          VillageSavedData villageData,
                                          long currentTick) {
-        for (SeaRoute seaRoute : villageData.getAllSeaRoutes()) {
-            if (!seaRoute.isActive()) continue;
+        var graph = tterrag1112.life_in_the_village.Networking
+                .WorldRoadSavedData.get(level).getGraph();
 
-            // Find the trade route(s) using this sea route
-            List<TradeRoute> routesUsingThis = villageData.getAllTradeRoutes().stream()
-                    .filter(r -> seaRoute.getRouteIds().contains(r.getRouteId()))
-                    .collect(Collectors.toList());
+        for (TradeRoute route : villageData.getAllTradeRoutes()) {
+            if (!route.isTradeAllowed()) continue;
 
-            for (TradeRoute route : routesUsingThis) {
-                if (!route.isTradeAllowed()) continue;
+            List<UUID> edgeIds = route.getEdgeIds();
+            if (edgeIds.isEmpty()) continue;
 
-                // Already an active boat on this route?
-                boolean hasActive = boatCaravans.values().stream()
-                        .anyMatch(c -> c.getSeaRouteId().equals(seaRoute.getConnectionId())
-                                && c.getOriginVillageId().equals(route.getVillageA())
-                                && c.getState() != BoatCaravan.BoatState.FAILED);
-                if (hasActive) continue;
-
-                if (RANDOM.nextFloat() > DAILY_DISPATCH_CHANCE) continue;
-
-                Village originVillage = villageData.getVillageById(route.getVillageA()).orElse(null);
-                Village destVillage = villageData.getVillageById(route.getVillageB()).orElse(null);
-                if (originVillage == null || destVillage == null) continue;
-
-                // Reserve a merchant from the origin village
-                UUID principalId = villageData.reserveIdleMerchant(
-                        originVillage.getId(), level);
-                if (principalId == null) {
-                    System.out.println("BoatCaravanSavedData: no idle merchant in "
-                            + originVillage.getName() + " — skipping dispatch");
-                    continue;
-                }
-
-                // Find the origin dock
-                UUID originDockId = findDockBuilding(originVillage, villageData);
-                if (originDockId == null) {
-                    // Shouldn't happen — sea routes should only exist between
-                    // villages that have docks. Log and skip defensively.
-                    System.out.println("BoatCaravanSavedData: origin village "
-                            + originVillage.getName() + " has no dock — skipping dispatch");
-                    continue;
-                }
-
-                List<ItemStack> goods = CaravanGoodsSelector.selectGoods(
-                        level, originVillage, destVillage, villageData);
-
-                BoatCaravan caravan = BoatCaravan.create(
-                        seaRoute.getConnectionId(),
-                        originVillage.getId(),
-                        destVillage.getId(),
-                        principalId,
-                        originDockId,
-                        goods,
-                        currentTick);
-
-                boatCaravans.put(caravan.getCaravanId(), caravan);
-
-                // Mark the merchant with the now-known caravan ID
-                var mob = level.getEntity(principalId);
-                if (mob instanceof TownspersonMob m) {
-                    m.setCurrentExpeditionId(caravan.getCaravanId());
-                }
-
-                System.out.println("BoatCaravanSavedData: dispatched boat caravan from "
-                        + originVillage.getName() + " to " + destVillage.getName()
-                        + " (principal " + principalId.toString().substring(0, 8)
-                        + ", " + goods.size() + " goods)");
+            tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge firstEdge =
+                    graph.getEdge(edgeIds.get(0));
+            if (firstEdge == null
+                    || firstEdge.getTier() != tterrag1112.life_in_the_village
+                            .Village.Roads.Graph.RoadEdge.EdgeTier.SEA) {
+                continue; // land route — handled by CaravanSavedData
             }
+            UUID seaEdgeId = firstEdge.getEdgeId();
+
+            // Already an active boat on this route?
+            boolean hasActive = boatCaravans.values().stream()
+                    .anyMatch(c -> c.getEdgeId().equals(seaEdgeId)
+                            && c.getOriginVillageId().equals(route.getVillageA())
+                            && c.getState() != BoatCaravan.BoatState.FAILED);
+            if (hasActive) continue;
+
+            if (RANDOM.nextFloat() > DAILY_DISPATCH_CHANCE) continue;
+
+            Village originVillage = villageData.getVillageById(route.getVillageA()).orElse(null);
+            Village destVillage = villageData.getVillageById(route.getVillageB()).orElse(null);
+            if (originVillage == null || destVillage == null) continue;
+
+            UUID principalId = villageData.reserveIdleMerchant(
+                    originVillage.getId(), level);
+            if (principalId == null) {
+                System.out.println("BoatCaravanSavedData: no idle merchant in "
+                        + originVillage.getName() + " — skipping dispatch");
+                continue;
+            }
+
+            UUID originDockId = findDockBuilding(originVillage, villageData);
+            if (originDockId == null) {
+                System.out.println("BoatCaravanSavedData: origin village "
+                        + originVillage.getName() + " has no dock — skipping dispatch");
+                continue;
+            }
+
+            List<ItemStack> goods = CaravanGoodsSelector.selectGoods(
+                    level, originVillage, destVillage, villageData);
+
+            BoatCaravan caravan = BoatCaravan.create(
+                    seaEdgeId,
+                    originVillage.getId(),
+                    destVillage.getId(),
+                    principalId,
+                    originDockId,
+                    goods,
+                    currentTick);
+
+            boatCaravans.put(caravan.getCaravanId(), caravan);
+
+            var mob = level.getEntity(principalId);
+            if (mob instanceof TownspersonMob m) {
+                m.setCurrentExpeditionId(caravan.getCaravanId());
+            }
+
+            System.out.println("BoatCaravanSavedData: dispatched boat caravan from "
+                    + originVillage.getName() + " to " + destVillage.getName()
+                    + " (principal " + principalId.toString().substring(0, 8)
+                    + ", " + goods.size() + " goods, edge="
+                    + seaEdgeId.toString().substring(0, 8) + ")");
         }
     }
 

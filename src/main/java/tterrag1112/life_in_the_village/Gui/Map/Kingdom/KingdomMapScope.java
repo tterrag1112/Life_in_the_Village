@@ -85,20 +85,24 @@ public final class KingdomMapScope {
         var graph = tterrag1112.life_in_the_village.Networking
                 .WorldRoadSavedData.get(level).getGraph();
         List<MapRoadSnapshot> roads = new ArrayList<>();
-        Set<UUID> seaIds  = new HashSet<>();
+        // Track C3.3 — sea routes are now SEA-tier RoadEdges. Walk the
+        // graph directly; pick edges whose maintainer set intersects a
+        // viewable village.
+        List<MapSeaRouteSnapshot> seaRoutes = new ArrayList<>();
         for (TradeRoute route : data.getAllTradeRoutes()) {
             if (!viewable.contains(route.getVillageA())
                     && !viewable.contains(route.getVillageB())) continue;
             if (route.hasGraphPath()) {
-                roads.add(MapRoadSnapshot.fromRoute(route, graph));
-            } else if (route.getConnectionId() != null
-                    && data.getSeaRouteById(route.getConnectionId()).isPresent()) {
-                seaIds.add(route.getConnectionId());
+                var edge = graph.getEdge(route.getEdgeIds().get(0));
+                if (edge != null
+                        && edge.getTier() == tterrag1112.life_in_the_village
+                                .Village.Roads.Graph.RoadEdge.EdgeTier.SEA) {
+                    seaRoutes.add(MapSeaRouteSnapshot.fromEdge(edge));
+                } else {
+                    roads.add(MapRoadSnapshot.fromRoute(route, graph));
+                }
             }
         }
-        List<MapSeaRouteSnapshot> seaRoutes = new ArrayList<>(seaIds.size());
-        for (UUID id : seaIds)
-            data.getSeaRouteById(id).ifPresent(s -> seaRoutes.add(MapSeaRouteSnapshot.fromSeaRoute(s)));
 
         return new Result(cells, roads, seaRoutes);
     }

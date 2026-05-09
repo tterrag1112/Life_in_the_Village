@@ -136,6 +136,11 @@ public final class PrimitiveChainBuilder {
             case TRUNK      -> RoadShape.RoadTier.TOWN_ROAD;
             case CONNECTOR  -> RoadShape.RoadTier.VILLAGE_ROAD;
             case LOCAL      -> RoadShape.RoadTier.VILLAGE_PATH;
+            // Track C3.3 — SEA edges never reach the road-shape
+            // pipeline (EdgeRealizer skips them), but the enum
+            // requires exhaustive coverage. FOOTPATH is a harmless
+            // sentinel.
+            case SEA        -> RoadShape.RoadTier.FOOTPATH;
         };
     }
 }

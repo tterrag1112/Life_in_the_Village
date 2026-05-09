@@ -6176,3 +6176,286 @@ Gradle network-blocked in this sandbox. Static review confirmed:
   rules" omits a per-region (e.g. per-2048-block) cap. If dense
   worlds end up with too many POI subroads, a region cap is the
   natural escalation; not added pre-emptively.
+
+---
+
+### 2026-05-09 — Track C3.3 / Phase 13: sea route unification
+
+**Phase:** Track C3.3 (Phase 13) per `UNIFIED_REWORK_PLAN.md` and the
+"Phase 13 — Sea route unification" section of `ROADS_PLAN.md`. The
+sea / land split at the `TradeConnection` interface is removed; all
+trade edges now live on the unified `WorldRoadGraph`.
+
+#### Disposition before code
+
+- **`SeaRoute.cellPath` and `RoadEdge.cellPath` use the same encoding**
+  (List<Long> of atlas cell-keys), so the data port is field-for-field
+  clean. The cell A* in `SeaRouteRouter` already produces the same
+  shape worldgen connectors do.
+- **`TradeConnection` interface** had only `SeaRoute` as implementer
+  post-C1. Safely deletable after migration.
+- **`BoatCaravan` extends `TravellingGroup`** (not `Caravan`), so
+  unifying their saved-data classes would have meant restructuring
+  the caravan / travelling-group hierarchy.
+- **Dock-building UUIDs** (legacy `SeaRoute.dockA`/`dockB`) didn't
+  survive cleanly to the new edge representation, but
+  `BoatCaravanSavedData.findDockBuilding` already re-scans villages
+  for `BuildingType.DOCKS` at dispatch time, so dropping the
+  references during migration was safe.
+- **No hybrid routes today.** `TradeRoute.edgeIds` is uniform-tier
+  by convention but not enforced; the dispatcher unification adds a
+  first-edge-tier inspection that doubles as a soft guard.
+
+#### Decisions (user-confirmed)
+
+- **Edge representation: new `EdgeTier.SEA`** rather than an
+  `isWater` boolean. Codec-natural extension; existing tier switches
+  in `EdgeRealizer` / `EdgeMaterialResolver` / `RoadUpkeepSystem` /
+  `RoadLightingPlacer` / `EdgeTier.CODEC` pick it up via the
+  exhaustive-switch surface. Future hybrid routes still possible —
+  one leg per tier.
+- **Keep `BoatCaravanSavedData` as-is** (runtime index of active
+  boats). `BoatCaravan` is a `TravellingGroup` peer to `Caravan`;
+  unifying their saved-data would have been a bigger refactor than
+  the dispatcher unification was worth.
+- **Full delete of `SeaRoute` + `TradeConnection`.** Migration uses
+  a private inline `LegacySeaRoute` record in `SeaRouteMigration`
+  for the codec round-trip. `git grep SeaRoute` after this phase
+  finds only the migration code (and method names like
+  `getSeaRouteId`/`MapSeaRouteSnapshot` retained for source compat).
+
+#### Migration
+
+`SeaRouteMigration.migrateIfNeeded(level)` runs at first server
+tick (driven from `ServerTickDispatcher`). Idempotency gated by
+`WorldRoadSavedData.isSeaRoutesMigrated()`. Pre-Phase-13 saves load
+with the flag false; the migration:
+1. Snapshots the legacy `seaRoutes` map via
+   `VillageSavedData.peekLegacySeaRoutes()`.
+2. For each legacy record, creates two `VILLAGE_DOCK` nodes at the
+   cellPath endpoints (sea-level Y) and a SEA-tier `RoadEdge` whose
+   UUID **equals the legacy `SeaRoute.connectionId`**. Maintainer
+   set is the two endpoint villages; maintenance score copies the
+   legacy quality.
+3. UUID preservation means existing in-flight `BoatCaravan` records
+   load with their persisted `seaRouteId` field still pointing to a
+   valid edge — no caravan-data patching required.
+4. Only after edge creation succeeds is the legacy map cleared
+   (`VillageSavedData.clearLegacySeaRoutes()`); a partial / aborted
+   migration reruns next load because `seaRoutesMigrated` stays
+   false until the very end.
+
+Fresh worlds default `seaRoutesMigrated = true` in the
+`WorldRoadSavedData` constructor, so the migration never runs on a
+world that never saw a `SeaRoute`.
+
+#### Behavioural preservation
+
+- **Dock-as-trigger** still fires from
+  `TradeRouteManager.establishRoutes` when a new village with
+  `BuildingType.DOCKS` spawns. The path now creates a SEA-tier
+  `RoadEdge` directly (no `SeaRoute` record) and wraps it in a
+  `TradeRoute` via `createGraph` with a single-element
+  `edgeIds = [seaEdgeId]` list.
+- **Boat caravan dispatch** lives in
+  `BoatCaravanSavedData.dispatchNewBoatCaravans` and now iterates
+  `TradeRoute`s, picking those whose first edge is SEA-tier. Land
+  dispatch in `CaravanSavedData.dispatchNewCaravans` adds the
+  inverse filter (skip-if-first-edge-is-SEA).
+- **Speed multiplier** for boats follows the same curve the legacy
+  `SeaRoute.getSpeedMultiplier` produced: 0 below the BLOCKED
+  threshold, 0.7..1.3 above MINIMUM. Implemented as
+  `BoatCaravan.seaSpeedMultiplier(int maintenance)` reading from
+  `RoadEdge.getMaintenance()`.
+- **Decay rate** for SEA edges is `-2` per upkeep cycle when
+  unmaintained, vs `-5` for land roads — matches the legacy
+  SeaRoute model (≈3 quality per 2-week tick).
+- **Caravan exclusion** chains the existing C3.2 filter:
+  `GraphTradeRouteEstablisher.findEdgePath` and `findSegmentedPath`
+  skip POI_STUB-touching edges (Track C3.2) AND SEA-tier edges
+  (Track C3.3) during adjacency-list construction. Track C2's
+  village traversal continues working unchanged.
+- **Map UI** still ships `MapSeaRouteSnapshot` records over the
+  wire; the server-side derivation now reads SEA-tier `RoadEdge`s
+  via `MapSeaRouteSnapshot.fromEdge(RoadEdge)` instead of legacy
+  `SeaRoute` records. Wire shape is unchanged — clients render the
+  same cellPath line as before.
+
+#### Files added
+
+- `Village/Economy/Trade/SeaRouteMigration.java` — one-shot,
+  idempotent migration with inline `LegacySeaRoute` record (the
+  only place the legacy data shape exists post-Phase 13).
+
+#### Files deleted
+
+- `Village/Economy/Trade/SeaRoute.java`
+- `Village/Economy/Trade/TradeConnection.java`
+
+#### Files modified
+
+- `Village/Roads/Graph/RoadEdge.java` — `EdgeTier.SEA` enum value
+  with `isWater()` helper.
+- 12 exhaustive `switch (EdgeTier)` sites updated with SEA arms:
+  `RoadSafetySystem`, `TickSystems` (graph realisation radius),
+  `RoadGraphDebugCommand` (debug particle), `GraphTradeRouteEstablisher`
+  (edge weight + adjacency filter), `RoadUpkeepCalculator` (cost +
+  priority), `TierPromotionRules` (rank), `RoadSpeedModifier` (no
+  walked-surface bonus), `CorridorAttractorBuilder` (no discount),
+  `RoadLightingPlacer` (no width), `ParallelismResolver` (sentinel
+  rank), `RoadClearanceValidator` (no clearance),
+  `PrimitiveChainBuilder.edgeTierToRoadTier` (FOOTPATH sentinel),
+  `RoadProposalCalculator` (rejects SEA — players can't propose sea
+  routes), `CulturePaletteResolver` (default culture).
+- `Events/RoadUpkeepSystem.java` — `decayDeltaForUnmaintained`
+  returns -2 for SEA tier, preserving the legacy decay curve.
+- `Events/EdgeRealizer.java` — SEA-edge guard at the top of
+  `realizeEdgeImpl`: marks the edge realised with an empty block path
+  and returns immediately.
+- `Events/TickSystems.java` — `GraphEdgeRealizationSystem`
+  candidate selection skips SEA edges (so they aren't repeatedly
+  picked up by player-proximity scans).
+- `Events/RoadEdgeRealization` (no-op) — unchanged; the SEA guard
+  in EdgeRealizer is sufficient.
+- `Events/ServerTickDispatcher.java` — calls
+  `SeaRouteMigration.migrateIfNeeded` once on first tick.
+- `Village/Roads/Realization/EdgeMaterialResolver.java` — SEA
+  short-circuit returns a dirt+null-culture context (defensive; the
+  resolver is never called for SEA edges in practice because
+  EdgeRealizer skips them).
+- `Village/Economy/Trade/BoatCaravan.java` — `seaRouteId` field
+  semantically becomes `edgeId`; codec key preserved for save
+  compat. `getPath()` reads from
+  `WorldRoadSavedData.getGraph().getEdge(edgeId).getCellPath()`.
+  `getSpeedMultiplier` derives from edge maintenance via the
+  legacy curve.
+- `Village/Economy/Trade/BoatCaravanSavedData.java` — dispatch
+  iterates `TradeRoute`s, filters first-edge-is-SEA. Skips Collectors
+  (no longer needed).
+- `Village/Economy/Trade/CaravanSavedData.java` — land dispatch
+  filters first-edge-is-NOT-SEA.
+- `Village/Economy/Trade/TradeRouteManager.java` — sea-route
+  establishment creates SEA-tier `RoadEdge`s directly, plus
+  matching `VILLAGE_DOCK` nodes; wraps in `TradeRoute.createGraph`
+  with a single-element `edgeIds`. Removes `seaRouteExistsBetween`
+  / `findReusableSeaRoute` helpers in favour of a graph-walking
+  `seaEdgeExistsBetween`.
+- `Village/Economy/Trade/TradeRoute.java` — javadoc updated;
+  `connectionId` becomes a save-compat fossil.
+- `Village/Economy/Trade/MapSeaRouteSnapshot.java` —
+  `fromSeaRoute(SeaRoute)` replaced with
+  `fromEdge(RoadEdge)`; wire shape unchanged.
+- `Gui/Map/Kingdom/{KingdomMapScope,ContinentMapScope}.java` —
+  derive map snapshots from SEA-tier edges, not from legacy
+  `SeaRoute` records.
+- `Networking/{KingdomMapSyncPacket,ContinentMapSyncPacket}.java`
+  — no behavioural change; just reflect that the snapshots come
+  from edges now.
+- `Networking/RequestContinentMapSyncPacket.java` — drops unused
+  `SeaRoute` import.
+- `Networking/VillageSavedData.java` — sea-route map retyped to
+  `Map<UUID, SeaRouteMigration.LegacySeaRoute>`. `addSeaRoute` /
+  `getAllSeaRoutes` / `getSeaRouteById` removed; replaced with
+  `peekLegacySeaRoutes` and `clearLegacySeaRoutes` for the
+  migration only. `getConnectionById` deleted.
+- `Networking/WorldRoadSavedData.java` — new `seaRoutesMigrated`
+  flag on the snapshot codec (optionalFieldOf, default false for
+  pre-Phase-13 saves; constructor defaults true so fresh worlds
+  skip).
+- `Village/Decoration/Roads/CulturePaletteResolver.java` — SEA
+  tier returns "default" culture (defensive).
+- `Village/Roads/Decoration/RoadClearanceValidator.java`,
+  `Village/Roads/Lighting/RoadLightingPlacer.java`,
+  `Village/Roads/Planning/{CorridorAttractorBuilder,
+  ParallelismResolver}.java`,
+  `Village/Roads/Economy/{RoadUpkeepCalculator,TierPromotionRules
+  }.java`,
+  `Village/Roads/Travel/RoadSpeedModifier.java` — all gain SEA
+  arms in their tier switches.
+
+#### Test plan (manual)
+
+1. **Existing-save migration.** Load a world that has active
+   `SeaRoute` records from before Phase 13. On first tick the
+   migration logs `[SeaRouteMigration] migrated N sea route(s) to
+   SEA-tier edges`. Boat caravans on those routes continue
+   dispatching without interruption (`/liv road debug show_graph`
+   shows SEA-tier edges with the legacy connection UUIDs).
+2. **Fresh-world test.** Spawn two coastal villages with dock
+   buildings within sea-route range. After village registration
+   completes, `/liv road debug show_graph` includes a SEA-tier
+   edge between the two new VILLAGE_DOCK nodes.
+3. **Land caravan exclusion.** With a SEA edge present along the
+   corridor between two villages, `/liv road debug
+   dispatch_test_caravan_between` picks a route that does NOT
+   include the SEA edge. Land dispatch in
+   `CaravanSavedData.dispatchNewCaravans` skips it via the
+   first-edge-is-SEA filter; sea dispatch picks it up via the
+   inverse filter.
+4. **Decay.** Wait several daily upkeep cycles with no maintainer
+   payments. SEA edge maintenance falls at -2/cycle; a comparable
+   CONNECTOR falls at -5/cycle.
+5. **Server restart.** Both completed migration state and active
+   boat caravans persist across save / load. The
+   `seaRoutesMigrated` flag stays true; the migration is a no-op
+   on subsequent loads.
+6. **Multi-gateway compatibility (C2).** A coastal village with
+   both Track-C2 land gateway TERMINUSes and a dock-building
+   VILLAGE_DOCK node has both kinds of nodes in `WorldRoadGraph`,
+   each connected to different-tier edges (gateway TERMINUSes to
+   land connectors; dock VILLAGE_DOCK to SEA edge). Land caravans
+   approach via gateways; boat caravans via the dock node.
+7. **POI exclusion (C3.2) still works.** A POI subroad (LOCAL
+   tier with POI_STUB endpoint) is still excluded from caravan
+   dispatch by the existing `touchesPoiStub` filter.
+8. **Player proposals (C3.1) reject SEA tier.**
+   `/litv road propose <vA> <vB> SEA` exits with
+   `IllegalArgumentException` from
+   `RoadProposalCalculator.tierMultiplier`; players can't accidentally
+   commission a sea route through the road-engineer system.
+
+#### Compile status
+
+Gradle network-blocked in this sandbox. Static review confirmed:
+- All 12+ exhaustive `switch (EdgeTier)` sites carry an SEA arm.
+- `WorldRoadSavedData.Snapshot` codec round-trips with the new
+  `seaRoutesMigrated` flag defaulting false for pre-Phase-13
+  saves; constructor default for fresh worlds is true.
+- `LegacySeaRoute.CODEC` reads the legacy SeaRoute layout
+  (mandatory `dockA`/`dockB` fields tolerated via
+  `optionalFieldOf` so deletion of those fields on re-encode is
+  harmless — the migration drains the map before any re-encode
+  happens).
+- BoatCaravan codec key remains `"seaRouteId"`; in-flight
+  caravan records load with the field pointing to a valid
+  SEA-tier `RoadEdge.UUID` (UUID-preservation guarantee).
+- `EdgeRealizer` short-circuits on SEA before
+  `EdgeMaterialResolver` runs; both layers carry defensive
+  fallbacks so an out-of-band SEA query from elsewhere stays
+  safe.
+- Land caravan dispatch and the segmented Dijkstra
+  (`findSegmentedPath`) skip SEA-tier edges via the same
+  adjacency-construction filter that excludes POI_STUB-touching
+  edges.
+- `TradeConnection` interface fully deleted; no source file
+  imports it. `git grep TradeConnection` returns only the unrelated
+  `ClientTradeConnectionCache` class name.
+
+#### Out-of-scope, flagged
+
+- **Hybrid land-sea-land routes.** The graph representation
+  permits them (mixed-tier `edgeIds`), but the dispatcher only
+  inspects the first edge. A future phase could extend the
+  dispatcher to leg-by-leg inspection so a caravan handing off
+  from land to boat to land becomes possible.
+- **Boat pathfinding quality.** Still teleport-based per the
+  legacy `BoatCaravan.onTickSpawned` model.
+- **Sea-accessible POIs** (islands with shrines).
+- **Reputation deltas** for completed sea-route trade — no
+  changes; the existing pipeline applies to land-or-sea
+  uniformly.
+- **Player-initiated sea routes.** Out of scope per Phase 11
+  scope; `RoadProposalCalculator.tierMultiplier` rejects SEA at
+  argument validation.
+
+**Track C is now complete.**

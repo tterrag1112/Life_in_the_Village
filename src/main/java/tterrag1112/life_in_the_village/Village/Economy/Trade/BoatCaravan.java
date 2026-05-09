@@ -12,17 +12,18 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Travel.Roster;
 import tterrag1112.life_in_the_village.Village.Travel.TravellingGroup;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
- * A trade caravan that travels by boat along a {@link SeaRoute}.
+ * A trade caravan that travels by boat along a SEA-tier {@code RoadEdge}.
  *
  * <h3>Differences from {@link Caravan}</h3>
  * <ul>
@@ -60,8 +61,13 @@ public class BoatCaravan implements TravellingGroup {
             i.group(
                     UUIDUtil.CODEC.fieldOf("caravanId")
                             .forGetter(c -> c.caravanId),
+                    // Track C3.3: codec key stays "seaRouteId" for save
+                    // compat; the field now references the SEA-tier
+                    // RoadEdge's UUID. SeaRouteMigration reuses the
+                    // legacy SeaRoute UUID as the edge UUID so old
+                    // BoatCaravan records load with a valid pointer.
                     UUIDUtil.CODEC.fieldOf("seaRouteId")
-                            .forGetter(c -> c.seaRouteId),
+                            .forGetter(c -> c.edgeId),
                     UUIDUtil.CODEC.fieldOf("originVillageId")
                             .forGetter(c -> c.originVillageId),
                     UUIDUtil.CODEC.fieldOf("destVillageId")
@@ -83,7 +89,13 @@ public class BoatCaravan implements TravellingGroup {
     // =========================================================================
 
     private final UUID caravanId;
-    private final UUID seaRouteId;
+    /**
+     * Track C3.3 — UUID of the SEA-tier {@code RoadEdge} this caravan
+     * traverses. Codec key remains "seaRouteId" for save compatibility
+     * with pre-Phase-13 worlds (the migration ensures the legacy
+     * connection UUID is reused as the new edge UUID).
+     */
+    private final UUID edgeId;
     private final UUID originVillageId;
     private final UUID destVillageId;
     private BoatState state;
@@ -94,13 +106,13 @@ public class BoatCaravan implements TravellingGroup {
 
     private transient boolean spawned = false;
 
-    public BoatCaravan(UUID caravanId, UUID seaRouteId,
+    public BoatCaravan(UUID caravanId, UUID edgeId,
                        UUID originVillageId, UUID destVillageId,
                        BoatState state, double progress,
                        long dispatchTick, List<ItemStack> goods,
                        Roster roster) {
         this.caravanId       = caravanId;
-        this.seaRouteId      = seaRouteId;
+        this.edgeId          = edgeId;
         this.originVillageId = originVillageId;
         this.destVillageId   = destVillageId;
         this.state           = state;
@@ -110,7 +122,7 @@ public class BoatCaravan implements TravellingGroup {
         this.roster          = roster;
     }
 
-    public static BoatCaravan create(UUID seaRouteId,
+    public static BoatCaravan create(UUID edgeId,
                                      UUID originVillageId,
                                      UUID destVillageId,
                                      UUID principalId,
@@ -122,7 +134,7 @@ public class BoatCaravan implements TravellingGroup {
         r.setOriginBuildingId(originDockId);
         return new BoatCaravan(
                 UUID.randomUUID(),
-                seaRouteId,
+                edgeId,
                 originVillageId,
                 destVillageId,
                 BoatState.OUTBOUND,
@@ -140,13 +152,12 @@ public class BoatCaravan implements TravellingGroup {
 
     @Override
     public List<BlockPos> getPath(ServerLevel level, VillageSavedData data) {
-        // Convert the sea route's cell path to a block-position list
-        // by interpolating cell centres at sea level. Each cell becomes
-        // 4 waypoints so caravans don't make 64-block hops.
-        Optional<SeaRoute> routeOpt = data.getSeaRouteById(seaRouteId);
-        if (routeOpt.isEmpty()) return List.of();
-        SeaRoute route = routeOpt.get();
-        List<Long> cells = route.getCellPath();
+        // Track C3.3 — pull the cell path from the SEA-tier RoadEdge
+        // identified by edgeId. The encoding is identical to the legacy
+        // SeaRoute.getCellPath() output.
+        RoadEdge edge = WorldRoadSavedData.get(level).getGraph().getEdge(edgeId);
+        if (edge == null) return List.of();
+        List<Long> cells = edge.getCellPath();
         if (cells.isEmpty()) return List.of();
 
         int seaLevel = level.getSeaLevel();
@@ -171,9 +182,25 @@ public class BoatCaravan implements TravellingGroup {
 
     @Override
     public double getSpeedMultiplier(ServerLevel level, VillageSavedData data) {
-        return data.getSeaRouteById(seaRouteId)
-                .map(SeaRoute::getSpeedMultiplier)
-                .orElse(1.0);
+        // Track C3.3 — derive sea-route speed from the edge's
+        // maintenance score using the same curve the legacy
+        // SeaRoute.getSpeedMultiplier returned (0.7..1.3 at full
+        // maintenance, 0 below the blocked threshold).
+        RoadEdge edge = WorldRoadSavedData.get(level).getGraph().getEdge(edgeId);
+        if (edge == null) return 1.0;
+        return seaSpeedMultiplier(edge.getMaintenance());
+    }
+
+    /**
+     * Mirrors the legacy {@code SeaRoute.getSpeedMultiplier} curve so
+     * boat-caravan dispatch numerics stay observably the same after
+     * Phase 13.
+     */
+    public static double seaSpeedMultiplier(int maintenance) {
+        if (maintenance <= 20) return 0.0;            // BLOCKED
+        if (maintenance <= 21) return 1.0;            // MINIMUM (sentinel)
+        double normalized = (maintenance - 21) / (100.0 - 21);
+        return 0.7 + normalized * 0.6;
     }
 
     @Override public boolean isSpawned() { return spawned; }
@@ -322,7 +349,14 @@ public class BoatCaravan implements TravellingGroup {
     // =========================================================================
 
     public UUID getCaravanId()       { return caravanId; }
-    public UUID getSeaRouteId()      { return seaRouteId; }
+    /**
+     * Track C3.3 — UUID of the underlying SEA-tier {@code RoadEdge}.
+     * Method retains the legacy name for source compatibility with
+     * dispatch / UI call sites; new call sites should prefer
+     * {@link #getEdgeId()}.
+     */
+    public UUID getSeaRouteId()      { return edgeId; }
+    public UUID getEdgeId()          { return edgeId; }
     public UUID getOriginVillageId() { return originVillageId; }
     public UUID getDestVillageId()   { return destVillageId; }
     public BoatState getState()      { return state; }

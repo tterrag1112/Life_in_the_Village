@@ -228,6 +228,9 @@ public final class RoadLightingPlacer {
             case TRUNK      -> 3; // TOWN_ROAD
             case CONNECTOR  -> 2; // VILLAGE_ROAD
             case LOCAL      -> 1; // FOOTPATH
+            // Track C3.3 — SEA edges have no width; lighting pass is
+            // gated separately to skip them.
+            case SEA        -> 0;
         };
     }
 

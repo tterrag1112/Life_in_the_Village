@@ -46,11 +46,13 @@ public final class GraphTradeRouteEstablisher {
 
         // Build adjacency list from edges. Track C3.2: skip edges that
         // touch a POI_STUB endpoint — caravans don't visit dungeons.
-        // The same filter applies to findSegmentedPath because it shares
-        // this adjacency layer below.
+        // Track C3.3: skip SEA edges — those carry boat caravans, not
+        // land caravans. Both filters apply to findSegmentedPath via
+        // the same logic below.
         Map<UUID, List<EdgeConnection>> adj = new HashMap<>();
         for (RoadEdge edge : graph.allEdges()) {
             if (touchesPoiStub(graph, edge)) continue;
+            if (edge.getTier() == RoadEdge.EdgeTier.SEA) continue;
             double w = edgeWeight(edge);
             adj.computeIfAbsent(edge.getNodeAId(), k -> new ArrayList<>())
                     .add(new EdgeConnection(edge.getEdgeId(), edge.getNodeBId(), w));
@@ -102,6 +104,11 @@ public final class GraphTradeRouteEstablisher {
             case TRUNK      -> 0.8;
             case CONNECTOR  -> 1.0;
             case LOCAL      -> 1.5;
+            // Track C3.3 — SEA edges are filtered out before adjacency
+            // construction (touchesPoiStub-style guard) so this branch
+            // is unreachable in practice. Pick a high cost as a defence
+            // in depth in case a future call site forgets the filter.
+            case SEA        -> 999.0;
         };
         return tierFactor * Math.max(1, edge.getCellPath().size());
     }
@@ -166,11 +173,12 @@ public final class GraphTradeRouteEstablisher {
         }
 
         // Adjacency from real edges, like findEdgePath. Track C3.2: skip
-        // edges with POI_STUB endpoints so caravans don't route via
-        // POI subroads.
+        // edges with POI_STUB endpoints. Track C3.3: skip SEA-tier edges
+        // — those carry boats, not caravans.
         Map<UUID, List<EdgeConnection>> adj = new HashMap<>();
         for (RoadEdge edge : graph.allEdges()) {
             if (touchesPoiStub(graph, edge)) continue;
+            if (edge.getTier() == RoadEdge.EdgeTier.SEA) continue;
             double w = edgeWeight(edge);
             adj.computeIfAbsent(edge.getNodeAId(), k -> new ArrayList<>())
                     .add(new EdgeConnection(edge.getEdgeId(), edge.getNodeBId(), w));

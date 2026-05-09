@@ -581,6 +581,11 @@ class GraphEdgeRealizationSystem implements TickSubsystem {
         List<Candidate> candidates = new ArrayList<>();
 
         for (RoadEdge edge : graph.allEdges()) {
+            // Track C3.3 — SEA edges paint no blocks. EdgeRealizer
+            // marks them realised on first contact; if for any reason
+            // the realised flag is unset, skip them here so the
+            // candidate list stays land-only.
+            if (edge.getTier() == RoadEdge.EdgeTier.SEA) continue;
             boolean needsWork = !edge.isRealized() || !edge.getStaleCells().isEmpty();
             if (!needsWork) continue;
             if (edge.getCellPath().isEmpty()) continue;
@@ -615,6 +620,10 @@ class GraphEdgeRealizationSystem implements TickSubsystem {
             case TRUNK      -> RADIUS_TRUNK;
             case CONNECTOR  -> RADIUS_CONNECTOR;
             case LOCAL      -> RADIUS_LOCAL;
+            // Track C3.3 — SEA edges are skipped at the realisation
+            // candidate-selection step; this value is unreachable in
+            // practice but keeps the switch exhaustive.
+            case SEA        -> 0;
         };
     }
 

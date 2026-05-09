@@ -263,6 +263,12 @@ public final class RoadUpkeepSystem {
                             || (b != null && b.type() == RoadNode.NodeType.POI_STUB);
             if (isPoiSubroad) return -8;
         }
+        // Track C3.3 — SEA edges decay slower than land roads,
+        // matching the legacy SeaRoute model (≈3 quality per 2-week
+        // tick). One upkeep cycle per day works out to roughly the
+        // same when summed over weeks; -2 keeps the long-run shape
+        // close to the legacy curve.
+        if (edge.getTier() == RoadEdge.EdgeTier.SEA) return -2;
         return -5;
     }
 }

@@ -3,8 +3,12 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
@@ -47,6 +51,28 @@ public class TradeRouteManager {
         return false;
     }
 
+    /**
+     * Track C3.3 — establishes a sea route as a SEA-tier {@link RoadEdge}
+     * directly on the world graph instead of as a separate
+     * {@code SeaRoute} record. The dock-as-trigger condition is unchanged.
+     *
+     * <p>For each pair of dock-building villages, the routing pipeline:
+     * <ol>
+     *   <li>Asks {@link SeaRouteRouter#findRoute} for a cellPath through
+     *       ocean cells. (Same A* implementation; just produces a path
+     *       that becomes a graph edge instead of a SeaRoute record.)</li>
+     *   <li>Creates two {@code VILLAGE_DOCK} nodes at the cellPath
+     *       endpoints — these are the boat's outbound and inbound
+     *       waypoints. The dock-building UUIDs themselves are not
+     *       persisted on the edge (re-scanned at dispatch time).</li>
+     *   <li>Creates a SEA-tier {@link RoadEdge} between those nodes
+     *       carrying the cellPath; both villages become maintainers so
+     *       the existing upkeep loop pays for harbour maintenance.</li>
+     *   <li>Wraps the new edge in a {@link TradeRoute} via
+     *       {@link TradeRoute#createGraph} with a single-element
+     *       {@code edgeIds} list.</li>
+     * </ol>
+     */
     private static void establishSeaRoutes(ServerLevel level,
                                            Village originVillage,
                                            VillageSavedData data) {
@@ -59,14 +85,13 @@ public class TradeRouteManager {
                 .orElse(originVillage.getAnchorPos());
 
         WorldAtlas atlas = WorldAtlas.get(level);
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
 
-        // Find all other villages with docks within sea-route range
         for (Village other : data.getAllVillages()) {
             if (other.getId().equals(originVillage.getId())) continue;
             if (!hasDock(other, data)) continue;
 
-            // Don't duplicate — if a sea route already exists, skip
-            if (seaRouteExistsBetween(data, originVillage.getId(), other.getId())) continue;
+            if (seaEdgeExistsBetween(graph, originVillage.getId(), other.getId())) continue;
 
             UUID destDockId = findDockBuilding(other, data);
             if (destDockId == null) continue;
@@ -75,43 +100,64 @@ public class TradeRouteManager {
                     .map(Building.BuildingShape::getOrigin)
                     .orElse(other.getAnchorPos());
 
-            // Try to find a sea path
             List<Long> cellPath = SeaRouteRouter.findRoute(
                     atlas, originDockPos, destDockPos);
             if (cellPath.isEmpty()) continue;
 
-            // Check for reusable existing sea route
-            SeaRoute reusable = findReusableSeaRoute(data, cellPath);
-            SeaRoute route;
-            if (reusable != null) {
-                route = reusable;
-            } else {
-                route = SeaRoute.create(
-                        originVillage.getId(), other.getId(),
-                        originDockId, destDockId,
-                        cellPath);
-                data.addSeaRoute(route);
-            }
+            BlockPos endA = AtlasRouteRouter.cellKeyToBlockCenter(cellPath.get(0));
+            BlockPos endB = AtlasRouteRouter.cellKeyToBlockCenter(cellPath.get(cellPath.size() - 1));
+            int seaLevel = level.getSeaLevel();
+            BlockPos waypointA = new BlockPos(endA.getX(), seaLevel, endA.getZ());
+            BlockPos waypointB = new BlockPos(endB.getX(), seaLevel, endB.getZ());
 
-            // Create a TradeRoute referencing this connection
-            TradeRoute tradeRoute = new TradeRoute(
-                    UUID.randomUUID(),
-                    originVillage.getId(),
-                    other.getId(),
-                    route.getConnectionId(),
-                    TradeRoute.RouteStatus.ACTIVE,
-                    TradeRoute.RouteType.NEUTRAL,  // or whatever default fits
-                    level.getGameTime(),
-                    0L,                             // lastCaravanTick
-                    1.0                             // penalty or whatever the 9th arg is
-            );
+            UUID nodeAId = createSeaDockNode(graph, waypointA, originVillage.getId());
+            UUID nodeBId = createSeaDockNode(graph, waypointB, other.getId());
+
+            long meanderSeed = (long) originVillage.getId().getMostSignificantBits()
+                    ^ (long) other.getId().getLeastSignificantBits();
+            RoadEdge seaEdge = RoadEdge.create(
+                    nodeAId, nodeBId,
+                    cellPath, RoadEdge.EdgeTier.SEA,
+                    new RoadEdge.MeanderProfile(0f, 0f, meanderSeed));
+            seaEdge.setMaintenance(100);
+            seaEdge.getMaintainerVillageIds().add(originVillage.getId());
+            seaEdge.getMaintainerVillageIds().add(other.getId());
+            graph.addEdge(seaEdge);
+            WorldRoadSavedData.get(level).markDirty();
+
+            TradeRoute tradeRoute = TradeRoute.createGraph(
+                    originVillage.getId(), other.getId(),
+                    TradeRoute.RouteType.NEUTRAL, level.getGameTime(),
+                    List.of(seaEdge.getEdgeId()), nodeAId);
             data.addTradeRoute(tradeRoute);
-            route.addRouteReference(tradeRoute.getRouteId());
 
-            System.out.println("TradeRouteManager: established sea route "
+            System.out.println("TradeRouteManager: established sea edge "
                     + originVillage.getName() + " ↔ " + other.getName()
-                    + " (" + cellPath.size() + " cells)");
+                    + " (" + cellPath.size() + " cells, edge="
+                    + seaEdge.getEdgeId().toString().substring(0, 8) + ")");
         }
+    }
+
+    /** Track C3.3 — true if a SEA edge already connects these two villages. */
+    private static boolean seaEdgeExistsBetween(WorldRoadGraph graph,
+                                                  UUID villageA, UUID villageB) {
+        for (RoadEdge edge : graph.allEdges()) {
+            if (edge.getTier() != RoadEdge.EdgeTier.SEA) continue;
+            List<UUID> maintainers = edge.getMaintainerVillageIds();
+            if (maintainers.contains(villageA) && maintainers.contains(villageB)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Track C3.3 — creates a fresh VILLAGE_DOCK node at {@code pos}. */
+    private static UUID createSeaDockNode(WorldRoadGraph graph, BlockPos pos,
+                                            UUID villageId) {
+        RoadNode node = new RoadNode(UUID.randomUUID(), pos,
+                RoadNode.NodeType.VILLAGE_DOCK, Optional.empty());
+        graph.addNode(node);
+        return node.nodeId();
     }
 
     private static UUID findDockBuilding(Village village, VillageSavedData data) {
@@ -120,31 +166,6 @@ public class TradeRouteManager {
             if (building != null && building.getType() == BuildingType.DOCKS) {
                 return buildingId;
             }
-        }
-        return null;
-    }
-
-    private static boolean seaRouteExistsBetween(VillageSavedData data,
-                                                 UUID villageA, UUID villageB) {
-        for (SeaRoute route : data.getAllSeaRoutes()) {
-            if ((route.getVillageA().equals(villageA) && route.getVillageB().equals(villageB))
-                    || (route.getVillageA().equals(villageB) && route.getVillageB().equals(villageA))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static SeaRoute findReusableSeaRoute(VillageSavedData data, List<Long> cellPath) {
-        Set<Long> newCells = new HashSet<>(cellPath);
-        for (SeaRoute existing : data.getAllSeaRoutes()) {
-            Set<Long> existingCells = new HashSet<>(existing.getCellPath());
-            int overlap = 0;
-            for (Long cell : newCells) {
-                if (existingCells.contains(cell)) overlap++;
-            }
-            double ratio = (double) overlap / newCells.size();
-            if (ratio >= 0.5) return existing;
         }
         return null;
     }

@@ -67,6 +67,17 @@ public final class EdgeMaterialResolver {
                                                   VillageSavedData data) {
         RoadEdge.EdgeTier tier = edge.getTier();
 
+        // Track C3.3 — SEA edges have no material; EdgeRealizer skips
+        // them before this resolver runs, but we keep a defensive
+        // short-circuit so any future call site doesn't trip on
+        // CulturePaletteResolver. Returning a dirt context with null
+        // culture is harmless because no realisation consumes it for
+        // SEA tiers.
+        if (tier == RoadEdge.EdgeTier.SEA) {
+            return new MaterialContext(PathMaterial.dirt(), null,
+                    CulturePaletteResolver.resolve(edge, graph, data).palette());
+        }
+
         CulturePaletteResolver.Resolved resolved = CulturePaletteResolver.resolve(edge, graph, data);
         CulturePalette palette = resolved.palette();
 

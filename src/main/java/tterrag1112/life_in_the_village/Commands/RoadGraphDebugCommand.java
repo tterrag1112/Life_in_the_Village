@@ -1590,6 +1590,7 @@ public class RoadGraphDebugCommand {
             case TRUNK      -> ParticleTypes.FLAME;
             case CONNECTOR  -> ParticleTypes.COMPOSTER;
             case LOCAL      -> ParticleTypes.SMOKE;
+            case SEA        -> ParticleTypes.SPLASH;
         };
     }
 

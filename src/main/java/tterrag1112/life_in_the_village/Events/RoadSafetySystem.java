@@ -128,6 +128,10 @@ public final class RoadSafetySystem {
             case TRUNK      -> 0.70f;
             case CONNECTOR  -> 0.50f;
             case LOCAL      -> 0.30f;
+            // Track C3.3 — SEA edges aren't realised land roads;
+            // pick CONNECTOR-equivalent so any incidental query
+            // returns a sane number.
+            case SEA        -> 0.50f;
         };
     }
 

@@ -43,6 +43,10 @@ public final class RoadUpkeepCalculator {
             case TRUNK      -> 2;
             case CONNECTOR  -> 1;
             case LOCAL      -> 1;
+            // Track C3.3 — SEA edges' upkeep is paid by the maintainer
+            // village's harbour budget; modelled here as 1 silver per
+            // cell (matches legacy SeaRoute.UPKEEP_COST_PER_CELL).
+            case SEA        -> 1;
         };
     }
 
@@ -146,6 +150,9 @@ public final class RoadUpkeepCalculator {
             case TRUNK      -> 1;
             case LOCAL      -> 2;
             case GREAT_ROAD -> 3;
+            // Track C3.3 — SEA priority sits last; harbour upkeep is
+            // paid only after land-road upkeep is satisfied.
+            case SEA        -> 4;
         };
     }
 }

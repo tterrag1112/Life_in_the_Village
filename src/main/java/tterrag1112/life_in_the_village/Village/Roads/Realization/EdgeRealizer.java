@@ -77,6 +77,16 @@ public final class EdgeRealizer {
                                         WorldRoadGraph graph,
                                         VillageSavedData data,
                                         WorldRoadSavedData roadData) {
+        // Track C3.3: SEA edges have no block path. Boat caravans
+        // interpolate their cell-path waypoints at runtime; the
+        // realizer never paints anything for them. Mark the edge
+        // realised so the GraphEdgeRealizationSystem stops picking it
+        // up on every pass.
+        if (edge.getTier() == RoadEdge.EdgeTier.SEA) {
+            if (!edge.isRealized()) edge.markRealized(java.util.List.of());
+            return;
+        }
+
         // Fast path: fully realized with no terrain changes since last realization.
         if (edge.isRealized() && edge.getStaleCells().isEmpty()) return;
 

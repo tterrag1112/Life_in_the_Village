@@ -89,7 +89,8 @@ public class WorldRoadSavedData extends SavedData {
                              Map<UUID, RoadEvent> events,
                              List<String> worldUniqueTypesPlaced,
                              Map<UUID, RoadProposal> proposals,
-                             Map<UUID, DiscoveredPoi> pois) {
+                             Map<UUID, DiscoveredPoi> pois,
+                             boolean seaRoutesMigrated) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
@@ -119,7 +120,13 @@ public class WorldRoadSavedData extends SavedData {
                 // Empty for pre-C3.2 saves.
                 Codec.unboundedMap(UUID_CODEC, DiscoveredPoi.CODEC)
                         .optionalFieldOf("discoveredPois", new HashMap<>())
-                        .forGetter(Snapshot::pois)
+                        .forGetter(Snapshot::pois),
+                // Track C3.3: SeaRouteMigration idempotency flag. Pre-
+                // C3.3 saves load with this false; the migration runs
+                // once at startup, converts all SeaRoute records to
+                // SEA-tier RoadEdges, and flips it true.
+                Codec.BOOL.optionalFieldOf("seaRoutesMigrated", false)
+                        .forGetter(Snapshot::seaRoutesMigrated)
         ).apply(i, Snapshot::new));
     }
 
@@ -132,7 +139,8 @@ public class WorldRoadSavedData extends SavedData {
                         new HashMap<>(snap.events()),
                         new HashSet<>(snap.worldUniqueTypesPlaced()),
                         new HashMap<>(snap.proposals()),
-                        new HashMap<>(snap.pois()));
+                        new HashMap<>(snap.pois()),
+                        snap.seaRoutesMigrated());
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -150,7 +158,8 @@ public class WorldRoadSavedData extends SavedData {
                     new HashMap<>(data.events),
                     new ArrayList<>(data.worldUniqueTypesPlaced),
                     new HashMap<>(data.proposals),
-                    new HashMap<>(data.pois))
+                    new HashMap<>(data.pois),
+                    data.seaRoutesMigrated)
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -179,6 +188,8 @@ public class WorldRoadSavedData extends SavedData {
     private final Map<UUID, RoadProposal> proposals;
     /** Track C3.2 — discovery id → discovered POI record. */
     private final Map<UUID, DiscoveredPoi> pois;
+    /** Track C3.3 — true once {@code SeaRouteMigration} has run. */
+    private boolean seaRoutesMigrated;
 
     // =========================================================================
     // Constructors
@@ -195,6 +206,8 @@ public class WorldRoadSavedData extends SavedData {
         this.worldUniqueTypesPlaced      = new HashSet<>();
         this.proposals                   = new HashMap<>();
         this.pois                        = new HashMap<>();
+        // Fresh worlds skip the migration (no legacy SeaRoutes to convert).
+        this.seaRoutesMigrated           = true;
     }
 
     private WorldRoadSavedData(WorldRoadGraph graph,
@@ -205,7 +218,8 @@ public class WorldRoadSavedData extends SavedData {
                                 Map<UUID, RoadEvent> events,
                                 Set<String> worldUniqueTypesPlaced,
                                 Map<UUID, RoadProposal> proposals,
-                                Map<UUID, DiscoveredPoi> pois) {
+                                Map<UUID, DiscoveredPoi> pois,
+                                boolean seaRoutesMigrated) {
         this.graph                       = graph;
         this.ledgers                     = ledgers;
         this.greatRoadGenerationComplete = greatRoadGenerationComplete;
@@ -215,6 +229,7 @@ public class WorldRoadSavedData extends SavedData {
         this.worldUniqueTypesPlaced      = worldUniqueTypesPlaced;
         this.proposals                   = proposals;
         this.pois                        = pois;
+        this.seaRoutesMigrated           = seaRoutesMigrated;
     }
 
     // =========================================================================
@@ -378,6 +393,16 @@ public class WorldRoadSavedData extends SavedData {
 
     public Map<UUID, DiscoveredPoi> getAllPois() {
         return Collections.unmodifiableMap(pois);
+    }
+
+    // =========================================================================
+    // Sea-route migration (Track C3.3)
+    // =========================================================================
+
+    public boolean isSeaRoutesMigrated() { return seaRoutesMigrated; }
+    public void setSeaRoutesMigrated(boolean v) {
+        this.seaRoutesMigrated = v;
+        setDirty();
     }
 
     // =========================================================================
