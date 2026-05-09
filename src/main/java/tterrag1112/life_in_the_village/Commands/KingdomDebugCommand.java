@@ -12,7 +12,9 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import tterrag1112.life_in_the_village.Cultures.Culture;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles;
 import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
+import tterrag1112.life_in_the_village.Kingdom.Houses.House;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
+import tterrag1112.life_in_the_village.Kingdom.KingdomModifier;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -49,7 +51,19 @@ public final class KingdomDebugCommand {
                                         .then(Commands.literal("list")
                                                 .executes(KingdomDebugCommand::listAll))
                                         .then(Commands.literal("events_stats")
-                                                .executes(KingdomDebugCommand::eventsStats))))
+                                                .executes(KingdomDebugCommand::eventsStats))
+                                        // Track D3.2a — list noble houses for a kingdom.
+                                        .then(Commands.literal("houses")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> houses(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))
+                                        // Track D3.2a — list active stability/legitimacy modifiers.
+                                        .then(Commands.literal("modifiers")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> modifiers(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))))
         );
     }
 
@@ -127,7 +141,97 @@ public final class KingdomDebugCommand {
             }
         }
         send(ctx, "  total: " + cnt);
+        // Track D3.2a — house + modifier summary.
+        send(ctx, "── Noble houses (D3.2a) ──");
+        if (k.getHouses().isEmpty()) {
+            send(ctx, "  (none)");
+        } else {
+            for (House h : k.getHouses()) {
+                send(ctx, "  " + h.name() + " [" + h.id().toString().substring(0, 8) + "] "
+                        + (h.isExtinct() ? "(extinct)"
+                                : "head=" + h.headUuid().get().toString().substring(0, 8))
+                        + " prestige=" + h.prestige());
+            }
+        }
+        send(ctx, "── Active modifiers (D3.2a) ──");
+        if (k.getModifiers().isEmpty()) {
+            send(ctx, "  (none)");
+        } else {
+            for (KingdomModifier m : k.getModifiers()) {
+                send(ctx, "  " + m.id() + ": stab" + signed(m.stabilityDelta())
+                        + " leg" + signed(m.legitimacyDelta())
+                        + (m.isPermanent() ? " (permanent)"
+                                : " expires@" + m.expiresAtTick()));
+            }
+        }
         return 1;
+    }
+
+    private static String signed(int v) { return v >= 0 ? "+" + v : Integer.toString(v); }
+
+    private static int houses(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv kingdom debug houses must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No kingdom named '" + name + "'."));
+            return 0;
+        }
+        if (k.getHouses().isEmpty()) {
+            send(ctx, "Kingdom '" + name + "' has no noble houses.");
+            return 0;
+        }
+        send(ctx, "── Houses of " + name + " (" + k.getHouses().size() + ") ──");
+        for (House h : k.getHouses()) {
+            send(ctx, "  " + h.name() + " [" + h.id().toString().substring(0, 8) + "]");
+            send(ctx, "    founder    : " + h.founderUuid().toString().substring(0, 8)
+                    + " @ tick " + h.foundingTick());
+            send(ctx, "    head       : " + (h.isExtinct() ? "(extinct)"
+                    : h.headUuid().get().toString().substring(0, 8)));
+            send(ctx, "    heraldry   : " + h.heraldry().describe());
+            send(ctx, "    prestige   : " + h.prestige());
+            if (!h.motto().isEmpty()) send(ctx, "    motto      : " + h.motto());
+        }
+        return k.getHouses().size();
+    }
+
+    private static int modifiers(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv kingdom debug modifiers must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No kingdom named '" + name + "'."));
+            return 0;
+        }
+        send(ctx, "── Modifiers on " + name + " ──");
+        send(ctx, "  base stability  : " + k.getStability()
+                + "   modifier sum: " + signed(k.stabilityModifierSum()));
+        send(ctx, "  base legitimacy : " + k.getLegitimacy()
+                + "   modifier sum: " + signed(k.legitimacyModifierSum()));
+        if (k.getModifiers().isEmpty()) {
+            send(ctx, "  (no active modifiers)");
+            return 0;
+        }
+        for (KingdomModifier m : k.getModifiers()) {
+            send(ctx, "  " + m.id());
+            if (!m.description().isEmpty()) send(ctx, "    desc       : " + m.description());
+            send(ctx, "    deltas     : stab" + signed(m.stabilityDelta())
+                    + ", leg" + signed(m.legitimacyDelta()));
+            send(ctx, "    applied@   : " + m.appliedAtTick());
+            send(ctx, "    expires@   : " + (m.isPermanent() ? "permanent"
+                    : Long.toString(m.expiresAtTick())));
+        }
+        return k.getModifiers().size();
     }
 
     private static int listAll(CommandContext<CommandSourceStack> ctx) {

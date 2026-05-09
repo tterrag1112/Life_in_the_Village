@@ -678,3 +678,111 @@ Gradle network-blocked in this sandbox. Static review confirmed:
   surfaces in play.
 - **Multi-village kingdom regrowth**. D3.1 produces capital-only
   kingdoms; vassalage / village-joining is D3 phase 2.
+
+---
+
+### 2026-05-09 — Track D3.2a landed (nobility data substrate)
+
+Phase 2 of the kingdom rework was originally specified as one
+large prompt covering houses, ranks, estate income, fealty-based
+tax flow, marriage, succession, and the dynasty-tree GUI. Per
+user direction we split it cleanly:
+
+- **D3.2a — data substrate** (this entry): records, codecs,
+  generators, helpers, and debug commands. Inert in-game beyond
+  persistence.
+- **D3.2b — behaviour** (separate phase): succession + fealty
+  tax + marriage + dynasty-tree GUI + KingdomModifier emitters.
+  Reads the D3.2a substrate as authoritative.
+
+#### What this phase ships
+
+- `Npc/Nobility/NobilityComponent` — kingdom-tier overlay on
+  `TownspersonMob`. Holds `dynastyHouseId` (UUID? — the noble
+  dynasty the NPC belongs to, distinct from
+  `FamilyComponent.houseId`), `rankIndex` (index into the NPC's
+  culture's `CultureKingdomDefaults.nobilityRanks` list), and
+  `prestige` (0..100 scalar). `FOUNDING_THRESHOLD = 30` ships
+  as a constant for D3.2b's house-founding gate. Codec-driven
+  save/load matches `SkillComponent` / `TraitVector` idiom.
+- `TownspersonMob` wiring — new `private final
+  NobilityComponent nobility` field + `getNobility()` accessor;
+  `nobility.save(output)` / `nobility.load(input)` delegated
+  alongside `npcRelationships`.
+- `Kingdom/Houses/House` — record carrying `(id, name,
+  kingdomId, founderUuid, foundingTick, headUuid, heraldry,
+  prestige, motto)` plus `withHead`, `withoutHead`,
+  `withPrestige`, `withMotto` copy-helpers. Bundled into the
+  existing `KingdomGovernanceData` sub-record (now 7 fields,
+  well under the 16-field DFU cap) — no new top-level slot on
+  `Kingdom.CODEC` (which sits at the cap). New accessors:
+  `getHouses` / `findHouse(id)` / `findHouseByName` / `addHouse`
+  / `removeHouse(id)` / `replaceHouse(replacement)`.
+- `Kingdom/KingdomModifier` — wires the stability/legitimacy
+  modifier system D1 declared aspirational. Record is
+  `(id, description, stabilityDelta, legitimacyDelta,
+  appliedAtTick, expiresAtTick)`; `expiresAtTick == 0L` means
+  permanent. `Kingdom.addModifier` / `removeModifier(id)` /
+  `pruneExpiredModifiers(tick)` plus
+  `stabilityModifierSum` / `legitimacyModifierSum` summarise
+  active deltas. Bundled into `KingdomGovernanceData`
+  alongside houses.
+- `HeraldryGenerator.forHouse(houseId, founderUuid)` — same
+  xorshift mixer as the kingdom variant, seeded from the house
+  id + founder UUID. House heraldry is independent of culture
+  seed so a single kingdom can carry visually distinct house
+  arms even when all houses share its culture.
+- `Npc/Nobility/NobilityRanks` — pure helper resolving
+  `(cultureId, rankIndex)` to a display name from
+  `CultureKingdomDefaults.nobilityRanks`. Out-of-range indices
+  clamp; non-monarchy cultures (empty rank list) return
+  `COMMONER_FALLBACK = "Commoner"`. Companion helpers:
+  `rankCount`, `maxRankIndex`, `isMonarchyCulture`, `namesFor`.
+- `/litv kingdom debug describe <name>` extended with
+  `── Noble houses (D3.2a) ──` and `── Active modifiers (D3.2a) ──`
+  sections. Two new subcommands: `/litv kingdom debug houses
+  <name>` (full house records) and `/litv kingdom debug
+  modifiers <name>` (base scalars + modifier sum + per-modifier
+  detail with applied/expires ticks).
+
+#### Decisions worth recording
+
+- **Naming clarification.** `FamilyComponent.houseId` is a
+  `BuildingType.HOUSE` UUID (the residential building an NPC
+  physically lives in, used by `HouseholdManager`).
+  `NobilityComponent.dynastyHouseId` is a different concept
+  entirely — the UUID of a `Kingdom.Houses.House` record (a
+  noble dynasty). The two never share a value. The investigation
+  agent's "move houseId to NobilityComponent" recommendation
+  was based on a conflation; after reading
+  `FamilyComponent.java` directly, we kept the building-side
+  field unchanged and introduced a new dynastyHouseId on the
+  nobility component. Documented in
+  `NobilityComponent`'s class javadoc and on `House`.
+- **Where to store houses + modifiers.** `Kingdom.CODEC` is at
+  16 fields after D3.1, the DFU group cap. We extend the
+  existing `KingdomGovernanceData` sub-record (5 → 7 fields)
+  rather than introducing a new top-level slot. Save compat
+  preserved with `optionalFieldOf(... , new ArrayList<>())`
+  defaults.
+- **Phase split rationale.** The D3.2 prompt explicitly
+  invited a split if 2.1 + 2.2 (data) cleaved cleanly from
+  2.3-2.7 (behaviour). They do: nothing in this phase reads
+  any new field as authoritative — the entire substrate is
+  inert until D3.2b's tick subsystems and event handlers
+  wire up. Shipping data first keeps the diff focused and
+  makes save format the easy thing to review independently.
+
+#### Out-of-scope, flagged for D3.2b
+
+- **Marriage flow** — gendered or otherwise. D3.2a doesn't
+  touch `FamilyComponent` beyond reading existing fields.
+- **Succession + fealty tax flow** — the underlying records
+  exist; the tick subsystem that drives them is D3.2b.
+- **Dynasty-tree GUI** — `House.headUuid` is the entry point;
+  the actual screen is D3.2b.
+- **Modifier emitters** — the substrate exists; the systems
+  that *add* modifiers (succession turbulence, recent crime,
+  active war, etc.) are D3.2b.
+- **House-founding gate** — `FOUNDING_THRESHOLD = 30` ships
+  as a constant; the gate that consumes it is D3.2b.

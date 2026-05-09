@@ -48,6 +48,7 @@ import tterrag1112.life_in_the_village.Npc.Knowledge.NpcKnowledgeLedger;
 import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalSet;
 import tterrag1112.life_in_the_village.Npc.Memory.NpcMemoryLog;
 import tterrag1112.life_in_the_village.Npc.Mood.NpcMoodState;
+import tterrag1112.life_in_the_village.Npc.Nobility.NobilityComponent;
 import tterrag1112.life_in_the_village.Npc.Relations.NpcRelationshipLedger;
 import tterrag1112.life_in_the_village.Npc.Schedule.PersonalScheduleOverride;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillComponent;
@@ -125,6 +126,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     private final FamilyComponent family = new FamilyComponent();
     private final EconomyComponent economy = new EconomyComponent();
+    /** Track D3.2a — kingdom-tier nobility overlay (house, rank,
+     *  prestige). Default-constructed = "common citizen". Inert at
+     *  D3.2a close; D3.2b reads + writes for succession, fealty,
+     *  marriage, dynasty-tree mechanics. */
+    private final NobilityComponent nobility = new NobilityComponent();
     /** True once the NPC has received its one-time profession starter
      *  bundle. Persisted; flipped by {@link #setProfession} on the
      *  first non-NONE assignment so re-assignment doesn't re-pay. */
@@ -729,6 +735,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     // =========================================================================
 
     public FamilyComponent getFamily() { return family; }
+
+    /** Track D3.2a — kingdom-tier nobility overlay accessor. */
+    public NobilityComponent getNobility() { return nobility; }
 
     public FamilyRole getFamilyRole()          { return family.getRole(); }
     public void setFamilyRole(FamilyRole role) {
@@ -1501,6 +1510,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── NPC↔NPC relationship ledger (Phase 2 task 11) ───────────────────
         npcRelationships.save(output);
 
+        // ── Nobility overlay (Track D3.2a) ──────────────────────────────────
+        nobility.save(output);
+
         // ── Hobby preferences (Phase 2 task 14) ─────────────────────────────
         hobbyPreference.save(output);
 
@@ -1688,6 +1700,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── NPC↔NPC relationship ledger (Phase 2 task 11) ───────────────────
         npcRelationships.load(input);
+
+        // ── Nobility overlay (Track D3.2a) ──────────────────────────────────
+        nobility.load(input);
 
         // ── Hobby preferences (Phase 2 task 14) ─────────────────────────────
         hobbyPreference.load(input);

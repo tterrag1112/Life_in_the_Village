@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
+import tterrag1112.life_in_the_village.Kingdom.Houses.House;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
@@ -17,7 +18,9 @@ public class Kingdom {
             double incomeTaxRate,
             long flatUpkeepBronze,
             long lastTaxTick,
-            KingdomHistoryData history
+            KingdomHistoryData history,
+            List<House> houses,
+            List<KingdomModifier> modifiers
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -38,7 +41,17 @@ public class Kingdom {
                                         new KingdomHistoryData())
                                 .forGetter(g -> g.history() != null
                                         ? g.history()
-                                        : new KingdomHistoryData())
+                                        : new KingdomHistoryData()),
+                        // Track D3.2a — noble dynasties belonging to this kingdom.
+                        House.CODEC.listOf()
+                                .optionalFieldOf("houses", new ArrayList<>())
+                                .forGetter(g -> g.houses() != null
+                                        ? g.houses() : new ArrayList<>()),
+                        // Track D3.2a — active stability/legitimacy modifiers.
+                        KingdomModifier.CODEC.listOf()
+                                .optionalFieldOf("modifiers", new ArrayList<>())
+                                .forGetter(g -> g.modifiers() != null
+                                        ? g.modifiers() : new ArrayList<>())
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -101,7 +114,9 @@ public class Kingdom {
                                             k.lastTaxTick,
                                             k.history != null
                                                     ? k.history
-                                                    : new KingdomHistoryData())),
+                                                    : new KingdomHistoryData(),
+                                            new ArrayList<>(k.houses),
+                                            new ArrayList<>(k.modifiers))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -159,6 +174,9 @@ public class Kingdom {
         k.flatUpkeepBronze = governance.flatUpkeepBronze();
         k.lastTaxTick      = governance.lastTaxTick();
         k.history          = governance.history() != null ? governance.history() : new KingdomHistoryData();
+        // Track D3.2a — restore houses + modifiers (empty for pre-D3.2a saves).
+        if (governance.houses() != null)    k.houses.addAll(governance.houses());
+        if (governance.modifiers() != null) k.modifiers.addAll(governance.modifiers());
         // Office state: stored value wins; otherwise migrate the legacy
         // ruler fields into a kingdom_king holding.
         if (offices.isPresent()) {
@@ -254,6 +272,20 @@ public class Kingdom {
      * stability / legitimacy decay to age the kingdom.
      */
     private long foundingTick = 0L;
+
+    /**
+     * Track D3.2a — noble dynasties belonging to this kingdom.
+     * Mutated only via {@link #addHouse}, {@link #removeHouse},
+     * {@link #replaceHouse}; codec persists the snapshot.
+     */
+    private final List<House> houses = new ArrayList<>();
+
+    /**
+     * Track D3.2a — active stability / legitimacy modifiers. Aspirational
+     * D1 hook now wired: D3.2b's tick subsystem decays expiring
+     * modifiers. Mutated via {@link #addModifier}, {@link #removeModifier}.
+     */
+    private final List<KingdomModifier> modifiers = new ArrayList<>();
 
 
     // =========================================================================
@@ -549,5 +581,80 @@ public class Kingdom {
     /** Clamps a 0..100 input to the valid stability/legitimacy range. */
     private static int clampScalar(int v) {
         return Math.max(0, Math.min(100, v));
+    }
+
+    // =========================================================================
+    // Track D3.2a — noble houses
+    // =========================================================================
+
+    /** Snapshot of all noble houses belonging to this kingdom. */
+    public List<House> getHouses() { return Collections.unmodifiableList(houses); }
+
+    public Optional<House> findHouse(UUID houseId) {
+        for (House h : houses) if (h.id().equals(houseId)) return Optional.of(h);
+        return Optional.empty();
+    }
+
+    public Optional<House> findHouseByName(String name) {
+        for (House h : houses) if (h.name().equalsIgnoreCase(name)) return Optional.of(h);
+        return Optional.empty();
+    }
+
+    public void addHouse(House house) {
+        if (house == null) return;
+        if (findHouse(house.id()).isPresent()) return;
+        houses.add(house);
+    }
+
+    public boolean removeHouse(UUID houseId) {
+        return houses.removeIf(h -> h.id().equals(houseId));
+    }
+
+    /** Replaces an existing house (matched by id) in-place; no-op if missing. */
+    public void replaceHouse(House replacement) {
+        if (replacement == null) return;
+        for (int i = 0; i < houses.size(); i++) {
+            if (houses.get(i).id().equals(replacement.id())) {
+                houses.set(i, replacement);
+                return;
+            }
+        }
+    }
+
+    // =========================================================================
+    // Track D3.2a — kingdom modifiers (stability / legitimacy hooks)
+    // =========================================================================
+
+    public List<KingdomModifier> getModifiers() {
+        return Collections.unmodifiableList(modifiers);
+    }
+
+    public void addModifier(KingdomModifier m) {
+        if (m != null) modifiers.add(m);
+    }
+
+    public boolean removeModifier(String id) {
+        return modifiers.removeIf(m -> m.id().equals(id));
+    }
+
+    /** Removes any modifier whose {@code expiresAtTick} is &le; the supplied tick. */
+    public int pruneExpiredModifiers(long currentTick) {
+        int before = modifiers.size();
+        modifiers.removeIf(m -> m.expiresAtTick() > 0 && m.expiresAtTick() <= currentTick);
+        return before - modifiers.size();
+    }
+
+    /** Sum of all stability deltas across active modifiers. */
+    public int stabilityModifierSum() {
+        int s = 0;
+        for (KingdomModifier m : modifiers) s += m.stabilityDelta();
+        return s;
+    }
+
+    /** Sum of all legitimacy deltas across active modifiers. */
+    public int legitimacyModifierSum() {
+        int s = 0;
+        for (KingdomModifier m : modifiers) s += m.legitimacyDelta();
+        return s;
     }
 }
