@@ -107,6 +107,9 @@ public final class TickSubsystemRegistry {
         register(new TierReconciliationTickSystem());
         register(new NpcMemoryDecayTickSystem());
         register(new GossipSchedulerTickSystem());
+
+        // Track C3.1 — advances player-initiated road proposals.
+        register(new RoadProposalTickSystem());
         register(new OfficeElectionTickSystem());
         register(new LawDecisionTickSystem());
         register(new CrimeTrialTickSystem());

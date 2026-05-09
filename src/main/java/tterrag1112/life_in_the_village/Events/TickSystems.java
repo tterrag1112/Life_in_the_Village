@@ -1130,3 +1130,23 @@ class HistoryPruneTickSystem implements TickSubsystem {
                 .prune(ctx.tick());
     }
 }
+
+/**
+ * Track C3.1 — advances every {@code IN_PROGRESS}
+ * {@link tterrag1112.life_in_the_village.Village.Roads.Proposal.RoadProposal}
+ * once per second. Calling
+ * {@link tterrag1112.life_in_the_village.Village.Roads.Proposal.RoadProposalManager#tick}
+ * is enough; the manager handles per-proposal advancement, completion
+ * commit, and EdgeRealizer dispatch.
+ */
+class RoadProposalTickSystem implements TickSubsystem {
+    @Override public String name()     { return "road_proposals"; }
+    @Override public int    interval() { return 20; }
+    @Override public int    priority() { return 210; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalManager.tick(ctx.level());
+    }
+}

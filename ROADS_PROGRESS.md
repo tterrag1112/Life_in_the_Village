@@ -5784,3 +5784,212 @@ Gradle network-blocked in this sandbox. Static review confirmed:
   used to provide a coarse waypoint sequence to
   `CaravanMerchantGoal`. Higher-fidelity sampling can come later
   if needed.
+
+---
+
+### 2026-05-09 — Track C3.1 / Phase 11: player-initiated road construction
+
+**Phase:** Track C3.1 (Phase 11) per `UNIFIED_REWORK_PLAN.md` and the
+"Phase 11 — Player-initiated road construction" section of
+`ROADS_PLAN.md`. The agency layer.
+
+#### Disposition of pre-existing surfaces
+
+Investigation pass before drafting any code surfaced three findings
+that materially shaped scope:
+
+1. **`PlayerProfession`** has no engineer/architect/surveyor slot;
+   the closest existing professions are CARPENTER and MERCHANT.
+   Adding a new `ROAD_ENGINEER` enum entry (with a corresponding
+   new `XpSource.ROAD_PROPOSAL_COMPLETE`) was the cleaner fit.
+2. **`CraftingOrderManager` / `CommissionBoardPanel` are workshop-
+   bench-shaped**, not road-shaped. The prompt's "post commissions
+   for BUILDER NPCs to walk and place blocks" assumed
+   infrastructure that does not exist — fitting "walk to road
+   segment N and realise it" into CraftingOrder would have meant
+   building a generic walk-and-place NPC goal from scratch.
+3. **`ConnectorPlanner.planConnector` commits in-call.** There is
+   no dry-run path. A pure validation pass (route exists / route
+   doesn't exist + reason) had to be implemented separately.
+
+#### Decisions (user-confirmed)
+
+- **Labor model**: treasury-driven, no NPC walking. Construction
+  advances by ticks + village treasury draw + player profession
+  level. The prompt's "watch BUILDER/STONEMASON walk the route"
+  becomes "the road materialises gradually as the proposal's
+  block budget is consumed; on completion, the edge is realised
+  in one shot through `EdgeRealizer`." A future agency-rework
+  phase can add a generic walk-and-place goal.
+- **Profession**: new `PlayerProfession.ROAD_ENGINEER`.
+  Thresholds match existing professions (Apprentice/Journeyman/
+  Expert/Master/Grandmaster at 0/500/2500/10000/40000 XP).
+  Sole XP source = `XpSource.ROAD_PROPOSAL_COMPLETE`, 100 XP
+  per completed route. `isRelevantBlock`/`isRelevantCraft` return
+  false for ROAD_ENGINEER (no ambient XP).
+- **Validation**: separate `RoadProposalRouter.dryRun(level, vA, vB)`
+  peer of `ConnectorPlanner.planConnector`. Routes A→B via
+  `AtlasRouteRouter.findRoute` with `CorridorAttractorBuilder`
+  attractors — same routing pipeline worldgen uses, no graph
+  mutation. Returns a sealed `RouteResult` (`Routed{cellPath}` or
+  `NoRoute{reason}`) that maps onto the UI / command-error path.
+- **UI**: minimal book screen + dev command. `ROAD_ENGINEER_PLANS`
+  book item right-clicks → `RoadProposalsScreen` with a read-only
+  list of the player's outstanding proposals (status, progress
+  bar, fee). Submission flows through the `/litv road propose`
+  command. A future phase can extend this into a full proposal-
+  builder with village pickers and a route preview.
+- **Cost model**: upfront flat fee paid by the player.
+  `blockCount = cellPath.size() × 16`,
+  `currencyFeeBronze = blockCount × 5 × tier_multiplier`
+  (LOCAL=1.0, CONNECTOR=1.5, TRUNK=2.5, GREAT_ROAD=4.0). For an
+  800-block CONNECTOR route the fee is 6 000 bronze ≈ 1.5 gold.
+  Village-treasury contribution is left as future scope; this
+  phase ships the player-pays model.
+- **Cross-tick advancement**: `RoadProposalManager.tick(level)`
+  runs every 20 ticks (1 second) via `RoadProposalTickSystem`.
+  Each `IN_PROGRESS` proposal advances by
+  `BASE_BLOCKS_PER_SECOND × (1 + 0.5 × playerLevel)` ≈ 1 block/sec
+  at level 0, 3 blocks/sec at Grandmaster. An 800-block route
+  takes ~13 minutes at level 0, ~5 minutes at max level.
+- **Completion**: `RoadProposalRouter.commit` produces a real
+  `RoadEdge` connecting both villages' dock nodes (preferring
+  Track C2 gateway TERMINUSes), `EdgeRealizer.realizeEdge`
+  materialises the blocks, both villages added to
+  `maintainerVillageIds` (so the existing decay loop applies),
+  XP + reputation grants fire, status flips to `COMPLETE`.
+
+#### Files added
+
+- `Village/Roads/Proposal/RoadProposal.java` — record + Status
+  enum + codec. Lifecycle: PROPOSED → IN_PROGRESS → COMPLETE
+  (or CANCELLED). `withProgress` / `withStatus` produce updated
+  copies.
+- `Village/Roads/Proposal/RoadProposalCalculator.java` — cost
+  formula. `Estimate(totalBlocks, currencyFeeBronze)` with
+  tier-multiplier logic.
+- `Village/Roads/Proposal/RoadProposalRouter.java` — dryRun +
+  commit peer of ConnectorPlanner. Resolves docking anchors with
+  Track C2 gateway awareness; rejects duplicate-edge proposals;
+  uses the same atlas + corridor-attractor pipeline as worldgen.
+- `Village/Roads/Proposal/RoadProposalManager.java` — orchestrator.
+  `submit` validates / charges / persists. `tick` advances all
+  in-progress. `complete` commits + realises + grants XP/rep.
+  `cancel` flips status without refund.
+- `Networking/OpenRoadProposalsPacket.java` — client-bound packet
+  carrying a flat list of proposal entries for the screen.
+- `Gui/RoadProposalsScreen.java` — read-only book screen using
+  Framework Chrome + ProgressBar.
+- `Items/RoadEngineerPlansItem.java` — book item; right-click
+  builds the snapshot and sends `OpenRoadProposalsPacket`.
+
+#### Files modified
+
+- `Profession/PlayerProfession.java` — `ROAD_ENGINEER` enum value;
+  `XpSource.ROAD_PROPOSAL_COMPLETE`; relevance-check switch arms.
+- `Profession/WorkplaceAssignmentManager.java` — exhaustive switch
+  on PlayerProfession needed a `case ROAD_ENGINEER` arm. Returns
+  a no-op TASK assignment because road-engineer work is issued
+  via the proposal system, not via village workplaces.
+- `Networking/WorldRoadSavedData.java` — new
+  `Map<UUID, RoadProposal> proposals` field on the snapshot
+  (optionalFieldOf so pre-C3.1 saves load with empty proposals).
+  New accessors: `getProposal`, `putProposal`, `removeProposal`,
+  `getAllProposals`.
+- `Village/Reputation/VillageReputation.java` — new
+  `ChangeReason.ROAD_PROPOSAL_COMPLETE` (+5 score delta).
+- `Village/Reputation/ReputationManager.java` — new public hook
+  `onRoadProposalCompleted(player, villageId, level)`.
+- `Items/ModItems.java` — registers `ROAD_ENGINEER_PLANS`.
+- `Events/ModModEvents.java` — registers
+  `OpenRoadProposalsPacket` as `playToClient`.
+- `Events/TickSystems.java` — adds `RoadProposalTickSystem`
+  (interval = 20).
+- `Events/TickSubsystemRegistry.java` — registers it.
+- `Commands/RoadGraphDebugCommand.java` — new commands:
+  `/litv road propose <vA> <vB> [tier]`,
+  `/litv road estimate <vA> <vB>`,
+  `/litv road cancel_proposal <proposalIdPrefix>`,
+  `/liv road debug complete_proposal <proposalIdPrefix>`,
+  `/liv road debug list_proposals`.
+
+#### Test plan (manual)
+
+1. `/give @s litv:road_engineer_plans` — pick up the book.
+2. Spawn two villages 800-1500 blocks apart with no existing
+   connector. Verify with `/liv road debug show_graph` that
+   they are unconnected.
+3. `/litv road estimate <vA> <vB>` — shows cell count, total
+   blocks, and the upfront fee. Verify fee scales with tier
+   (LOCAL=1×, CONNECTOR=1.5×, TRUNK=2.5×, GREAT_ROAD=4×).
+4. Carry enough coins (~1.5 gold for default 800-block CONNECTOR).
+5. `/litv road propose <vA> <vB>` — coins deducted; proposal
+   appears in `/liv road debug list_proposals`.
+6. Right-click the book → `RoadProposalsScreen` shows the
+   proposal with its progress bar.
+7. Wait — every 20 ticks the progress bar advances by 1 block
+   (×(1 + 0.5×level)).
+8. On reach 100%: status flips to COMPLETE, the connector edge
+   appears in `WorldRoadGraph`, the player gets +100 XP in
+   `ROAD_ENGINEER` and +5 reputation at both endpoints.
+9. `/liv road debug show_graph` confirms the new edge.
+10. Daily caravan dispatch uses the new connector — verify
+    `dispatch_test_caravan_between` between the same two
+    villages now finds a path that traverses the new edge.
+11. Server restart: the now-COMPLETE proposal persists; an
+    in-progress proposal also persists with its progressBlocks
+    intact and resumes ticking next tick cycle.
+12. Maintenance loop: the new edge appears in
+    `RoadUpkeepSystem`'s daily cycle once both villages have
+    treasury, with both as `maintainerVillageIds`.
+
+For testing without waiting for natural advancement, use
+`/liv road debug complete_proposal <prefix>` to force completion.
+
+#### Compile status
+
+Gradle network-blocked in this sandbox. Static review confirmed:
+- `WorldRoadSavedData.Snapshot` codec round-trips with
+  `proposals` defaulting to an empty map for pre-C3.1 saves.
+- `PlayerProfession`'s exhaustive switch consumers
+  (`WorkplaceAssignmentManager` only) get the new ROAD_ENGINEER
+  arm; relevance-check switches handle it (returns false).
+- `RoadProposalRouter.dryRun` does not mutate
+  `WorldRoadSavedData` or `VillageRoadsSavedData` (uses
+  `getOrCreate` only on the village's own internal graph, which
+  is a no-op when the graph already exists).
+- `EdgeRealizer.realizeEdge` is the same call worldgen
+  connectors use; the new edge is therefore graph-
+  indistinguishable from a worldgen connector.
+- Track C2 reuse of gateway TERMINUSes works correctly via
+  `RoadProposalRouter.resolveDock` — the new connector lands at
+  the same gateway TERMINUS a worldgen connector would have
+  used.
+
+#### Out of scope, flagged for future tracks
+
+- **Village-treasury contribution to road construction.** Player
+  pays the full fee upfront in this phase. A future phase can
+  add a treasury-draw stream tied to maintainer villages so
+  building a long road meaningfully drains village wealth.
+- **NPC walking labor.** A `RoadWorkerGoal` extending
+  BuilderGoal semantics is the natural follow-on. Would need
+  chunk-loading along the route for far segments.
+- **Full proposal-builder UI** with village pickers, route
+  preview, and tier selector. The current screen is read-only;
+  submission goes through `/litv road propose`.
+- **Refunds on cancellation.** Per the prompt: "Refunds on
+  cancellation beyond returning the player's currency fee" are
+  out of scope; this phase does not refund the upfront fee
+  either, since no village treasury has been touched.
+- **Multi-village routes (>2 endpoints).** Out of scope per
+  prompt.
+- **Proposal queueing.** Multiple in-progress proposals from
+  the same player are allowed, but two proposals between the
+  same village pair are rejected at submit time.
+- **Auto-LAND-route creation for daily caravan dispatch.** Pre-
+  existing C1 carryover gap; player-built edges still need a
+  `TradeRoute.createGraph` somewhere to be picked up by the
+  daily dispatcher. The diagnostic `dispatch_test_caravan_between`
+  command will use the new edge once it's registered. Daily
+  auto-creation lives in a future phase.

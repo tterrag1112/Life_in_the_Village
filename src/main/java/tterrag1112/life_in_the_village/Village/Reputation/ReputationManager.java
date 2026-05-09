@@ -46,6 +46,13 @@ public final class ReputationManager {
         modify(player, villageId, VillageReputation.ChangeReason.JOB_POSTING_COMPLETE, level);
     }
 
+    /** Player completed a road-construction proposal landing at this village. */
+    public static void onRoadProposalCompleted(ServerPlayer player,
+                                                UUID villageId,
+                                                ServerLevel level) {
+        modify(player, villageId, VillageReputation.ChangeReason.ROAD_PROPOSAL_COMPLETE, level);
+    }
+
     /** Player completed a single trade at a village market. */
     public static void onTradeCompleted(ServerPlayer player,
                                         UUID villageId,

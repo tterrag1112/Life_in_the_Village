@@ -55,6 +55,7 @@ spec matches reality.
 | C1-tr | TradeRoad.java deletion | Done 2026-05-09 | Land routes are graph-only; legacy land/realisation/event stack removed. See ROADS_PROGRESS Track C1 entry. |
 | C1-cv | TravellingGroupEngine synthetic-caravan fix | Done 2026-05-09 | Root cause was in the diagnostic command's synthetic principal UUID, not the engine. `dispatch_test_caravan_between` now reserves a real merchant via `reserveIdleMerchant` + `setCurrentExpeditionId`. |
 | C2 | Phase 7f Slice 4 connector routing | Done 2026-05-09 | V2 villages register multi-gateway docks (spine endpoints + cross-street outer arms); ConnectorPlanner reuses gateway TERMINUSes; new `GraphTradeRouteEstablisher.findSegmentedPath` does augmented Dijkstra over world graph + village internal hops, emits `RouteSegment.WorldEdge`+`VillageTraversal` chains. See ROADS_PROGRESS Track C2 entry. |
+| C3.1 | Phase 11 player-initiated roads | Done 2026-05-09 | New `ROAD_ENGINEER` PlayerProfession; `RoadProposal` saved-data co-tenant on WorldRoadSavedData; treasury-driven cross-tick advancement (no NPC walking); minimal `ROAD_ENGINEER_PLANS` book screen + `/litv road propose` command; reuses worldgen `AtlasRouteRouter` + `EdgeRealizer` for graph-indistinguishable connectors. See ROADS_PROGRESS Phase 11 entry. |
 | C3-11 | Phase 11 — player-initiated road construction | Not-Started | |
 | C3-12 | Phase 12 — POI subroads | Not-Started | |
 | C3-13 | Phase 13 — sea route unification | Not-Started | Folds SeaRoute into world graph. |
@@ -2227,3 +2228,67 @@ the middle one has cross streets; confirm
 middle one; run `dispatch_test_caravan_between` between the
 flanking villages and watch the caravan walk through the middle
 village along its painted spine and out the far gateway.
+
+### 2026-05-09 — Track C3.1 landed (player-initiated road construction)
+
+Phase 11 from `ROADS_PLAN.md` shipped. Per-file detail in
+`ROADS_PROGRESS.md` under "Phase 11" (most recent entry); summary
+here.
+
+**Disposition before code:**
+- `PlayerProfession` had no engineer slot → added new
+  `ROAD_ENGINEER` enum value with `XpSource.ROAD_PROPOSAL_COMPLETE`.
+- `CraftingOrderManager` is workshop-bench-shaped, not road-shaped
+  → labor flows through a treasury-driven cross-tick loop, no NPC
+  walking this phase.
+- `ConnectorPlanner.planConnector` commits in-call → added
+  `RoadProposalRouter.dryRun` peer for pure validation.
+
+**User-confirmed scope:** treasury-driven labor; new ROAD_ENGINEER
+profession; dryRun on a peer (not threaded through ConnectorPlanner);
+minimal book screen + dev command.
+
+**Code shipped:**
+
+- `Village/Roads/Proposal/` — new package containing
+  `RoadProposal` (record + Status), `RoadProposalCalculator`
+  (cost formula), `RoadProposalRouter` (dryRun + commit using the
+  same atlas + corridor pipeline as worldgen, reusing Track C2
+  gateway TERMINUSes), and `RoadProposalManager` (submit / tick /
+  complete / cancel).
+- `Networking/WorldRoadSavedData.java` — `proposals` field on
+  Snapshot (optionalFieldOf so pre-C3.1 saves load empty).
+- `Profession/PlayerProfession.java` — new `ROAD_ENGINEER` enum
+  value + `XpSource.ROAD_PROPOSAL_COMPLETE`. Exhaustive switch
+  consumers (only `WorkplaceAssignmentManager`) get the new arm.
+- `Village/Reputation/{VillageReputation,ReputationManager}.java`
+  — new `ChangeReason.ROAD_PROPOSAL_COMPLETE` (+5 score) and
+  `onRoadProposalCompleted` hook.
+- `Items/RoadEngineerPlansItem.java` + `Items/ModItems.java`
+  registration + `Networking/OpenRoadProposalsPacket.java` +
+  `Gui/RoadProposalsScreen.java` — read-only book UI.
+- `Events/TickSystems.java` + `Events/TickSubsystemRegistry.java`
+  — `RoadProposalTickSystem` (interval = 20).
+- `Commands/RoadGraphDebugCommand.java` — five new commands:
+  `/litv road propose`, `/litv road estimate`,
+  `/litv road cancel_proposal`, `/liv road debug complete_proposal`,
+  `/liv road debug list_proposals`.
+
+**Save compat:** existing saves load with no proposals;
+`PlayerProfession`'s new enum value has its own thresholds and
+defaults to 0 XP. Player-built edges go through the same
+`EdgeRealizer` and per-edge maintenance system as worldgen edges.
+
+**Out-of-scope but flagged:** village-treasury contribution,
+NPC walk-and-place labor, full proposal-builder UI with route
+preview, refunds on cancellation, auto-LAND-route creation for
+daily caravan dispatch (a Track C1 carryover gap that affects
+all LAND routing, not just player-built ones).
+
+**Cumulative pending verification:** spawn two villages 800-1500
+blocks apart with no existing connector; carry ≈1.5 gold; right-
+click `litv:road_engineer_plans`; submit via
+`/litv road propose <vA> <vB>`; watch the progress bar advance ~1
+block per second; on completion verify edge present in
+`WorldRoadGraph`, +100 XP, +5 reputation at both endpoints, edge
+realised in world.

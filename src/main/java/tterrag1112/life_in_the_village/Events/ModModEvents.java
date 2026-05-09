@@ -171,6 +171,12 @@ public class ModModEvents {
                 OpenVillageBookPacket.TYPE,
                 OpenVillageBookPacket.CODEC,
                 OpenVillageBookPacket::handle);
+
+        // Track C3.1 — road proposals book screen.
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Networking.OpenRoadProposalsPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.OpenRoadProposalsPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.OpenRoadProposalsPacket::handle);
         registrar.playToServer(
                 VillageActionPacket.TYPE,
                 VillageActionPacket.CODEC,

@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Events.RoadEvent;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Proposal.RoadProposal;
 
 
 import java.util.ArrayList;
@@ -85,7 +86,8 @@ public class WorldRoadSavedData extends SavedData {
                              Map<UUID, List<ShelterInstance>> edgeShelters,
                              Map<UUID, TollGateRecord> tollGates,
                              Map<UUID, RoadEvent> events,
-                             List<String> worldUniqueTypesPlaced) {
+                             List<String> worldUniqueTypesPlaced,
+                             Map<UUID, RoadProposal> proposals) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
@@ -105,7 +107,12 @@ public class WorldRoadSavedData extends SavedData {
                         .forGetter(Snapshot::events),
                 Codec.STRING.listOf()
                         .optionalFieldOf("worldUniqueTypesPlaced", new ArrayList<>())
-                        .forGetter(Snapshot::worldUniqueTypesPlaced)
+                        .forGetter(Snapshot::worldUniqueTypesPlaced),
+                // Track C3.1: player-initiated road proposals. Empty for
+                // pre-C3.1 saves; otherwise persisted across world load.
+                Codec.unboundedMap(UUID_CODEC, RoadProposal.CODEC)
+                        .optionalFieldOf("roadProposals", new HashMap<>())
+                        .forGetter(Snapshot::proposals)
         ).apply(i, Snapshot::new));
     }
 
@@ -116,7 +123,8 @@ public class WorldRoadSavedData extends SavedData {
                         snap.greatRoadGenerationComplete(), new HashMap<>(snap.edgeShelters()),
                         new HashMap<>(snap.tollGates()),
                         new HashMap<>(snap.events()),
-                        new HashSet<>(snap.worldUniqueTypesPlaced()));
+                        new HashSet<>(snap.worldUniqueTypesPlaced()),
+                        new HashMap<>(snap.proposals()));
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -132,7 +140,8 @@ public class WorldRoadSavedData extends SavedData {
                     data.greatRoadGenerationComplete, new HashMap<>(data.edgeShelters),
                     new HashMap<>(data.tollGates),
                     new HashMap<>(data.events),
-                    new ArrayList<>(data.worldUniqueTypesPlaced))
+                    new ArrayList<>(data.worldUniqueTypesPlaced),
+                    new HashMap<>(data.proposals))
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -157,6 +166,8 @@ public class WorldRoadSavedData extends SavedData {
     private final Map<UUID, RoadEvent> events;
     /** Phase 10 — typeIds of world-unique events that have already been placed. */
     private final Set<String> worldUniqueTypesPlaced;
+    /** Track C3.1 — proposal id → player-submitted road proposal. */
+    private final Map<UUID, RoadProposal> proposals;
 
     // =========================================================================
     // Constructors
@@ -171,6 +182,7 @@ public class WorldRoadSavedData extends SavedData {
         this.tollGates                   = new HashMap<>();
         this.events                      = new HashMap<>();
         this.worldUniqueTypesPlaced      = new HashSet<>();
+        this.proposals                   = new HashMap<>();
     }
 
     private WorldRoadSavedData(WorldRoadGraph graph,
@@ -179,7 +191,8 @@ public class WorldRoadSavedData extends SavedData {
                                 Map<UUID, List<ShelterInstance>> edgeShelters,
                                 Map<UUID, TollGateRecord> tollGates,
                                 Map<UUID, RoadEvent> events,
-                                Set<String> worldUniqueTypesPlaced) {
+                                Set<String> worldUniqueTypesPlaced,
+                                Map<UUID, RoadProposal> proposals) {
         this.graph                       = graph;
         this.ledgers                     = ledgers;
         this.greatRoadGenerationComplete = greatRoadGenerationComplete;
@@ -187,6 +200,7 @@ public class WorldRoadSavedData extends SavedData {
         this.tollGates                   = tollGates;
         this.events                      = events;
         this.worldUniqueTypesPlaced      = worldUniqueTypesPlaced;
+        this.proposals                   = proposals;
     }
 
     // =========================================================================
@@ -304,6 +318,31 @@ public class WorldRoadSavedData extends SavedData {
     /** Unmodifiable view of all toll gate records, keyed by node UUID. */
     public Map<UUID, TollGateRecord> getAllTollGates() {
         return Collections.unmodifiableMap(tollGates);
+    }
+
+    // =========================================================================
+    // Road proposals (Track C3.1)
+    // =========================================================================
+
+    /** Returns the proposal with this id, or empty. */
+    public Optional<RoadProposal> getProposal(UUID id) {
+        return Optional.ofNullable(proposals.get(id));
+    }
+
+    /** Adds (or overwrites) a proposal. Marks dirty. */
+    public void putProposal(RoadProposal proposal) {
+        proposals.put(proposal.id(), proposal);
+        setDirty();
+    }
+
+    /** Removes the proposal by id. No-op if absent. */
+    public void removeProposal(UUID id) {
+        if (proposals.remove(id) != null) setDirty();
+    }
+
+    /** Unmodifiable view of all proposals, keyed by proposal UUID. */
+    public Map<UUID, RoadProposal> getAllProposals() {
+        return Collections.unmodifiableMap(proposals);
     }
 
     // =========================================================================

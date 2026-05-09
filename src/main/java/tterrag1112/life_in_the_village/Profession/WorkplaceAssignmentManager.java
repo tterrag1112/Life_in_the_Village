@@ -753,6 +753,21 @@ public class WorkplaceAssignmentManager {
                     currentTick, currentTick + TASK_DEADLINE,
                     30, 7L)
                     .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
+
+            // Track C3.1: ROAD_ENGINEER does not bind to a village
+            // workplace — its tasks are issued via RoadProposal
+            // submissions and tracked in WorldRoadSavedData. No
+            // quota or simple-task variant is meaningful here.
+            // Returning a no-op TASK keeps the assignment-pipeline
+            // non-exhaustive callers (commission rotation, etc.)
+            // safe; the assignment is never surfaced to the player.
+            case ROAD_ENGINEER -> new PlayerWorkplace.WorkAssignment(
+                    PlayerWorkplace.AssignmentType.TASK,
+                    "(road-engineer tasks issue via the road-proposal system)",
+                    "", 1, 0,
+                    currentTick, currentTick + TASK_DEADLINE,
+                    0, 0L)
+                    .withType(WorkTaskType.BUSYWORK, TaskPriority.LOW);
         };
     }
 

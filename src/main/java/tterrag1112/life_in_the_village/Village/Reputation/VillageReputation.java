@@ -115,6 +115,7 @@ public class VillageReputation {
         CRAFTING_ORDER_FILLED (  3, "Fulfilled a crafting order"),
         DONATED_TO_VILLAGE    ( 10, "Donated to the village treasury"),
         VILLAGE_EVENT_HELPED  (  5, "Helped during a village event"),
+        ROAD_PROPOSAL_COMPLETE(  5, "Completed a road-construction proposal"),
 
         STOLE_FROM_CONTAINER  (-20, "Stole from village property"),
         ATTACKED_NPC          (-50, "Attacked a villager"),

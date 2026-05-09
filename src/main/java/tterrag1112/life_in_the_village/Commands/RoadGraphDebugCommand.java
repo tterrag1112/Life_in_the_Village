@@ -178,6 +178,12 @@ public class RoadGraphDebugCommand {
                                 .then(Commands.literal("inspect_junction")
                                         .then(Commands.argument("nodeId", StringArgumentType.word())
                                                 .executes(RoadGraphDebugCommand::inspectJunction)))
+                                // Track C3.1 — force a road proposal to completion.
+                                .then(Commands.literal("complete_proposal")
+                                        .then(Commands.argument("proposalIdPrefix", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::completeProposal)))
+                                .then(Commands.literal("list_proposals")
+                                        .executes(RoadGraphDebugCommand::listProposals))
                                 .then(Commands.literal("cleanup_scan")
                                         .executes(RoadGraphDebugCommand::cleanupScan)
                                         .then(Commands.argument("radius", IntegerArgumentType.integer(64, 4096))
@@ -423,6 +429,24 @@ public class RoadGraphDebugCommand {
                         .then(Commands.literal("pay")
                                 .executes(RoadGraphDebugCommand::playerTollPay))
                 )
+        );
+
+        // ── /litv road propose <vA> <vB> [tier]  (Track C3.1) ────────────────
+        dispatcher.register(Commands.literal("litv")
+                .then(Commands.literal("road")
+                        .then(Commands.literal("propose")
+                                .then(Commands.argument("villageA", StringArgumentType.word())
+                                .then(Commands.argument("villageB", StringArgumentType.word())
+                                        .executes(RoadGraphDebugCommand::proposeRoadConnector)
+                                        .then(Commands.argument("tier", StringArgumentType.word())
+                                                .executes(RoadGraphDebugCommand::proposeRoadConnectorWithTier)))))
+                        .then(Commands.literal("estimate")
+                                .then(Commands.argument("villageA", StringArgumentType.word())
+                                .then(Commands.argument("villageB", StringArgumentType.word())
+                                        .executes(RoadGraphDebugCommand::estimateRoadConnector))))
+                        .then(Commands.literal("cancel_proposal")
+                                .then(Commands.argument("proposalIdPrefix", StringArgumentType.word())
+                                        .executes(RoadGraphDebugCommand::cancelProposal))))
         );
     }
 
@@ -4835,5 +4859,179 @@ public class RoadGraphDebugCommand {
         long dx = (long) a.getX() - b.getX();
         long dz = (long) a.getZ() - b.getZ();
         return dx * dx + dz * dz;
+    }
+
+    // =========================================================================
+    // Track C3.1 — road proposal commands
+    // =========================================================================
+
+    private static Village findVillageByName(VillageSavedData vdata, String name) {
+        return vdata.getAllVillages().stream()
+                .filter(v -> v.getName().equalsIgnoreCase(name))
+                .findFirst().orElse(null);
+    }
+
+    private static tterrag1112.life_in_the_village.Village.Roads.Proposal.RoadProposal
+            findProposalByPrefix(ServerLevel level, String prefix) {
+        return WorldRoadSavedData.get(level).getAllProposals().values().stream()
+                .filter(p -> p.id().toString().startsWith(prefix))
+                .findFirst().orElse(null);
+    }
+
+    private static int estimateRoadConnector(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vdata = VillageSavedData.get(level);
+        String aName = StringArgumentType.getString(ctx, "villageA");
+        String bName = StringArgumentType.getString(ctx, "villageB");
+        Village vA = findVillageByName(vdata, aName);
+        Village vB = findVillageByName(vdata, bName);
+        if (vA == null || vB == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown village name: '" + (vA == null ? aName : bName) + "'"));
+            return 0;
+        }
+        var routed = tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalRouter.dryRun(level, vA, vB);
+        if (routed instanceof tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalRouter.RouteResult.NoRoute(String reason)) {
+            ctx.getSource().sendFailure(Component.literal("Cannot route: " + reason));
+            return 0;
+        }
+        var ok = (tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalRouter.RouteResult.Routed) routed;
+        var est = tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalCalculator.estimate(ok.cellPath(),
+                        tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge.EdgeTier.CONNECTOR);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Estimate " + vA.getName() + " ↔ " + vB.getName() + ": "
+                + ok.cellPath().size() + " cells, " + est.totalBlocks()
+                + " blocks, fee = " + est.currencyFee()
+                + " (CONNECTOR tier)."), false);
+        return 1;
+    }
+
+    private static int proposeRoadConnector(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        return submitProposal(ctx,
+                tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge.EdgeTier.CONNECTOR);
+    }
+
+    private static int proposeRoadConnectorWithTier(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        String tierStr = StringArgumentType.getString(ctx, "tier").toUpperCase();
+        tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge.EdgeTier tier;
+        try {
+            tier = tterrag1112.life_in_the_village.Village.Roads.Graph
+                    .RoadEdge.EdgeTier.valueOf(tierStr);
+        } catch (IllegalArgumentException ex) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown tier '" + tierStr + "'. Use LOCAL, CONNECTOR, TRUNK, or GREAT_ROAD."));
+            return 0;
+        }
+        return submitProposal(ctx, tier);
+    }
+
+    private static int submitProposal(CommandContext<CommandSourceStack> ctx,
+                                       tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge.EdgeTier tier)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vdata = VillageSavedData.get(level);
+        String aName = StringArgumentType.getString(ctx, "villageA");
+        String bName = StringArgumentType.getString(ctx, "villageB");
+        Village vA = findVillageByName(vdata, aName);
+        Village vB = findVillageByName(vdata, bName);
+        if (vA == null || vB == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Unknown village name: '" + (vA == null ? aName : bName) + "'"));
+            return 0;
+        }
+        var result = tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalManager.submit(level, player, vA, vB, tier);
+        if (result instanceof tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalManager.SubmitResult.Rejected(String reason)) {
+            ctx.getSource().sendFailure(Component.literal("Proposal rejected: " + reason));
+            return 0;
+        }
+        var ok = (tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalManager.SubmitResult.Submitted) result;
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Proposal " + ok.proposal().id().toString().substring(0, 8)
+                + " submitted (" + ok.proposal().totalBlocks() + " blocks, fee paid: "
+                + tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue
+                        .of(ok.proposal().currencyFeeBronze())
+                + "). Crafting will advance over real time."), false);
+        return 1;
+    }
+
+    private static int cancelProposal(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        ServerLevel level = ctx.getSource().getLevel();
+        String prefix = StringArgumentType.getString(ctx, "proposalIdPrefix");
+        var p = findProposalByPrefix(level, prefix);
+        if (p == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No proposal id starts with '" + prefix + "'"));
+            return 0;
+        }
+        // Only the owner (or op via debug variant) can cancel through /litv.
+        if (!p.proposingPlayerId().equals(player.getUUID())) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "That proposal belongs to another player."));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalManager.cancel(level, p);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Proposal " + p.id().toString().substring(0, 8) + " cancelled. "
+                + "Currency fee is not refunded."), false);
+        return 1;
+    }
+
+    private static int completeProposal(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ServerLevel level = ctx.getSource().getLevel();
+        String prefix = StringArgumentType.getString(ctx, "proposalIdPrefix");
+        var p = findProposalByPrefix(level, prefix);
+        if (p == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No proposal id starts with '" + prefix + "'"));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Village.Roads.Proposal
+                .RoadProposalManager.complete(level, p);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Forced completion of proposal " + p.id().toString().substring(0, 8)
+                + "."), false);
+        return 1;
+    }
+
+    private static int listProposals(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        VillageSavedData vdata = VillageSavedData.get(level);
+        var props = WorldRoadSavedData.get(level).getAllProposals().values();
+        if (props.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "No road proposals registered."), false);
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "── Road proposals (" + props.size() + ") ──"), false);
+        for (var p : props) {
+            String fromName = vdata.getVillageById(p.fromVillageId())
+                    .map(Village::getName).orElse("(missing)");
+            String toName = vdata.getVillageById(p.toVillageId())
+                    .map(Village::getName).orElse("(missing)");
+            String pid = p.id().toString().substring(0, 8);
+            int pct = (int) (p.progressFraction() * 100);
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + pid + "  " + fromName + " → " + toName
+                    + "  " + p.tier() + "  " + p.status()
+                    + "  " + pct + "%  ("
+                    + p.progressBlocks() + " / " + p.totalBlocks() + ")"), false);
+        }
+        return props.size();
     }
 }

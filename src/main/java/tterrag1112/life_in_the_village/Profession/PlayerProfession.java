@@ -121,6 +121,31 @@ public enum PlayerProfession {
                     XpSource.CRAFT_RELEVANT, 3,    // 3 XP — crafting weapons & armour
                     XpSource.SELL_TO_NPC,    1     // 1 XP — minor
             )
+    ),
+
+    /**
+     * ROAD_ENGINEER — surveys, plans and oversees the construction of
+     * inter-village connector roads (Track C3.1, Phase 11).
+     *
+     * <h3>XP sources</h3>
+     * The only meaningful XP source is completing a road-construction
+     * proposal — every other source is zero. A new connector materialises
+     * over real time after the player submits the proposal and the
+     * cross-tick construction loop drains its budget; on completion, the
+     * player who submitted it receives a flat XP grant via
+     * {@link XpSource#ROAD_PROPOSAL_COMPLETE}.
+     *
+     * <h3>Levels</h3>
+     * Higher levels reduce the per-block tick budget for proposals the
+     * player owns: at Apprentice the construction rate is 1 block/sec;
+     * at Grandmaster it scales to 3 blocks/sec.
+     */
+    ROAD_ENGINEER(
+            "Road Engineer",
+            new int[]{0, 500, 2_500, 10_000, 40_000},
+            Map.of(
+                    XpSource.ROAD_PROPOSAL_COMPLETE, 100  // 100 XP per completed route
+            )
     );
 
     // =========================================================================
@@ -133,7 +158,9 @@ public enum PlayerProfession {
         CRAFT_RELEVANT,
         SELL_TO_NPC,
         JOB_POSTING,
-        KILL_MOB
+        KILL_MOB,
+        /** Track C3.1: granted on completion of a {@code RoadProposal}. */
+        ROAD_PROPOSAL_COMPLETE
     }
 
     // =========================================================================
@@ -233,6 +260,7 @@ public enum PlayerProfession {
                     Identifier.withDefaultNamespace("ancient_debris")));
             case GUARD      -> false;   // Guards earn from KILL_MOB instead
             case MERCHANT   -> false;   // Merchants earn from SELL_TO_NPC instead
+            case ROAD_ENGINEER -> false; // Road engineers earn only via ROAD_PROPOSAL_COMPLETE
         };
     }
 
@@ -275,6 +303,8 @@ public enum PlayerProfession {
                     || result.getItem() == Items.SHIELD
                     || result.getItem() == Items.ARROW
                     || result.getItem() == Items.CROSSBOW;
+
+            case ROAD_ENGINEER -> false; // No craft-XP for road engineers
         };
     }
     /**
