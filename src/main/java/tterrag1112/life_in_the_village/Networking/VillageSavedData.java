@@ -452,7 +452,10 @@ public class VillageSavedData extends SavedData implements
                     // Pre-D1 saves load false; the migration runs once and
                     // flips it true. Fresh worlds default true.
                     Codec.BOOL.optionalFieldOf("kingdomMembershipMigrated", false)
-                            .forGetter(d -> d.kingdomMembershipMigrated)
+                            .forGetter(d -> d.kingdomMembershipMigrated),
+                    // Track D3.1 — capital-back-fill idempotency flag.
+                    Codec.BOOL.optionalFieldOf("kingdomCapitalMigrated", false)
+                            .forGetter(d -> d.kingdomCapitalMigrated)
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -474,10 +477,12 @@ public class VillageSavedData extends SavedData implements
             VillageSubBuildingData subBuildingData,
             VillageGardenData     gardenData,
             VillageFarmData       farmSectorData,
-            boolean               kingdomMembershipMigrated) {
+            boolean               kingdomMembershipMigrated,
+            boolean               kingdomCapitalMigrated) {
 
         VillageSavedData data = new VillageSavedData();
         data.kingdomMembershipMigrated = kingdomMembershipMigrated;
+        data.kingdomCapitalMigrated    = kingdomCapitalMigrated;
 
         // Structure
         data.buildings.addAll(structureData.buildings());
@@ -658,6 +663,13 @@ public class VillageSavedData extends SavedData implements
     // saves arrive with a codec value of false and the migration
     // runs once on first server tick.
     private boolean kingdomMembershipMigrated = true;
+    // Track D3.1 — capitalVillageId back-fill flag. Independent of
+    // the D1 flag because pre-D3.1 saves may already have the D1
+    // migration done (flag = true) but no capitalVillageId field.
+    // Fresh D3.1+ worlds default true; pre-D3.1 saves arrive false
+    // and the migration stamps Kingdom.capitalVillageId from the
+    // first entry of villageIds.
+    private boolean kingdomCapitalMigrated = true;
 
     // Property
     private final List<PlayerHousingData.PlayerProperty> playerProperties = new ArrayList<>();
@@ -729,6 +741,12 @@ public class VillageSavedData extends SavedData implements
     public void markDirty() { setDirty(); }
 
     /** Track D1 — KingdomMembershipMigration idempotency flag. */
+    public boolean isKingdomCapitalMigrated() { return kingdomCapitalMigrated; }
+    public void setKingdomCapitalMigrated(boolean v) {
+        this.kingdomCapitalMigrated = v;
+        setDirty();
+    }
+
     public boolean isKingdomMembershipMigrated() { return kingdomMembershipMigrated; }
     public void setKingdomMembershipMigrated(boolean v) {
         this.kingdomMembershipMigrated = v;

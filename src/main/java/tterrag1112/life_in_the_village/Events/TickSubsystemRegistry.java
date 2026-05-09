@@ -113,6 +113,11 @@ public final class TickSubsystemRegistry {
 
         // Track C3.2 — discovers POIs near players and plans subroads.
         register(new PoiDiscoveryTickSystem());
+
+        // Track D3.1 — bootstraps kingdom offices for newly-realised
+        // capital villages. Idempotent; skips kingdoms whose king is
+        // already seated.
+        register(new KingdomOfficeBootstrapTickSystem());
         register(new OfficeElectionTickSystem());
         register(new LawDecisionTickSystem());
         register(new CrimeTrialTickSystem());

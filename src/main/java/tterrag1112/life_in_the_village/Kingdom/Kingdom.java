@@ -111,7 +111,13 @@ public class Kingdom {
                             Codec.INT.optionalFieldOf("legitimacy", 75)
                                     .forGetter(k -> k.legitimacy),
                             Heraldry.CODEC.optionalFieldOf("heraldry", Heraldry.UNKNOWN)
-                                    .forGetter(k -> k.heraldry)
+                                    .forGetter(k -> k.heraldry),
+                            // Track D3.1 — capital + founding bookkeeping.
+                            Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                                    .optionalFieldOf("capitalVillageId")
+                                    .forGetter(k -> Optional.ofNullable(k.capitalVillageId)),
+                            Codec.LONG.optionalFieldOf("foundingTick", 0L)
+                                    .forGetter(k -> k.foundingTick)
                     ).apply(instance, Kingdom::fromCodec));
 
 
@@ -125,7 +131,8 @@ public class Kingdom {
             Optional<KingdomClaim> claim,
             KingdomGovernanceData governance,
             Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
-            int stability, int legitimacy, Heraldry heraldry) {
+            int stability, int legitimacy, Heraldry heraldry,
+            Optional<UUID> capitalVillageId, long foundingTick) {
         Kingdom k = new Kingdom(id, name, culture);
         k.stability = clampScalar(stability);
         k.legitimacy = clampScalar(legitimacy);
@@ -138,6 +145,9 @@ public class Kingdom {
             k.heraldry = heraldry;
         }
         // else: keep the constructor-generated heraldry.
+        // Track D3.1 — capital + founding bookkeeping.
+        capitalVillageId.ifPresent(cid -> k.capitalVillageId = cid);
+        k.foundingTick = foundingTick;
         k.villageIds.addAll(villageIds);
         rulerEntity.ifPresent(rid -> k.rulerEntityId = rid);
         rulerPlayer.ifPresent(pid -> k.rulerPlayerId = pid);
@@ -224,6 +234,26 @@ public class Kingdom {
      * Never null after construction; never null after codec round-trip.
      */
     private Heraldry heraldry = Heraldry.UNKNOWN;
+
+    /**
+     * Track D3.1 — UUID of the capital village. Set by
+     * {@code CapitalGenerator} at kingdom founding; back-filled for
+     * pre-D3.1 saves by {@code KingdomCapitalMigration} from the
+     * first entry of {@link #villageIds}. Never null after
+     * back-fill; new code paths read this rather than indexing
+     * villageIds.
+     */
+    @javax.annotation.Nullable
+    private UUID capitalVillageId = null;
+
+    /**
+     * Track D3.1 — server tick at which this kingdom was founded.
+     * Pre-D3.1 saves arrive with 0L (the codec default); D3.1
+     * generation stamps the actual tick. Used by
+     * {@link HeraldryGenerator} as the foundingSeed and by D3
+     * stability / legitimacy decay to age the kingdom.
+     */
+    private long foundingTick = 0L;
 
 
     // =========================================================================
@@ -505,6 +535,16 @@ public class Kingdom {
 
     public Heraldry getHeraldry()       { return heraldry; }
     public void setHeraldry(Heraldry h) { this.heraldry = h == null ? Heraldry.UNKNOWN : h; }
+
+    // =========================================================================
+    // Track D3.1 — capital + founding
+    // =========================================================================
+
+    public Optional<UUID> getCapitalVillageId() { return Optional.ofNullable(capitalVillageId); }
+    public void setCapitalVillageId(UUID id)     { this.capitalVillageId = id; }
+
+    public long getFoundingTick()         { return foundingTick; }
+    public void setFoundingTick(long t)   { this.foundingTick = t; }
 
     /** Clamps a 0..100 input to the valid stability/legitimacy range. */
     private static int clampScalar(int v) {

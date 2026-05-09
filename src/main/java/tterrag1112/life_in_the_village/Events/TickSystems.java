@@ -1180,3 +1180,22 @@ class PoiDiscoveryTickSystem implements TickSubsystem {
                 .PoiSubroadPlanner.planAllPending(ctx.level());
     }
 }
+
+/**
+ * Track D3.1 — kingdom office bootstrap. Once per second, scan
+ * kingdoms whose capital village has realised (buildingIds non-empty)
+ * but whose kingdom_king is still vacant; fresh-spawn the founding
+ * ruler and draft / fresh-spawn the culture's required offices.
+ * Idempotent: skips kingdoms whose king is already seated.
+ */
+class KingdomOfficeBootstrapTickSystem implements TickSubsystem {
+    @Override public String name()     { return "kingdom_office_bootstrap"; }
+    @Override public int    interval() { return 20; }
+    @Override public int    priority() { return 220; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Worldgen
+                .KingdomOfficeBootstrap.runOnce(ctx.level());
+    }
+}

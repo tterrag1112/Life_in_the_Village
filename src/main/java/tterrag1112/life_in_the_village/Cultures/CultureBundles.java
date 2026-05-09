@@ -578,7 +578,18 @@ public final class CultureBundles {
             SuccessionRule              successionRule,
             SubdivisionModel            subdivisionModel,
             Map<UpkeepSource, Double>   upkeepMix,
-            List<String>                requiredOffices
+            List<String>                requiredOffices,
+            // Track D1.5 (D3.1 prep) — six fields per D2 Section 5.5.
+            // Ship inert at D3.1 close: D3.1 itself reads claimBudgetHint
+            // and claimResistance; the other four are populated for D3.2+
+            // consumers (vassalage, hostile spacing, succession nobility
+            // gates, province-seat derivation).
+            int                         claimBudgetHint,
+            float                       claimResistance,
+            List<String>                vassalEligibleCultures,
+            List<String>                hostileCultures,
+            int                         minNobilityTier,
+            int                         provinceSeatThreshold
     ) {
         public CultureKingdomDefaults {
             nobilityRanks   = List.copyOf(nobilityRanks   != null ? nobilityRanks   : List.of());
@@ -586,8 +597,19 @@ public final class CultureBundles {
                     ? Collections.unmodifiableMap(new EnumMap<>(upkeepMix))
                     : Map.of();
             requiredOffices = List.copyOf(requiredOffices != null ? requiredOffices : List.of());
+            vassalEligibleCultures = List.copyOf(
+                    vassalEligibleCultures != null ? vassalEligibleCultures : List.of());
+            hostileCultures = List.copyOf(
+                    hostileCultures != null ? hostileCultures : List.of());
             if (successionRule == null)   successionRule   = SuccessionRule.PRIMOGENITURE;
             if (subdivisionModel == null) subdivisionModel = SubdivisionModel.PROVINCES;
+            // claimResistance clamps to [0, 1].
+            if (claimResistance < 0f) claimResistance = 0f;
+            if (claimResistance > 1f) claimResistance = 1f;
+            // claimBudgetHint floors at 1 — a 0-budget claim never expands.
+            if (claimBudgetHint < 1) claimBudgetHint = 1;
+            if (minNobilityTier < 0) minNobilityTier = 0;
+            if (provinceSeatThreshold < 0) provinceSeatThreshold = 0;
         }
 
         public static final CultureKingdomDefaults DEFAULT = new CultureKingdomDefaults(
@@ -600,7 +622,16 @@ public final class CultureBundles {
                         UpkeepSource.LEVY,    0.20,
                         UpkeepSource.TRADE,   0.20),
                 List.of("kingdom_king", "kingdom_chancellor",
-                        "kingdom_treasurer", "kingdom_general"));
+                        "kingdom_treasurer", "kingdom_general"),
+                // D1.5 fields — DEFAULT culture matches the legacy
+                // KingdomClaimComputer.DEFAULT_BUDGET (1800) so
+                // pre-D3.1 saves keep their territorial radius.
+                /* claimBudgetHint */         1800,
+                /* claimResistance */         0.30f,
+                /* vassalEligibleCultures */  List.of(),
+                /* hostileCultures */         List.of(),
+                /* minNobilityTier */         0,
+                /* provinceSeatThreshold */   5);
 
         public static final Codec<CultureKingdomDefaults> CODEC = RecordCodecBuilder.create(i -> i.group(
                 Codec.STRING.listOf().optionalFieldOf("nobilityRanks", DEFAULT.nobilityRanks)
@@ -623,7 +654,22 @@ public final class CultureBundles {
                         .optionalFieldOf("upkeepMix", DEFAULT.upkeepMix)
                         .forGetter(CultureKingdomDefaults::upkeepMix),
                 Codec.STRING.listOf().optionalFieldOf("requiredOffices", DEFAULT.requiredOffices)
-                        .forGetter(CultureKingdomDefaults::requiredOffices)
+                        .forGetter(CultureKingdomDefaults::requiredOffices),
+                // ── Track D1.5 fields (D3.1 prep) ────────────────────
+                Codec.INT.optionalFieldOf("claimBudgetHint", DEFAULT.claimBudgetHint)
+                        .forGetter(CultureKingdomDefaults::claimBudgetHint),
+                Codec.FLOAT.optionalFieldOf("claimResistance", DEFAULT.claimResistance)
+                        .forGetter(CultureKingdomDefaults::claimResistance),
+                Codec.STRING.listOf().optionalFieldOf("vassalEligibleCultures",
+                                DEFAULT.vassalEligibleCultures)
+                        .forGetter(CultureKingdomDefaults::vassalEligibleCultures),
+                Codec.STRING.listOf().optionalFieldOf("hostileCultures",
+                                DEFAULT.hostileCultures)
+                        .forGetter(CultureKingdomDefaults::hostileCultures),
+                Codec.INT.optionalFieldOf("minNobilityTier", DEFAULT.minNobilityTier)
+                        .forGetter(CultureKingdomDefaults::minNobilityTier),
+                Codec.INT.optionalFieldOf("provinceSeatThreshold", DEFAULT.provinceSeatThreshold)
+                        .forGetter(CultureKingdomDefaults::provinceSeatThreshold)
         ).apply(i, CultureKingdomDefaults::new));
     }
 

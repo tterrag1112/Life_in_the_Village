@@ -44,32 +44,57 @@ public final class KingdomMembershipMigration {
 
     private KingdomMembershipMigration() {}
 
-    /** Drives the migration. Safe to call on every level load. */
+    /**
+     * Drives the migration. Safe to call on every level load.
+     *
+     * <p>Two independent gates: the D1 membership migration (back-fills
+     * {@code Village.kingdomId} from {@code Kingdom.villageIds}) and
+     * the D3.1 capital migration (stamps {@code Kingdom.capitalVillageId}).
+     * Either runs only when its respective flag is false. Pre-D1 saves
+     * arrive with both false; post-D1 / pre-D3.1 saves arrive with the
+     * D1 flag true and the D3.1 flag false.
+     */
     public static void migrateIfNeeded(ServerLevel level) {
         VillageSavedData vdata = VillageSavedData.get(level);
-        if (vdata.isKingdomMembershipMigrated()) return;
+
+        boolean needMembership = !vdata.isKingdomMembershipMigrated();
+        boolean needCapitals   = !vdata.isKingdomCapitalMigrated();
+        if (!needMembership && !needCapitals) return;
 
         int kingdoms = 0;
         int stamped  = 0;
         int collisions = 0;
         int heraldryBackFilled = 0;
+        int capitalsStamped = 0;
 
         for (Kingdom k : vdata.getAllKingdoms()) {
             kingdoms++;
 
-            // Heraldry back-fill: if the kingdom loaded with the
-            // sentinel UNKNOWN, generate a real heraldry from its
-            // culture + UUID. The Kingdom constructor already does
-            // this for fresh kingdoms; this branch covers
-            // codec-loaded pre-Phase-0 kingdoms whose stored
-            // heraldry is the optionalFieldOf default.
-            if (Heraldry.UNKNOWN.equals(k.getHeraldry())) {
+            // Heraldry back-fill: only on D1 path. Once D1 has run,
+            // heraldry is already non-UNKNOWN.
+            if (needMembership && Heraldry.UNKNOWN.equals(k.getHeraldry())) {
                 k.setHeraldry(HeraldryGenerator.generate(
                         tterrag1112.life_in_the_village.Cultures.CultureRegistry
                                 .getOrDefault(k.getCulture()),
                         k.getId(), 0L));
                 heraldryBackFilled++;
             }
+
+            // Track D3.1 — capital back-fill. Independent of the D1
+            // path because pre-D3.1 saves may already have D1 done
+            // but no capitalVillageId field. The first villageId in
+            // the legacy list is implicitly the capital; stamp it
+            // explicitly.
+            if (needCapitals && k.getCapitalVillageId().isEmpty()
+                    && !k.getVillageIds().isEmpty()) {
+                k.setCapitalVillageId(k.getVillageIds().get(0));
+                capitalsStamped++;
+            }
+
+            // Below: D1 membership stamping. Skip when only the D3.1
+            // capital path is needed (the village.kingdomId reverse
+            // pointer is already set from D1's earlier run).
+            if (!needMembership) continue;
 
             for (java.util.UUID vid : k.getVillageIds()) {
                 Village v = vdata.getVillageById(vid).orElse(null);
@@ -94,12 +119,13 @@ public final class KingdomMembershipMigration {
             }
         }
 
-        vdata.setKingdomMembershipMigrated(true);
+        if (needMembership) vdata.setKingdomMembershipMigrated(true);
+        if (needCapitals)   vdata.setKingdomCapitalMigrated(true);
         vdata.markDirty();
 
         LOGGER.info(
                 "[KingdomMembershipMigration] complete — kingdoms={} stamped={} "
-                        + "collisions={} heraldryBackFilled={}",
-                kingdoms, stamped, collisions, heraldryBackFilled);
+                        + "collisions={} heraldryBackFilled={} capitalsStamped={}",
+                kingdoms, stamped, collisions, heraldryBackFilled, capitalsStamped);
     }
 }

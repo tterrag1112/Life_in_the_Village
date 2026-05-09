@@ -71,20 +71,33 @@ public final class KingdomDebugCommand {
         CultureBundles.CultureKingdomDefaults kd = culture.kingdomDefaults();
 
         send(ctx, "── Kingdom: " + k.getName() + " ──");
-        send(ctx, "  id        : " + k.getId().toString().substring(0, 8));
-        send(ctx, "  culture   : " + k.getCulture());
-        send(ctx, "  stability : " + k.getStability()
+        send(ctx, "  id           : " + k.getId().toString().substring(0, 8));
+        send(ctx, "  culture      : " + k.getCulture());
+        send(ctx, "  founding tick: " + k.getFoundingTick());
+        send(ctx, "  capital      : " + k.getCapitalVillageId()
+                .map(cid -> data.getVillageById(cid)
+                        .map(v -> v.getName() + " (" + cid.toString().substring(0, 8) + ")")
+                        .orElse("(missing village " + cid.toString().substring(0, 8) + ")"))
+                .orElse("(unset)"));
+        send(ctx, "  stability    : " + k.getStability()
                 + " (" + Kingdom.bandOf(k.getStability()) + ")");
-        send(ctx, "  legitimacy: " + k.getLegitimacy()
+        send(ctx, "  legitimacy   : " + k.getLegitimacy()
                 + " (" + Kingdom.bandOf(k.getLegitimacy()) + ")");
-        send(ctx, "  heraldry  : " + k.getHeraldry().describe());
-        send(ctx, "  treasury  : " + k.getTreasuryBronze() + " bronze");
+        send(ctx, "  heraldry     : " + k.getHeraldry().describe());
+        send(ctx, "  treasury     : " + k.getTreasuryBronze() + " bronze");
         send(ctx, "── Culture defaults ──");
         send(ctx, "  succession    : " + kd.successionRule().name());
         send(ctx, "  subdivision   : " + kd.subdivisionModel().name());
         send(ctx, "  noble ranks   : " + kd.nobilityRanks());
         send(ctx, "  upkeep mix    : " + kd.upkeepMix());
         send(ctx, "  required offc : " + kd.requiredOffices());
+        // Track D1.5 — kingdom-wide settings.
+        send(ctx, "  claim budget  : " + kd.claimBudgetHint());
+        send(ctx, "  claim resist  : " + kd.claimResistance());
+        send(ctx, "  vassal-eligible: " + kd.vassalEligibleCultures());
+        send(ctx, "  hostile       : " + kd.hostileCultures());
+        send(ctx, "  min nobility  : " + kd.minNobilityTier());
+        send(ctx, "  prov-seat thr : " + kd.provinceSeatThreshold());
         send(ctx, "── Offices held ──");
         if (k.getOffices() != null && !k.getOffices().snapshot().isEmpty()) {
             k.getOffices().snapshot().forEach((officeId, holding) ->
@@ -131,8 +144,18 @@ public final class KingdomDebugCommand {
         }
         send(ctx, "── Kingdoms (" + kingdoms.size() + ") ──");
         for (Kingdom k : kingdoms) {
+            String capital = k.getCapitalVillageId()
+                    .flatMap(data::getVillageById)
+                    .map(Village::getName)
+                    .orElse("(unset)");
+            String kingHeld = k.getOffices() == null ? "?"
+                    : (k.getOffices().isVacant(
+                            tterrag1112.life_in_the_village.Npc.Office
+                                    .OfficeRegistry.KINGDOM_KING) ? "vacant" : "seated");
             send(ctx, "  " + k.getName() + "  [" + k.getCulture()
-                    + "]  stab=" + k.getStability()
+                    + "]  capital=" + capital
+                    + "  king=" + kingHeld
+                    + "  stab=" + k.getStability()
                     + " leg=" + k.getLegitimacy()
                     + " villages=" + k.getVillageIds().size());
         }

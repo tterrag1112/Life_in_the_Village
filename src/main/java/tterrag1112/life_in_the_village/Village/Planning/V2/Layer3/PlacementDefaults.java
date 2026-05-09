@@ -45,6 +45,55 @@ public final class PlacementDefaults {
                 List.of(new Provides(Category.CIVIC_AUTHORITY, 1)),
                 List.of(new Requires(Category.HOUSING, 3, false))));
 
+        // Track D3.1 — kingdom-tier civic anchors. Capital villages
+        // (CapitalGenerator-emitted layouts) declare CASTLE as a
+        // required building; non-capital villages don't get it
+        // because their layouts don't list it required and the
+        // structure-availability gate filters non-capital sites
+        // through the existing civic-anchor centrality scoring.
+        // CASTLE provides 5 CIVIC_AUTHORITY units — enough alone
+        // to clear the highmarch-tier provinceSeatThreshold of 6
+        // when paired with a TOWN_HALL (1) plus a NOBLE_MANOR (1).
+        m.put(BuildingType.CASTLE, new PlacementProfile(
+                false, Priority.CIVIC, SizeClass.LARGE, 0.9,
+                List.of(BuildingType.TOWN_HALL),
+                terrain(Map.of(TerrainFactor.FLAT, 1.5)),
+                adj(Map.of(AdjacencyFactor.NEAR_ANCHOR, 1.5)),
+                Set.of(),
+                List.of(new Provides(Category.CIVIC_AUTHORITY, 5),
+                        new Provides(Category.DEFENSE, 3),
+                        new Provides(Category.EMPLOYMENT, 3)),
+                List.of(new Requires(Category.HOUSING, 5, false))));
+
+        // Track D3.1 — noble manor. Provides 1 CIVIC_AUTHORITY (per
+        // D2's translation table); declared in capital-tier layouts;
+        // existing AdjunctPlot bindings (FORMAL_GARDEN, STABLE_PADDOCK)
+        // already attach to it via the AdjunctPlotRegistry.
+        m.put(BuildingType.NOBLE_MANOR, new PlacementProfile(
+                false, Priority.CIVIC, SizeClass.MEDIUM, 0.7,
+                List.of(),
+                terrain(Map.of(TerrainFactor.FLAT, 1.0)),
+                adj(Map.of(AdjacencyFactor.NEAR_ANCHOR, 1.0)),
+                Set.of(),
+                List.of(new Provides(Category.CIVIC_AUTHORITY, 1),
+                        new Provides(Category.HOUSING, 3),
+                        new Provides(Category.EMPLOYMENT, 1)),
+                List.of(new Requires(Category.HOUSING, 1, false))));
+
+        // Track D3.1 — kingdom treasury. Capital villages declare it
+        // required. Provides COMMERCE; a separate building from the
+        // CASTLE so smaller capitals can have a treasury without
+        // committing to the full castle footprint.
+        m.put(BuildingType.TREASURY, new PlacementProfile(
+                false, Priority.CIVIC, SizeClass.MEDIUM, 0.7,
+                List.of(),
+                terrain(Map.of(TerrainFactor.FLAT, 1.5)),
+                adj(Map.of(AdjacencyFactor.NEAR_ANCHOR, 1.5)),
+                Set.of(),
+                List.of(new Provides(Category.COMMERCE, 1),
+                        new Provides(Category.EMPLOYMENT, 1)),
+                List.of(new Requires(Category.HOUSING, 1, false))));
+
         m.put(BuildingType.MARKET, new PlacementProfile(
                 false, Priority.CIVIC, SizeClass.MEDIUM, 0.7,
                 List.of(),

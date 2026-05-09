@@ -157,7 +157,17 @@ public final class CultureRegistry {
                                 CultureBundles.UpkeepSource.LEVY,    0.60,
                                 CultureBundles.UpkeepSource.TRADE,   0.20),
                         List.of("kingdom_king", "kingdom_chancellor",
-                                "kingdom_scholar")));
+                                "kingdom_scholar"),
+                        // D1.5 fields. Plainfolk territories sprawl
+                        // (high budget, low resistance to absorption);
+                        // open to default-culture vassalage; hostile to
+                        // none by default; nobility minimum at Headman.
+                        /* claimBudgetHint */         2400,
+                        /* claimResistance */         0.15f,
+                        /* vassalEligibleCultures */  List.of("default"),
+                        /* hostileCultures */         List.of(),
+                        /* minNobilityTier */         1,
+                        /* provinceSeatThreshold */   3));
     }
 
     // ── Highmarch ─────────────────────────────────────────────────────────
@@ -226,7 +236,18 @@ public final class CultureRegistry {
                                 CultureBundles.UpkeepSource.TRADE,   0.10),
                         List.of("kingdom_king", "kingdom_chancellor",
                                 "kingdom_treasurer", "kingdom_general",
-                                "kingdom_magistrate")));
+                                "kingdom_magistrate"),
+                        // D1.5 fields. Highmarch holds territory tightly:
+                        // smaller initial budget, very high resistance to
+                        // absorption, hostile to plainfolk by default;
+                        // nobility starts at Knight; province seat
+                        // threshold high (4 authority units).
+                        /* claimBudgetHint */         1500,
+                        /* claimResistance */         0.85f,
+                        /* vassalEligibleCultures */  List.of("plainfolk", "tidereach"),
+                        /* hostileCultures */         List.of("plainfolk"),
+                        /* minNobilityTier */         0,
+                        /* provinceSeatThreshold */   6));
     }
 
     // ── Silkwood ──────────────────────────────────────────────────────────
@@ -297,7 +318,19 @@ public final class CultureRegistry {
                                 CultureBundles.UpkeepSource.TRADE,   0.60),
                         List.of("kingdom_king", "kingdom_chancellor",
                                 "kingdom_scholar", "kingdom_diplomat",
-                                "kingdom_treasurer")));
+                                "kingdom_treasurer"),
+                        // D1.5 fields. Silkwood city-states hold compact
+                        // claims (low budget); resistant to absorption
+                        // because city walls + treaties; receptive to
+                        // tidereach trade partners; nobility minimum
+                        // at Magnate; province threshold low (a single
+                        // strong city counts).
+                        /* claimBudgetHint */         1200,
+                        /* claimResistance */         0.55f,
+                        /* vassalEligibleCultures */  List.of("tidereach"),
+                        /* hostileCultures */         List.of("highmarch"),
+                        /* minNobilityTier */         1,
+                        /* provinceSeatThreshold */   2));
     }
 
     // ── Tidereach ─────────────────────────────────────────────────────────
@@ -366,6 +399,17 @@ public final class CultureRegistry {
                                 CultureBundles.UpkeepSource.LEVY,    0.15,
                                 CultureBundles.UpkeepSource.TRADE,   0.40),
                         List.of("kingdom_king", "kingdom_chancellor",
-                                "kingdom_treasurer", "kingdom_diplomat")));
+                                "kingdom_treasurer", "kingdom_diplomat"),
+                        // D1.5 fields. Tidereach maritime states sprawl
+                        // along coasts (large budget) but accept vassals
+                        // (low resistance, open to silkwood + plainfolk
+                        // trade-partners); no default hostility; nobility
+                        // starts at Steward; medium province threshold.
+                        /* claimBudgetHint */         2100,
+                        /* claimResistance */         0.25f,
+                        /* vassalEligibleCultures */  List.of("silkwood", "plainfolk"),
+                        /* hostileCultures */         List.of(),
+                        /* minNobilityTier */         0,
+                        /* provinceSeatThreshold */   4));
     }
 }

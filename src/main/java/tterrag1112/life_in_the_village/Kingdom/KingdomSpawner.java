@@ -579,169 +579,22 @@ public class KingdomSpawner {
     // =========================================================================
     // Plan-only kingdom creation
     // =========================================================================
+    // Track D3.1 — `planComposed` deleted. Worldgen now uses
+    // CapitalGenerator (Kingdom/Worldgen/CapitalGenerator.java) for
+    // single-capital kingdoms. The multi-village placement loop the
+    // old planComposed body ran is preserved in git history; D3
+    // phase 2 (vassalage / village-joining) reintroduces multi-village
+    // kingdoms via a different mechanism rather than reusing this code.
+    // The remaining KingdomSpawner.spawn / spawnComposed entries stay
+    // for admin /liv commands that synchronously place full kingdoms.
 
-    /**
-     * Creates a kingdom and its constituent villages as PLANNED records only.
-     * No blocks are placed and no NPCs are spawned. Each village is realised
-     * lazily by {@link tterrag1112.life_in_the_village.Events.VillageRealisationSystem}
-     * when a player enters its trigger radius.
-     *
-     * <p>This method replaces the old worldgen-time use of
-     * {@link #spawnComposed}. Use {@code spawnComposed} only when an
-     * immediate block-level placement is required (debug commands, etc.).
-     *
-     * <p>Trade routes are not established at plan time — they require
-     * block-level pathfinding across terrain that isn't loaded yet. Route
-     * creation is deferred to the first tick after all participating
-     * villages become realised.
+    /*
+     * (Removed in D3.1) Was: planComposed — a kingdom-and-composition
+     * plan-only creator. Worldgen replacement: CapitalGenerator.
+     * Admin spawn replacement: KingdomSpawner.spawnComposed (still
+     * public, used by /liv kingdom debug spawn). See git history for
+     * the original ~150-line implementation.
      */
-    public static java.util.Optional<Kingdom> planComposed(ServerLevel level,
-                 BlockPos origin,
-                 String kingdomName,
-                 String culture,
-                 java.util.List<String> composition,
-                 java.util.function.Consumer<String> progress) {
-
-        tterrag1112.life_in_the_village.Networking.VillageSavedData data =
-                tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
-
-        if (data.getKingdomByName(kingdomName).isPresent()) {
-            progress.accept("Kingdom '" + kingdomName + "' already exists.");
-            return java.util.Optional.empty();
-        }
-        if (composition.isEmpty()) {
-            progress.accept("Composition list is empty — aborting.");
-            return java.util.Optional.empty();
-        }
-
-        java.util.Random rng = new java.util.Random(
-                (long) kingdomName.hashCode() * 31L + origin.hashCode());
-
-        int villageCount = composition.size();
-        progress.accept("Planning " + villageCount
-                + " virtual villages for kingdom '" + kingdomName + "'...");
-
-        tterrag1112.life_in_the_village.Kingdom.Kingdom kingdom =
-                new tterrag1112.life_in_the_village.Kingdom.Kingdom(kingdomName, culture);
-        data.addKingdom(kingdom);
-        kingdom.getHistory().recordEvent(
-                tterrag1112.life_in_the_village.Lore.HistoryTextGenerator.kingdomFounded(
-                        kingdomName, "world-gen", level.getGameTime()),
-                kingdomName);
-        kingdom.getHistory().setOrigin(
-                new tterrag1112.life_in_the_village.Lore.KingdomHistoryData.KingdomOriginData(
-                        tterrag1112.life_in_the_village.Lore.KingdomHistoryData.KingdomOrigins.FOUNDED_BY_PLAYER,
-                        "world-gen", new java.util.UUID(0, 0),
-                        "the wilderness", level.getGameTime(), 0, ""));
-        data.setDirty();
-
-        int    radius      = MIN_RADIUS + rng.nextInt(MAX_RADIUS - MIN_RADIUS);
-        double angleOffset = rng.nextDouble() * 2 * Math.PI;
-        java.util.List<BlockPos> placedPositions = new java.util.ArrayList<>();
-        java.util.Set<Integer>   usedSuffixes    = new java.util.HashSet<>();
-
-        // ── Atlas preparation ────────────────────────────────────────────────────
-        tterrag1112.life_in_the_village.World.Atlas.WorldAtlas atlas =
-                tterrag1112.life_in_the_village.World.Atlas.WorldAtlas.get(level);
-
-        int fillRadius = 2500; // covers default-budget claims with headroom
-        progress.accept("Filling atlas around kingdom origin (" + fillRadius + " blocks)...");
-        atlas.ensureRegionFilled(level, origin.getX(), origin.getZ(),
-                fillRadius, 80_000_000L);
-        atlas.ensureRegionsIndexed(
-                tterrag1112.life_in_the_village.World.Atlas.WorldAtlas.blockToCell(origin.getX()),
-                tterrag1112.life_in_the_village.World.Atlas.WorldAtlas.blockToCell(origin.getZ()),
-                (fillRadius >> tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_SHIFT) + 2);
-
-// ── Compute territorial claim ────────────────────────────────────────────
-        tterrag1112.life_in_the_village.Kingdom.KingdomClaim territorialClaim =
-                tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.compute(
-                        atlas, origin,
-                        tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer.DEFAULT_BUDGET);
-        kingdom.setTerritorialClaim(territorialClaim);
-        progress.accept("Claimed " + territorialClaim.size() + " cells (home="
-                + territorialClaim.homeCategoryName() + ")");
-
-        if (territorialClaim.size() < composition.size()) {
-            progress.accept("Warning: claim has fewer cells (" + territorialClaim.size()
-                    + ") than villages to place (" + composition.size() + ")");
-        }
-
-// ── Plan village placements ──────────────────────────────────────────────
-        // Collect positions of all villages already in the world so the placer
-        // can use proximity penalties to avoid cross-kingdom co-location.
-        java.util.List<BlockPos> existingVillagePositions = data.getAllVillages().stream()
-                .map(tterrag1112.life_in_the_village.Village.Village::getAnchorPos)
-                .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toList());
-
-        // Phase 9 — pass the world road graph so non-capital villages get a
-        // network-alignment bonus (preference for cells near GREAT_ROAD / TRUNK).
-        // Capitals are placed before any culture-owned roads exist, so the
-        // scorer skips the bonus for them; great roads from Phase 7a are the
-        // only network present at initial seeding.
-        tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph roadGraph =
-                tterrag1112.life_in_the_village.Networking.WorldRoadSavedData.get(level).getGraph();
-
-        java.util.List<tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.PlacementResult>
-                placements = tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer.plan(
-                atlas, territorialClaim, origin, composition,
-                existingVillagePositions, roadGraph);
-
-
-        for (int i = 0; i < placements.size(); i++) {
-            var placement = placements.get(i);
-            boolean isCapital = (i == 0);
-
-            if (!placement.placed()) {
-                if (isCapital) {
-                    progress.accept("  Capital could not be placed — aborting '" + kingdomName + "'");
-                    data.removeKingdom(kingdom.getId());
-                    data.setDirty();
-                    return java.util.Optional.empty();
-                }
-                progress.accept("  Skipping '" + placement.villageType() + "' — no cell matched");
-                continue;
-            }
-
-            // Check for clash with any existing village BEFORE adding to saved data.
-            // (Previously this check ran after planVillage() added the village, causing
-            //  it to always match itself at dist=0 and silently skip all placements.)
-            final BlockPos pos = placement.position();
-            boolean clashesWithExisting = data.getAllVillages().stream()
-                    .anyMatch(v -> {
-                        BlockPos anchor = v.getAnchorPos();
-                        return anchor != null && anchor.distSqr(pos) < 100L * 100L;
-                    });
-            if (clashesWithExisting) {
-                progress.accept("  Skipping '" + placement.villageType()
-                        + "' — too close to a village from another kingdom");
-                continue;
-            }
-
-            String villageName = generateUniqueName(kingdomName, isCapital, i, rng, usedSuffixes);
-            progress.accept("  Planning "
-                    + (isCapital ? "capital " : "village ")
-                    + villageName + " (" + placement.villageType()
-                    + (placement.relaxed() ? ", relaxed tag match" : "")
-                    + ") at " + placement.position().toShortString()
-                    + " score=" + String.format("%.2f", placement.score()));
-
-            tterrag1112.life_in_the_village.Village.Village planned =
-                    tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper
-                            .planVillage(level, data, placement.position(),
-                                    placement.villageType(), villageName);
-
-            kingdom.addVillage(planned.getId());
-            placedPositions.add(placement.position());
-        }
-
-
-        data.setDirty();
-        progress.accept("Planned kingdom '" + kingdomName + "' with "
-                + kingdom.getVillageIds().size() + " villages");
-        return java.util.Optional.of(kingdom);
-    }
 
     // Add this static helper to KingdomSpawner.java (or wherever site scoring lives):
 

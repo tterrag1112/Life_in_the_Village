@@ -432,3 +432,249 @@ Estimated ≈ 100 LOC across `CultureBundles.java` (add fields
 
 D3 phases 1–7, when drafted, can now reference Section 5.1–5.8
 directly — no V1-vocabulary translation step in those prompts.
+
+---
+
+## D3.1 — Kingdom plan Phase 1: Worldgen and capital generation
+
+### 2026-05-09 — Track D3.1 landed
+
+**Phase:** Track D3.1 (kingdom plan Phase 1) — reshapes the
+seed-to-kingdom flow to produce kingdoms in D1+D2 vocabulary.
+Capital-only initial state; multi-village kingdoms grow later via
+D3 phase 2's vassalage / village-joining mechanism.
+
+#### Disposition before code
+
+- `WorldgenKingdomSeeder` (376 LOC, `@SubscribeEvent` on
+  `ServerTickEvent.Post`) drives kingdom worldgen after great-road
+  generation completes. Composition list pre-D3.1 produced
+  multi-village kingdoms.
+- `KingdomSpawner.planComposed` (~150 LOC inside the 764-LOC
+  spawner) was the worldgen entry. Created Kingdom record + claim
+  + planned multiple villages.
+- `Kingdom/Castle/` (31 files) is generator-style — returns
+  `CastleManifest` after world block mutation. Currently invoked
+  only by `CastleCommand` debug. **No `castle_styles/*.json`
+  exist in resources today**, so `CastleGenerator.generate`
+  cannot produce visible buildings without significant content
+  authoring. Per user direction: Kingdom/Castle/ stays orphan;
+  may be deleted in Track E.
+- `KingdomClaim` + `KingdomClaimComputer` — pure Dijkstra over
+  atlas cells with hard-coded `DEFAULT_BUDGET = 1800f`. D2's
+  translation table identified `claimBudgetHint` and
+  `claimResistance` as forthcoming D1 sub-bundle fields; D3.1
+  adds them.
+- V2 has no CASTLE PlacementProfile in `PlacementDefaults.java`
+  today. CASTLE is in `BuildingType` and has an existing
+  `level_1.nbt` plus an inhabitant spec
+  (KINGDOM_RULER + 2 GUARDs).
+- V2 has no "capital" concept at the planner level. Every village
+  is treated equally.
+- `KingdomEventBus` had zero call sites pre-D3.1. D3.1 is the
+  first place events fire.
+- Existing kingdoms in saves had no `capitalVillageId`; first
+  member village was implicitly the capital.
+
+#### Decisions (user-confirmed)
+
+**Q1 Capital castle production → V2 places existing castle NBT;
+Kingdom/Castle stays orphan.** Per user clarification: "Just
+use a normal castle nbt since the Kingdom/Castle system is a
+WIP and may be deleted unless I can think of a good way to get
+it to work better, but that is a Track E type of thing."
+D3.1 ships V2 PlacementProfile entries for `CASTLE`,
+`NOBLE_MANOR`, `TREASURY` so future capital-tier village types
+can declare them required. The existing `level_1.nbt` is the
+visible structure when V2 selects CASTLE. Kingdom/Castle/ is
+not integrated in this phase; the prompt's "no more orphan
+status" criterion is partially deferred to Track E.
+
+**Q2 D1.5 follow-up fields → add the 6 fields now.**
+`CultureKingdomDefaults` gains `claimBudgetHint`,
+`claimResistance`, `vassalEligibleCultures`, `hostileCultures`,
+`minNobilityTier`, `provinceSeatThreshold`. ~100 LOC bundle
+extension. Per-culture defaults set in `CultureRegistry` for
+default / plainfolk / highmarch / silkwood / tidereach. D3.1's
+`CapitalGenerator` reads `claimBudgetHint` to drive the
+`KingdomClaimComputer`; the other 4 fields are populated for
+D3.2+ consumers (vassalage, hostile spacing, succession nobility
+gates, province-seat derivation).
+
+**Q3 Office staffing → Hybrid: fresh-spawn ruler + culture-required
+offices, draft inhabitants for the rest.** A new
+`KingdomOfficeBootstrap` runs every second post-realisation:
+fresh-spawns a `KINGDOM_RULER` `TownspersonMob` at the capital
+anchor and seats them as `kingdom_king`; for each office in the
+culture's `requiredOffices` list, drafts an existing nearby
+inhabitant whose profession matches the office's
+`eligibleProfessions` (96-block scan radius), else fresh-spawns
+the first eligible profession. Idempotent: gated on
+`OfficeState.isVacant("kingdom_king")` so re-running is a no-op.
+
+**Q4 Multi-village flow → Replace `planComposed` with new
+CapitalGenerator.** `KingdomSpawner.planComposed` deleted;
+`Kingdom/Worldgen/CapitalGenerator.java` (new) replaces it as
+the sole worldgen entry. The remaining `KingdomSpawner.spawn` /
+`spawnComposed` survive for admin /liv commands that synchronously
+place full multi-village kingdoms. `WorldgenKingdomSeeder`
+rewired to call `CapitalGenerator.generate` instead.
+
+#### Files added
+
+- `Kingdom/Worldgen/CapitalGenerator.java` (~190 LOC) —
+  worldgen orchestrator. Takes `(level, origin, kingdomName,
+  culture, capitalVillageType)`; creates Kingdom record with
+  foundingTick + regenerated heraldry; computes
+  `KingdomClaim` with culture-keyed `claimBudgetHint`; plans
+  the capital village via `ClaimVillagePlacer` with composition
+  size 1; wires `Village.kingdomId` and `Kingdom.capitalVillageId`;
+  fires `KingdomEvent.KingdomFounded`.
+- `Kingdom/Worldgen/KingdomOfficeBootstrap.java` (~190 LOC) —
+  post-realisation office staffing. Fresh-spawns the founding
+  ruler; drafts / fresh-spawns culture-required offices; fires
+  `RulerSucceeded` + `OfficeFilled` events.
+
+#### Files modified
+
+- `Cultures/CultureBundles.java` — `CultureKingdomDefaults`
+  gains 6 fields (D1.5). DEFAULT, plainfolk, highmarch,
+  silkwood, tidereach all set per-culture values.
+- `Cultures/CultureRegistry.java` — per-culture D1.5 field
+  values. Plainfolk wide+open (budget=2400, resistance=0.15,
+  vassal-eligible=[default]); Highmarch tight+hostile
+  (budget=1500, resistance=0.85, hostile-to=[plainfolk]);
+  Silkwood compact+resistant (budget=1200, resistance=0.55);
+  Tidereach maritime (budget=2100, trade-heavy upkeep).
+- `Village/Planning/V2/Layer3/PlacementDefaults.java` — new
+  CASTLE / NOBLE_MANOR / TREASURY profiles. CASTLE provides
+  `CIVIC_AUTHORITY=5` + `DEFENSE=3` + `EMPLOYMENT=3`;
+  NOBLE_MANOR provides `CIVIC_AUTHORITY=1` + housing;
+  TREASURY provides `COMMERCE`. Inert until village types
+  declare them required (D3.2+ work).
+- `Kingdom/Kingdom.java` — `capitalVillageId: UUID?` and
+  `foundingTick: long` fields with codec entries
+  (optionalFieldOf default empty / 0L). 16-field codec arity
+  at the DFU cap.
+- `Kingdom/KingdomMembershipMigration.java` — second migration
+  pass back-fills `capitalVillageId` from the first villageId
+  for pre-D3.1 saves. Independent flag
+  (`kingdomCapitalMigrated`) so the back-fill runs even on
+  saves where the D1 pass already completed.
+- `Networking/VillageSavedData.java` — new
+  `kingdomCapitalMigrated` flag with codec wiring. 16-field
+  codec arity at the DFU cap.
+- `Kingdom/WorldgenKingdomSeeder.java` — calls
+  `CapitalGenerator.generate` instead of
+  `KingdomSpawner.planComposed`. Composition list's first
+  entry becomes `capitalVillageType`; remaining entries are
+  ignored at worldgen.
+- `Kingdom/KingdomSpawner.java` — `planComposed` body removed
+  (~150 LOC). The remaining `spawn` / `spawnComposed` admin
+  paths are unchanged.
+- `Events/TickSystems.java` + `Events/TickSubsystemRegistry.java`
+  — `KingdomOfficeBootstrapTickSystem` registered (interval =
+  20). Idempotent.
+- `Commands/KingdomDebugCommand.java` — `describe` extended
+  with capital + foundingTick + 6 D1.5 fields; `list`
+  extended with capital name + king-seated state.
+
+#### Wired but inert at D3.1 close
+
+- CASTLE / NOBLE_MANOR / TREASURY PlacementProfiles. V2 doesn't
+  yet select them because no village type declares them
+  required. D3.2 (or earlier) will introduce a "capital-tier"
+  village type that lists CASTLE as required.
+- D1.5 fields beyond `claimBudgetHint`. `claimResistance`,
+  `vassalEligibleCultures`, `hostileCultures`, `minNobilityTier`,
+  `provinceSeatThreshold` are populated and queryable but
+  no D3.1 code reads them (consumers ship in D3.2+).
+- Kingdom/Castle/ orphan stays untouched per user direction.
+  Track E is the natural place to either integrate it (with
+  authored castle_styles JSONs) or delete the package.
+
+#### Test plan (manual)
+
+1. **Fresh world.** Spawn three different worlds (different
+   seeds). For each:
+   - `WorldgenKingdomSeeder` schedules N kingdoms after
+     great-road generation completes.
+   - Each kingdom gets the new D3.1 path via
+     `CapitalGenerator`. Log line:
+     `Founding capital-tier kingdom 'X' (culture) at ...`.
+   - `KingdomFounded` event fires (visible in
+     `/litv kingdom debug events_stats` once a subscriber
+     ever registers; D3.1 has no subscribers, but the count
+     would increment).
+   - `/litv kingdom debug list` shows N kingdoms with
+     capital=$name + king=vacant.
+2. **Capital realisation.** Walk a player into a capital
+   village's trigger radius. `VillageRealisationSystem`
+   realises the village; `BuildingInhabitantRegistry`
+   spawns CASTLE inhabitants if a CASTLE building landed.
+   Within ~1 second, `KingdomOfficeBootstrap` runs:
+   - Fresh-spawns a `KINGDOM_RULER` NPC at the capital anchor.
+   - `OfficeRegistry.KINGDOM_KING` becomes seated.
+   - `RulerSucceeded` + `OfficeFilled` events fire.
+   - `/litv kingdom debug list` now shows king=seated.
+3. **Determinism.** Spawn the same seed in two separate world
+   slots. Confirm:
+   - Same kingdoms in the same positions.
+   - Same heraldry per kingdom (CapitalGenerator regenerates
+     heraldry from `(culture, kingdomId, foundingTick)`;
+     since foundingTick is `level.getGameTime()` at the
+     scheduling moment, this depends on tick ordering being
+     deterministic — which it is for a freshly-seeded world).
+   - Same office assignments once both worlds reach the same
+     tick.
+4. **Existing-save migration.** Load a save with pre-D3.1
+   kingdoms (D1 already ran):
+   - `[KingdomMembershipMigration] complete — kingdoms=N
+     ... capitalsStamped=N` log line on first tick.
+   - `Kingdom.capitalVillageId` is populated for every
+     kingdom (= first entry of `villageIds`).
+   - `/litv kingdom debug describe <name>` shows non-empty
+     capital + foundingTick=0 (legacy kingdoms didn't track
+     this).
+
+#### Compile status
+
+Gradle network-blocked in this sandbox. Static review confirmed:
+- `CultureKingdomDefaults` codec arity = 11 (5 + 6 D1.5);
+  under DFU cap.
+- `Kingdom` codec arity = 14 (was 11 + 3 D1) + 2 D3.1 = 16,
+  AT the DFU cap. No more room without consolidation.
+- `VillageSavedData.fromCodec` arity = 14 + 2 migration flags
+  = 16, AT the DFU cap.
+- `CapitalGenerator.generate` returns Optional, mirrors the
+  contract of the deleted `planComposed` — only difference
+  is composition is always size 1.
+- `KingdomOfficeBootstrap.runOnce` is idempotent — gated on
+  `OfficeState.isVacant(KINGDOM_KING)`. Fresh-spawn paths
+  use try/catch; failed spawns log + skip.
+
+#### Out-of-scope, flagged for later
+
+- **Kingdom/Castle/ integration** — moved to Track E. Per user:
+  "WIP and may be deleted unless I can think of a good way to
+  get it to work better."
+- **Visibly distinct capital settlements**: the prompt's done
+  criterion "capitals are visibly proper capital settlements
+  (not ordinary villages)" is **partially deferred**. Capitals
+  today look like normal villages because no village type lists
+  CASTLE as required. The CASTLE PlacementProfile is wired and
+  ready; D3.2+ ships a capital-tier village type that uses it.
+- **`/litv kingdom debug regen <seed>`** — not shipped this
+  phase. Determinism is verifiable by spawning two fresh
+  worlds with the same seed and comparing
+  `/litv kingdom debug list` output.
+- **Office NPC behaviour goals**. Fresh-spawned kingdom-tier
+  NPCs (chancellor, scholar, etc.) idle today; D3 phase 3
+  wires their behaviours.
+- **Heraldry uniqueness enforcement**. Two kingdoms with the
+  same culture + similar foundingTick could produce similar
+  heraldry. The xorshift hash makes this unlikely but not
+  impossible; D3 phase 2+ can add a uniqueness pass if it
+  surfaces in play.
+- **Multi-village kingdom regrowth**. D3.1 produces capital-only
+  kingdoms; vassalage / village-joining is D3 phase 2.

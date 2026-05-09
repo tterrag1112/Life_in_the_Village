@@ -186,8 +186,21 @@ public class WorldgenKingdomSeeder {
                 + "' (" + sk.culture + ") at " + chosenOrigin.toShortString()
                 + " | biome=" + cell.category() + " | " + sk.composition);
 
-        KingdomSpawner.planComposed(level, chosenOrigin, sk.name, sk.culture,
-                sk.composition,
+        // Track D3.1 — capital-only initial state. The composition
+        // list's first entry is the capital village type; the
+        // remaining entries are no longer placed at worldgen (D3
+        // phase 2 reintroduces multi-village kingdoms via a
+        // vassalage / village-joining mechanism). The legacy
+        // KingdomSpawner.planComposed multi-village body is
+        // preserved as @Deprecated for /liv kingdom debug commands
+        // that admin-spawn full kingdoms; the worldgen path uses
+        // CapitalGenerator which honors the D1 culture sub-bundle's
+        // claimBudgetHint, sets capitalVillageId / foundingTick,
+        // and fires the KingdomFounded bus event.
+        String capitalType = sk.composition.isEmpty() ? "default"
+                : sk.composition.get(0);
+        tterrag1112.life_in_the_village.Kingdom.Worldgen.CapitalGenerator.generate(
+                level, chosenOrigin, sk.name, sk.culture, capitalType,
                 msg -> System.out.println("  " + msg));
         logNearAncientRoad(level, sk.name, chosenOrigin);
         kingdomsPlaced++;

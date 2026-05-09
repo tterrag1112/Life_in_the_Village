@@ -77,7 +77,8 @@ spec matches reality.
 | D1-07 | Heraldry generator | Superseded by D1 | |
 | D1-08 | Office stub completion (7 offices) | Superseded by D1 | |
 | D2-row-old | Section 5 rewrite | Superseded by D2 | |
-| D3-1 | Phase 1 — worldgen rewrite | Not-Started | Depends A4 + D2. |
+| D3.1 | Phase 1 — worldgen + capital generation | Done 2026-05-09 | New `Kingdom/Worldgen/CapitalGenerator` replaces deleted `KingdomSpawner.planComposed` for worldgen entry. Capital-only initial state; D3.2+ regrows multi-village kingdoms. D1.5 prep landed: 6 new fields on `CultureKingdomDefaults` (claimBudgetHint, claimResistance, vassalEligibleCultures, hostileCultures, minNobilityTier, provinceSeatThreshold). Kingdom record gains capitalVillageId + foundingTick. `KingdomOfficeBootstrap` tick subsystem fresh-spawns founding ruler + drafts/fresh-spawns culture-required offices post-realisation. CASTLE / NOBLE_MANOR / TREASURY V2 PlacementProfiles wired (inert until D3.2 capital-tier village types). `KingdomFounded` / `RulerSucceeded` / `OfficeFilled` events fire. Pre-D3.1 saves migrate via independent `kingdomCapitalMigrated` flag. Per user direction, `Kingdom/Castle/` stays orphan (Track E candidate). See KINGDOM_PROGRESS.md D3.1 entry. |
+| D3-1 | Phase 1 — worldgen rewrite | Superseded by D3.1 | |
 | D3-2 | Phase 2 — houses, ranks, nobility | Not-Started | Depends D3-1. |
 | D3-3 | Phase 3 — provinces & offices | Not-Started | Depends D3-2. |
 | D3-4 | Phase 4 — laws & intrigue | Not-Started | Depends D3-3. |
@@ -2706,3 +2707,98 @@ five fields. No new mechanism.
 `SubBuildingType` extensions land in D3 alongside their feature
 ship-points (cemetery in D3 phase 2, festival ground in D3
 phase 5, audience chamber in D3 phase 3).
+
+### 2026-05-09 — Track D3.1 landed (kingdom worldgen + capital generation)
+
+Phase D3.1 (kingdom plan Phase 1) shipped. Per-decision detail in
+`KINGDOM_PROGRESS.md` D3.1 entry; summary here.
+
+**Disposition before code:**
+- `WorldgenKingdomSeeder` was already clean and modular. Pre-D3.1
+  `KingdomSpawner.planComposed` produced multi-village kingdoms.
+- `Kingdom/Castle/` (31 files) is generator-style but unused. No
+  `castle_styles/*.json` exist in resources today — full
+  integration requires content authoring outside this phase's
+  scope.
+- V2 had no CASTLE PlacementProfile and no "capital" concept.
+- `KingdomEventBus` had zero call sites pre-D3.1.
+- `CultureKingdomDefaults` was missing the 6 D2-flagged D1.5
+  follow-up fields.
+
+**User-confirmed scope (over four design questions):**
+- Capital castle: use existing `level_1.nbt` via V2 PlacementProfile.
+  Kingdom/Castle/ stays orphan (Track E candidate); D3.1 doesn't
+  integrate.
+- D1.5 fields: add the 6 fields now (~100 LOC bundle extension).
+- Office staffing: hybrid — fresh-spawn founding ruler;
+  draft/fresh-spawn culture-required offices.
+- Multi-village flow: replace `planComposed` with `CapitalGenerator`;
+  capital-only initial state.
+
+**Code shipped:**
+- `Cultures/CultureBundles.java` — `CultureKingdomDefaults` gains
+  6 D1.5 fields.
+- `Cultures/CultureRegistry.java` — per-culture D1.5 values.
+- `Village/Planning/V2/Layer3/PlacementDefaults.java` — CASTLE +
+  NOBLE_MANOR + TREASURY profiles. Forward-looking; inert until
+  capital-tier village types declare them required (D3.2+).
+- `Kingdom/Kingdom.java` — `capitalVillageId` + `foundingTick`
+  fields. Codec at the DFU 16-cap.
+- `Kingdom/Worldgen/CapitalGenerator.java` (new) — single-village
+  kingdom generator. Reads culture-keyed `claimBudgetHint`;
+  sets `capitalVillageId`, `foundingTick`; regenerates heraldry
+  from foundingTick; fires `KingdomFounded`.
+- `Kingdom/Worldgen/KingdomOfficeBootstrap.java` (new) +
+  tick subsystem. Post-realisation: fresh-spawns ruler;
+  drafts/fresh-spawns culture-required offices; fires
+  `RulerSucceeded` + `OfficeFilled`.
+- `Kingdom/KingdomMembershipMigration.java` — second pass for
+  `capitalVillageId` back-fill, gated on independent
+  `kingdomCapitalMigrated` flag.
+- `Networking/VillageSavedData.java` — new flag + codec wiring.
+- `Kingdom/WorldgenKingdomSeeder.java` — calls `CapitalGenerator`
+  instead of `planComposed`.
+- `Kingdom/KingdomSpawner.java` — `planComposed` body deleted
+  (~150 LOC). Admin paths (`spawn`, `spawnComposed`) preserved.
+- `Commands/KingdomDebugCommand.java` — `describe` + `list`
+  extended with new D1.5 + D3.1 fields.
+
+**Save compat:**
+- Pre-D3.1 saves load with `kingdomCapitalMigrated = false`;
+  migration runs once on first tick, stamps
+  `Kingdom.capitalVillageId` from first villageId, then flips
+  the flag.
+- Independent of D1's `kingdomMembershipMigrated` flag — pre-D3.1
+  saves where D1 already ran still get the D3.1 capital
+  back-fill.
+- Fresh worlds default both flags true.
+- Kingdom codec at the 16-field DFU cap. VillageSavedData codec
+  at the 16-field cap. No more codec room without consolidation.
+
+**Wired but inert:**
+- CASTLE / NOBLE_MANOR / TREASURY PlacementProfiles. Forward-
+  looking; D3.2+ wires capital-tier village types that declare
+  these required.
+- 5 of 6 D1.5 fields (claimResistance, vassalEligibleCultures,
+  hostileCultures, minNobilityTier, provinceSeatThreshold).
+  Populated and queryable; D3.2+ consumers read them.
+
+**Out-of-scope, flagged:**
+- Kingdom/Castle/ integration — moved to Track E.
+- "Visibly distinct capital settlements" — partially deferred;
+  V2 PlacementProfile machinery is wired but no village type
+  uses it yet (D3.2+).
+- `/litv kingdom debug regen` — not shipped; determinism
+  verifiable via two-world manual test.
+- Office NPC behaviour goals — fresh-spawned kingdom-tier
+  NPCs idle. D3 phase 3 wires behaviour.
+
+**Cumulative pending verification:** spawn three different fresh
+worlds (different seeds) and confirm:
+1. Each produces a deterministic set of kingdoms with deterministic
+   heraldry per `(culture, kingdomId, foundingTick)`.
+2. Each kingdom has exactly one member village (the capital).
+3. After walking a player into the capital, the king becomes
+   seated within ~1 second; `/litv kingdom debug list` shows
+   king=seated.
+4. Pre-D3.1 saves load and back-fill `capitalVillageId` cleanly.
