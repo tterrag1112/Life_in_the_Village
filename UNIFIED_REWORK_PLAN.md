@@ -273,6 +273,197 @@ Sequential per the original plan. Adjustments:
   -political-authority absorbs NPC religion records.
 - Phase 7 (polish, scale, longevity) — out-of-scope per below.
 
+
+## Track E — Polish and tuning
+
+Cross-cutting polish pass after Tracks A–D land. Items surface
+during testing in earlier tracks but aren't worth fixing
+mid-track. Track E consolidates them. Each item is prefixed
+with the originating track for traceability.
+
+### Design themes
+
+**Radius-of-development.** Villages have a graded development
+radius — dense civic core, then mixed-use mid-band, then
+agricultural / industrial / decorative outer band. Visual goal:
+medieval coherence — city centre → market quarter → farms
+outside the walls. CITY tier has wide bands with multiple
+branching roads and 4+ districts. HAMLET tier is core-only with
+a thin outer ring. The concept may already be partially present
+in V2's Layer 2 (site analyzer's centrality score gestures at
+this); E1.2 verifies and extends.
+
+Effects:
+- Civic buildings score highest near centre.
+- Residential clusters mid-band.
+- Agricultural plots, parks-as-natural-features, and outer
+  decorations (welcome marker, eventual boundary stones) live in
+  the outer band.
+- This means even a CITY can have an agricultural zone, just at
+  the perimeter — solving the "AGRICULTURAL inclination should
+  produce visible farms even when tier is large" problem
+  cleanly.
+
+**Inclination as soft multi-axis bias.** Inclination currently
+labels but rarely shifts behaviour. Track E completes its
+effects across building selection weights, decoration density,
+park style, farm sector size, homestead pool, road-network
+density, and more. Already partially shipped in B2.9 T3; Track
+E rounds out the rest.
+
+### E1 — V2 placement retuning
+
+**E1.1 — Tier sizing rework.** CITY, TOWN, HAMLET, OUTPOST
+counts and footprints retuned. CITY targets ~50–80 buildings
+(currently ~25) with multiple cross-streets and >300-block
+spine. HAMLET shrinks. Spine length, cross-street count, and
+frontage capacity rescale.
+
+**E1.2 — Radius-of-development zones.** Verify whether the
+concept already exists partially (centrality score in Layer 2
+gestures at it). Extend to explicit development-radius bands
+recorded on VillageData. Outer-band cells flagged for outdoor
+uses; civic-core for primaries; mid-band for residential. V2
+Layer 3 reads zone tags during placement scoring. (Plus
+follow-up to B2.9 T3 inclination biasing — zones and
+inclination compose.)
+
+**E1.3 — Drop-rate tuning.** PhasedPlanner currently drops
+20+ buildings on a 23-building village (NO_VIABLE_CANDIDATE).
+Either reduce drops by widening frontage-distance threshold or
+adjusting scoring, or accept drops as deliberate when sites are
+genuinely tight. Goal: drops indicate real placement failures,
+not over-eager filtering.
+
+**E1.4 — Arable threshold across biomes.** FarmSectorPlanner
+calibrated for plains, forest edges, savanna, taiga, etc.
+Desert / swamp / mushroom / nether reliably fail. (B2.9 T6
+follow-up.)
+
+**E1.5 — Inclination biasing completion.** B2.9 T3 added
+selection biasing. E1.5 extends inclination effects to:
+decoration density per zone, park-style preference,
+farm-sector size scaling, homestead plot weights.
+
+### E2 — Renderer and decoration polish
+
+**E2.1 — Real adjunct rendering.** B2.1 ships placeholder log
+lines (`[adjunct] B2.1 placeholder render for KITCHEN_GARDEN`)
+that don't write blocks. Once user NBT authoring lands, replace
+the placeholder with real NBT loading + placement.
+
+**E2.2 — ParkCandidateFinder textured-world tuning.** Calibrate
+scoring weights (vegetation density, water proximity, slope,
+view exposure) once tested in non-superflat worlds. Tune
+"preserve-vs-compose" thresholds. (B2.4 follow-up.)
+
+**E2.3 — Legacy decoration code removal.** B2.9 disabled
+PLAZA composition emitter and VILLAGE_BOUNDARY slots. E2.3
+removes the dead code paths once confirmed unused. Audit other
+legacy decoration emitters that pre-date DecorationProfile
+registry.
+
+**E2.4 — VillageDecorator follow-up.** B2.8 connected or
+removed road-walking parts. E2.4 reviews remaining
+responsibilities (weathering, ambient effects). Either fully
+migrate to V2 or cleanly delete.
+
+**E2.5 — Decoration density retuning.** B2.2's density curves
+calibrated against actual visual feel post-NBT-authoring. Likely
+CITY × main road denser; HAMLET sparser; per-zone tuning from
+E1.2.
+
+**E2.6 — Decoration profile registry growth.** Default culture
+ships ~15 profiles. Visual coverage wants 30+. User authoring;
+Track E tracks completeness.
+
+**E2.7 — Farm sector visual polish.** B2.5 ships sector + plot
++ field organization. E2.7 tunes scarecrow density, path width,
+  fence styles, tool shed placement once visible. (B2.5
+  follow-up.)
+
+**E2.8 — Homestead roll rate tuning.** B2.9 T7 surfaced low
+roll rate. E2.8 finalises plot fit vs weight distribution. Goal:
+≥80% of HOUSEs in CITY tier roll a plot. (B2.6 follow-up.)
+
+### E3 — NPC integration polish
+
+**E3.1 — Per-tick hot-loop audit.** B2.9 T2 fixed three
+specific loops. E3.1 audits all per-tick systems for similar
+patterns: idempotence, event-driven triggers where possible,
+profiling.
+
+**E3.2 — AbstractHomesteadGoal behaviour tuning.** Output rates,
+animations, schedule alignment between SPOUSE / CHILD /
+homestead activities. Functional now; E3.2 tunes feel.
+
+**E3.3 — VillageInhabitantPopulator + homestead interaction.**
+Homestead plot type now rolls at placement. E3.3 lets the
+populator bias household composition based on plot type
+(HOMESTEAD_ORCHARD households tilted toward outdoor-tolerant
+members, etc.). Soft bias.
+
+**E3.4 — Workshop / village leader assignment idempotence
+review.** B2.9 T2 surgical fix; E3.4 confirms full coverage —
+no remaining reassignment loops.
+
+### E4 — Cross-culture authoring
+
+Largest E phase. Substantial NBT + manifest authoring (user
+task); Track E tracks completeness and adds code-side support
+where needed.
+
+**E4.1 — Highmarch culture.** Mountain-tolerant agricultural
+focus. Stone-and-iron decoration. Cold-hardy crops (barley,
+potato, root vegetables). Compact footprints for steep terrain.
+
+**E4.2 — Silkwood culture.** Forest-canopy aesthetic. Vine-
+wrapped architecture. Mushroom / fruit / berry economy. Denser
+forest integration.
+
+**E4.3 — Tidereach culture.** Coastal / riverine. Driftwood-
+and-rope decoration. Kelp / fish / shellfish economy. Pier and
+dock infrastructure.
+
+**E4.4 — Cross-culture variant matrix verification.** All B2
+systems (decoration profile, AdjunctPlot, GardenStyle,
+FarmSector crop preference, homestead plot pool) authored for
+each non-default culture. Verify no `"default"` literal leaks
+in dispatch.
+
+### E5 — Robustness + Track A follow-ups
+
+**E5.1 — Save/reload multi-system round-trip.** Save with
+farm sectors, garden plots, homestead plot types, adjunct
+reservations all populated. Reload, verify everything restores.
+Edge cases: partial save failures, missing NBT references.
+
+**E5.2 — Forward-compat for older saves.** Worlds saved
+before/during B2 should load without crashing. New fields
+default sensibly.
+
+**E5.3 — A1b deferred V1-caller cleanup.** A1b inventory
+flagged some V1 callers for follow-up. E5.3 addresses them.
+
+### E6 — Final measurement run
+
+Phase 23.2 expanded against the full inclination × tier ×
+culture × biome matrix once Track E content lands. Compare
+against Track A's V2 baseline numbers. Document regressions and
+final shape of placement metrics.
+
+### E7 — Track C / D follow-ups
+
+Placeholder. Populated as Tracks C and D ship and surface
+issues.
+
+### Sequencing
+
+E1 first (foundational — radius-of-development affects
+everything downstream). E2–E3 parallel-eligible after E1. E4
+runs alongside everything as authoring time permits. E5 last
+(regression-test pass). E6 final.
+
 ## Sequencing summary
 A1 → A2 → A3 → A4 → A5
 ↓ (post-A2)
