@@ -96,6 +96,10 @@ public class ModModEvents {
         // Phase 1: register the three default NpcLifeEvent dispatchers
         // (memory, mood, trait drift). Idempotent.
         tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.registerDefaults();
+        // Track D1: kingdom-tier event bus. Idempotent; D1 ships with
+        // no default subscribers — D2 / D3 register stability /
+        // legitimacy / office-population dispatchers later.
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.registerDefaults();
 
         // Phase 3 task 24: register building enter/leave listeners that
         // drive greeter assignment + close refusal logic. Listener

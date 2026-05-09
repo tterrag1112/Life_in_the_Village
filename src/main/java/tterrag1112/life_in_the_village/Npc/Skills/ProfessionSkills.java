@@ -68,6 +68,15 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         m.put(Profession.GUILDWORKER,      new ProfessionSkills(Skill.CRAFTING, Skill.SOCIAL));
         m.put(Profession.COMPANY_WORKER,   new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
 
+        // Track D1 — kingdom-tier office professions. Inert this phase
+        // (no NPC ever spawns with these professions until D3); the
+        // entries are here so any code that walks the map in advance
+        // doesn't trip on missing keys.
+        m.put(Profession.GENERAL,    new ProfessionSkills(Skill.COMBAT,   Skill.SOCIAL));
+        m.put(Profession.MAGISTRATE, new ProfessionSkills(Skill.LITERACY, Skill.SOCIAL));
+        m.put(Profession.SPYMASTER,  new ProfessionSkills(Skill.SOCIAL,   Skill.LITERACY));
+        m.put(Profession.DIPLOMAT,   new ProfessionSkills(Skill.SOCIAL,   Skill.COMMERCE));
+
         // NONE / CITIZEN intentionally absent — no profession means no
         // bias at spawn-time skill init.
         return Map.copyOf(m);

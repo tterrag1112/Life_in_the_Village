@@ -61,6 +61,11 @@ public class ServerTickDispatcher {
             // every load (cheap when already migrated).
             tterrag1112.life_in_the_village.Village.Economy.Trade
                     .SeaRouteMigration.migrateIfNeeded(overworld);
+            // Track D1 — back-fill Village.kingdomId from each
+            // Kingdom's villageIds list. Idempotent; gated by
+            // VillageSavedData.kingdomMembershipMigrated.
+            tterrag1112.life_in_the_village.Kingdom
+                    .KingdomMembershipMigration.migrateIfNeeded(overworld);
             initialized = true;
             LOGGER.info("ServerTickDispatcher: subsystem registry initialized");
         }

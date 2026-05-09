@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Simulation.ResourceCategory;
 
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
@@ -554,6 +555,132 @@ public final class CultureBundles {
                                 defaultHomesteadPlotWeights())
                         .forGetter(CulturePlanningBias::homesteadPlotWeights)
         ).apply(i, CulturePlanningBias::new));
+    }
+
+    // =========================================================================
+    // Track D1 — Kingdom-tier sub-bundle
+    // =========================================================================
+
+    /**
+     * Track D1 (Phase 0) — culture defaults that drive kingdom-tier
+     * behaviour: the noble rank ladder, the succession rule, the
+     * subdivision model, the upkeep mix between revenue sources, and
+     * the set of offices a kingdom of this culture is expected to
+     * staff.
+     *
+     * <p>Inert in D1 — D2 and D3 read these values to drive estate
+     * placement, ruler selection, taxation, and office population.
+     * The 0–1 floats in {@code upkeepMix} should sum to ≈ 1.0 but are
+     * not enforced; consumers normalise.
+     */
+    public record CultureKingdomDefaults(
+            List<String>                nobilityRanks,
+            SuccessionRule              successionRule,
+            SubdivisionModel            subdivisionModel,
+            Map<UpkeepSource, Double>   upkeepMix,
+            List<String>                requiredOffices
+    ) {
+        public CultureKingdomDefaults {
+            nobilityRanks   = List.copyOf(nobilityRanks   != null ? nobilityRanks   : List.of());
+            upkeepMix       = upkeepMix != null
+                    ? Collections.unmodifiableMap(new EnumMap<>(upkeepMix))
+                    : Map.of();
+            requiredOffices = List.copyOf(requiredOffices != null ? requiredOffices : List.of());
+            if (successionRule == null)   successionRule   = SuccessionRule.PRIMOGENITURE;
+            if (subdivisionModel == null) subdivisionModel = SubdivisionModel.PROVINCES;
+        }
+
+        public static final CultureKingdomDefaults DEFAULT = new CultureKingdomDefaults(
+                List.of("Knight", "Baron", "Count", "Duke"),
+                SuccessionRule.PRIMOGENITURE,
+                SubdivisionModel.PROVINCES,
+                Map.of(
+                        UpkeepSource.TAX,     0.40,
+                        UpkeepSource.TRIBUTE, 0.20,
+                        UpkeepSource.LEVY,    0.20,
+                        UpkeepSource.TRADE,   0.20),
+                List.of("kingdom_king", "kingdom_chancellor",
+                        "kingdom_treasurer", "kingdom_general"));
+
+        public static final Codec<CultureKingdomDefaults> CODEC = RecordCodecBuilder.create(i -> i.group(
+                Codec.STRING.listOf().optionalFieldOf("nobilityRanks", DEFAULT.nobilityRanks)
+                        .forGetter(CultureKingdomDefaults::nobilityRanks),
+                Codec.STRING.xmap(
+                                s -> SuccessionRule.valueOf(s.toUpperCase(Locale.ROOT)),
+                                SuccessionRule::name)
+                        .optionalFieldOf("successionRule", DEFAULT.successionRule)
+                        .forGetter(CultureKingdomDefaults::successionRule),
+                Codec.STRING.xmap(
+                                s -> SubdivisionModel.valueOf(s.toUpperCase(Locale.ROOT)),
+                                SubdivisionModel::name)
+                        .optionalFieldOf("subdivisionModel", DEFAULT.subdivisionModel)
+                        .forGetter(CultureKingdomDefaults::subdivisionModel),
+                Codec.unboundedMap(
+                                Codec.STRING.xmap(
+                                        s -> UpkeepSource.valueOf(s.toUpperCase(Locale.ROOT)),
+                                        UpkeepSource::name),
+                                Codec.DOUBLE)
+                        .optionalFieldOf("upkeepMix", DEFAULT.upkeepMix)
+                        .forGetter(CultureKingdomDefaults::upkeepMix),
+                Codec.STRING.listOf().optionalFieldOf("requiredOffices", DEFAULT.requiredOffices)
+                        .forGetter(CultureKingdomDefaults::requiredOffices)
+        ).apply(i, CultureKingdomDefaults::new));
+    }
+
+    /**
+     * Track D1 — kingdom succession-rule vocabulary. The rule
+     * determines who claims the throne when a ruler dies / steps
+     * down; D1 only persists the value, D3 reads it.
+     */
+    public enum SuccessionRule {
+        /** Eldest legitimate child of either gender. */
+        PRIMOGENITURE,
+        /** Eldest male legitimate child only. */
+        AGNATIC_PRIMOGENITURE,
+        /** Eldest legitimate son; daughters bypass to grandsons. */
+        SEMI_SALIC,
+        /** Council of nobles or guildmasters elects from candidates. */
+        ELECTIVE,
+        /** Standing council assumes succession; no single ruler. */
+        COUNCIL,
+        /** Designated by religious authority or oracular reading. */
+        DIVINE_DESIGNATION
+    }
+
+    /**
+     * Track D1 — kingdom subdivision model. Captures the spatial /
+     * political structure below the kingdom level. D1 stores only;
+     * D2 / D3 use this to drive territorial planning and
+     * province-tier office assignment.
+     */
+    public enum SubdivisionModel {
+        /** No subdivisions; the kingdom is administered as one block. */
+        UNITARY,
+        /** Crown-administered provinces overseen by appointed governors. */
+        PROVINCES,
+        /** Hereditary noble holdings with delegated authority. */
+        DUCHIES,
+        /** Kin-bound clans with shared culture and overlapping claims. */
+        TRIBAL_CONFEDERATION,
+        /** Autonomous urban polities loosely associated under a high seat. */
+        CITY_STATE_LEAGUE
+    }
+
+    /**
+     * Track D1 — sources from which a kingdom funds its upkeep budget.
+     * The proportions in {@code CultureKingdomDefaults.upkeepMix} sum
+     * to roughly 1.0 across these axes. D3 wires the actual collection
+     * mechanics.
+     */
+    public enum UpkeepSource {
+        /** Direct taxation on village treasuries. */
+        TAX,
+        /** Tribute owed by vassal villages or sub-kingdoms. */
+        TRIBUTE,
+        /** Levy fees collected on conscripted labour and arms. */
+        LEVY,
+        /** Tariff and toll revenue from trade routes through claimed land. */
+        TRADE
     }
 
     /** Suppresses unused-import warning on EnumMap (used in helpers). */

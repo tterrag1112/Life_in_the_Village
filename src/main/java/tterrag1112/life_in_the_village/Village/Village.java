@@ -106,6 +106,16 @@ public class Village {
     /** True for villages created at or after Phase 3b; the graph connector system routes their connectors. */
     private boolean useGraphConnector = true;
 
+    /**
+     * Track D1 — explicit kingdom membership. Null for unaffiliated
+     * villages. Pre-Phase-D1 saves arrive null and are back-filled by
+     * {@code KingdomMembershipMigration} from the legacy
+     * {@code Kingdom.villageIds} list. After D1 the field is the
+     * authoritative membership pointer; the legacy list stays in
+     * sync via add/removeVillage callers.
+     */
+    @Nullable private UUID kingdomId;
+
     // =========================================================================
     // LAYOUT METADATA — persisted so the expansion system can use them
     // =========================================================================
@@ -522,13 +532,19 @@ public class Village {
                     // polygon generator.
                     VillagePlazaMeta.CODEC
                             .optionalFieldOf("plazaMeta", VillagePlazaMeta.empty())
-                            .forGetter(VillagePlazaMeta::from)
+                            .forGetter(VillagePlazaMeta::from),
+                    // Track D1 — explicit kingdom membership. Empty for
+                    // pre-Phase-D1 saves; back-filled by
+                    // KingdomMembershipMigration on first load.
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                            .optionalFieldOf("kingdomId")
+                            .forGetter(v -> Optional.ofNullable(v.kingdomId))
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
                                layoutMeta, villageType, dockNodeId,
                                useGraphConnector, offices, policy,
-                               plazaMeta) -> {
+                               plazaMeta, kingdomId) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -558,6 +574,7 @@ public class Village {
                 }
                 v.policy = policy != null ? policy : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy();
                 if (plazaMeta != null) plazaMeta.applyTo(v);
+                kingdomId.ifPresent(v::setKingdomId);
                 return v;
             })
     );
@@ -716,6 +733,11 @@ public class Village {
 
     public Optional<UUID> getDockNodeId() { return Optional.ofNullable(dockNodeId); }
     public void setDockNodeId(UUID id) { this.dockNodeId = id; }
+
+    /** Track D1 — explicit kingdom membership pointer. Empty if unaffiliated. */
+    public Optional<UUID> getKingdomId() { return Optional.ofNullable(kingdomId); }
+    public void setKingdomId(UUID id) { this.kingdomId = id; }
+    public void clearKingdomId() { this.kingdomId = null; }
 
     public boolean useGraphConnector() { return useGraphConnector; }
 

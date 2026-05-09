@@ -66,14 +66,15 @@ spec matches reality.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| D1-01 | Culture kingdom-tier fields | Not-Started | Depends A2. |
-| D1-02 | KingdomEventBus peer | Not-Started | Mirror NpcLifeEventBus. |
-| D1-03 | Stability scalars | Not-Started | |
-| D1-04 | Territory vs membership split | Not-Started | |
-| D1-05 | Legitimacy scalar | Not-Started | |
-| D1-06 | Estate primitives | Not-Started | |
-| D1-07 | Heraldry generator | Not-Started | |
-| D1-08 | Office stub completion (7 offices) | Not-Started | Chancellor / Scholar / General / Magistrate / Spymaster / Treasurer / Diplomat. |
+| D1 | Phase 0 bridge (kingdom-tier scaffolding) | Done 2026-05-09 | All eight sub-tasks (D1-01 through D1-08) shipped together as one phase per the user-confirmed Phase 0 prompt. New `CultureKingdomDefaults` sub-bundle on `Cultures.Culture`; `Kingdom.stability` + `legitimacy` + `heraldry`; `Village.kingdomId` + idempotent `KingdomMembershipMigration`; `BuildingType.ESTATE`; deterministic `HeraldryGenerator`; `Kingdom.Events.KingdomEventBus` peer + 8-record taxonomy; five new kingdom-office stubs (Scholar / General / Magistrate / Spymaster / Diplomat) + four new `Profession` enum values; `/litv kingdom debug describe`. Purely additive; no behaviour change in-game; everything new is wired but inert. See KINGDOM_PROGRESS.md for per-decision rationale. |
+| D1-01 | Culture kingdom-tier fields | Superseded by D1 | |
+| D1-02 | KingdomEventBus peer | Superseded by D1 | |
+| D1-03 | Stability scalars | Superseded by D1 | |
+| D1-04 | Territory vs membership split | Superseded by D1 | |
+| D1-05 | Legitimacy scalar | Superseded by D1 | |
+| D1-06 | Estate primitives | Superseded by D1 | |
+| D1-07 | Heraldry generator | Superseded by D1 | |
+| D1-08 | Office stub completion (7 offices) | Superseded by D1 | |
 | D2 | Section 5 rewrite | Not-Started | Doc-only. Depends A4. |
 | D3-1 | Phase 1 — worldgen rewrite | Not-Started | Depends A4 + D2. |
 | D3-2 | Phase 2 — houses, ranks, nobility | Not-Started | Depends D3-1. |
@@ -2463,3 +2464,151 @@ sea routes; confirm migration log; spawn two coastal villages on a
 fresh world and verify a SEA edge forms; run land
 `dispatch_test_caravan_between` and confirm the SEA edge is excluded;
 wait several upkeep cycles and confirm SEA decays at -2/cycle.
+
+### 2026-05-09 — Track D1 landed (kingdom-tier scaffolding bridge)
+
+Phase D1 from `UNIFIED_REWORK_PLAN.md` lines 222–241 shipped as a
+single phase. Per-decision detail in `KINGDOM_PROGRESS.md` (newly
+created — D2 will append to it); summary here.
+
+**Disposition before code:**
+- `Cultures.Culture` is a 14-field record at the 16-field DFU
+  ceiling; adding a 15th sub-bundle is fine.
+- `Kingdom` is a mutable class (not record) with codec persistence;
+  no stability / legitimacy fields existed prior to D1.
+- Membership was list-on-Kingdom only (`villageIds: List<UUID>`);
+  no reverse field on Village.
+- `NpcLifeEventBus` has the synchronized DISPATCHERS / EVENT_COUNTS /
+  LISTENERS pattern at `Npc.Events`; KingdomEventBus mirrors at
+  `Kingdom.Events.KingdomEventBus` (sibling-style).
+- `OfficeRegistry.registerKingdomOffices()` already had KING +
+  CHANCELLOR + TREASURER + COUNCIL_SEAT; D1 adds the five missing
+  ones (Scholar, General, Magistrate, Spymaster, Diplomat).
+- `Kingdom/Castle/` is 20 files of procedural castle generation,
+  entirely separate from kingdom membership / office framework /
+  culture. Out of scope for D1; not touched.
+
+**User-confirmed scope (over four design questions):**
+- Heraldry: minimal 4-enum stub (Tincture × 7, Charge × 10, Layout
+  × 4) — ~1960 unique combinations per culture, sufficient for D3
+  to extend with renderers.
+- Subdivision model: five-value enum (UNITARY / PROVINCES /
+  DUCHIES / TRIBAL_CONFEDERATION / CITY_STATE_LEAGUE).
+- Per-culture defaults: distinct per culture (plainfolk = tribal
+  council with levy-heavy upkeep, highmarch = duchies with
+  agnatic primogeniture and tribute, silkwood = elective
+  city-state league with trade-heavy upkeep, tidereach = elective
+  provinces with trade-heavy upkeep, default = standard provinces
+  with primogeniture and balanced upkeep).
+- Office IDs: `kingdom_<office>` matching the existing
+  `kingdom_king` / `kingdom_chancellor` / `kingdom_treasurer`
+  namespace.
+
+**Code shipped:**
+
+- `Cultures/CultureBundles.java` — `CultureKingdomDefaults` record
+  with `nobilityRanks`, `successionRule`, `subdivisionModel`,
+  `upkeepMix`, `requiredOffices`. New enums `SuccessionRule` (6
+  values), `SubdivisionModel` (5 values), `UpkeepSource` (4 values).
+- `Cultures/Culture.java` — 15th field `kingdomDefaults` with codec
+  optionalFieldOf default.
+- `Cultures/CultureRegistry.java` — per-culture defaults table
+  applied to plainfolk / highmarch / silkwood / tidereach.
+- `Kingdom/Heraldry.java` (new) — record + Tincture/Charge/Layout
+  enums + codec.
+- `Kingdom/HeraldryGenerator.java` (new) — deterministic xorshift
+  hash from `(culture, kingdomId, foundingSeed)` → Heraldry; same
+  inputs always produce same output.
+- `Kingdom/Kingdom.java` — `stability`, `legitimacy` ints with
+  defaults 75; `heraldry` field; `Kingdom.ScalarBand` enum +
+  `bandOf` helper; constructor generates heraldry deterministically;
+  `fromCodec` back-fills heraldry for pre-D1 kingdoms.
+- `Kingdom/KingdomMembershipMigration.java` (new) — one-shot,
+  idempotent migration that walks `Kingdom.villageIds` and stamps
+  `Village.kingdomId`. Mirror of `SeaRouteMigration` (Track C3.3)
+  shape. Side-effect: back-fills Heraldry for pre-D1 kingdoms whose
+  loaded heraldry is `Heraldry.UNKNOWN`.
+- `Village/Village.java` — `kingdomId: Optional<UUID>` field +
+  codec + accessors.
+- `Networking/VillageSavedData.java` — `kingdomMembershipMigrated`
+  flag + accessors + codec wiring; fresh worlds default true,
+  pre-D1 saves arrive false.
+- `Kingdom/Events/KingdomEvent.java` (new) — sealed interface with
+  8 record subtypes (Founded, Dissolved, RulerSucceeded,
+  OfficeFilled, OfficeVacated, VillageJoined, VillageLeft,
+  ScalarShifted).
+- `Kingdom/Events/KingdomEventDispatcher.java` (new) — listener
+  interface mirroring `Npc.Events.EventDispatcher`.
+- `Kingdom/Events/KingdomEventBus.java` (new) — synchronous dispatch
+  hub mirroring `NpcLifeEventBus` exactly. `registerDefaults()`
+  is a no-op in D1 (no subscribers).
+- `Profession/Profession.java` — four new enum values: GENERAL,
+  MAGISTRATE, SPYMASTER, DIPLOMAT.
+- `Npc/Skills/ProfessionSkills.java` — stub skill mappings for
+  the four new professions.
+- `Npc/Office/OfficeRegistry.java` — five new office IDs +
+  `register(...)` calls in `registerKingdomOffices()` (Scholar,
+  General, Magistrate, Spymaster, Diplomat).
+- `Village/Buildings/BuildingType.java` — `ESTATE` enum value.
+- `Events/ServerTickDispatcher.java` — calls
+  `KingdomMembershipMigration.migrateIfNeeded` once on first tick
+  alongside the existing `SeaRouteMigration` call.
+- `Events/ModModEvents.java` — calls
+  `KingdomEventBus.registerDefaults()` (idempotent no-op in D1)
+  alongside the existing `NpcLifeEventBus.registerDefaults()`.
+- `Commands/KingdomDebugCommand.java` (new) —
+  `/litv kingdom debug describe <name>`, `list`, `events_stats`.
+- `KINGDOM_PROGRESS.md` (new) — append-only kingdom track log.
+
+**Save compat:**
+- Pre-D1 saves load with `kingdomMembershipMigrated = false`; the
+  migration runs at first server tick, stamps `Village.kingdomId`
+  for every kingdom member, then flips the flag.
+- `Heraldry` defaults to `Heraldry.UNKNOWN` for pre-D1 kingdoms;
+  the migration regenerates it via `HeraldryGenerator.generate(culture,
+  kingdomId, 0L)`.
+- All new Codec fields use `optionalFieldOf` with explicit defaults
+  so missing-field saves load cleanly.
+- `Kingdom/Castle/` package untouched.
+
+**Wired but inert:**
+- `CultureKingdomDefaults` persists on each Culture; no consumer
+  reads it.
+- `Kingdom.stability` / `legitimacy` persist; no driver loops fire.
+- `Kingdom.heraldry` persists + back-fills; nothing renders it.
+- `KingdomEventBus` accepts subscribers and fires events; D1 ships
+  zero subscribers and zero call sites that fire events.
+- `Village.kingdomId` is back-filled at load; no D1 code queries
+  it (legacy `Kingdom.villageIds` remains the canonical read).
+- `BuildingType.ESTATE` exists; no spawn rule, no inhabitant
+  populator, no structure JSONs.
+- Five new kingdom offices registered; no goal class, no NPC ever
+  spawns with the four new professions.
+
+**Cumulative pending verification:**
+- Existing-save migration: load a save with active kingdoms;
+  `[KingdomMembershipMigration]` log line on first tick;
+  `/litv kingdom debug describe <name>` shows matching legacy
+  list and reverse-pointer member counts; heraldry is no longer
+  UNKNOWN.
+- Fresh-world test: a newly-founded kingdom has the eight offices
+  registered, default 75/75 stability/legitimacy, generated
+  heraldry, the kingdom-tier sub-bundle visible in the describe
+  output.
+- Codec round-trip: save → restart → load → save produces an
+  identical NBT diff.
+- Behaviour preservation: caravans, road maintenance, V2 villages,
+  decoration cycles, NPC schedules — all work identically to
+  pre-D1. The only observable change is debug-command output.
+- `git grep KingdomEventBus` shows it as a peer (sibling-level)
+  of `NpcLifeEventBus`, not nested.
+
+**What's deferred:**
+- D2 (Section 5 rewrite): consumes `CultureKingdomDefaults` to
+  drive kingdom worldgen schemas + capital-emits-claim wiring.
+- D3: stability / legitimacy decay drivers, kingdom-tier office
+  population logic, estate placement + inhabitants, succession-
+  rule-driven ruler transitions, KingdomEventBus subscribers,
+  culture-required-offices enforcement.
+- Track E: heraldry rendering, treaties / war / vassalage
+  taxonomy, kingdom-tier UI, kingdom-merge / split workflows.

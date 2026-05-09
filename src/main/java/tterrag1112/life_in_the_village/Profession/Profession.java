@@ -62,7 +62,40 @@ public enum Profession {
      * HEALER_HUT. Produces remedies between treatments and runs the
      * around-the-clock plague response. Phase 3 task 21.
      */
-    HEALER;
+    HEALER,
+
+    // ── Track D1 (Phase 0) — kingdom-tier office professions ────────────────
+    // These are placeholders for D3's office-driven population logic.
+    // No goal class, no workplace binding, no NPC ever spawns with one
+    // of these professions until D3. Listed so {@code OfficeRegistry}
+    // has the eligibility tokens it needs.
+
+    /**
+     * Track D1 — head of the kingdom's standing forces. Bound to the
+     * {@code kingdom_general} office. D3 wires the muster + patrol
+     * behaviour goal.
+     */
+    GENERAL,
+
+    /**
+     * Track D1 — judicial officer for kingdom-tier law. Bound to the
+     * {@code kingdom_magistrate} office. D3 wires court / sentencing.
+     */
+    MAGISTRATE,
+
+    /**
+     * Track D1 — head of the kingdom's intelligence service. Bound to
+     * the {@code kingdom_spymaster} office. D3 wires informants /
+     * intrigue.
+     */
+    SPYMASTER,
+
+    /**
+     * Track D1 — envoy responsible for inter-kingdom relations. Bound
+     * to the {@code kingdom_diplomat} office. D3 wires treaty
+     * negotiation and embassy protocol.
+     */
+    DIPLOMAT;
 
     public String getDisplayName() {
         return switch (this) {

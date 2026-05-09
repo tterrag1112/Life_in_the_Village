@@ -104,7 +104,14 @@ public class Kingdom {
                                                     : new KingdomHistoryData())),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
-                                    .forGetter(k -> Optional.ofNullable(k.offices))
+                                    .forGetter(k -> Optional.ofNullable(k.offices)),
+                            // Track D1 — kingdom-tier scalars + heraldry.
+                            Codec.INT.optionalFieldOf("stability", 75)
+                                    .forGetter(k -> k.stability),
+                            Codec.INT.optionalFieldOf("legitimacy", 75)
+                                    .forGetter(k -> k.legitimacy),
+                            Heraldry.CODEC.optionalFieldOf("heraldry", Heraldry.UNKNOWN)
+                                    .forGetter(k -> k.heraldry)
                     ).apply(instance, Kingdom::fromCodec));
 
 
@@ -117,8 +124,20 @@ public class Kingdom {
             List<KingdomLaw> laws,
             Optional<KingdomClaim> claim,
             KingdomGovernanceData governance,
-            Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices) {
+            Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
+            int stability, int legitimacy, Heraldry heraldry) {
         Kingdom k = new Kingdom(id, name, culture);
+        k.stability = clampScalar(stability);
+        k.legitimacy = clampScalar(legitimacy);
+        // Track D1 — back-fill heraldry for pre-Phase-0 kingdoms.
+        // The constructor already generated culture-seeded heraldry;
+        // accept a stored non-UNKNOWN value over it but keep the
+        // generator's output for older saves whose codec missed the
+        // field entirely (defaults to UNKNOWN there).
+        if (heraldry != null && !heraldry.equals(Heraldry.UNKNOWN)) {
+            k.heraldry = heraldry;
+        }
+        // else: keep the constructor-generated heraldry.
         k.villageIds.addAll(villageIds);
         rulerEntity.ifPresent(rid -> k.rulerEntityId = rid);
         rulerPlayer.ifPresent(pid -> k.rulerPlayerId = pid);
@@ -181,6 +200,31 @@ public class Kingdom {
     private KingdomHistoryData history = new KingdomHistoryData();
     private KingdomClaim territorialClaim = null; // nullable — older saves won't have it
 
+    // Track D1 — kingdom-tier scalars + heraldry. Inert this phase;
+    // stability and legitimacy carry no driver yet (D3 wires the
+    // decay loops). Heraldry is purely a persistence + display
+    // concern at this stage.
+    /**
+     * Track D1 — 0..100 stability score. Default 75 = SECURE band.
+     * Bands: 0–24 CRISIS, 25–49 STRAINED, 50–74 STABLE, 75–100 SECURE.
+     * D3 drivers (intent): treasury health, recent crime rate,
+     * neighbouring war, succession turbulence.
+     */
+    private int stability = 75;
+    /**
+     * Track D1 — 0..100 legitimacy score. Default 75. Same bands as
+     * stability. D3 drivers (intent): culturally-correct succession,
+     * occupied culture-required offices, holy / oracular endorsement.
+     */
+    private int legitimacy = 75;
+    /**
+     * Track D1 — kingdom heraldry. Generated deterministically from
+     * (culture, kingdomId, foundingSeed) at kingdom-founding;
+     * pre-Phase-0 saves back-fill via the migration with foundingSeed=0.
+     * Never null after construction; never null after codec round-trip.
+     */
+    private Heraldry heraldry = Heraldry.UNKNOWN;
+
 
     // =========================================================================
     // CONSTRUCTORS
@@ -192,6 +236,15 @@ public class Kingdom {
         this.culture = culture;
         this.offices = tterrag1112.life_in_the_village.Npc.Office.OfficeState
                 .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.KINGDOM, this.id);
+        // Track D1 — generate heraldry deterministically at founding.
+        // Codec round-trip overrides this with the persisted record;
+        // pre-Phase-0 saves arrive via fromCodec which sets heraldry
+        // explicitly before this default would re-fire (constructor
+        // is called once, codec setters once).
+        this.heraldry = HeraldryGenerator.generate(
+                tterrag1112.life_in_the_village.Cultures.CultureRegistry
+                        .getOrDefault(culture),
+                id, 0L);
     }
 
     /** Office state for this kingdom; never {@code null} after construction. */
@@ -427,4 +480,34 @@ public class Kingdom {
         this.territorialClaim = claim;
     }
 
+    // =========================================================================
+    // Track D1 — stability / legitimacy / heraldry
+    // =========================================================================
+
+    public int getStability()  { return stability; }
+    public int getLegitimacy() { return legitimacy; }
+
+    public void setStability(int v)  { this.stability  = clampScalar(v); }
+    public void setLegitimacy(int v) { this.legitimacy = clampScalar(v); }
+
+    /**
+     * Track D1 — semantic band for either scalar.
+     * 0–24 = CRISIS, 25–49 = STRAINED, 50–74 = STABLE, 75–100 = SECURE.
+     */
+    public enum ScalarBand { CRISIS, STRAINED, STABLE, SECURE }
+
+    public static ScalarBand bandOf(int score) {
+        if (score < 25) return ScalarBand.CRISIS;
+        if (score < 50) return ScalarBand.STRAINED;
+        if (score < 75) return ScalarBand.STABLE;
+        return ScalarBand.SECURE;
+    }
+
+    public Heraldry getHeraldry()       { return heraldry; }
+    public void setHeraldry(Heraldry h) { this.heraldry = h == null ? Heraldry.UNKNOWN : h; }
+
+    /** Clamps a 0..100 input to the valid stability/legitimacy range. */
+    private static int clampScalar(int v) {
+        return Math.max(0, Math.min(100, v));
+    }
 }

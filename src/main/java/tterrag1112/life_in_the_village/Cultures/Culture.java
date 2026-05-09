@@ -6,6 +6,7 @@ import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureAestheticT
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureApprenticeshipNorms;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureEconomicNorms;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureHobbyWeights;
+import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureKingdomDefaults;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureLawDefaults;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CultureOfficeRules;
 import tterrag1112.life_in_the_village.Cultures.CultureBundles.CulturePlanningBias;
@@ -43,7 +44,10 @@ public record Culture(
         CultureVisitorAffinity visitorAffinity,
         CultureApprenticeshipNorms apprenticeshipNorms,
         CultureAestheticTokens aesthetics,
-        CulturePlanningBias planningBias
+        CulturePlanningBias planningBias,
+        // Track D1 — kingdom-tier defaults. Inert this phase; D2/D3
+        // read these to drive succession, subdivision, and upkeep.
+        CultureKingdomDefaults kingdomDefaults
 ) {
     public Culture {
         if (id == null) throw new IllegalArgumentException("culture id required");
@@ -60,6 +64,7 @@ public record Culture(
         if (apprenticeshipNorms == null) apprenticeshipNorms = CultureApprenticeshipNorms.DEFAULT;
         if (aesthetics == null)          aesthetics          = CultureAestheticTokens.DEFAULT;
         if (planningBias == null)        planningBias        = CulturePlanningBias.DEFAULT;
+        if (kingdomDefaults == null)     kingdomDefaults     = CultureKingdomDefaults.DEFAULT;
     }
 
     /** Convenience: a barebones culture for the {@code "default"}
@@ -78,7 +83,8 @@ public record Culture(
                 CultureVisitorAffinity.NEUTRAL,
                 CultureApprenticeshipNorms.DEFAULT,
                 CultureAestheticTokens.DEFAULT,
-                CulturePlanningBias.DEFAULT);
+                CulturePlanningBias.DEFAULT,
+                CultureKingdomDefaults.DEFAULT);
     }
 
     public static final Codec<Culture> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -95,6 +101,7 @@ public record Culture(
             CultureVisitorAffinity.CODEC.optionalFieldOf("visitorAffinity", CultureVisitorAffinity.NEUTRAL).forGetter(Culture::visitorAffinity),
             CultureApprenticeshipNorms.CODEC.optionalFieldOf("apprenticeshipNorms", CultureApprenticeshipNorms.DEFAULT).forGetter(Culture::apprenticeshipNorms),
             CultureAestheticTokens.CODEC.optionalFieldOf("aesthetics", CultureAestheticTokens.DEFAULT).forGetter(Culture::aesthetics),
-            CulturePlanningBias.CODEC.optionalFieldOf("planningBias", CulturePlanningBias.DEFAULT).forGetter(Culture::planningBias)
+            CulturePlanningBias.CODEC.optionalFieldOf("planningBias", CulturePlanningBias.DEFAULT).forGetter(Culture::planningBias),
+            CultureKingdomDefaults.CODEC.optionalFieldOf("kingdomDefaults", CultureKingdomDefaults.DEFAULT).forGetter(Culture::kingdomDefaults)
     ).apply(i, Culture::new));
 }

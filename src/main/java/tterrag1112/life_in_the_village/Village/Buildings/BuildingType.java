@@ -21,6 +21,13 @@ public enum BuildingType {
     // Tier 4
     NOBLE_MANOR, WINERY, ARMORER, TOOLSMITH, ATELIER, DOCKS,
 
+    // Track D1 (Phase 0) — landed-noble holding owned by a named
+    // noble, smaller than a village, larger than a single farmstead.
+    // Inert this phase: no spawn rule, no inhabitant populator, no
+    // structure JSONs. D3 wires placement, ownership, and economic
+    // flow from {@code Kingdom.subdivisionModel}.
+    ESTATE,
+
     // Scribal (Phase 2 task 17)
     SCRIBE_WORKSHOP, SCHOLARS_RETREAT,
 

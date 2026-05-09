@@ -143,7 +143,21 @@ public final class CultureRegistry {
                         List.of("brown", "tan", "ochre", "natural_linen"),
                         List.of("straw_hat", "wool_scarf"),
                         "default", Optional.empty()),
-                CulturePlanningBias.DEFAULT);
+                CulturePlanningBias.DEFAULT,
+                // Track D1 — plainfolk: tribal confederation,
+                // council-led, levy-heavy (most upkeep is local
+                // labour, not coin or tribute).
+                new CultureBundles.CultureKingdomDefaults(
+                        List.of("Yeoman", "Headman", "Elder", "Chief"),
+                        CultureBundles.SuccessionRule.COUNCIL,
+                        CultureBundles.SubdivisionModel.TRIBAL_CONFEDERATION,
+                        Map.of(
+                                CultureBundles.UpkeepSource.TAX,     0.10,
+                                CultureBundles.UpkeepSource.TRIBUTE, 0.10,
+                                CultureBundles.UpkeepSource.LEVY,    0.60,
+                                CultureBundles.UpkeepSource.TRADE,   0.20),
+                        List.of("kingdom_king", "kingdom_chancellor",
+                                "kingdom_scholar")));
     }
 
     // ── Highmarch ─────────────────────────────────────────────────────────
@@ -196,7 +210,23 @@ public final class CultureRegistry {
                         List.of("dark_grey", "iron_black", "deep_red", "leather_brown"),
                         List.of("iron_pauldron", "heraldic_cape"),
                         "broad", Optional.of("kingdom_heraldry")),
-                CulturePlanningBias.DEFAULT);
+                CulturePlanningBias.DEFAULT,
+                // Track D1 — highmarch: hereditary duchies, agnatic
+                // primogeniture, tribute-heavy. Vassals owe tribute
+                // upward; the central treasury rarely taxes
+                // commoners directly.
+                new CultureBundles.CultureKingdomDefaults(
+                        List.of("Knight", "Baron", "Marquis", "Duke"),
+                        CultureBundles.SuccessionRule.AGNATIC_PRIMOGENITURE,
+                        CultureBundles.SubdivisionModel.DUCHIES,
+                        Map.of(
+                                CultureBundles.UpkeepSource.TAX,     0.30,
+                                CultureBundles.UpkeepSource.TRIBUTE, 0.40,
+                                CultureBundles.UpkeepSource.LEVY,    0.20,
+                                CultureBundles.UpkeepSource.TRADE,   0.10),
+                        List.of("kingdom_king", "kingdom_chancellor",
+                                "kingdom_treasurer", "kingdom_general",
+                                "kingdom_magistrate")));
     }
 
     // ── Silkwood ──────────────────────────────────────────────────────────
@@ -251,7 +281,23 @@ public final class CultureRegistry {
                         List.of("forest_green", "moss", "muted_blue", "ivory"),
                         List.of("scholar_robe", "embroidered_sash"),
                         "tall", Optional.of("geometric")),
-                CulturePlanningBias.DEFAULT);
+                CulturePlanningBias.DEFAULT,
+                // Track D1 — silkwood: city-state league, elective
+                // archons, trade-heavy. Coastal magnates fund the
+                // central treasury through mercantile tariffs more
+                // than agrarian taxes.
+                new CultureBundles.CultureKingdomDefaults(
+                        List.of("Citizen", "Magnate", "Senator", "Archon"),
+                        CultureBundles.SuccessionRule.ELECTIVE,
+                        CultureBundles.SubdivisionModel.CITY_STATE_LEAGUE,
+                        Map.of(
+                                CultureBundles.UpkeepSource.TAX,     0.20,
+                                CultureBundles.UpkeepSource.TRIBUTE, 0.10,
+                                CultureBundles.UpkeepSource.LEVY,    0.10,
+                                CultureBundles.UpkeepSource.TRADE,   0.60),
+                        List.of("kingdom_king", "kingdom_chancellor",
+                                "kingdom_scholar", "kingdom_diplomat",
+                                "kingdom_treasurer")));
     }
 
     // ── Tidereach ─────────────────────────────────────────────────────────
@@ -305,6 +351,21 @@ public final class CultureRegistry {
                         List.of("ocean_blue", "sailcloth_white", "sun_bleached", "rope_hemp"),
                         List.of("fishing_cap", "sea_pendant"),
                         "lean", Optional.of("wave")),
-                CulturePlanningBias.DEFAULT);
+                CulturePlanningBias.DEFAULT,
+                // Track D1 — tidereach: maritime provinces under
+                // elective leadership; trade-heavy with strong
+                // diplomatic emphasis. Tariff revenue dominates;
+                // taxation modest.
+                new CultureBundles.CultureKingdomDefaults(
+                        List.of("Steward", "Reeve", "Magistrate", "Princeps"),
+                        CultureBundles.SuccessionRule.ELECTIVE,
+                        CultureBundles.SubdivisionModel.PROVINCES,
+                        Map.of(
+                                CultureBundles.UpkeepSource.TAX,     0.30,
+                                CultureBundles.UpkeepSource.TRIBUTE, 0.15,
+                                CultureBundles.UpkeepSource.LEVY,    0.15,
+                                CultureBundles.UpkeepSource.TRADE,   0.40),
+                        List.of("kingdom_king", "kingdom_chancellor",
+                                "kingdom_treasurer", "kingdom_diplomat")));
     }
 }

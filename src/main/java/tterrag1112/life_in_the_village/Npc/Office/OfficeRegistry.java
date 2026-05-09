@@ -61,6 +61,15 @@ public final class OfficeRegistry {
     public static final String KINGDOM_KING         = "kingdom_king";
     public static final String KINGDOM_CHANCELLOR   = "kingdom_chancellor";
     public static final String KINGDOM_TREASURER    = "kingdom_treasurer";
+    // Track D1 (Phase 0) — five new kingdom-tier office stubs.
+    // Inert this phase: registered for D2's culture-driven required-
+    // office checks and D3's behaviour-goal wiring. No active holder
+    // logic, no workplace bindings until D3.
+    public static final String KINGDOM_SCHOLAR      = "kingdom_scholar";
+    public static final String KINGDOM_GENERAL      = "kingdom_general";
+    public static final String KINGDOM_MAGISTRATE   = "kingdom_magistrate";
+    public static final String KINGDOM_SPYMASTER    = "kingdom_spymaster";
+    public static final String KINGDOM_DIPLOMAT     = "kingdom_diplomat";
     public static final String KINGDOM_COUNCIL_SEAT = "kingdom_council_seat";
 
     public static final String TEMPLE_HIGH_PRIEST = "temple_high_priest";
@@ -339,6 +348,53 @@ public final class OfficeRegistry {
                 365,
                 List.of(),
                 new Competence(Skill.SOCIAL, 30, 70, 1.05f, 0.0f)));
+
+        // ── Track D1 (Phase 0) — five new kingdom-tier office stubs ─────
+        // No goals, no behaviour, no inhabitant populator yet. Powers
+        // sets are placeholders that match each office's intended
+        // domain; D3 wires the actual capabilities.
+
+        register(OfficeDefinition.of(KINGDOM_SCHOLAR, OrgType.KINGDOM, "Royal Scholar",
+                List.of(Profession.SCHOLAR),
+                Map.of(Skill.LITERACY, 60),
+                SelectionMethod.APPOINTED,
+                0,
+                List.of(OfficePower.ISSUE_DECREE, OfficePower.VIEW_BUDGET),
+                new Competence(Skill.LITERACY, 60, 90, 1.10f, -0.05f)));
+
+        register(OfficeDefinition.of(KINGDOM_GENERAL, OrgType.KINGDOM, "Kingdom General",
+                List.of(Profession.GENERAL, Profession.GUARD),
+                Map.of(Skill.COMBAT, 60, Skill.SOCIAL, 30),
+                SelectionMethod.APPOINTED,
+                0,
+                List.of(OfficePower.COMMAND_CITIZENS, OfficePower.APPOINT_SUBORDINATE,
+                        OfficePower.ISSUE_DECREE),
+                new Competence(Skill.COMBAT, 60, 90, 1.20f, -0.12f)));
+
+        register(OfficeDefinition.of(KINGDOM_MAGISTRATE, OrgType.KINGDOM, "Kingdom Magistrate",
+                List.of(Profession.MAGISTRATE),
+                Map.of(Skill.LITERACY, 50, Skill.SOCIAL, 40),
+                SelectionMethod.APPOINTED,
+                0,
+                List.of(OfficePower.ENACT_LAW, OfficePower.REPEAL_LAW,
+                        OfficePower.ISSUE_DECREE),
+                new Competence(Skill.LITERACY, 50, 85, 1.10f, -0.08f)));
+
+        register(OfficeDefinition.of(KINGDOM_SPYMASTER, OrgType.KINGDOM, "Kingdom Spymaster",
+                List.of(Profession.SPYMASTER),
+                Map.of(Skill.SOCIAL, 50, Skill.LITERACY, 30),
+                SelectionMethod.APPOINTED,
+                0,
+                List.of(OfficePower.ISSUE_DECREE, OfficePower.APPOINT_SUBORDINATE),
+                new Competence(Skill.SOCIAL, 50, 85, 1.10f, -0.10f)));
+
+        register(OfficeDefinition.of(KINGDOM_DIPLOMAT, OrgType.KINGDOM, "Kingdom Diplomat",
+                List.of(Profession.DIPLOMAT, Profession.HERALD),
+                Map.of(Skill.SOCIAL, 60, Skill.COMMERCE, 30),
+                SelectionMethod.APPOINTED,
+                0,
+                List.of(OfficePower.ISSUE_DECREE),
+                new Competence(Skill.SOCIAL, 60, 90, 1.15f, -0.08f)));
     }
 
     private static void registerTempleOffices() {

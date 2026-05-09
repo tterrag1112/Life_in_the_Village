@@ -447,7 +447,12 @@ public class VillageSavedData extends SavedData implements
                             .optionalFieldOf("farmSectorData",
                                     new VillageFarmData(List.of()))
                             .forGetter(d -> new VillageFarmData(
-                                    List.copyOf(d.farmSectors.values())))
+                                    List.copyOf(d.farmSectors.values()))),
+                    // Track D1 — KingdomMembershipMigration idempotency flag.
+                    // Pre-D1 saves load false; the migration runs once and
+                    // flips it true. Fresh worlds default true.
+                    Codec.BOOL.optionalFieldOf("kingdomMembershipMigrated", false)
+                            .forGetter(d -> d.kingdomMembershipMigrated)
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -468,9 +473,11 @@ public class VillageSavedData extends SavedData implements
             VillageAdjunctData    adjunctData,
             VillageSubBuildingData subBuildingData,
             VillageGardenData     gardenData,
-            VillageFarmData       farmSectorData) {
+            VillageFarmData       farmSectorData,
+            boolean               kingdomMembershipMigrated) {
 
         VillageSavedData data = new VillageSavedData();
+        data.kingdomMembershipMigrated = kingdomMembershipMigrated;
 
         // Structure
         data.buildings.addAll(structureData.buildings());
@@ -646,6 +653,12 @@ public class VillageSavedData extends SavedData implements
 
 
 
+    // Track D1 — KingdomMembershipMigration idempotency flag.
+    // Fresh worlds default true (no legacy data to migrate); pre-D1
+    // saves arrive with a codec value of false and the migration
+    // runs once on first server tick.
+    private boolean kingdomMembershipMigrated = true;
+
     // Property
     private final List<PlayerHousingData.PlayerProperty> playerProperties = new ArrayList<>();
     private final Map<UUID, Long>                        propertyTaxRates = new HashMap<>();
@@ -714,6 +727,13 @@ public class VillageSavedData extends SavedData implements
 
     /** Exposes setDirty() to external systems (e.g. ReputationManager). */
     public void markDirty() { setDirty(); }
+
+    /** Track D1 — KingdomMembershipMigration idempotency flag. */
+    public boolean isKingdomMembershipMigrated() { return kingdomMembershipMigrated; }
+    public void setKingdomMembershipMigrated(boolean v) {
+        this.kingdomMembershipMigrated = v;
+        setDirty();
+    }
 
     // =========================================================================
     // Buildings
