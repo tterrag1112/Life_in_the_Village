@@ -110,6 +110,9 @@ public final class TickSubsystemRegistry {
 
         // Track C3.1 — advances player-initiated road proposals.
         register(new RoadProposalTickSystem());
+
+        // Track C3.2 — discovers POIs near players and plans subroads.
+        register(new PoiDiscoveryTickSystem());
         register(new OfficeElectionTickSystem());
         register(new LawDecisionTickSystem());
         register(new CrimeTrialTickSystem());

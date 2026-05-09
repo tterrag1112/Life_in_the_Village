@@ -56,8 +56,9 @@ spec matches reality.
 | C1-cv | TravellingGroupEngine synthetic-caravan fix | Done 2026-05-09 | Root cause was in the diagnostic command's synthetic principal UUID, not the engine. `dispatch_test_caravan_between` now reserves a real merchant via `reserveIdleMerchant` + `setCurrentExpeditionId`. |
 | C2 | Phase 7f Slice 4 connector routing | Done 2026-05-09 | V2 villages register multi-gateway docks (spine endpoints + cross-street outer arms); ConnectorPlanner reuses gateway TERMINUSes; new `GraphTradeRouteEstablisher.findSegmentedPath` does augmented Dijkstra over world graph + village internal hops, emits `RouteSegment.WorldEdge`+`VillageTraversal` chains. See ROADS_PROGRESS Track C2 entry. |
 | C3.1 | Phase 11 player-initiated roads | Done 2026-05-09 | New `ROAD_ENGINEER` PlayerProfession; `RoadProposal` saved-data co-tenant on WorldRoadSavedData; treasury-driven cross-tick advancement (no NPC walking); minimal `ROAD_ENGINEER_PLANS` book screen + `/litv road propose` command; reuses worldgen `AtlasRouteRouter` + `EdgeRealizer` for graph-indistinguishable connectors. See ROADS_PROGRESS Phase 11 entry. |
-| C3-11 | Phase 11 — player-initiated road construction | Not-Started | |
-| C3-12 | Phase 12 — POI subroads | Not-Started | |
+| C3.2 | Phase 12 POI subroads | Done 2026-05-09 | Player-proximity scan registers vanilla pillager_outpost / ruined_portal / pyramids / igloos / swamp_huts as `DiscoveredPoi` records; `PoiSubroadPlanner` routes a LOCAL-tier dirt footpath to the nearest non-POI graph node/edge; layered skip rules (village claim, 200-block dedup, 500-block isolation threshold); `EdgeMaterialResolver` paints POI subroads in dirt; caravan dispatch (both `findEdgePath` and Track C2 `findSegmentedPath`) skips POI_STUB-edged edges; `RoadUpkeepSystem` decays POI subroads at –8 vs –5; `/litv road debug list_pois`. See ROADS_PROGRESS Phase 12 entry. |
+| C3-11 | Phase 11 — player-initiated road construction | Superseded by C3.1 | |
+| C3-12 | Phase 12 — POI subroads | Superseded by C3.2 | |
 | C3-13 | Phase 13 — sea route unification | Not-Started | Folds SeaRoute into world graph. |
 
 ## Track D — Kingdom rework
@@ -2292,3 +2293,75 @@ click `litv:road_engineer_plans`; submit via
 block per second; on completion verify edge present in
 `WorldRoadGraph`, +100 XP, +5 reputation at both endpoints, edge
 realised in world.
+
+### 2026-05-09 — Track C3.2 landed (POI subroads)
+
+Phase 12 from `ROADS_PLAN.md` shipped. Per-file detail in
+`ROADS_PROGRESS.md` under "Phase 12"; summary here.
+
+**Disposition before code:**
+- `RoadNode.NodeType.POI_STUB` was already declared and validator-
+  exempted but unused — Phase 12 wired it.
+- POI discovery infrastructure did not exist (no `LandmarkRegistry`,
+  no chunk-load scan); Phase 12 invented it as a player-proximity scan.
+- No mod-added Old Realm structures exist; the prompt's
+  watchtower-fiction beat has no anchor today. Vanilla
+  `ruined_portal` near a `GREAT_ROAD` is the closest analog.
+- `ConnectorPlanner.Candidate` is node-type agnostic, so the
+  routing pipeline is reused unchanged.
+
+**User-confirmed scope:**
+- Discovery: player-proximity scan, every 10 seconds, 256-block
+  radius, only loaded chunks.
+- Targets: pillager_outpost + ruined_portal (all biome variants) +
+  desert_pyramid + jungle_pyramid + igloo + swamp_hut.
+- Density: layered skip rules — inside village claim / within 200
+  blocks of an existing POI / no graph within 500 blocks (then
+  ISOLATED).
+- Visual: `PathMaterial.dirt()` rendered through FOOTPATH overlays
+  at the existing 3-block tier width. No new palette.
+
+**Code shipped:**
+
+- `Village/Roads/Poi/` — new package with `DiscoveredPoi` (record +
+  Status), `PoiDiscovery` (player-proximity scan + skip rules), and
+  `PoiSubroadPlanner` (top-K candidate routing using the worldgen
+  AtlasRouteRouter + CorridorAttractorBuilder pipeline).
+- `Networking/WorldRoadSavedData.java` — `pois` field on the
+  Snapshot record (optionalFieldOf so pre-C3.2 saves load empty);
+  accessors `getPoi`, `putPoi`, `removePoi`, `getAllPois`.
+- `Events/{TickSystems,TickSubsystemRegistry}.java` —
+  `PoiDiscoveryTickSystem` (interval = 200) drives both halves
+  (discovery + planning).
+- `Village/Economy/Trade/GraphTradeRouteEstablisher.java` —
+  `touchesPoiStub` filter applied to both `findEdgePath` (LAND
+  caravans) and `findSegmentedPath` (Track C2 segmented). Sea routes
+  unaffected.
+- `Events/RoadUpkeepSystem.java` — tier-aware decay helper
+  `decayDeltaForUnmaintained` returns –8 for POI subroads, –5 else.
+- `Village/Roads/Realization/EdgeMaterialResolver.java` — POI
+  subroad detection overrides material to dirt with seasonal +
+  maintenance overlays at FOOTPATH tier; nulls culture so
+  architectural detail passes don't fire.
+- `Commands/RoadGraphDebugCommand.java` —
+  `/litv road debug list_pois`.
+
+**Save compat:** existing saves load with no POIs; the validator
+already exempts orphan POI_STUBs so even partial writes (a stub
+without an edge) load cleanly.
+
+**Caravan exclusion** is shared across `findEdgePath` and
+`findSegmentedPath` — Track C2's village traversal continues to
+work; only edges with a POI_STUB endpoint are filtered out.
+
+**Out-of-scope but flagged:** mod-added Old Realm structures,
+pilgrim/traveller events that target POIs (Phase 10b territory),
+sea-accessible POIs (Track C3.3), player-initiated POI subroads,
+density region cap (escalation if needed).
+
+**Cumulative pending verification:** spawn near a ruined_portal or
+pillager_outpost; wait 10–20 seconds; `/litv road debug list_pois`
+shows the structure; if a road is within 500 blocks, a LOCAL-tier
+edge appears; `dispatch_test_caravan_between` doesn't route via
+that edge; the POI subroad's maintenance score drops faster than
+neighbouring CONNECTOR edges over a few daily cycles.

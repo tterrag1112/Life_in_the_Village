@@ -184,6 +184,9 @@ public class RoadGraphDebugCommand {
                                                 .executes(RoadGraphDebugCommand::completeProposal)))
                                 .then(Commands.literal("list_proposals")
                                         .executes(RoadGraphDebugCommand::listProposals))
+                                // Track C3.2 — list discovered POIs.
+                                .then(Commands.literal("list_pois")
+                                        .executes(RoadGraphDebugCommand::listPois))
                                 .then(Commands.literal("cleanup_scan")
                                         .executes(RoadGraphDebugCommand::cleanupScan)
                                         .then(Commands.argument("radius", IntegerArgumentType.integer(64, 4096))
@@ -5006,6 +5009,31 @@ public class RoadGraphDebugCommand {
                 "Forced completion of proposal " + p.id().toString().substring(0, 8)
                 + "."), false);
         return 1;
+    }
+
+    private static int listPois(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        var pois = WorldRoadSavedData.get(level).getAllPois().values();
+        if (pois.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "No POIs discovered yet. Walk near a vanilla pillager_outpost / "
+                    + "ruined_portal / pyramid / igloo / swamp_hut to trigger "
+                    + "the proximity scan."), false);
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "── Discovered POIs (" + pois.size() + ") ──"), false);
+        for (var p : pois) {
+            String pid = p.id().toString().substring(0, 8);
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "  " + pid + "  " + p.structureType()
+                    + "  " + p.position().toShortString()
+                    + "  " + p.status()
+                    + (p.edgeId().isPresent()
+                            ? "  edge=" + p.edgeId().get().toString().substring(0, 8)
+                            : "")), false);
+        }
+        return pois.size();
     }
 
     private static int listProposals(CommandContext<CommandSourceStack> ctx) {

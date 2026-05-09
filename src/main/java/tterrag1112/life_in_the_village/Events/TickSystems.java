@@ -1150,3 +1150,24 @@ class RoadProposalTickSystem implements TickSubsystem {
                 .RoadProposalManager.tick(ctx.level());
     }
 }
+
+/**
+ * Track C3.2 — POI discovery (player-proximity scan) followed by
+ * subroad planning. Runs every 10 seconds. The discovery half scans
+ * loaded chunks near each online player; the planning half drains any
+ * PENDING POIs through {@link tterrag1112.life_in_the_village
+ * .Village.Roads.Poi.PoiSubroadPlanner#planAllPending}.
+ */
+class PoiDiscoveryTickSystem implements TickSubsystem {
+    @Override public String name()     { return "poi_discovery"; }
+    @Override public int    interval() { return 200; }
+    @Override public int    priority() { return 215; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Village.Roads.Poi
+                .PoiDiscovery.scanForPlayers(ctx.level());
+        tterrag1112.life_in_the_village.Village.Roads.Poi
+                .PoiSubroadPlanner.planAllPending(ctx.level());
+    }
+}

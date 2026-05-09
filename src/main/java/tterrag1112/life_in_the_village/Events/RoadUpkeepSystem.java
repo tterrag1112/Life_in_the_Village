@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.RoadUpkeepCalculator;
 import tterrag1112.life_in_the_village.Village.Roads.Economy.VillageUpkeepLedger;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.Roads.Travel.RoadProximityCache;
@@ -161,8 +162,11 @@ public final class RoadUpkeepSystem {
             }
 
             if (maintainers.isEmpty()) {
-                // Unmaintained edge decays slowly
-                applyDecay(edge, -5);
+                // Unmaintained edge decays slowly. Track C3.2: POI
+                // subroads (LOCAL edge with a POI_STUB endpoint) decay
+                // faster — no village pays, no village walks, the
+                // forest reclaims the path.
+                applyDecay(edge, decayDeltaForUnmaintained(edge, graph));
                 continue;
             }
 
@@ -175,8 +179,8 @@ public final class RoadUpkeepSystem {
                 // All maintainers paid — gradual repair
                 edge.setMaintenance(edge.getMaintenance() + 2);
             } else if (paid == 0) {
-                // Nobody paid — decay
-                applyDecay(edge, -5);
+                // Nobody paid — decay (tier-aware via Track C3.2 helper)
+                applyDecay(edge, decayDeltaForUnmaintained(edge, graph));
             }
             // Partial payment — maintenance stays flat (no change)
 
@@ -237,5 +241,28 @@ public final class RoadUpkeepSystem {
         if (maintenance < 60) return 2;
         if (maintenance < 80) return 3;
         return 4;
+    }
+
+    /**
+     * Track C3.2 — returns the per-tick decay delta for an unmaintained
+     * edge. POI subroads (LOCAL tier with at least one POI_STUB
+     * endpoint) decay at –8 per cycle instead of the default –5;
+     * forests reclaim them faster than other LOCAL edges. All other
+     * tiers fall back to the original –5.
+     *
+     * <p>Note this only fires on the no-maintainer / no-payer paths.
+     * Edges with maintainers paying upkeep aren't subject to decay
+     * regardless of tier.
+     */
+    static int decayDeltaForUnmaintained(RoadEdge edge, WorldRoadGraph graph) {
+        if (edge.getTier() == RoadEdge.EdgeTier.LOCAL) {
+            RoadNode a = graph.getNode(edge.getNodeAId());
+            RoadNode b = graph.getNode(edge.getNodeBId());
+            boolean isPoiSubroad =
+                    (a != null && a.type() == RoadNode.NodeType.POI_STUB)
+                            || (b != null && b.type() == RoadNode.NodeType.POI_STUB);
+            if (isPoiSubroad) return -8;
+        }
+        return -5;
     }
 }

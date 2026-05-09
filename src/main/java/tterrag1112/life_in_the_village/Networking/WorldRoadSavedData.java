@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Events.RoadEvent;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidator;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
+import tterrag1112.life_in_the_village.Village.Roads.Poi.DiscoveredPoi;
 import tterrag1112.life_in_the_village.Village.Roads.Proposal.RoadProposal;
 
 
@@ -87,7 +88,8 @@ public class WorldRoadSavedData extends SavedData {
                              Map<UUID, TollGateRecord> tollGates,
                              Map<UUID, RoadEvent> events,
                              List<String> worldUniqueTypesPlaced,
-                             Map<UUID, RoadProposal> proposals) {
+                             Map<UUID, RoadProposal> proposals,
+                             Map<UUID, DiscoveredPoi> pois) {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
@@ -112,7 +114,12 @@ public class WorldRoadSavedData extends SavedData {
                 // pre-C3.1 saves; otherwise persisted across world load.
                 Codec.unboundedMap(UUID_CODEC, RoadProposal.CODEC)
                         .optionalFieldOf("roadProposals", new HashMap<>())
-                        .forGetter(Snapshot::proposals)
+                        .forGetter(Snapshot::proposals),
+                // Track C3.2: discovered POIs (dungeons, ruins, shrines).
+                // Empty for pre-C3.2 saves.
+                Codec.unboundedMap(UUID_CODEC, DiscoveredPoi.CODEC)
+                        .optionalFieldOf("discoveredPois", new HashMap<>())
+                        .forGetter(Snapshot::pois)
         ).apply(i, Snapshot::new));
     }
 
@@ -124,7 +131,8 @@ public class WorldRoadSavedData extends SavedData {
                         new HashMap<>(snap.tollGates()),
                         new HashMap<>(snap.events()),
                         new HashSet<>(snap.worldUniqueTypesPlaced()),
-                        new HashMap<>(snap.proposals()));
+                        new HashMap<>(snap.proposals()),
+                        new HashMap<>(snap.pois()));
                 List<String> warnings = GraphInvariantValidator.validate(snap.graph());
                 for (String w : warnings) {
                     System.out.println("[RoadGraph Validator] " + w);
@@ -141,7 +149,8 @@ public class WorldRoadSavedData extends SavedData {
                     new HashMap<>(data.tollGates),
                     new HashMap<>(data.events),
                     new ArrayList<>(data.worldUniqueTypesPlaced),
-                    new HashMap<>(data.proposals))
+                    new HashMap<>(data.proposals),
+                    new HashMap<>(data.pois))
     );
 
     public static final SavedDataType<WorldRoadSavedData> TYPE = new SavedDataType<>(
@@ -168,6 +177,8 @@ public class WorldRoadSavedData extends SavedData {
     private final Set<String> worldUniqueTypesPlaced;
     /** Track C3.1 — proposal id → player-submitted road proposal. */
     private final Map<UUID, RoadProposal> proposals;
+    /** Track C3.2 — discovery id → discovered POI record. */
+    private final Map<UUID, DiscoveredPoi> pois;
 
     // =========================================================================
     // Constructors
@@ -183,6 +194,7 @@ public class WorldRoadSavedData extends SavedData {
         this.events                      = new HashMap<>();
         this.worldUniqueTypesPlaced      = new HashSet<>();
         this.proposals                   = new HashMap<>();
+        this.pois                        = new HashMap<>();
     }
 
     private WorldRoadSavedData(WorldRoadGraph graph,
@@ -192,7 +204,8 @@ public class WorldRoadSavedData extends SavedData {
                                 Map<UUID, TollGateRecord> tollGates,
                                 Map<UUID, RoadEvent> events,
                                 Set<String> worldUniqueTypesPlaced,
-                                Map<UUID, RoadProposal> proposals) {
+                                Map<UUID, RoadProposal> proposals,
+                                Map<UUID, DiscoveredPoi> pois) {
         this.graph                       = graph;
         this.ledgers                     = ledgers;
         this.greatRoadGenerationComplete = greatRoadGenerationComplete;
@@ -201,6 +214,7 @@ public class WorldRoadSavedData extends SavedData {
         this.events                      = events;
         this.worldUniqueTypesPlaced      = worldUniqueTypesPlaced;
         this.proposals                   = proposals;
+        this.pois                        = pois;
     }
 
     // =========================================================================
@@ -343,6 +357,27 @@ public class WorldRoadSavedData extends SavedData {
     /** Unmodifiable view of all proposals, keyed by proposal UUID. */
     public Map<UUID, RoadProposal> getAllProposals() {
         return Collections.unmodifiableMap(proposals);
+    }
+
+    // =========================================================================
+    // POIs (Track C3.2)
+    // =========================================================================
+
+    public Optional<DiscoveredPoi> getPoi(UUID id) {
+        return Optional.ofNullable(pois.get(id));
+    }
+
+    public void putPoi(DiscoveredPoi poi) {
+        pois.put(poi.id(), poi);
+        setDirty();
+    }
+
+    public void removePoi(UUID id) {
+        if (pois.remove(id) != null) setDirty();
+    }
+
+    public Map<UUID, DiscoveredPoi> getAllPois() {
+        return Collections.unmodifiableMap(pois);
     }
 
     // =========================================================================

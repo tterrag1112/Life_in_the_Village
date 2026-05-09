@@ -44,9 +44,13 @@ public final class GraphTradeRouteEstablisher {
                                                      UUID toNodeId) {
         if (fromNodeId.equals(toNodeId)) return Optional.of(List.of());
 
-        // Build adjacency list from edges
+        // Build adjacency list from edges. Track C3.2: skip edges that
+        // touch a POI_STUB endpoint — caravans don't visit dungeons.
+        // The same filter applies to findSegmentedPath because it shares
+        // this adjacency layer below.
         Map<UUID, List<EdgeConnection>> adj = new HashMap<>();
         for (RoadEdge edge : graph.allEdges()) {
+            if (touchesPoiStub(graph, edge)) continue;
             double w = edgeWeight(edge);
             adj.computeIfAbsent(edge.getNodeAId(), k -> new ArrayList<>())
                     .add(new EdgeConnection(edge.getEdgeId(), edge.getNodeBId(), w));
@@ -102,6 +106,24 @@ public final class GraphTradeRouteEstablisher {
         return tierFactor * Math.max(1, edge.getCellPath().size());
     }
 
+    /**
+     * Track C3.2 — true if either endpoint of {@code edge} is a
+     * {@link tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode.NodeType#POI_STUB}
+     * node. POI subroads are excluded from caravan routing because
+     * caravans don't visit dungeons / shrines. The check is
+     * defensive against missing nodes (returns false if either
+     * endpoint can't be resolved — those edges are already broken
+     * and the validator handles them).
+     */
+    private static boolean touchesPoiStub(WorldRoadGraph graph, RoadEdge edge) {
+        var a = graph.getNode(edge.getNodeAId());
+        var b = graph.getNode(edge.getNodeBId());
+        return (a != null && a.type()
+                == tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode.NodeType.POI_STUB)
+                || (b != null && b.type()
+                == tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode.NodeType.POI_STUB);
+    }
+
     // =========================================================================
     // Track C2 — segmented Dijkstra (through-village traversal)
     // =========================================================================
@@ -143,9 +165,12 @@ public final class GraphTradeRouteEstablisher {
                     nodeToVillage.put(n.nodeId(), link.villageId()));
         }
 
-        // Adjacency from real edges, like findEdgePath.
+        // Adjacency from real edges, like findEdgePath. Track C3.2: skip
+        // edges with POI_STUB endpoints so caravans don't route via
+        // POI subroads.
         Map<UUID, List<EdgeConnection>> adj = new HashMap<>();
         for (RoadEdge edge : graph.allEdges()) {
+            if (touchesPoiStub(graph, edge)) continue;
             double w = edgeWeight(edge);
             adj.computeIfAbsent(edge.getNodeAId(), k -> new ArrayList<>())
                     .add(new EdgeConnection(edge.getEdgeId(), edge.getNodeBId(), w));

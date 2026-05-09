@@ -72,6 +72,20 @@ public final class EdgeMaterialResolver {
 
         RoadShape.RoadTier roadTier = PrimitiveChainBuilder.edgeTierToRoadTier(tier);
 
+        // Track C3.2: POI subroads (LOCAL tier with a POI_STUB endpoint)
+        // get a worn-footpath treatment — raw dirt at FOOTPATH width,
+        // null culture so UnifiedRoadPlacer's architectural detail
+        // passes are skipped, and seasonal overlays applied against the
+        // edge's current maintenance score so the path overgrows
+        // visibly as it decays.
+        if (tier == RoadEdge.EdgeTier.LOCAL && touchesPoiStub(graph, edge)) {
+            SeasonTracker.Season season = SeasonTracker.currentSeason(level);
+            PathMaterial dirt = PathMaterial.applyOverlays(
+                    PathMaterial.dirt(), edge.getMaintenance(),
+                    RoadShape.RoadTier.FOOTPATH, season);
+            return new MaterialContext(dirt, null, palette);
+        }
+
         PathMaterial base = PathMaterial.fromCulturePalette(palette);
         PathMaterial material;
         if (tier == RoadEdge.EdgeTier.GREAT_ROAD) {
@@ -89,6 +103,14 @@ public final class EdgeMaterialResolver {
                 ? null
                 : resolved.cultureId();
         return new MaterialContext(material, cultureStr, palette);
+    }
+
+    /** Track C3.2 — true if either endpoint is a POI_STUB node. */
+    private static boolean touchesPoiStub(WorldRoadGraph graph, RoadEdge edge) {
+        RoadNode a = graph.getNode(edge.getNodeAId());
+        RoadNode b = graph.getNode(edge.getNodeBId());
+        return (a != null && a.type() == RoadNode.NodeType.POI_STUB)
+                || (b != null && b.type() == RoadNode.NodeType.POI_STUB);
     }
 
     // =========================================================================

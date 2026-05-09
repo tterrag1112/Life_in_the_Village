@@ -5993,3 +5993,186 @@ Gradle network-blocked in this sandbox. Static review confirmed:
   daily dispatcher. The diagnostic `dispatch_test_caravan_between`
   command will use the new edge once it's registered. Daily
   auto-creation lives in a future phase.
+
+---
+
+### 2026-05-09 — Track C3.2 / Phase 12: POI subroads
+
+**Phase:** Track C3.2 (Phase 12) per `UNIFIED_REWORK_PLAN.md` and the
+"Phase 12 — POI subroads" section of `ROADS_PLAN.md`.
+
+#### Disposition before code
+
+- `RoadNode.NodeType.POI_STUB` was **already defined** but unused.
+  `GraphInvariantValidator` already exempts orphan POI_STUBs.
+- **No POI discovery infrastructure existed.** No
+  `LandmarkRegistry`, no `PoiManager`, no chunk-load hook, no
+  saved-data tracking. Phase 12 invented this.
+- **No mod-added Old Realm structures exist.** All structure JSONs
+  in resources are village buildings. The "Old Realm watchtower
+  to ancient road" fiction beat has no mod structure to anchor on
+  this phase — the closest analog is a vanilla `ruined_portal`
+  adjacent to a `GREAT_ROAD`. New mod structures are out-of-scope.
+- `ConnectorPlanner.Candidate` / `commitPlan` is node-type
+  agnostic, so a POI_STUB source compiles into the existing
+  routing pipeline cleanly.
+- `GraphTradeRouteEstablisher.findEdgePath` runs unfiltered
+  Dijkstra over all edges. Caravan exclusion is a 3-line filter
+  on adjacency-list construction; the same filter applies to
+  `findSegmentedPath` (Track C2) because it shares the layer.
+- `RoadUpkeepSystem` applied a flat `-5` decay regardless of
+  tier; tier-aware decay is a single helper.
+
+#### Decisions (user-confirmed)
+
+- **Discovery**: player-proximity scan. Every 10 seconds
+  (interval = 200 ticks), scan loaded chunks within 16 chunks
+  (≈256 blocks) of each online player using
+  `ChunkAccess.getAllStarts()`. No chunks force-loaded.
+- **Targets**: six common vanilla structures plus all ruined-
+  portal variants — `pillager_outpost`, `ruined_portal` (+ desert
+  / jungle / swamp / mountain / ocean / nether variants),
+  `desert_pyramid`, `jungle_pyramid`, `igloo`, `swamp_hut`.
+- **Density / placement**: layered skip rules.
+  - Skip if inside any village's claim radius
+    (`Village.getRing2Radius()` falling back to 96 blocks).
+  - Skip if another `DiscoveredPoi` is within 200 blocks
+    (`DEDUP_RADIUS_BLOCKS`).
+  - Register as `ISOLATED` (no edge) if no graph node / edge
+    is within 500 blocks (`PLANNER_RADIUS_BLOCKS`).
+- **Footpath visuals**: reuse `PathMaterial.dirt()` rendered
+  through the existing `RoadShape.RoadTier.FOOTPATH` (3-block
+  width). `EdgeMaterialResolver` detects the POI_STUB endpoint
+  and overrides the resolved material to dirt with seasonal +
+  maintenance overlays applied. No new palette.
+
+#### Cost / decay model
+
+- **Subroad edge tier**: `EdgeTier.LOCAL`.
+- **Maintainer set**: empty — no village pays for upkeep.
+- **Decay rate**: `-8` per cycle for unmaintained LOCAL edges
+  with a POI_STUB endpoint (vs `-5` for other unmaintained
+  edges). `RoadUpkeepSystem.decayDeltaForUnmaintained` returns
+  the per-edge delta.
+- **Maintenance starting score**: 80 (so the path looks fresh
+  initially but visibly worsens within a couple of game days
+  without players visiting).
+
+#### Files added
+
+- `Village/Roads/Poi/DiscoveredPoi.java` — record + Status
+  (PENDING / ISOLATED / CONNECTED) + codec.
+- `Village/Roads/Poi/PoiDiscovery.java` — player-proximity scan
+  driver, dedup + village-claim skip rules, helper for "any
+  graph infrastructure within 500 blocks".
+- `Village/Roads/Poi/PoiSubroadPlanner.java` — top-K candidate
+  routing with corridor attractors and atlas A*; same pipeline
+  worldgen connectors use.
+
+#### Files modified
+
+- `Networking/WorldRoadSavedData.java` — new `pois` field on the
+  Snapshot record (optionalFieldOf so pre-C3.2 saves load
+  empty). Accessors `getPoi`, `putPoi`, `removePoi`,
+  `getAllPois`.
+- `Events/TickSystems.java` — `PoiDiscoveryTickSystem`
+  (interval 200) calls `PoiDiscovery.scanForPlayers` then
+  `PoiSubroadPlanner.planAllPending`.
+- `Events/TickSubsystemRegistry.java` — registers it.
+- `Village/Economy/Trade/GraphTradeRouteEstablisher.java` —
+  edges touching a POI_STUB endpoint are skipped during
+  adjacency-list construction in both `findEdgePath` (LAND
+  caravan dispatch) and `findSegmentedPath` (Track C2 segmented
+  routing). Helper `touchesPoiStub`.
+- `Events/RoadUpkeepSystem.java` — `decayDeltaForUnmaintained`
+  returns -8 for POI subroads, -5 otherwise. Called from both
+  the no-maintainer and no-payer code paths.
+- `Village/Roads/Realization/EdgeMaterialResolver.java` —
+  POI subroad detection; overrides material to
+  `PathMaterial.dirt()` rendered through
+  `RoadShape.RoadTier.FOOTPATH` with seasonal + maintenance
+  overlays. Skips culture (returns null) so
+  `UnifiedRoadPlacer`'s architectural detail passes don't fire.
+- `Commands/RoadGraphDebugCommand.java` —
+  `/litv road debug list_pois` lists registered POIs with id,
+  type, position, status, and edge id.
+
+#### Test plan (manual)
+
+1. Fresh world; spawn at default seed.
+2. Walk until a vanilla structure (e.g. pillager outpost or
+   ruined portal) appears within 256 blocks of a road.
+3. Wait 10 seconds. `/litv road debug list_pois` lists the
+   structure with status `PENDING`.
+4. Wait another 10 seconds. The planner runs; status flips to
+   either `ISOLATED` (no graph within 500 blocks) or
+   `CONNECTED` (subroad created).
+5. For a CONNECTED POI: `/liv road debug show_graph` shows a
+   new POI_STUB node and a LOCAL-tier edge with both endpoints
+   visible.
+6. Walk near the POI; `GraphEdgeRealizationSystem` paints the
+   subroad as players come within 192 blocks. Confirm dirt
+   material at 3-block width.
+7. Run `dispatch_test_caravan_between` between two villages
+   when a POI subroad lies along the corridor. The Dijkstra
+   path must avoid the POI subroad (visible in logs:
+   `[CaravanDispatch] Found N edge path` should not include
+   the POI edge).
+8. Wait several daily cycles. The POI subroad maintenance
+   score drops faster than a comparable unmaintained
+   CONNECTOR (–8 vs –5 per cycle). Visible via
+   `/liv road debug show_maintenance`.
+9. Server restart: `pois` map persists; subroad edge persists;
+   POI_STUB node persists.
+10. Spawn a fresh village whose `getRing2Radius()` covers a
+    structure: the structure does not get registered as a POI.
+11. `/litv road debug show_graph` near a stronghold or other
+    non-target structure: not registered (target list is
+    intentionally narrow).
+
+#### Compile status
+
+Gradle network-blocked in this sandbox. Static review confirmed:
+- `ChunkAccess.getAllStarts()`, `level.hasChunk(int, int)`,
+  `level.registryAccess().lookupOrThrow(Registries.STRUCTURE)`
+  — present in NeoForge 1.21 API; the codebase already uses the
+  same pattern for biome lookup
+  (`AdventurerQuestGenerator.java:144-152`).
+- `WorldRoadGraph.splitEdgeAtCell` returns an
+  `Optional<SplitResult>` consumed correctly by
+  `PoiSubroadPlanner.commitEdge`.
+- `GraphInvariantValidator` already exempts orphan POI_STUBs,
+  so an ISOLATED POI (registered POI_STUB with no incident
+  edges) does not generate a load-time warning.
+- `WorldRoadSavedData.Snapshot` codec round-trips with the new
+  `pois` field defaulting empty for pre-C3.2 saves.
+- `EdgeRealizer` reads tier via
+  `PrimitiveChainBuilder.edgeTierToRoadTier`, which still
+  returns `VILLAGE_PATH` for LOCAL — but the geometry is
+  identical to FOOTPATH (both `coreHalf=1`), so the visual
+  difference is purely material (dirt vs gravel). Material is
+  overridden in `EdgeMaterialResolver`.
+
+#### Out-of-scope, flagged
+
+- **Mod-added Old Realm structures.** Phase 12's fiction beat
+  about Old Realm watchtowers connecting to ancient roads has
+  no actual mod structure today. Vanilla `ruined_portal` near
+  a `GREAT_ROAD` is the closest analog. New structures are a
+  Track E candidate.
+- **Pilgrim / traveller events** that target POIs (Phase 10b
+  territory).
+- **Sea-accessible POIs** (islands with shrines) — Track C3.3
+  scope.
+- **Player-initiated POI subroads** — Phase 11 handles
+  village↔village; players don't propose POI roads.
+- **Structure overgrowth coordination.** A POI subroad
+  decaying past the lowest maintenance band can leave the
+  POI_STUB edge looking like undisturbed ground; the existing
+  `RoadOvergrowthDecorator` handles overgrowth without any
+  Phase-12-specific tweaks. If the visual ends up too aggressive
+  this is an obvious follow-on.
+- **Density region cap.** The user-confirmed "layered skip
+  rules" omits a per-region (e.g. per-2048-block) cap. If dense
+  worlds end up with too many POI subroads, a region cap is the
+  natural escalation; not added pre-emptively.
