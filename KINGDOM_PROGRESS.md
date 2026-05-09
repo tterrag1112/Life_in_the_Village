@@ -258,3 +258,177 @@ Gradle network-blocked in this sandbox. Static review confirmed:
 - Migration is idempotent: gated by
   `VillageSavedData.kingdomMembershipMigrated`, runs at first
   server tick, sets the flag last so a partial migration reruns.
+
+---
+
+## D2 — Section 5 rewrite for V2 vocabulary
+
+### 2026-05-09 — Track D2 landed (doc-only)
+
+**Phase:** Track D2 per `UNIFIED_REWORK_PLAN.md`. KINGDOM_PLAN
+Section 5 (lines 248–300 pre-D2) is rewritten in V2 vocabulary
+so D3 phases 1–7 can reference it directly without further
+translation.
+
+**No code changes.** Repo `git diff` for this commit touches
+Markdown / text files only: `docs/KINGDOM_PLAN.md` (Section 5
+body + appendix), `UNIFIED_REWORK_PROGRESS.md` (D2 row + activity
+log), `KINGDOM_PROGRESS.md` (this entry).
+
+#### Disposition before code
+
+- KINGDOM_PLAN Section 5 lives at `docs/KINGDOM_PLAN.md` lines
+  248–300 (pre-D2). Boundaries clean: opens "What the placement
+  rework MUST include for kingdoms"; closes before Section 6.
+  Sub-headings: `Slot primitives`, `VillageTypeData schema
+  reservations`, `Spacing parameter`, `Determinism contract`,
+  `Robustness slices`. Seven slots and seven schema fields
+  exactly match the prompt's scope list.
+- V2 vocabulary surveyed:
+  - `Inclination` enum (`Village/Planning/V2/Inclination.java`)
+    — six values (AGRICULTURAL, INDUSTRIAL, DEFENSIVE, CIVIC,
+    RESIDENTIAL, SACRED). Capped at 6 deliberately. **No
+    AUTHORITY axis.**
+  - `Category` enum (`Village/Planning/V2/Layer3/Category.java`)
+    — sixteen values including `CIVIC_AUTHORITY`. The
+    "AUTHORITY" the prompt referenced maps to this Category at
+    the manifest layer, not to a new Inclination axis.
+  - `Provides` and `Requires` records on `PlacementProfile`.
+    `(category, capacity)` and `(category, amount, tradeable)`
+    shapes. Already used by TOWN_HALL → `Provides(CIVIC_AUTHORITY,
+    1)`.
+  - `AdjunctPlotRegistry` bindings (3×3 to 8×8 plots attached
+    to a parent building; existing example: `NOBLE_MANOR →
+    [FORMAL_GARDEN, STABLE_PADDOCK]`).
+  - `SubBuildingType` enum (`docs/decoration_redesign/03-subbuildings.md`)
+    — eight current values (STALL, APARTMENT, SHOP, ARCHIVE,
+    INN_ROOM, WORKSHOP, CHAPEL_ROOM, CELLAR). **No
+    AUDIENCE_CHAMBER / TREASURY_VAULT today.**
+  - D1 `CultureKingdomDefaults`
+    (`Cultures/CultureBundles.java`) — ships with five fields
+    (`nobilityRanks`, `successionRule`, `subdivisionModel`,
+    `upkeepMix`, `requiredOffices`). The Section 5 rewrite
+    identifies six additional fields needed before D3 phase 1.
+- `BuildingType` already has CASTLE, NOBLE_MANOR, TREASURY,
+  CHANCELLERY, ESTATE (D1). **Missing**: PALACE, AUDIENCE_HALL,
+  CEMETERY, FESTIVAL_GROUND.
+
+#### Decisions (user-confirmed)
+
+**Q1 TREASURY → keep `BuildingType.TREASURY`.** The "queryable
+position in capital-tier villages" V1 semantic is met by
+`VillageSavedData.getBuildingsOfType(TREASURY)`. Capital-tier
+village layouts declare TREASURY as required.
+`SubBuildingType.TREASURY_VAULT` interior detail inside the
+CASTLE NBT is reserved for stylistic refinement; not required
+for D3.
+
+**Q2 PALACE / AUDIENCE → CASTLE variant + deferred SubBuilding.**
+PALACE is a stylistic NBT pack consumed by `BuildingType.CASTLE`
+— culture-specific castle NBTs already exist via the structure
+availability registry. AUDIENCE becomes a deferred
+`SubBuildingType.AUDIENCE_CHAMBER`; D3 phase 3 (provinces and
+offices wired) ships the SubBuildingType extension and the
+ruler-audience behaviour together.
+
+**Q3 CEMETERY / FESTIVAL_GROUND → both deferred BuildingType
+extensions.** Two single-enum-value additions plus matching
+PlacementProfile entries. Both scale naturally as primary
+buildings; AdjunctPlot's 3×3 to 8×8 footprint cap doesn't fit
+royal cemeteries that grow with lineage. CEMETERY ships in D3
+phase 2; FESTIVAL_GROUND ships in D3 phase 5.
+
+**Q4 "AUTHORITY inclination" → `Inclination.CIVIC` +
+`Category.CIVIC_AUTHORITY`.** The prompt's loose wording about
+an "AUTHORITY inclination" maps cleanly to existing V2
+mechanism: `Inclination.CIVIC` for layout-level civic-anchor
+bias; `Provides(CIVIC_AUTHORITY, N)` on individual buildings
+for capital-emission and province-seat derivation. No new
+Inclination axis added (Inclination is deliberately capped at
+6 per its source-code comment).
+
+#### Translation outcome — 14 V1 concepts
+
+**Mapped (4)** — direct V2 equivalent in current use:
+- `capital_emits_claim` → `Inclination.CIVIC` + aggregated
+  `Provides(CIVIC_AUTHORITY)`.
+- `CASTLE_SLOT` → `BuildingType.CASTLE` (already in
+  `BuildingType.java`).
+- `NOBLE_RESIDENCE` → `BuildingType.NOBLE_MANOR` + existing
+  `AdjunctPlotRegistry` binding.
+- `TREASURY` → `BuildingType.TREASURY`.
+
+**Subsumed (2)** — V2 mechanism covers V1 intent without a
+dedicated equivalent:
+- `province_seat_eligible` — derived at runtime from `Inclination`
+  + aggregated `Provides(CIVIC_AUTHORITY)` ≥ threshold.
+- `PALACE_SLOT` — stylistic NBT pack on `BuildingType.CASTLE`.
+
+**Distributed → D1 follow-up (5)** — V1 concept moves to a
+forthcoming `CultureKingdomDefaults` field:
+- `claim_budget_hint` → `claimBudgetHint: int`
+- `vassal_types` → `vassalEligibleCultures: List<String>`
+- `hostile_types` → `hostileCultures: List<String>`
+- `min_nobility_tier` → `minNobilityTier: int`
+- `claim_resistance` → `claimResistance: float`
+
+Plus one new field the rewrite adds for § 5.2:
+- (new) `provinceSeatThreshold: int`
+
+D1 didn't ship these to keep the bridge phase minimal; the
+extension lands as a D1.5 / D1 follow-up before D3 phase 1
+opens. Single-record-field additions with codec
+`optionalFieldOf` defaults — same shape as the five existing
+fields.
+
+**Deferred (3)** — no V2 mechanism yet; minimum extension named:
+- `AUDIENCE` → `SubBuildingType.AUDIENCE_CHAMBER` (D3 phase 3
+  ships the enum value alongside the ruler-audience behaviour).
+- `CEMETERY` → `BuildingType.CEMETERY` (D3 phase 2 ships).
+- `FESTIVAL_GROUND` → `BuildingType.FESTIVAL_GROUND` (D3 phase 5
+  ships).
+
+#### Why this passes all the constraints
+
+- **Doc-only.** No `.java`, no `.json`, no `.nbt` touched. Diff
+  is restricted to three Markdown files.
+- **No V1 vocabulary in the rewrite body.** The "(formerly X)"
+  parentheticals appear only in the appendix table headers
+  ("Schema fields (formerly `VillageTypeData`)"). Section
+  5.1–5.8 reads as native V2 prose.
+- **All V1 intent preserved.** Each of the 14 V1 concepts has
+  an explicit destination — Mapped / Subsumed / Distributed /
+  Deferred. No silent drops.
+- **D1 sub-bundle is the home for kingdom-wide rules.** Five
+  V1 fields nominally on `VillageTypeData` were really
+  kingdom-wide; § 5.5 relocates them onto
+  `CultureKingdomDefaults` and flags the missing fields as a
+  D1 follow-up.
+- **No `"default"` literal.** Per-culture defaults remain in
+  `CultureBundles`.
+- **Inclination not extended.** AUTHORITY maps to the existing
+  CIVIC_AUTHORITY Category; no seventh Inclination axis added.
+- **`Kingdom/Castle/` not referenced.** The rewrite does not
+  mention the package; V1 Section 5 didn't reference it either,
+  so no doc bridge is needed.
+
+#### What's deferred for the D1 follow-up extension (D1.5)
+
+Six fields on `CultureKingdomDefaults`, each with codec
+`optionalFieldOf` default matching the existing five fields'
+shape. Per-culture defaults set in `CultureRegistry` for
+default / plainfolk / highmarch / silkwood / tidereach.
+Estimated ≈ 100 LOC across `CultureBundles.java` (add fields
++ codec) and `CultureRegistry.java` (per-culture values).
+
+#### What's deferred for D3 (alongside feature shipping)
+
+- `SubBuildingType.AUDIENCE_CHAMBER` enum value + anchor-block
+  authoring in CASTLE NBTs (D3 phase 3).
+- `BuildingType.CEMETERY` enum value + PlacementProfile +
+  layout-recipe entry (D3 phase 2).
+- `BuildingType.FESTIVAL_GROUND` enum value + PlacementProfile
+  + festival-tick gating (D3 phase 5).
+
+D3 phases 1–7, when drafted, can now reference Section 5.1–5.8
+directly — no V1-vocabulary translation step in those prompts.

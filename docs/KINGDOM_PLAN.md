@@ -247,55 +247,225 @@ extends them but does not redefine them.
 
 ## 5. What the placement rework MUST include for kingdoms
 
-The placement rework lands first. These items must be in its scope
-to avoid retrofitting:
+Track D2 (2026-05-09) rewrote this section in V2 vocabulary.
+The original V1 schema reservations and slot primitives are
+mapped term-for-term in the translation appendix at the end of
+the section; the body now reads in the same vocabulary the
+placement rework actually uses. D3 phases reference the
+sub-sections below directly without further translation.
 
-### Slot primitives
+The placement rework lands first. The needs below must be in
+its scope (or in the D1 culture sub-bundle alongside it) so D3
+doesn't retrofit.
 
-- **CASTLE_SLOT / PALACE_SLOT** — capital-tier civic anchor distinct
-  from regular civic-anchor.
-- **NOBLE_RESIDENCE slot** — manor anchor, reservable independent
-  of generic civic placement, scales with village tier.
-- **AUDIENCE / COURT slot** — guaranteed point in every capital for
-  ruler audiences. Not emergent from subbuilding scan.
-- **CEMETERY slot** — large enough in capitals to scale with royal
-  lineage accumulation.
-- **FESTIVAL_GROUND slot** — every capital has one reliably.
-- **TREASURY position** — queryable position in capital-tier
-  villages.
+### 5.1 Capital-eligible village layouts
 
-### VillageTypeData schema reservations
+Capital-tier villages are not tagged with a boolean. They are
+recognised structurally — by the V2 Inclination they declare
+and by the categorical authority their placed buildings supply.
 
-Schema fields whose values may be placeholders but whose slots must
-exist in the JSON to avoid second migration:
+A capital-eligible layout selects `Inclination.CIVIC` as its
+dominant axis (or as a strong secondary alongside `RESIDENTIAL`
+or `DEFENSIVE`). Its required-building list includes
+`BuildingType.CASTLE`. The Layer-3 placement profile for
+`CASTLE` declares `Provides(Category.CIVIC_AUTHORITY, 5)`; for
+`NOBLE_MANOR`, `Provides(CIVIC_AUTHORITY, 1)`; for `TOWN_HALL`,
+`Provides(CIVIC_AUTHORITY, 1)` (already wired in V2 Layer 3).
+A village's total `CIVIC_AUTHORITY` supply, summed across its
+placed buildings, is what D3 reads to decide whether the village
+qualifies as a capital, a province seat, or neither.
 
-- `capital_emits_claim: boolean`
-- `claim_budget_hint: int`
-- `vassal_types: [string]`
-- `hostile_types: [string]`
-- `min_nobility_tier: int`
-- `province_seat_eligible: boolean`
-- `claim_resistance: float` — 0 always claimable, 1 never claimable
+PALACE-flavoured kingdoms ship a stylistic NBT pack consumed by
+the same `BuildingType.CASTLE` — the gameplay distinction
+between "castle" and "palace" is a structure-pack and culture
+choice, not a separate building type.
 
-### Spacing parameter
+### 5.2 Province-seat derivation
 
-- Spacing logic must accept a `culture` parameter on the seed even
-  if the cost function ignores it initially. Same-culture villages
-  pack tighter; hostile-culture villages require wider spacing.
+Province-seat eligibility is derived, not flagged. A village
+qualifies as a province seat when, at layout-completion time:
 
-### Determinism contract
+1. Its layout was selected with `Inclination.CIVIC` as the
+   primary or a strong secondary inclination, AND
+2. Its placed buildings' aggregated
+   `Provides(Category.CIVIC_AUTHORITY)` capacity meets or
+   exceeds the kingdom-tier `provinceSeatThreshold` (a
+   forthcoming D1 sub-bundle field — see § 5.5).
 
-- Village seeds must be deterministic from world seed alone, not
-  from accumulated state or atlas-fill order. Kingdom claim
-  resolution depends on this.
+Capital villages always satisfy the threshold by virtue of their
+CASTLE supply. Mid-tier towns can become seats if they accumulate
+enough authority — e.g. NOBLE_MANOR + TOWN_HALL totals 2; with
+a CHANCELLERY (which provides additional `CIVIC_AUTHORITY`) they
+cross thresholds set in the 3–5 range.
 
-### Robustness slices land in placement rework, not kingdom rework
+D3 phase 3 (provinces and offices wired) computes this on each
+kingdom-tier tick and updates `Kingdom.provinceSeatVillageIds`
+(a forthcoming `Kingdom` field, deferred until D3 needs to read
+it). The computation does not need a persisted flag — it
+re-derives from the world graph on demand.
+
+### 5.3 Spatial bindings — AdjunctPlot, SubBuilding
+
+V1 listed several "slots" — NOBLE_RESIDENCE, AUDIENCE,
+TREASURY — that V2 expresses through the adjunct-plot and
+sub-building machinery. The choice of which machinery applies
+to each is a function of the slot's footprint and gameplay role:
+
+- **Manor adjunct gardens.** A NOBLE_MANOR is a primary
+  building (`BuildingType.NOBLE_MANOR`), not a slot beside a
+  CASTLE. Its supporting space (formal gardens, stable
+  paddocks) is delivered by the existing `AdjunctPlotRegistry`
+  binding `NOBLE_MANOR → [FORMAL_GARDEN, STABLE_PADDOCK]`.
+  Capital-tier villages place ≥ 1 NOBLE_MANOR by including it
+  in their layout's required-building list.
+- **Audience chamber inside the castle.** A `SubBuildingType`
+  extension (deferred — D3 phase 3 adds `AUDIENCE_CHAMBER` to
+  the `SubBuildingType` enum and authors it as an anchored
+  region inside the CASTLE NBT). The V2 sub-building scanner
+  already detects anchor blocks at NBT-stamp time, registers
+  the sub-region on `VillageSavedData`, and exposes
+  `getSubBuildingsOfType` queries. D3's ruler-audience and
+  royal-proclamation code path looks up this sub-building by
+  type rather than searching for an "audience slot" position.
+- **Treasury vault.** `BuildingType.TREASURY` already exists
+  as a primary building. The V1 "queryable position in
+  capital-tier villages" semantic is met by
+  `VillageSavedData.getBuildingsOfType(TREASURY)`. Capital-tier
+  layouts declare TREASURY as required. A
+  `SubBuildingType.TREASURY_VAULT` interior detail inside the
+  CASTLE NBT is reserved for stylistic refinement and is not
+  required for D3.
+
+### 5.4 Deferred BuildingType extensions
+
+Two V1 slots have no current V2 BuildingType and no clean fit
+under existing primitives. They are deferred — D3 (or its
+prerequisite slice) ships the extension before the feature
+lands:
+
+- **`BuildingType.CEMETERY`** (deferred). A primary building
+  providing `Provides(Category.RELIGIOUS, 1)` and
+  `Provides(Category.EMPLOYMENT, 1)` (gravedigger / mortuary
+  attendant). Capital villages declare it as required; lineage
+  accumulation drives footprint scaling via `SizeClass`
+  promotion (LARGE in capitals, MEDIUM elsewhere). D3 phase 2
+  (houses, ranks, nobility) is the natural shipping point —
+  cemeteries become meaningful when lineages start leaving
+  graves.
+- **`BuildingType.FESTIVAL_GROUND`** (deferred). A primary
+  building providing `Provides(Category.COMMERCE, 2)` and
+  `Provides(Category.EMPLOYMENT, 1)` during festival ticks
+  only. Capital villages declare it as required; non-capital
+  villages may declare it optional. D3 phase 5 (player
+  experience layer) is the shipping point — festival mechanics
+  make the ground meaningful.
+
+Both extensions are single-enum-value additions plus matching
+`PlacementProfile` entries; neither requires new primitives.
+
+### 5.5 Kingdom-wide settings on the D1 culture sub-bundle
+
+Several V1 schema fields were nominally per-village-type but
+expressed kingdom-wide intent. V2 places them on the D1 culture
+sub-bundle (`CultureKingdomDefaults`) so kingdoms read them once
+at founding and apply uniformly.
+
+D1 shipped the bundle with five fields: `nobilityRanks`,
+`successionRule`, `subdivisionModel`, `upkeepMix`,
+`requiredOffices`. The Section 5 rewrite identifies five
+additional fields needed before D3 phase 1 (worldgen rewrite).
+They are deferred D1 follow-ups — small bundle extensions, not
+new mechanisms:
+
+| Field | Type | Replaces V1 field | Use site |
+|---|---|---|---|
+| `claimBudgetHint` | `int` | `claim_budget_hint` | Caps the Dijkstra budget for territorial expansion at kingdom founding. |
+| `vassalEligibleCultures` | `List<String>` | `vassal_types` | Cultures this kingdom may absorb as vassals. |
+| `hostileCultures` | `List<String>` | `hostile_types` | Cultures this kingdom treats as hostile by default. Spacing logic reads this for inter-village spacing. |
+| `minNobilityTier` | `int` | `min_nobility_tier` | Minimum index in `nobilityRanks` a culture allows for ruler succession. |
+| `claimResistance` | `float` (0..1) | `claim_resistance` | Resistance to being absorbed into another kingdom's claim. 0 = always claimable; 1 = never claimable. |
+| `provinceSeatThreshold` | `int` | (new — supports § 5.2) | Minimum aggregated `CIVIC_AUTHORITY` for province-seat eligibility. |
+
+D1 omitted these to keep the bridge phase minimal; the
+extension lands as a D1.5 / D1-follow-up before D3 phase 1
+opens. The fields are independent of the placement rework
+itself — they live on `CultureKingdomDefaults` alongside
+nobility and succession data.
+
+### 5.6 Spacing parameter
+
+Spacing logic accepts a `culture` parameter on the seed even if
+the cost function ignores it initially. Same-culture villages
+pack tighter; hostile-culture villages require wider spacing.
+The hostile-culture list comes from the D1 sub-bundle's
+`hostileCultures` (§ 5.5).
+
+### 5.7 Determinism contract
+
+Village seeds must be deterministic from world seed alone, not
+from accumulated state or atlas-fill order. Kingdom claim
+resolution depends on this.
+
+### 5.8 Robustness slices land in placement rework, not kingdom rework
 
 - Fallback layout chains (degraded retry on failure)
 - Iterative layout expansion (wave-based slot emission)
 - Water/cliff-tolerant primitives (bridges, causeways, stepped
   roads)
-- Exit criterion: 90%+ village realization success on real terrain
+- Exit criterion: 90%+ village realization success on real
+  terrain
+
+### Appendix — V1 → V2 translation table
+
+A reader holding the pre-D2 Section 5 (V1 vocabulary) can find
+every concept in this rewrite via the table below. **Mapped**
+means a direct V2 equivalent exists and is in use today.
+**Distributed** means the V1 concept splits across multiple V2
+mechanisms. **Subsumed** means V2's existing mechanism covers
+the V1 intent without a dedicated equivalent. **Deferred** means
+no V2 mechanism exists yet; the rewrite identifies the minimum
+extension needed.
+
+#### Schema fields (formerly `VillageTypeData`)
+
+| V1 field | V2 expression | Status |
+|---|---|---|
+| `capital_emits_claim: boolean` | Layer 3 layout uses `Inclination.CIVIC` (primary or strong secondary) AND placed buildings' aggregated `Provides(Category.CIVIC_AUTHORITY)` ≥ 5. Capital-emission is derived from this aggregate, not flagged on the village type. | **Mapped** |
+| `claim_budget_hint: int` | `CultureKingdomDefaults.claimBudgetHint: int`. Lives on the kingdom's culture, not on each village type. | **Distributed → D1 follow-up** (field absent at D2 close) |
+| `vassal_types: [string]` | `CultureKingdomDefaults.vassalEligibleCultures: List<String>`. Kingdom-wide rule on the founder's culture. | **Distributed → D1 follow-up** |
+| `hostile_types: [string]` | `CultureKingdomDefaults.hostileCultures: List<String>`. Read by the spacing function (§ 5.6) and by D3 diplomatic-default selection. | **Distributed → D1 follow-up** |
+| `min_nobility_tier: int` | `CultureKingdomDefaults.minNobilityTier: int`. Indexes into `CultureKingdomDefaults.nobilityRanks`. | **Distributed → D1 follow-up** |
+| `province_seat_eligible: boolean` | Derived at runtime: layout has `Inclination.CIVIC` AND aggregated `Provides(CIVIC_AUTHORITY) ≥ provinceSeatThreshold`. Not stored. | **Subsumed** |
+| `claim_resistance: float` | `CultureKingdomDefaults.claimResistance: float`. Per-culture, not per-village-type. | **Distributed → D1 follow-up** |
+
+#### Slot primitives
+
+| V1 primitive | V2 expression | Status |
+|---|---|---|
+| `CASTLE_SLOT` | `BuildingType.CASTLE` (already exists). PlacementProfile declares `Provides(CIVIC_AUTHORITY, 5)`. Capital layouts list as required. | **Mapped** |
+| `PALACE_SLOT` | Stylistic NBT pack consumed by `BuildingType.CASTLE`; not a separate type. PALACE-flavoured cultures supply alternative castle NBTs via the existing structure-availability registry. | **Subsumed** |
+| `NOBLE_RESIDENCE` | `BuildingType.NOBLE_MANOR` (already exists). Existing `AdjunctPlotRegistry` binding `NOBLE_MANOR → [FORMAL_GARDEN, STABLE_PADDOCK]` covers the spatial-companion semantics V1 implied. PlacementProfile declares `Provides(CIVIC_AUTHORITY, 1)`. | **Mapped** |
+| `AUDIENCE` (a.k.a. `COURT`) | `SubBuildingType.AUDIENCE_CHAMBER` inside CASTLE NBT (deferred extension). The sub-building scanner registers the region at NBT-stamp time; D3 phase 3 looks up via `getSubBuildingsOfType`. | **Deferred** (SubBuildingType extension) |
+| `CEMETERY` | `BuildingType.CEMETERY` (deferred extension). Provides RELIGIOUS + EMPLOYMENT. SizeClass scales with capital tier. | **Deferred** (BuildingType extension) |
+| `FESTIVAL_GROUND` | `BuildingType.FESTIVAL_GROUND` (deferred extension). Provides COMMERCE + EMPLOYMENT during festival ticks. | **Deferred** (BuildingType extension) |
+| `TREASURY` (queryable position) | `BuildingType.TREASURY` (already exists). Capital layouts list as required. Querying is `VillageSavedData.getBuildingsOfType(TREASURY)`. A `SubBuildingType.TREASURY_VAULT` inside CASTLE remains optional stylistic detail; not required for D3. | **Mapped** |
+
+#### Status legend
+
+- **Mapped** — V2 has a direct equivalent in current use.
+- **Distributed** — V1 concept splits across multiple V2
+  mechanisms, with the kingdom-wide portion landing on
+  `CultureKingdomDefaults`.
+- **Subsumed** — V2's existing mechanisms cover the V1 intent
+  implicitly; no dedicated equivalent is needed.
+- **Deferred** — no V2 equivalent yet; the table names the
+  minimum extension D3 (or a D1 follow-up) ships before the
+  related feature lands. Three extensions are flagged:
+  `SubBuildingType.AUDIENCE_CHAMBER`, `BuildingType.CEMETERY`,
+  `BuildingType.FESTIVAL_GROUND`. Five
+  `CultureKingdomDefaults` fields are flagged as D1 follow-ups.
+
+
 
 ---
 

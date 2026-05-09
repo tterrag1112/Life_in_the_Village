@@ -67,6 +67,7 @@ spec matches reality.
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | D1 | Phase 0 bridge (kingdom-tier scaffolding) | Done 2026-05-09 | All eight sub-tasks (D1-01 through D1-08) shipped together as one phase per the user-confirmed Phase 0 prompt. New `CultureKingdomDefaults` sub-bundle on `Cultures.Culture`; `Kingdom.stability` + `legitimacy` + `heraldry`; `Village.kingdomId` + idempotent `KingdomMembershipMigration`; `BuildingType.ESTATE`; deterministic `HeraldryGenerator`; `Kingdom.Events.KingdomEventBus` peer + 8-record taxonomy; five new kingdom-office stubs (Scholar / General / Magistrate / Spymaster / Diplomat) + four new `Profession` enum values; `/litv kingdom debug describe`. Purely additive; no behaviour change in-game; everything new is wired but inert. See KINGDOM_PROGRESS.md for per-decision rationale. |
+| D2 | Section 5 rewrite for V2 vocabulary | Done 2026-05-09 | Doc-only. KINGDOM_PLAN Section 5 rewritten in V2 vocabulary (Inclination biases, Provides/Requires Categories, AdjunctPlot, SubBuilding, D1 sub-bundle). Eight V1 reservations translated: 4 Mapped (CASTLE/NOBLE_MANOR/TREASURY/CIVIC-claim-emission), 1 Subsumed (PALACE = CASTLE NBT variant; province-seat derived), 5 Distributed → D1 follow-up (claimBudgetHint / vassalEligibleCultures / hostileCultures / minNobilityTier / claimResistance + new provinceSeatThreshold), 3 Deferred (SubBuildingType.AUDIENCE_CHAMBER, BuildingType.CEMETERY, BuildingType.FESTIVAL_GROUND). Translation appendix preserved. No code changes. See KINGDOM_PROGRESS.md D2 entry. |
 | D1-01 | Culture kingdom-tier fields | Superseded by D1 | |
 | D1-02 | KingdomEventBus peer | Superseded by D1 | |
 | D1-03 | Stability scalars | Superseded by D1 | |
@@ -75,7 +76,7 @@ spec matches reality.
 | D1-06 | Estate primitives | Superseded by D1 | |
 | D1-07 | Heraldry generator | Superseded by D1 | |
 | D1-08 | Office stub completion (7 offices) | Superseded by D1 | |
-| D2 | Section 5 rewrite | Not-Started | Doc-only. Depends A4. |
+| D2-row-old | Section 5 rewrite | Superseded by D2 | |
 | D3-1 | Phase 1 — worldgen rewrite | Not-Started | Depends A4 + D2. |
 | D3-2 | Phase 2 — houses, ranks, nobility | Not-Started | Depends D3-1. |
 | D3-3 | Phase 3 — provinces & offices | Not-Started | Depends D3-2. |
@@ -2612,3 +2613,96 @@ created — D2 will append to it); summary here.
   culture-required-offices enforcement.
 - Track E: heraldry rendering, treaties / war / vassalage
   taxonomy, kingdom-tier UI, kingdom-merge / split workflows.
+
+### 2026-05-09 — Track D2 landed (KINGDOM_PLAN Section 5 V2 rewrite)
+
+Phase D2 from `UNIFIED_REWORK_PLAN.md` shipped. Doc-only — `git
+diff` for this commit touches Markdown / text only. Per-decision
+detail in `KINGDOM_PROGRESS.md`; summary here.
+
+**Disposition before code:**
+- KINGDOM_PLAN Section 5 lives at `docs/KINGDOM_PLAN.md` lines
+  248–300; bounded cleanly between Section 4 ("does NOT redefine")
+  and Section 6 ("Phases and slices").
+- V2 vocabulary surveyed: `Inclination` (6 values; no AUTHORITY),
+  `Category` (16 values incl. CIVIC_AUTHORITY), `Provides /
+  Requires` records on PlacementProfile, `AdjunctPlotRegistry`
+  bindings, `SubBuildingType` (8 current values), D1
+  `CultureKingdomDefaults` (5 fields).
+- Existing BuildingType values relevant to V1 slots: CASTLE,
+  NOBLE_MANOR, TREASURY, CHANCELLERY, ESTATE (D1). Missing:
+  PALACE, AUDIENCE_HALL, CEMETERY, FESTIVAL_GROUND.
+
+**User-confirmed scope (over four design questions):**
+- TREASURY: keep `BuildingType.TREASURY`; the V1 "queryable
+  position" semantic is met by `getBuildingsOfType(TREASURY)`.
+- PALACE / AUDIENCE: PALACE is a stylistic NBT pack on
+  `BuildingType.CASTLE` (no separate type); AUDIENCE is a
+  deferred `SubBuildingType.AUDIENCE_CHAMBER`.
+- CEMETERY / FESTIVAL_GROUND: both deferred BuildingType
+  extensions (each with PlacementProfile and Provides/Requires
+  declarations).
+- "AUTHORITY inclination": maps to existing CIVIC Inclination
+  + CIVIC_AUTHORITY Category at the manifest layer; the
+  prompt's wording was loose, no Inclination axis added.
+
+**Rewrite shape:**
+
+Section 5 now reads as eight numbered sub-sections in V2 prose:
+- 5.1 Capital-eligible village layouts (Inclination + Provides
+  pattern).
+- 5.2 Province-seat derivation (runtime aggregate, not flag).
+- 5.3 Spatial bindings (AdjunctPlot vs SubBuilding choice
+  rules).
+- 5.4 Deferred BuildingType extensions (CEMETERY,
+  FESTIVAL_GROUND).
+- 5.5 Kingdom-wide settings on the D1 culture sub-bundle (six
+  fields: claimBudgetHint, vassalEligibleCultures,
+  hostileCultures, minNobilityTier, claimResistance,
+  provinceSeatThreshold — all D1 follow-ups).
+- 5.6 Spacing parameter (preserved from V1).
+- 5.7 Determinism contract (preserved from V1).
+- 5.8 Robustness slices (preserved from V1).
+- Appendix: V1 → V2 translation table with Mapped /
+  Distributed / Subsumed / Deferred status per V1 concept.
+
+**Translation outcome (14 V1 concepts):**
+- **Mapped (4):** capital_emits_claim, CASTLE_SLOT,
+  NOBLE_RESIDENCE, TREASURY.
+- **Subsumed (2):** province_seat_eligible (derived from
+  CIVIC_AUTHORITY aggregate); PALACE_SLOT (CASTLE NBT pack
+  variant).
+- **Distributed → D1 follow-up (5):** claim_budget_hint,
+  vassal_types, hostile_types, min_nobility_tier,
+  claim_resistance — all relocate to `CultureKingdomDefaults`.
+- **Deferred (3):** AUDIENCE → `SubBuildingType.AUDIENCE_CHAMBER`,
+  CEMETERY → `BuildingType.CEMETERY`, FESTIVAL_GROUND →
+  `BuildingType.FESTIVAL_GROUND`.
+
+**D1 follow-up identified:** the rewrite calls for six fields
+on `CultureKingdomDefaults` that D1 didn't ship (claimBudgetHint,
+vassalEligibleCultures, hostileCultures, minNobilityTier,
+claimResistance, provinceSeatThreshold). This is a small bundle
+extension — single record-field additions with codec
+optionalFieldOf defaults — that lands as a D1.5 / D1 follow-up
+before D3 phase 1 opens. Not part of D2 (doc-only).
+
+**No code changes.** No new types, no modified types, no new
+methods. Repo `git diff` shows only:
+- `docs/KINGDOM_PLAN.md` — Section 5 rewrite + appendix.
+- `UNIFIED_REWORK_PROGRESS.md` — D2 row + activity-log entry.
+- `KINGDOM_PROGRESS.md` — D2 entry (per-decision rationale).
+
+**Behaviour preservation:** the underlying mod is unchanged;
+only the kingdom-plan doc updates. D1's "wired but inert" code
+remains wired but inert.
+
+**What's deferred for the bundle extension (D1.5):**
+six field additions on `CultureKingdomDefaults`, each with
+codec `optionalFieldOf` default. Same shape as the existing
+five fields. No new mechanism.
+
+**What's deferred for Track E:** the three `BuildingType` /
+`SubBuildingType` extensions land in D3 alongside their feature
+ship-points (cemetery in D3 phase 2, festival ground in D3
+phase 5, audience chamber in D3 phase 3).
