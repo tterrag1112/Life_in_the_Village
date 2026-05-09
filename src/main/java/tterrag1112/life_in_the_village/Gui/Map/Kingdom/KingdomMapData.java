@@ -69,9 +69,9 @@ public final class KingdomMapData {
                                 boolean isCapital) {}
 
     /**
-     * A polyline through either block-space waypoints (land — sampled
-     * from TradeRoad blocks) or cell-centre waypoints (sea — from cell
-     * keys). Either way, stored as world-block coords; {@link MapProjection}
+     * A polyline through either block-space waypoints (land — sampled from
+     * graph edge cellPaths) or cell-centre waypoints (sea — from cell keys).
+     * Either way, stored as world-block coords; {@link MapProjection}
      * handles the mapping.
      */
     public record RoutePath(UUID connectionId, UUID villageA, UUID villageB,

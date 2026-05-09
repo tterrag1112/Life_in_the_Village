@@ -75,7 +75,10 @@ public class TradeRoute {
     private final UUID routeId;
     private final UUID villageA;
     private final UUID villageB;
-    /** Nullable — null for graph-based routes that have no legacy TradeRoad. */
+    /**
+     * For SEA routes, the {@link SeaRoute} connection ID. Null for LAND
+     * routes — those are graph-only and addressed by {@link #edgeIds}.
+     */
     private final UUID connectionId;
     private RouteStatus status;
     private final RouteType routeType;
@@ -110,12 +113,12 @@ public class TradeRoute {
         this.segments         = new ArrayList<>(segments);
     }
 
-    /** Legacy constructor — for code that creates TradeRoutes with a TradeRoad connectionId. */
+    /** Sea-route constructor — uses a {@link SeaRoute} connection ID. */
     public TradeRoute(UUID routeId, UUID villageA, UUID villageB,
-                      UUID roadId, RouteStatus status,
+                      UUID seaConnectionId, RouteStatus status,
                       RouteType routeType, long establishedTick,
                       long lastCaravanTick, double tradePenalty) {
-        this(routeId, villageA, villageB, roadId, status, routeType,
+        this(routeId, villageA, villageB, seaConnectionId, status, routeType,
                 establishedTick, lastCaravanTick, tradePenalty, List.of(), null, List.of());
     }
 
@@ -155,6 +158,7 @@ public class TradeRoute {
                 currentTick, 0L, penalty, List.of(), null, segments);
     }
 
+    /** Creates a sea route by connection ID. Land routes use {@link #createGraph}. */
     public static TradeRoute create(UUID villageA, UUID villageB,
                                     UUID connectionId, RouteType type,
                                     long currentTick) {
@@ -187,40 +191,39 @@ public class TradeRoute {
     }
 
     /**
-     * Returns effective trade efficiency — how much of the
-     * goods actually arrive. Affected by road quality,
-     * distance, and kingdom penalty.
+     * Returns effective trade efficiency — how much of the goods actually
+     * arrive. Affected by route quality (0–100), distance (block path
+     * length), and kingdom penalty.
      */
-    public double getTradeEfficiency(TradeRoad road) {
+    public double getTradeEfficiency(int quality, int lengthBlocks) {
         if (!isTradeAllowed()) return 0.0;
 
-        double qualityFactor  = road.getQuality() / 100.0;
+        double qualityFactor  = quality / 100.0;
         double distanceFactor = Math.max(0.3,
-                1.0 - (road.getRoadLength() / 10000.0));
+                1.0 - (lengthBlocks / 10000.0));
         double penaltyFactor  = 1.0 - tradePenalty;
 
         return qualityFactor * distanceFactor * penaltyFactor;
     }
 
     /**
-     * Returns caravan travel speed multiplier.
-     * Quality 100 = normal speed.
-     * Quality 0 = half speed.
+     * Returns caravan travel speed multiplier from quality (0–100).
+     * Quality 100 = normal speed, quality 0 = half speed.
      */
-    public double getCaravanSpeedMultiplier(TradeRoad road) {
-        return 0.5 + (road.getQuality() / 100.0) * 0.5;
+    public double getCaravanSpeedMultiplier(int quality) {
+        return 0.5 + (quality / 100.0) * 0.5;
     }
 
     /**
-     * Returns daily caravan chance based on road quality.
+     * Returns daily caravan chance from quality (0–100) and length (blocks).
      * Suspended routes never dispatch caravans.
      */
-    public float getDailyCaravanChance(TradeRoad road) {
+    public float getDailyCaravanChance(int quality, int lengthBlocks) {
         if (status == RouteStatus.SUSPENDED) return 0f;
 
-        float qualityFactor  = road.getQuality() / 100.0f;
+        float qualityFactor  = quality / 100.0f;
         float distanceFactor = Math.max(0.1f,
-                1.0f - (road.getRoadLength() / 5000.0f));
+                1.0f - (lengthBlocks / 5000.0f));
         float penaltyFactor  = (float)(1.0 - tradePenalty);
 
         return qualityFactor * distanceFactor
@@ -239,13 +242,13 @@ public class TradeRoute {
     public UUID getRouteId()               { return routeId; }
     public UUID getVillageA()              { return villageA; }
     public UUID getVillageB()              { return villageB; }
-    /** Returns the legacy TradeRoad ID, or null for graph-based routes. */
+    /** Returns the {@link SeaRoute} connection ID for sea routes, or null for land routes. */
     public UUID getConnectionId()          { return connectionId; }
-    /** Returns the ordered edge IDs for graph-based routes. Empty for legacy routes. */
+    /** Returns the ordered edge IDs for land (graph) routes. Empty for sea routes. */
     public List<UUID> getEdgeIds()         { return Collections.unmodifiableList(edgeIds); }
-    /** Returns the graph node ID at village-A's end. Null for legacy routes. */
+    /** Returns the graph node ID at village-A's end. Null for sea routes. */
     public UUID getRouteStartNodeId()      { return routeStartNodeId; }
-    /** True when this route is backed by WorldRoadGraph edges rather than a legacy TradeRoad. */
+    /** True when this route is backed by WorldRoadGraph edges (a land route). */
     public boolean hasGraphPath()          { return !edgeIds.isEmpty(); }
     /** Returns the ordered route segments (world edges + village traversals). */
     public List<RouteSegment> getSegments() { return Collections.unmodifiableList(segments); }

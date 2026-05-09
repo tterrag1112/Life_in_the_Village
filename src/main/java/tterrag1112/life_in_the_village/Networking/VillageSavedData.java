@@ -55,7 +55,7 @@ public class VillageSavedData extends SavedData implements
     //  governanceData  — kingdoms, events, guilds
     //  socialData      — households, reputations, crafting orders  (new)
     //  housingData     — rented rooms, rented beds
-    //  economyData     — trade routes, trade roads
+    //  economyData     — trade routes, sea routes, treasuries, etc.
     //  propertyData    — player properties, tax rates
     // =========================================================================
 
@@ -171,10 +171,7 @@ public class VillageSavedData extends SavedData implements
 
     public record VillageEconomyData(
             List<TradeRoute>      tradeRoutes,
-            List<TradeRoad>       tradeRoads,
-            List<SeaRoute>        seaRoutes,  // ← new
-
-            List<RoadEvent> roadEvents,
+            List<SeaRoute>        seaRoutes,
             List<VillageTreasury> treasuries,
             List<FarmBusinessLevel> farmBusinessLevels,
             List<MarketStall>     marketStalls,
@@ -188,15 +185,9 @@ public class VillageSavedData extends SavedData implements
                         TradeRoute.CODEC.listOf()
                                 .optionalFieldOf("tradeRoutes", new ArrayList<>())
                                 .forGetter(VillageEconomyData::tradeRoutes),
-                        TradeRoad.CODEC.listOf()
-                                .optionalFieldOf("tradeRoads", new ArrayList<>())
-                                .forGetter(VillageEconomyData::tradeRoads),
                         SeaRoute.CODEC.listOf()
                                 .optionalFieldOf("seaRoutes", new ArrayList<>())
                                 .forGetter(VillageEconomyData::seaRoutes),
-                        RoadEvent.CODEC.listOf()
-                                .optionalFieldOf("roadEvents", new ArrayList<>())
-                                .forGetter(VillageEconomyData::roadEvents),
                         VillageTreasury.CODEC.listOf()
                                 .optionalFieldOf("treasuries", new ArrayList<>())
                                 .forGetter(VillageEconomyData::treasuries),
@@ -412,9 +403,7 @@ public class VillageSavedData extends SavedData implements
                             .fieldOf("economyData")
                             .forGetter(d -> new VillageEconomyData(
                                     new ArrayList<>(d.tradeRoutes.values()),
-                                    new ArrayList<>(d.tradeRoads.values()),
                                     new ArrayList<>(d.seaRoutes.values()),
-                                    new ArrayList<>(d.roadEvents.values()),
                                     new ArrayList<>(d.treasuries.values()),
                                     new ArrayList<>(d.farmBusinessLevels.values()),
                                     new ArrayList<>(d.marketStalls),
@@ -512,10 +501,7 @@ public class VillageSavedData extends SavedData implements
 
         // Economy
         economyData.tradeRoutes().forEach(r -> data.tradeRoutes.put(r.getRouteId(), r));
-        economyData.tradeRoads().forEach(r  -> data.tradeRoads.put(r.getRoadId(), r));
         economyData.seaRoutes().forEach(s -> data.seaRoutes.put(s.getConnectionId(), s));
-
-        economyData.roadEvents().forEach(r -> data.roadEvents.put(r.getEventId(), r));
         economyData.treasuries().forEach(t  -> data.treasuries.put(t.getVillageId(), t));
         economyData.marketStalls().forEach(s -> {
             data.marketStalls.add(s);
@@ -641,7 +627,6 @@ public class VillageSavedData extends SavedData implements
 
     // Economy
     private final Map<UUID, TradeRoute> tradeRoutes = new HashMap<>();
-    private final Map<UUID, TradeRoad>  tradeRoads  = new HashMap<>();
     private final Map<UUID, SeaRoute> seaRoutes = new HashMap<>();
 
     private final Map<UUID, VillageTreasury> treasuries = new LinkedHashMap<>();
@@ -1381,28 +1366,17 @@ public class VillageSavedData extends SavedData implements
     }
 
     // =========================================================================
-    // Trade routes & roads
+    // Trade routes (land routes are graph-backed; sea routes use SeaRoute)
     // =========================================================================
 
     public void addTradeRoute(TradeRoute route) { tradeRoutes.put(route.getRouteId(), route); setDirty(); }
-    public void addTradeRoad(TradeRoad road)    { tradeRoads.put(road.getRoadId(), road);     setDirty(); }
 
     public Optional<TradeRoute> getRouteById(UUID id) { return Optional.ofNullable(tradeRoutes.get(id)); }
-    public Optional<TradeRoad>  getRoadById(UUID id)  { return Optional.ofNullable(tradeRoads.get(id));  }
 
     public List<TradeRoute> getAllTradeRoutes() { return new ArrayList<>(tradeRoutes.values()); }
-    public List<TradeRoad>  getAllTradeRoads()  { return new ArrayList<>(tradeRoads.values());  }
 
     public Optional<TradeRoute> getRouteBetween(UUID a, UUID b) {
         return tradeRoutes.values().stream().filter(r -> r.connects(a, b)).findFirst();
-    }
-
-    public Optional<TradeRoad> getRoadBetween(UUID a, UUID b) {
-        return tradeRoutes.values().stream()
-                .filter(r -> r.connects(a, b))
-                .map(r -> tradeRoads.get(r.getConnectionId()))
-                .filter(Objects::nonNull)
-                .findFirst();
     }
 
     public List<TradeRoute> getRoutesForVillage(UUID villageId) {
@@ -1413,32 +1387,6 @@ public class VillageSavedData extends SavedData implements
     }
 
     public void removeTradeRoute(UUID id) { tradeRoutes.remove(id); setDirty(); }
-    public void removeTradeRoad(UUID id)  { tradeRoads.remove(id);  setDirty(); }
-
-
-    private final Map<UUID, RoadEvent> roadEvents = new HashMap<>();
-    public void addRoadEvent(RoadEvent event) {
-        roadEvents.put(event.getEventId(), event);
-        setDirty();
-    }
-
-    public void removeRoadEvent(UUID eventId) {
-        if (roadEvents.remove(eventId) != null) setDirty();
-    }
-
-    public Optional<RoadEvent> getRoadEventById(UUID id) {
-        return Optional.ofNullable(roadEvents.get(id));
-    }
-
-    public List<RoadEvent> getAllRoadEvents() {
-        return List.copyOf(roadEvents.values());
-    }
-
-    public List<RoadEvent> getEventsForRoad(UUID roadId) {
-        return roadEvents.values().stream()
-                .filter(e -> e.getRoadId().equals(roadId))
-                .toList();
-    }
 
     // =========================================================================
     // Player property
@@ -1777,13 +1725,11 @@ public class VillageSavedData extends SavedData implements
     }
 
     /**
-     * Looks up a trade connection by UUID, checking both land roads
-     * and sea routes. Returns the connection as the common interface
-     * type so callers can handle both uniformly.
+     * Looks up a trade connection by UUID. Only sea routes carry a connection
+     * ID; land routes are addressed by {@link TradeRoute#getEdgeIds()} on the
+     * road graph and are not represented here.
      */
     public Optional<TradeConnection> getConnectionById(UUID id) {
-        TradeRoad road = tradeRoads.get(id);
-        if (road != null) return Optional.of(road);
         SeaRoute sea = seaRoutes.get(id);
         if (sea != null) return Optional.of(sea);
         return Optional.empty();

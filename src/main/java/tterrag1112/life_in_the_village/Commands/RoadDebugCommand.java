@@ -9,13 +9,13 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 
 import java.util.List;
 
 /**
- * Debug commands for testing trade road aging and repair.
+ * Debug commands for testing trade road aging and repair across the road graph.
  *
  * <ul>
  *   <li>{@code /liv roads degrade} — instantly convert all road blocks to dirt
@@ -41,17 +41,18 @@ public class RoadDebugCommand {
         );
     }
 
-    /** Instantly convert all road surface blocks to dirt (fully weathered). */
+    /** Instantly convert all realised road surface blocks to dirt (fully weathered). */
     private static int degradeAllRoads(CommandContext<CommandSourceStack> ctx) {
         ServerLevel level = ctx.getSource().getLevel();
-        VillageSavedData data = VillageSavedData.get(level);
+        var graph = WorldRoadSavedData.get(level).getGraph();
 
-        int roads = 0, blocks = 0;
-        for (TradeRoad road : data.getAllTradeRoads()) {
-            List<BlockPos> roadBlocks = road.getBlocks();
-            if (roadBlocks.isEmpty()) continue;
-            roads++;
-            for (BlockPos pos : roadBlocks) {
+        int edges = 0, blocks = 0;
+        for (RoadEdge edge : graph.allEdges()) {
+            if (!edge.isRealized()) continue;
+            List<BlockPos> path = edge.getBlockPath();
+            if (path.isEmpty()) continue;
+            edges++;
+            for (BlockPos pos : path) {
                 BlockPos block = pos.below();
                 BlockState state = level.getBlockState(block);
                 if (state.is(Blocks.COBBLESTONE)
@@ -63,23 +64,24 @@ public class RoadDebugCommand {
             }
         }
 
-        int r = roads, b = blocks;
+        int e = edges, b = blocks;
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "Fully degraded " + r + " roads (" + b + " blocks → dirt)"), false);
-        return roads;
+                "Fully degraded " + e + " edges (" + b + " blocks → dirt)"), false);
+        return edges;
     }
 
-    /** Advance all roads one degradation stage (cobbblestone→gravel→dirt_path→dirt). */
+    /** Advance all realised edges one degradation stage (cobblestone→gravel→dirt_path→dirt). */
     private static int stepAllRoads(CommandContext<CommandSourceStack> ctx) {
         ServerLevel level = ctx.getSource().getLevel();
-        VillageSavedData data = VillageSavedData.get(level);
+        var graph = WorldRoadSavedData.get(level).getGraph();
 
-        int roads = 0, blocks = 0;
-        for (TradeRoad road : data.getAllTradeRoads()) {
-            List<BlockPos> roadBlocks = road.getBlocks();
-            if (roadBlocks.isEmpty()) continue;
-            roads++;
-            for (BlockPos pos : roadBlocks) {
+        int edges = 0, blocks = 0;
+        for (RoadEdge edge : graph.allEdges()) {
+            if (!edge.isRealized()) continue;
+            List<BlockPos> path = edge.getBlockPath();
+            if (path.isEmpty()) continue;
+            edges++;
+            for (BlockPos pos : path) {
                 BlockPos block = pos.below();
                 BlockState state = level.getBlockState(block);
                 if (state.is(Blocks.COBBLESTONE)) {
@@ -95,23 +97,24 @@ public class RoadDebugCommand {
             }
         }
 
-        int r = roads, b = blocks;
+        int e = edges, b = blocks;
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "Stepped " + r + " roads one degradation stage (" + b + " blocks changed)"), false);
-        return roads;
+                "Stepped " + e + " edges one degradation stage (" + b + " blocks changed)"), false);
+        return edges;
     }
 
-    /** Restore all road surface blocks to cobblestone. */
+    /** Restore all realised road surface blocks to cobblestone. */
     private static int repairAllRoads(CommandContext<CommandSourceStack> ctx) {
         ServerLevel level = ctx.getSource().getLevel();
-        VillageSavedData data = VillageSavedData.get(level);
+        var graph = WorldRoadSavedData.get(level).getGraph();
 
-        int roads = 0, blocks = 0;
-        for (TradeRoad road : data.getAllTradeRoads()) {
-            List<BlockPos> roadBlocks = road.getBlocks();
-            if (roadBlocks.isEmpty()) continue;
-            roads++;
-            for (BlockPos pos : roadBlocks) {
+        int edges = 0, blocks = 0;
+        for (RoadEdge edge : graph.allEdges()) {
+            if (!edge.isRealized()) continue;
+            List<BlockPos> path = edge.getBlockPath();
+            if (path.isEmpty()) continue;
+            edges++;
+            for (BlockPos pos : path) {
                 BlockPos block = pos.below();
                 BlockState state = level.getBlockState(block);
                 if (state.is(Blocks.GRAVEL)
@@ -123,9 +126,9 @@ public class RoadDebugCommand {
             }
         }
 
-        int r = roads, b = blocks;
+        int e = edges, b = blocks;
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "Repaired " + r + " roads (" + b + " blocks → cobblestone)"), false);
-        return roads;
+                "Repaired " + e + " edges (" + b + " blocks → cobblestone)"), false);
+        return edges;
     }
 }

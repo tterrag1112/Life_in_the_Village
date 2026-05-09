@@ -641,15 +641,11 @@ public class BuildingCommand {
 
         // Count before clearing
         int routeCount = villageData.getAllTradeRoutes().size();
-        int roadCount  = villageData.getAllTradeRoads().size();
 
-        // Clear all trade data
+        // Clear all trade routes (sea + land)
         villageData.getAllTradeRoutes()
                 .forEach(r -> villageData.removeTradeRoute(
                         r.getRouteId()));
-        villageData.getAllTradeRoads()
-                .forEach(r -> villageData.removeTradeRoad(
-                        r.getRoadId()));
         villageData.setDirty();
 
         // Clear all caravans
@@ -658,15 +654,16 @@ public class BuildingCommand {
                         c.getCaravanId()));
         caravanData.setDirty();
 
-        // Re-establish routes between existing villages
+        // Re-establish sea routes between existing villages with docks.
+        // Land routes are produced by the connector pipeline at village
+        // spawn time and cannot be reconstructed from this command.
         villageData.getAllVillages().forEach(village ->
                 TradeRouteManager.establishRoutes(
                         level, village, villageData));
 
         src.sendSuccess(() -> Component.literal(
-                        "Reset " + routeCount + " routes and "
-                                + roadCount + " roads.\n"
-                                + "Re-established routes for "
+                        "Reset " + routeCount + " routes.\n"
+                                + "Re-established sea routes for "
                                 + villageData.getAllVillages().size()
                                 + " villages.\n"
                                 + "New routes: "

@@ -6,30 +6,13 @@ import java.util.UUID;
 
 /**
  * Common surface for any persistent trade connection between two
- * villages. Implemented by {@link TradeRoad} (overland) and
- * {@link SeaRoute} (over water), and could be implemented by future
- * connection types like rivers, mountain passes, or magical portals.
+ * villages. After C1 the only implementation is {@link SeaRoute}; land
+ * routes have been folded into the road graph and are addressed by
+ * {@link TradeRoute#getEdgeIds()} rather than by a connection ID.
  *
- * <h3>What this interface unifies</h3>
- * The {@link TradeRouteManager}, route upkeep tick, route quality
- * checks, and trade efficiency calculations all need to work on any
- * connection type without caring whether it's a road or a sea route.
- * {@link TradeRoute} references its connection by UUID, and
- * {@link tterrag1112.life_in_the_village.Networking.VillageSavedData}
- * looks it up against both collections in parallel.
- *
- * <h3>What this interface does NOT unify</h3>
- * <ul>
- *   <li><b>Path representation.</b> Land roads are block lists; sea
- *       routes are cell lists. Each implementation owns its own.</li>
- *   <li><b>Realisation.</b> Land roads place blocks; sea routes don't.
- *       The interface is silent on this — each type's
- *       {@link TravellingGroup} caravans handle their own
- *       spawn/despawn details.</li>
- *   <li><b>Caravan type.</b> {@link Caravan} uses land roads;
- *       {@link BoatCaravan} uses sea routes. They share
- *       {@link TravellingGroup} but not their spawn logic.</li>
- * </ul>
+ * <p>The interface survives because future connection types (rivers,
+ * mountain passes, etc.) and the planned C3 sea-route unification will
+ * benefit from a shared abstraction.
  */
 public interface TradeConnection {
 

@@ -2,24 +2,21 @@ package tterrag1112.life_in_the_village.Village.Economy.Trade;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.StreamCodec;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Lightweight snapshot of a {@link TradeRoad} for map rendering.
- * Carries only the cell path and endpoints — not the full block list,
- * which can run to thousands of positions and blow past NBT size limits
- * when a map covers many roads.
+ * Lightweight snapshot of a land trade route for map rendering. Carries
+ * the route ID, the two endpoint villages, and the concatenated cell path
+ * derived from the route's graph edges.
  *
  * <p>Streams with raw field writes (no NBT) so a map packet can carry
- * arbitrarily many snapshots without hitting the 2 MB per-field
- * NBT cap.
- *
- * <p>If a road has no cell path (legacy pre-Phase-7a roads), callers
- * should derive a coarse path from the block list before sending.
- * See {@link #fromRoad}.
+ * arbitrarily many snapshots without hitting the 2 MB per-field NBT cap.
  */
 public record MapRoadSnapshot(
         UUID roadId,
@@ -55,25 +52,19 @@ public record MapRoadSnapshot(
             };
 
     /**
-     * Build a snapshot from a server-side {@link TradeRoad}. Uses the
-     * road's native cell path when available; otherwise downsamples the
-     * block list to one cell per unique cell entered.
+     * Builds a snapshot for a graph-backed land route. Concatenates the
+     * cellPath of each edge in traversal order, deduplicating consecutive
+     * shared cells at edge joins.
      */
-    public static MapRoadSnapshot fromRoad(TradeRoad road) {
-        List<Long> path;
-        if (road.hasCellPath()) {
-            path = new ArrayList<>(road.getCellPath());
-        } else {
-            path = new ArrayList<>();
-            long last = Long.MIN_VALUE;
-            for (var bp : road.getBlocks()) {
-                long key = tterrag1112.life_in_the_village.World.Atlas
-                        .AtlasCell.packKey(
-                                bp.getX() >> 6, bp.getZ() >> 6);
-                if (key != last) { path.add(key); last = key; }
-            }
+    public static MapRoadSnapshot fromRoute(TradeRoute route, WorldRoadGraph graph) {
+        LinkedHashSet<Long> cells = new LinkedHashSet<>();
+        for (UUID edgeId : route.getEdgeIds()) {
+            RoadEdge edge = graph.getEdge(edgeId);
+            if (edge == null) continue;
+            cells.addAll(edge.getCellPath());
         }
         return new MapRoadSnapshot(
-                road.getRoadId(), road.getVillageA(), road.getVillageB(), path);
+                route.getRouteId(), route.getVillageA(), route.getVillageB(),
+                new ArrayList<>(cells));
     }
 }

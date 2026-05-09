@@ -33,7 +33,6 @@ import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
-import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageWarningSystem;
@@ -1094,36 +1093,38 @@ public class GuildCommands {
 
         VillageSavedData villageData = VillageSavedData.get(level);
         CaravanSavedData caravanData = CaravanSavedData.get(level);
+        var graph = tterrag1112.life_in_the_village.Networking
+                .WorldRoadSavedData.get(level).getGraph();
 
-        // Find the nearest trade route to the player
+        // Find the nearest land (graph) trade route to the player
         BlockPos playerPos = player.blockPosition();
 
         TradeRoute nearestRoute = villageData.getAllTradeRoutes()
                 .stream()
                 .filter(TradeRoute::isTradeAllowed)
-                .filter(r -> villageData.getRoadById(
-                        r.getConnectionId()).isPresent())
-                .min(Comparator.comparingDouble(r ->
-                        villageData.getRoadById(r.getConnectionId())
-                                .map(road -> road.getBlocks()
-                                        .isEmpty() ? Double.MAX_VALUE
-                                        : road.getBlocks().get(0)
-                                        .distSqr(playerPos))
-                                .orElse(Double.MAX_VALUE)))
+                .filter(TradeRoute::hasGraphPath)
+                .min(Comparator.comparingDouble(r -> {
+                    var blocks = tterrag1112.life_in_the_village.Village
+                            .Economy.Trade.GraphTradeRouteEstablisher.resolveGraphBlocks(
+                                    graph, r.getEdgeIds(), r.getRouteStartNodeId());
+                    return blocks.isEmpty() ? Double.MAX_VALUE
+                            : blocks.get(0).distSqr(playerPos);
+                }))
                 .orElse(null);
 
         if (nearestRoute == null) {
             src.sendFailure(Component.literal(
-                    "No active trade routes found. "
+                    "No active land trade routes found. "
                             + "Spawn a village first."));
             return 0;
         }
 
-        TradeRoad road = villageData.getRoadById(
-                nearestRoute.getConnectionId()).orElse(null);
-        if (road == null || road.getBlocks().isEmpty()) {
+        var routeBlocks = tterrag1112.life_in_the_village.Village.Economy
+                .Trade.GraphTradeRouteEstablisher.resolveGraphBlocks(
+                        graph, nearestRoute.getEdgeIds(), nearestRoute.getRouteStartNodeId());
+        if (routeBlocks.isEmpty()) {
             src.sendFailure(Component.literal(
-                    "Trade route has no road data."));
+                    "Trade route has no realised edges yet."));
             return 0;
         }
 
@@ -1175,12 +1176,11 @@ public class GuildCommands {
                 .getVillageById(nearestRoute.getVillageB())
                 .map(v -> v.getName()).orElse("unknown");
 
+        final int blockCount = routeBlocks.size();
         src.sendSuccess(() -> Component.literal(
                         "Spawned test caravan!\n"
                                 + "Route: " + originName + " → " + destName + "\n"
-                                + "Road length: " + road.getBlocks().size()
-                                + " blocks\n"
-                                + "Road quality: " + road.getQuality() + "%\n"
+                                + "Path length: " + blockCount + " blocks\n"
                                 + "Guards: 2\n"
                                 + "Caravan ID: "
                                 + caravan.getCaravanId().toString()

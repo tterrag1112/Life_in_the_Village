@@ -35,7 +35,6 @@ import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.BoatCaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
-import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadEventScheduler;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
@@ -124,17 +123,6 @@ class CompanyTickSystem implements TickSubsystem {
     @Override
     public void tick(TickContext ctx) {
         ctx.companyData().tick(ctx.level(), ctx.villageData(), ctx.tick());
-    }
-}
-
-class TradeRouteTickSystem implements TickSubsystem {
-    @Override public String name()     { return "trade_routes"; }
-    @Override public int    interval() { return 20; }
-    @Override public int    priority() { return 110; }
-
-    @Override
-    public void tick(TickContext ctx) {
-        TradeRouteManager.tick(ctx.level(), ctx.villageData(), ctx.tick());
     }
 }
 
@@ -495,11 +483,11 @@ class WanderingTraderTickSystem implements TickSubsystem {
 
     private BlockPos findSpawnPosition(ServerLevel level,
                                        VillageSavedData vdata) {
-        // Gather all road blocks from all active roads
+        // Gather all road blocks from realised graph edges
         List<BlockPos> candidates = new java.util.ArrayList<>();
-        for (var route : vdata.getAllTradeRoutes()) {
-            vdata.getRoadById(route.getConnectionId())
-                    .ifPresent(road -> candidates.addAll(road.getBlocks()));
+        var graph = tterrag1112.life_in_the_village.Networking.WorldRoadSavedData.get(level).getGraph();
+        for (var edge : graph.allEdges()) {
+            if (edge.isRealized()) candidates.addAll(edge.getBlockPath());
         }
 
         if (candidates.isEmpty()) {
@@ -564,26 +552,6 @@ class WanderingTraderTickSystem implements TickSubsystem {
 
 
 
-}
-class RouteRealisationTickSystem implements TickSubsystem {
-    @Override public String name()     { return "route_realisation"; }
-    @Override public int    interval() { return 20; }
-    @Override public int    priority() { return 115; }
-
-    @Override
-    public void tick(TickContext ctx) {
-        RouteRealisationSystem.run(ctx.level(), ctx.villageData());
-    }
-}
-class RoadEventTickSystem implements TickSubsystem {
-    @Override public String name()     { return "road_events"; }
-    @Override public int    interval() { return 20; }   // engine ticks once per second
-    @Override public int    priority() { return 116; }
-
-    @Override
-    public void tick(TickContext ctx) {
-        RoadEventScheduler.tick(ctx.level(), ctx.villageData());
-    }
 }
 
 class GraphEdgeRealizationSystem implements TickSubsystem {

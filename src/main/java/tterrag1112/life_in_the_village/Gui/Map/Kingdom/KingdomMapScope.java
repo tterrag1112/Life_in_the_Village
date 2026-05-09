@@ -80,22 +80,22 @@ public final class KingdomMapScope {
             }
         }
 
-        // Roads + sea routes referenced by any trade route where either
-        // endpoint is a viewable village
-        Set<UUID> roadIds = new HashSet<>();
+        // Land routes (graph-backed) and sea routes referenced by any trade
+        // route where either endpoint is a viewable village.
+        var graph = tterrag1112.life_in_the_village.Networking
+                .WorldRoadSavedData.get(level).getGraph();
+        List<MapRoadSnapshot> roads = new ArrayList<>();
         Set<UUID> seaIds  = new HashSet<>();
         for (TradeRoute route : data.getAllTradeRoutes()) {
             if (!viewable.contains(route.getVillageA())
                     && !viewable.contains(route.getVillageB())) continue;
-            UUID connId = route.getConnectionId();
-            // A connection is either a road or a sea route; collect into the right set
-            if (data.getRoadById(connId).isPresent())       roadIds.add(connId);
-            else if (data.getSeaRouteById(connId).isPresent()) seaIds.add(connId);
+            if (route.hasGraphPath()) {
+                roads.add(MapRoadSnapshot.fromRoute(route, graph));
+            } else if (route.getConnectionId() != null
+                    && data.getSeaRouteById(route.getConnectionId()).isPresent()) {
+                seaIds.add(route.getConnectionId());
+            }
         }
-
-        List<MapRoadSnapshot> roads = new ArrayList<>(roadIds.size());
-        for (UUID id : roadIds)
-            data.getRoadById(id).ifPresent(r -> roads.add(MapRoadSnapshot.fromRoad(r)));
         List<MapSeaRouteSnapshot> seaRoutes = new ArrayList<>(seaIds.size());
         for (UUID id : seaIds)
             data.getSeaRouteById(id).ifPresent(s -> seaRoutes.add(MapSeaRouteSnapshot.fromSeaRoute(s)));

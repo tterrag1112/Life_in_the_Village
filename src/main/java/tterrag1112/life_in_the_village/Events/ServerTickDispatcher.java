@@ -9,9 +9,7 @@ import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
-import tterrag1112.life_in_the_village.Village.Roads.Graph.TradeRoadMigration;
 
 import static tterrag1112.life_in_the_village.Life_in_the_village.MODID;
 
@@ -52,15 +50,7 @@ public class ServerTickDispatcher {
         ServerLevel overworld = event.getServer().overworld();
         long tick = overworld.getGameTime();
 
-        VillageSavedData   vdata    = VillageSavedData.get(overworld);
-        WorldRoadSavedData roadData = WorldRoadSavedData.get(overworld);
-
-        // One-time migration from TradeRoads → WorldRoadGraph. Called every tick
-        // because migrateIfNeeded() returns immediately once migrated == true,
-        // making this O(1) on all but the very first tick of a new/legacy world.
-        // Calling it here (outside the initialized guard) ensures it also fires
-        // correctly if a second world is loaded in the same JVM session.
-        TradeRoadMigration.migrateIfNeeded(overworld, vdata, roadData);
+        VillageSavedData vdata = VillageSavedData.get(overworld);
 
         // ── One-time initialization on first tick ────────────────────────────
         if (!initialized) {

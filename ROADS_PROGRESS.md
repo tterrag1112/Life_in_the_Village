@@ -5444,3 +5444,144 @@ Phase C.2 then ships a targeted fix — most likely in:
 
 
 
+
+---
+
+### 2026-05-09 — Track C1 — TradeRoad removal + synthetic-caravan fix
+
+**Phase:** Track C1 (per `UNIFIED_REWORK_PLAN.md`).
+
+**Files deleted (legacy land-trade stack):**
+- `Village/Economy/Trade/TradeRoad.java`
+- `Village/Roads/Graph/TradeRoadMigration.java`
+- `Village/Economy/Trade/RoadEvent.java` (legacy; superseded by
+  `Village/Roads/Events/RoadEvent.java`)
+- `Village/Economy/Trade/RoadEventScheduler.java` (superseded by
+  `Village/Roads/Events/EventLifecycleSystem` + EventRealizer)
+- `Events/RouteRealisationSystem.java` (superseded by
+  `Village/Roads/Realization/EdgeRealizer` + `GraphEdgeRealizationSystem`)
+- `Village/Economy/Trade/RouteRealiser.java` (only caller was the
+  deleted `RouteRealisationSystem`)
+
+**Files refactored:**
+- `Networking/WorldRoadSavedData.java` — `migrated` flag plumbing
+  removed (only `TradeRoadMigration` read it). The codec drops the
+  `migrated` JSON field on load (no save-compat issue: extra fields
+  are silently ignored by DFU).
+- `Networking/VillageSavedData.java` — `tradeRoads` map and the
+  `roadEvents` map removed along with their codec fields,
+  accessors, and `getConnectionById`'s land-road branch. Old saves
+  with these fields will load fine; the data is silently dropped.
+- `Village/Economy/Trade/TradeRoute.java` — `getTradeEfficiency`,
+  `getCaravanSpeedMultiplier`, and `getDailyCaravanChance` no
+  longer take a `TradeRoad`. They now take an `int quality` (0-100)
+  and `int lengthBlocks` parameter; callers compute these from the
+  edge chain. The legacy 9-arg constructor is kept as the
+  sea-route constructor (sea routes still use a `SeaRoute`
+  connection ID via `TradeConnection`).
+- `Village/Economy/Trade/Caravan.java` — `getPath` and
+  `getSpeedMultiplier` are graph-only. Speed multiplier averages
+  the maintenance score across the route's realised edges.
+- `Entities/Goals/Profession/Merchant/CaravanMerchantGoal.java` —
+  `resolveBlocks` is graph-only.
+- `Village/Economy/Trade/CaravanSavedData.java` — `dispatchNewCaravans`
+  filters to `route.hasGraphPath()`; sea routes go through
+  `BoatCaravanSavedData` as before. `handleDelivery` derives
+  efficiency from the edge chain. Two helper methods,
+  `avgEdgeMaintenance` and `totalEdgeBlockLength`, encapsulate the
+  graph quality/length lookup for both paths.
+- `Village/Economy/Trade/TradeRouteManager.java` — entire legacy
+  LAND-route path (`establishOneRoute`, `findReusableRoad`,
+  `tickOneRoad`, `maxRoadsForTier`, `deductUpkeep`,
+  `determineRouteType`, `getVillageCenter`, `collectTradeHubAttractors`,
+  `getVillageName`, the `tick` upkeep cycle, `MAX_ROUTE_DISTANCE`,
+  `TICK_INTERVAL`, `SHARE_THRESHOLD`, `REPAIR_THRESHOLD`) deleted.
+  This path was already gated off by `useGraphConnector()` at every
+  callsite, so it never ran on V2 worlds. `establishRoutes` now
+  only fires sea-route establishment when the village has a dock.
+  `prefillAtlasCorridor` survives as a public utility used by
+  `RoadGraphDebugCommand.prefillAtlasCorridor`.
+- `Village/Economy/Trade/RoadRouter.java` — `findRoadWithMerge`,
+  `findMergePoint`, and `nearestRoadBlock` deleted (only used by
+  the deleted RouteRealiser).
+- `Village/Economy/Trade/MapRoadSnapshot.java` — `fromRoad(TradeRoad)`
+  replaced with `fromRoute(TradeRoute, WorldRoadGraph)`. The wire
+  format is unchanged (UUID + 2 villages + cellPath); the snapshot
+  derives its cellPath by concatenating each edge's cellPath in
+  traversal order.
+- `Gui/Map/Kingdom/KingdomMapScope.java` and
+  `Gui/Map/Kingdom/ContinentMapScope.java` — emit one
+  `MapRoadSnapshot` per graph route directly; sea routes still go
+  through `MapSeaRouteSnapshot`. The "either road or sea" branch
+  is gone.
+- `Commands/RoadDebugCommand.java` — operates on
+  `WorldRoadGraph.allEdges()` instead of TradeRoads.
+- `Commands/BuildingCommand.java` — the `/liv reset trade` path
+  no longer touches TradeRoads. Re-establishment now only re-fires
+  sea routes; land routes require village respawn through the
+  connector pipeline.
+- `Commands/GuildCommands.java` — `/spawn caravan` selects the
+  nearest graph route (filtered by `hasGraphPath`) and resolves the
+  block path through `GraphTradeRouteEstablisher.resolveGraphBlocks`.
+- `Commands/RoadGraphDebugCommand.java` —
+  `caravanStatus` drops the `legacy(road=…)` branch (replaced with
+  `sea(<connId>)` for the rare sea caravan stored here).
+  `dispatchTestCaravanBetween` reserves a real merchant via
+  `villageData.reserveIdleMerchant`, fails the command with a
+  clear message if none is available, picks an origin market via a
+  local `findFirstBuildingOfType` helper, and calls
+  `setCurrentExpeditionId` on the merchant entity. This matches
+  the daily-dispatch and `GuildCommands.spawnTestCaravan` patterns.
+- `Events/ServerTickDispatcher.java` — `TradeRoadMigration`
+  invocation deleted along with the `WorldRoadSavedData` parameter
+  it required.
+- `Events/TickSubsystemRegistry.java` — `TradeRouteTickSystem`,
+  `RouteRealisationTickSystem`, `RoadEventTickSystem` no longer
+  registered.
+- `Events/TickSystems.java` — those three classes removed; the
+  `WanderingTrader` spawner now scans realised graph edges for
+  candidate spawn positions instead of TradeRoad block lists.
+- Various javadoc cleanups in `RoadEdge`, `SeaRoute`,
+  `TradeConnection`, and `KingdomMapData`.
+
+**Synthetic-caravan root cause and fix:**
+
+The diagnostic command's `principalId = UUID.randomUUID()`
+resolved to no entity. When a player approached, `CaravanSavedData
+.spawnCaravanEntities` fell back to spawning a fresh merchant
+entity (the existing fallback path). That fresh merchant *did*
+get its profession, `caravanId`, and `currentExpeditionId` set on
+spawn, so `CaravanMerchantGoal.canUse` would have returned true.
+However, every spawn↔despawn cycle re-discarded the merchant and
+spawned another one (the discarded UUID can never be looked up
+again), and during simulated stretches the path's speed
+multiplier was effectively a no-op fallback. The net effect was
+visible "stalls" between spawn cycles that the user observed as
+"the caravan doesn't visibly progress."
+
+The actual bug location was *not* in
+`TravellingGroupEngine.tick`. The engine's spawn/despawn/progress
+logic is identical to what daily-dispatched caravans use, and
+those work end-to-end. The fix belongs at the call site that
+seeded the bad principal — the diagnostic command itself. It now
+mirrors the daily-dispatch path (reserve a real merchant, set the
+expedition ID on the entity), so the spawn/despawn cycle has a
+stable principal to bring in and out of the world.
+
+**Compilation status:** Gradle artifact download blocked in this
+sandbox (no internet). Static review across the full call graph
+of every removed/refactored symbol; no remaining references to
+`TradeRoad`, `TradeRoadMigration`, `getRoadById`,
+`getAllTradeRoads`, `addTradeRoad`, `removeTradeRoad`, or
+`legacy(road=` outside of three identifier-only sites
+(`emitTradeRoadEndpoints` method name, two doc comments) which
+are explicitly allowed by the prompt.
+
+**Done-criteria check:**
+- `git grep TradeRoad` → matches only an unchanged method name
+  (`emitTradeRoadEndpoints` in `DecorationSlotEmitter`) and one
+  doc comment in `KingdomMapData`. No code references.
+- `git grep TradeRoadMigration` → empty.
+- `git grep getRoadById` → empty.
+- Sea-route establishment path (`TradeRouteManager.establishSeaRoutes`)
+  is unchanged.

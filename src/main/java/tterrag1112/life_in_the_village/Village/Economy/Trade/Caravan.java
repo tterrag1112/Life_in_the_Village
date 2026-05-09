@@ -8,6 +8,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.Ingredient;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.Travel.Roster;
 import tterrag1112.life_in_the_village.Village.Travel.TravellingGroup;
 
@@ -242,9 +244,7 @@ public class Caravan implements TravellingGroup {
                     route.getRouteStartNodeId());
         }
 
-        return data.getRoadById(route.getConnectionId())
-                .map(TradeRoad::getBlocks)
-                .orElse(List.of());
+        return List.of();
     }
 
     /** Concatenates block paths for each segment, skipping the first block of each non-first segment. */
@@ -266,10 +266,24 @@ public class Caravan implements TravellingGroup {
 
     @Override
     public double getSpeedMultiplier(ServerLevel level, VillageSavedData data) {
-        return data.getRouteById(routeId)
-                .flatMap(r -> data.getRoadById(r.getConnectionId()))
-                .map(TradeRoad::getSpeedMultiplier)
-                .orElse(1.0);
+        TradeRoute route = data.getRouteById(routeId).orElse(null);
+        if (route == null || !route.hasGraphPath()) return 1.0;
+
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
+        int sumMaintenance = 0;
+        int countedEdges   = 0;
+        for (UUID edgeId : route.getEdgeIds()) {
+            RoadEdge edge = graph.getEdge(edgeId);
+            if (edge == null) continue;
+            sumMaintenance += edge.getMaintenance();
+            countedEdges++;
+        }
+        if (countedEdges == 0) return 1.0;
+        int avgQuality = sumMaintenance / countedEdges;
+        if (avgQuality <= 20) return 0.0;
+        if (avgQuality <= 21) return 1.0;
+        double normalized = (avgQuality - 21) / (100.0 - 21);
+        return 1.0 + normalized;
     }
 
     @Override

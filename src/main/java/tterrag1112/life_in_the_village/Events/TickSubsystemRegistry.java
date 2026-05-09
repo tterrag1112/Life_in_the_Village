@@ -79,7 +79,6 @@ public final class TickSubsystemRegistry {
         register(new AdventurerTickSystem());
         register(new CaravanTickSystem());
         register(new CompanyTickSystem());
-        register(new TradeRouteTickSystem());
         register(new WarningTickSystem());
         register(new ExpansionTickSystem());
         register(new AgingTickSystem());
@@ -98,8 +97,6 @@ public final class TickSubsystemRegistry {
 
         register(new AtlasFillSystem());
         register(new VillageRealisationSystem());
-        register(new RouteRealisationTickSystem());
-        register(new RoadEventTickSystem());
         register(new TollGateTickSystem());
         register(new BoatCaravanTickSystem());
         register(new GraphEdgeRealizationSystem());

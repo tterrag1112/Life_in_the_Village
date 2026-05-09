@@ -10,8 +10,9 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * A trade connection over open water. Sibling to {@link TradeRoad}
- * with the same role but different storage and behaviour.
+ * A trade connection over open water. Land routes live on the road graph
+ * and are addressed by edge IDs; SeaRoute remains a connection-by-UUID
+ * record until C3 / Phase 13 folds it into the graph.
  *
  * <h3>No block-level realisation</h3>
  * Unlike land roads, sea routes don't place anything in the world.

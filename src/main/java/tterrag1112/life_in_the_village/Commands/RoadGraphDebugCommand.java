@@ -14,8 +14,11 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.levelgen.Heightmap;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
+import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
@@ -1068,6 +1071,22 @@ public class RoadGraphDebugCommand {
             return 0;
         }
 
+        // Reserve a real merchant from villageA so the caravan has a working
+        // principal entity. Using a synthetic UUID here would resolve to no
+        // entity in the world, and CaravanMerchantGoal would never link
+        // entity → expedition, so the caravan would not visibly progress.
+        UUID principalId = vdata.reserveIdleMerchant(villageA.getId(), level);
+        if (principalId == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "'" + villageA.getName() + "' has no idle merchant available — "
+                    + "try again later or move a villager to MERCHANT profession."));
+            return 0;
+        }
+
+        // Find an origin market building so the roster's origin is populated
+        // (matches the daily-dispatch path).
+        UUID originMarketId = findFirstBuildingOfType(villageA, BuildingType.MARKET, vdata);
+
         // Create a real TradeRoute (stored in villageData so TravellingGroupEngine can find it)
         TradeRoute route = TradeRoute.createGraph(
                 villageA.getId(), villageB.getId(),
@@ -1076,22 +1095,29 @@ public class RoadGraphDebugCommand {
         vdata.addTradeRoute(route);
         vdata.setDirty();
 
-        // Create caravan pointing to that real route
-        UUID syntheticPrincipalId = UUID.randomUUID();
+        // Create caravan pointing to that real route, using the reserved merchant
         Caravan testCaravan = Caravan.create(
                 route.getRouteId(),
                 villageA.getId(),
                 villageB.getId(),
-                syntheticPrincipalId,
-                UUID.randomUUID(),
+                principalId,
+                originMarketId,
                 List.of(),
                 0,
                 level.getGameTime());
 
+        // Tag the merchant entity with the new expedition so CaravanMerchantGoal
+        // can find its caravan when it next ticks (matches CaravanSavedData.dispatchNewCaravans).
+        var mob = level.getEntity(principalId);
+        if (mob instanceof TownspersonMob m) {
+            m.setCurrentExpeditionId(testCaravan.getCaravanId());
+        }
+
         CaravanSavedData.get(level).addCaravan(testCaravan);
 
         System.out.println("[CaravanDispatch] Created route " + route.getRouteId().toString().substring(0, 8)
-                + " with " + edgeIds.size() + " edges → " + resolvedPath.size() + " blocks resolved");
+                + " with " + edgeIds.size() + " edges → " + resolvedPath.size() + " blocks resolved"
+                + " (principal=" + principalId.toString().substring(0, 8) + ")");
 
         final String va = villageA.getName();
         final String vb = villageB.getName();
@@ -1103,6 +1129,17 @@ public class RoadGraphDebugCommand {
                 + edgeCnt + " edges, " + blkCnt + " blocks resolved."
                 + (finalRealizedNow > 0 ? " (realized " + finalRealizedNow + " edges)" : "")), false);
         return 1;
+    }
+
+    /** Returns the first building of the given type in {@code village}, or null. */
+    private static UUID findFirstBuildingOfType(Village village,
+                                                BuildingType type,
+                                                VillageSavedData vdata) {
+        for (UUID id : village.getBuildingIds()) {
+            Building b = vdata.getBuildingById(id).orElse(null);
+            if (b != null && b.getType() == type) return id;
+        }
+        return null;
     }
 
     // =========================================================================
@@ -1359,7 +1396,9 @@ public class RoadGraphDebugCommand {
             TradeRoute tr = VillageSavedData.get(level).getRouteById(c.getRouteId()).orElse(null);
             String routeInfo = tr == null ? "route=missing"
                     : tr.hasGraphPath() ? "graph(" + tr.getEdgeIds().size() + " edges)"
-                    : "legacy(road=" + (tr.getConnectionId() != null ? tr.getConnectionId().toString().substring(0, 8) : "null") + ")";
+                    : tr.getConnectionId() != null
+                            ? "sea(" + tr.getConnectionId().toString().substring(0, 8) + ")"
+                            : "no-path";
             final String line = "[" + shortId + "] " + origin + " → " + dest
                     + "  state=" + c.getState()
                     + " progress=" + pct + "%"

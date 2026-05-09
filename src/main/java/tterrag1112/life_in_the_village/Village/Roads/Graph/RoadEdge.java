@@ -26,14 +26,11 @@ import java.util.*;
  * <h3>Realization</h3>
  * {@code blockPath} is empty until the realiser runs (Phase 5). The
  * {@code realized} flag tracks whether blocks have ever been placed.
- * Copying block paths from legacy {@link tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoad}s
- * during migration pre-populates this field for already-realized roads.
  *
  * <h3>Meander profile</h3>
  * Seeded once at planning time. Re-realization uses the same seed so a given
  * edge always has the same visual character regardless of how many times it is
- * re-placed. Legacy migrated roads receive amplitude=0, frequency=0 (flat
- * profile); they will be re-realized under the new system in Phase 5.
+ * re-placed.
  */
 public class RoadEdge {
 

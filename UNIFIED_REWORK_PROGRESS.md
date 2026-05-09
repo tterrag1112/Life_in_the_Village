@@ -52,8 +52,8 @@ spec matches reality.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| C1-tr | TradeRoad.java deletion | Not-Started | Migration complete; source is dead code. |
-| C1-cv | TravellingGroupEngine synthetic-caravan fix | Not-Started | Carryover from Roads Phase 3b. |
+| C1-tr | TradeRoad.java deletion | Done 2026-05-09 | Land routes are graph-only; legacy land/realisation/event stack removed. See ROADS_PROGRESS Track C1 entry. |
+| C1-cv | TravellingGroupEngine synthetic-caravan fix | Done 2026-05-09 | Root cause was in the diagnostic command's synthetic principal UUID, not the engine. `dispatch_test_caravan_between` now reserves a real merchant via `reserveIdleMerchant` + `setCurrentExpeditionId`. |
 | C2 | Phase 7f Slice 4 connector routing | Not-Started | Depends A4. |
 | C3-11 | Phase 11 — player-initiated road construction | Not-Started | |
 | C3-12 | Phase 12 — POI subroads | Not-Started | |
@@ -2121,3 +2121,53 @@ produce a recognisably different roster, plaza slots should no
 longer collide with parks, farm sectors should plant on plains,
 CITY homesteads should roll regularly, and `/liv decoration slots`
 should work bare.
+
+### 2026-05-09 — Track C1 landed (TradeRoad removal + caravan diagnostic fix)
+
+Track C1 from `UNIFIED_REWORK_PLAN.md` shipped. Both rows
+(C1-tr, C1-cv) flipped to Done above. Full per-file detail in
+`ROADS_PROGRESS.md` under the "Track C1 — TradeRoad removal +
+synthetic-caravan fix" entry; this is a summary row.
+
+**Code shipped:**
+
+Deleted: `Village/Economy/Trade/TradeRoad.java`,
+`Village/Economy/Trade/RoadEvent.java` (legacy),
+`Village/Economy/Trade/RoadEventScheduler.java`,
+`Village/Economy/Trade/RouteRealiser.java`,
+`Village/Roads/Graph/TradeRoadMigration.java`,
+`Events/RouteRealisationSystem.java`. `TickSubsystemRegistry`
+no longer registers `TradeRouteTickSystem`,
+`RouteRealisationTickSystem`, or `RoadEventTickSystem`. The
+`migrated` flag plumbing on `WorldRoadSavedData` is gone.
+
+Refactored: `TradeRoute` (drop TradeRoad parameter from
+efficiency / speed / chance methods; take quality + length ints
+instead), `Caravan` (graph-only path, edge-derived speed
+multiplier), `CaravanMerchantGoal` (graph-only resolveBlocks),
+`CaravanSavedData` (graph-only land dispatch + edge-derived
+delivery efficiency), `TradeRouteManager` (legacy LAND path
+deleted; sea-route establishment retained), `RoadRouter` (legacy
+merge helpers deleted), `MapRoadSnapshot` (`fromRoute` derives
+cellPath from edges), continent + kingdom map scopes,
+`/liv roads` debug commands, `/spawn caravan`, `/litv road debug
+dispatch_test_caravan_between` and `caravan_status`,
+`BuildingCommand`, `ServerTickDispatcher`, `TickSystems`'
+WanderingTrader spawner.
+
+**Synthetic-caravan finding:** the bug was in the diagnostic
+command (synthetic principal UUID), not in
+`TravellingGroupEngine.tick`. Diagnostic now reserves a real
+merchant (`villageData.reserveIdleMerchant`) and calls
+`setCurrentExpeditionId` on the entity, matching the
+daily-dispatch path.
+
+**Save compat:** old saves with `tradeRoads`, `roadEvents`, or
+`migrated` JSON fields load fine — DFU silently drops fields the
+codec no longer recognises.
+
+**Cumulative pending verification:** spawn a fresh world; verify
+daily-dispatched caravans walk visibly between villages; run
+`/litv road debug dispatch_test_caravan_between A B` and watch
+the test caravan reach the destination; spawn a sea-route test
+case to confirm boat caravans still dispatch.

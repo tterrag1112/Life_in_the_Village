@@ -12,6 +12,7 @@ import tterrag1112.life_in_the_village.Village.Roads.Graph.GraphInvariantValidat
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -33,12 +34,6 @@ import java.util.UUID;
  *   <li>{@link GraphInvariantValidator#validate} runs; any warnings are printed
  *       with the {@code [RoadGraph Validator]} prefix. No exception is thrown.</li>
  * </ol>
- *
- * <h3>Migration flag</h3>
- * {@code migrated} is {@code false} on a fresh world. Once
- * {@link tterrag1112.life_in_the_village.Village.Roads.Graph.TradeRoadMigration}
- * runs successfully it sets the flag to {@code true} and calls {@link #markDirty}
- * so the flag is persisted. Subsequent world loads skip migration immediately.
  */
 public class WorldRoadSavedData extends SavedData {
 
@@ -84,7 +79,7 @@ public class WorldRoadSavedData extends SavedData {
     private static final Codec<UUID> UUID_CODEC =
             Codec.STRING.xmap(UUID::fromString, UUID::toString);
 
-    private record Snapshot(WorldRoadGraph graph, boolean migrated,
+    private record Snapshot(WorldRoadGraph graph,
                              Map<UUID, VillageUpkeepLedger> ledgers,
                              boolean greatRoadGenerationComplete,
                              Map<UUID, List<ShelterInstance>> edgeShelters,
@@ -94,8 +89,6 @@ public class WorldRoadSavedData extends SavedData {
         static final Codec<Snapshot> CODEC = RecordCodecBuilder.create(i -> i.group(
                 WorldRoadGraph.CODEC.fieldOf("graph")
                         .forGetter(Snapshot::graph),
-                Codec.BOOL.optionalFieldOf("migrated", false)
-                        .forGetter(Snapshot::migrated),
                 Codec.unboundedMap(UUID_CODEC, VillageUpkeepLedger.CODEC)
                         .optionalFieldOf("upkeepLedgers", new HashMap<>())
                         .forGetter(Snapshot::ledgers),
@@ -119,7 +112,7 @@ public class WorldRoadSavedData extends SavedData {
     public static final Codec<WorldRoadSavedData> CODEC = Snapshot.CODEC.xmap(
             snap -> {
                 WorldRoadSavedData data = new WorldRoadSavedData(
-                        snap.graph(), snap.migrated(), new HashMap<>(snap.ledgers()),
+                        snap.graph(), new HashMap<>(snap.ledgers()),
                         snap.greatRoadGenerationComplete(), new HashMap<>(snap.edgeShelters()),
                         new HashMap<>(snap.tollGates()),
                         new HashMap<>(snap.events()),
@@ -135,7 +128,7 @@ public class WorldRoadSavedData extends SavedData {
                 }
                 return data;
             },
-            data -> new Snapshot(data.graph, data.migrated, new HashMap<>(data.ledgers),
+            data -> new Snapshot(data.graph, new HashMap<>(data.ledgers),
                     data.greatRoadGenerationComplete, new HashMap<>(data.edgeShelters),
                     new HashMap<>(data.tollGates),
                     new HashMap<>(data.events),
@@ -153,7 +146,6 @@ public class WorldRoadSavedData extends SavedData {
     // =========================================================================
 
     private final WorldRoadGraph graph;
-    private boolean migrated;
     /** Village UUID → upkeep ledger. Populated lazily on first upkeep cycle. */
     private final Map<UUID, VillageUpkeepLedger> ledgers;
     private boolean greatRoadGenerationComplete;
@@ -173,7 +165,6 @@ public class WorldRoadSavedData extends SavedData {
     /** Default constructor — creates an empty graph for a fresh world. */
     public WorldRoadSavedData() {
         this.graph                       = new WorldRoadGraph();
-        this.migrated                    = false;
         this.ledgers                     = new HashMap<>();
         this.greatRoadGenerationComplete = false;
         this.edgeShelters                = new HashMap<>();
@@ -182,7 +173,7 @@ public class WorldRoadSavedData extends SavedData {
         this.worldUniqueTypesPlaced      = new HashSet<>();
     }
 
-    private WorldRoadSavedData(WorldRoadGraph graph, boolean migrated,
+    private WorldRoadSavedData(WorldRoadGraph graph,
                                 Map<UUID, VillageUpkeepLedger> ledgers,
                                 boolean greatRoadGenerationComplete,
                                 Map<UUID, List<ShelterInstance>> edgeShelters,
@@ -190,7 +181,6 @@ public class WorldRoadSavedData extends SavedData {
                                 Map<UUID, RoadEvent> events,
                                 Set<String> worldUniqueTypesPlaced) {
         this.graph                       = graph;
-        this.migrated                    = migrated;
         this.ledgers                     = ledgers;
         this.greatRoadGenerationComplete = greatRoadGenerationComplete;
         this.edgeShelters                = edgeShelters;
@@ -208,14 +198,10 @@ public class WorldRoadSavedData extends SavedData {
     }
 
     // =========================================================================
-    // Getters / setters — graph, migration
+    // Getters — graph
     // =========================================================================
 
     public WorldRoadGraph getGraph() { return graph; }
-
-    public boolean isMigrated() { return migrated; }
-
-    public void setMigrated(boolean migrated) { this.migrated = migrated; }
 
     // =========================================================================
     // Upkeep ledgers

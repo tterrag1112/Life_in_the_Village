@@ -20,9 +20,12 @@ import tterrag1112.life_in_the_village.Entities.NpcNameRegistry;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadEdge;
+import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
 import tterrag1112.life_in_the_village.Village.Travel.Roster;
 import tterrag1112.life_in_the_village.Village.Travel.TravellingGroupEngine;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -285,14 +288,14 @@ public class CaravanSavedData extends SavedData {
     private void handleDelivery(Caravan caravan,
                                 ServerLevel level,
                                 VillageSavedData villageData) {
-        // Get trade efficiency from route and road
+        // Get trade efficiency from the route's edges
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
         double efficiency = villageData
                 .getRouteBetween(caravan.getOriginVillageId(),
                         caravan.getDestVillageId())
-                .flatMap(route -> villageData
-                        .getRoadById(route.getConnectionId())
-                        .map(road -> route
-                                .getTradeEfficiency(road)))
+                .map(route -> route.getTradeEfficiency(
+                        avgEdgeMaintenance(graph, route),
+                        totalEdgeBlockLength(graph, route)))
                 .orElse(0.5);
 
         // Deliver goods
@@ -323,6 +326,7 @@ public class CaravanSavedData extends SavedData {
     private void dispatchNewCaravans(ServerLevel level,
                                      VillageSavedData villageData,
                                      long currentTick) {
+        WorldRoadGraph graph = WorldRoadSavedData.get(level).getGraph();
         for (TradeRoute route : villageData.getAllTradeRoutes()) {
             if (!route.isTradeAllowed()) continue;
 
@@ -331,14 +335,12 @@ public class CaravanSavedData extends SavedData {
                             && c.getState() != Caravan.CaravanState.FAILED);
             if (hasActiveCaravan) continue;
 
-            // Get the connection (road or sea route) from the route
-            var connOpt = villageData.getConnectionById(route.getConnectionId());
-            if (connOpt.isEmpty()) continue;
-            var connection = connOpt.get();
-            if (connection.getMode() != TradeConnection.Mode.LAND) continue; // skip sea routes
-            TradeRoad road = (TradeRoad) connection;
+            // LAND-only here. Sea routes go through BoatCaravanSavedData.
+            if (!route.hasGraphPath()) continue;
 
-            float chance = route.getDailyCaravanChance(road);
+            int quality      = avgEdgeMaintenance(graph, route);
+            int lengthBlocks = totalEdgeBlockLength(graph, route);
+            float chance     = route.getDailyCaravanChance(quality, lengthBlocks);
             if (RANDOM.nextFloat() > chance) continue;
 
             Village originVillage = villageData.getVillageById(route.getVillageA()).orElse(null);
@@ -507,5 +509,31 @@ public class CaravanSavedData extends SavedData {
                 + " bronze profit from delivery");
     }
 
+    /**
+     * Average maintenance score (0–100) across the route's graph edges.
+     * Returns 100 if the route has no resolvable edges (treat as pristine
+     * so callers don't accidentally penalise an unrouted journey).
+     */
+    private static int avgEdgeMaintenance(WorldRoadGraph graph, TradeRoute route) {
+        int sum = 0;
+        int count = 0;
+        for (UUID edgeId : route.getEdgeIds()) {
+            RoadEdge edge = graph.getEdge(edgeId);
+            if (edge == null) continue;
+            sum += edge.getMaintenance();
+            count++;
+        }
+        return count == 0 ? 100 : sum / count;
+    }
 
+    /** Sum of block-path lengths across the route's realised edges. */
+    private static int totalEdgeBlockLength(WorldRoadGraph graph, TradeRoute route) {
+        int total = 0;
+        for (UUID edgeId : route.getEdgeIds()) {
+            RoadEdge edge = graph.getEdge(edgeId);
+            if (edge == null) continue;
+            total += edge.getBlockPath().size();
+        }
+        return total;
+    }
 }
