@@ -5585,3 +5585,202 @@ are explicitly allowed by the prompt.
 - `git grep getRoadById` → empty.
 - Sea-route establishment path (`TradeRouteManager.establishSeaRoutes`)
   is unchanged.
+
+---
+
+### 2026-05-09 — Track C2 — Phase 7f Slice 4: connector routing through villages
+
+**Phase:** Track C2 (Phase 7f Slice 4) per `UNIFIED_REWORK_PLAN.md`.
+
+#### Slice 1–3 disposition
+
+Investigation produced these findings before code:
+
+- **Slice 1 (shipped, alive):** `VillageRoadGraph` + `VillageRoadNode`
+  + `VillageRoadEdge` + `VillageRoadsSavedData` + `RoadNode.GatewayLink`.
+  V2 spawn already calls `VillageRoadsSavedData.getOrCreate(villageId)`
+  so every V2 village has an empty graph allocated.
+- **Slice 2 (drafted but never wired):** `GatewayDescriptor`,
+  `GatewayPopulator.populate`, and `ConnectorPlanner.selectGateway`
+  exist, but `GatewayPopulator.populate` was never called from V2
+  spawn. `selectGateway` returned empty for every call and
+  `ConnectorPlanner.planConnector` always fell back to legacy
+  `VillageDockingPoint.compute`.
+- **Slice 3 (partially drafted, never wired):** `InternalRoadCommitter`
+  exists but is never called. `RouteSegment.WorldEdge`,
+  `RouteSegment.VillageTraversal`, `TradeRoute.createSegmented`,
+  `VillageRoadGraph.findGatewayBlockPath`, and the segment branches
+  in `Caravan.getPath` / `CaravanMerchantGoal.resolveBlocks` are all
+  already coded. No caller produced segmented routes; daily dispatch
+  and `dispatchTestCaravanBetween` both built graph (edge-list)
+  routes via `TradeRoute.createGraph`.
+
+So the work for C2 was: wire Slice 2 + Slice 3 into the V2 spawn
+path, build a V2-specific internal-graph committer, and add a
+segmented Dijkstra to the route establisher so caravans actually
+walk through multi-gateway villages.
+
+#### Design decisions
+
+**a) Gateway model.** Each V2 village registers gateways for
+`spineStart`, `spineEnd`, plus the two outer endpoints of each
+cross street. PRIMARY role goes to the existing `mainGateEndpoint`
+(= `spineEnd`); all other gates are SIDE. `Village.getDockNodeId()`
+stays a single Optional<UUID> (legacy compat) — when multiple
+connectors land at different gateways, `dockNodeId` is the most
+recently set TERMINUS, but the village's full gateway set is always
+queryable via `VillageRoadsSavedData.getGraph(villageId).gateways()`.
+
+**b) Graph representation.** Sibling `VillageRoadGraph` (the
+existing Slice 1 model), not `EdgeTier.INTERNAL` on `RoadEdge`.
+The sibling model means maintenance, decoration, parallelism
+detection, kingdom-claim trunk scoring, and the validator all
+naturally skip internal village edges — they iterate
+`WorldRoadGraph.allEdges()`, which has none of them.
+`GraphInvariantValidator` is unaffected because gateway TERMINUS
+nodes are normal TERMINUS-typed nodes (with a `GatewayLink`)
+and the validator's orphan check already exempts TERMINUS.
+Realisation cost is also unaffected — `EdgeRealizer` never sees
+village-internal edges, so it can't try to re-paint roads
+that `RoadPainter` already drew.
+
+**c) Connector planner change.** `ConnectorPlanner.selectGateway`
+already loops gateways and picks the best per remote candidate.
+The remaining piece was `getOrCreateDockNode`: when a TERMINUS
+linked to this village (via `GatewayLink`) already exists at the
+proposed docking anchor, reuse it instead of creating a fresh
+`VILLAGE_DOCK`. Multiple connectors to the same village can land
+at different gateway TERMINUSes; the `dockNodeId` field tracks
+the most recent landing for legacy compat.
+
+**d) Through-village resolution.**
+`GraphTradeRouteEstablisher.findSegmentedPath` runs Dijkstra over
+the world graph augmented with virtual hops between TERMINUS pairs
+that share a `GatewayLink.villageId`. A village hop's cost is the
+BFS-distance (sum of edge `length()`) between the two gateways
+inside the village's `VillageRoadGraph`; missing/empty village
+graphs yield zero-cost hops as a defensive fallback so single-
+gateway villages still produce valid paths. The output is a
+`List<RouteSegment>` mixing `WorldEdge` and `VillageTraversal`
+that maps directly onto `TradeRoute.createSegmented`. The existing
+`Caravan.getPath` / `CaravanMerchantGoal.resolveBlocks` segment
+branches resolve the path at tick time without further changes.
+
+**e) Layout coverage.** No layout-type gating. Every V2 village
+gets gate positions from `Skeleton.spineStart()` + `spineEnd()` +
+`crossStreets()`. CROSSROADS-style villages get the visible
+multi-arm test case because they're the ones whose cross streets
+plant outer gateways perpendicular to the spine; LINEAR/CHAIN/
+ROADSIDE-shape villages get two opposing arms by virtue of having
+a long spine. Single-dock pre-C2 saves keep working unchanged
+because their `getGatePositions()` is empty and `GatewayPopulator`
+is only fired at fresh-spawn time.
+
+#### Files modified
+
+- `Village/Planning/V2/V2VillageSpawnerAdapter.java` —
+  `buildSynthLayout` populates `gatePositions` from V2 RoadNetwork
+  (spineStart, spineEnd, cross-street outer endpoints). The spawn
+  pipeline calls `GatewayPopulator.populate` and
+  `InternalRoadCommitter.commitFromV2` immediately after
+  `data.addVillage` + `VillageRoadsSavedData.getOrCreate`, both
+  guarded so a failure in either is logged and does not abort
+  the spawn.
+- `Village/Roads/Planning/InternalRoadCommitter.java` — new public
+  method `commitFromV2(level, village, roads)` reads V2's
+  `RoadNetwork`, projects each cross-street junction onto the
+  spine, splits the spine at each junction, emits one
+  `THROUGH_VILLAGE` `VillageRoadEdge` per spine segment, and one
+  `SIDE_PATH` `VillageRoadEdge` per cross-street arm. Reload
+  protection: no-op if the village graph already has edges.
+- `Village/Roads/Planning/ConnectorPlanner.java` —
+  `getOrCreateDockNode` first searches for a TERMINUS at the
+  docking anchor with a matching `GatewayLink.villageId`; on hit,
+  returns it as the dock and updates `village.dockNodeId`.
+  Falls through to the legacy create-fresh-VILLAGE_DOCK path
+  on miss. `commitPlan`'s connector-edge endpoint is now the
+  reused TERMINUS, so connector edges naturally chain into
+  gateway-bearing TERMINUSes.
+- `Village/Economy/Trade/GraphTradeRouteEstablisher.java` — new
+  `findSegmentedPath(graph, villageRoadsData, fromNodeId, toNodeId)`
+  runs an augmented Dijkstra with `WORLD_EDGE` and `VILLAGE_HOP`
+  step kinds. Reconstructs to a `List<RouteSegment>`. Internal
+  enum `StepKind` and helpers `findGatewayByWorldNodeId`,
+  `villageHopCost` (BFS over `VillageRoadGraph.findPath`).
+- `Commands/RoadGraphDebugCommand.java` —
+  `dispatchTestCaravanBetween` tries `findSegmentedPath` first
+  and uses the result if it includes any `VillageTraversal`
+  segment. Otherwise falls back to `findEdgePath` for an
+  edge-list route. Realises only the `WorldEdge` segments'
+  underlying `RoadEdge`s; village-internal edges resolve from
+  blocks RoadPainter already placed. Output reports edges
+  vs. segments correctly.
+
+#### Files **NOT** modified — preserved out of scope
+
+- `CaravanSavedData.dispatchNewCaravans` — daily LAND dispatch
+  still uses `route.hasGraphPath()` and edge IDs. Daily-dispatched
+  LAND routes don't currently exist on the V2 path (a Track C1
+  carryover gap noted in that progress entry); a future task that
+  re-introduces auto-LAND-route creation will need to call
+  `findSegmentedPath` from there too.
+- Sea routes, `BoatCaravanSavedData`, `TradeConnection`,
+  `SeaRoute` — unchanged.
+- Maintenance, decoration, parallelism, kingdom-claim trunk
+  systems — they iterate `WorldRoadGraph.allEdges()` and never
+  see internal village edges, so no audit was required.
+- `Village.getDockNodeId()` shape — still single `Optional<UUID>`.
+  Multi-gateway is a property of the underlying graph, not of
+  the legacy field.
+
+#### Test plan (manual, post-build)
+
+1. `/litv config adaptive_v2 on` (already the default).
+2. Spawn three villages on opposite sides of each other (one
+   centred, two on +X / −X).
+3. `/litv road debug village_gateways <centre-name>` should list
+   ≥ 2 gateways for the centre village.
+4. `/litv road debug show_village_graph <centre-name>` should
+   show one or more `THROUGH_VILLAGE` edges connecting the
+   gateways and one `SIDE_PATH` per cross-street arm if any.
+5. `/litv road debug dispatch_test_caravan_between <left> <right>`
+   should print "Segmented path with N segment(s) (includes
+   village traversal)" if the centre village is multi-gateway
+   and Dijkstra routes through it.
+6. Watch the test caravan at the centre village's PRIMARY
+   gateway — it should walk in, follow the painted spine through
+   the village, exit the other gateway, and continue toward the
+   destination.
+7. Spawn a single-gateway-shape village (e.g. RADIAL with no cross
+   streets); `village_gateways` should report 2 gateways
+   (spineStart + spineEnd) but routing-through is unlikely to
+   pick it because there's nothing to traverse.
+
+#### Compile status
+
+Gradle network-blocked in this sandbox. Static review confirmed:
+- All new types resolve through existing imports.
+- `RouteSegment`, `VillageRoadsSavedData`, `RoadNode.GatewayLink`,
+  `VillageRoadNode.GatewayInfo.worldNodeId` accessor signatures
+  match.
+- `GraphInvariantValidator` exempts orphan TERMINUS, so the new
+  gateway TERMINUSes don't generate spawn-time warnings.
+- Reload protection guards on `GatewayPopulator.populate` and
+  `InternalRoadCommitter.commitFromV2` keep abandonment-respawn
+  cycles idempotent.
+
+#### Deviations from prompt
+
+- The prompt suggested CROSSROADS-only as a possible scope.
+  Implementation is layout-agnostic (every V2 village registers
+  gateways for its spine endpoints + cross-street outer endpoints)
+  per the answered design question. CROSSROADS is the visibly
+  multi-arm test case; other layouts gain the same machinery
+  invisibly.
+- Internal edge cell paths are 4-block-resolution straight-line
+  samples between gateway/junction nodes, not the actual painted
+  RoadPainter centerlines. Caravans walk the `RoadPainter` blocks
+  at runtime regardless — `VillageTraversal.resolveBlocks` is only
+  used to provide a coarse waypoint sequence to
+  `CaravanMerchantGoal`. Higher-fidelity sampling can come later
+  if needed.

@@ -54,7 +54,7 @@ spec matches reality.
 |---|---|---|---|
 | C1-tr | TradeRoad.java deletion | Done 2026-05-09 | Land routes are graph-only; legacy land/realisation/event stack removed. See ROADS_PROGRESS Track C1 entry. |
 | C1-cv | TravellingGroupEngine synthetic-caravan fix | Done 2026-05-09 | Root cause was in the diagnostic command's synthetic principal UUID, not the engine. `dispatch_test_caravan_between` now reserves a real merchant via `reserveIdleMerchant` + `setCurrentExpeditionId`. |
-| C2 | Phase 7f Slice 4 connector routing | Not-Started | Depends A4. |
+| C2 | Phase 7f Slice 4 connector routing | Done 2026-05-09 | V2 villages register multi-gateway docks (spine endpoints + cross-street outer arms); ConnectorPlanner reuses gateway TERMINUSes; new `GraphTradeRouteEstablisher.findSegmentedPath` does augmented Dijkstra over world graph + village internal hops, emits `RouteSegment.WorldEdge`+`VillageTraversal` chains. See ROADS_PROGRESS Track C2 entry. |
 | C3-11 | Phase 11 — player-initiated road construction | Not-Started | |
 | C3-12 | Phase 12 — POI subroads | Not-Started | |
 | C3-13 | Phase 13 — sea route unification | Not-Started | Folds SeaRoute into world graph. |
@@ -2171,3 +2171,59 @@ daily-dispatched caravans walk visibly between villages; run
 `/litv road debug dispatch_test_caravan_between A B` and watch
 the test caravan reach the destination; spawn a sea-route test
 case to confirm boat caravans still dispatch.
+
+### 2026-05-09 — Track C2 landed (multi-gateway dock + through-village caravan traversal)
+
+Track C2 / Phase 7f Slice 4 from `UNIFIED_REWORK_PLAN.md` shipped.
+Full per-file detail in `ROADS_PROGRESS.md` under the "Track C2 —
+Phase 7f Slice 4" entry; this is a summary row.
+
+**Slice 1–3 disposition (per investigation):** Slice 1 was alive
+(VillageRoadGraph data model + Slice 1 saved-data shipped). Slices
+2 + 3 had pieces drafted (`GatewayPopulator`, `InternalRoadCommitter`,
+`RouteSegment`, segment-aware Caravan path) but were never wired
+into V2 spawn — V2 villages had empty internal graphs and a single
+VILLAGE_DOCK at the spine end. Track C2 wired them in and added the
+augmented Dijkstra needed for actual through-village traversal.
+
+**Code shipped:**
+
+- `V2VillageSpawnerAdapter` — populates synth-layout `gatePositions`
+  from the V2 RoadNetwork (spine start/end + cross-street outer
+  arms); calls `GatewayPopulator.populate` and
+  `InternalRoadCommitter.commitFromV2` immediately after village
+  registration, both `guard()`-wrapped.
+- `InternalRoadCommitter.commitFromV2` (new) — derives the village
+  internal graph from V2's `RoadNetwork`: spine split at every
+  cross-street junction, plus one SIDE_PATH edge per cross-street
+  arm. Reload-protected.
+- `ConnectorPlanner.getOrCreateDockNode` — first reuses any
+  TERMINUS at the docking anchor whose `GatewayLink` references
+  this village; falls through to legacy VILLAGE_DOCK creation.
+- `GraphTradeRouteEstablisher.findSegmentedPath` (new) —
+  augmented Dijkstra; world-edge expansions plus virtual
+  village-hop expansions across same-village TERMINUS pairs.
+  Reconstructs to a `List<RouteSegment>` mixing `WorldEdge` and
+  `VillageTraversal`.
+- `RoadGraphDebugCommand.dispatchTestCaravanBetween` — tries the
+  segmented pathfinder first; uses it when a village traversal is
+  involved, falls back to the edge-list pathfinder otherwise.
+
+**Save compat:** existing single-dock saves keep working unchanged —
+`GatewayPopulator` only fires at fresh-spawn time and is no-op if
+gateways already exist; `InternalRoadCommitter.commitFromV2` no-ops
+if internal edges already exist. Pre-C2 villages have neither, so
+they remain single-dock and `findSegmentedPath` falls through to
+`findEdgePath`.
+
+**Out-of-scope-but-noted:** `CaravanSavedData.dispatchNewCaravans`
+still uses graph-edge dispatch; auto-LAND-route creation is a
+known gap from C1 and a future task that re-introduces it will
+need to call `findSegmentedPath` from there too.
+
+**Cumulative pending verification:** spawn three villages where
+the middle one has cross streets; confirm
+`/litv road debug village_gateways` lists ≥ 2 gateways for the
+middle one; run `dispatch_test_caravan_between` between the
+flanking villages and watch the caravan walk through the middle
+village along its painted spine and out the far gateway.

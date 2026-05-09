@@ -23,6 +23,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.AtlasRouteRouter;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.GraphTradeRouteEstablisher;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.RouteSegment;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRouteManager;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.CulturePalette;
@@ -1034,37 +1035,75 @@ public class RoadGraphDebugCommand {
                 + " (dock=" + dockA.toString().substring(0, 8) + ") to "
                 + villageB.getName() + " (dock=" + dockB.toString().substring(0, 8) + ")");
 
-        Optional<List<UUID>> edgePathOpt = GraphTradeRouteEstablisher.findEdgePath(graph, dockA, dockB);
-        if (edgePathOpt.isEmpty()) {
+        // Track C2: try the segmented pathfinder first so the route can
+        // walk through any multi-gateway villages between A and B. Falls
+        // back to the legacy single-graph path if the segmented search
+        // can't find a route (e.g., neither village is multi-gateway).
+        VillageRoadsSavedData villageRoadsData = VillageRoadsSavedData.get(level);
+        Optional<List<RouteSegment>> segOpt = GraphTradeRouteEstablisher.findSegmentedPath(
+                graph, villageRoadsData, dockA, dockB);
+        Optional<List<UUID>> edgePathOpt;
+        boolean usedSegments;
+        if (segOpt.isPresent() && segOpt.get().stream()
+                .anyMatch(s -> s instanceof RouteSegment.VillageTraversal)) {
+            edgePathOpt = Optional.empty();
+            usedSegments = true;
+            System.out.println("[CaravanDispatch] Segmented path with "
+                    + segOpt.get().size() + " segment(s) (includes village traversal)");
+        } else {
+            edgePathOpt = GraphTradeRouteEstablisher.findEdgePath(graph, dockA, dockB);
+            usedSegments = false;
+        }
+        if (edgePathOpt.isEmpty() && !usedSegments) {
             ctx.getSource().sendFailure(Component.literal(
                     "No graph path found between '" + villageA.getName()
                     + "' and '" + villageB.getName() + "'. Check that their dock nodes are connected."));
             return 0;
         }
-        List<UUID> edgeIds = edgePathOpt.get();
+        List<UUID> edgeIds = usedSegments ? List.of() : edgePathOpt.get();
 
-        System.out.println("[CaravanDispatch] Found " + edgeIds.size() + " edge path:");
-        for (UUID eid : edgeIds) {
-            RoadEdge e = graph.getEdge(eid);
-            System.out.println("  edge=" + eid.toString().substring(0, 8)
-                    + (e != null ? " tier=" + e.getTier() + " realized=" + e.isRealized()
-                                         + " blocks=" + e.getBlockPath().size() : " (null)"));
+        if (!usedSegments) {
+            System.out.println("[CaravanDispatch] Found " + edgeIds.size() + " edge path:");
+            for (UUID eid : edgeIds) {
+                RoadEdge e = graph.getEdge(eid);
+                System.out.println("  edge=" + eid.toString().substring(0, 8)
+                        + (e != null ? " tier=" + e.getTier() + " realized=" + e.isRealized()
+                                             + " blocks=" + e.getBlockPath().size() : " (null)"));
+            }
         }
 
-        // Force-realize any unrealized edges on the path
+        // Force-realize any unrealized edges on the path (only for the
+        // graph-edge case; segments resolve via village or world edges
+        // separately at tick time).
         int realizedNow = 0;
-        for (UUID eid : edgeIds) {
-            RoadEdge e = graph.getEdge(eid);
-            if (e != null && !e.isRealized()) {
-                EdgeRealizer.realizeEdge(level, e, graph, vdata);
-                realizedNow++;
-                System.out.println("[CaravanDispatch] Realized edge " + eid.toString().substring(0, 8)
-                        + " → " + e.getBlockPath().size() + " blocks");
+        if (!usedSegments) {
+            for (UUID eid : edgeIds) {
+                RoadEdge e = graph.getEdge(eid);
+                if (e != null && !e.isRealized()) {
+                    EdgeRealizer.realizeEdge(level, e, graph, vdata);
+                    realizedNow++;
+                    System.out.println("[CaravanDispatch] Realized edge " + eid.toString().substring(0, 8)
+                            + " → " + e.getBlockPath().size() + " blocks");
+                }
+            }
+        } else {
+            // Realize each WorldEdge in the segment chain so the caravan
+            // has block paths to walk through.
+            for (RouteSegment seg : segOpt.get()) {
+                if (seg instanceof RouteSegment.WorldEdge we) {
+                    RoadEdge e = graph.getEdge(we.edgeId());
+                    if (e != null && !e.isRealized()) {
+                        EdgeRealizer.realizeEdge(level, e, graph, vdata);
+                        realizedNow++;
+                    }
+                }
             }
         }
         if (realizedNow > 0) rdata.markDirty();
 
-        List<BlockPos> resolvedPath = GraphTradeRouteEstablisher.resolveGraphBlocks(graph, edgeIds, dockA);
+        List<BlockPos> resolvedPath = usedSegments
+                ? Caravan.resolveSegmentBlocks(level, segOpt.get())
+                : GraphTradeRouteEstablisher.resolveGraphBlocks(graph, edgeIds, dockA);
         if (resolvedPath.isEmpty()) {
             ctx.getSource().sendFailure(Component.literal(
                     "Path resolved to 0 blocks — edges may still be unrealized after forced realization. Check logs."));
@@ -1088,10 +1127,11 @@ public class RoadGraphDebugCommand {
         UUID originMarketId = findFirstBuildingOfType(villageA, BuildingType.MARKET, vdata);
 
         // Create a real TradeRoute (stored in villageData so TravellingGroupEngine can find it)
-        TradeRoute route = TradeRoute.createGraph(
-                villageA.getId(), villageB.getId(),
-                TradeRoute.RouteType.NEUTRAL, level.getGameTime(),
-                edgeIds, dockA);
+        TradeRoute route = usedSegments
+                ? TradeRoute.createSegmented(villageA.getId(), villageB.getId(),
+                        TradeRoute.RouteType.NEUTRAL, level.getGameTime(), segOpt.get())
+                : TradeRoute.createGraph(villageA.getId(), villageB.getId(),
+                        TradeRoute.RouteType.NEUTRAL, level.getGameTime(), edgeIds, dockA);
         vdata.addTradeRoute(route);
         vdata.setDirty();
 
@@ -1115,18 +1155,22 @@ public class RoadGraphDebugCommand {
 
         CaravanSavedData.get(level).addCaravan(testCaravan);
 
+        int routeShape = usedSegments ? segOpt.get().size() : edgeIds.size();
         System.out.println("[CaravanDispatch] Created route " + route.getRouteId().toString().substring(0, 8)
-                + " with " + edgeIds.size() + " edges → " + resolvedPath.size() + " blocks resolved"
+                + " with " + routeShape + (usedSegments ? " segments" : " edges")
+                + " → " + resolvedPath.size() + " blocks resolved"
                 + " (principal=" + principalId.toString().substring(0, 8) + ")");
 
         final String va = villageA.getName();
         final String vb = villageB.getName();
-        final int edgeCnt = edgeIds.size();
+        final int shapeCnt = routeShape;
+        final boolean seg = usedSegments;
         final int blkCnt  = resolvedPath.size();
         int finalRealizedNow = realizedNow;
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "Dispatched test caravan from '" + va + "' to '" + vb + "': "
-                + edgeCnt + " edges, " + blkCnt + " blocks resolved."
+                + shapeCnt + (seg ? " segments" : " edges") + ", "
+                + blkCnt + " blocks resolved."
                 + (finalRealizedNow > 0 ? " (realized " + finalRealizedNow + " edges)" : "")), false);
         return 1;
     }

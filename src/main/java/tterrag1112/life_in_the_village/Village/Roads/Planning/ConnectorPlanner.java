@@ -503,6 +503,23 @@ public final class ConnectorPlanner {
             Village village,
             BlockPos dockingAnchor) {
 
+        // Track C2: prefer reusing a gateway TERMINUS at the docking anchor.
+        // GatewayPopulator already created one TERMINUS per gateway (each
+        // linked back to the village's VillageRoadGraph). Reusing them here
+        // means a multi-gateway village can host multiple connectors —
+        // each landing at a different gateway TERMINUS — without creating
+        // redundant VILLAGE_DOCK nodes that would duplicate gateway state.
+        for (RoadNode candidate : graph.allNodes()) {
+            if (candidate.type() != RoadNode.NodeType.TERMINUS) continue;
+            Optional<RoadNode.GatewayLink> link = candidate.gatewayLink();
+            if (link.isEmpty()) continue;
+            if (!link.get().villageId().equals(village.getId())) continue;
+            if (!candidate.position().equals(dockingAnchor)) continue;
+            village.setDockNodeId(candidate.nodeId());
+            data.setDirty();
+            return candidate;
+        }
+
         Optional<UUID> existingId = village.getDockNodeId();
         if (existingId.isPresent()) {
             RoadNode existing = graph.getNode(existingId.get());

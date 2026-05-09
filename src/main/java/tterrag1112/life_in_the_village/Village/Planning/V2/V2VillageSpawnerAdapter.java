@@ -240,6 +240,20 @@ public final class V2VillageSpawnerAdapter {
         data.addVillage(village);
         VillageRoadsSavedData.get(level).getOrCreate(village.getId());
 
+        // Track C2: register multi-gateway dock nodes. Reads gate
+        // positions populated above by buildSynthLayout (spine
+        // endpoints + cross-street outer endpoints) and creates a
+        // GATEWAY node + linked TERMINUS in the world graph for each.
+        // Existing single-dock saves and pre-C2 villages stay
+        // single-gateway because their gatePositions are empty.
+        guard("GatewayPopulator", () ->
+                tterrag1112.life_in_the_village.Village.Roads.Planning
+                        .GatewayPopulator.populate(level, village, synth));
+        guard("InternalRoadCommitter", () ->
+                tterrag1112.life_in_the_village.Village.Roads.Planning
+                        .InternalRoadCommitter.commitFromV2(
+                                level, village, roads));
+
         // B2.4 — reserve garden plots from the FeatureMap before the
         // building loop runs. Buildings can't overlap parks because
         // they were already planned in PhasedPlanner; parks fit into
@@ -444,6 +458,28 @@ public final class V2VillageSpawnerAdapter {
         layout.setTownSquareRadius(FALLBACK_TOWN_SQUARE_RADIUS);
         BlockPos gate = roads.skeleton().spineEnd();
         if (gate != null) layout.setMainGateEndpoint(gate);
+
+        // Track C2: expose the V2 spine endpoints + cross-street outer
+        // endpoints as gate positions so GatewayPopulator can register
+        // multiple GATEWAY nodes (one per arm) per village. The PRIMARY
+        // role goes to mainGateEndpoint (= spineEnd) per Slice 2's
+        // convention; remaining gate positions become SIDE.
+        // GatewayPopulator's deriveDescriptors only scans gatePositions
+        // (it falls back to mainGateEndpoint only when that list is
+        // empty), so spineEnd is added here too even though it's also
+        // the mainGateEndpoint — equality with mainGate flags it
+        // PRIMARY inside the loop.
+        if (gate != null) layout.addGatePosition(gate);
+        BlockPos spineStart = roads.skeleton().spineStart();
+        if (spineStart != null && !spineStart.equals(gate)) {
+            layout.addGatePosition(spineStart);
+        }
+        for (var cs : roads.skeleton().crossStreets()) {
+            // Each cross street contributes its two outer endpoints
+            // (the spine junction is interior, not a gateway).
+            if (cs.start() != null) layout.addGatePosition(cs.start());
+            if (cs.end()   != null) layout.addGatePosition(cs.end());
+        }
         return layout;
     }
 
