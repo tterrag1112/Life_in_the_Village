@@ -786,3 +786,147 @@ user direction we split it cleanly:
   active war, etc.) are D3.2b.
 - **House-founding gate** — `FOUNDING_THRESHOLD = 30` ships
   as a constant; the gate that consumes it is D3.2b.
+
+---
+
+### 2026-05-09 — Track D3.2b landed (nobility behaviour)
+
+D3.2b wires behaviour on top of D3.2a's data substrate per the
+user-confirmed design pass:
+
+- **Succession scope:** interpret `SuccessionRule` inside
+  `HereditarySelection` (no SelectionMethod enum changes).
+- **Fealty chain:** two-tier (village → noble-overlord → kingdom)
+  with default skim rate = 0 to preserve net flow.
+- **House founding:** daily tick subsystem auto-founds eligible NPCs.
+- **Dynasty tree GUI:** new "Houses" tab in `KingdomBookScreen`.
+
+#### What this phase ships
+
+- `Npc/Nobility/NobilityEventDispatcher` — single
+  `EventDispatcher` registered in `NpcLifeEventBus.registerDefaults`
+  that handles two events:
+  - `Married` — adopts dynasty house (the unaffiliated spouse joins
+    the affiliated one's dynasty; on a cross-house marriage, the
+    higher-rank spouse's house wins); `marryUp` advances the
+    lower-rank spouse one step toward the higher rank, capped at
+    `higher − 1`; both spouses gain +3 prestige; if either is at
+    rank ≥ 2, emits `marriage.high_rank` legitimacy +3 modifier
+    (one-week expiry). Idempotent: only acts when
+    `subject.uuid < spouse.uuid` because `CourtingGoal` fires
+    `Married` for both partners.
+  - `FamilyDeath` — walks every kingdom's houses; for any house
+    whose `headUuid == deceasedId`, runs `SuccessionResolver`
+    against the kingdom's culture rule; on success, replaces the
+    house head and the heir inherits the predecessor's rank
+    (capped at culture max); on failure, marks the house extinct
+    via `House.withoutHead`; either way, emits `succession.transition`
+    legitimacy −5 modifier (one-day expiry).
+
+- `Npc/Nobility/SuccessionResolver` — pure helper, no state.
+  `pickHeir(level, predecessor, rule)` returns the heir per rule:
+  PRIMOGENITURE (eldest child, any gender), AGNATIC_PRIMOGENITURE
+  (eldest male), SEMI_SALIC (eldest son first; falls through to
+  eldest grandson via daughter-line). ELECTIVE / COUNCIL /
+  DIVINE_DESIGNATION return empty so callers fall through to the
+  existing `CouncilSelection` / `MeritocraticSelection` engines —
+  D3.3 wires real electors when provinces land. `isHereditary(rule)`
+  inspection helper for callers that want to choose the path
+  upfront.
+
+- `HereditarySelection.pickHeir` extension — consults the resolver
+  first; retains the prior "any eligible adult child, oldest first"
+  fallback for cultures whose rule is electoral (so non-king
+  hereditary offices on Silkwood/Tidereach still resolve via the
+  legacy path).
+
+- `Npc/Nobility/HouseFoundingDriver` + `HouseFoundingTickSystem`
+  (priority 196, interval 24000) — daily scan walks every kingdom's
+  villages, collects loaded adult NPCs, and founds a house for each
+  NPC with no `dynastyHouseId`, prestige ≥
+  `NobilityComponent.FOUNDING_THRESHOLD`, and `rankIndex ≥
+  culture.kingdomDefaults().minNobilityTier`. Names derive from the
+  NPC's surname ("John Stoneblossom" → "House Stoneblossom"); fresh
+  UUID; founder = current NPC, head = current NPC, heraldry from
+  `HeraldryGenerator.forHouse(houseId, founderUuid)`. Emits
+  `house.founded` (+1 stability, +1 legitimacy, one-week expiry).
+
+- `Npc/Nobility/FealtyChain` — two-tier tax flow infrastructure.
+  `lordOfVillage(level, data, village)` returns the highest-rank
+  loaded NPC assigned to the village who has a dynasty house
+  (rank > 0 + dynastyHouseId set), tie-broken by prestige.
+  `split(taxOwed, lord)` returns a `TaxSplit(kingdomShare, lordShare,
+  lord)` per `DEFAULT_LORD_SKIM_RATE`. `payLord` credits the
+  lord's personal purse via `CoinHelper.giveCoins`. **Default skim
+  rate = 0.0** so net kingdom revenue is unchanged from the
+  pre-D3.2b shape; the chain is wired and observable, ready for
+  D3.3 to lift the rate per culture.
+
+- `KingdomTaxEvent.collectTaxes` extension — per village, after the
+  per-NPC collection loop, splits `collectedFromVillage` between
+  the lord (if any) and the kingdom; pays the lord; remits the
+  kingdom share to the treasury. Logs include the lord's name
+  + share when present.
+
+- `KingdomBookScreen.DYNASTY_TREE` ("Houses" tab) — new section
+  reading `Kingdom.governance.houses` from the existing
+  `SyncKingdomPacket` flow. Lists each house with name, heraldry
+  blazon, prestige, head + founder UUIDs (truncated), and motto.
+
+- `/litv kingdom debug fealty <name>` — prints the lord-of-village
+  resolution for each village in the kingdom plus the default
+  skim rate, so verifying the chain doesn't require waiting for
+  the daily tax tick.
+
+#### Decisions worth recording
+
+- **Marriage idempotency.** `CourtingGoal` fires `Married` twice
+  (subject = entity, spouse = target; then subject = target,
+  spouse = entity). Without protection, every marriage would
+  double-apply rank/prestige changes and stack the high-rank
+  modifier. Solution: gate the dispatcher's processing on
+  `subject.uuid < spouse.uuid`. Documented in the dispatcher.
+- **Family-death fan-out.** `FamilyDeath` fires once per surviving
+  relative. Without protection, succession would run N times. The
+  fix is implicit: after the first run, `house.headUuid` is no
+  longer the deceased, so the per-house filter rejects the rest.
+  No explicit gate needed.
+- **Heir rank cap.** Heir inherits predecessor's rank, capped at
+  the culture's `maxRankIndex` (=`nobilityRanks.size() - 1`).
+  Avoids overflow if the culture's rank list shrinks between
+  saves.
+- **Succession-during-death predecessor lookup.** When
+  `FamilyDeath` fires, the deceased entity is gone — `findByUUID`
+  returns empty. We use the kingdom's culture as a proxy
+  succession rule (members typically share their kingdom's
+  culture). For mixed-culture houses, this still picks a coherent
+  rule rather than crashing on a null lookup.
+- **GUI member-name resolution deferred.** "Head + spouse +
+  children + member list" was the user-confirmed scope for the
+  Dynasty Tree GUI. NPC names live on `TownspersonMob` entities,
+  not on synced records. Resolving a UUID to a name client-side
+  requires either (a) syncing per-village name indices via a new
+  packet, or (b) a server roundtrip when the user opens a house.
+  D3.2b ships the data-visible variant (truncated UUIDs);
+  follow-up work — likely D3.3 alongside the province GUI panel —
+  adds the detail roundtrip.
+- **Net economic flow constraint.** The original D3.2 prompt
+  required net flow preserved within tolerance under default
+  parameters. With `DEFAULT_LORD_SKIM_RATE = 0.0`, the lord
+  receives 0 bronze and the kingdom receives the full collected
+  amount — exactly the pre-D3.2b shape. Constraint satisfied
+  exactly, not just within tolerance.
+
+#### Out-of-scope, flagged for D3.3 / Phase 4
+
+- **Province subdivision** + **provincial governance** — D3.3.
+- **Capability gating** + **office competence** — D3.3.
+- **Live name resolution** in the Houses GUI tab — flagged above.
+- **Modifier emitters beyond the three D3.2b ships** —
+  `crime.homicide`, `war.active`, `religion.blessing` etc. are
+  Phase 4 / 6 territory per the original prompt's deferral list.
+- **Heir refusal mechanics** — the resolver picks an heir; the
+  heir always accepts. Refusal + cousin-walking is D3.3.
+- **Kingdom-tier laws driven by Chancellor** — capability gating
+  is D3.3; today the king can pass any law per the existing
+  flow.

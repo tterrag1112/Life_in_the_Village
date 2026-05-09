@@ -80,6 +80,11 @@ public final class NpcLifeEventBus {
         // Phase 5 task 33: rebuild Layer-1 appearance on life-stage /
         // office / hire / fire / promotion events.
         register(new tterrag1112.life_in_the_village.Entities.custom.Appearance.AppearanceLifeEventProducer());
+        // Track D3.2b — nobility behaviour: marriage rank/prestige
+        // updates, dynasty house adoption, head-of-house heir transfer
+        // on death, plus the succession.transition / marriage.high_rank
+        // KingdomModifier emissions.
+        register(new tterrag1112.life_in_the_village.Npc.Nobility.NobilityEventDispatcher());
         // Lazy-load the appearance registry as a side-effect — keeps the
         // /appearance debug command and rebuilder cheap on first use.
         tterrag1112.life_in_the_village.Entities.custom.Appearance.AppearanceLayerRegistry.ensureInit();

@@ -119,6 +119,8 @@ public final class TickSubsystemRegistry {
         // already seated.
         register(new KingdomOfficeBootstrapTickSystem());
         register(new OfficeElectionTickSystem());
+        // Track D3.2b — daily auto-found of noble houses for eligible NPCs.
+        register(new HouseFoundingTickSystem());
         register(new LawDecisionTickSystem());
         register(new CrimeTrialTickSystem());
         register(new ReligionRiteTickSystem());

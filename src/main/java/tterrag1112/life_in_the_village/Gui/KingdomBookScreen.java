@@ -8,6 +8,7 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
 import tterrag1112.life_in_the_village.Gui.Map.Kingdom.KingdomMapPanel;
 import tterrag1112.life_in_the_village.Kingdom.*;
+import tterrag1112.life_in_the_village.Kingdom.Houses.House;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Networking.KingdomActionPacket;
 import tterrag1112.life_in_the_village.Networking.RequestKingdomMapSyncPacket;
@@ -22,7 +23,9 @@ public class KingdomBookScreen extends Screen {
 
     private enum SectionType {
         FRONTISPIECE, STATUS, HISTORY, LAWS, ECONOMY,
-        APPOINTMENTS, DIPLOMACY, DECREES, KINGDOM_MAP, ROYAL_BUILDS
+        APPOINTMENTS, DIPLOMACY, DECREES, KINGDOM_MAP, ROYAL_BUILDS,
+        // Track D3.2b — noble dynasties owned by this kingdom.
+        DYNASTY_TREE
     }
 
     private record NavEntry(String label, SectionType section, int historyPageIndex) {}
@@ -49,6 +52,8 @@ public class KingdomBookScreen extends Screen {
     private final List<HistoryTextGenerator.HistoryPage>
             historyPages                                   = new ArrayList<>();
     private final List<NavEntry> navEntries                = new ArrayList<>();
+    // Track D3.2b — synced from Kingdom.governance.houses.
+    private final List<House> houses                       = new ArrayList<>();
 
     private KingdomMapPanel mapPanel;
     private Sidebar<SectionType> sidebar;
@@ -106,6 +111,10 @@ public class KingdomBookScreen extends Screen {
                         kingdoms.add(new KingdomEntry(other.getId(), other.getName(),
                                 other.getVillageIds().size(), rel))));
 
+        // Track D3.2b — pull noble houses from the synced Kingdom record.
+        houses.clear();
+        houses.addAll(k.getHouses());
+
         villages.clear();
 
         long currentTick = net.minecraft.client.Minecraft.getInstance().level != null
@@ -137,6 +146,7 @@ public class KingdomBookScreen extends Screen {
         navEntries.add(new NavEntry("Decrees",      SectionType.DECREES,      -1));
         navEntries.add(new NavEntry("Kingdom Map",  SectionType.KINGDOM_MAP,  -1));
         navEntries.add(new NavEntry("Royal Builds", SectionType.ROYAL_BUILDS, -1));
+        navEntries.add(new NavEntry("Houses",       SectionType.DYNASTY_TREE, -1));
         page = Math.min(page, navEntries.size() - 1);
     }
 
@@ -155,7 +165,8 @@ public class KingdomBookScreen extends Screen {
                         new Sidebar.Entry<>(SectionType.DIPLOMACY,    "Diplomacy",    true),
                         new Sidebar.Entry<>(SectionType.DECREES,      "Decrees",      true),
                         new Sidebar.Entry<>(SectionType.KINGDOM_MAP,  "Kingdom Map",  true),
-                        new Sidebar.Entry<>(SectionType.ROYAL_BUILDS, "Royal Builds", true)
+                        new Sidebar.Entry<>(SectionType.ROYAL_BUILDS, "Royal Builds", true),
+                        new Sidebar.Entry<>(SectionType.DYNASTY_TREE, "Houses",       true)
                 ),
                 this::currentSection,
                 section -> {
@@ -314,6 +325,7 @@ public class KingdomBookScreen extends Screen {
             case DECREES      -> drawDecrees(g, px, py, pw, maxY);
             case KINGDOM_MAP  -> drawKingdomMap(g, px, py, pw, maxY, mx, my);
             case ROYAL_BUILDS -> drawRoyalBuilds(g, px, py, pw, maxY);
+            case DYNASTY_TREE -> drawDynastyTree(g, px, py, pw, maxY);
         }
     }
 
@@ -506,6 +518,72 @@ public class KingdomBookScreen extends Screen {
             return;
         }
         mapPanel.render(g, px, py, pw, maxY - py, mx, my);
+    }
+
+    /**
+     * Track D3.2b — Houses section. Lists each noble dynasty owned
+     * by this kingdom with name, heraldry, prestige, head UUID
+     * (truncated), and motto. Synced via {@code Kingdom.governance.houses};
+     * no extra round-trip needed.
+     *
+     * <p>Live spouse / children / member-name resolution requires
+     * a server-side detail packet (NPC names live on entities, not
+     * persisted records). Documented as a follow-up — D3.2b ships
+     * the data-visible variant; D3.3 / a follow-up slice can add
+     * the detail roundtrip.
+     */
+    private void drawDynastyTree(GuiGraphics g, int px, int py, int pw, int maxY) {
+        if (houses.isEmpty()) {
+            g.drawString(font, "No noble houses founded yet.", px, py,
+                    BookScreenColors.MID, false);
+            g.drawString(font, "Houses appear once an eligible NPC reaches the",
+                    px, py + 16, BookScreenColors.LIGHT, false);
+            g.drawString(font, "founding threshold (prestige " + 30
+                            + ", min nobility tier).",
+                    px, py + 28, BookScreenColors.LIGHT, false);
+            return;
+        }
+
+        g.drawString(font, "Noble Houses (" + houses.size() + ")",
+                px, py, BookScreenColors.GOLD, false);
+        g.fill(px, py + 10, px + pw, py + 11, BookScreenColors.BORDER);
+
+        int y = py + 16;
+        for (House h : houses) {
+            if (y + 44 > maxY) break;
+
+            // House name + prestige.
+            g.drawString(font, h.name(), px, y, BookScreenColors.DARK, false);
+            String prestigeStr = "Prestige: " + h.prestige();
+            int pwid = font.width(prestigeStr);
+            g.drawString(font, prestigeStr, px + pw - pwid, y,
+                    BookScreenColors.MID, false);
+
+            // Heraldry blazon line.
+            g.drawString(font, h.heraldry().describe(),
+                    px + 4, y + 11, BookScreenColors.LIGHT, false);
+
+            // Head + founder lines.
+            String head = h.isExtinct()
+                    ? "(extinct line)"
+                    : "Head: " + h.headUuid().get().toString().substring(0, 8);
+            g.drawString(font, head, px + 4, y + 22,
+                    h.isExtinct() ? BookScreenColors.RED_TXT : BookScreenColors.DARK,
+                    false);
+            String founder = "Founder: " + h.founderUuid().toString().substring(0, 8);
+            int fw = font.width(founder);
+            g.drawString(font, founder, px + pw - fw, y + 22,
+                    BookScreenColors.MID, false);
+
+            // Optional motto.
+            if (!h.motto().isEmpty()) {
+                g.drawString(font, "\"" + h.motto() + "\"", px + 4, y + 33,
+                        BookScreenColors.LIGHT, false);
+            }
+
+            g.fill(px, y + 42, px + pw, y + 43, BookScreenColors.HIGHLIGHT);
+            y += 48;
+        }
     }
 
     private void drawRoyalBuilds(GuiGraphics g, int px, int py, int pw, int maxY) {

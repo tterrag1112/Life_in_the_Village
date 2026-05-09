@@ -9,6 +9,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData;
+import tterrag1112.life_in_the_village.Npc.Nobility.FealtyChain;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Roads.Events.EventLifecycleSystem;
@@ -91,6 +92,7 @@ public class KingdomTaxEvent {
 
             // Collect tax from village NPCs proportionally
             long remaining = taxOwed;
+            long collectedFromVillage = 0L;
             for (TownspersonMob mob : level.getEntitiesOfClass(
                     TownspersonMob.class,
                     village.get().getBounds(data)
@@ -113,13 +115,31 @@ public class KingdomTaxEvent {
                 if (CoinHelper.spend(mob.getPersonalInventory(),
                         CurrencyValue.of(share))) {
                     remaining -= share;
-                    totalCollected += share;
+                    collectedFromVillage += share;
                 }
             }
 
-            System.out.println("Kingdom '" + kingdom.getName()
-                    + "' collected " + CurrencyValue.of(taxOwed - remaining)
-                    + " tax from village '" + village.get().getName() + "'");
+            // Track D3.2b — two-tier fealty: split the village's
+            // collected tax between the lord-of-village (if any) and
+            // the kingdom. Default skim rate is 0 so net flow matches
+            // pre-D3.2b behaviour; the chain is wired and observable.
+            FealtyChain.TaxSplit split = FealtyChain.split(
+                    collectedFromVillage,
+                    FealtyChain.lordOfVillage(level, data, village.get()));
+            if (split.hasLord()) {
+                FealtyChain.payLord(split.lord(), split.lordShare());
+                totalCollected += split.kingdomShare();
+                System.out.println("Kingdom '" + kingdom.getName()
+                        + "' collected " + CurrencyValue.of(collectedFromVillage)
+                        + " tax from village '" + village.get().getName()
+                        + "' (lord " + split.lord().getNpcName()
+                        + " kept " + CurrencyValue.of(split.lordShare()) + ")");
+            } else {
+                totalCollected += collectedFromVillage;
+                System.out.println("Kingdom '" + kingdom.getName()
+                        + "' collected " + CurrencyValue.of(collectedFromVillage)
+                        + " tax from village '" + village.get().getName() + "'");
+            }
         }
 
         kingdom.depositToTreasury(totalCollected);

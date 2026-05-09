@@ -1047,6 +1047,28 @@ class HealthDailyTickSystem implements TickSubsystem {
     }
 }
 
+// =============================================================================
+// HOUSE FOUNDING (Track D3.2b — once per in-game day, priority = 196)
+// =============================================================================
+
+/**
+ * Track D3.2b — runs the house-founding scan once per in-game day.
+ * Priority 196 places it between office elections (195) and law
+ * decisions (197), so a same-day promotion can lift an NPC over
+ * the rank gate before the founding scan reads it.
+ */
+class HouseFoundingTickSystem implements TickSubsystem {
+    @Override public String name()     { return "house_founding"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 196; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Npc.Nobility.HouseFoundingDriver
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
 /**
  * Weekly plague-outbreak roll per village (spec line 169). Runs once
  * a week ({@code 168000} ticks); chance is gated on village size +

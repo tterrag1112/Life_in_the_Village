@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Npc.Office.Selection;
 
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Nobility.SuccessionResolver;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeHolding;
 import tterrag1112.life_in_the_village.Npc.Office.SelectionMethod;
 
@@ -60,6 +61,16 @@ public final class HereditarySelection implements OfficeSelectionEngine {
     private static Optional<TownspersonMob> pickHeir(OfficeSelectionContext ctx, UUID predecessorId) {
         TownspersonMob predecessor = TownspersonMob.findByUUID(ctx.level(), predecessorId).orElse(null);
         if (predecessor == null) return Optional.empty();
+        // Track D3.2b — culture's SuccessionRule drives heir filter
+        // (PRIMOGENITURE / AGNATIC / SEMI_SALIC). Returns empty for
+        // ELECTIVE / COUNCIL / DIVINE_DESIGNATION; caller falls
+        // through to CouncilSelection.
+        Optional<TownspersonMob> ruleHeir = SuccessionResolver.pickHeir(ctx.level(), predecessor);
+        if (ruleHeir.isPresent()) return ruleHeir;
+        // Pre-D3.2b fallback: any eligible adult child, oldest first.
+        // Retained because some hereditary offices may sit on cultures
+        // whose rule is electoral; SuccessionResolver returns empty
+        // there, so this fallback still serves them.
         List<UUID> children = predecessor.getFamily().getChildrenIds();
         return children.stream()
                 .map(cid -> TownspersonMob.findByUUID(ctx.level(), cid))

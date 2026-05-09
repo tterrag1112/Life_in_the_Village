@@ -63,6 +63,12 @@ public final class KingdomDebugCommand {
                                                 .then(Commands.argument("name",
                                                                 StringArgumentType.string())
                                                         .executes(ctx -> modifiers(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))
+                                        // Track D3.2b — preview the fealty chain (lord-of-village).
+                                        .then(Commands.literal("fealty")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> fealty(ctx,
                                                                 StringArgumentType.getString(ctx, "name")))))))
         );
     }
@@ -232,6 +238,52 @@ public final class KingdomDebugCommand {
                     : Long.toString(m.expiresAtTick())));
         }
         return k.getModifiers().size();
+    }
+
+    /**
+     * Track D3.2b — prints the lord-of-village resolution result for
+     * each village in the kingdom. Useful for verifying that the
+     * fealty chain finds a noble overlord (or correctly falls
+     * through to "no lord — direct flow" for villages without one).
+     */
+    private static int fealty(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv kingdom debug fealty must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No kingdom named '" + name + "'."));
+            return 0;
+        }
+        send(ctx, "── Fealty chain for " + name + " ──");
+        send(ctx, "  default skim rate: "
+                + tterrag1112.life_in_the_village.Npc.Nobility.FealtyChain.DEFAULT_LORD_SKIM_RATE);
+        int villagesWithLord = 0;
+        for (UUID vid : k.getVillageIds()) {
+            Village v = data.getVillageById(vid).orElse(null);
+            if (v == null) continue;
+            var lord = tterrag1112.life_in_the_village.Npc.Nobility.FealtyChain
+                    .lordOfVillage(level, data, v);
+            if (lord.isPresent()) {
+                villagesWithLord++;
+                var npc = lord.get();
+                send(ctx, "  " + v.getName() + " → " + npc.getNpcName()
+                        + " (rank=" + npc.getNobility().getRankIndex()
+                        + ", prestige=" + npc.getNobility().getPrestige()
+                        + ", house=" + npc.getNobility().getDynastyHouseId()
+                                .map(id -> id.toString().substring(0, 8))
+                                .orElse("none") + ")");
+            } else {
+                send(ctx, "  " + v.getName() + " → (no lord; direct flow)");
+            }
+        }
+        send(ctx, "  " + villagesWithLord + "/" + k.getVillageIds().size()
+                + " villages have a noble overlord");
+        return villagesWithLord;
     }
 
     private static int listAll(CommandContext<CommandSourceStack> ctx) {
