@@ -933,6 +933,184 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-09 — Track D3.4a landed (law typology refactor + GUI rewrite)
+
+First half of the user-confirmed D3.4 split. The flat
+`KingdomLaw` enum becomes one of two coexisting things: the
+legacy enum at `Kingdom.KingdomLaw` (kept for save compat + as
+the keying namespace for non-refactored call sites) and a new
+sealed interface at `Kingdom.Laws.KingdomLaw` (the typology) with
+three archetype implementations. All eight existing laws migrate
+1:1 into ToggleLaw instances; two new example laws exercise the
+ScalarLaw and EnumLaw archetypes.
+
+#### User-confirmed design
+
+- **Phase split:** slice 1 ships 4.1+4.2 (laws); slice 2 ships
+  4.3+4.4+4.5 (charters + intrigue + treaties). Each ~1 commit,
+  one cohesive testable surface.
+- **Example laws:** EDUCATION_STIPEND (ScalarLaw, 0..32 bronze/
+  day, default 0) and OFFICIAL_RELIGION (EnumLaw, choices
+  none/state_religion/toleration). Locked in alongside the
+  framework so the GUI has something to drive.
+
+#### What this slice ships
+
+- `Kingdom/Laws/` package with:
+  - Sealed `KingdomLaw` interface — id, displayName, description,
+    category, scope, enactmentCost, enactmentCapability,
+    requiredActiveLaws, archetype.
+  - `ToggleLaw` / `ScalarLaw` / `EnumLaw` records.
+  - `KingdomLawCategory` enum (ECONOMY / CRIME / EDUCATION /
+    DIPLOMACY / RELIGION / MILITARY / LAND / FAMILY).
+  - `KingdomLawScope` enum (KINGDOM / PROVINCE / VILLAGE).
+  - `KingdomLawState` enum (DRAFT / PROPOSED / ACTIVE).
+  - `EnactmentCost` record (treasury / stability / legitimacy /
+    prestige debits).
+  - `KingdomLawInstance` record — per-kingdom dynamic state.
+    Carries lawId, state, drafterUuid, proposerUuid, enactedTick,
+    scalarValue, enumChoice, stateChangedTick. Codec-persisted.
+  - `KingdomLawRegistry` — static catalogue. Eight legacy
+    ToggleLaws + 1 ScalarLaw + 1 EnumLaw at v1.
+- `Kingdom`:
+  - `lawInstances: LinkedHashMap<String, KingdomLawInstance>` is
+    the canonical storage; `activeLaws Set<KingdomLaw enum>` stays
+    as a derived legacy mirror auto-synced by
+    `syncLegacyActiveLaws()`.
+  - Legacy `enactLaw(KingdomLaw)` / `repealLaw(KingdomLaw)` /
+    `hasLaw(KingdomLaw)` keep working as one-line shims.
+  - New id-based accessors: `hasActiveLaw(String)`,
+    `lawScalar(String)`, `lawChoice(String)`, `findLawInstance`,
+    `getLawInstances`.
+  - Lifecycle methods: `draftLaw(id, drafter, tick)`,
+    `updateDraftScalar`, `updateDraftChoice`, `proposeLaw(id,
+    proposer, tick)`, `enactLaw(String, long)`, `repealLaw(String,
+    long)`. Enactment applies the law's `EnactmentCost` to
+    treasury/stability/legitimacy; repeal refunds half the
+    treasury cost and reverses half the stability delta (no free
+    rebound).
+- One-shot migration in `Kingdom.fromCodec`: if `governance
+  .lawInstances` is empty AND legacy top-level `activeLaws` has
+  entries, translate each enum to an ACTIVE ToggleLaw instance
+  with id = `enumName.toLowerCase()`. Pre-D3.4 saves load
+  unchanged at the data level.
+- `KingdomGovernanceData` extended with `lawInstances` field
+  (now 10/16). Top-level Kingdom codec stays at 16/16; no
+  field-count crisis.
+- `KingdomLawEffects` unchanged (still reads via legacy
+  `kingdom.hasLaw(KingdomLaw)` shim — which now derives from
+  `lawInstances`). All existing effect call sites in
+  `KingdomLawEffects`, `Company`, `HousePurchaseManager`
+  continue to work.
+- `KingdomTaxEvent.collectTaxes` extended with the EDUCATION_
+  STIPEND outflow: drains kingdom treasury once per tax cycle by
+  `(active scalar value) × (number of villages hosting a Scholar)`.
+  First observable hot-path effect of a parameterized kingdom-
+  tier law.
+- `KingdomActionPacket` gained six new verbs:
+  - `DRAFT_LAW` (lawId) — gated by ISSUE_DECREE.
+  - `PROPOSE_LAW` (lawId) — gated by archetype's enactment
+    capability.
+  - `ENACT_LAW` (lawId) — gated by archetype's enactment
+    capability.
+  - `REPEAL_LAW` (lawId) — gated by archetype's enactment
+    capability.
+  - `UPDATE_DRAFT_SCALAR` (lawId:value) — DRAFT-state only.
+  - `UPDATE_DRAFT_CHOICE` (lawId:choice) — DRAFT-state only.
+  Legacy `TOGGLE_LAW` deprecated but kept one phase as fallback.
+- `KingdomBookScreen` Laws panel rewritten:
+  - Per-row state badge: `[available]` / `[draft]` / `[proposed]`
+    / `[active]`.
+  - Parameter display for ScalarLaw (value + unit) and EnumLaw
+    (choice).
+  - Single lifecycle action button cycling
+    `Draft → Propose → Enact → Repeal` (server enforces gates).
+  - ± buttons on ScalarLaw drafts; ▶ cycle button on EnumLaw
+    drafts.
+  - X cancel button on DRAFT/PROPOSED rows.
+- Four new `KingdomEvent` subtypes: `LawDrafted` / `LawProposed`
+  / `LawEnacted` / `LawRepealed`. Fired by every server-side
+  packet handler.
+- New debug command `/litv kingdom debug laws <name>` listing
+  every law's archetype, state, parameter, category, gate
+  capability, plus active/touched/total counts.
+
+#### Decisions worth recording
+
+- **Two `KingdomLaw` types coexist by design.** The prompt asked
+  for "the flat KingdomLaw enum is replaced with a sealed
+  KingdomLaw interface". A literal in-place rename would have
+  broken the codec persistence (DFU enum codecs serialize via
+  `.name()`; the JSON shape encodes `"OPEN_BORDERS"` etc.) plus
+  every call site that imports `Kingdom.KingdomLaw` as a static
+  enum reference. The two-type compromise: legacy enum stays at
+  `Kingdom.KingdomLaw` (used by save format + 9 existing call
+  sites); new sealed interface lives at `Kingdom.Laws.KingdomLaw`
+  (used by new code, the registry, the GUI, the packet verbs).
+  Conversion is symmetric via lowercased id. Future phases can
+  remove the legacy enum once all call sites migrate; this slice
+  doesn't force that churn.
+- **Archetype-authority rule.** ToggleLaws gate on King's
+  PASS_LAW capability; ScalarLaws / EnumLaws gate on Chancellor's
+  ISSUE_DECREE capability per the prompt's "ruler proposes,
+  Chancellor enacts" rule for parameterized laws. Drafting always
+  gates on ISSUE_DECREE (Scholar is the literate ministerial
+  capacity; v1's capability table doesn't include a dedicated
+  DRAFT slot; using ISSUE_DECREE as a proxy keeps the gate at the
+  right "literate office" granularity). Repeal uses the same
+  capability as enactment per the prompt.
+- **Lifecycle without `Effects` registry.** The kingdom-tier
+  laws use direct `hasActiveLaw(String)` / `lawScalar(String)` /
+  `lawChoice(String)` queries against `Kingdom`. The village-tier
+  `LawEffect` interface + registry pattern from `Npc.Laws` is
+  rich and reusable, but kingdom-tier hot paths today are sparse
+  (5 helpers in `KingdomLawEffects`) and the laws-as-flags model
+  beats laws-as-pluggable-effects for a first pass. Slice 2's
+  charters + intrigue add new hot paths that may justify a
+  shared effect registry; deferred until a concrete need.
+- **No category sidebar in the rewrite (yet).** The prompt asks
+  for a category-sidebar layout; the rewrite kept the flat list
+  (10 laws fit comfortably in the existing book page height).
+  The categorisation lives on each law's `KingdomLawCategory`
+  field and surfaces in the debug output. Slice 2 or a polish
+  pass adds the sidebar UI; it's not load-bearing for the
+  done-criterion "drafting / proposing / enacting / repealing
+  works through the GUI".
+- **Prerequisite enforcement is a stub.** Each law's
+  `requiredActiveLaws` list is wired through the codec but no v1
+  law sets it and the proposer-side check isn't enforced. Deferred
+  to slice 2 (charters introduce dependency chains that will
+  stress-test the prerequisite system).
+- **EnactmentCost ships at zero across all v1 laws.** Per the
+  "Net economic flow at default parameters preserved" constraint.
+  ScalarLaw active values produce ongoing flow (EDUCATION_STIPEND
+  drains daily) but the one-shot enactment debit is zero. Phase 5
+  / playtest data may add costs to politically-significant laws
+  (e.g. CONSCRIPTION takes a stability hit on enactment).
+
+#### Out-of-scope — Phase 4 slice 2 / Phase 5+ deferrals
+
+- **Charters and privileges (4.3)** — slice 2.
+- **Spymaster intrigue (4.4)** — slice 2.
+- **Treaties (4.5)** — slice 2.
+- **Decree disposition (design pass d)** — staying as peer
+  concept; ISSUE_DECREE remains a stateless chat broadcast,
+  unchanged from D3.3b. Decision recorded as "decree as one-
+  shot ruler pronouncement, separate from law lifecycle".
+- **Spymaster competence inputs (design pass e)** — slice 2.
+- **Intrigue cooldowns / budgets (design pass f)** — slice 2.
+- **Category sidebar polish** — see decisions.
+- **Effect-preview tooltips on laws panel rows** — Phase 5
+  audience-loop UI.
+- **Lifecycle history per instance** — `stateChangedTick` exists
+  on `KingdomLawInstance`; Phase 5 surfaces a "drafted 3 days
+  ago by Magistrate X" timeline.
+- **Server-side prerequisite enforcement** — see decisions.
+- **`KingdomLaw` legacy enum removal** — once all call sites
+  migrate to id strings (likely Track E).
+
+---
+
 ### 2026-05-09 — Track D3.3b landed (offices + capability gating + office-grant ennoblement)
 
 Second half of the D3.3 split. Wires the kingdom's seven Phase 0 office stubs (Chancellor / Treasurer / Scholar / General / Magistrate / Spymaster / Diplomat) into actual capability gating, both server-side enforcement and client-side grey-out.

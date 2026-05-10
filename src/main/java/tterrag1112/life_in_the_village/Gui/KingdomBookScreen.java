@@ -196,30 +196,98 @@ public class KingdomBookScreen extends Screen {
     }
 
     private void buildLawWidgets(int px, int py, int pw) {
-        KingdomLaw[] laws = KingdomLaw.values();
-        // Track D3.3b — capability gate. Coarse client-side check
-        // greys the button when no satisfier office is held. Server
-        // still enforces the full competence check.
+        // Track D3.4 — typology-aware Laws panel. Each registered
+        // law renders one row showing state (AVAILABLE / DRAFT /
+        // PROPOSED / ACTIVE) and a lifecycle action button. Scalar
+        // and Enum drafts also surface ± / cycle buttons for
+        // parameter editing. Server enforces capability gates;
+        // client-side check just greys the action button.
         Kingdom kCap = Kingdom.ClientKingdomCache.getById(kingdomId).orElse(null);
-        var passLawCap = tterrag1112.life_in_the_village.Kingdom.Capabilities
-                .KingdomCapability.PASS_LAW;
-        boolean canPassLaw = tterrag1112.life_in_the_village.Kingdom.Capabilities
-                .ClientCapabilityCheck.canExercise(kCap, passLawCap);
-        String passLawTooltip = tterrag1112.life_in_the_village.Kingdom.Capabilities
-                .ClientCapabilityCheck.buildTooltip(kCap, passLawCap);
-        for (int i = 0; i < laws.length; i++) {
-            KingdomLaw law = laws[i];
-            boolean active = activeLaws.contains(law);
+        var laws = tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry.all();
+        for (int i = 0; i < laws.size(); i++) {
+            var law = laws.get(i);
             int by = py + i * 28;
             if (by + 20 > bookY + BOOK_H - 32) break;
-            StyledButton btn = StyledButton.builder(
-                            Component.literal(active ? "Repeal" : "Enact"),
-                            b -> sendAction(KingdomActionPacket.ActionType.TOGGLE_LAW, law.name(), 0))
-                    .pos(px + pw - 52, by).size(50, 16).build();
-            btn.active = canPassLaw;
-            btn.setTooltip(net.minecraft.client.gui.components.Tooltip
-                    .create(Component.literal(passLawTooltip)));
-            addRenderableWidget(btn);
+            buildLawRow(px, by, pw, law, kCap);
+        }
+    }
+
+    /** Track D3.4 — one lifecycle action row per registered law. */
+    private void buildLawRow(int px, int py, int pw,
+                             tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLaw law,
+                             Kingdom kCap) {
+        var inst = (kCap != null)
+                ? kCap.findLawInstance(law.id()).orElse(null)
+                : null;
+        var state = (inst != null) ? inst.state() : null;
+
+        // Capability gate for this law's enactment authority.
+        boolean canEnact = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .ClientCapabilityCheck.canExercise(kCap, law.enactmentCapability());
+        String enactTooltip = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .ClientCapabilityCheck.buildTooltip(kCap, law.enactmentCapability());
+
+        // ── Parameter editor (Scalar / Enum on DRAFT) ──────────────────────
+        if (state == tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState.DRAFT) {
+            if (law instanceof tterrag1112.life_in_the_village.Kingdom.Laws.ScalarLaw scalar) {
+                double cur = inst.scalarValue().orElse(scalar.defaultValue());
+                StyledButton minus = StyledButton.builder(Component.literal("−"), b -> {
+                    sendAction(KingdomActionPacket.ActionType.UPDATE_DRAFT_SCALAR,
+                            law.id() + ":" + (cur - scalar.step()), 0);
+                }).pos(px + pw - 110, py).size(14, 16).build();
+                addRenderableWidget(minus);
+                StyledButton plus = StyledButton.builder(Component.literal("+"), b -> {
+                    sendAction(KingdomActionPacket.ActionType.UPDATE_DRAFT_SCALAR,
+                            law.id() + ":" + (cur + scalar.step()), 0);
+                }).pos(px + pw - 92, py).size(14, 16).build();
+                addRenderableWidget(plus);
+            } else if (law instanceof tterrag1112.life_in_the_village.Kingdom.Laws.EnumLaw enumLaw) {
+                String cur = inst.enumChoice().orElse(enumLaw.defaultChoice());
+                int idx = enumLaw.choices().indexOf(cur);
+                String next = enumLaw.choices().get((idx + 1) % enumLaw.choices().size());
+                StyledButton cycle = StyledButton.builder(Component.literal("▶"), b -> {
+                    sendAction(KingdomActionPacket.ActionType.UPDATE_DRAFT_CHOICE,
+                            law.id() + ":" + next, 0);
+                }).pos(px + pw - 92, py).size(28, 16).build();
+                addRenderableWidget(cycle);
+            }
+        }
+
+        // ── Lifecycle action button ────────────────────────────────────────
+        // AVAILABLE → DRAFT_LAW; DRAFT → PROPOSE_LAW; PROPOSED → ENACT_LAW;
+        // ACTIVE → REPEAL_LAW. Single button cycles forward.
+        final String actionLabel;
+        final KingdomActionPacket.ActionType actionVerb;
+        if (state == null) {
+            actionLabel = "Draft";
+            actionVerb = KingdomActionPacket.ActionType.DRAFT_LAW;
+        } else if (state == tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState.DRAFT) {
+            actionLabel = "Propose";
+            actionVerb = KingdomActionPacket.ActionType.PROPOSE_LAW;
+        } else if (state == tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState.PROPOSED) {
+            actionLabel = "Enact";
+            actionVerb = KingdomActionPacket.ActionType.ENACT_LAW;
+        } else {
+            actionLabel = "Repeal";
+            actionVerb = KingdomActionPacket.ActionType.REPEAL_LAW;
+        }
+        StyledButton act = StyledButton.builder(Component.literal(actionLabel),
+                        b -> sendAction(actionVerb, law.id(), 0))
+                .pos(px + pw - 60, py).size(58, 16).build();
+        act.active = canEnact;
+        act.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                Component.literal(enactTooltip)));
+        addRenderableWidget(act);
+
+        // ── Repeal-while-drafting / cancel button ──────────────────────────
+        // For DRAFT or PROPOSED, also show a small "X" to cancel.
+        if (state == tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState.DRAFT
+                || state == tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState.PROPOSED) {
+            StyledButton cancel = StyledButton.builder(Component.literal("X"),
+                            b -> sendAction(KingdomActionPacket.ActionType.REPEAL_LAW,
+                                    law.id(), 0))
+                    .pos(px + pw - 76, py).size(14, 16).build();
+            addRenderableWidget(cancel);
         }
     }
 
@@ -463,16 +531,42 @@ public class KingdomBookScreen extends Screen {
     }
 
     private void drawLaws(GuiGraphics g, int px, int py, int pw, int maxY) {
-        KingdomLaw[] laws = KingdomLaw.values();
+        // Track D3.4 — typology-aware row rendering. State badge,
+        // archetype tag, parameter display for Scalar / Enum drafts.
+        Kingdom kCap = Kingdom.ClientKingdomCache.getById(kingdomId).orElse(null);
+        var laws = tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry.all();
         int y = py;
-        for (KingdomLaw law : laws) {
+        for (var law : laws) {
             if (y + 22 > maxY) break;
-            boolean active = activeLaws.contains(law);
-            if (active) g.fill(px - 2, y - 1, px + pw + 2, y + 21, BookScreenColors.GREEN_BG);
-            g.drawString(font, formatLawName(law.name()), px, y + 4,
+            var inst = (kCap != null) ? kCap.findLawInstance(law.id()).orElse(null) : null;
+            var state = (inst != null) ? inst.state() : null;
+            boolean active = state == tterrag1112.life_in_the_village.Kingdom.Laws
+                    .KingdomLawState.ACTIVE;
+            if (active) g.fill(px - 2, y - 1, px + pw + 2, y + 21,
+                    BookScreenColors.GREEN_BG);
+            g.drawString(font, law.displayName(), px, y + 4,
                     active ? BookScreenColors.GREEN_TXT : BookScreenColors.DARK, false);
-            g.drawString(font, active ? "[On]" : "[Off]", px + 120, y + 4,
+            // State badge.
+            String badge = state == null
+                    ? "[available]"
+                    : "[" + state.name().toLowerCase(java.util.Locale.ROOT) + "]";
+            g.drawString(font, badge, px + 110, y + 4,
                     active ? BookScreenColors.GREEN_TXT : BookScreenColors.LIGHT, false);
+            // Parameter display (Scalar / Enum only).
+            if (inst != null) {
+                String param = "";
+                if (law instanceof tterrag1112.life_in_the_village.Kingdom.Laws.ScalarLaw scalar) {
+                    double v = inst.scalarValue().orElse(scalar.defaultValue());
+                    param = String.format(java.util.Locale.ROOT, "%.0f%s",
+                            v, scalar.unit().isEmpty() ? "" : " " + scalar.unit());
+                } else if (law instanceof tterrag1112.life_in_the_village.Kingdom.Laws.EnumLaw) {
+                    param = inst.enumChoice().orElse("");
+                }
+                if (!param.isEmpty()) {
+                    g.drawString(font, param, px + 170, y + 4,
+                            BookScreenColors.LIGHT, false);
+                }
+            }
             g.fill(px, y + 21, px + pw, y + 22, BookScreenColors.HIGHLIGHT);
             y += 28;
         }

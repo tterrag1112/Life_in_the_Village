@@ -26,12 +26,28 @@ public record KingdomActionPacket(
 ) implements CustomPacketPayload {
 
     public enum ActionType {
+        /** @deprecated Track D3.4 — superseded by DRAFT_LAW + PROPOSE_LAW + ENACT_LAW.
+         *              Kept one phase as a fallback for any unmigrated client. */
+        @Deprecated
         TOGGLE_LAW,
         SET_TAX_RATE,
         SET_UPKEEP,
         SET_RELATION,
         APPOINT_LEADER,
-        ISSUE_DECREE
+        ISSUE_DECREE,
+        // ── Track D3.4 — law lifecycle verbs ────────────────────────────────
+        /** stringParam = lawId; intParam unused. */
+        DRAFT_LAW,
+        /** stringParam = lawId; intParam unused. */
+        PROPOSE_LAW,
+        /** stringParam = lawId; intParam unused. */
+        ENACT_LAW,
+        /** stringParam = lawId; intParam unused. */
+        REPEAL_LAW,
+        /** stringParam = "lawId:value" for ScalarLaw drafts (numeric value). */
+        UPDATE_DRAFT_SCALAR,
+        /** stringParam = "lawId:choice" for EnumLaw drafts. */
+        UPDATE_DRAFT_CHOICE
     }
 
     public static final Type<KingdomActionPacket> TYPE = new Type<>(
@@ -273,6 +289,13 @@ public record KingdomActionPacket(
                                                     .ChatFormatting.GOLD)));
                     data.setDirty();
                 }
+                // ── Track D3.4 — law lifecycle verbs ────────────────────────
+                case DRAFT_LAW -> handleDraftLaw(player, level, data, kingdom, pkt);
+                case PROPOSE_LAW -> handleProposeLaw(player, level, data, kingdom, pkt);
+                case ENACT_LAW -> handleEnactLaw(player, level, data, kingdom, pkt);
+                case REPEAL_LAW -> handleRepealLaw(player, level, data, kingdom, pkt);
+                case UPDATE_DRAFT_SCALAR -> handleUpdateDraftScalar(player, kingdom, pkt);
+                case UPDATE_DRAFT_CHOICE -> handleUpdateDraftChoice(player, kingdom, pkt);
             }
             System.out.println("Kingdom history events before save: "
                     + kingdom.getHistory().getEvents().size());
@@ -291,6 +314,137 @@ public record KingdomActionPacket(
         return name.charAt(0)
                 + name.substring(1).toLowerCase()
                 .replace("_", " ");
+    }
+
+    // =========================================================================
+    // Track D3.4 — law lifecycle handlers
+    // =========================================================================
+
+    /**
+     * DRAFT_LAW. Drafting requires a Scholar competently held
+     * (mapped through the {@code DRAFT_LAW} capability — using
+     * ISSUE_DECREE as a proxy for "literate ministerial capacity"
+     * since v1's capability table doesn't include a dedicated
+     * DRAFT slot). Validates the law id exists in the registry.
+     */
+    private static void handleDraftLaw(ServerPlayer player, ServerLevel level,
+                                       VillageSavedData data, Kingdom kingdom,
+                                       KingdomActionPacket pkt) {
+        String lawId = pkt.stringParam();
+        if (tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry
+                .find(lawId).isEmpty()) {
+            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                    "Unknown law id: " + lawId));
+            return;
+        }
+        // Drafting gate: Scholar competently held, surfaced through
+        // the existing ISSUE_DECREE capability for v1.
+        if (!checkCapability(player, level, data, kingdom,
+                tterrag1112.life_in_the_village.Kingdom.Capabilities
+                        .KingdomCapability.ISSUE_DECREE,
+                "draft a law")) return;
+        kingdom.draftLaw(lawId, java.util.Optional.of(player.getUUID()),
+                level.getGameTime());
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .LawDrafted(kingdom.getId(), lawId, player.getUUID(),
+                        level.getGameTime()));
+        data.setDirty();
+    }
+
+    /**
+     * PROPOSE_LAW. Drafting → Proposed transition. Requires the
+     * archetype's enactment capability (King for Toggle, Chancellor
+     * for Scalar/Enum). Per the user-confirmed authority rule.
+     */
+    private static void handleProposeLaw(ServerPlayer player, ServerLevel level,
+                                         VillageSavedData data, Kingdom kingdom,
+                                         KingdomActionPacket pkt) {
+        String lawId = pkt.stringParam();
+        var law = tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry
+                .find(lawId).orElse(null);
+        if (law == null) return;
+        if (!checkCapability(player, level, data, kingdom,
+                law.enactmentCapability(),
+                "propose '" + law.displayName() + "'")) return;
+        if (!kingdom.proposeLaw(lawId, player.getUUID(), level.getGameTime())) {
+            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                    "Cannot propose '" + law.displayName()
+                            + "' — must be in DRAFT state."));
+            return;
+        }
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .LawProposed(kingdom.getId(), lawId, player.getUUID(),
+                        level.getGameTime()));
+        data.setDirty();
+    }
+
+    /** ENACT_LAW. Proposed → Active. Same capability as propose. */
+    private static void handleEnactLaw(ServerPlayer player, ServerLevel level,
+                                       VillageSavedData data, Kingdom kingdom,
+                                       KingdomActionPacket pkt) {
+        String lawId = pkt.stringParam();
+        var law = tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry
+                .find(lawId).orElse(null);
+        if (law == null) return;
+        if (!checkCapability(player, level, data, kingdom,
+                law.enactmentCapability(),
+                "enact '" + law.displayName() + "'")) return;
+        if (!kingdom.enactLaw(lawId, level.getGameTime())) {
+            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                    "Cannot enact '" + law.displayName()
+                            + "' — must be in PROPOSED state."));
+            return;
+        }
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .LawEnacted(kingdom.getId(), lawId, player.getUUID(),
+                        level.getGameTime()));
+        data.setDirty();
+    }
+
+    /**
+     * REPEAL_LAW. Removes the law instance entirely. Capability
+     * matches the law's enactment capability (per the prompt's
+     * "repeal mirrors enactment authority" rule).
+     */
+    private static void handleRepealLaw(ServerPlayer player, ServerLevel level,
+                                        VillageSavedData data, Kingdom kingdom,
+                                        KingdomActionPacket pkt) {
+        String lawId = pkt.stringParam();
+        var law = tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry
+                .find(lawId).orElse(null);
+        if (law == null) return;
+        if (!checkCapability(player, level, data, kingdom,
+                law.enactmentCapability(),
+                "repeal '" + law.displayName() + "'")) return;
+        var prior = kingdom.findLawInstance(lawId).map(i -> i.state().name())
+                .orElse("ABSENT");
+        if (!kingdom.repealLaw(lawId, level.getGameTime())) return;
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .LawRepealed(kingdom.getId(), lawId, prior, player.getUUID(),
+                        level.getGameTime()));
+        data.setDirty();
+    }
+
+    /** UPDATE_DRAFT_SCALAR. Edits a DRAFT-state ScalarLaw's value. */
+    private static void handleUpdateDraftScalar(ServerPlayer player, Kingdom kingdom,
+                                                KingdomActionPacket pkt) {
+        String[] parts = pkt.stringParam().split(":", 2);
+        if (parts.length != 2) return;
+        try {
+            kingdom.updateDraftScalar(parts[0], Double.parseDouble(parts[1]));
+        } catch (NumberFormatException ignored) {}
+    }
+
+    /** UPDATE_DRAFT_CHOICE. Edits a DRAFT-state EnumLaw's choice. */
+    private static void handleUpdateDraftChoice(ServerPlayer player, Kingdom kingdom,
+                                                KingdomActionPacket pkt) {
+        String[] parts = pkt.stringParam().split(":", 2);
+        if (parts.length != 2) return;
+        kingdom.updateDraftChoice(parts[0], parts[1]);
     }
 
     /**

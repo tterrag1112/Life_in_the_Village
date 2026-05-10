@@ -167,7 +167,52 @@ public class KingdomTaxEvent {
         }
 
         kingdom.depositToTreasury(totalCollected);
+
+        // Track D3.4 — EDUCATION_STIPEND ScalarLaw outflow. Drains
+        // treasury once per tax cycle by (active scalar value) ×
+        // (number of villages hosting a Scholar). Demonstrates the
+        // ScalarLaw archetype with a concrete observable hook.
+        kingdom.lawScalar("education_stipend").ifPresent(stipend -> {
+            if (stipend <= 0.0) return;
+            int scholarVillages = countScholarVillages(level, kingdom, data);
+            long outflow = (long) Math.floor(stipend * scholarVillages);
+            if (outflow > 0L) {
+                long withdrawn = Math.min(outflow, kingdom.getTreasury());
+                kingdom.depositToTreasury(-withdrawn);
+                System.out.println("Kingdom '" + kingdom.getName()
+                        + "' paid education stipend " + withdrawn + "b ("
+                        + scholarVillages + " scholar villages × "
+                        + stipend + "b/day)");
+            }
+        });
+
         System.out.println("Kingdom '" + kingdom.getName()
                 + "' treasury: " + kingdom.getTreasury());
+    }
+
+    /**
+     * Track D3.4 — counts villages in the kingdom that have at
+     * least one loaded Scholar NPC. Used for EDUCATION_STIPEND
+     * outflow scaling.
+     */
+    private static int countScholarVillages(ServerLevel level, Kingdom kingdom,
+                                            VillageSavedData data) {
+        int count = 0;
+        for (UUID villageId : kingdom.getVillageIds()) {
+            Village v = data.getVillageById(villageId).orElse(null);
+            if (v == null) continue;
+            var bounds = v.getBounds(data).map(b -> b.inflate(32))
+                    .orElse(null);
+            if (bounds == null) continue;
+            boolean hasScholar = level.getEntitiesOfClass(TownspersonMob.class, bounds,
+                    npc -> npc.getProfession()
+                            == tterrag1112.life_in_the_village.Profession.Profession.SCHOLAR
+                            && npc.getAssignedVillageName()
+                                    .map(n -> n.equals(v.getName()))
+                                    .orElse(false))
+                    .stream().findAny().isPresent();
+            if (hasScholar) count++;
+        }
+        return count;
     }
 }

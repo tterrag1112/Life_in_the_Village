@@ -90,6 +90,12 @@ public final class KingdomDebugCommand {
                                                 .then(Commands.argument("name",
                                                                 StringArgumentType.string())
                                                         .executes(ctx -> capabilities(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))
+                                        // Track D3.4 — list every law's archetype, state, and effect summary.
+                                        .then(Commands.literal("laws")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> laws(ctx,
                                                                 StringArgumentType.getString(ctx, "name")))))))
                         // Track D3.3 — top-level /litv province describe <provinceName>.
                         .then(Commands.literal("province")
@@ -327,6 +333,53 @@ public final class KingdomDebugCommand {
         send(ctx, "  " + villagesWithLord + "/" + k.getVillageIds().size()
                 + " villages have a noble overlord");
         return villagesWithLord;
+    }
+
+    /**
+     * Track D3.4 — lists every registered KingdomLaw with its
+     * archetype, current per-kingdom state (DRAFT / PROPOSED /
+     * ACTIVE / available), parameter value where applicable, and
+     * the satisfier capability for tooltips.
+     */
+    private static int laws(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv kingdom debug laws must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No kingdom named '" + name + "'."));
+            return 0;
+        }
+        send(ctx, "── Laws of " + name + " ──");
+        var registered = tterrag1112.life_in_the_village.Kingdom.Laws
+                .KingdomLawRegistry.all();
+        int active = 0;
+        int touched = 0;
+        for (var law : registered) {
+            var inst = k.findLawInstance(law.id()).orElse(null);
+            String state = (inst == null) ? "available" : inst.state().name();
+            String param = "";
+            if (inst != null) {
+                if (law instanceof tterrag1112.life_in_the_village.Kingdom.Laws.ScalarLaw s) {
+                    param = " value=" + inst.scalarValue().orElse(s.defaultValue())
+                            + " " + s.unit();
+                } else if (law instanceof tterrag1112.life_in_the_village.Kingdom.Laws.EnumLaw e) {
+                    param = " choice=" + inst.enumChoice().orElse(e.defaultChoice());
+                }
+                touched++;
+                if (inst.isActive()) active++;
+            }
+            send(ctx, String.format("  [%s] %s (%s, %s)%s — gate=%s",
+                    state, law.displayName(), law.archetype(), law.category().name(),
+                    param, law.enactmentCapability().name()));
+        }
+        send(ctx, "  " + active + " active, " + touched + " touched, "
+                + registered.size() + " total");
+        return active;
     }
 
     /**

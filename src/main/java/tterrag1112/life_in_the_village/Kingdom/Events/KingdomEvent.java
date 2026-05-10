@@ -64,4 +64,27 @@ public sealed interface KingdomEvent {
     record ScalarShifted(UUID kingdomId, String which,
                          String priorBand, String newBand, long tick)
             implements KingdomEvent {}
+
+    // ── Track D3.4 — law lifecycle events ──────────────────────────────────
+
+    /** A law transitioned to {@code DRAFT} state (Scholar started drafting). */
+    record LawDrafted(UUID kingdomId, String lawId,
+                      UUID drafterUuid, long tick) implements KingdomEvent {}
+
+    /** A law transitioned to {@code PROPOSED} state (committed for ratification). */
+    record LawProposed(UUID kingdomId, String lawId,
+                       UUID proposerUuid, long tick) implements KingdomEvent {}
+
+    /** A law transitioned to {@code ACTIVE} state (effects live). */
+    record LawEnacted(UUID kingdomId, String lawId,
+                      UUID enactorUuid, long tick) implements KingdomEvent {}
+
+    /**
+     * A law was repealed (any state → removed). {@code priorState}
+     * = "DRAFT" / "PROPOSED" / "ACTIVE" lets subscribers
+     * differentiate "cancel a draft" from "tear down active law".
+     */
+    record LawRepealed(UUID kingdomId, String lawId,
+                       String priorState, UUID actorUuid, long tick)
+            implements KingdomEvent {}
 }

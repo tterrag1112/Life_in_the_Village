@@ -5,6 +5,11 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Kingdom.Houses.House;
+import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawInstance;
+import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry;
+import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState;
+import tterrag1112.life_in_the_village.Kingdom.Laws.ScalarLaw;
+import tterrag1112.life_in_the_village.Kingdom.Laws.EnumLaw;
 import tterrag1112.life_in_the_village.Kingdom.Provinces.Province;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -23,7 +28,8 @@ public class Kingdom {
             List<House> houses,
             List<KingdomModifier> modifiers,
             List<Province> provinces,
-            long lastProvinceRecomputeTick
+            long lastProvinceRecomputeTick,
+            List<KingdomLawInstance> lawInstances
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -62,7 +68,15 @@ public class Kingdom {
                                         ? g.provinces() : new ArrayList<>()),
                         // Track D3.3 — last weekly polygon recompute tick.
                         Codec.LONG.optionalFieldOf("lastProvinceRecomputeTick", -1L)
-                                .forGetter(KingdomGovernanceData::lastProvinceRecomputeTick)
+                                .forGetter(KingdomGovernanceData::lastProvinceRecomputeTick),
+                        // Track D3.4 — kingdom-tier law instances (DRAFT /
+                        // PROPOSED / ACTIVE per the typology refactor).
+                        // Empty for pre-D3.4 saves; migrated from the
+                        // top-level activeLaws (legacy enum) at fromCodec.
+                        KingdomLawInstance.CODEC.listOf()
+                                .optionalFieldOf("lawInstances", new ArrayList<>())
+                                .forGetter(g -> g.lawInstances() != null
+                                        ? g.lawInstances() : new ArrayList<>())
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -129,7 +143,8 @@ public class Kingdom {
                                             new ArrayList<>(k.houses),
                                             new ArrayList<>(k.modifiers),
                                             new ArrayList<>(k.provinces),
-                                            k.lastProvinceRecomputeTick)),
+                                            k.lastProvinceRecomputeTick,
+                                            new ArrayList<>(k.lawInstances.values()))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -180,7 +195,26 @@ public class Kingdom {
         rulerEntity.ifPresent(rid -> k.rulerEntityId = rid);
         rulerPlayer.ifPresent(pid -> k.rulerPlayerId = pid);
         k.relations.putAll(relations);
-        k.activeLaws.addAll(laws);
+        // Track D3.4 — populate lawInstances from governance.lawInstances
+        // first; if that's empty AND legacy enum-based activeLaws has
+        // entries, migrate the enum values to ACTIVE ToggleLaw instances
+        // (one-shot path for pre-D3.4 saves).
+        if (governance.lawInstances() != null && !governance.lawInstances().isEmpty()) {
+            for (KingdomLawInstance inst : governance.lawInstances()) {
+                k.lawInstances.put(inst.lawId(), inst);
+            }
+        } else if (laws != null && !laws.isEmpty()) {
+            for (KingdomLaw legacy : laws) {
+                String id = legacy.name().toLowerCase(java.util.Locale.ROOT);
+                if (KingdomLawRegistry.find(id).isEmpty()) continue;
+                k.lawInstances.put(id, new KingdomLawInstance(
+                        id, KingdomLawState.ACTIVE,
+                        Optional.empty(), Optional.empty(),
+                        0L, Optional.empty(), Optional.empty(),
+                        0L));
+            }
+        }
+        k.syncLegacyActiveLaws();
         claim.ifPresent(c -> k.territorialClaim = c);
         k.treasuryBronze   = governance.treasuryBronze();
         k.incomeTaxRate    = governance.incomeTaxRate();
@@ -230,7 +264,23 @@ public class Kingdom {
     private UUID rulerPlayerId                  = null; // player ruler
     private long treasuryBronze                 = 0L;
     private final Map<UUID, DiplomaticRelation> relations = new HashMap<>();
+    /**
+     * Track D3.4 — legacy storage. Mirrors the ACTIVE-state subset
+     * of {@link #lawInstances} for legacy enum read APIs and the
+     * top-level {@code activeLaws} codec field. Kept in sync by
+     * {@link #syncLegacyActiveLaws()}; do not mutate directly.
+     */
     private final Set<KingdomLaw> activeLaws    = new HashSet<>();
+
+    /**
+     * Track D3.4 — canonical per-kingdom law-instance storage,
+     * keyed by law id. Carries DRAFT / PROPOSED / ACTIVE state
+     * for every law the kingdom has touched. Drives every
+     * accessor below; legacy {@link KingdomLaw} enum APIs are
+     * shims over this map.
+     */
+    private final java.util.LinkedHashMap<String, KingdomLawInstance> lawInstances
+            = new java.util.LinkedHashMap<>();
     /**
      * Office state for this kingdom. Phase 0 storage only — see
      * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
@@ -514,10 +564,169 @@ public class Kingdom {
         return Collections.unmodifiableSet(activeLaws);
     }
 
+    /** Legacy enum check: does this kingdom have the named law ACTIVE? */
     public boolean hasLaw(KingdomLaw law) { return activeLaws.contains(law); }
 
-    public void enactLaw(KingdomLaw law)  { activeLaws.add(law); }
-    public void repealLaw(KingdomLaw law) { activeLaws.remove(law); }
+    /**
+     * Legacy enum-based enactment. Routes through the new
+     * {@link KingdomLawInstance} state machine, going straight to
+     * ACTIVE without a Scholar draft (preserves legacy semantics
+     * for callers that haven't been refactored to the lifecycle
+     * flow). The new GUI / packet verbs use {@link #draftLaw} →
+     * {@link #proposeLaw} → {@link #enactLaw(String, long)}.
+     */
+    public void enactLaw(KingdomLaw law) {
+        String id = law.name().toLowerCase(java.util.Locale.ROOT);
+        if (KingdomLawRegistry.find(id).isEmpty()) return;
+        lawInstances.put(id, new KingdomLawInstance(
+                id, KingdomLawState.ACTIVE,
+                Optional.empty(), Optional.empty(),
+                0L, Optional.empty(), Optional.empty(),
+                0L));
+        syncLegacyActiveLaws();
+    }
+
+    public void repealLaw(KingdomLaw law) {
+        String id = law.name().toLowerCase(java.util.Locale.ROOT);
+        lawInstances.remove(id);
+        syncLegacyActiveLaws();
+    }
+
+    // =========================================================================
+    // Track D3.4 — id-based law accessors + lifecycle
+    // =========================================================================
+
+    /** Snapshot of every law instance the kingdom has touched. */
+    public List<KingdomLawInstance> getLawInstances() {
+        return List.copyOf(lawInstances.values());
+    }
+
+    public Optional<KingdomLawInstance> findLawInstance(String lawId) {
+        return Optional.ofNullable(lawInstances.get(lawId));
+    }
+
+    /** True iff the named law is in {@link KingdomLawState#ACTIVE}. */
+    public boolean hasActiveLaw(String lawId) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        return inst != null && inst.isActive();
+    }
+
+    /**
+     * Returns the active scalar value for a {@link ScalarLaw} id, or
+     * empty when the law is not ACTIVE / not a scalar / not touched.
+     */
+    public Optional<Double> lawScalar(String lawId) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        if (inst == null || !inst.isActive()) return Optional.empty();
+        return inst.scalarValue();
+    }
+
+    /**
+     * Returns the active enum choice for an {@link EnumLaw} id, or
+     * empty when not ACTIVE / not an enum / not touched.
+     */
+    public Optional<String> lawChoice(String lawId) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        if (inst == null || !inst.isActive()) return Optional.empty();
+        return inst.enumChoice();
+    }
+
+    /**
+     * Begins a {@link KingdomLawState#DRAFT} on {@code lawId}. If a
+     * draft / proposed / active instance already exists, returns it
+     * unchanged (call repealLaw first to start over).
+     */
+    public KingdomLawInstance draftLaw(String lawId, Optional<UUID> drafter, long tick) {
+        KingdomLawInstance existing = lawInstances.get(lawId);
+        if (existing != null) return existing;
+        KingdomLaw law = KingdomLawRegistry.byId(lawId);
+        KingdomLawInstance fresh = KingdomLawInstance.freshDraft(law, drafter, tick);
+        lawInstances.put(lawId, fresh);
+        return fresh;
+    }
+
+    /**
+     * Updates the live scalar value on a DRAFT-state ScalarLaw.
+     * No-op for non-DRAFT instances or non-ScalarLaws (callers
+     * should validate before calling).
+     */
+    public void updateDraftScalar(String lawId, double value) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        if (inst == null || !inst.isDraft()) return;
+        if (!(KingdomLawRegistry.byId(lawId) instanceof ScalarLaw s)) return;
+        lawInstances.put(lawId, inst.withScalar(s.clamp(value)));
+    }
+
+    /** Updates the live choice on a DRAFT-state EnumLaw. */
+    public void updateDraftChoice(String lawId, String choice) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        if (inst == null || !inst.isDraft()) return;
+        if (!(KingdomLawRegistry.byId(lawId) instanceof EnumLaw e)) return;
+        if (!e.hasChoice(choice)) return;
+        lawInstances.put(lawId, inst.withChoice(choice));
+    }
+
+    /** Transitions DRAFT → PROPOSED. No-op when not in DRAFT. */
+    public boolean proposeLaw(String lawId, UUID proposerUuid, long tick) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        if (inst == null || !inst.isDraft()) return false;
+        lawInstances.put(lawId, inst.withProposer(proposerUuid, tick));
+        return true;
+    }
+
+    /**
+     * Transitions PROPOSED → ACTIVE. Applies enactment cost
+     * (treasury / stability / legitimacy debits) and syncs the
+     * legacy {@link #activeLaws} set.
+     */
+    public boolean enactLaw(String lawId, long tick) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        if (inst == null || !inst.isProposed()) return false;
+        KingdomLaw law = KingdomLawRegistry.byId(lawId);
+        var cost = law.enactmentCost();
+        treasuryBronze = Math.max(0L, treasuryBronze - cost.treasuryBronze());
+        stability = clampScalar(stability + cost.stabilityDelta());
+        legitimacy = clampScalar(legitimacy + cost.legitimacyDelta());
+        lawInstances.put(lawId, inst.withState(KingdomLawState.ACTIVE, tick));
+        syncLegacyActiveLaws();
+        return true;
+    }
+
+    /**
+     * Removes a law instance entirely (any state). Repeals an
+     * ACTIVE law; cancels a DRAFT or PROPOSED. Cost: refunds half
+     * the enactment treasury cost, applies the inverse stability
+     * delta capped at zero (no free stability rebound).
+     */
+    public boolean repealLaw(String lawId, long tick) {
+        KingdomLawInstance inst = lawInstances.get(lawId);
+        if (inst == null) return false;
+        if (inst.isActive()) {
+            KingdomLaw law = KingdomLawRegistry.byId(lawId);
+            var cost = law.enactmentCost();
+            treasuryBronze += cost.treasuryBronze() / 2L;
+            stability = clampScalar(stability - cost.stabilityDelta() / 2);
+        }
+        lawInstances.remove(lawId);
+        syncLegacyActiveLaws();
+        return true;
+    }
+
+    /** Mirrors the ACTIVE-state ToggleLaw subset into legacy {@link #activeLaws}. */
+    private void syncLegacyActiveLaws() {
+        activeLaws.clear();
+        for (KingdomLawInstance inst : lawInstances.values()) {
+            if (!inst.isActive()) continue;
+            try {
+                KingdomLaw legacy = KingdomLaw.valueOf(
+                        inst.lawId().toUpperCase(java.util.Locale.ROOT));
+                activeLaws.add(legacy);
+            } catch (IllegalArgumentException ignored) {
+                // New laws (Scalar/Enum) without a legacy enum twin
+                // are correctly absent from the legacy set.
+            }
+        }
+    }
 
     // =========================================================================
     // TAXATION
