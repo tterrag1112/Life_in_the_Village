@@ -933,6 +933,146 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-10 — Track D3.5B landed (audience screen + NPC ruler AI + heir-traits + stale-treaty GC)
+
+Second quarter of the user-confirmed Phase 5 four-way split. Five
+deliverables — all pinned by the Slice A out-of-scope list except
+the heir-traits roll (locked design) and stale-draft GC (slice
+polish target promoted to here).
+
+#### User-confirmed locks honoured
+
+- **Heir-traits hybrid roll.** Slice A added the PIETY +
+  SCHOLARSHIP axes; this slice ships the actual hybrid formula:
+  `child = 0.6 × parent_avg + 0.4 × fresh_roll`. Locked-design
+  framing was "hybrid"; CC's call on the 0.6/0.4 split + Gaussian
+  std-dev 0.4. NPC-rulers' resolution AI uses the same trait pool.
+
+#### CC's calls (deferred to user if surprising)
+
+- **0.6 inherited / 0.4 fresh-roll for heirs.** Pure inheritance
+  produces dynastic stagnation; pure re-roll erases lineage. The
+  60-40 split lands a heir who feels like family but not a
+  Xerox copy. Tunable in `HeirTraitRoll.INHERITED_WEIGHT`.
+- **Stale-draft TTL = 60 in-game days.** A treaty drafted but
+  never fully ratified is GC'd. 60 days is long enough for a
+  multi-party cross-kingdom flow to complete, short enough that
+  forgotten drafts don't accumulate. Fires `TreatyBroken` once
+  with reason `"stale draft"`.
+- **NPC-ruler approve / deny thresholds = ±25.** Score below
+  ±25 leaves the petition pending; expiry sweep handles it. The
+  thresholds match the typical signal-floor for trait-weighted
+  scoring with 8-axis input + ±15 standing nudge.
+- **Per-kind trait weights.** Five hand-tuned recipes (see
+  `NpcRulerAuditor.WEIGHTS`); not derived from existing data.
+  WAR_DECLARATION default-deny baseline −20; BREAK_TREATY −10;
+  AUDIENCE_GRIEVANCE +5 (default-approve); CHARTER_REQUEST −5
+  (default-skeptical); TREATY_RATIFICATION 0 (purely
+  trait-driven).
+
+#### What this slice ships
+
+- **`Networking/KingdomPetitionSubmitPacket`** — client → server.
+  Carries a `byte[]` payload encoded via
+  `PetitionPayload.CODEC → NBT → NbtIo.write` (with a wrapper
+  CompoundTag for non-compound roots so NbtIo can serialize
+  them). Decode mirror in `decodePayload`. Supports all five
+  kinds from the client; the GUI uses it for AUDIENCE_GRIEVANCE
+  in this slice. Other kinds reachable via debug commands.
+  Registered in `ModModEvents.registerPayloads`.
+- **`Gui/KingdomBookScreen` AUDIENCE section** — new
+  `SectionType.AUDIENCE` enum value + sidebar entry + nav entry.
+  `buildAudienceWidgets` adds:
+  - Per-pending-petition row buttons: `✓` Approve + `✗` Deny
+    visible only when local player UUID = `Kingdom.getRulerPlayerId`;
+    `Withdraw` button visible only when local player UUID =
+    `petition.playerUuid`.
+  - `grievanceBox` (StyledEditBox, 256-char limit) +
+    `Submit grievance` button at page bottom.
+  `drawAudience` renders header + standing summary
+  ("Your standing: N [TRUSTED/HOSTILE/neutral]") + scrollable
+  pending list. Reads petitions + standings off
+  `Kingdom.ClientKingdomCache` — no new sync packet because
+  D3.5A's KingdomGovernanceData CODEC already syncs petitions +
+  playerStandings. Page handles up to ~9 pending rows; "(+N
+  more)" indicator for overflow.
+- **`Kingdom/Audience/NpcRulerAuditor`** — daily AI tick that
+  scores every pending petition in NPC-ruled kingdoms and
+  auto-resolves entries past the threshold. Per-kind
+  `KindWeights(Map<TraitAxis, Double>, baseline)` recipe drives
+  the scoring formula
+  `score = baseline + Σ(axis_weight × axis_value × 30) +
+   standing × 0.15`. Player-ruled kingdoms skipped (player is
+  ruler; resolves via the audience screen). Vacant / offline
+  NPC ruler also skipped — expiry sweep handles those.
+- **`Events/TickSystems` + `TickSubsystemRegistry`** — new
+  `NpcRulerAuditTickSystem` registered at priority 196.
+- **`Npc/Nobility/HeirTraitRoll`** — the locked-design hybrid
+  roll. `apply(child, parentA, parentB, random)` writes the
+  blended TraitVector; `tryApplyAtBirth(child, parent, level)`
+  resolves the spouse via `parent.getSpouseId()` then dispatches.
+  Only applies when at least one parent is noble. Wired into
+  `ChildBirthGoal.spawnChild` post-family-registration,
+  pre-`level.addFreshEntity`.
+- **`Kingdom/Audience/AudienceLoopDriver`** — added stale-draft
+  treaty cleanup. `STALE_DRAFT_TICKS = 60 × 24000`. Each
+  kingdom's daily sweep scans its treaty list for drafts past
+  the TTL whose `isActive() == false` (waiting for a party
+  signature) and breaks them across every party. Idempotent —
+  multiple parties' daily ticks all run the same check; first
+  one to fire `breakTreaty` wins, rest no-op.
+
+#### Decisions worth recording
+
+- **Submit packet is byte-encoded NBT.** A simpler stringly
+  approach would only support AUDIENCE_GRIEVANCE; the
+  byte-encoded path supports the full PetitionPayload union via
+  the existing dispatched codec. Trade-off: client + server now
+  do an extra NbtIo round-trip per submission. Acceptable —
+  petitions are user-paced events, not per-tick traffic.
+- **Submission is unauthenticated.** Any player can submit any
+  petition kind to any kingdom they know about. The server-side
+  effect (when approved) is gated by the kingdom's own
+  capability checks. This avoids client-side capability
+  mirroring drift; the worst a hostile petitioner can do is
+  spam — and the standing-decay-on-deny path naturally
+  attenuates that.
+- **GUI section reuses existing kingdom sync.** No new sync
+  packet because D3.5A's KingdomGovernanceData CODEC already
+  flows petitions + playerStandings to the client cache. This
+  keeps the network surface minimal.
+- **Trait-weighted scoring uses every axis.** The user-confirmed
+  PIETY + SCHOLARSHIP axes from Slice A finally become
+  load-bearing — PIETY heavy on WAR_DECLARATION (anti) and
+  BREAK_TREATY (anti); SCHOLARSHIP heavy on TREATY_RATIFICATION
+  (pro) and CHARTER_REQUEST (pro). The full 10-axis pool is
+  reflected somewhere in the recipe table.
+
+#### Out-of-scope, flagged for Slice C / D
+
+- **CHARTER_REQUEST submit verb in GUI** — Slice C. Needs a
+  charter-builder panel for the params (currently only debug
+  commands construct CharterRequest payloads).
+- **Player ennoblement via TITLE_GRANT charter** — Slice C.
+  Player gets a NobilityRecord shim when an approved
+  TITLE_GRANT charter targets them.
+- **LAND_GRANT manor placement** — Slice C / D. Data shape
+  exists; actual structure spawn lands later.
+- **Newsfeed surface for resolved petitions** — Slice D. The
+  `PetitionResolved` event fires today but isn't surfaced
+  anywhere except chat / debug logs.
+- **Per-kingdom petition-throttle** — polish target. v1 has no
+  per-petitioner submit rate limit; the per-target petition TTL
+  + standing-decay-on-deny attenuates abuse but doesn't
+  prevent it.
+- **NPC ruler audit's daily run cap** — polish. v1 resolves
+  every pending petition that crosses threshold every daily
+  tick; no per-day decision budget. With APPROVE_THRESHOLD=±25
+  and Gaussian-distributed scores this lands at ~3-5
+  resolutions per kingdom per day in practice.
+
+---
+
 ### 2026-05-10 — Track D3.5A landed (audience loop + standing + trait-pool extension)
 
 First quarter of the user-confirmed Phase 5 four-way split. Three

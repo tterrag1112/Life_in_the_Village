@@ -1150,6 +1150,27 @@ class AudienceLoopTickSystem implements TickSubsystem {
 }
 
 /**
+ * Track D3.5B — daily NPC-ruler petition audit. Scores every
+ * pending petition in NPC-ruled kingdoms via trait-weighted
+ * formula in {@link tterrag1112.life_in_the_village.Kingdom.Audience.NpcRulerAuditor};
+ * auto-approves / auto-denies entries past the threshold; leaves
+ * the rest pending. Priority 196 — immediately after the
+ * audience-loop sweep (195) so today's expiries are off the queue
+ * before the ruler scores it.
+ */
+class NpcRulerAuditTickSystem implements TickSubsystem {
+    @Override public String name()     { return "npc_ruler_audit"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 196; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Audience.NpcRulerAuditor
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
  * Weekly plague-outbreak roll per village (spec line 169). Runs once
  * a week ({@code 168000} ticks); chance is gated on village size +
  * region (Phase 4 visitor flux is stubbed for v1).

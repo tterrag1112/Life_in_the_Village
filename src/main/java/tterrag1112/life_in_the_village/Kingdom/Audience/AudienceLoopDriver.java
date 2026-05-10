@@ -35,8 +35,12 @@ public final class AudienceLoopDriver {
 
     private AudienceLoopDriver() {}
 
+    /** A drafted treaty without full ratification expires after 60 days. */
+    public static final long STALE_DRAFT_TICKS = 60L * 24000L;
+
     public static void dailyTick(ServerLevel level, VillageSavedData data, long tick) {
         int totalSwept = 0;
+        int totalStaleDrafts = 0;
         for (Kingdom k : data.getAllKingdoms()) {
             // Fire EXPIRED events for each pending petition past
             // its TTL, before sweepPetitions mutates them.
@@ -49,10 +53,34 @@ public final class AudienceLoopDriver {
             }
             totalSwept += k.sweepPetitions(tick);
             k.decayPlayerStandings(tick);
+
+            // Track D3.5B — stale-draft treaty cleanup. Treaties
+            // drafted but never fully ratified after 60 days
+            // auto-break with reason "stale draft". Only triggered
+            // by the drafter party so we don't mirror the break
+            // multiple times across parties — every party's
+            // dailyTick runs the same check; the first one to act
+            // sets broken=true, the rest no-op via breakTreaty's
+            // idempotence.
+            for (var t : new java.util.ArrayList<>(k.getTreaties())) {
+                if (t.broken()) continue;
+                if (t.isActive()) continue;
+                if (tick - t.draftedTick() < STALE_DRAFT_TICKS) continue;
+                // Stale; auto-break on every party's copy.
+                for (java.util.UUID partyId : t.parties()) {
+                    data.getKingdomById(partyId).ifPresent(party ->
+                            party.breakTreaty(t.id(), k.getId(), tick,
+                                    "stale draft (no ratification within 60 days)"));
+                }
+                KingdomEventBus.fire(new KingdomEvent.TreatyBroken(
+                        t.id(), t.type().name(), k.getId(),
+                        "stale draft", tick));
+                totalStaleDrafts++;
+            }
         }
-        if (totalSwept > 0) {
-            LOGGER.debug("[AudienceLoopDriver] daily sweep: {} petitions swept",
-                    totalSwept);
+        if (totalSwept > 0 || totalStaleDrafts > 0) {
+            LOGGER.debug("[AudienceLoopDriver] daily sweep: {} petitions swept, {} stale drafts broken",
+                    totalSwept, totalStaleDrafts);
         }
     }
 }

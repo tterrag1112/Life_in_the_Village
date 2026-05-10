@@ -25,7 +25,9 @@ public class KingdomBookScreen extends Screen {
         FRONTISPIECE, STATUS, HISTORY, LAWS, ECONOMY,
         APPOINTMENTS, DIPLOMACY, DECREES, KINGDOM_MAP, ROYAL_BUILDS,
         // Track D3.2b — noble dynasties owned by this kingdom.
-        DYNASTY_TREE
+        DYNASTY_TREE,
+        // Track D3.5B — audience chamber: pending petitions + grievance submit.
+        AUDIENCE
     }
 
     private record NavEntry(String label, SectionType section, int historyPageIndex) {}
@@ -58,6 +60,8 @@ public class KingdomBookScreen extends Screen {
     private KingdomMapPanel mapPanel;
     private Sidebar<SectionType> sidebar;
     private StyledEditBox decreeBox;
+    /** Track D3.5B — grievance text input on the AUDIENCE page. */
+    private StyledEditBox grievanceBox;
 
     public KingdomBookScreen(UUID kingdomId) {
         super(Component.literal("Kingdom Book"));
@@ -147,12 +151,15 @@ public class KingdomBookScreen extends Screen {
         navEntries.add(new NavEntry("Kingdom Map",  SectionType.KINGDOM_MAP,  -1));
         navEntries.add(new NavEntry("Royal Builds", SectionType.ROYAL_BUILDS, -1));
         navEntries.add(new NavEntry("Houses",       SectionType.DYNASTY_TREE, -1));
+        // Track D3.5B — audience chamber.
+        navEntries.add(new NavEntry("Audience",     SectionType.AUDIENCE,     -1));
         page = Math.min(page, navEntries.size() - 1);
     }
 
     private void buildWidgets() {
         clearWidgets();
         decreeBox = null;
+        grievanceBox = null;
 
         sidebar = new Sidebar<>(bookX + 2, bookY + 28, SIDEBAR_W - 2, 18,
                 List.of(
@@ -166,7 +173,9 @@ public class KingdomBookScreen extends Screen {
                         new Sidebar.Entry<>(SectionType.DECREES,      "Decrees",      true),
                         new Sidebar.Entry<>(SectionType.KINGDOM_MAP,  "Kingdom Map",  true),
                         new Sidebar.Entry<>(SectionType.ROYAL_BUILDS, "Royal Builds", true),
-                        new Sidebar.Entry<>(SectionType.DYNASTY_TREE, "Houses",       true)
+                        new Sidebar.Entry<>(SectionType.DYNASTY_TREE, "Houses",       true),
+                        // Track D3.5B — audience chamber.
+                        new Sidebar.Entry<>(SectionType.AUDIENCE,     "Audience",     true)
                 ),
                 this::currentSection,
                 section -> {
@@ -191,6 +200,7 @@ public class KingdomBookScreen extends Screen {
             case ECONOMY   -> buildEconomyWidgets(px, py, pw);
             case DIPLOMACY -> buildDiplomacyWidgets(px, py, pw);
             case DECREES   -> buildDecreeWidgets(px, py, pw);
+            case AUDIENCE  -> buildAudienceWidgets(px, py, pw);
             default        -> {}
         }
     }
@@ -421,6 +431,7 @@ public class KingdomBookScreen extends Screen {
             case KINGDOM_MAP  -> drawKingdomMap(g, px, py, pw, maxY, mx, my);
             case ROYAL_BUILDS -> drawRoyalBuilds(g, px, py, pw, maxY);
             case DYNASTY_TREE -> drawDynastyTree(g, px, py, pw, maxY);
+            case AUDIENCE     -> drawAudience(g, px, py, pw, maxY);
         }
     }
 
@@ -629,6 +640,168 @@ public class KingdomBookScreen extends Screen {
     private void drawDecrees(GuiGraphics g, int px, int py, int pw, int maxY) {
         g.drawString(font, "Issue a royal decree", px, py, BookScreenColors.MID, false);
         g.fill(px, py + 10, px + pw, py + 11, BookScreenColors.BORDER);
+    }
+
+    // =========================================================================
+    // Track D3.5B — Audience chamber section
+    // =========================================================================
+
+    /**
+     * Build buttons + edit box for the AUDIENCE page. One row per
+     * pending petition with Approve / Deny / Withdraw inline (visible
+     * by player role); a grievance submit form below the list.
+     */
+    private void buildAudienceWidgets(int px, int py, int pw) {
+        Kingdom k = Kingdom.ClientKingdomCache.getById(kingdomId).orElse(null);
+        if (k == null) return;
+
+        java.util.UUID self = (minecraft != null && minecraft.player != null)
+                ? minecraft.player.getUUID() : null;
+        boolean isRuler = self != null
+                && k.getRulerPlayerId().filter(self::equals).isPresent();
+
+        var pending = k.getPetitions().stream()
+                .filter(p -> p.isPending())
+                .toList();
+
+        // Per-pending row: text in drawAudience, buttons here.
+        int rowH = 22;
+        int listTop = py + 32;
+        int maxRows = (bookY + BOOK_H - 90 - listTop) / rowH;
+        int shown = Math.min(maxRows, pending.size());
+        for (int i = 0; i < shown; i++) {
+            var pet = pending.get(i);
+            int by = listTop + i * rowH;
+            int btnX = px + pw - 60;
+            boolean isPetitioner = self != null && pet.playerUuid().equals(self);
+            if (isRuler) {
+                addRenderableWidget(StyledButton.builder(
+                        Component.literal("✓"),
+                        b -> sendPetitionAction(
+                                tterrag1112.life_in_the_village.Networking
+                                        .KingdomPetitionPacket.Action.APPROVE,
+                                pet.id()))
+                        .pos(btnX, by + 2).size(18, 16).build());
+                addRenderableWidget(StyledButton.builder(
+                        Component.literal("✗"),
+                        b -> sendPetitionAction(
+                                tterrag1112.life_in_the_village.Networking
+                                        .KingdomPetitionPacket.Action.DENY,
+                                pet.id()))
+                        .pos(btnX + 20, by + 2).size(18, 16).build());
+            } else if (isPetitioner) {
+                addRenderableWidget(StyledButton.builder(
+                        Component.literal("Withdraw"),
+                        b -> sendPetitionAction(
+                                tterrag1112.life_in_the_village.Networking
+                                        .KingdomPetitionPacket.Action.WITHDRAW,
+                                pet.id()))
+                        .pos(btnX - 18, by + 2).size(58, 16).build());
+            }
+        }
+
+        // Grievance submit form pinned to bottom of page.
+        int submitY = bookY + BOOK_H - 78;
+        grievanceBox = new StyledEditBox(font, px, submitY, pw, 16,
+                Component.literal("Submit a grievance..."));
+        grievanceBox.setMaxLength(256);
+        addRenderableWidget(grievanceBox);
+        addRenderableWidget(StyledButton.builder(
+                Component.literal("Submit grievance"),
+                b -> {
+                    if (grievanceBox != null && !grievanceBox.getValue().isEmpty()) {
+                        submitGrievance(grievanceBox.getValue());
+                        grievanceBox.setValue("");
+                    }
+                })
+                .pos(px, submitY + 22).size(pw, 18).build());
+    }
+
+    private void drawAudience(GuiGraphics g, int px, int py, int pw, int maxY) {
+        Kingdom k = Kingdom.ClientKingdomCache.getById(kingdomId).orElse(null);
+        if (k == null) {
+            g.drawString(font, "No kingdom data available.", px, py,
+                    BookScreenColors.LIGHT, false);
+            return;
+        }
+
+        java.util.UUID self = (minecraft != null && minecraft.player != null)
+                ? minecraft.player.getUUID() : null;
+
+        // Header.
+        g.drawString(font, "Audience Chamber", px, py, BookScreenColors.MID, false);
+        g.fill(px, py + 10, px + pw, py + 11, BookScreenColors.BORDER);
+
+        // Standing summary for the local player.
+        if (self != null) {
+            var ps = k.getAllPlayerStandings().get(self);
+            int score = (ps != null) ? ps.score() : 0;
+            String band = (score >=
+                    tterrag1112.life_in_the_village.Kingdom.Audience
+                            .PlayerStanding.TRUSTED_THRESHOLD) ? "TRUSTED"
+                    : (score <=
+                    tterrag1112.life_in_the_village.Kingdom.Audience
+                            .PlayerStanding.HOSTILE_THRESHOLD) ? "HOSTILE"
+                    : "neutral";
+            g.drawString(font,
+                    "Your standing: " + score + " [" + band + "]",
+                    px, py + 16, BookScreenColors.LIGHT, false);
+        }
+
+        // Pending petitions list.
+        var pending = k.getPetitions().stream()
+                .filter(p -> p.isPending())
+                .toList();
+        if (pending.isEmpty()) {
+            g.drawString(font, "No pending petitions.", px, py + 36,
+                    BookScreenColors.LIGHT, false);
+            return;
+        }
+
+        int rowH = 22;
+        int listTop = py + 32;
+        int maxRows = (bookY + BOOK_H - 90 - listTop) / rowH;
+        int shown = Math.min(maxRows, pending.size());
+        for (int i = 0; i < shown; i++) {
+            var pet = pending.get(i);
+            int by = listTop + i * rowH;
+            String shortId = pet.id().toString().substring(0, 6);
+            String shortPlayer = pet.playerUuid().toString().substring(0, 6);
+            g.drawString(font,
+                    pet.kind().name() + " #" + shortId
+                            + " by " + shortPlayer,
+                    px, by, BookScreenColors.MID, false);
+            g.drawString(font,
+                    "submitted tick " + pet.submittedTick(),
+                    px, by + 10, BookScreenColors.LIGHT, false);
+        }
+        if (pending.size() > shown) {
+            g.drawString(font,
+                    "(+" + (pending.size() - shown) + " more)",
+                    px, listTop + shown * rowH,
+                    BookScreenColors.LIGHT, false);
+        }
+    }
+
+    /** Track D3.5B — fires APPROVE/DENY/WITHDRAW for the named petition. */
+    private void sendPetitionAction(
+            tterrag1112.life_in_the_village.Networking
+                    .KingdomPetitionPacket.Action action,
+            java.util.UUID petitionId) {
+        ClientPacketDistributor.sendToServer(
+                new tterrag1112.life_in_the_village.Networking
+                        .KingdomPetitionPacket(action, kingdomId, petitionId, ""));
+    }
+
+    /** Track D3.5B — submits an AUDIENCE_GRIEVANCE petition. */
+    private void submitGrievance(String text) {
+        var payload = new tterrag1112.life_in_the_village.Kingdom.Audience
+                .PetitionPayload.AudienceGrievance(text);
+        byte[] bytes = tterrag1112.life_in_the_village.Networking
+                .KingdomPetitionSubmitPacket.encodePayload(payload);
+        ClientPacketDistributor.sendToServer(
+                new tterrag1112.life_in_the_village.Networking
+                        .KingdomPetitionSubmitPacket(kingdomId, bytes));
     }
 
     private void drawKingdomMap(GuiGraphics g, int px, int py, int pw, int maxY,

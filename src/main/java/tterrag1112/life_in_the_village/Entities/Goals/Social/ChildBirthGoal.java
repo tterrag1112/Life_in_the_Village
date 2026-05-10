@@ -206,6 +206,12 @@ public class ChildBirthGoal extends Goal {
                                 mob -> mob.getUUID().equals(spouseId))
                         .forEach(spouse -> spouse.addChildId(child.getUUID())));
 
+        // Track D3.5B — heir-traits hybrid roll for noble children.
+        // Non-noble children retain the legacy "zero + culture-bias"
+        // path applied at context-load.
+        tterrag1112.life_in_the_village.Npc.Nobility.HeirTraitRoll
+                .tryApplyAtBirth(child, entity, level);
+
         level.addFreshEntity(child);
 
         // ── Phase 1: BirthInFamily fires for mother + spouse if known ──────

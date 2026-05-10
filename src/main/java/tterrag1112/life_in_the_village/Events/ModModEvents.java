@@ -166,6 +166,11 @@ public class ModModEvents {
                 tterrag1112.life_in_the_village.Networking.KingdomPetitionPacket.TYPE,
                 tterrag1112.life_in_the_village.Networking.KingdomPetitionPacket.CODEC,
                 tterrag1112.life_in_the_village.Networking.KingdomPetitionPacket::handle);
+        // Track D3.5B — petition submission (carries full payload bytes).
+        registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.KingdomPetitionSubmitPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.KingdomPetitionSubmitPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.KingdomPetitionSubmitPacket::handle);
 
         registrar.playToClient(
                 OpenKingdomBookPacket.TYPE,

@@ -124,6 +124,8 @@ public final class TickSubsystemRegistry {
         register(new ProvinceDailyTickSystem());
         // Track D3.5A — daily audience-loop sweep (priority 195).
         register(new AudienceLoopTickSystem());
+        // Track D3.5B — daily NPC-ruler petition audit (priority 196).
+        register(new NpcRulerAuditTickSystem());
         register(new OfficeElectionTickSystem());
         // Track D3.2b — daily auto-found of noble houses for eligible NPCs.
         register(new HouseFoundingTickSystem());
