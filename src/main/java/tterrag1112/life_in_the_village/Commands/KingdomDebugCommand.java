@@ -200,6 +200,30 @@ public final class KingdomDebugCommand {
                                                                 StringArgumentType.getString(ctx, "kingdom"),
                                                                 StringArgumentType.getString(ctx, "petitionUuid"),
                                                                 false))))))
+                        // Track D3.5C — top-level /litv ennoblement list/grant.
+                        .then(Commands.literal("ennoblement")
+                                .then(Commands.literal("list")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> ennoblementList(ctx,
+                                                        StringArgumentType.getString(ctx, "kingdom")))))
+                                .then(Commands.literal("grant")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("rank",
+                                                                com.mojang.brigadier.arguments.IntegerArgumentType
+                                                                        .integer(0, 8))
+                                                        .executes(ctx -> ennoblementGrant(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                com.mojang.brigadier.arguments.IntegerArgumentType
+                                                                        .getInteger(ctx, "rank")))))))
+                        // Track D3.5C — top-level /litv newsfeed list <kingdom>.
+                        .then(Commands.literal("newsfeed")
+                                .then(Commands.literal("list")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> newsfeedList(ctx,
+                                                        StringArgumentType.getString(ctx, "kingdom"))))))
                         // Track D3.5A — top-level /litv standing get/set.
                         .then(Commands.literal("standing")
                                 .then(Commands.literal("get")
@@ -324,6 +348,8 @@ public final class KingdomDebugCommand {
         send(ctx, "  petitions: " + pendingPet + " pending / "
                 + k.getPetitions().size() + " total");
         send(ctx, "  player standings tracked: " + k.getAllPlayerStandings().size());
+        send(ctx, "  player nobles: " + k.getAllPlayerNobles().size()
+                + ", newsfeed entries: " + k.getHistory().getNewsfeed().size());
         send(ctx, "── Provinces (D3.3) ──");
         if (k.getProvinces().isEmpty()) {
             send(ctx, "  (none — UNITARY, ≤3 villages, or not yet computed)");
@@ -981,6 +1007,83 @@ public final class KingdomDebugCommand {
                 + " (standing " + (result.standingDelta() >= 0 ? "+" : "")
                 + result.standingDelta() + " → " + result.newStanding() + ")");
         return 1;
+    }
+
+    private static int ennoblementList(CommandContext<CommandSourceStack> ctx, String kingdom) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var nobles = k.getAllPlayerNobles();
+        send(ctx, "── Player nobles of " + kingdom + " (" + nobles.size() + ") ──");
+        nobles.forEach((puid, pn) -> {
+            String land = pn.hasLandGrant()
+                    ? " · manor " + pn.landGrantBlockX().get() + ","
+                            + pn.landGrantBlockZ().get() + " ("
+                            + pn.landGrantSize().get() + ")"
+                    : "";
+            send(ctx, "  " + puid.toString().substring(0, 8)
+                    + " rank " + pn.rankIndex() + land);
+        });
+        return nobles.size();
+    }
+
+    private static int ennoblementGrant(CommandContext<CommandSourceStack> ctx,
+                                        String kingdom, int rank) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        var entity = ctx.getSource().getEntity();
+        if (!(entity instanceof net.minecraft.server.level.ServerPlayer player)) {
+            ctx.getSource().sendFailure(Component.literal("Run as a player."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        // Build a fast-path TITLE_GRANT charter directly so debug
+        // doesn't have to round-trip through audience approval.
+        var params = new tterrag1112.life_in_the_village.Kingdom.Charters
+                .CharterParams.TitleGrant(rank);
+        var grantee = tterrag1112.life_in_the_village.Kingdom.Charters
+                .GranteeRef.ofPlayer(player.getUUID());
+        var charter = k.grantCharter("[debug] TITLE rank " + rank, grantee, params,
+                java.util.Optional.empty(), level.getGameTime());
+        var noble = k.ennoblePlayer(player.getUUID(), rank, charter.id(),
+                level.getGameTime());
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .PlayerEnnobled(k.getId(), player.getUUID(), rank,
+                        charter.id(), level.getGameTime()));
+        tterrag1112.life_in_the_village.Kingdom.Audience.KingdomNewsfeed.append(
+                k, "player.ennobled", "Ennobled player at rank " + rank,
+                level.getGameTime());
+        data.setDirty();
+        send(ctx, "Ennobled " + player.getUUID().toString().substring(0, 8)
+                + " at rank " + rank + " (charter "
+                + charter.id().toString().substring(0, 8) + ")");
+        return rank;
+    }
+
+    private static int newsfeedList(CommandContext<CommandSourceStack> ctx, String kingdom) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var feed = k.getHistory().getNewsfeed();
+        send(ctx, "── Newsfeed of " + kingdom + " (" + feed.size() + ") ──");
+        int n = feed.size();
+        // Most recent last — show newest first.
+        for (int i = n - 1; i >= Math.max(0, n - 20); i--) {
+            var e = feed.get(i);
+            send(ctx, "  [" + e.tag() + "] @ tick " + e.tick() + " — "
+                    + e.summary());
+        }
+        return n;
     }
 
     private static int standingGet(CommandContext<CommandSourceStack> ctx, String kingdom) {

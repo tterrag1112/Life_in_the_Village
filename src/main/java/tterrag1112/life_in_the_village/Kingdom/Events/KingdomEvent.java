@@ -171,5 +171,35 @@ public sealed interface KingdomEvent {
     record StandingChanged(UUID kingdomId, UUID playerUuid,
                            int delta, int newScore, long tick)
             implements KingdomEvent {}
+
+    // ── Track D3.5C — titled-grants events ────────────────────────────────
+
+    /**
+     * A player was ennobled by the kingdom via an approved
+     * TITLE_GRANT charter. {@code rankIndex} is in the kingdom
+     * culture's rank table (0 = lowest noble).
+     */
+    record PlayerEnnobled(UUID kingdomId, UUID playerUuid, int rankIndex,
+                          UUID titleCharterId, long tick) implements KingdomEvent {}
+
+    /**
+     * A LAND_GRANT charter was approved for a player; manor
+     * coordinates attached to the kingdom-side
+     * {@code PlayerNobility} record.
+     */
+    record PlayerLandGranted(UUID kingdomId, UUID playerUuid,
+                             int blockX, int blockZ, int sizeCells,
+                             UUID landCharterId, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * A newsfeed entry — emitted by
+     * {@code KingdomNewsfeed.append} so subscribers can mirror
+     * the kingdom's recent-events log without parsing every
+     * per-type event subscription. {@code summary} is a one-line
+     * human-readable description.
+     */
+    record NewsfeedAppended(UUID kingdomId, String tag, String summary,
+                            long tick) implements KingdomEvent {}
 }
 

@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Kingdom.Audience.Petition;
+import tterrag1112.life_in_the_village.Kingdom.Audience.PlayerNobility;
 import tterrag1112.life_in_the_village.Kingdom.Audience.PlayerStanding;
 import tterrag1112.life_in_the_village.Kingdom.Charters.Charter;
 import tterrag1112.life_in_the_village.Kingdom.Houses.House;
@@ -40,7 +41,8 @@ public class Kingdom {
             List<Treaty> treaties,
             List<IntrigueAttempt> intrigueHistory,
             List<Petition> petitions,
-            List<PlayerStanding> playerStandings
+            List<PlayerStanding> playerStandings,
+            List<PlayerNobility> playerNobles
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -125,7 +127,15 @@ public class Kingdom {
                         PlayerStanding.CODEC.listOf()
                                 .optionalFieldOf("playerStandings", new ArrayList<>())
                                 .forGetter(g -> g.playerStandings() != null
-                                        ? g.playerStandings() : new ArrayList<>())
+                                        ? g.playerStandings() : new ArrayList<>()),
+                        // Track D3.5C — kingdom-side authoritative
+                        // player nobility records. Created when an
+                        // approved TITLE_GRANT charter targets a
+                        // PLAYER grantee; extended by LAND_GRANT.
+                        PlayerNobility.CODEC.listOf()
+                                .optionalFieldOf("playerNobles", new ArrayList<>())
+                                .forGetter(g -> g.playerNobles() != null
+                                        ? g.playerNobles() : new ArrayList<>())
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -198,7 +208,8 @@ public class Kingdom {
                                             new ArrayList<>(k.treaties),
                                             new ArrayList<>(k.intrigueHistory),
                                             new ArrayList<>(k.petitions),
-                                            new ArrayList<>(k.playerStandings.values()))),
+                                            new ArrayList<>(k.playerStandings.values()),
+                                            new ArrayList<>(k.playerNobles.values()))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -292,6 +303,12 @@ public class Kingdom {
         if (governance.playerStandings() != null) {
             for (PlayerStanding ps : governance.playerStandings()) {
                 k.playerStandings.put(ps.playerUuid(), ps);
+            }
+        }
+        // Track D3.5C — restore player nobility records.
+        if (governance.playerNobles() != null) {
+            for (PlayerNobility pn : governance.playerNobles()) {
+                k.playerNobles.put(pn.playerUuid(), pn);
             }
         }
         // Track D3.4b — restore treaties (empty for pre-D3.4b saves);
@@ -419,6 +436,15 @@ public class Kingdom {
      * user-confirmed "kingdom-side authoritative" lock.
      */
     private final java.util.LinkedHashMap<UUID, PlayerStanding> playerStandings
+            = new java.util.LinkedHashMap<>();
+
+    /**
+     * Track D3.5C — kingdom-side authoritative player nobility
+     * records, keyed by player UUID. Created when an approved
+     * TITLE_GRANT charter targets a PLAYER grantee; extended by
+     * subsequent LAND_GRANT approvals.
+     */
+    private final java.util.LinkedHashMap<UUID, PlayerNobility> playerNobles
             = new java.util.LinkedHashMap<>();
     /**
      * Office state for this kingdom. Phase 0 storage only — see
@@ -1518,5 +1544,75 @@ public class Kingdom {
             PlayerStanding next = e.getValue().applyDecay(currentTick);
             if (next != e.getValue()) playerStandings.put(e.getKey(), next);
         }
+    }
+
+    // =========================================================================
+    // Track D3.5C — player nobility (titled grants flow)
+    // =========================================================================
+
+    public Map<UUID, PlayerNobility> getAllPlayerNobles() {
+        return Collections.unmodifiableMap(playerNobles);
+    }
+
+    public Optional<PlayerNobility> getPlayerNobility(UUID playerUuid) {
+        return Optional.ofNullable(playerNobles.get(playerUuid));
+    }
+
+    /** True when {@code playerUuid} holds any rank ≥ 0 in this kingdom. */
+    public boolean isPlayerNoble(UUID playerUuid) {
+        PlayerNobility pn = playerNobles.get(playerUuid);
+        return pn != null && pn.rankIndex() >= 0;
+    }
+
+    /**
+     * Ennobles {@code playerUuid} at {@code rankIndex} per the
+     * approved TITLE_GRANT charter. Existing record (if any) gets
+     * its rank updated; new record otherwise. Returns the resulting
+     * record.
+     */
+    public PlayerNobility ennoblePlayer(UUID playerUuid, int rankIndex,
+                                        UUID titleCharterId, long tick) {
+        PlayerNobility existing = playerNobles.get(playerUuid);
+        PlayerNobility updated = (existing == null)
+                ? PlayerNobility.freshEnnoblement(playerUuid, rankIndex, tick, titleCharterId)
+                : existing.withRank(rankIndex, tick, titleCharterId);
+        playerNobles.put(playerUuid, updated);
+        return updated;
+    }
+
+    /**
+     * Attaches a LAND_GRANT to the player's existing nobility
+     * record. v1: data-only — actual manor structure spawn deferred.
+     * Creates a rank-0 record on-the-fly if the player isn't yet
+     * ennobled (LAND_GRANT alone implies at least lowest noble).
+     */
+    public PlayerNobility grantPlayerLand(UUID playerUuid, int blockX, int blockZ,
+                                          int sizeCells, long tick) {
+        PlayerNobility existing = playerNobles.get(playerUuid);
+        PlayerNobility base = (existing == null)
+                ? PlayerNobility.freshEnnoblement(playerUuid, 0, tick, this.id)
+                : existing;
+        PlayerNobility updated = base.withLandGrant(blockX, blockZ, sizeCells);
+        playerNobles.put(playerUuid, updated);
+        return updated;
+    }
+
+    /**
+     * Strips the player's noble status — invoked on TITLE_GRANT
+     * charter revocation. Land grant survives (separate charter
+     * lifecycle). Returns the post-strip record or empty if the
+     * player never had nobility here.
+     */
+    public Optional<PlayerNobility> stripPlayerNobility(UUID playerUuid) {
+        PlayerNobility existing = playerNobles.get(playerUuid);
+        if (existing == null) return Optional.empty();
+        PlayerNobility stripped = existing.asStripped();
+        if (stripped.hasLandGrant()) {
+            playerNobles.put(playerUuid, stripped);
+        } else {
+            // Nothing left worth keeping.
+            playerNobles.remove(playerUuid);
+        }
+        return Optional.of(stripped);
     }
 }

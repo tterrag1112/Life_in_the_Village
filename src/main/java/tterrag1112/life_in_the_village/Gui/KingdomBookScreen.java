@@ -701,7 +701,7 @@ public class KingdomBookScreen extends Screen {
         }
 
         // Grievance submit form pinned to bottom of page.
-        int submitY = bookY + BOOK_H - 78;
+        int submitY = bookY + BOOK_H - 100;
         grievanceBox = new StyledEditBox(font, px, submitY, pw, 16,
                 Component.literal("Submit a grievance..."));
         grievanceBox.setMaxLength(256);
@@ -715,6 +715,20 @@ public class KingdomBookScreen extends Screen {
                     }
                 })
                 .pos(px, submitY + 22).size(pw, 18).build());
+
+        // Track D3.5C — charter-request quick buttons. Two flagship
+        // flows: request a title (lowest noble rank) and request a
+        // manor land grant at the player's current position.
+        int charterY = submitY + 46;
+        int halfW = (pw - 4) / 2;
+        addRenderableWidget(StyledButton.builder(
+                Component.literal("Request title (rank 1)"),
+                b -> requestTitleGrant(1))
+                .pos(px, charterY).size(halfW, 18).build());
+        addRenderableWidget(StyledButton.builder(
+                Component.literal("Request land grant"),
+                b -> requestLandGrant(4))
+                .pos(px + halfW + 4, charterY).size(halfW, 18).build());
     }
 
     private void drawAudience(GuiGraphics g, int px, int py, int pw, int maxY) {
@@ -781,6 +795,28 @@ public class KingdomBookScreen extends Screen {
                     px, listTop + shown * rowH,
                     BookScreenColors.LIGHT, false);
         }
+
+        // Track D3.5C — show the player's nobility status with this
+        // kingdom (rank + manor). Drawn between the petition list
+        // and the submit forms.
+        if (self != null) {
+            var pn = k.getAllPlayerNobles().get(self);
+            int statusY = bookY + BOOK_H - 116;
+            if (pn != null && pn.rankIndex() >= 0) {
+                String rankLabel = "Rank " + pn.rankIndex();
+                String manor = pn.hasLandGrant()
+                        ? " · manor " + pn.landGrantBlockX().get()
+                                + "," + pn.landGrantBlockZ().get()
+                                + " (" + pn.landGrantSize().get() + " cells)"
+                        : "";
+                g.drawString(font,
+                        "Noble of " + k.getName() + ": " + rankLabel + manor,
+                        px, statusY, BookScreenColors.MID, false);
+            } else {
+                g.drawString(font, "Commoner", px, statusY,
+                        BookScreenColors.LIGHT, false);
+            }
+        }
     }
 
     /** Track D3.5B — fires APPROVE/DENY/WITHDRAW for the named petition. */
@@ -797,6 +833,54 @@ public class KingdomBookScreen extends Screen {
     private void submitGrievance(String text) {
         var payload = new tterrag1112.life_in_the_village.Kingdom.Audience
                 .PetitionPayload.AudienceGrievance(text);
+        sendSubmit(payload);
+    }
+
+    /**
+     * Track D3.5C — submits a CHARTER_REQUEST petition asking the
+     * kingdom to grant a TITLE_GRANT to the local player at the
+     * named rank.
+     */
+    private void requestTitleGrant(int rankIndex) {
+        if (minecraft == null || minecraft.player == null) return;
+        var self = minecraft.player.getUUID();
+        var charterParams = new tterrag1112.life_in_the_village.Kingdom.Charters
+                .CharterParams.TitleGrant(rankIndex);
+        var payload = new tterrag1112.life_in_the_village.Kingdom.Audience
+                .PetitionPayload.CharterRequest(
+                "Title rank " + rankIndex,
+                self,
+                tterrag1112.life_in_the_village.Kingdom.Charters
+                        .GranteeRef.GranteeKind.PLAYER.name(),
+                charterParams);
+        sendSubmit(payload);
+    }
+
+    /**
+     * Track D3.5C — submits a CHARTER_REQUEST petition asking for a
+     * LAND_GRANT at the player's current block position with the
+     * named cell footprint.
+     */
+    private void requestLandGrant(int sizeCells) {
+        if (minecraft == null || minecraft.player == null) return;
+        var self = minecraft.player.getUUID();
+        int bx = (int) minecraft.player.getX();
+        int bz = (int) minecraft.player.getZ();
+        var charterParams = new tterrag1112.life_in_the_village.Kingdom.Charters
+                .CharterParams.LandGrant(bx, bz, sizeCells);
+        var payload = new tterrag1112.life_in_the_village.Kingdom.Audience
+                .PetitionPayload.CharterRequest(
+                "Manor at " + bx + "," + bz,
+                self,
+                tterrag1112.life_in_the_village.Kingdom.Charters
+                        .GranteeRef.GranteeKind.PLAYER.name(),
+                charterParams);
+        sendSubmit(payload);
+    }
+
+    /** Common encode + send path for any petition payload. */
+    private void sendSubmit(
+            tterrag1112.life_in_the_village.Kingdom.Audience.PetitionPayload payload) {
         byte[] bytes = tterrag1112.life_in_the_village.Networking
                 .KingdomPetitionSubmitPacket.encodePayload(payload);
         ClientPacketDistributor.sendToServer(

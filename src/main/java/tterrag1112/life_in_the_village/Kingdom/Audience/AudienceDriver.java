@@ -128,6 +128,8 @@ public final class AudienceDriver {
                 p.kind().name(), "APPROVED", delta, tick));
         KingdomEventBus.fire(new KingdomEvent.StandingChanged(
                 kingdom.getId(), p.playerUuid(), delta, ps.score(), tick));
+        KingdomNewsfeed.append(kingdom, "petition.approved",
+                "Approved " + p.kind().name() + ": " + effectsNote, tick);
 
         LOGGER.info("[AudienceDriver] {} approved {} from {} (+{} standing → {})",
                 kingdom.getName(), p.kind(), p.playerUuid(), delta, ps.score());
@@ -158,6 +160,8 @@ public final class AudienceDriver {
                 p.kind().name(), "DENIED", delta, tick));
         KingdomEventBus.fire(new KingdomEvent.StandingChanged(
                 kingdom.getId(), p.playerUuid(), delta, ps.score(), tick));
+        KingdomNewsfeed.append(kingdom, "petition.denied",
+                "Denied " + p.kind().name(), tick);
 
         LOGGER.info("[AudienceDriver] {} denied {} from {} ({} standing → {})",
                 kingdom.getName(), p.kind(), p.playerUuid(), delta, ps.score());
@@ -220,6 +224,37 @@ public final class AudienceDriver {
                 KingdomEventBus.fire(new KingdomEvent.CharterGranted(
                         kingdom.getId(), charter.id(), cr.params().type().name(),
                         cr.granteeId(), kind.name(), tick));
+
+                // Track D3.5C — titled-grants flow. PLAYER grantees
+                // with TITLE_GRANT or LAND_GRANT params get a
+                // PlayerNobility record on the granting kingdom.
+                if (kind == GranteeRef.GranteeKind.PLAYER) {
+                    UUID playerUuid = cr.granteeId();
+                    switch (cr.params()) {
+                        case tterrag1112.life_in_the_village.Kingdom.Charters
+                                .CharterParams.TitleGrant tg -> {
+                            kingdom.ennoblePlayer(playerUuid, tg.rankIndex(),
+                                    charter.id(), tick);
+                            KingdomEventBus.fire(new KingdomEvent.PlayerEnnobled(
+                                    kingdom.getId(), playerUuid, tg.rankIndex(),
+                                    charter.id(), tick));
+                        }
+                        case tterrag1112.life_in_the_village.Kingdom.Charters
+                                .CharterParams.LandGrant lg -> {
+                            kingdom.grantPlayerLand(playerUuid, lg.blockX(),
+                                    lg.blockZ(), lg.sizeCells(), tick);
+                            KingdomEventBus.fire(new KingdomEvent.PlayerLandGranted(
+                                    kingdom.getId(), playerUuid, lg.blockX(),
+                                    lg.blockZ(), lg.sizeCells(), charter.id(), tick));
+                        }
+                        default -> {
+                            // Other charter types to PLAYER grantees
+                            // (TOLL_RIGHTS / TAX_EXEMPTION /
+                            // MARKET_MONOPOLY / ORDINATION_RIGHTS) get
+                            // the charter record but no nobility shim.
+                        }
+                    }
+                }
                 return "charter " + cr.params().type().name() + " granted";
             }
             case PetitionPayload.AudienceGrievance ag -> {

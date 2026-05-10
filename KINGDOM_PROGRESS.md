@@ -933,6 +933,165 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-10 — Track D3.5C landed (titled grants flow + newsfeed surface + charter request GUI)
+
+Third quarter of the user-confirmed Phase 5 four-way split. Five
+deliverables — all pinned by the Slice B out-of-scope list. The
+centerpiece is the titled-grants flow: a player can now actually
+become a noble of a kingdom via a CHARTER_REQUEST petition that
+the ruler approves through the audience screen.
+
+#### User-confirmed locks honoured
+
+- **Standing kingdom-side authoritative** (Slice A) extended to
+  ennoblement: `Kingdom.playerNobles` is the single source per
+  granting kingdom. A player ennobled by kingdom A is NOT
+  automatically noble in kingdom B.
+
+#### CC's calls (deferred to user if surprising)
+
+- **PLAYER GranteeKind value.** Cleaner than overloading
+  NOBLE_NPC. Five existing values + PLAYER = six. Backwards-
+  compatible — old saves never serialized PLAYER, so the codec
+  enum dispatch doesn't see it on legacy reads.
+- **Charter request GUI = two flagship buttons.** "Request title
+  (rank 1)" + "Request land grant" cover the primary
+  player-facing flow; the full builder (with kind selector,
+  per-kind input forms for TOLL_RIGHTS / TAX_EXEMPTION /
+  MARKET_MONOPOLY / ORDINATION_RIGHTS) is deferred to Slice D
+  polish since these charter types are niche for player play.
+- **Newsfeed lives on KingdomHistoryData.** That class is
+  already routed through `KingdomGovernanceData.history` and
+  has its own codec. Adding a 4th field to KHD's record codec
+  keeps KGD at exactly 16/16 — the DFU `RecordCodecBuilder`
+  group cap. Newsfeed != events: newsfeed is transient
+  one-line tags ("petition.approved", "treaty.broken"); events
+  is curated narrative.
+- **Newsfeed buffer = 64 entries.** ~30 in-game days at typical
+  1-2 events/day cadence. FIFO trim on append.
+- **LAND_GRANT data shape only.** v1 stores manor coords +
+  size on `PlayerNobility`; doesn't actually place manor
+  blocks. Phase 6 / castle-builder integration lands the
+  structure spawn.
+
+#### What this slice ships
+
+- **`Kingdom/Charters/GranteeRef`** — `PLAYER` enum value +
+  `ofPlayer(UUID)` factory. Adds a sixth grantee kind alongside
+  NOBLE_NPC / HOUSE / GUILD / VILLAGE / RELIGIOUS_ORDER.
+- **`Kingdom/Audience/PlayerNobility`** — record (playerUuid,
+  rankIndex, ennobledTick, dynastyHouseId, landGrantBlockX/Z/size,
+  titleCharterId). All optional fields except playerUuid +
+  rankIndex + ennobledTick. Codec uses `optionalFieldOf` with
+  defaults so partially-noble records (rank but no land) and
+  vice versa serialize cleanly. `freshEnnoblement` factory;
+  `withRank` / `withLandGrant` / `withoutLandGrant` /
+  `asStripped` copy-helpers; `hasLandGrant()` predicate.
+- **`Kingdom.playerNobles`** — LinkedHashMap on
+  `KingdomGovernanceData` (16/16; cap reached). API:
+  `getAllPlayerNobles` / `getPlayerNobility` / `isPlayerNoble` /
+  `ennoblePlayer(playerUuid, rankIndex, charterId, tick)` /
+  `grantPlayerLand(playerUuid, blockX, blockZ, sizeCells, tick)` /
+  `stripPlayerNobility(playerUuid)`.
+- **`AudienceDriver.applyApproval`** — extended for
+  `PetitionPayload.CharterRequest` with
+  `kind == GranteeKind.PLAYER`. TITLE_GRANT params →
+  `ennoblePlayer` + `KingdomEvent.PlayerEnnobled`; LAND_GRANT
+  params → `grantPlayerLand` + `KingdomEvent.PlayerLandGranted`.
+  Other charter types granted but no nobility shim.
+- **`Kingdom/Audience/NewsfeedEntry`** — record (tag, summary,
+  tick) with codec; `BUFFER_CAPACITY = 64`.
+  **`Kingdom/Audience/KingdomNewsfeed.append`** — helper +
+  fires `KingdomEvent.NewsfeedAppended`. Wired into
+  AudienceDriver approve/deny paths.
+- **`KingdomHistoryData`** — extended with a 4th codec field
+  (`newsfeed`) + `getNewsfeed()` / `appendNewsfeed(entry)` API.
+- **`KingdomBookScreen` AUDIENCE section** — extended with:
+  - "Request title (rank 1)" button — sends CHARTER_REQUEST
+    with TITLE_GRANT params, granteeKind PLAYER, rank 1.
+  - "Request land grant" button — sends CHARTER_REQUEST with
+    LAND_GRANT params at player's current block position,
+    default 4-cell footprint.
+  - Player nobility status line ("Noble of [Kingdom]: Rank N ·
+    manor X,Z (N cells)" or "Commoner") between the petition
+    list and submit forms.
+- **Three new `KingdomEvent` subtypes:** `PlayerEnnobled`
+  (kingdomId, playerUuid, rankIndex, titleCharterId, tick) /
+  `PlayerLandGranted` (kingdomId, playerUuid, blockX, blockZ,
+  sizeCells, landCharterId, tick) / `NewsfeedAppended`
+  (kingdomId, tag, summary, tick).
+- **Debug commands:**
+  - `/litv ennoblement list <kingdom>` — lists all player
+    nobles with rank + manor.
+  - `/litv ennoblement grant <kingdom> <rank>` — fast-path
+    grants TITLE_GRANT charter + `ennoblePlayer` for the
+    calling player, bypassing audience approval.
+  - `/litv newsfeed list <kingdom>` — last 20 entries
+    newest-first.
+- `/litv kingdom debug describe` extended with player-nobles
+  count + newsfeed-entries count.
+
+#### Decisions worth recording
+
+- **KGD is now at the codec cap (16/16).** DFU's
+  RecordCodecBuilder maxes at 16 group elements. Slice D needs
+  to bundle to add new fields — natural targets: bundle
+  petitions+playerStandings+playerNobles into a single
+  AudienceData sub-record, freeing 2 slots.
+- **Player ennoblement uses the same charter system as NPCs.**
+  TITLE_GRANT charter with PLAYER grantee writes to
+  `Kingdom.playerNobles`; TITLE_GRANT with NOBLE_NPC grantee
+  writes to the NPC's existing `NobilityComponent` (D3.2). One
+  charter type, two grantee kinds, two storage paths — but the
+  charter records are uniform.
+- **LAND_GRANT alone implies rank 0.** Per
+  `Kingdom.grantPlayerLand`, if a player gets a LAND_GRANT
+  without ever having a TITLE_GRANT, they get auto-ennobled at
+  rank 0 (lowest noble). Lands a manor for someone "without"
+  needs the holder to be at least gentry.
+- **Charter request GUI is minimal-but-real.** Two buttons that
+  generate proper PetitionPayload.CharterRequest payloads with
+  full CharterParams. Not a UI placeholder — the wire format
+  is production-grade. Future Slice D builder can call the
+  same helper methods.
+- **Submitter UUID in PetitionPayload.CharterRequest doesn't
+  have to match the petitioner.** The granteeId is whoever the
+  charter targets; the petitioner is the player who SUBMITTED
+  the petition. v1: GUI buttons always set granteeId =
+  petitioner UUID (request-for-self), but the data shape
+  supports request-on-behalf-of-other for Phase 6+ political
+  flows.
+
+#### Out-of-scope, flagged for Slice D / later
+
+- **Full charter-builder GUI** — Slice D. Per-kind input forms
+  for TOLL_RIGHTS / TAX_EXEMPTION / MARKET_MONOPOLY /
+  ORDINATION_RIGHTS via a kind cycle button + parameter fields.
+- **LAND_GRANT manor structure spawn** — Phase 6+ (castle-
+  builder integration). v1 only stores coords.
+- **In-screen newsfeed panel** — Slice D. Buffer flows to
+  client; debug command surfaces it; the GUI panel rendering
+  it as a side-panel under the audience-petition list lands
+  next slice.
+- **TITLE_GRANT charter revocation auto-strips nobility** —
+  polish target. Currently `Kingdom.revokeCharter` just marks
+  the charter inactive; the player's `PlayerNobility` record
+  needs explicit `stripPlayerNobility`. The revocation hook
+  is one-liner away.
+- **Per-petitioner submit-rate limit** — Slice D polish.
+  Currently no per-player throttle on `submit`.
+- **Kingdom newsfeed event subscriptions for non-audience
+  events** — Slice D / Track E. Slice C wires AudienceDriver's
+  approve/deny only; charter grants / treaty changes / intrigue
+  still need to call `KingdomNewsfeed.append` from their fire
+  sites.
+- **PLAYER grantee in non-titled charters** — TOLL_RIGHTS /
+  TAX_EXEMPTION / MARKET_MONOPOLY to player UUIDs work at the
+  data level (PLAYER kind accepted) but no code path consumes
+  them as gameplay rules. Future polish.
+
+---
+
 ### 2026-05-10 — Track D3.5B landed (audience screen + NPC ruler AI + heir-traits + stale-treaty GC)
 
 Second quarter of the user-confirmed Phase 5 four-way split. Five

@@ -34,7 +34,15 @@ public record GranteeRef(GranteeKind kind, UUID id) {
          * v1 has no religious-order data structure; ORDINATION_RIGHTS
          * charters with this kind hold the id placeholder for Phase 6.
          */
-        RELIGIOUS_ORDER;
+        RELIGIOUS_ORDER,
+        /**
+         * Track D3.5C — a player, identified by the player's UUID.
+         * Drives the titled-grants flow: an approved TITLE_GRANT
+         * charter with this kind ennobles the player on the
+         * granting kingdom; LAND_GRANT carries manor coords into
+         * the player's per-kingdom nobility record.
+         */
+        PLAYER;
     }
 
     public static final Codec<GranteeRef> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -51,5 +59,8 @@ public record GranteeRef(GranteeKind kind, UUID id) {
     public static GranteeRef ofVillage(UUID villageId) { return new GranteeRef(GranteeKind.VILLAGE, villageId); }
     public static GranteeRef ofReligiousOrder(UUID orderId) {
         return new GranteeRef(GranteeKind.RELIGIOUS_ORDER, orderId);
+    }
+    public static GranteeRef ofPlayer(UUID playerUuid) {
+        return new GranteeRef(GranteeKind.PLAYER, playerUuid);
     }
 }

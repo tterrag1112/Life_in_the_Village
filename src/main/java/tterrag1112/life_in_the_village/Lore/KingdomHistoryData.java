@@ -305,17 +305,29 @@ public class KingdomHistoryData {
                                     new KingdomDiplomacyData(
                                             new ArrayList<>(),
                                             0, 0, 0, "", ""))
-                            .forGetter(d -> d.diplomacy)
+                            .forGetter(d -> d.diplomacy),
+                    // Track D3.5C — bounded rolling newsfeed buffer.
+                    // Distinct from {@code events} (long-form
+                    // narrative), this is a transient one-line log
+                    // used by the AUDIENCE GUI. Capped at
+                    // {@code NewsfeedEntry.BUFFER_CAPACITY}; FIFO
+                    // trim on append.
+                    tterrag1112.life_in_the_village.Kingdom.Audience.NewsfeedEntry.CODEC
+                            .listOf()
+                            .optionalFieldOf("newsfeed", new ArrayList<>())
+                            .forGetter(d -> d.newsfeed)
             ).apply(i, KingdomHistoryData::fromCodec));
 
     private static KingdomHistoryData fromCodec(
             Optional<KingdomOriginData> origin,
             KingdomEventsData events,
-            KingdomDiplomacyData diplomacy) {
+            KingdomDiplomacyData diplomacy,
+            java.util.List<tterrag1112.life_in_the_village.Kingdom.Audience.NewsfeedEntry> newsfeed) {
         KingdomHistoryData data = new KingdomHistoryData();
         data.origin    = origin.orElse(null);
         data.events    = events;
         data.diplomacy = diplomacy;
+        if (newsfeed != null) data.newsfeed.addAll(newsfeed);
         return data;
     }
 
@@ -326,6 +338,9 @@ public class KingdomHistoryData {
     private KingdomDiplomacyData diplomacy =
             new KingdomDiplomacyData(
                     new ArrayList<>(), 0, 0, 0, "", "");
+    /** Track D3.5C — rolling newsfeed buffer. */
+    private final java.util.List<tterrag1112.life_in_the_village.Kingdom.Audience.NewsfeedEntry>
+            newsfeed = new ArrayList<>();
 
     // -------------------------------------------------------------------------
     // API
@@ -403,5 +418,26 @@ public class KingdomHistoryData {
                 new ArrayList<>(), 0, 0, 0);
         this.diplomacy = new KingdomDiplomacyData(
                 new ArrayList<>(), 0, 0, 0, "", "");
+    }
+
+    // ── Track D3.5C — newsfeed access ──────────────────────────────────────
+
+    public java.util.List<tterrag1112.life_in_the_village.Kingdom.Audience.NewsfeedEntry>
+            getNewsfeed() {
+        return java.util.Collections.unmodifiableList(newsfeed);
+    }
+
+    /**
+     * Appends a newsfeed entry; FIFO trim to
+     * {@link tterrag1112.life_in_the_village.Kingdom.Audience.NewsfeedEntry#BUFFER_CAPACITY}.
+     */
+    public void appendNewsfeed(
+            tterrag1112.life_in_the_village.Kingdom.Audience.NewsfeedEntry entry) {
+        if (entry == null) return;
+        newsfeed.add(entry);
+        while (newsfeed.size()
+                > tterrag1112.life_in_the_village.Kingdom.Audience.NewsfeedEntry.BUFFER_CAPACITY) {
+            newsfeed.remove(0);
+        }
     }
 }
