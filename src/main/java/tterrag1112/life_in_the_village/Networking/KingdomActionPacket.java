@@ -158,7 +158,7 @@ public record KingdomActionPacket(
                             case WAR -> tterrag1112.life_in_the_village
                                     .Kingdom.Capabilities
                                     .KingdomCapability.DECLARE_WAR;
-                            case ALLIANCE, TRADE_PACT -> tterrag1112
+                            case ALLIANCE, TRADE -> tterrag1112
                                     .life_in_the_village.Kingdom.Capabilities
                                     .KingdomCapability.DRAFT_TREATY;
                             default -> null;

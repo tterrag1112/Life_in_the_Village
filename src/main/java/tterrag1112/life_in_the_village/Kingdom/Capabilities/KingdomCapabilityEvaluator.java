@@ -68,7 +68,7 @@ public final class KingdomCapabilityEvaluator {
     public static Result evaluate(ServerLevel level, VillageSavedData data,
                                   Kingdom kingdom, KingdomCapability capability) {
         if (kingdom == null || capability == null) {
-            return Result.deny(capability, null, "no kingdom or capability");
+            return Result.deny(capability, "no kingdom or capability");
         }
         OfficeState offices = kingdom.getOffices();
         List<String> satisfiers = SATISFIERS.getOrDefault(capability, List.of());

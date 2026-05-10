@@ -136,9 +136,10 @@ public class ContinentMapScreen extends Screen {
                 data.seedKingdomId, data.seedKingdomName,
                 data.minCellX, data.minCellZ, data.maxCellX, data.maxCellZ,
                 data.terrainGrid,
-                Set.of(),           // focus cells unused — territory drawn below
-                List.of(),          // foreign kingdoms unused for same reason
-                data.villages, data.landRoutes, data.seaRoutes);
+                java.util.Collections.<Long>emptySet(),                              // focus cells
+                java.util.Collections.<KingdomMapData.ForeignKingdom>emptyList(),    // foreign
+                data.villages, data.landRoutes, data.seaRoutes,
+                java.util.Collections.<KingdomMapData.ProvinceMarker>emptyList());   // D3.3 provinces
 
         new TerrainLayer().draw(g, adapter, projection, layerState, mouseX, mouseY);
         ContinentTerritoryLayer.draw(g, data, projection);

@@ -389,7 +389,14 @@ public class Village {
             // spawn or any caller that hands V2 an explicit tier). When
             // present, getSizeTier returns this instead of recomputing
             // from building count. Legacy saves load with empty.
-            Optional<VillageSizeTier> v2TierOverride
+            Optional<VillageSizeTier> v2TierOverride,
+            // Track D3.3b — folded here to keep top-level Village codec at
+            // the 16-arg RecordCodecBuilder.group() ceiling. D1 added
+            // top-level "kingdomId"; subsequent kingdom work pushed
+            // arity over. KingdomMembershipMigration re-stamps via the
+            // legacy villageIds-on-Kingdom path when this is empty, so
+            // saves predating this fold migrate cleanly.
+            Optional<UUID> kingdomId
     ) {
         static final Codec<VillagePlazaMeta> CODEC = RecordCodecBuilder.create(i -> i.group(
                 tterrag1112.life_in_the_village.Village.Decoration
@@ -408,12 +415,15 @@ public class Village {
                         .forGetter(VillagePlazaMeta::v2Inclination),
                 Codec.STRING.xmap(VillageSizeTier::valueOf, Enum::name)
                         .optionalFieldOf("v2TierOverride")
-                        .forGetter(VillagePlazaMeta::v2TierOverride)
+                        .forGetter(VillagePlazaMeta::v2TierOverride),
+                Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                        .optionalFieldOf("kingdomId")
+                        .forGetter(VillagePlazaMeta::kingdomId)
         ).apply(i, VillagePlazaMeta::new));
 
         static VillagePlazaMeta empty() {
             return new VillagePlazaMeta(new ArrayList<>(), Optional.empty(),
-                    Optional.empty(), Optional.empty());
+                    Optional.empty(), Optional.empty(), Optional.empty());
         }
 
         static VillagePlazaMeta from(Village v) {
@@ -421,7 +431,8 @@ public class Village {
                     new ArrayList<>(v.plazaRegions),
                     Optional.ofNullable(v.villageCenterMarker),
                     Optional.ofNullable(v.inclination),
-                    Optional.ofNullable(v.tierOverride));
+                    Optional.ofNullable(v.tierOverride),
+                    Optional.ofNullable(v.kingdomId));
         }
 
         void applyTo(Village v) {
@@ -432,6 +443,7 @@ public class Village {
             v.villageCenterMarker = villageCenterMarker.orElse(null);
             v2Inclination.ifPresent(i -> v.inclination = i);
             v2TierOverride.ifPresent(t -> v.tierOverride = t);
+            kingdomId.ifPresent(id -> v.kingdomId = id);
         }
     }
 
@@ -529,22 +541,18 @@ public class Village {
                                     : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy()),
                     // Phase 16 doc 04 — plaza polygon data. Empty for
                     // pre-prompt-16 saves; populated by prompt 17's
-                    // polygon generator.
+                    // polygon generator. Track D3.3b also folded
+                    // kingdomId into this sub-record to keep top-level
+                    // arity at 16; see VillagePlazaMeta.
                     VillagePlazaMeta.CODEC
                             .optionalFieldOf("plazaMeta", VillagePlazaMeta.empty())
-                            .forGetter(VillagePlazaMeta::from),
-                    // Track D1 — explicit kingdom membership. Empty for
-                    // pre-Phase-D1 saves; back-filled by
-                    // KingdomMembershipMigration on first load.
-                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
-                            .optionalFieldOf("kingdomId")
-                            .forGetter(v -> Optional.ofNullable(v.kingdomId))
+                            .forGetter(VillagePlazaMeta::from)
             ).apply(instance, (name, id, buildingIds, guardPosts,
                                reputations, armor, lastNeedsUpdate,
                                treasuryBronze, villageLeaderId,
                                layoutMeta, villageType, dockNodeId,
                                useGraphConnector, offices, policy,
-                               plazaMeta, kingdomId) -> {
+                               plazaMeta) -> {
                 Village v = new Village(name, id,
                         new ArrayList<>(buildingIds),
                         new ArrayList<>(guardPosts),
@@ -574,7 +582,11 @@ public class Village {
                 }
                 v.policy = policy != null ? policy : new tterrag1112.life_in_the_village.Npc.Laws.VillagePolicy();
                 if (plazaMeta != null) plazaMeta.applyTo(v);
-                kingdomId.ifPresent(v::setKingdomId);
+                // Track D3.3b — kingdomId now lives inside plazaMeta;
+                // VillagePlazaMeta.applyTo sets it during layoutMeta /
+                // plazaMeta.applyTo above. KingdomMembershipMigration
+                // re-stamps for any village whose kingdomId is still
+                // missing on first load (pre-fold saves).
                 return v;
             })
     );

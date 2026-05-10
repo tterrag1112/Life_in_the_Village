@@ -133,7 +133,7 @@ public final class KingdomOfficeBootstrap {
         int filled = 1; // king already counted
         for (String officeId : kd.requiredOffices()) {
             if (officeId.equals(OfficeRegistry.KINGDOM_KING)) continue;
-            if (!state.isVacant(officeId)) continue;
+            if (!kingdom.getOffices().isVacant(officeId)) continue;
             OfficeDefinition def = OfficeRegistry.get(officeId);
             if (def == null) continue;
 

@@ -59,6 +59,14 @@ public final class KingdomMembershipMigration {
 
         boolean needMembership = !vdata.isKingdomMembershipMigrated();
         boolean needCapitals   = !vdata.isKingdomCapitalMigrated();
+        // Track D3.3b — when kingdomId moved into VillagePlazaMeta,
+        // post-D1 saves whose top-level kingdomId field was silently
+        // dropped on load need a one-shot re-stamp. Detect by
+        // scanning for any kingdom-listed village whose reverse
+        // pointer is still empty.
+        if (!needMembership && !needCapitals && hasOrphanedMembership(vdata)) {
+            needMembership = true;
+        }
         if (!needMembership && !needCapitals) return;
 
         int kingdoms = 0;
@@ -127,5 +135,22 @@ public final class KingdomMembershipMigration {
                 "[KingdomMembershipMigration] complete — kingdoms={} stamped={} "
                         + "collisions={} heraldryBackFilled={} capitalsStamped={}",
                 kingdoms, stamped, collisions, heraldryBackFilled, capitalsStamped);
+    }
+
+    /**
+     * Track D3.3b — quick scan: any kingdom whose villageIds entry
+     * has an empty {@code kingdomId} reverse pointer triggers a
+     * one-shot re-stamp. Catches saves produced before the codec
+     * fold dropped the top-level kingdomId field.
+     */
+    private static boolean hasOrphanedMembership(
+            tterrag1112.life_in_the_village.Networking.VillageSavedData vdata) {
+        for (Kingdom k : vdata.getAllKingdoms()) {
+            for (java.util.UUID vid : k.getVillageIds()) {
+                Village v = vdata.getVillageById(vid).orElse(null);
+                if (v != null && v.getKingdomId().isEmpty()) return true;
+            }
+        }
+        return false;
     }
 }

@@ -122,9 +122,14 @@ public class BoatCaravanSavedData extends SavedData {
         // Sea route trade efficiency — simpler than land for now.
         // A future enhancement would factor in weather, piracy,
         // sea route quality etc.
-        double efficiency = villageData.getSeaRouteById(caravan.getSeaRouteId())
-                .map(r -> r.getQuality() / 100.0)
-                .orElse(0.5);
+        // Track C3.3 — sea routes migrated to SEA-tier RoadEdges in
+        // WorldRoadGraph; read maintenance as the quality scalar.
+        var roadGraph = tterrag1112.life_in_the_village.Networking
+                .WorldRoadSavedData.get(level).getGraph();
+        var edge = roadGraph.getEdge(caravan.getEdgeId());
+        double efficiency = edge != null
+                ? edge.getMaintenance() / 100.0
+                : 0.5;
 
         CaravanGoodsSelector.deliverGoods(
                 level,
