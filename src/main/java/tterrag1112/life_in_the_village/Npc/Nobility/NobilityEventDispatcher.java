@@ -203,6 +203,22 @@ public final class NobilityEventDispatcher implements EventDispatcher {
                 0, -5,
                 level.getGameTime(),
                 ONE_DAY_TICKS));
+        // Track D3.6.6 — increment the kingdom's succession counter
+        // (drives age-cycle transitions). Counted only when an heir
+        // was actually seated; extinction-no-op skips this.
+        if (heir.isPresent()) kingdom.getHistory().recordSuccession();
+        // Track D3.6.5 — clear any prior reign's sanctification +
+        // attempt fresh sanctification for the new heir. No-op when
+        // no official religion is declared.
+        if (heir.isPresent()) {
+            kingdom.removeModifier(
+                    tterrag1112.life_in_the_village.Kingdom.Religion
+                            .ReligionAuthorityEngine.SANCTIFIED_MODIFIER_ID);
+            tterrag1112.life_in_the_village.Kingdom.Religion
+                    .ReligionAuthorityEngine.attemptSanctification(
+                            level, data, kingdom, heir.get().getUUID(),
+                            level.getGameTime());
+        }
 
         // Track D3.3 — event-driven province polygon invalidation
         // (the C-hybrid timing: weekly recompute + manor-event

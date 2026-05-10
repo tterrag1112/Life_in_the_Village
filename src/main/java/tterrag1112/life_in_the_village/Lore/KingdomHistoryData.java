@@ -163,7 +163,8 @@ public class KingdomHistoryData {
             List<KingdomHistoryEvent> events,
             int warCount,
             int allianceCount,
-            int villagesEverOwned
+            int villagesEverOwned,
+            int successionCount
     ) {
         public static final Codec<KingdomEventsData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -178,7 +179,11 @@ public class KingdomHistoryData {
                                 .forGetter(KingdomEventsData::allianceCount),
                         Codec.INT.optionalFieldOf(
                                         "villagesEverOwned", 0)
-                                .forGetter(KingdomEventsData::villagesEverOwned)
+                                .forGetter(KingdomEventsData::villagesEverOwned),
+                        // Track D3.6.6 — successful succession count;
+                        // feeds age-cycle transition rules.
+                        Codec.INT.optionalFieldOf("successionCount", 0)
+                                .forGetter(KingdomEventsData::successionCount)
                 ).apply(i, KingdomEventsData::new));
 
         public KingdomEventsData withEvent(
@@ -186,16 +191,15 @@ public class KingdomHistoryData {
             List<KingdomHistoryEvent> updated =
                     new ArrayList<>(events);
             updated.add(event);
-            // Keep last 100 events
-            /*if (updated.size() > 100) {
-                updated = updated.subList(
-                        updated.size() - 100, updated.size());
-            }
-
-             */
             return new KingdomEventsData(updated,
                     warCount, allianceCount,
-                    villagesEverOwned);
+                    villagesEverOwned, successionCount);
+        }
+
+        /** Track D3.6.6 — increments the succession counter. */
+        public KingdomEventsData withSuccession() {
+            return new KingdomEventsData(events, warCount, allianceCount,
+                    villagesEverOwned, successionCount + 1);
         }
     }
 
@@ -298,7 +302,7 @@ public class KingdomHistoryData {
                             .optionalFieldOf("events",
                                     new KingdomEventsData(
                                             new ArrayList<>(),
-                                            0, 0, 0))
+                                            0, 0, 0, 0))
                             .forGetter(d -> d.events),
                     KingdomDiplomacyData.CODEC
                             .optionalFieldOf("diplomacy",
@@ -334,7 +338,7 @@ public class KingdomHistoryData {
     private KingdomOriginData origin       = null;
     private KingdomEventsData events       =
             new KingdomEventsData(
-                    new ArrayList<>(), 0, 0, 0);
+                    new ArrayList<>(), 0, 0, 0, 0);
     private KingdomDiplomacyData diplomacy =
             new KingdomDiplomacyData(
                     new ArrayList<>(), 0, 0, 0, "", "");
@@ -415,9 +419,19 @@ public class KingdomHistoryData {
     public KingdomHistoryData() {
         this.origin    = null;
         this.events    = new KingdomEventsData(
-                new ArrayList<>(), 0, 0, 0);
+                new ArrayList<>(), 0, 0, 0, 0);
         this.diplomacy = new KingdomDiplomacyData(
                 new ArrayList<>(), 0, 0, 0, "", "");
+    }
+
+    /** Track D3.6.6 — increments the kingdom's succession counter. */
+    public void recordSuccession() {
+        this.events = events.withSuccession();
+    }
+
+    /** Track D3.6.6 — read-only view of the succession counter. */
+    public int getSuccessionCount() {
+        return events.successionCount();
     }
 
     // ── Track D3.5C — newsfeed access ──────────────────────────────────────

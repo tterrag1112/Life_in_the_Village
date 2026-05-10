@@ -52,5 +52,13 @@ public enum KingdomCapability {
     /** Investigate a criminal case at kingdom tier. Requires King OR Magistrate. */
     INVESTIGATE_CRIME,
     /** Issue a kingdom currency. Requires King OR Treasurer. */
-    ISSUE_CURRENCY;
+    ISSUE_CURRENCY,
+    /**
+     * Track D3.6.5 — launch a conversion campaign on a kingdom
+     * province. Per the prompt: "Diplomat + Treasurer + ruler +
+     * treasury cost". Per the existing OR-semantics the evaluator
+     * accepts King OR Diplomat OR Treasurer; treasury cost is
+     * enforced at the driver site.
+     */
+    CONVERT_PROVINCE;
 }

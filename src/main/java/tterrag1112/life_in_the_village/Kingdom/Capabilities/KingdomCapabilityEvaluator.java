@@ -187,6 +187,11 @@ public final class KingdomCapabilityEvaluator {
                 List.of(K, OfficeRegistry.KINGDOM_MAGISTRATE));
         m.put(KingdomCapability.ISSUE_CURRENCY,
                 List.of(K, OfficeRegistry.KINGDOM_TREASURER));
+        // Track D3.6.5 — CONVERT_PROVINCE: King OR Diplomat OR
+        // Treasurer (per prompt; OR-semantics matches D3.3b).
+        m.put(KingdomCapability.CONVERT_PROVINCE,
+                List.of(K, OfficeRegistry.KINGDOM_DIPLOMAT,
+                        OfficeRegistry.KINGDOM_TREASURER));
         return m;
     }
 

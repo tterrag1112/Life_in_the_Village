@@ -99,6 +99,17 @@ public final class WarEngine {
         if (!capResult.allowed()) {
             return DeclareResult.fail("DECLARE_WAR denied: " + capResult.reason());
         }
+        // Track D3.6.5 — HOLY_WAR religious-justification gate.
+        // The attacker must have an official religion declared
+        // (otherwise there's no doctrinal basis).
+        if (cb == CasusBelli.HOLY_WAR) {
+            var officialOpt = tterrag1112.life_in_the_village.Kingdom.Religion
+                    .ReligionAuthorityEngine.officialReligion(attacker);
+            if (officialOpt.isEmpty()) {
+                return DeclareResult.fail(
+                        "HOLY_WAR requires an official religion declared by the attacker");
+            }
+        }
         // Validate goals against casus belli.
         for (WarGoal g : goals) {
             if (g.kind() == WarGoal.Kind.TERRITORY && !cb.allowsTerritory()) {

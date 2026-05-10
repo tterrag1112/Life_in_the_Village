@@ -136,6 +136,12 @@ public final class TickSubsystemRegistry {
         register(new VoluntaryUnionTickSystem());
         // Track D3.6.4 — daily war engine tick (priority 201).
         register(new WarTickSystem());
+        // Track D3.6.5 — daily religion-authority engine (priority 202).
+        register(new ReligionAuthorityTickSystem());
+        // Track D3.6.5 — daily conversion-campaign sweep (priority 203).
+        register(new ConvertProvinceTickSystem());
+        // Track D3.6.6 — daily age-cycle evaluator (priority 204).
+        register(new AgeCycleTickSystem());
         register(new OfficeElectionTickSystem());
         // Track D3.2b — daily auto-found of noble houses for eligible NPCs.
         register(new HouseFoundingTickSystem());

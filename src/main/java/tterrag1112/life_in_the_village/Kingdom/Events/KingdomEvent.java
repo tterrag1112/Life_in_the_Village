@@ -290,5 +290,46 @@ public sealed interface KingdomEvent {
     record PeaceTreatyOffered(UUID warId, UUID offeringKingdomId,
                               UUID receivingKingdomId, UUID petitionId, long tick)
             implements KingdomEvent {}
+
+    // ── Track D3.6.5 — religion-as-authority events ─────────────────────
+
+    /** New ruler sanctified by the senior priest. */
+    record Sanctified(UUID kingdomId, UUID rulerId, long tick) implements KingdomEvent {}
+
+    /** Senior priest refused to sanctify the new ruler. */
+    record SanctificationRefused(UUID kingdomId, UUID rulerId, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * Religious unrest crossed threshold — separate track from
+     * standard rebellion. {@code reason} = one-line trigger
+     * ("sanctification refused" / "official_religion changed
+     * against priesthood" / "ordination_rights revoked").
+     */
+    record ReligiousRebellion(UUID kingdomId, String reason, long tick)
+            implements KingdomEvent {}
+
+    /** A conversion campaign began on a province. */
+    record ConversionCampaignStarted(UUID kingdomId, UUID provinceId, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * Kingdom declared an official religion via the
+     * {@code official_religion} EnumLaw enacting.
+     * {@code religionId} = the law's enum choice (e.g.
+     * "state_religion" / "toleration").
+     */
+    record OfficialReligionDeclared(UUID kingdomId, String religionId, long tick)
+            implements KingdomEvent {}
+
+    // ── Track D3.6.6 — age-cycle events ──────────────────────────────────
+
+    /**
+     * Kingdom transitioned between age states. {@code fromState} =
+     * "FRESH" for first-time stamping (no prior state), or one of
+     * FOUNDING_ERA / MATURE / DECADENT.
+     */
+    record AgeCycleTransition(UUID kingdomId, String fromState,
+                              String toState, long tick) implements KingdomEvent {}
 }
 

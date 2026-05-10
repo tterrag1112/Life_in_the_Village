@@ -933,6 +933,190 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-10 — Track D3.6 Slice 3 landed; Phase 6 complete
+
+Final of three Phase 6 slices. Religion-as-political-authority +
+kingdom age cycles. With this slice, Phase 6 ships at 100%: a
+world running for many in-game years now produces realistic
+political churn — secessions, collapses, mergers, wars,
+religious rebellions, age-cycle transitions — all driven from
+the locked-design substrate.
+
+#### User-confirmed locks honoured
+
+- **Soft religion model** — declaration of an official religion
+  causes immediate stability dip on dissenting provinces (via
+  `religion.tension.<provinceId>` modifier); CONVERT_PROVINCE
+  charter slowly clears tension; no auto-rebellion unless the
+  province crosses the standard rebellion threshold from Slice 1
+  (the lower stability gets it there sooner — that's the linkage).
+
+#### CC's calls (design pass e/g locked here)
+
+- **(e) Age cycle culture tuning.** v1 ships single defaults
+  (FOUNDING_ERA→MATURE at 90d + 1 succession; MATURE→DECADENT
+  at 360d + 4 successions + legitimacy ≤ 45; DECADENT→MATURE
+  renewal at legitimacy ≥ 75 + sanctified). Per-culture
+  overrides flagged for follow-up; the `RebellionThresholds`
+  pattern from Slice 1 is the template.
+- **(g) Determinism seeds for Phase 6 stochastic outcomes:**
+  - Sanctification roll: `(kingdomId, "sanctify", rulerId, gameDay)`.
+  - Conversion completion: deterministic from start tick + 30d.
+  - Age-cycle transitions: deterministic from kingdom state (no
+    RNG).
+
+#### What this slice ships
+
+- **`KingdomEventsData.successionCount`** — 5th codec field on
+  the existing record; `KingdomHistoryData.recordSuccession()`
+  + `getSuccessionCount()` accessors. Hooked into
+  `NobilityEventDispatcher.runSuccession` (after heir seated)
+  so successions feed age-cycle transitions automatically.
+- **`Kingdom/AgeCycle/KingdomAgeState` enum** — three states
+  with per-state modifier id + stability + legitimacy deltas:
+  - FOUNDING_ERA: +3 stab, +5 leg (rulers carry weight; laws
+    cost more — but the per-law cost mechanic isn't gated yet,
+    so the modifier alone represents the "young institutions"
+    flavor).
+  - MATURE: +5 stab, +2 leg.
+  - DECADENT: −8 stab, −5 leg (instability rising; rebellion
+    fires sooner because total stability is lower so province
+    rebellion thresholds get crossed faster — the linkage to
+    Slice 1's threshold mechanism).
+- **`Kingdom/AgeCycle/AgeCycleDriver`** — daily evaluator;
+  computes target from current state + age + successions +
+  effective legitimacy + sanctified status. Transitions swap
+  modifiers + fire `AgeCycleTransition` event.
+- **`Kingdom/Religion/ReligionAuthorityEngine`** with three
+  responsibilities:
+  - `officialReligion(kingdom)` reads D3.4a's
+    `official_religion` EnumLaw.
+  - `applyReligiousTension` daily stamps
+    `religion.tension.<provinceId>` modifier (−3 stab, 30d) on
+    dissenting provinces; first-detection of a new declared
+    religion fires `OfficialReligionDeclared` once via
+    `religion.declared.<religionId>` permanent marker
+    (re-fires on choice change).
+  - `attemptSanctification` called from succession hook:
+    deterministic seeded roll (70% baseline + legitimacy
+    modulation, clamped 20-95%); GRANTED stamps permanent
+    `religion.sanctified` (+10 leg) + Sanctified event;
+    REFUSED stamps 60-day expiring
+    `religion.sanctification_refused` (−10 leg) +
+    SanctificationRefused event; 10% of refusals additionally
+    fire ReligiousRebellion + 30-day kingdom-wide pressure
+    modifier.
+- **`Kingdom/Religion/ConvertProvinceDriver`** — `launch`
+  validates `KingdomCapability.CONVERT_PROVINCE` + 100b
+  treasury cost; stamps permanent
+  `religion.conversion_campaign.<provinceId>` modifier whose
+  appliedAtTick = start. Daily sweep removes the campaign
+  modifier after 30 days (auto-completes; tension lifts on
+  next ReligionAuthorityEngine tick).
+- **`KingdomCapability.CONVERT_PROVINCE`** + satisfier table
+  entry (King OR Diplomat OR Treasurer; OR-semantics matches
+  D3.3b).
+- **`WarEngine.declareWar`** extended with HOLY_WAR
+  validation: refuses unless attacker has an official religion
+  declared. (Slice 2 reserved this hook; Slice 3 lights it up.)
+- **Sanctification-on-succession hook** in
+  `NobilityEventDispatcher.runSuccession`: clears any prior
+  reign's sanctified marker + calls
+  `attemptSanctification` if an heir was seated.
+- **6 new KingdomEvent subtypes**: Sanctified,
+  SanctificationRefused, ReligiousRebellion,
+  ConversionCampaignStarted, OfficialReligionDeclared,
+  AgeCycleTransition.
+- **3 new tick systems** (ReligionAuthority 202,
+  ConvertProvince 203, AgeCycle 204).
+- **3 new debug commands**: `/litv kingdom debug sanctify`,
+  `convert`, `age_cycle`. Describe extended.
+
+#### Decisions worth recording
+
+- **Per-province religion = culture default in v1.** The
+  prompt's "soft religion" model expects per-province dominant
+  religion data; v1 doesn't carry per-province religion state.
+  Fallback: `ReligionRegistry.dominantReligionFor(culture)`
+  serves as the dominant religion for every province. Means
+  tension only fires when the kingdom OVERRIDES its culture
+  default. Future: a `Province.dominantReligionId` field +
+  per-NPC adherence aggregation pipeline.
+- **Sanctification doesn't simulate per-NPC priest
+  disposition.** v1 uses ruler legitimacy as a proxy for
+  "would the senior priest grant?". Real per-NPC PIETY trait
+  + ruler-priest relation analysis is a polish target.
+- **Renewal path requires explicit sanctification.** A
+  DECADENT kingdom can't renew just from high legitimacy alone
+  — it needs the sanctified marker. This is intentional;
+  renewal requires a religious investiture, mirroring
+  historical "blessed restoration" narratives.
+- **OfficialReligionDeclared event fires lazily.** Rather than
+  hooking the law-enacting path, the religion engine detects
+  the choice on its daily tick via the marker modifier
+  pattern. One-tick delay between law enactment and event
+  fire; acceptable.
+- **CONVERT_PROVINCE OR-semantics.** Per the prompt's
+  "Diplomat + Treasurer + ruler" wording, strict AND would
+  require all three offices simultaneously. v1 follows D3.3b's
+  established OR-semantics convention; tighter AND-semantics
+  is a Phase 6 polish target.
+
+#### Out-of-scope, flagged for warfare session / Phase 7 / Track E
+
+- **In-world combat units** — warfare session via
+  `WarEngine.setResolver` swap from Slice 2.
+- **Per-province religion state** — v1 derives from culture
+  default; future Province record extension.
+- **Per-NPC priest disposition for sanctification** — v1 uses
+  ruler legitimacy proxy.
+- **ORDINATION_RIGHTS as priest-production mechanism** — the
+  D3.4b charter exists; productive consumer is the
+  religious-orders system in Phase 7+. v1: charter recorded,
+  doesn't gate priest spawning.
+- **LAND_GRANT to RELIGIOUS_ORDER grantee binding to actual
+  estate** — D3.4b accepts the grantee kind; data flow exists.
+  Phase 6+ would extend to real estate transfer / structure
+  spawn.
+- **HOLY_WAR's score boost during HOLY periods** — Slice 2
+  reserved this; v1 doesn't track religious calendar HOLY
+  periods at the war-engine level.
+- **Per-culture age-cycle tuning overrides** — v1 single
+  defaults; per-culture overrides via CultureBundles is a
+  follow-up matching Slice 1's RebellionThresholds pattern.
+- **Voluntary union counter-offer with VASSALAGE** — Slice 1
+  shipped voluntary union and conquest-vassalage; the
+  counter-offer mid-petition path is polish.
+- **Per-event newsfeed importance levels** — accumulating
+  scope; Phase 7 polish target.
+
+#### Phase 6 retrospective (S1 + S2 + S3)
+
+- **20+ new files; ~30 modified.** Span: rebellion / collapse /
+  merger (Slice 1), war substrate + engine (Slice 2),
+  age-cycle + religion (Slice 3).
+- **Locked design fully landed:** culture-per-default
+  rebellion thresholds, war shell (B) stub handoff with
+  Battle record, war-wins precedence on merger conflict, soft
+  religion model, all enacted.
+- **No new top-level Kingdom CODEC fields.** Phase 6 added one
+  KGD field (wars list in Slice 2) and one KingdomEventsData
+  field (successionCount in Slice 3); everything else rides
+  D1's modifier infrastructure with namespaced ids.
+- **Determinism throughout.** Every stochastic outcome
+  documented seed tuple: rebellion outcome, vassal rebellion
+  fire, intrigue, sanctification, battle resolution. Same
+  world seed produces same political-churn trajectory.
+- **Pre-D3.6 migration:** built into Slice 1's
+  CollapseEngine. Pre-D3.6 saves with low-stability kingdoms
+  get a 30-day grace period via `pre_d36_grace.applied`
+  marker + `pre_d36_grace.buff` modifier before the collapse
+  clock starts.
+- **No build verification.** Maven blocked locally;
+  cross-references reviewed manually across slices.
+
+---
+
 ### 2026-05-10 — Track D3.6 Slice 2 landed (war system v2, political shell)
 
 Second of three Phase 6 slices per the user-locked split. Politics

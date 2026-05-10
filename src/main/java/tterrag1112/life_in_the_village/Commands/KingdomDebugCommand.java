@@ -217,6 +217,30 @@ public final class KingdomDebugCommand {
                                                                 StringArgumentType.getString(ctx, "kingdom"),
                                                                 com.mojang.brigadier.arguments.IntegerArgumentType
                                                                         .getInteger(ctx, "rank")))))))
+                        // Track D3.6.5 — religion debug: /litv kingdom debug sanctify <kingdom>.
+                        .then(Commands.literal("sanctify")
+                                .then(Commands.argument("kingdom",
+                                                StringArgumentType.string())
+                                        .executes(ctx -> sanctifyDebug(ctx,
+                                                StringArgumentType.getString(ctx, "kingdom")))))
+                        // Track D3.6.5 — /litv kingdom debug convert <kingdom> <provinceName>.
+                        .then(Commands.literal("convert")
+                                .then(Commands.argument("kingdom",
+                                                StringArgumentType.string())
+                                        .then(Commands.argument("provinceName",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> convertDebug(ctx,
+                                                        StringArgumentType.getString(ctx, "kingdom"),
+                                                        StringArgumentType.getString(ctx, "provinceName"))))))
+                        // Track D3.6.6 — /litv kingdom debug age_cycle <kingdom> <state>.
+                        .then(Commands.literal("age_cycle")
+                                .then(Commands.argument("kingdom",
+                                                StringArgumentType.string())
+                                        .then(Commands.argument("state",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> ageCycleDebug(ctx,
+                                                        StringArgumentType.getString(ctx, "kingdom"),
+                                                        StringArgumentType.getString(ctx, "state"))))))
                         // Track D3.6.4 — top-level /litv kingdom debug war_declare/war_resolve/war_list.
                         .then(Commands.literal("war_declare")
                                 .then(Commands.argument("attacker",
@@ -410,6 +434,18 @@ public final class KingdomDebugCommand {
                 + ", newsfeed entries: " + k.getHistory().getNewsfeed().size());
         send(ctx, "  active wars (initiated): " + k.getActiveWars().size()
                 + " / total " + k.getWars().size());
+        send(ctx, "── Religion / Age (D3.6 S3) ──");
+        var ageState = tterrag1112.life_in_the_village.Kingdom.AgeCycle.AgeCycleDriver
+                .currentState(k);
+        send(ctx, "  age cycle: " + (ageState != null ? ageState.name() : "fresh"));
+        send(ctx, "  successions: " + k.getHistory().getSuccessionCount());
+        var officialOpt = tterrag1112.life_in_the_village.Kingdom.Religion
+                .ReligionAuthorityEngine.officialReligion(k);
+        send(ctx, "  official religion: "
+                + officialOpt.orElse("(none declared)"));
+        send(ctx, "  ruler sanctified: "
+                + k.hasModifierWithId(tterrag1112.life_in_the_village.Kingdom.Religion
+                        .ReligionAuthorityEngine.SANCTIFIED_MODIFIER_ID));
         send(ctx, "── Provinces (D3.3) ──");
         if (k.getProvinces().isEmpty()) {
             send(ctx, "  (none — UNITARY, ≤3 villages, or not yet computed)");
@@ -1135,6 +1171,93 @@ public final class KingdomDebugCommand {
     // =========================================================================
     // Track D3.6 — fragmentation debug handlers
     // =========================================================================
+
+    // =========================================================================
+    // Track D3.6.5 + 6.6 — religion + age-cycle debug handlers
+    // =========================================================================
+
+    private static int sanctifyDebug(CommandContext<CommandSourceStack> ctx, String kingdom) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        UUID rulerId = k.getRulerEntityId().orElse(k.getRulerPlayerId().orElse(null));
+        // Strip the prior sanctified marker so the call rolls fresh.
+        k.removeModifier(tterrag1112.life_in_the_village.Kingdom.Religion
+                .ReligionAuthorityEngine.SANCTIFIED_MODIFIER_ID);
+        tterrag1112.life_in_the_village.Kingdom.Religion.ReligionAuthorityEngine
+                .attemptSanctification(level, data, k, rulerId, level.getGameTime());
+        data.setDirty();
+        boolean granted = k.hasModifierWithId(tterrag1112.life_in_the_village.Kingdom.Religion
+                .ReligionAuthorityEngine.SANCTIFIED_MODIFIER_ID);
+        send(ctx, "Sanctification " + (granted ? "GRANTED" : "REFUSED")
+                + " for ruler of " + kingdom);
+        return granted ? 1 : 0;
+    }
+
+    private static int convertDebug(CommandContext<CommandSourceStack> ctx,
+                                    String kingdom, String provinceName) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var province = k.getProvinces().stream()
+                .filter(p -> p.name().equalsIgnoreCase(provinceName))
+                .findFirst().orElse(null);
+        if (province == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No province '" + provinceName + "'."));
+            return 0;
+        }
+        var result = tterrag1112.life_in_the_village.Kingdom.Religion
+                .ConvertProvinceDriver.launch(level, data, k, province.id(),
+                        level.getGameTime());
+        if (!result.started()) {
+            ctx.getSource().sendFailure(Component.literal("Failed: " + result.reason()));
+            return 0;
+        }
+        data.setDirty();
+        send(ctx, "Conversion campaign launched in " + provinceName);
+        return 1;
+    }
+
+    private static int ageCycleDebug(CommandContext<CommandSourceStack> ctx,
+                                     String kingdom, String stateStr) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        tterrag1112.life_in_the_village.Kingdom.AgeCycle.KingdomAgeState target;
+        try {
+            target = tterrag1112.life_in_the_village.Kingdom.AgeCycle.KingdomAgeState
+                    .valueOf(stateStr.toUpperCase(java.util.Locale.ROOT));
+        } catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Bad state. Valid: FOUNDING_ERA / MATURE / DECADENT"));
+            return 0;
+        }
+        // Strip every existing age-cycle modifier and stamp the target.
+        for (var s : tterrag1112.life_in_the_village.Kingdom.AgeCycle.KingdomAgeState.values()) {
+            k.removeModifier(s.modifierId());
+        }
+        k.addModifier(tterrag1112.life_in_the_village.Kingdom.KingdomModifier.permanent(
+                target.modifierId(), target.description(),
+                target.stabilityDelta(), target.legitimacyDelta(),
+                level.getGameTime()));
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .AgeCycleTransition(k.getId(), "DEBUG", target.name(),
+                        level.getGameTime()));
+        data.setDirty();
+        send(ctx, "Age cycle of " + kingdom + " forced to " + target);
+        return 1;
+    }
 
     // =========================================================================
     // Track D3.6.4 — war debug handlers

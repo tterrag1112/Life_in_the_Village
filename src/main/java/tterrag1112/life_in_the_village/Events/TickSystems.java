@@ -1201,6 +1201,57 @@ class KingdomCollapseTickSystem implements TickSubsystem {
 }
 
 /**
+ * Track D3.6.5 — daily religion-authority engine. Priority 202 —
+ * after war scoring so today's wins/losses feed sanctification
+ * and tension recompute.
+ */
+class ReligionAuthorityTickSystem implements TickSubsystem {
+    @Override public String name()     { return "religion_authority"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 202; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Religion.ReligionAuthorityEngine
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
+ * Track D3.6.5 — daily conversion-campaign sweep. Priority 203 —
+ * runs after religion authority so newly-stamped tension is
+ * picked up by today's campaign completion checks.
+ */
+class ConvertProvinceTickSystem implements TickSubsystem {
+    @Override public String name()     { return "convert_province"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 203; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Religion.ConvertProvinceDriver
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
+ * Track D3.6.6 — daily age-cycle evaluator. Priority 204 — runs
+ * last in the Phase 6 chain so transitions reflect everything
+ * that happened today.
+ */
+class AgeCycleTickSystem implements TickSubsystem {
+    @Override public String name()     { return "age_cycle"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 204; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.AgeCycle.AgeCycleDriver
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
  * Track D3.6.4 — daily war engine tick (battle scheduling +
  * scoring + resolution). Priority 201 — runs after the
  * fragmentation drivers so today's collapses / secessions feed
