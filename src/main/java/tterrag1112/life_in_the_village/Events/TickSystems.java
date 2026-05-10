@@ -1201,6 +1201,24 @@ class KingdomCollapseTickSystem implements TickSubsystem {
 }
 
 /**
+ * Track D3.6.4 — daily war engine tick (battle scheduling +
+ * scoring + resolution). Priority 201 — runs after the
+ * fragmentation drivers so today's collapses / secessions feed
+ * war-state computation.
+ */
+class WarTickSystem implements TickSubsystem {
+    @Override public String name()     { return "war_engine"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 201; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.War.WarEngine
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
  * Track D3.6.3 — daily voluntary-union petition driver. Priority
  * 200 — runs after collapse so already-collapsed weak kingdoms
  * don't try to petition.

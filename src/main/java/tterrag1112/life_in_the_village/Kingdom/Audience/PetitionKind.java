@@ -44,5 +44,12 @@ public enum PetitionKind {
      * or denies (newsfeed; small kingdom continues). Counter-offer
      * to VASSALAGE is a follow-up flow.
      */
-    VOLUNTARY_UNION
+    VOLUNTARY_UNION,
+    /**
+     * Track D3.6.4 — one party of an active war offers peace.
+     * Approve resolves the war as WHITE_PEACE; deny continues
+     * the war. Either party can submit (the petitioning side
+     * pays a small standing hit on rejection).
+     */
+    PEACE_OFFER
 }

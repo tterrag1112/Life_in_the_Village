@@ -217,6 +217,36 @@ public final class KingdomDebugCommand {
                                                                 StringArgumentType.getString(ctx, "kingdom"),
                                                                 com.mojang.brigadier.arguments.IntegerArgumentType
                                                                         .getInteger(ctx, "rank")))))))
+                        // Track D3.6.4 — top-level /litv kingdom debug war_declare/war_resolve/war_list.
+                        .then(Commands.literal("war_declare")
+                                .then(Commands.argument("attacker",
+                                                StringArgumentType.string())
+                                        .then(Commands.argument("defender",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("casusBelli",
+                                                                StringArgumentType.string())
+                                                        .then(Commands.argument("goalsCsv",
+                                                                        StringArgumentType.greedyString())
+                                                                .executes(ctx -> warDeclareDebug(ctx,
+                                                                        StringArgumentType.getString(ctx, "attacker"),
+                                                                        StringArgumentType.getString(ctx, "defender"),
+                                                                        StringArgumentType.getString(ctx, "casusBelli"),
+                                                                        StringArgumentType.getString(ctx, "goalsCsv")))))))
+                                .then(Commands.argument("attacker_simple",
+                                                StringArgumentType.string())
+                                        .executes(ctx -> warDeclareDebug(ctx,
+                                                StringArgumentType.getString(ctx, "attacker_simple"),
+                                                "", "TERRITORIAL_CLAIM", ""))))
+                        .then(Commands.literal("war_resolve")
+                                .then(Commands.argument("warUuid",
+                                                StringArgumentType.string())
+                                        .then(Commands.argument("status",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> warResolveDebug(ctx,
+                                                        StringArgumentType.getString(ctx, "warUuid"),
+                                                        StringArgumentType.getString(ctx, "status"))))))
+                        .then(Commands.literal("war_list")
+                                .executes(ctx -> warListDebug(ctx)))
                         // Track D3.6 — top-level /litv kingdom debug rebel/collapse/merge.
                         .then(Commands.literal("rebel")
                                 .then(Commands.argument("kingdom",
@@ -378,6 +408,8 @@ public final class KingdomDebugCommand {
         send(ctx, "  player standings tracked: " + k.getAllPlayerStandings().size());
         send(ctx, "  player nobles: " + k.getAllPlayerNobles().size()
                 + ", newsfeed entries: " + k.getHistory().getNewsfeed().size());
+        send(ctx, "  active wars (initiated): " + k.getActiveWars().size()
+                + " / total " + k.getWars().size());
         send(ctx, "── Provinces (D3.3) ──");
         if (k.getProvinces().isEmpty()) {
             send(ctx, "  (none — UNITARY, ≤3 villages, or not yet computed)");
@@ -1103,6 +1135,127 @@ public final class KingdomDebugCommand {
     // =========================================================================
     // Track D3.6 — fragmentation debug handlers
     // =========================================================================
+
+    // =========================================================================
+    // Track D3.6.4 — war debug handlers
+    // =========================================================================
+
+    private static int warDeclareDebug(CommandContext<CommandSourceStack> ctx,
+                                       String attackerName, String defenderName,
+                                       String cbStr, String goalsCsv) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom attacker = data.getKingdomByName(attackerName).orElse(null);
+        Kingdom defender = defenderName.isEmpty() ? null
+                : data.getKingdomByName(defenderName).orElse(null);
+        if (attacker == null || defender == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Both kingdom names required."));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Kingdom.War.CasusBelli cb;
+        try {
+            cb = tterrag1112.life_in_the_village.Kingdom.War.CasusBelli
+                    .valueOf(cbStr.toUpperCase(java.util.Locale.ROOT));
+        } catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Bad casusBelli. Valid: "
+                            + java.util.Arrays.toString(
+                                    tterrag1112.life_in_the_village.Kingdom.War
+                                            .CasusBelli.values())));
+            return 0;
+        }
+        java.util.List<tterrag1112.life_in_the_village.Kingdom.War.WarGoal> goals =
+                new java.util.ArrayList<>();
+        for (String tok : goalsCsv.split(",")) {
+            String t = tok.trim().toUpperCase(java.util.Locale.ROOT);
+            if (t.isEmpty()) continue;
+            switch (t) {
+                case "VASSALIZE" -> goals.add(
+                        new tterrag1112.life_in_the_village.Kingdom.War.WarGoal.Vassalize());
+                case "REGIME_CHANGE" -> goals.add(
+                        new tterrag1112.life_in_the_village.Kingdom.War.WarGoal.RegimeChange());
+                case "TRIBUTE" -> goals.add(
+                        new tterrag1112.life_in_the_village.Kingdom.War.WarGoal.Tribute(
+                                500L, 0));
+                case "TERRITORY" -> goals.add(
+                        new tterrag1112.life_in_the_village.Kingdom.War.WarGoal.Territory(
+                                java.util.List.copyOf(defender.getVillageIds())));
+                default -> { /* ignore */ }
+            }
+        }
+        var result = tterrag1112.life_in_the_village.Kingdom.War.WarEngine.declareWar(
+                level, data, attacker, defender, cb, goals, level.getGameTime());
+        if (!result.declared()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Declaration failed: " + result.reason()));
+            return 0;
+        }
+        data.setDirty();
+        send(ctx, "Declared war " + result.warId().toString().substring(0, 8)
+                + " (" + cb + ", goals=" + goals.size() + ")");
+        return 1;
+    }
+
+    private static int warResolveDebug(CommandContext<CommandSourceStack> ctx,
+                                       String warUuidStr, String statusStr) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        java.util.UUID warId;
+        try { warId = java.util.UUID.fromString(warUuidStr); }
+        catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal("Bad UUID."));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Kingdom.War.War.Status finalStatus;
+        try {
+            finalStatus = tterrag1112.life_in_the_village.Kingdom.War.War.Status
+                    .valueOf(statusStr.toUpperCase(java.util.Locale.ROOT));
+        } catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Bad status. Valid: WON / LOST / WHITE_PEACE / STALEMATE"));
+            return 0;
+        }
+        for (Kingdom k : data.getAllKingdoms()) {
+            var w = k.findWar(warId).orElse(null);
+            if (w != null && w.isActive()) {
+                tterrag1112.life_in_the_village.Kingdom.War.WarEngine.resolveWar(
+                        level, data, k, w, finalStatus, level.getGameTime(),
+                        "[debug] forced " + finalStatus.name());
+                data.setDirty();
+                send(ctx, "Resolved war " + warUuidStr.substring(0, 8) + " as " + finalStatus);
+                return 1;
+            }
+        }
+        ctx.getSource().sendFailure(Component.literal("No active war with that id."));
+        return 0;
+    }
+
+    private static int warListDebug(CommandContext<CommandSourceStack> ctx) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        int total = 0;
+        send(ctx, "── Active wars ──");
+        for (Kingdom k : data.getAllKingdoms()) {
+            for (var w : k.getActiveWars()) {
+                Kingdom def = data.getKingdomById(w.defenderKingdomId()).orElse(null);
+                send(ctx, "  " + w.id().toString().substring(0, 8)
+                        + " " + k.getName() + " vs "
+                        + (def != null ? def.getName() : "?")
+                        + " [" + w.casusBelli() + "] score=" + w.attackerScore()
+                        + " battles=" + w.battles().size());
+                total++;
+            }
+        }
+        send(ctx, "Total: " + total);
+        return total;
+    }
 
     private static int rebelDebug(CommandContext<CommandSourceStack> ctx,
                                   String kingdom, String provinceName, String choiceStr) {

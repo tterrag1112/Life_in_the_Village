@@ -933,6 +933,157 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-10 — Track D3.6 Slice 2 landed (war system v2, political shell)
+
+Second of three Phase 6 slices per the user-locked split. Politics
+of war: declaration with capability gating, levy aggregation
+through fealty chain, scheduled battles via a stub-handoff
+resolver, scoring + threshold-driven resolution, victory-goal
+application including conquest absorption via Slice 1's merger
+engine, peace-offer flow through the audience loop.
+
+#### User-confirmed locks honoured
+
+- **War shell (B)** — Battle record carries every input the
+  warfare session will need (attacker/defender levies,
+  leadership multipliers, terrain modifier, supply modifier,
+  deterministic seed). `BattleResolver.DEFAULT` ships the
+  scoring formula; `WarEngine.setResolver` lets the warfare
+  session swap implementations without touching the substrate.
+- **War wins precedence on merger** — already enforced in Slice
+  1 via `MergerEngine.canMerge`; `WarEngine.applyVictoryGoals`
+  bypasses the precedence check by calling
+  `triggerConquestMerger` directly when the war is already
+  resolved.
+
+#### CC's calls for this slice
+
+- **Battle interval = 5 game days.** Tunable in
+  `WarEngine.BATTLE_INTERVAL_DAYS`. With STALEMATE_TICKS=120d
+  this gives ~24 battles per war ceiling — sufficient for
+  scoring to reach victory thresholds without dragging on
+  forever.
+- **Casus-belli legitimacy table.** TERRITORIAL_CLAIM=−3,
+  RECLAIM_VASSAL=0, HONOUR=−8, HOLY_WAR=+2 (positive!),
+  SUCCESSION_DISPUTE=−2, RECONQUEST=−4. Reflects relative
+  diplomatic legitimacy of each justification. HOLY_WAR's +2
+  is anchored on Slice 3's religious-authority mechanic.
+- **Score thresholds.** Attacker victory ≥60, defender
+  victory ≤−40 (asymmetric — defender gets edge from
+  defending, matches the prompt's "defending against
+  aggression produces legitimacy bonus"). Stalemate timeout
+  120 days.
+- **Stub terrain + supply modifiers.** v1: defender +0.10
+  terrain, attacker −0.15 supply, fixed values. The warfare
+  session's resolver swap reads these from real terrain /
+  claim-distance data.
+- **Conquest path detection.** When a WON war's goals include
+  BOTH Territory + Vassalize (full conquest signal), the
+  defender absorbs into attacker via Slice 1's
+  `MergerEngine.triggerConquestMerger`. Pure Territory-only
+  is just transfer; pure Vassalize is just treaty creation.
+- **Aggressive-war legitimacy malus.** HONOUR + RECONQUEST
+  trigger `AGGRESSIVE_WAR_MALUS=−8` on top of the casus-belli
+  base. NON_AGGRESSION-broken declaration also adds the
+  `BROKEN_TREATY_MALUS=−20`.
+
+#### What this slice ships
+
+- **`Kingdom/War/CasusBelli`** — 6-value enum with per-cb
+  metadata (legitimacyOnDeclaration, defaultWarScoreSeed,
+  allowsRegimeChange / allowsVassalization / allowsTerritory).
+- **`Kingdom/War/WarGoal`** — sealed union with
+  Codec.STRING.dispatch:
+  - `Territory(villageIds)` — village-list transfer on win.
+  - `Tribute(bronzeAmount, recurringDays)` — one-shot or
+    placeholder for recurring (v1 logs only on recurring).
+  - `Vassalize` — VASSALAGE treaty creation on win.
+  - `RegimeChange` — clears defender's ruler so next succession
+    picks a new ruler with `legitimacy=35` (usurped path).
+- **`Kingdom/War/Battle`** record — 15 fields covering every
+  input the warfare session will read. Codec uses
+  optionalFieldOf throughout for back-compat. `withOutcome`
+  copy-helper for the resolver to stamp.
+- **`Kingdom/War/BattleResolver`** interface +
+  `BattleResolver.DEFAULT` impl. Default formula:
+  `advantage = 0.5 × (levyRatio − 1) + 0.25 × leadershipDiff
+  − terrainModifier + supplyModifier`; Gaussian roll with
+  std 0.35; outcome bands: > 0.35 attacker, < −0.35 defender,
+  middle is DRAW. Score deltas scale with the absolute roll
+  size.
+- **`Kingdom/War/War`** record — 11 fields, status enum
+  ACTIVE/WON/LOST/WHITE_PEACE/STALEMATE. Persisted on the
+  attacker's KGD `wars` list (15th field; KGD still 16/16
+  after Slice 2). Defender side queries via per-kingdom scan
+  (`getActiveWars()` + `findWar(warId)`).
+- **`Kingdom/War/LevyComputer.computeLevy`** —
+  Σ_villages(currentLevel × 8) × kingdomEfficiency (0.5..1.2
+  scaled from stability+legitimacy combined) × war-exhaustion
+  (1.0 − 0.10 × activeWars).
+- **`Kingdom/War/WarEngine`** — declare/dailyTick/resolveWar
+  with full outcome dispatch. Conquest path triggers
+  Slice 1's MergerEngine.
+- **`PetitionKind.PEACE_OFFER`** + `PetitionPayload.PeaceOffer`
+  + AudienceDriver dispatch path that finds the war on
+  either party's list and resolves as WHITE_PEACE.
+- **4 new KingdomEvent subtypes**: WarDeclared, BattleResolved,
+  WarConcluded, PeaceTreatyOffered.
+- **Kingdom API additions**: `getWars`, `getActiveWars`,
+  `findWar`, `addWar`, `replaceWar`.
+- **`WarTickSystem`** — daily tick at priority 201.
+- **Debug commands**: `/litv kingdom debug war_declare`,
+  `war_resolve`, `war_list`. Describe extended.
+
+#### Decisions worth recording
+
+- **War records live on attacker only.** Eliminates the
+  two-side mirror sync problem; defender just scans every
+  kingdom's war list for participation. O(n × m) per scan
+  but n (kingdoms) and m (wars per kingdom) are both small.
+- **Conquest absorbs only on Territory+Vassalize+RegimeChange
+  goals concurrently.** Pure Territory transfer doesn't
+  collapse the defender; pure Vassalize creates a vassal but
+  preserves the kingdom record. Conquest = "I'm taking
+  everything" detected by the goal combo.
+- **WAR_DECLARATION petition** (D3.4b) and `WarEngine.declareWar`
+  coexist. Petition is the player→ruler path (NPC ruler
+  approves and triggers declareWar internally); declareWar is
+  the actual mechanism. Slice 3 wires the petition's approval
+  through declareWar.
+- **PEACE_OFFER doesn't validate offering side.** Either party
+  can submit a PEACE_OFFER petition to the OTHER party's
+  audience; the recipient's ruler approves to end the war.
+  v1: any player can submit; capability check is on the
+  receiving side via the audience-resolve ruler check.
+- **HOLY_WAR's positive declaration legitimacy** is the only
+  positive entry — pre-Slice 3 it's symbolic; Slice 3's
+  ORDINATION_RIGHTS / sanctification mechanics will gate
+  HOLY_WAR's actual usability.
+
+#### Out-of-scope, flagged for Slice 3 / warfare session
+
+- **In-world combat units / armies as entities** — warfare
+  session via BattleResolver swap; Phase 6 ships the input
+  shape only.
+- **Real terrain modifier from per-province terrain data** —
+  v1 fixed +0.10 defender bonus.
+- **Supply lines from actual claim-distance computation** —
+  v1 fixed −0.15 attacker penalty.
+- **Recurring-tribute TRADE_DEAL wiring** — v1 logs only.
+  Future: create a TRADE_DEAL treaty with embedded tribute
+  flow.
+- **Regime-change reseat path through NobilityEventDispatcher** —
+  v1 clears ruler so next succession picks a new one with
+  legitimacy 35; cleaner explicit reseat lands later.
+- **HOLY_WAR religious-authority validation** — Slice 3 wires
+  this with the priesthood mechanics.
+- **Slice 1's WAR_DECLARATION petition payload approval-side
+  wiring** — currently AudienceDriver's WarDeclaration handler
+  sets WAR via setRelation directly; should call
+  WarEngine.declareWar with proper goals. Polish target.
+
+---
+
 ### 2026-05-10 — Track D3.6 Slice 1 landed (fragmentation: rebellion + collapse + merger)
 
 First of three Phase 6 slices per the user-locked split. Six

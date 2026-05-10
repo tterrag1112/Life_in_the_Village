@@ -134,6 +134,8 @@ public final class TickSubsystemRegistry {
         register(new KingdomCollapseTickSystem());
         // Track D3.6.3 — daily voluntary-union petition driver (priority 200).
         register(new VoluntaryUnionTickSystem());
+        // Track D3.6.4 — daily war engine tick (priority 201).
+        register(new WarTickSystem());
         register(new OfficeElectionTickSystem());
         // Track D3.2b — daily auto-found of noble houses for eligible NPCs.
         register(new HouseFoundingTickSystem());

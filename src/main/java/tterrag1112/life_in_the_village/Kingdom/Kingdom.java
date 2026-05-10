@@ -13,6 +13,7 @@ import tterrag1112.life_in_the_village.Kingdom.Houses.House;
 import tterrag1112.life_in_the_village.Kingdom.Intrigue.IntrigueAttempt;
 import tterrag1112.life_in_the_village.Kingdom.Treaties.Treaty;
 import tterrag1112.life_in_the_village.Kingdom.Treaties.TreatyType;
+import tterrag1112.life_in_the_village.Kingdom.War.War;
 import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawInstance;
 import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry;
 import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState;
@@ -41,7 +42,8 @@ public class Kingdom {
             List<Charter> charters,
             List<Treaty> treaties,
             List<IntrigueAttempt> intrigueHistory,
-            KingdomAudienceData audience
+            KingdomAudienceData audience,
+            List<War> wars
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -122,7 +124,14 @@ public class Kingdom {
                         KingdomAudienceData.CODEC
                                 .optionalFieldOf("audience", KingdomAudienceData.EMPTY)
                                 .forGetter(g -> g.audience() != null
-                                        ? g.audience() : KingdomAudienceData.EMPTY)
+                                        ? g.audience() : KingdomAudienceData.EMPTY),
+                        // Track D3.6.4 — wars this kingdom initiated.
+                        // Defender access via VSD.findActiveWarsInvolving;
+                        // attacker-side is the source of truth.
+                        War.CODEC.listOf()
+                                .optionalFieldOf("wars", new ArrayList<>())
+                                .forGetter(g -> g.wars() != null
+                                        ? g.wars() : new ArrayList<>())
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -197,7 +206,8 @@ public class Kingdom {
                                             new KingdomAudienceData(
                                                     new ArrayList<>(k.petitions),
                                                     new ArrayList<>(k.playerStandings.values()),
-                                                    new ArrayList<>(k.playerNobles.values())))),
+                                                    new ArrayList<>(k.playerNobles.values())),
+                                            new ArrayList<>(k.wars))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -304,6 +314,8 @@ public class Kingdom {
                 k.playerNobles.put(pn.playerUuid(), pn);
             }
         }
+        // Track D3.6.4 — restore wars (attacker side).
+        if (governance.wars() != null) k.wars.addAll(governance.wars());
         // Track D3.4b — restore treaties (empty for pre-D3.4b saves);
         // auto-migrate cooperative DiplomaticRelation entries into
         // ALLIANCE / TRADE_DEAL treaties when no treaty list exists.
@@ -439,6 +451,13 @@ public class Kingdom {
      */
     private final java.util.LinkedHashMap<UUID, PlayerNobility> playerNobles
             = new java.util.LinkedHashMap<>();
+
+    /**
+     * Track D3.6.4 — wars this kingdom initiated (attacker side).
+     * Defender's participation queried via
+     * {@code VillageSavedData.findActiveWarsInvolving}.
+     */
+    private final List<War> wars = new ArrayList<>();
     /**
      * Office state for this kingdom. Phase 0 storage only — see
      * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
@@ -1662,6 +1681,39 @@ public class Kingdom {
         PlayerNobility updated = base.withLandGrant(blockX, blockZ, sizeCells);
         playerNobles.put(playerUuid, updated);
         return updated;
+    }
+
+    // =========================================================================
+    // Track D3.6.4 — wars (attacker side)
+    // =========================================================================
+
+    public List<War> getWars() { return Collections.unmodifiableList(wars); }
+
+    public List<War> getActiveWars() {
+        List<War> out = new ArrayList<>();
+        for (War w : wars) if (w.isActive()) out.add(w);
+        return out;
+    }
+
+    public Optional<War> findWar(UUID warId) {
+        for (War w : wars) if (w.id().equals(warId)) return Optional.of(w);
+        return Optional.empty();
+    }
+
+    public void addWar(War war) {
+        if (war == null) return;
+        for (War existing : wars) if (existing.id().equals(war.id())) return;
+        wars.add(war);
+    }
+
+    public boolean replaceWar(War replacement) {
+        for (int i = 0; i < wars.size(); i++) {
+            if (wars.get(i).id().equals(replacement.id())) {
+                wars.set(i, replacement);
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

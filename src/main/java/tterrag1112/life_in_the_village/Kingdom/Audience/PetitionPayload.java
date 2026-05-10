@@ -24,7 +24,8 @@ public sealed interface PetitionPayload permits
         PetitionPayload.WarDeclaration,
         PetitionPayload.BreakTreaty,
         PetitionPayload.RebellionThreat,
-        PetitionPayload.VoluntaryUnion {
+        PetitionPayload.VoluntaryUnion,
+        PetitionPayload.PeaceOffer {
 
     /** Discriminator used by the codec to pick the right variant. */
     PetitionKind kind();
@@ -41,6 +42,7 @@ public sealed interface PetitionPayload permits
                 case BREAK_TREATY        -> BreakTreaty.MAP_CODEC;
                 case REBELLION_THREAT    -> RebellionThreat.MAP_CODEC;
                 case VOLUNTARY_UNION     -> VoluntaryUnion.MAP_CODEC;
+                case PEACE_OFFER         -> PeaceOffer.MAP_CODEC;
             });
 
     /**
@@ -152,6 +154,21 @@ public sealed interface PetitionPayload permits
                         Codec.STRING.optionalFieldOf("reason", "")
                                 .forGetter(VoluntaryUnion::reason)
                 ).apply(i, VoluntaryUnion::new));
+    }
+
+    /**
+     * PEACE_OFFER — a war combatant offers peace. Carries the
+     * war UUID; approval resolves the war as WHITE_PEACE.
+     */
+    record PeaceOffer(UUID warId, String terms) implements PetitionPayload {
+        @Override public PetitionKind kind() { return PetitionKind.PEACE_OFFER; }
+
+        public static final MapCodec<PeaceOffer> MAP_CODEC =
+                RecordCodecBuilder.mapCodec(i -> i.group(
+                        UUIDUtil.CODEC.fieldOf("warId").forGetter(PeaceOffer::warId),
+                        Codec.STRING.optionalFieldOf("terms", "")
+                                .forGetter(PeaceOffer::terms)
+                ).apply(i, PeaceOffer::new));
     }
 
     record BreakTreaty(UUID treatyId, String reason)

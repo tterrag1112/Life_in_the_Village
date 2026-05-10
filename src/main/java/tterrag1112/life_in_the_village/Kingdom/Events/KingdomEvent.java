@@ -258,5 +258,37 @@ public sealed interface KingdomEvent {
      */
     record UnionRequest(UUID petitioningKingdomId, UUID targetKingdomId,
                         UUID petitionId, long tick) implements KingdomEvent {}
+
+    // ── Track D3.6.4 — war events ───────────────────────────────────────
+
+    /**
+     * War declared by attacker on defender. Casus belli stamped at
+     * declaration time.
+     */
+    record WarDeclared(UUID attackerKingdomId, UUID defenderKingdomId,
+                       UUID warId, String casusBelli, long tick)
+            implements KingdomEvent {}
+
+    /** A battle resolved. {@code outcome} = Battle.Outcome.name(). */
+    record BattleResolved(UUID warId, UUID battleId, String outcome,
+                          int attackerScoreDelta, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * War ended. {@code finalStatus} = War.Status.name() ∈
+     * {WON, LOST, WHITE_PEACE, STALEMATE}.
+     */
+    record WarConcluded(UUID warId, UUID attackerKingdomId, UUID defenderKingdomId,
+                        String finalStatus, String summary, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * One combatant offered peace via the audience loop. Petition
+     * UUID lets newsfeed surface a "peace offered, awaiting reply"
+     * note.
+     */
+    record PeaceTreatyOffered(UUID warId, UUID offeringKingdomId,
+                              UUID receivingKingdomId, UUID petitionId, long tick)
+            implements KingdomEvent {}
 }
 

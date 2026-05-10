@@ -300,6 +300,27 @@ public final class AudienceDriver {
                 }
                 return "voluntary union approved";
             }
+            case PetitionPayload.PeaceOffer po -> {
+                // Find the war on either party's list and resolve it as WHITE_PEACE.
+                Kingdom attackerSide = null;
+                tterrag1112.life_in_the_village.Kingdom.War.War war = null;
+                for (Kingdom k : data.getAllKingdoms()) {
+                    var w = k.findWar(po.warId()).orElse(null);
+                    if (w != null) {
+                        attackerSide = k;
+                        war = w;
+                        break;
+                    }
+                }
+                if (war == null || attackerSide == null || !war.isActive()) {
+                    return "FAIL: no active war " + po.warId();
+                }
+                tterrag1112.life_in_the_village.Kingdom.War.WarEngine.resolveWar(
+                        level, data, attackerSide, war,
+                        tterrag1112.life_in_the_village.Kingdom.War.War.Status.WHITE_PEACE,
+                        tick, "negotiated peace: " + po.terms());
+                return "peace accepted";
+            }
             case PetitionPayload.BreakTreaty bt -> {
                 Treaty t = kingdom.findTreaty(bt.treatyId()).orElse(null);
                 if (t == null) return "FAIL: no treaty";
