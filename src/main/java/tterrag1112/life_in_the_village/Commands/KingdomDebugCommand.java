@@ -217,6 +217,34 @@ public final class KingdomDebugCommand {
                                                                 StringArgumentType.getString(ctx, "kingdom"),
                                                                 com.mojang.brigadier.arguments.IntegerArgumentType
                                                                         .getInteger(ctx, "rank")))))))
+                        // Track D3.6 — top-level /litv kingdom debug rebel/collapse/merge.
+                        .then(Commands.literal("rebel")
+                                .then(Commands.argument("kingdom",
+                                                StringArgumentType.string())
+                                        .then(Commands.argument("provinceName",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("choice",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> rebelDebug(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                StringArgumentType.getString(ctx, "provinceName"),
+                                                                StringArgumentType.getString(ctx, "choice")))))))
+                        .then(Commands.literal("collapse")
+                                .then(Commands.argument("kingdom",
+                                                StringArgumentType.string())
+                                        .executes(ctx -> collapseDebug(ctx,
+                                                StringArgumentType.getString(ctx, "kingdom")))))
+                        .then(Commands.literal("merge")
+                                .then(Commands.argument("survivor",
+                                                StringArgumentType.string())
+                                        .then(Commands.argument("mergedAway",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("path",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> mergeDebug(ctx,
+                                                                StringArgumentType.getString(ctx, "survivor"),
+                                                                StringArgumentType.getString(ctx, "mergedAway"),
+                                                                StringArgumentType.getString(ctx, "path")))))))
                         // Track D3.5C — top-level /litv newsfeed list <kingdom>.
                         .then(Commands.literal("newsfeed")
                                 .then(Commands.literal("list")
@@ -1070,6 +1098,120 @@ public final class KingdomDebugCommand {
                 + " at rank " + rank + " (charter "
                 + charter.id().toString().substring(0, 8) + ")");
         return rank;
+    }
+
+    // =========================================================================
+    // Track D3.6 — fragmentation debug handlers
+    // =========================================================================
+
+    private static int rebelDebug(CommandContext<CommandSourceStack> ctx,
+                                  String kingdom, String provinceName, String choiceStr) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var province = k.getProvinces().stream()
+                .filter(p -> p.name().equalsIgnoreCase(provinceName))
+                .findFirst().orElse(null);
+        if (province == null) {
+            ctx.getSource().sendFailure(Component.literal("No province '" + provinceName + "'."));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Kingdom.Rebellion.RebellionEngine.Choice choice;
+        try {
+            choice = tterrag1112.life_in_the_village.Kingdom.Rebellion
+                    .RebellionEngine.Choice.valueOf(choiceStr.toUpperCase(java.util.Locale.ROOT));
+        } catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Bad choice. Valid: NEGOTIATE / CRUSH / ACCEPT"));
+            return 0;
+        }
+        // Force-drop province stability below threat threshold so the
+        // engine processes it on the next dailyTick — but for an
+        // immediate effect we fire the resolution path directly.
+        if (choice == tterrag1112.life_in_the_village.Kingdom.Rebellion.RebellionEngine.Choice.ACCEPT) {
+            tterrag1112.life_in_the_village.Kingdom.Rebellion.SecessionExecutor.secede(
+                    level, data, k, province, level.getGameTime(), "[debug] accept");
+            send(ctx, "Forced secession of " + province.name());
+        } else {
+            // For NEGOTIATE / CRUSH, apply the effects directly.
+            if (choice == tterrag1112.life_in_the_village.Kingdom.Rebellion.RebellionEngine.Choice.NEGOTIATE) {
+                k.depositToTreasury(-tterrag1112.life_in_the_village.Kingdom.Rebellion
+                        .RebellionEngine.NEGOTIATE_TREASURY_COST);
+                k.replaceProvinceStability(province.id(),
+                        Math.max(province.stability(),
+                                tterrag1112.life_in_the_village.Kingdom.Rebellion
+                                        .RebellionEngine.NEGOTIATE_STABILITY_FLOOR));
+                send(ctx, "Negotiated peace in " + province.name());
+            } else {
+                k.applyLegitimacyDelta(-tterrag1112.life_in_the_village.Kingdom.Rebellion
+                        .RebellionEngine.CRUSH_LEGITIMACY_MALUS);
+                k.replaceProvinceStability(province.id(),
+                        Math.max(province.stability(),
+                                tterrag1112.life_in_the_village.Kingdom.Rebellion
+                                        .RebellionEngine.CRUSH_STABILITY_FLOOR));
+                send(ctx, "Crushed rebellion in " + province.name());
+            }
+        }
+        data.setDirty();
+        return 1;
+    }
+
+    private static int collapseDebug(CommandContext<CommandSourceStack> ctx, String kingdom) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        tterrag1112.life_in_the_village.Kingdom.Rebellion.CollapseEngine.collapse(
+                level, data, k, level.getGameTime(), "[debug] force");
+        send(ctx, "Forced collapse of " + kingdom);
+        return 1;
+    }
+
+    private static int mergeDebug(CommandContext<CommandSourceStack> ctx,
+                                  String survivorName, String mergedAwayName, String pathStr) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom survivor = data.getKingdomByName(survivorName).orElse(null);
+        Kingdom mergedAway = data.getKingdomByName(mergedAwayName).orElse(null);
+        if (survivor == null || mergedAway == null) {
+            ctx.getSource().sendFailure(Component.literal("Both kingdoms required."));
+            return 0;
+        }
+        String path = pathStr.toLowerCase(java.util.Locale.ROOT);
+        if (!path.equals("marriage_union") && !path.equals("voluntary_union")
+                && !path.equals("conquest")) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Bad path. Valid: marriage_union / voluntary_union / conquest"));
+            return 0;
+        }
+        UUID result;
+        if (path.equals("marriage_union")) {
+            result = tterrag1112.life_in_the_village.Kingdom.Merger.MergerEngine
+                    .triggerMarriageUnion(level, data, survivor, mergedAway, level.getGameTime());
+        } else if (path.equals("conquest")) {
+            result = tterrag1112.life_in_the_village.Kingdom.Merger.MergerEngine
+                    .triggerConquestMerger(level, data, survivor, mergedAway, level.getGameTime());
+        } else {
+            tterrag1112.life_in_the_village.Kingdom.Merger.MergerEngine
+                    .absorbInto(level, data, survivor, mergedAway, level.getGameTime(),
+                            "voluntary_union");
+            result = survivor.getId();
+        }
+        if (result == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Merger blocked (active war or already-collapsed kingdom)."));
+            return 0;
+        }
+        data.setDirty();
+        send(ctx, "Merged " + mergedAwayName + " into " + survivorName + " (" + path + ")");
+        return 1;
     }
 
     private static int newsfeedList(CommandContext<CommandSourceStack> ctx, String kingdom) {

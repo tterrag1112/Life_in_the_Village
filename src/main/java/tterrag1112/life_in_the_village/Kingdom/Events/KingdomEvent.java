@@ -201,5 +201,62 @@ public sealed interface KingdomEvent {
      */
     record NewsfeedAppended(UUID kingdomId, String tag, String summary,
                             long tick) implements KingdomEvent {}
+
+    // ── Track D3.6.1 — rebellion + secession events ─────────────────────
+
+    /** Province stability crossed GRUMBLE threshold (newsfeed-only). */
+    record RebellionGrumble(UUID kingdomId, UUID provinceId,
+                            int stability, long tick) implements KingdomEvent {}
+
+    /** Province stability crossed SECESSION_THREAT threshold; ruler must resolve. */
+    record SecessionThreat(UUID kingdomId, UUID provinceId,
+                           int stability, long tick) implements KingdomEvent {}
+
+    /** Ruler negotiated peace via treasury cost + stability floor. */
+    record SecessionThreatNegotiated(UUID kingdomId, UUID provinceId,
+                                     long treasuryCost, long tick)
+            implements KingdomEvent {}
+
+    /** Ruler crushed the rebellion via legitimacy + stability cost. */
+    record SecessionThreatCrushed(UUID kingdomId, UUID provinceId, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * Province seceded — new kingdom created; old kingdom's claim
+     * shrinks; villages transfer.
+     */
+    record Secession(UUID parentKingdomId, UUID newKingdomId, UUID provinceId,
+                     UUID governorUuid, String reason, long tick)
+            implements KingdomEvent {}
+
+    /** Vassal kingdom rebelled against overlord — VASSALAGE treaty broken. */
+    record VassalRebelled(UUID overlordKingdomId, UUID vassalKingdomId,
+                          UUID treatyId, String reason, long tick)
+            implements KingdomEvent {}
+
+    // ── Track D3.6.2 — kingdom collapse ─────────────────────────────────
+
+    /** Kingdom collapsed; provinces shattered into successor kingdoms. */
+    record KingdomCollapsed(UUID kingdomId, List<UUID> successorKingdomIds,
+                            UUID rumpKingdomId, String reason, long tick)
+            implements KingdomEvent {}
+
+    // ── Track D3.6.3 — kingdom merger ───────────────────────────────────
+
+    /**
+     * Two kingdoms merged. {@code mergerPath} = "marriage_union" /
+     * "voluntary_union" / "conquest". {@code mergedAwayId} is the
+     * kingdom that no longer exists; {@code survivorId} retains
+     * its UUID + capital.
+     */
+    record KingdomMerged(UUID survivorId, UUID mergedAwayId,
+                         String mergerPath, long tick) implements KingdomEvent {}
+
+    /**
+     * A voluntary union petition was created — weak kingdom asks
+     * a strong neighbour for absorption.
+     */
+    record UnionRequest(UUID petitioningKingdomId, UUID targetKingdomId,
+                        UUID petitionId, long tick) implements KingdomEvent {}
 }
 

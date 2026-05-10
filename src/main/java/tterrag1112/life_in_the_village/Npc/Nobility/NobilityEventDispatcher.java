@@ -212,6 +212,25 @@ public final class NobilityEventDispatcher implements EventDispatcher {
         // immediately.
         kingdom.setLastProvinceRecomputeTick(-1L);
 
+        // Track D3.6.3 — marriage-union detection. If the heir is
+        // married to a ruler of another kingdom, both kingdoms
+        // merge per the locked design ("war wins, marriage-union
+        // deferred" precedence enforced inside MergerEngine.canMerge).
+        if (heir.isPresent()) {
+            heir.get().getSpouseId().ifPresent(spouseId -> {
+                if (kingdom.getRulerEntityId().filter(spouseId::equals).isPresent()) return;
+                for (Kingdom other : new java.util.ArrayList<>(data.getAllKingdoms())) {
+                    if (other.getId().equals(kingdom.getId())) continue;
+                    if (other.getRulerEntityId().filter(spouseId::equals).isPresent()) {
+                        tterrag1112.life_in_the_village.Kingdom.Merger.MergerEngine
+                                .triggerMarriageUnion(level, data, kingdom, other,
+                                        level.getGameTime());
+                        break;
+                    }
+                }
+            });
+        }
+
         // Mark data dirty so the kingdom + house mutation persists.
         data.setDirty();
     }

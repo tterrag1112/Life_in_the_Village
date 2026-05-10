@@ -589,7 +589,11 @@ public final class CultureBundles {
             List<String>                vassalEligibleCultures,
             List<String>                hostileCultures,
             int                         minNobilityTier,
-            int                         provinceSeatThreshold
+            int                         provinceSeatThreshold,
+            // Track D3.6.1 — per-culture rebellion + collapse
+            // threshold tuning. Defaults match the prompt
+            // recommendation; cultures override per temperament.
+            RebellionThresholds         rebellionThresholds
     ) {
         public CultureKingdomDefaults {
             nobilityRanks   = List.copyOf(nobilityRanks   != null ? nobilityRanks   : List.of());
@@ -610,6 +614,7 @@ public final class CultureBundles {
             if (claimBudgetHint < 1) claimBudgetHint = 1;
             if (minNobilityTier < 0) minNobilityTier = 0;
             if (provinceSeatThreshold < 0) provinceSeatThreshold = 0;
+            if (rebellionThresholds == null) rebellionThresholds = RebellionThresholds.DEFAULT;
         }
 
         public static final CultureKingdomDefaults DEFAULT = new CultureKingdomDefaults(
@@ -631,7 +636,8 @@ public final class CultureBundles {
                 /* vassalEligibleCultures */  List.of(),
                 /* hostileCultures */         List.of(),
                 /* minNobilityTier */         0,
-                /* provinceSeatThreshold */   5);
+                /* provinceSeatThreshold */   5,
+                /* rebellionThresholds */     RebellionThresholds.DEFAULT);
 
         public static final Codec<CultureKingdomDefaults> CODEC = RecordCodecBuilder.create(i -> i.group(
                 Codec.STRING.listOf().optionalFieldOf("nobilityRanks", DEFAULT.nobilityRanks)
@@ -669,7 +675,11 @@ public final class CultureBundles {
                 Codec.INT.optionalFieldOf("minNobilityTier", DEFAULT.minNobilityTier)
                         .forGetter(CultureKingdomDefaults::minNobilityTier),
                 Codec.INT.optionalFieldOf("provinceSeatThreshold", DEFAULT.provinceSeatThreshold)
-                        .forGetter(CultureKingdomDefaults::provinceSeatThreshold)
+                        .forGetter(CultureKingdomDefaults::provinceSeatThreshold),
+                // Track D3.6.1 — per-culture rebellion thresholds.
+                RebellionThresholds.CODEC.optionalFieldOf(
+                                "rebellionThresholds", DEFAULT.rebellionThresholds)
+                        .forGetter(CultureKingdomDefaults::rebellionThresholds)
         ).apply(i, CultureKingdomDefaults::new));
     }
 

@@ -933,6 +933,212 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-10 — Track D3.6 Slice 1 landed (fragmentation: rebellion + collapse + merger)
+
+First of three Phase 6 slices per the user-locked split. Six
+mechanics ship together: per-culture rebellion thresholds,
+province-rebellion engine with three-way ruler resolution,
+secession executor, vassal rebellion specialization, kingdom
+collapse engine with pre-D3.6 grace-period migration, and three
+merger paths (marriage-union / voluntary-union / conquest stub).
+
+#### User-confirmed locks honoured
+
+- **War shell (B)** — stub handoff with Battle record reserved
+  for Slice 2; this slice ships the conquest-merger hook
+  (`MergerEngine.triggerConquestMerger`) that Slice 2's war
+  engine will call on victory.
+- **Culture-per-default thresholds** — `RebellionThresholds`
+  record on `CultureKingdomDefaults`; defaults match prompt
+  recommendation (grumble<40 / threat<20 / secession<10 /
+  collapse<15 for 60d); per-culture overrides via
+  CultureBundles.
+- **War wins precedence** — `MergerEngine.canMerge` refuses
+  merger when active WAR relation exists between the two
+  kingdoms. Marriage-union deferred until war resolves.
+- **Soft religion** — Slice 3 lands the religion mechanics.
+
+#### CC's calls (design pass e/f/g/h documented here)
+
+- **(e) Age cycle culture tuning** — deferred to Slice 3 with
+  the age-cycle implementation.
+- **(f) Successor heraldry** — secession generates FRESH
+  heraldry seeded by the new kingdom's UUID + culture + tick;
+  marriage-union QUARTERED with survivor's field +
+  merged-away's chargeColour + survivor's primaryCharge.
+  Voluntary-union and conquest retain SURVIVOR's heraldry
+  unchanged.
+- **(g) Determinism seeds:**
+  - Rebellion outcome: `(kingdomId, "rebellion",
+    provinceId, gameDay)`.
+  - Vassal rebellion: `(vassalKingdomId, "vassal_rebellion",
+    overlordId, gameDay)` with 30% daily fire chance.
+  - Collapse + secession + merger: deterministic from input
+    order (no stochastic outcome).
+- **(h) Newsfeed importance** — v1's newsfeed has no
+  importance level (Slice 3/4 polish target). Per-event tags
+  encode the kind for future filtering: `rebellion.*` /
+  `collapse.*` / `kingdom.merged` / `union.*` / `vassal.*`.
+
+#### What this slice ships
+
+- **`Cultures/RebellionThresholds`** — 5-field record (grumble,
+  secessionThreat, secession, kingdomCollapse,
+  collapseDurationTicks). DEFAULT matches the prompt
+  recommendation. `stageFor(stability)` returns the rebellion
+  stage enum. CultureKingdomDefaults adds the 13th field with
+  back-compat optionalFieldOf.
+- **`Kingdom/Rebellion/RebellionEngine`** — daily entry that
+  iterates every province, computes its stage, applies per-stage
+  effects:
+  - GRUMBLE → `rebellion.grumble.<provinceId>` modifier (-2
+    stab, 14d expiry) + RebellionGrumble event + newsfeed.
+  - SECESSION_THREAT → if player ruler, creates a
+    REBELLION_THREAT petition + chat hint with debug-resolve
+    command; if NPC ruler, deterministic auto-resolve via
+    seeded RNG (45% negotiate if treasury allows, 35% crush,
+    20% accept).
+  - SECESSION → immediate SecessionExecutor invocation.
+  Three-way resolution effects: NEGOTIATE = 50b cost +
+  stability floor 35; CRUSH = -10 legitimacy + stability
+  floor 30 + 14-day kingdom-wide -3/-5 modifier; ACCEPT =
+  immediate secession.
+- **`Kingdom/Rebellion/SecessionExecutor`** — creates a new
+  Kingdom record with the province's name + fresh heraldry +
+  governor-as-ruler with USURPED_LEGITIMACY=35. Transfers
+  villages (`Village.setKingdomId`), removes the province from
+  parent, schedules parent claim recompute via
+  `setLastProvinceRecomputeTick(-1L)`, applies parent
+  malus (-10 stab, -15 leg), fires Secession event +
+  newsfeed on both kingdoms.
+- **`Kingdom/Rebellion/VassalRebellionDriver`** — vassalage
+  loyalty = vassal stability (with modifiers) +/- cultural
+  compatibility (hostileCultures -30, vassalEligibleCultures
+  +15). Below threshold 20 with 30% daily roll → breaks
+  VASSALAGE treaty on both sides + VassalRebelled event +
+  newsfeed.
+- **`Kingdom/Rebellion/CollapseEngine`** — sustained-below-
+  threshold tracker via `collapse.tracker` expiring modifier.
+  First detection of below-threshold stamps a permanent
+  `pre_d36_grace.applied` marker + a 30-day
+  `pre_d36_grace.buff` modifier (+5 stab) BEFORE starting the
+  collapse clock — this is the locked pre-D3.6 migration
+  grace path, built into the engine so legacy saves don't
+  auto-collapse on day 1. After the grace period, sustained
+  below threshold past `collapseDurationTicks` triggers
+  `collapse(...)`: provinces secede individually; if capital
+  province stability ≥ 25 the kingdom persists as a rump with
+  permanent `collapse.rump` modifier; otherwise all villages
+  orphan (kingdomId=null for D3.1 claim re-resolution) and
+  the kingdom is marked with permanent `kingdom.collapsed`
+  modifier (history-only record). All charters + treaties
+  cascade-break.
+- **`Kingdom/Merger/MergerEngine`** — three paths:
+  - **Marriage-union**: auto-detected in
+    `NobilityEventDispatcher.runSuccession` when the newly-
+    seated heir's spouseId matches another kingdom's
+    rulerEntityId. Survivor = larger kingdom by village
+    count. Heraldry QUARTERED with survivor's field +
+    merged-away's chargeColour + survivor's primaryCharge.
+  - **Voluntary-union**: `dailyTick` scans for weak kingdoms
+    (stab+leg+modSum ≤ 80) and strong neighbours
+    (stab+leg ≥ weak + 40); creates a VOLUNTARY_UNION
+    petition with 30-day retry cooldown. AudienceDriver
+    approval dispatches to `approveVoluntaryUnion`.
+  - **Conquest**: `triggerConquestMerger` API reserved for
+    Slice 2's war engine.
+  `absorbInto` transfers villages + houses + heraldry
+  preservation, breaks merged-away's charters and treaties,
+  marks merged-away with `kingdom.collapsed` permanent
+  modifier.
+- **Marriage-union hook** in `NobilityEventDispatcher.runSuccession`:
+  after heir is seated, scans all other kingdoms for one whose
+  ruler UUID equals the heir's spouseId; on match triggers
+  marriage-union (canMerge gates on active WAR).
+- **Four new tick systems** registered at priorities 197-200:
+  RebellionTickSystem / VassalRebellionTickSystem /
+  KingdomCollapseTickSystem / VoluntaryUnionTickSystem.
+- **PetitionKind extensions**: REBELLION_THREAT (rules a
+  three-way resolve path) + VOLUNTARY_UNION (standard
+  approve/deny via audience).
+- **PetitionPayload variants**: `RebellionThreat(provinceId)`
+  + `VoluntaryUnion(petitioningKingdomId, reason)`. Dispatched
+  codec extended.
+- **KingdomPetitionPacket.Action additions**: RESOLVE_NEGOTIATE
+  / RESOLVE_CRUSH / RESOLVE_ACCEPT. Handler routes to
+  `RebellionEngine.resolveThreat` with ruler-only check.
+- **9 new KingdomEvent subtypes**: RebellionGrumble,
+  SecessionThreat, SecessionThreatNegotiated,
+  SecessionThreatCrushed, Secession, VassalRebelled,
+  KingdomCollapsed, KingdomMerged, UnionRequest.
+- **Kingdom API additions**: `hasModifierWithId(id)`,
+  `replaceProvinceStability(provinceId, newStability)`,
+  `applyLegitimacyDelta(delta)`, `applyStabilityDelta(delta)`.
+- **Debug commands**:
+  - `/litv kingdom debug rebel <kingdom> <provinceName> <choice>` —
+    direct-resolve a province's rebellion (NEGOTIATE/CRUSH/ACCEPT).
+  - `/litv kingdom debug collapse <kingdom>` — force a collapse
+    immediately.
+  - `/litv kingdom debug merge <survivor> <mergedAway> <path>` —
+    force merger (marriage_union / voluntary_union / conquest).
+
+#### Decisions worth recording
+
+- **Grace period is engine-embedded, not a top-level migration.**
+  CollapseEngine stamps the permanent grace-applied marker the
+  first time it sees a kingdom below threshold; the grace's
+  +5 buff is a 30-day expiring modifier. This means brand-new
+  kingdoms that drop below threshold also get the grace once
+  in their lifetime — slightly more lenient than pure
+  pre-D3.6-only migration. Trade-off accepted: simpler
+  engine; no first-tick scan; idempotent.
+- **No top-level Kingdom CODEC fields added.** Kingdom CODEC
+  is at 16/16 (the DFU group cap). All Phase 6 transient state
+  rides existing modifier infrastructure (`collapse.tracker`,
+  `collapse.rump`, `kingdom.collapsed`, `rebellion.grumble.X`,
+  `rebellion.crushed.X`, `pre_d36_grace.*`). KingdomGovernanceData
+  was at 14/16 post-D3.5D; rebellion-state petitions ride the
+  existing audience-petition list, no new fields needed.
+- **REBELLION_THREAT three-button GUI is deferred.** v1 player
+  path: chat notification with debug-command hint. NPC path:
+  deterministic auto-resolution. The infrastructure
+  (RESOLVE_NEGOTIATE/CRUSH/ACCEPT packet actions, AudienceDriver
+  dispatch, engine resolve method) is all in place; only the
+  GUI buttons are deferred.
+- **Marriage-union detection is succession-time only in v1.**
+  Cross-house arranged marriages that don't go through
+  succession aren't auto-detected. Debug command + future
+  Slice 3 (or polish) can extend.
+- **Vassal rebellion 30% daily fire chance** — keeps rebellion
+  from firing instantly on the first day below threshold. Tunable.
+- **Rump capital threshold = 25 stability.** Below that, the
+  capital becomes an independent village too. Above, the
+  original kingdom name + heraldry persists as a small
+  successor with permanent legitimacy malus.
+
+#### Out-of-scope, flagged for Slice 2 / 3 / polish
+
+- **REBELLION_THREAT GUI three-button panel** — Slice 2 or 3
+  polish. AudienceScreen extension.
+- **Cross-house arranged marriage auto-detection** —
+  succession-time only in v1.
+- **Per-province culture inheritance on secession** — v1
+  inherits parent culture. Future: a Province record could
+  carry its own `culture` field.
+- **War-conquest merger wiring** — Slice 2 calls
+  `MergerEngine.triggerConquestMerger` on war victory.
+- **Orphan-village re-resolution as automatic D3.1 trigger** —
+  v1 sets `Village.kingdomId = null`; D3.1's claim resolution
+  may need an explicit re-entry call. Verified the kingdomId
+  clearing works; full re-resolution path verification is a
+  follow-up.
+- **Newsfeed importance levels** — Slice 3 / polish.
+- **Vassal-rebellion stochasticity per culture** — v1 uses
+  fixed 30% daily fire chance; could be culture-tuned in a
+  future polish slice.
+
+---
+
 ### 2026-05-10 — Track D3.5D landed; Phase 5 complete
 
 Final quarter of the user-confirmed Phase 5 four-way split. Six

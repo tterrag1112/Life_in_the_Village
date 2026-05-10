@@ -1106,6 +1106,44 @@ public class Kingdom {
         return modifiers.removeIf(m -> m.id().equals(id));
     }
 
+    /** Track D3.6.1 — predicate for modifier presence by id. */
+    public boolean hasModifierWithId(String id) {
+        for (KingdomModifier m : modifiers) if (m.id().equals(id)) return true;
+        return false;
+    }
+
+    /**
+     * Track D3.6.1 — replaces the named province's stability with
+     * {@code newStability} (clamped 0..100). No-op if the province
+     * isn't owned by this kingdom.
+     */
+    public boolean replaceProvinceStability(UUID provinceId, int newStability) {
+        for (int i = 0; i < provinces.size(); i++) {
+            Province pr = provinces.get(i);
+            if (pr.id().equals(provinceId)) {
+                provinces.set(i, pr.withStability(newStability));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Track D3.6.1 — additive legitimacy adjustment. Clamps via
+     * {@link #setLegitimacy}.
+     */
+    public void applyLegitimacyDelta(int delta) {
+        setLegitimacy(legitimacy + delta);
+    }
+
+    /**
+     * Track D3.6.1 — additive stability adjustment. Clamps via
+     * {@link #setStability}.
+     */
+    public void applyStabilityDelta(int delta) {
+        setStability(stability + delta);
+    }
+
     /** Removes any modifier whose {@code expiresAtTick} is &le; the supplied tick. */
     public int pruneExpiredModifiers(long currentTick) {
         int before = modifiers.size();

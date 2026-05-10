@@ -282,6 +282,24 @@ public final class AudienceDriver {
                         tterrag1112.life_in_the_village.Kingdom.DiplomaticRelation.WAR);
                 return "war declared on " + target.getName();
             }
+            case PetitionPayload.RebellionThreat rt -> {
+                // REBELLION_THREAT does not use approve/deny — the
+                // three-way resolution is handled via
+                // KingdomPetitionPacket.RESOLVE_NEGOTIATE/CRUSH/ACCEPT.
+                // Reaching this case means the standard approve path
+                // was called on a rebellion threat (shouldn't happen
+                // via GUI); fall through with a benign note.
+                return "rebellion threat (use the three-way resolve actions)";
+            }
+            case PetitionPayload.VoluntaryUnion vu -> {
+                UUID surviving = tterrag1112.life_in_the_village.Kingdom.Merger
+                        .MergerEngine.approveVoluntaryUnion(level, data,
+                                kingdom, vu.petitioningKingdomId(), tick);
+                if (surviving == null) {
+                    return "FAIL: cannot merge (active war or merged-away kingdom missing)";
+                }
+                return "voluntary union approved";
+            }
             case PetitionPayload.BreakTreaty bt -> {
                 Treaty t = kingdom.findTreaty(bt.treatyId()).orElse(null);
                 if (t == null) return "FAIL: no treaty";

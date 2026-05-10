@@ -30,5 +30,19 @@ public enum PetitionKind {
     CHARTER_REQUEST,
     AUDIENCE_GRIEVANCE,
     WAR_DECLARATION,
-    BREAK_TREATY
+    BREAK_TREATY,
+    /**
+     * Track D3.6.1 — province stability crossed
+     * {@code secessionThreat}. Ruler picks NEGOTIATE / CRUSH /
+     * ACCEPT via the three-button resolve path; no APPROVE/DENY
+     * for this kind.
+     */
+    REBELLION_THREAT,
+    /**
+     * Track D3.6.3 — weak kingdom's ruler petitions a strong
+     * neighbour for absorption. Ruler approves (merger executes)
+     * or denies (newsfeed; small kingdom continues). Counter-offer
+     * to VASSALAGE is a follow-up flow.
+     */
+    VOLUNTARY_UNION
 }

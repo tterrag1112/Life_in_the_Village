@@ -126,6 +126,14 @@ public final class TickSubsystemRegistry {
         register(new AudienceLoopTickSystem());
         // Track D3.5B — daily NPC-ruler petition audit (priority 196).
         register(new NpcRulerAuditTickSystem());
+        // Track D3.6.1 — daily province-rebellion driver (priority 197).
+        register(new RebellionTickSystem());
+        // Track D3.6.1 — daily vassal-rebellion driver (priority 198).
+        register(new VassalRebellionTickSystem());
+        // Track D3.6.2 — daily kingdom-collapse driver (priority 199).
+        register(new KingdomCollapseTickSystem());
+        // Track D3.6.3 — daily voluntary-union petition driver (priority 200).
+        register(new VoluntaryUnionTickSystem());
         register(new OfficeElectionTickSystem());
         // Track D3.2b — daily auto-found of noble houses for eligible NPCs.
         register(new HouseFoundingTickSystem());

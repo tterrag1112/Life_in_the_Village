@@ -39,7 +39,17 @@ public record KingdomPetitionPacket(
         String note
 ) implements CustomPacketPayload {
 
-    public enum Action { APPROVE, DENY, WITHDRAW }
+    public enum Action {
+        APPROVE, DENY, WITHDRAW,
+        /**
+         * Track D3.6.1 — three-way resolution for REBELLION_THREAT
+         * petitions. NEGOTIATE pays treasury + concessions and
+         * stamps a stability floor; CRUSH applies legitimacy /
+         * stability cost elsewhere with a province dip; ACCEPT
+         * triggers immediate secession.
+         */
+        RESOLVE_NEGOTIATE, RESOLVE_CRUSH, RESOLVE_ACCEPT
+    }
 
     public static final Type<KingdomPetitionPacket> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(
@@ -116,6 +126,34 @@ public record KingdomPetitionPacket(
                             net.minecraft.network.chat.Component.literal(
                                     r.applied() ? "Petition withdrawn"
                                             : "Withdraw failed: " + r.reason()),
+                            false);
+                }
+                case RESOLVE_NEGOTIATE, RESOLVE_CRUSH, RESOLVE_ACCEPT -> {
+                    if (!isRuler(kingdom, actor)) {
+                        player.displayClientMessage(
+                                net.minecraft.network.chat.Component.literal(
+                                        "Only the ruler can resolve a rebellion threat."),
+                                false);
+                        return;
+                    }
+                    var choice = switch (pkt.action()) {
+                        case RESOLVE_NEGOTIATE ->
+                                tterrag1112.life_in_the_village.Kingdom.Rebellion
+                                        .RebellionEngine.Choice.NEGOTIATE;
+                        case RESOLVE_CRUSH    ->
+                                tterrag1112.life_in_the_village.Kingdom.Rebellion
+                                        .RebellionEngine.Choice.CRUSH;
+                        default               ->
+                                tterrag1112.life_in_the_village.Kingdom.Rebellion
+                                        .RebellionEngine.Choice.ACCEPT;
+                    };
+                    var r = tterrag1112.life_in_the_village.Kingdom.Rebellion
+                            .RebellionEngine.resolveThreat(level, data, kingdom,
+                                    pkt.petitionId(), choice, actor, tick);
+                    player.displayClientMessage(
+                            net.minecraft.network.chat.Component.literal(
+                                    r.applied() ? "Threat resolved: " + r.reason()
+                                            : "Resolution failed: " + r.reason()),
                             false);
                 }
             }

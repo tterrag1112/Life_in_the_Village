@@ -22,7 +22,9 @@ public sealed interface PetitionPayload permits
         PetitionPayload.CharterRequest,
         PetitionPayload.AudienceGrievance,
         PetitionPayload.WarDeclaration,
-        PetitionPayload.BreakTreaty {
+        PetitionPayload.BreakTreaty,
+        PetitionPayload.RebellionThreat,
+        PetitionPayload.VoluntaryUnion {
 
     /** Discriminator used by the codec to pick the right variant. */
     PetitionKind kind();
@@ -37,6 +39,8 @@ public sealed interface PetitionPayload permits
                 case AUDIENCE_GRIEVANCE  -> AudienceGrievance.MAP_CODEC;
                 case WAR_DECLARATION     -> WarDeclaration.MAP_CODEC;
                 case BREAK_TREATY        -> BreakTreaty.MAP_CODEC;
+                case REBELLION_THREAT    -> RebellionThreat.MAP_CODEC;
+                case VOLUNTARY_UNION     -> VoluntaryUnion.MAP_CODEC;
             });
 
     /**
@@ -112,6 +116,44 @@ public sealed interface PetitionPayload permits
      * named treaty. Approve → Kingdom.breakTreaty mirrored on every
      * party. Ruler eats the legitimacy hit.
      */
+    /**
+     * REBELLION_THREAT — fired by {@code RebellionDriver} when a
+     * province's stability crosses the
+     * {@link tterrag1112.life_in_the_village.Cultures.RebellionThresholds#secessionThreat}.
+     * Carries the province UUID. Ruler resolves via NEGOTIATE /
+     * CRUSH / ACCEPT (see {@code KingdomPetitionPacket.Action}); the
+     * standard APPROVE / DENY verbs aren't used for this kind.
+     */
+    record RebellionThreat(UUID provinceId) implements PetitionPayload {
+        @Override public PetitionKind kind() { return PetitionKind.REBELLION_THREAT; }
+
+        public static final MapCodec<RebellionThreat> MAP_CODEC =
+                RecordCodecBuilder.mapCodec(i -> i.group(
+                        UUIDUtil.CODEC.fieldOf("provinceId").forGetter(RebellionThreat::provinceId)
+                ).apply(i, RebellionThreat::new));
+    }
+
+    /**
+     * VOLUNTARY_UNION — fired by {@code VoluntaryUnionDriver} when
+     * a weak kingdom's stability + legitimacy combination falls
+     * below threshold and a strong neighbour is available. Carries
+     * the petitioning kingdom (the absorbed party) UUID; the
+     * "target kingdom" in the petition itself is the receiving
+     * strong neighbour.
+     */
+    record VoluntaryUnion(UUID petitioningKingdomId, String reason)
+            implements PetitionPayload {
+        @Override public PetitionKind kind() { return PetitionKind.VOLUNTARY_UNION; }
+
+        public static final MapCodec<VoluntaryUnion> MAP_CODEC =
+                RecordCodecBuilder.mapCodec(i -> i.group(
+                        UUIDUtil.CODEC.fieldOf("petitioningKingdomId")
+                                .forGetter(VoluntaryUnion::petitioningKingdomId),
+                        Codec.STRING.optionalFieldOf("reason", "")
+                                .forGetter(VoluntaryUnion::reason)
+                ).apply(i, VoluntaryUnion::new));
+    }
+
     record BreakTreaty(UUID treatyId, String reason)
             implements PetitionPayload {
         @Override public PetitionKind kind() { return PetitionKind.BREAK_TREATY; }

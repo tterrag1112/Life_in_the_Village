@@ -1150,6 +1150,74 @@ class AudienceLoopTickSystem implements TickSubsystem {
 }
 
 /**
+ * Track D3.6.1 — daily province-rebellion driver. Priority 197 —
+ * after audience-loop (195) and NPC-ruler audit (196), so today's
+ * province stability changes feed in before rebellion evaluation.
+ */
+class RebellionTickSystem implements TickSubsystem {
+    @Override public String name()     { return "rebellion"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 197; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Rebellion.RebellionEngine
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
+ * Track D3.6.1 — daily vassal-rebellion driver. Priority 198 —
+ * after the province rebellion driver so per-vassal loyalty
+ * computation reads today's rebellion outcomes.
+ */
+class VassalRebellionTickSystem implements TickSubsystem {
+    @Override public String name()     { return "vassal_rebellion"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 198; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Rebellion.VassalRebellionDriver
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
+ * Track D3.6.2 — daily kingdom-collapse driver. Priority 199 —
+ * runs after the secession path so today's secessions feed
+ * collapse-tracking computation.
+ */
+class KingdomCollapseTickSystem implements TickSubsystem {
+    @Override public String name()     { return "kingdom_collapse"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 199; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Rebellion.CollapseEngine
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
+ * Track D3.6.3 — daily voluntary-union petition driver. Priority
+ * 200 — runs after collapse so already-collapsed weak kingdoms
+ * don't try to petition.
+ */
+class VoluntaryUnionTickSystem implements TickSubsystem {
+    @Override public String name()     { return "voluntary_union"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 200; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Merger.MergerEngine
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
  * Track D3.5B — daily NPC-ruler petition audit. Scores every
  * pending petition in NPC-ruled kingdoms via trait-weighted
  * formula in {@link tterrag1112.life_in_the_village.Kingdom.Audience.NpcRulerAuditor};
