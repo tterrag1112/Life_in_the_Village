@@ -15,6 +15,9 @@ import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
 import tterrag1112.life_in_the_village.Kingdom.Houses.House;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Kingdom.KingdomModifier;
+import tterrag1112.life_in_the_village.Kingdom.Provinces.Province;
+import tterrag1112.life_in_the_village.Kingdom.Provinces.ProvinceComputer;
+import tterrag1112.life_in_the_village.Kingdom.Provinces.ProvincialReport;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -69,6 +72,26 @@ public final class KingdomDebugCommand {
                                                 .then(Commands.argument("name",
                                                                 StringArgumentType.string())
                                                         .executes(ctx -> fealty(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))
+                                        // Track D3.3 — list provinces of a kingdom.
+                                        .then(Commands.literal("provinces")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> provinces(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))
+                                        // Track D3.3 — force a province polygon recompute.
+                                        .then(Commands.literal("province_recompute")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> provinceRecompute(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))))
+                        // Track D3.3 — top-level /litv province describe <provinceName>.
+                        .then(Commands.literal("province")
+                                .then(Commands.literal("debug")
+                                        .then(Commands.literal("describe")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> provinceDescribe(ctx,
                                                                 StringArgumentType.getString(ctx, "name")))))))
         );
     }
@@ -157,6 +180,20 @@ public final class KingdomDebugCommand {
                         + (h.isExtinct() ? "(extinct)"
                                 : "head=" + h.headUuid().get().toString().substring(0, 8))
                         + " prestige=" + h.prestige());
+            }
+        }
+        send(ctx, "── Provinces (D3.3) ──");
+        if (k.getProvinces().isEmpty()) {
+            send(ctx, "  (none — UNITARY, ≤3 villages, or not yet computed)");
+        } else {
+            for (Province p : k.getProvinces()) {
+                send(ctx, "  " + p.name() + " — "
+                        + p.villageIds().size() + " villages, "
+                        + p.cellKeys().size() + " cells, "
+                        + (p.isGoverned() ? "governor "
+                                + p.governorUuid().get().toString().substring(0, 8)
+                                : "ungoverned")
+                        + ", stab=" + p.stability());
             }
         }
         send(ctx, "── Active modifiers (D3.2a) ──");
@@ -284,6 +321,123 @@ public final class KingdomDebugCommand {
         send(ctx, "  " + villagesWithLord + "/" + k.getVillageIds().size()
                 + " villages have a noble overlord");
         return villagesWithLord;
+    }
+
+    /**
+     * Track D3.3 — lists provinces of a kingdom with governor +
+     * stability summaries.
+     */
+    private static int provinces(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv kingdom debug provinces must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No kingdom named '" + name + "'."));
+            return 0;
+        }
+        var ps = k.getProvinces();
+        if (ps.isEmpty()) {
+            send(ctx, "Kingdom '" + name + "' has no provinces (UNITARY culture, ≤3 villages, or pre-D3.3).");
+            return 0;
+        }
+        send(ctx, "── Provinces of " + name + " (" + ps.size() + ") ──");
+        send(ctx, "  last recompute tick: " + k.getLastProvinceRecomputeTick());
+        for (Province p : ps) {
+            send(ctx, "  " + p.name() + " [" + p.id().toString().substring(0, 8) + "]");
+            send(ctx, "    villages : " + p.villageIds().size()
+                    + ", cells : " + p.cellKeys().size());
+            send(ctx, "    governor : " + p.governorUuid()
+                    .map(uid -> uid.toString().substring(0, 8))
+                    .orElse("(ungoverned)"));
+            send(ctx, "    stability: " + p.stability()
+                    + " (effective " + (p.stability() + p.stabilityModifierSum()) + ")");
+            send(ctx, "    treasury : " + p.treasury() + " bronze");
+        }
+        return ps.size();
+    }
+
+    /**
+     * Track D3.3 — forces a province polygon recompute on the named
+     * kingdom, bypassing the weekly cadence. Useful for testing
+     * subdivision changes without waiting in-game.
+     */
+    private static int provinceRecompute(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv kingdom debug province_recompute must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No kingdom named '" + name + "'."));
+            return 0;
+        }
+        ProvinceComputer.recompute(level, data, k, level.getGameTime());
+        data.setDirty();
+        send(ctx, "Recomputed " + k.getProvinces().size()
+                + " province(s) for kingdom '" + name + "'.");
+        return k.getProvinces().size();
+    }
+
+    /**
+     * Track D3.3 — describes a single province by name across all
+     * kingdoms. Shows governor, members, stability + modifiers, and
+     * the most recent rolling-buffer reports.
+     */
+    private static int provinceDescribe(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv province debug describe must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Province found = null;
+        Kingdom owner = null;
+        for (Kingdom k : data.getAllKingdoms()) {
+            var p = k.findProvinceByName(name).orElse(null);
+            if (p != null) { found = p; owner = k; break; }
+        }
+        if (found == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No province named '" + name + "' in any kingdom."));
+            return 0;
+        }
+        send(ctx, "── Province: " + found.name() + " ──");
+        send(ctx, "  id        : " + found.id().toString().substring(0, 8));
+        send(ctx, "  kingdom   : " + owner.getName());
+        send(ctx, "  governor  : " + found.governorUuid()
+                .map(uid -> uid.toString().substring(0, 8))
+                .orElse("(ungoverned)"));
+        send(ctx, "  villages  : " + found.villageIds().size());
+        send(ctx, "  cells     : " + found.cellKeys().size());
+        send(ctx, "  stability : " + found.stability()
+                + " (mod sum " + signed(found.stabilityModifierSum()) + ")");
+        send(ctx, "  treasury  : " + found.treasury() + " bronze");
+        send(ctx, "  created   : tick " + found.createdTick());
+        if (!found.modifiers().isEmpty()) {
+            send(ctx, "── Modifiers ──");
+            for (KingdomModifier m : found.modifiers()) {
+                send(ctx, "  " + m.id() + ": stab" + signed(m.stabilityDelta())
+                        + (m.isPermanent() ? " permanent"
+                                : " expires@" + m.expiresAtTick()));
+            }
+        }
+        var reports = found.reports();
+        send(ctx, "── Recent reports (" + reports.size() + " / "
+                + ProvincialReport.BUFFER_CAPACITY + ") ──");
+        int show = Math.min(5, reports.size());
+        for (int i = reports.size() - show; i < reports.size(); i++) {
+            ProvincialReport r = reports.get(i);
+            send(ctx, "  tick " + r.tickGenerated() + " — " + r.summary());
+        }
+        return 1;
     }
 
     private static int listAll(CommandContext<CommandSourceStack> ctx) {

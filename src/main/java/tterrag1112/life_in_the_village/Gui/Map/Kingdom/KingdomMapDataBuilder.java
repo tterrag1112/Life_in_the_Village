@@ -127,10 +127,41 @@ public final class KingdomMapDataBuilder {
             }
         }
 
+        // Track D3.3 — province markers for the focus kingdom.
+        List<KingdomMapData.ProvinceMarker> provinces = new ArrayList<>();
+        for (var p : focus.getProvinces()) {
+            Set<Long> cells = new LinkedHashSet<>(p.cellKeys());
+            BlockPos centroid = computeCentroid(cells);
+            provinces.add(new KingdomMapData.ProvinceMarker(
+                    p.id(), p.name(), p.governorUuid(),
+                    cells, centroid, p.stability()));
+        }
+
         return Optional.of(new KingdomMapData(
                 focusKingdomId, focus.getName(),
                 minCX, minCZ, maxCX, maxCZ,
-                terrain, focusCells, foreign, villages, landRoutes, seaRoutes));
+                terrain, focusCells, foreign, villages, landRoutes, seaRoutes,
+                provinces));
+    }
+
+    /**
+     * Cell-set centroid in block coordinates. Used to anchor the
+     * governor label on the {@code ProvinceLayer}.
+     */
+    private static BlockPos computeCentroid(Set<Long> cells) {
+        if (cells.isEmpty()) return new BlockPos(0, 64, 0);
+        long sumX = 0L, sumZ = 0L;
+        int n = 0;
+        for (long key : cells) {
+            sumX += AtlasCell.unpackX(key);
+            sumZ += AtlasCell.unpackZ(key);
+            n++;
+        }
+        int cx = (int) (sumX / n);
+        int cz = (int) (sumZ / n);
+        int blockX = (cx << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+        int blockZ = (cz << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+        return new BlockPos(blockX, 64, blockZ);
     }
 
     /**

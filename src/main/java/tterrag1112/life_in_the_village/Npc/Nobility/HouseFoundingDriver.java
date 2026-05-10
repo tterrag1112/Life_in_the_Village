@@ -135,6 +135,11 @@ public final class HouseFoundingDriver {
                 tick,
                 HOUSE_FOUNDED_DURATION));
 
+        // Track D3.3 — event-driven province recompute invalidation.
+        // A new noble house is the canonical "manor changes hands"
+        // signal that promotes a recompute beyond the weekly cadence.
+        kingdom.setLastProvinceRecomputeTick(-1L);
+
         return true;
     }
 

@@ -126,20 +126,44 @@ public class KingdomTaxEvent {
             FealtyChain.TaxSplit split = FealtyChain.split(
                     collectedFromVillage,
                     FealtyChain.lordOfVillage(level, data, village.get()));
+            long lordShare = split.lordShare();
+            long postLordKingdomShare = split.kingdomShare();
             if (split.hasLord()) {
-                FealtyChain.payLord(split.lord(), split.lordShare());
-                totalCollected += split.kingdomShare();
-                System.out.println("Kingdom '" + kingdom.getName()
-                        + "' collected " + CurrencyValue.of(collectedFromVillage)
-                        + " tax from village '" + village.get().getName()
-                        + "' (lord " + split.lord().getNpcName()
-                        + " kept " + CurrencyValue.of(split.lordShare()) + ")");
-            } else {
-                totalCollected += collectedFromVillage;
-                System.out.println("Kingdom '" + kingdom.getName()
-                        + "' collected " + CurrencyValue.of(collectedFromVillage)
-                        + " tax from village '" + village.get().getName() + "'");
+                FealtyChain.payLord(split.lord(), lordShare);
             }
+
+            // Track D3.3 — three-tier fealty: insert province
+            // governor tier between lord and kingdom. Default skim
+            // rate 0 preserves net flow; the ledger entry feeds the
+            // daily provincial tick regardless of skim.
+            var governorRef = FealtyChain.governorOfVillage(level, data, kingdom, village.get());
+            FealtyChain.GovernorSplit govSplit =
+                    FealtyChain.splitForGovernor(postLordKingdomShare, governorRef);
+            if (govSplit.hasGovernor()) {
+                FealtyChain.payGovernor(govSplit.governor(), govSplit.governorShare());
+            }
+            totalCollected += govSplit.kingdomShare();
+
+            // Per-province ledger: append even when skim is 0 so
+            // the daily provincial tick still gets a tax-collected
+            // signal for stability + reports.
+            governorRef.ifPresent(g -> FealtyChain.recordProvinceLedger(
+                    g.province().id(),
+                    /*taxCollected=*/ postLordKingdomShare,
+                    /*taxRemitted=*/  govSplit.kingdomShare(),
+                    /*withhold=*/     0L));
+
+            System.out.println("Kingdom '" + kingdom.getName()
+                    + "' collected " + CurrencyValue.of(collectedFromVillage)
+                    + " tax from village '" + village.get().getName() + "'"
+                    + (split.hasLord()
+                            ? " (lord " + split.lord().getNpcName()
+                                    + " kept " + CurrencyValue.of(lordShare) + ")"
+                            : "")
+                    + (govSplit.hasGovernor()
+                            ? " (governor " + govSplit.governor().npc().getNpcName()
+                                    + " kept " + CurrencyValue.of(govSplit.governorShare()) + ")"
+                            : ""));
         }
 
         kingdom.depositToTreasury(totalCollected);

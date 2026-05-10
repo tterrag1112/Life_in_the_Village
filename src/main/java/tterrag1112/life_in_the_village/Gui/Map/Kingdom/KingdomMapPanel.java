@@ -49,6 +49,9 @@ public final class KingdomMapPanel {
         // Draw order matters — first added is drawn first (bottom layer)
         layers.add(new TerrainLayer());
         layers.add(new KingdomTerritoryLayer());
+        // Track D3.3 — province polygons + governor labels above the
+        // territory tint, below routes and village markers.
+        layers.add(new ProvinceLayer());
         layers.add(new RouteLayer(false));   // land routes
         layers.add(new RouteLayer(true));    // sea routes
         layers.add(new VillageLayer());

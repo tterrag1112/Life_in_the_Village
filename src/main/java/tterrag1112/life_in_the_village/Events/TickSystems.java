@@ -1069,6 +1069,68 @@ class HouseFoundingTickSystem implements TickSubsystem {
     }
 }
 
+// =============================================================================
+// PROVINCE RECOMPUTE (Track D3.3 — once per in-game week, priority = 191)
+// =============================================================================
+
+/**
+ * Track D3.3 — weekly baseline of the C-hybrid polygon update timing
+ * (manor-event invalidation handled via {@code NobilityEventDispatcher}).
+ * Walks every kingdom; recomputes provinces when the kingdom is past
+ * the {@code MIN_VILLAGES_FOR_SUBDIVISION} gate AND its
+ * {@code lastProvinceRecomputeTick} is older than the weekly
+ * cadence. Priority 191 places it before office elections so a
+ * same-day governor selection sees fresh province assignments.
+ */
+class ProvinceRecomputeTickSystem implements TickSubsystem {
+    /** Weekly cadence: 7 in-game days. */
+    public static final long RECOMPUTE_INTERVAL_TICKS = 7L * 24000L;
+
+    @Override public String name()     { return "province_recompute"; }
+    /** Tick every in-game day so the {@code isProvinceRecomputeDue}
+     *  check fires once per kingdom on the right day. The actual
+     *  cost is a single integer comparison per kingdom. */
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 191; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        for (var kingdom : ctx.villageData().getAllKingdoms()) {
+            if (!kingdom.isProvinceRecomputeDue(ctx.tick(), RECOMPUTE_INTERVAL_TICKS)) continue;
+            tterrag1112.life_in_the_village.Kingdom.Provinces.ProvinceComputer
+                    .recompute(ctx.level(), ctx.villageData(), kingdom, ctx.tick());
+        }
+    }
+}
+
+// =============================================================================
+// PROVINCE DAILY (Track D3.3 — once per in-game day, priority = 194)
+// =============================================================================
+
+/**
+ * Track D3.3 — daily provincial tick. Per-province: ticks stability
+ * decay, generates a {@link tterrag1112.life_in_the_village.Kingdom.Provinces.ProvincialReport}
+ * appended to the rolling buffer, applies ungoverned-status pressure.
+ * The actual tax flow happens via {@code FealtyChain} in the
+ * existing {@code KingdomTaxEvent}; this tick is the report +
+ * stability summary pass.
+ *
+ * <p>Priority 194 — after province recompute (191), before office
+ * elections (195) so a freshly-deposed governor's province reflects
+ * the change in the same daily cycle.
+ */
+class ProvinceDailyTickSystem implements TickSubsystem {
+    @Override public String name()     { return "province_daily"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 194; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Provinces.ProvincialDailyDriver
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
 /**
  * Weekly plague-outbreak roll per village (spec line 169). Runs once
  * a week ({@code 168000} ticks); chance is gated on village size +

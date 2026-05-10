@@ -930,3 +930,200 @@ user-confirmed design pass:
 - **Kingdom-tier laws driven by Chancellor** — capability gating
   is D3.3; today the king can pass any law per the existing
   flow.
+
+---
+
+### 2026-05-09 — Track D3.3a landed (provinces + provincial governance + map overlay)
+
+D3.3 was split per the kingdom plan's "If ambiguous" guidance:
+3.1 + 3.4 (subdivision + governance) ships first as **D3.3a**;
+3.2 + 3.3 (offices + capability gating) ships separately as
+**D3.3b**.
+
+#### User-confirmed design
+
+- **Polygon timing:** C — hybrid (weekly recompute baseline +
+  event-driven invalidation on noble-head changes).
+- **SubdivisionModel mapping:** all 5 enum values map.
+  PROVINCES + DUCHIES → TERRITORIAL (DUCHIES prefers house-head
+  governors; PROVINCES picks top-ranked); TRIBAL_CONFEDERATION
+  → TRIBAL; CITY_STATE_LEAGUE → FUNCTIONAL; UNITARY → NONE.
+- **Voronoi:** cell-set Voronoi at atlas-cell granularity. Each
+  kingdom-claim cell is assigned to the nearest seed by Manhattan
+  distance; ties break by seed UUID. No Fortune's algorithm —
+  the existing claim model is already cell-based.
+- **Manor fallback:** when a kingdom has no NOBLE_MANOR
+  buildings, village centroids seed the Voronoi instead. Fresh
+  kingdoms subdivide immediately.
+
+#### What this slice ships
+
+- `Kingdom/Provinces/Province` record — id (derived from
+  `(kingdomId, seedUuid)` for stable identity), name, kingdomId,
+  governor (Optional UUID), member villages, cell-set, stability
+  (default 60, clamped 0..100), treasury, createdTick, per-province
+  modifiers list (`KingdomModifier` shape), rolling
+  `ProvincialReport` buffer. Copy-helpers: `withGovernor`,
+  `withoutGovernor`, `withMembership`, `withStability`,
+  `withTreasury`, `withName`, `appendReport`, `withModifiers`.
+  `Province.fresh` constructs with default stability + empty
+  buffers.
+- `Kingdom/Provinces/ProvincialReport` record + codec — daily
+  snapshot of (tickGenerated, taxCollected, taxRemitted,
+  withhold, stabilityDelta, summary). Capacity constant
+  `BUFFER_CAPACITY = 28` (~4 in-game weeks).
+- `KingdomGovernanceData` extended (now 9/16 fields) with
+  `provinces` + `lastProvinceRecomputeTick`. `Kingdom.CODEC` stays
+  at 16 top-level fields (the cap).
+- `Kingdom` accessors: `getProvinces`, `findProvince(id)`,
+  `findProvinceByName(name)`, `findProvinceForVillage`,
+  `findProvinceForCell`, `addProvince`, `removeProvince`,
+  `replaceProvince`, `replaceAllProvinces` (atomic swap from
+  recompute), `getLastProvinceRecomputeTick`,
+  `setLastProvinceRecomputeTick`, `isProvinceRecomputeDue`.
+- `Kingdom/Provinces/ProvinceComputer.recompute` — single entry
+  point. Skips kingdoms with `< MIN_VILLAGES_FOR_SUBDIVISION = 4`
+  villages. Dispatches on `culture.kingdomDefaults().subdivisionModel()`:
+  - `PROVINCES` / `DUCHIES` → `territorial()` — collect
+    NOBLE_MANOR seeds (or village centroids if none); for each
+    cell in the kingdom's claim, assign to nearest seed; villages
+    join the province whose seed is nearest to their centroid.
+  - `TRIBAL_CONFEDERATION` → `tribal()` — group villages by
+    dominant noble house id (looked up via village leader →
+    house head/founder); cross-group cell partition by nearest
+    member centroid. Singleton groups → no subdivision.
+  - `CITY_STATE_LEAGUE` → `functional()` — group villages by
+    primary `VillageTag` role (TRADE > DEFENSIVE > INDUSTRIAL >
+    RELIGIOUS > AGRICULTURAL > REMOTE; default AGRICULTURAL).
+    Same cross-group cell partition.
+  - `UNITARY` → empty list.
+  Identity preservation: same seed UUIDs across recomputes
+  produce same province UUIDs, so `mergeWithExisting` carries
+  over treasury / reports / modifiers / governor.
+- `Kingdom/Provinces/GovernorSelector.selectFor` — walks loaded
+  NPCs assigned to the province's villages; filters by
+  `nobility.hasDynastyHouse() && rankIndex > 0`; sorts by
+  rank desc → prestige desc → UUID asc; for `DUCHIES` prefers
+  candidates who are heads of dynasty houses, falling back to
+  the top-ranked candidate.
+- `ProvinceRecomputeTickSystem` (priority 191, interval 24000,
+  but the per-kingdom `isProvinceRecomputeDue` check uses
+  `RECOMPUTE_INTERVAL_TICKS = 7 * 24000` so the cost is one
+  comparison per kingdom per day).
+- `ProvinceDailyTickSystem` (priority 194) + `ProvincialDailyDriver`
+  — per province per day: consumes the `FealtyChain` ledger
+  entry; computes stability delta from `(ungoverned ? -2 :
+  remitted ? +1 : 0) + (withhold > 0 ? -1 : 0) + drift`;
+  composes a one-line summary; appends `ProvincialReport`.
+- Event-driven recompute invalidation:
+  `NobilityEventDispatcher.runSuccession` resets the kingdom's
+  `lastProvinceRecomputeTick = -1L` (proxy for "manor changes
+  hands"); `HouseFoundingDriver.tryFound` does the same on a
+  fresh house. Next weekly tick fires immediately on the
+  affected kingdom.
+- `Npc/Nobility/FealtyChain` extended:
+  - `DEFAULT_GOVERNOR_SKIM_RATE = 0.0` (constraint: net flow
+    preserved at default parameters).
+  - `governorOfVillage(level, data, kingdom, village)` returns
+    `Optional<GovernorRef>`.
+  - `splitForGovernor(kingdomShare, governor)` returns
+    `GovernorSplit(crownShare, governorShare, governor)`.
+  - `payGovernor(GovernorRef, bronze)` credits the governor's
+    purse via `CoinHelper.giveCoins`.
+  - Static `PROVINCE_LEDGER` map keyed by province id;
+    `recordProvinceLedger` / `consumeProvinceLedger`. Built up
+    by the daily tax tick, consumed by the daily provincial tick.
+- `KingdomTaxEvent.collectTaxes` — three-tier flow:
+  village → lord (D3.2b) → governor (D3.3) → kingdom. Per-village
+  log line includes both lord and governor cuts when present.
+- `Gui/Map/Kingdom/Layer/ProvinceLayer` — sits between
+  `KingdomTerritoryLayer` and `RouteLayer`. Per-province cell
+  fill with UUID-derived colour, stability-tinted (low stability
+  redder); border outline; governor labels at cell centroids.
+- `KingdomMapData.ProvinceMarker` + builder population — provinces
+  ride the existing `Kingdom.CODEC` sync (no new packet); builder
+  computes cell-set centroid for label anchoring.
+- Debug commands:
+  - `/litv kingdom debug provinces <name>` — list with
+    governor + stability per province.
+  - `/litv kingdom debug province_recompute <name>` — force
+    recompute (skips weekly cadence).
+  - `/litv province debug describe <provinceName>` — full
+    detail including last 5 reports.
+  - `/litv kingdom debug describe` extended with a "Provinces"
+    section.
+
+#### Decisions worth recording
+
+- **Cell-set Voronoi over polygon Voronoi.** The existing
+  `KingdomClaim` is `List<Long> claimedCellKeys` (Dijkstra
+  output, not a polygon). Building Fortune's algorithm to
+  produce vertex polygons would have been ~500 LOC of fresh
+  geometry code; the cell-assignment pass is ~50 LOC and
+  produces visually equivalent results at the 64×64-block cell
+  resolution. Rendering is identical to existing kingdom
+  territory rendering, just per-province.
+- **Province identity preservation across recomputes.** Province
+  UUIDs derive deterministically from `(kingdomId, seedUuid)` —
+  for TERRITORIAL, the seedUuid is the manor's building UUID
+  (or the village's UUID when manors don't exist yet); for
+  TRIBAL it's the dynasty house id; for FUNCTIONAL it's a
+  hashed (role, idx) tuple. This means treasury balances,
+  ongoing modifiers, and the rolling report buffer survive
+  recomputes — losing them on every weekly recompute would have
+  thrown away the whole point of having them.
+- **Manor-event invalidation hook.** "Manor changes hands" was
+  the prompt's canonical event-driven trigger. We wired it via
+  proxy events: `NobilityEventDispatcher.runSuccession`
+  (head-of-house death → recompute) and
+  `HouseFoundingDriver.tryFound` (new house formed → recompute).
+  Direct manor-ownership-change events would require building
+  a manor-ownership ledger which D3.2 doesn't have; the
+  succession + founding hooks cover the same ground for D3.3a.
+- **Net flow constraint.** Both the lord skim
+  (`DEFAULT_LORD_SKIM_RATE = 0.0`, D3.2b) and the governor skim
+  (`DEFAULT_GOVERNOR_SKIM_RATE = 0.0`, D3.3a) ship at zero so
+  net kingdom revenue at default parameters is unchanged from
+  the pre-D3.2b shape. Both rates are class constants — D3.3b
+  / Phase 4 can lift them per culture or per province.
+- **Per-province ledger via static state.** The ledger is a
+  static `Map<UUID, ProvinceLedgerEntry>` on `FealtyChain`, not
+  persisted to SavedData. Reasoning: it's a within-day
+  accumulator consumed end-of-day. A server crash mid-day
+  drops the day's tax record, but the actual coin movements
+  already happened; the report buffer just misses one entry.
+  Persisting the ledger would add a serialization channel for
+  data that's transient by design.
+- **Voronoi tie-break by seed UUID.** Manhattan-distance ties
+  in the cell assignment break by `seedId.compareTo(otherSeedId)`
+  ascending. Stable across reloads since seed UUIDs are stable.
+- **Stability formula.** Daily delta = `+1` (governor remitted
+  cleanly) OR `-2` (ungoverned) OR `-1` (withhold > 0); plus
+  `±1` drift toward `DEFAULT_STABILITY = 60`. Clamped 0..100.
+  Numbers will be revisited after playtest data; phase 4's
+  rebellion driver wants stability < 25 to mean something
+  observable.
+
+#### Out-of-scope, flagged for D3.3b / Phase 4 / 5 / 6
+
+- **`KingdomCapability` enum + evaluator** — D3.3b. Eight
+  capabilities: ISSUE_DECREE / DRAFT_TREATY / DECLARE_WAR /
+  LEVY_TROOPS / PASS_LAW / INVESTIGATE_CRIME / ISSUE_CURRENCY /
+  INTRIGUE_FOREIGN. GUI grey-out + server-side enforcement.
+- **Office wiring** (Chancellor / Scholar / General /
+  Magistrate / Spymaster / Treasurer / Diplomat) — D3.3b.
+- **Office competence formula** — D3.3b.
+- **Office-grant ennoblement** — D3.3b.
+- **Heir refusal in governor selection** — Phase 4 / 5.
+- **Kingdom-tier laws** — Phase 4.
+- **Charters and privileges** — Phase 4.
+- **Spymaster intrigue** — Phase 4.
+- **Treaties** — Phase 4.
+- **Audience-loop UI for `ProvincialReport`** — Phase 5. Data
+  exists, no UI yet.
+- **Real Voronoi at sub-cell resolution** — Phase 7 polish if
+  the cell-set approximation's blocky borders bother players.
+- **Weekly polygon recompute interval tuning** — currently
+  hard-coded at 7 days; if Phase 6 rebellion mechanics churn
+  manors fast, the event-invalidation hook does the heavy
+  lifting and the weekly cadence becomes a safety net.

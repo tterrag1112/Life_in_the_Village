@@ -118,6 +118,10 @@ public final class TickSubsystemRegistry {
         // capital villages. Idempotent; skips kingdoms whose king is
         // already seated.
         register(new KingdomOfficeBootstrapTickSystem());
+        // Track D3.3 — weekly polygon recompute (priority 191).
+        register(new ProvinceRecomputeTickSystem());
+        // Track D3.3 — daily provincial reports + stability tick (priority 194).
+        register(new ProvinceDailyTickSystem());
         register(new OfficeElectionTickSystem());
         // Track D3.2b — daily auto-found of noble houses for eligible NPCs.
         register(new HouseFoundingTickSystem());

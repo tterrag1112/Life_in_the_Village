@@ -38,6 +38,9 @@ public final class KingdomMapData {
     /** Sea routes as cell-centre polylines (in cell coords → block coords at centre). */
     public final List<RoutePath> seaRoutes;
 
+    /** Track D3.3 — provinces of the focus kingdom (empty list when UNITARY or pre-D3.3). */
+    public final List<ProvinceMarker> provinces;
+
     public KingdomMapData(UUID focusKingdomId, String focusKingdomName,
                           int minCellX, int minCellZ, int maxCellX, int maxCellZ,
                           Map<Long, AtlasCell> terrainGrid,
@@ -45,7 +48,8 @@ public final class KingdomMapData {
                           List<ForeignKingdom> foreignKingdoms,
                           List<VillageMarker> villages,
                           List<RoutePath> landRoutes,
-                          List<RoutePath> seaRoutes) {
+                          List<RoutePath> seaRoutes,
+                          List<ProvinceMarker> provinces) {
         this.focusKingdomId  = focusKingdomId;
         this.focusKingdomName = focusKingdomName;
         this.minCellX = minCellX; this.minCellZ = minCellZ;
@@ -56,6 +60,7 @@ public final class KingdomMapData {
         this.villages    = List.copyOf(villages);
         this.landRoutes  = List.copyOf(landRoutes);
         this.seaRoutes   = List.copyOf(seaRoutes);
+        this.provinces   = List.copyOf(provinces);
     }
 
     // =========================================================================
@@ -67,6 +72,18 @@ public final class KingdomMapData {
     public record VillageMarker(UUID id, UUID kingdomId,
                                 String name, BlockPos worldPos,
                                 boolean isCapital) {}
+
+    /**
+     * Track D3.3 — province snapshot for map rendering. {@code cells}
+     * is the province's atlas-cell membership; {@code centroidBlock}
+     * is the average cell-centre block position (for governor labels).
+     * {@code stability} is the current province stability scalar (0..100).
+     */
+    public record ProvinceMarker(UUID id, String name,
+                                 java.util.Optional<UUID> governorUuid,
+                                 Set<Long> cells,
+                                 BlockPos centroidBlock,
+                                 int stability) {}
 
     /**
      * A polyline through either block-space waypoints (land — sampled from

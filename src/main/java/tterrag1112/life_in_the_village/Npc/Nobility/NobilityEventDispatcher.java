@@ -204,6 +204,14 @@ public final class NobilityEventDispatcher implements EventDispatcher {
                 level.getGameTime(),
                 ONE_DAY_TICKS));
 
+        // Track D3.3 — event-driven province polygon invalidation
+        // (the C-hybrid timing: weekly recompute + manor-event
+        // invalidation). House-head turnover is the proxy for
+        // "manor changes hands"; resetting the recompute tick to
+        // -1L makes the next weekly tick fire on this kingdom
+        // immediately.
+        kingdom.setLastProvinceRecomputeTick(-1L);
+
         // Mark data dirty so the kingdom + house mutation persists.
         data.setDirty();
     }

@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Kingdom.Houses.House;
+import tterrag1112.life_in_the_village.Kingdom.Provinces.Province;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
@@ -20,7 +21,9 @@ public class Kingdom {
             long lastTaxTick,
             KingdomHistoryData history,
             List<House> houses,
-            List<KingdomModifier> modifiers
+            List<KingdomModifier> modifiers,
+            List<Province> provinces,
+            long lastProvinceRecomputeTick
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -51,7 +54,15 @@ public class Kingdom {
                         KingdomModifier.CODEC.listOf()
                                 .optionalFieldOf("modifiers", new ArrayList<>())
                                 .forGetter(g -> g.modifiers() != null
-                                        ? g.modifiers() : new ArrayList<>())
+                                        ? g.modifiers() : new ArrayList<>()),
+                        // Track D3.3 — political subdivisions (provinces).
+                        Province.CODEC.listOf()
+                                .optionalFieldOf("provinces", new ArrayList<>())
+                                .forGetter(g -> g.provinces() != null
+                                        ? g.provinces() : new ArrayList<>()),
+                        // Track D3.3 — last weekly polygon recompute tick.
+                        Codec.LONG.optionalFieldOf("lastProvinceRecomputeTick", -1L)
+                                .forGetter(KingdomGovernanceData::lastProvinceRecomputeTick)
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -116,7 +127,9 @@ public class Kingdom {
                                                     ? k.history
                                                     : new KingdomHistoryData(),
                                             new ArrayList<>(k.houses),
-                                            new ArrayList<>(k.modifiers))),
+                                            new ArrayList<>(k.modifiers),
+                                            new ArrayList<>(k.provinces),
+                                            k.lastProvinceRecomputeTick)),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -177,6 +190,9 @@ public class Kingdom {
         // Track D3.2a — restore houses + modifiers (empty for pre-D3.2a saves).
         if (governance.houses() != null)    k.houses.addAll(governance.houses());
         if (governance.modifiers() != null) k.modifiers.addAll(governance.modifiers());
+        // Track D3.3 — restore provinces (empty for pre-D3.3 saves).
+        if (governance.provinces() != null) k.provinces.addAll(governance.provinces());
+        k.lastProvinceRecomputeTick = governance.lastProvinceRecomputeTick();
         // Office state: stored value wins; otherwise migrate the legacy
         // ruler fields into a kingdom_king holding.
         if (offices.isPresent()) {
@@ -286,6 +302,22 @@ public class Kingdom {
      * modifiers. Mutated via {@link #addModifier}, {@link #removeModifier}.
      */
     private final List<KingdomModifier> modifiers = new ArrayList<>();
+
+    /**
+     * Track D3.3 — political subdivisions. Mutated via
+     * {@link #addProvince}, {@link #removeProvince},
+     * {@link #replaceProvince}; rebuilt by
+     * {@code ProvinceComputer.recompute} on the weekly cadence + on
+     * manor-event invalidation.
+     */
+    private final List<Province> provinces = new ArrayList<>();
+
+    /**
+     * Track D3.3 — server tick of the last province polygon recompute.
+     * {@code -1L} signals "never recomputed"; the weekly tick
+     * subsystem treats that as eligible immediately.
+     */
+    private long lastProvinceRecomputeTick = -1L;
 
 
     // =========================================================================
@@ -656,5 +688,77 @@ public class Kingdom {
         int s = 0;
         for (KingdomModifier m : modifiers) s += m.legitimacyDelta();
         return s;
+    }
+
+    // =========================================================================
+    // Track D3.3 — provinces
+    // =========================================================================
+
+    public List<Province> getProvinces() {
+        return Collections.unmodifiableList(provinces);
+    }
+
+    public Optional<Province> findProvince(UUID provinceId) {
+        for (Province p : provinces) if (p.id().equals(provinceId)) return Optional.of(p);
+        return Optional.empty();
+    }
+
+    public Optional<Province> findProvinceByName(String name) {
+        for (Province p : provinces) if (p.name().equalsIgnoreCase(name)) return Optional.of(p);
+        return Optional.empty();
+    }
+
+    /** Returns the province that contains the given village, or empty. */
+    public Optional<Province> findProvinceForVillage(UUID villageId) {
+        for (Province p : provinces) if (p.containsVillage(villageId)) return Optional.of(p);
+        return Optional.empty();
+    }
+
+    /** Returns the province that contains the given atlas cell, or empty. */
+    public Optional<Province> findProvinceForCell(long cellKey) {
+        for (Province p : provinces) if (p.containsCell(cellKey)) return Optional.of(p);
+        return Optional.empty();
+    }
+
+    public void addProvince(Province p) {
+        if (p == null) return;
+        if (findProvince(p.id()).isPresent()) return;
+        provinces.add(p);
+    }
+
+    public boolean removeProvince(UUID provinceId) {
+        return provinces.removeIf(p -> p.id().equals(provinceId));
+    }
+
+    public void replaceProvince(Province replacement) {
+        if (replacement == null) return;
+        for (int i = 0; i < provinces.size(); i++) {
+            if (provinces.get(i).id().equals(replacement.id())) {
+                provinces.set(i, replacement);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Atomic swap of the entire province list — used by
+     * {@code ProvinceComputer.recompute} after a fresh subdivision
+     * pass. Preserves treasury / report buffer / modifiers when the
+     * incoming list keeps the same province ids.
+     */
+    public void replaceAllProvinces(List<Province> incoming) {
+        provinces.clear();
+        if (incoming != null) provinces.addAll(incoming);
+    }
+
+    public long getLastProvinceRecomputeTick() { return lastProvinceRecomputeTick; }
+    public void setLastProvinceRecomputeTick(long tick) {
+        this.lastProvinceRecomputeTick = tick;
+    }
+
+    /** True when a recompute is overdue per the weekly cadence. */
+    public boolean isProvinceRecomputeDue(long currentTick, long intervalTicks) {
+        if (lastProvinceRecomputeTick < 0L) return true;
+        return currentTick - lastProvinceRecomputeTick >= intervalTicks;
     }
 }
