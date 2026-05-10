@@ -161,6 +161,11 @@ public class ModModEvents {
                 KingdomActionPacket.TYPE,
                 KingdomActionPacket.CODEC,
                 KingdomActionPacket::handle);
+        // Track D3.5A — petition resolution / withdrawal.
+        registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.KingdomPetitionPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.KingdomPetitionPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.KingdomPetitionPacket::handle);
 
         registrar.playToClient(
                 OpenKingdomBookPacket.TYPE,

@@ -167,6 +167,56 @@ public final class KingdomDebugCommand {
                                                         .executes(ctx -> intrigueTestSow(ctx,
                                                                 StringArgumentType.getString(ctx, "source"),
                                                                 StringArgumentType.getString(ctx, "target")))))))
+                        // Track D3.5A — top-level /litv petition list/submit_grievance/approve/deny.
+                        .then(Commands.literal("petition")
+                                .then(Commands.literal("list")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> petitionList(ctx,
+                                                        StringArgumentType.getString(ctx, "kingdom")))))
+                                .then(Commands.literal("submit_grievance")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("text",
+                                                                StringArgumentType.greedyString())
+                                                        .executes(ctx -> petitionSubmitGrievance(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                StringArgumentType.getString(ctx, "text"))))))
+                                .then(Commands.literal("approve")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("petitionUuid",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> petitionResolve(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                StringArgumentType.getString(ctx, "petitionUuid"),
+                                                                true)))))
+                                .then(Commands.literal("deny")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("petitionUuid",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> petitionResolve(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                StringArgumentType.getString(ctx, "petitionUuid"),
+                                                                false))))))
+                        // Track D3.5A — top-level /litv standing get/set.
+                        .then(Commands.literal("standing")
+                                .then(Commands.literal("get")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> standingGet(ctx,
+                                                        StringArgumentType.getString(ctx, "kingdom")))))
+                                .then(Commands.literal("set")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("delta",
+                                                                com.mojang.brigadier.arguments.IntegerArgumentType
+                                                                        .integer(-100, 100))
+                                                        .executes(ctx -> standingAdjust(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                com.mojang.brigadier.arguments.IntegerArgumentType
+                                                                        .getInteger(ctx, "delta")))))))
         );
     }
 
@@ -269,6 +319,11 @@ public final class KingdomDebugCommand {
         }
         send(ctx, "  intrigue history: " + k.getIntrigueHistory().size()
                 + " entries");
+        send(ctx, "── Audience / Standing (D3.5A) ──");
+        long pendingPet = k.getPetitions().stream().filter(p -> p.isPending()).count();
+        send(ctx, "  petitions: " + pendingPet + " pending / "
+                + k.getPetitions().size() + " total");
+        send(ctx, "  player standings tracked: " + k.getAllPlayerStandings().size());
         send(ctx, "── Provinces (D3.3) ──");
         if (k.getProvinces().isEmpty()) {
             send(ctx, "  (none — UNITARY, ≤3 villages, or not yet computed)");
@@ -851,6 +906,125 @@ public final class KingdomDebugCommand {
                 + ", attemptId=" + result.attemptId().toString().substring(0, 8));
         data.setDirty();
         return 1;
+    }
+
+    // =========================================================================
+    // Track D3.5A — petition / standing debug handlers
+    // =========================================================================
+
+    private static int petitionList(CommandContext<CommandSourceStack> ctx, String kingdom) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var list = k.getPetitions();
+        send(ctx, "── Petitions of " + kingdom + " (" + list.size() + ") ──");
+        for (var p : list) {
+            send(ctx, "  [" + p.status().name() + "] " + p.kind().name()
+                    + " " + p.id().toString().substring(0, 8)
+                    + " by " + p.playerUuid().toString().substring(0, 8)
+                    + " @ tick " + p.submittedTick()
+                    + (p.isResolved() ? " note='" + p.resolutionNote() + "'" : ""));
+        }
+        return list.size();
+    }
+
+    private static int petitionSubmitGrievance(CommandContext<CommandSourceStack> ctx,
+                                               String kingdom, String text) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        var entity = ctx.getSource().getEntity();
+        if (!(entity instanceof net.minecraft.server.level.ServerPlayer player)) {
+            ctx.getSource().sendFailure(Component.literal("Run as a player."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var payload = new tterrag1112.life_in_the_village.Kingdom.Audience
+                .PetitionPayload.AudienceGrievance(text);
+        java.util.UUID petitionId = tterrag1112.life_in_the_village.Kingdom.Audience
+                .AudienceDriver.submit(level, data, k, player.getUUID(), payload, level.getGameTime());
+        data.setDirty();
+        send(ctx, "Submitted grievance " + petitionId.toString().substring(0, 8)
+                + " to " + kingdom);
+        return 1;
+    }
+
+    private static int petitionResolve(CommandContext<CommandSourceStack> ctx,
+                                       String kingdom, String petitionUuid, boolean approve) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        java.util.UUID pid;
+        try { pid = java.util.UUID.fromString(petitionUuid); }
+        catch (Exception e) { ctx.getSource().sendFailure(Component.literal("Bad UUID.")); return 0; }
+        var entity = ctx.getSource().getEntity();
+        java.util.UUID actor = (entity != null) ? entity.getUUID() : null;
+        var result = approve
+                ? tterrag1112.life_in_the_village.Kingdom.Audience.AudienceDriver.approve(
+                    level, data, k, pid, actor, level.getGameTime(), "[debug] approved")
+                : tterrag1112.life_in_the_village.Kingdom.Audience.AudienceDriver.deny(
+                    level, data, k, pid, actor, level.getGameTime(), "[debug] denied");
+        if (!result.applied()) {
+            ctx.getSource().sendFailure(Component.literal("Failed: " + result.reason()));
+            return 0;
+        }
+        data.setDirty();
+        send(ctx, (approve ? "Approved" : "Denied") + " " + result.reason()
+                + " (standing " + (result.standingDelta() >= 0 ? "+" : "")
+                + result.standingDelta() + " → " + result.newStanding() + ")");
+        return 1;
+    }
+
+    private static int standingGet(CommandContext<CommandSourceStack> ctx, String kingdom) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        var entity = ctx.getSource().getEntity();
+        if (!(entity instanceof net.minecraft.server.level.ServerPlayer player)) {
+            ctx.getSource().sendFailure(Component.literal("Run as a player."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var ps = k.getPlayerStanding(player.getUUID(), level.getGameTime());
+        String band = ps.isTrusted() ? "TRUSTED" : ps.isHostile() ? "HOSTILE" : "neutral";
+        send(ctx, "Standing with " + kingdom + ": " + ps.score()
+                + " [" + band + "] (favour " + ps.lifetimeFavour()
+                + " / wrath " + ps.lifetimeWrath() + ")");
+        return ps.score();
+    }
+
+    private static int standingAdjust(CommandContext<CommandSourceStack> ctx,
+                                      String kingdom, int delta) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        var entity = ctx.getSource().getEntity();
+        if (!(entity instanceof net.minecraft.server.level.ServerPlayer player)) {
+            ctx.getSource().sendFailure(Component.literal("Run as a player."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var ps = k.adjustPlayerStanding(player.getUUID(), delta, level.getGameTime());
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .StandingChanged(k.getId(), player.getUUID(), delta,
+                        ps.score(), level.getGameTime()));
+        data.setDirty();
+        send(ctx, "Standing → " + ps.score() + " (delta " + (delta >= 0 ? "+" : "")
+                + delta + ")");
+        return ps.score();
     }
 
     private static int listAll(CommandContext<CommandSourceStack> ctx) {

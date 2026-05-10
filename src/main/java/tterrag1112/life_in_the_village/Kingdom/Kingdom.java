@@ -4,6 +4,8 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
+import tterrag1112.life_in_the_village.Kingdom.Audience.Petition;
+import tterrag1112.life_in_the_village.Kingdom.Audience.PlayerStanding;
 import tterrag1112.life_in_the_village.Kingdom.Charters.Charter;
 import tterrag1112.life_in_the_village.Kingdom.Houses.House;
 import tterrag1112.life_in_the_village.Kingdom.Intrigue.IntrigueAttempt;
@@ -36,7 +38,9 @@ public class Kingdom {
             List<KingdomLawInstance> lawInstances,
             List<Charter> charters,
             List<Treaty> treaties,
-            List<IntrigueAttempt> intrigueHistory
+            List<IntrigueAttempt> intrigueHistory,
+            List<Petition> petitions,
+            List<PlayerStanding> playerStandings
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -106,7 +110,22 @@ public class Kingdom {
                         IntrigueAttempt.CODEC.listOf()
                                 .optionalFieldOf("intrigueHistory", new ArrayList<>())
                                 .forGetter(g -> g.intrigueHistory() != null
-                                        ? g.intrigueHistory() : new ArrayList<>())
+                                        ? g.intrigueHistory() : new ArrayList<>()),
+                        // Track D3.5A — pending + resolved petitions
+                        // (audience-loop). Bounded by per-kingdom GC
+                        // (resolved entries pruned after 30 in-game
+                        // days; pending entries auto-EXPIRE after 7).
+                        Petition.CODEC.listOf()
+                                .optionalFieldOf("petitions", new ArrayList<>())
+                                .forGetter(g -> g.petitions() != null
+                                        ? g.petitions() : new ArrayList<>()),
+                        // Track D3.5A — kingdom-side authoritative
+                        // player standings. Keyed in the API by player
+                        // UUID; serialized as a list for codec ergonomics.
+                        PlayerStanding.CODEC.listOf()
+                                .optionalFieldOf("playerStandings", new ArrayList<>())
+                                .forGetter(g -> g.playerStandings() != null
+                                        ? g.playerStandings() : new ArrayList<>())
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -177,7 +196,9 @@ public class Kingdom {
                                             new ArrayList<>(k.lawInstances.values()),
                                             new ArrayList<>(k.charters),
                                             new ArrayList<>(k.treaties),
-                                            new ArrayList<>(k.intrigueHistory))),
+                                            new ArrayList<>(k.intrigueHistory),
+                                            new ArrayList<>(k.petitions),
+                                            new ArrayList<>(k.playerStandings.values()))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -265,6 +286,13 @@ public class Kingdom {
         // Track D3.4b — restore intrigue history (bounded; empty for pre-D3.4b).
         if (governance.intrigueHistory() != null) {
             k.intrigueHistory.addAll(governance.intrigueHistory());
+        }
+        // Track D3.5A — restore petitions + player standings (empty for pre-D3.5A).
+        if (governance.petitions() != null) k.petitions.addAll(governance.petitions());
+        if (governance.playerStandings() != null) {
+            for (PlayerStanding ps : governance.playerStandings()) {
+                k.playerStandings.put(ps.playerUuid(), ps);
+            }
         }
         // Track D3.4b — restore treaties (empty for pre-D3.4b saves);
         // auto-migrate cooperative DiplomaticRelation entries into
@@ -370,6 +398,28 @@ public class Kingdom {
      * Phase 5 newsfeed surfacing.
      */
     private final List<IntrigueAttempt> intrigueHistory = new ArrayList<>();
+
+    /**
+     * Track D3.5A — pending and resolved petitions submitted to
+     * this kingdom's audience chamber. Pruned by
+     * {@link tterrag1112.life_in_the_village.Kingdom.Audience.AudienceQueueDriver}:
+     * pending → EXPIRED after
+     * {@link Petition#DEFAULT_EXPIRY_TICKS}; resolved entries
+     * dropped after {@link #PETITION_RETENTION_TICKS}.
+     */
+    private final List<Petition> petitions = new ArrayList<>();
+
+    /** Resolved petitions older than this are GC'd. 30 in-game days. */
+    public static final long PETITION_RETENTION_TICKS = 30L * 24000L;
+
+    /**
+     * Track D3.5A — kingdom-side authoritative player standings,
+     * keyed by player UUID. The player carries no mirror; their
+     * reputation is whatever the kingdom remembers per the
+     * user-confirmed "kingdom-side authoritative" lock.
+     */
+    private final java.util.LinkedHashMap<UUID, PlayerStanding> playerStandings
+            = new java.util.LinkedHashMap<>();
     /**
      * Office state for this kingdom. Phase 0 storage only — see
      * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
@@ -1357,5 +1407,116 @@ public class Kingdom {
     public Optional<IntrigueAttempt> lastAttempt() {
         if (intrigueHistory.isEmpty()) return Optional.empty();
         return Optional.of(intrigueHistory.get(intrigueHistory.size() - 1));
+    }
+
+    // =========================================================================
+    // Track D3.5A — audience-loop petitions
+    // =========================================================================
+
+    public List<Petition> getPetitions() {
+        return Collections.unmodifiableList(petitions);
+    }
+
+    public List<Petition> getPendingPetitions() {
+        List<Petition> out = new ArrayList<>();
+        for (Petition p : petitions) if (p.isPending()) out.add(p);
+        return out;
+    }
+
+    public Optional<Petition> findPetition(UUID petitionId) {
+        for (Petition p : petitions) if (p.id().equals(petitionId)) return Optional.of(p);
+        return Optional.empty();
+    }
+
+    /** Adds a fresh petition to the queue; no validation here (caller verifies). */
+    public void submitPetition(Petition petition) {
+        if (petition == null) return;
+        for (Petition existing : petitions) {
+            if (existing.id().equals(petition.id())) return;
+        }
+        petitions.add(petition);
+    }
+
+    /** Replaces a petition by id (used by approve/deny/expire/withdraw). */
+    public boolean replacePetition(Petition replacement) {
+        for (int i = 0; i < petitions.size(); i++) {
+            if (petitions.get(i).id().equals(replacement.id())) {
+                petitions.set(i, replacement);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Removes a petition entirely; used by GC of long-resolved entries. */
+    public boolean removePetition(UUID petitionId) {
+        return petitions.removeIf(p -> p.id().equals(petitionId));
+    }
+
+    /**
+     * Sweeps petitions: marks expired pending entries; removes
+     * resolved entries older than {@link #PETITION_RETENTION_TICKS}.
+     * Returns count of changes (expired + removed).
+     */
+    public int sweepPetitions(long currentTick) {
+        int changes = 0;
+        for (int i = 0; i < petitions.size(); i++) {
+            Petition p = petitions.get(i);
+            if (p.isExpiredAt(currentTick)) {
+                petitions.set(i, p.asExpired(currentTick));
+                changes++;
+            }
+        }
+        int before = petitions.size();
+        petitions.removeIf(p -> p.isResolved()
+                && currentTick - p.resolvedTick() > PETITION_RETENTION_TICKS);
+        changes += (before - petitions.size());
+        return changes;
+    }
+
+    // =========================================================================
+    // Track D3.5A — player standing
+    // =========================================================================
+
+    public Map<UUID, PlayerStanding> getAllPlayerStandings() {
+        return Collections.unmodifiableMap(playerStandings);
+    }
+
+    /**
+     * Reads the player's standing — returns a fresh zero-baseline
+     * record on first lookup so callers don't have to special-case
+     * "never met before" against null.
+     */
+    public PlayerStanding getPlayerStanding(UUID playerUuid, long currentTick) {
+        PlayerStanding ps = playerStandings.get(playerUuid);
+        if (ps == null) {
+            ps = PlayerStanding.fresh(playerUuid, currentTick);
+            playerStandings.put(playerUuid, ps);
+        }
+        return ps;
+    }
+
+    /**
+     * Applies a delta to the player's standing; clamped to
+     * {@link PlayerStanding#MIN_SCORE}..{@link PlayerStanding#MAX_SCORE}.
+     * Returns the updated record.
+     */
+    public PlayerStanding adjustPlayerStanding(UUID playerUuid, int delta, long currentTick) {
+        PlayerStanding ps = getPlayerStanding(playerUuid, currentTick);
+        PlayerStanding next = ps.addDelta(delta);
+        playerStandings.put(playerUuid, next);
+        return next;
+    }
+
+    /**
+     * Runs decay on every standing. Called from
+     * {@code PlayerStandingDecayDriver}'s daily tick.
+     */
+    public void decayPlayerStandings(long currentTick) {
+        for (Map.Entry<UUID, PlayerStanding> e
+                : new ArrayList<>(playerStandings.entrySet())) {
+            PlayerStanding next = e.getValue().applyDecay(currentTick);
+            if (next != e.getValue()) playerStandings.put(e.getKey(), next);
+        }
     }
 }

@@ -1132,6 +1132,24 @@ class ProvinceDailyTickSystem implements TickSubsystem {
 }
 
 /**
+ * Track D3.5A — daily audience-loop sweep. Runs petition expiry +
+ * resolved-entry GC + standing decay across every kingdom in the
+ * world. Priority 195 — immediately after province daily so
+ * province-tied standing changes feed today's queue.
+ */
+class AudienceLoopTickSystem implements TickSubsystem {
+    @Override public String name()     { return "audience_loop"; }
+    @Override public int    interval() { return 24000; }
+    @Override public int    priority() { return 195; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Kingdom.Audience.AudienceLoopDriver
+                .dailyTick(ctx.level(), ctx.villageData(), ctx.tick());
+    }
+}
+
+/**
  * Weekly plague-outbreak roll per village (spec line 169). Runs once
  * a week ({@code 168000} ticks); chance is gated on village size +
  * region (Phase 4 visitor flux is stubbed for v1).

@@ -17,7 +17,14 @@ public enum TraitAxis {
     HONESTY     ("Deceitful",  "Forthright"),
     AMBITION    ("Content",    "Ambitious"),
     COMPASSION  ("Callous",    "Compassionate"),
-    TEMPERANCE  ("Impulsive",  "Temperate");
+    TEMPERANCE  ("Impulsive",  "Temperate"),
+    // Track D3.5A — extends the trait pool per the user-confirmed
+    // lock. PIETY axis weights religious-rite participation +
+    // ORDINATION_RIGHTS charter politics; SCHOLARSHIP weights
+    // Scholar / Royal-Scholar competence + literacy-driven
+    // succession picks.
+    PIETY       ("Worldly",    "Devout"),
+    SCHOLARSHIP ("Unlettered", "Scholarly");
 
     private final String negativePole;
     private final String positivePole;

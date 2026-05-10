@@ -933,6 +933,163 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-10 — Track D3.5A landed (audience loop + standing + trait-pool extension)
+
+First quarter of the user-confirmed Phase 5 four-way split. Three
+substrate items arrive together: a server-authoritative petition
+queue replacing ad-hoc player→kingdom RPC; per-kingdom player
+standing with a clean band-trigger model; the trait-pool extension
+that the locked design pinned to this slice.
+
+#### User-confirmed locks honoured
+
+- **Standing kingdom-side authoritative.** `Kingdom.playerStandings`
+  LinkedHashMap is the single source. Players carry no mirror; a
+  player's reputation with kingdom X is whatever X remembers.
+- **Trait pool extended with PIETY + SCHOLARSHIP axes.** `TraitAxis`
+  now lists 10 axes; `TraitVector` constructor + codec extended;
+  old saves load neutral on the new axes.
+- **Four-way phase split.** Slices A/B/C/D as previously sequenced;
+  this is Slice A.
+
+#### CC's call (deferred to user if surprising)
+
+- **Standing band thresholds.** TRUSTED=+50, HOSTILE=−50, range
+  ±100. AUDIENCE_GRIEVANCE auto-resolves at the band boundary
+  (trusted → auto-approve; hostile → auto-deny). Other kinds
+  always require explicit ruler resolution.
+- **Standing deltas.** APPROVE=+5 (CHARTER_REQUEST=+10 since the
+  grant has more weight); DENY=−3 (diplomatic asks
+  WAR_DECLARATION/BREAK_TREATY=−1 since they're not personal
+  slights); EXPIRE / WITHDRAW = 0.
+- **Decay rate.** 1 step toward 0 every 7 in-game days. Applied
+  unconditionally each daily tick; partial-day catchup is in
+  `applyDecay`.
+- **Petition TTL.** 7 in-game days before a PENDING petition
+  auto-EXPIREs.
+- **Resolved-petition retention.** 30 in-game days before GC.
+
+#### What this slice ships
+
+- `Kingdom/Audience/Petition` record — id, playerUuid, kingdomId,
+  kind, payload, submittedTick, status, resolvedTick, resolvedBy,
+  resolutionNote. Lifecycle factories
+  (`asApproved` / `asDenied` / `asExpired` / `asWithdrawn`) +
+  query helpers (`isPending` / `isResolved` / `isExpiredAt`).
+- `Kingdom/Audience/PetitionKind` enum — five kinds covering the
+  player→kingdom verbs that previously had no political path
+  (TREATY_RATIFICATION / CHARTER_REQUEST / AUDIENCE_GRIEVANCE /
+  WAR_DECLARATION / BREAK_TREATY).
+- `Kingdom/Audience/PetitionPayload` sealed union — variant
+  records per kind; `Codec.STRING.dispatch` follows the existing
+  `RouteSegment` / `CharterParams` pattern. CHARTER_REQUEST
+  carries the full `CharterParams` so approval just calls
+  `Kingdom.grantCharter` without re-parsing.
+- `Kingdom/Audience/PlayerStanding` record — score, lastDecayTick,
+  lifetimeFavour, lifetimeWrath; clamped at ±100; thresholds
+  TRUSTED=+50 / HOSTILE=−50.
+  `applyDecay(currentTick)` does multi-step partial-day catchup.
+- `Kingdom/Audience/AudienceDriver` — server-side resolver:
+  `submit` / `approve` / `deny` / `withdraw` returning
+  `ResolutionResult` records. Approval dispatches to
+  kind-specific effect handlers; failures (missing target,
+  vassal-blocked WAR, stale treaty) return "FAIL:..." and the
+  caller treats as denial.
+- `Kingdom/Audience/AudienceLoopDriver.dailyTick` — petition
+  expiry sweep + resolved-entry GC + standing decay across every
+  kingdom in the world. Wired as `AudienceLoopTickSystem`
+  (priority 195, immediately after province daily).
+- `Kingdom.petitions` (List<Petition>) +
+  `Kingdom.playerStandings` (LinkedHashMap<UUID,PlayerStanding>)
+  on `KingdomGovernanceData` (now 15/16 fields). Top-level
+  `Kingdom.CODEC` stays at 16/16.
+- `Kingdom` API: `getPetitions` / `getPendingPetitions` /
+  `findPetition` / `submitPetition` / `replacePetition` /
+  `removePetition` / `sweepPetitions` for the queue;
+  `getAllPlayerStandings` / `getPlayerStanding` (auto-creates
+  fresh on first lookup) / `adjustPlayerStanding` /
+  `decayPlayerStandings` for standing.
+- `KingdomEvent` extended with three new subtypes:
+  `PetitionSubmitted` / `PetitionResolved` (outcome string +
+  standingDelta) / `StandingChanged` (delta + newScore).
+- `KingdomPetitionPacket` (APPROVE / DENY / WITHDRAW) — server
+  enforces ruler-only for resolve verbs (player-as-ruler check
+  via `Kingdom.getRulerPlayerId`) and petitioner-only for
+  withdraw. Note string clamped at 256 chars. Registered in
+  `ModModEvents.registerPayloads`.
+- `TraitAxis` enum extended with PIETY (Worldly / Devout) and
+  SCHOLARSHIP (Unlettered / Scholarly). `TraitVector` 8-arg
+  constructor → 10-arg; codec adds two `optionalFieldOf` entries
+  with default 0f so old saves load with neutral PIETY +
+  SCHOLARSHIP scores.
+- Top-level debug commands:
+  - `/litv petition list <kingdom>`
+  - `/litv petition submit_grievance <kingdom> <text>` (player
+    only — uses sender's UUID)
+  - `/litv petition approve|deny <kingdom> <petitionUuid>`
+  - `/litv standing get <kingdom>` (sender's standing)
+  - `/litv standing set <kingdom> <delta>` (debug; fires
+    StandingChanged)
+- `/litv kingdom debug describe` extended with pending-petition
+  count + tracked-standing count.
+
+#### Decisions worth recording
+
+- **PetitionPayload.CharterRequest carries CharterParams
+  directly.** Saves the approval handler from re-parsing; keeps
+  the petition self-contained. `granteeKindName` is a string
+  rather than the enum because the codec dispatch field is
+  already taken; round-tripping through `valueOf` at apply time.
+- **WAR_DECLARATION approval mirrors WAR on the target kingdom.**
+  AudienceDriver calls `setRelation(target, WAR)` on both sides;
+  the cascade-break of cooperative treaties from D3.4b runs
+  twice (once per side) and converges because `breakTreaty` is
+  idempotent.
+- **TREATY_RATIFICATION is per-party.** Each party's ruler
+  ratifies via their own audience chamber; the approve handler
+  checks if all parties have signed and only fires
+  `TreatyRatified` then. A drafted-but-stale treaty (one party
+  ratified, other never showed up) sits dormant until the
+  draft-side party breaks it. Cleanup of dormant treaties is a
+  Slice B+ polish target.
+- **PlayerStanding tracked-on-first-lookup.** `getPlayerStanding`
+  creates a zero-baseline record on first call so callers don't
+  branch null. The map stays bounded by player count per
+  kingdom; in practice ~10s of entries.
+- **No GUI surface yet.** KingdomBookScreen unchanged. Slice A
+  ships infrastructure; Slice B's audience screen will surface
+  the queue + Approve/Deny buttons + a submit panel for the
+  three remaining kinds. Debug commands carry the surface for
+  v1 and exercise every code path.
+- **Heir-traits hybrid roll deferred to Slice B.** The locked
+  design ("heir traits hybrid roll") is succession-side; it
+  belongs with the Slice B nobility extension, not with the
+  audience-loop substrate.
+
+#### Out-of-scope, flagged for later slices
+
+- **AudienceScreen GUI** — Slice B. Includes pending-petitions
+  list, Approve/Deny buttons (ruler-only), submit form for all
+  five kinds, standing display.
+- **CHARTER_REQUEST submission verb in `KingdomPetitionPacket`** —
+  Slice B. Needs a charter-builder GUI for the params (currently
+  only debug commands construct CharterRequest payloads).
+- **NPC-ruler petition resolution AI** — Slice B. NPC ruler
+  evaluates pending petitions on a daily AI tick using
+  trait-weighted scoring (where PIETY + SCHOLARSHIP feed in).
+- **Heir-traits hybrid roll** — Slice B (succession extension).
+  PIETY + SCHOLARSHIP axes added in Slice A so the Slice B roll
+  has the full pool to draw from.
+- **Titled-grants flow with player ennoblement** — Slice C.
+  Player gets ennobled via a TITLE_GRANT charter approval; needs
+  a player NobilityRecord shim in the existing nobility data
+  structures.
+- **LAND_GRANT manor placement** — Slice C / D. Data shape
+  exists from D3.4b; actual structure spawn lands later.
+- **Stale-draft treaty cleanup** — Slice B+ polish.
+
+---
+
 ### 2026-05-09 — Track D3.4b landed (charters + treaties + Spymaster intrigue)
 
 Second half of the user-confirmed D3.4 split. Three new mechanics

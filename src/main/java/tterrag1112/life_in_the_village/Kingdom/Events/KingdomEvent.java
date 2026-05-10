@@ -145,5 +145,31 @@ public sealed interface KingdomEvent {
     record IntrigueDiscovered(UUID targetKingdomId, UUID sourceKingdomId,
                               UUID targetProvinceId, long tick)
             implements KingdomEvent {}
+
+    // ── Track D3.5A — audience-loop + standing events ────────────────────
+
+    /** A player submitted a petition. {@code kind} = PetitionKind.name(). */
+    record PetitionSubmitted(UUID kingdomId, UUID petitionId, UUID playerUuid,
+                             String kind, long tick) implements KingdomEvent {}
+
+    /**
+     * A petition was resolved. {@code outcome} =
+     * "APPROVED" / "DENIED" / "EXPIRED" / "WITHDRAWN".
+     * {@code standingDelta} is the standing change applied to the
+     * petitioner; 0 for EXPIRED / WITHDRAWN.
+     */
+    record PetitionResolved(UUID kingdomId, UUID petitionId, UUID playerUuid,
+                            String kind, String outcome, int standingDelta,
+                            long tick) implements KingdomEvent {}
+
+    /**
+     * A player's standing with a kingdom changed. Subscribers can
+     * surface trust-band transitions ({@code crossedTrusted} /
+     * {@code crossedHostile}) by comparing
+     * {@code newScore - delta} against the thresholds.
+     */
+    record StandingChanged(UUID kingdomId, UUID playerUuid,
+                           int delta, int newScore, long tick)
+            implements KingdomEvent {}
 }
 

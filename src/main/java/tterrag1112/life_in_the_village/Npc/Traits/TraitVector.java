@@ -76,7 +76,8 @@ public final class TraitVector {
 
     /** All-axis constructor in enum declaration order; used by the codec. */
     public TraitVector(float industry, float courage, float sociability, float generosity,
-                       float honesty, float ambition, float compassion, float temperance) {
+                       float honesty, float ambition, float compassion, float temperance,
+                       float piety, float scholarship) {
         set(TraitAxis.INDUSTRY,    industry);
         set(TraitAxis.COURAGE,     courage);
         set(TraitAxis.SOCIABILITY, sociability);
@@ -85,6 +86,8 @@ public final class TraitVector {
         set(TraitAxis.AMBITION,    ambition);
         set(TraitAxis.COMPASSION,  compassion);
         set(TraitAxis.TEMPERANCE,  temperance);
+        set(TraitAxis.PIETY,       piety);
+        set(TraitAxis.SCHOLARSHIP, scholarship);
     }
 
     // ── Value access ────────────────────────────────────────────────────────
@@ -195,6 +198,10 @@ public final class TraitVector {
             Codec.FLOAT.optionalFieldOf("honesty",     0f).forGetter(v -> v.get(TraitAxis.HONESTY)),
             Codec.FLOAT.optionalFieldOf("ambition",    0f).forGetter(v -> v.get(TraitAxis.AMBITION)),
             Codec.FLOAT.optionalFieldOf("compassion",  0f).forGetter(v -> v.get(TraitAxis.COMPASSION)),
-            Codec.FLOAT.optionalFieldOf("temperance",  0f).forGetter(v -> v.get(TraitAxis.TEMPERANCE))
+            Codec.FLOAT.optionalFieldOf("temperance",  0f).forGetter(v -> v.get(TraitAxis.TEMPERANCE)),
+            // Track D3.5A — new axes. Old saves load with 0
+            // (neutral) so personality stays stable across upgrade.
+            Codec.FLOAT.optionalFieldOf("piety",       0f).forGetter(v -> v.get(TraitAxis.PIETY)),
+            Codec.FLOAT.optionalFieldOf("scholarship", 0f).forGetter(v -> v.get(TraitAxis.SCHOLARSHIP))
     ).apply(i, TraitVector::new));
 }

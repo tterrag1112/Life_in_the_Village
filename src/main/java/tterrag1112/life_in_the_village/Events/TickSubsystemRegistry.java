@@ -122,6 +122,8 @@ public final class TickSubsystemRegistry {
         register(new ProvinceRecomputeTickSystem());
         // Track D3.3 — daily provincial reports + stability tick (priority 194).
         register(new ProvinceDailyTickSystem());
+        // Track D3.5A — daily audience-loop sweep (priority 195).
+        register(new AudienceLoopTickSystem());
         register(new OfficeElectionTickSystem());
         // Track D3.2b — daily auto-found of noble houses for eligible NPCs.
         register(new HouseFoundingTickSystem());
