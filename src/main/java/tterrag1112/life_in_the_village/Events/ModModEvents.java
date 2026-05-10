@@ -304,6 +304,9 @@ public class ModModEvents {
         SiteCommand.register(event.getDispatcher());
         PlaceCommand.register(event.getDispatcher());
         LayoutCommand.register(event.getDispatcher());
+        // Track E1 — V2 layout introspection dump command.
+        tterrag1112.life_in_the_village.Commands.LayoutDumpCommand
+                .register(event.getDispatcher());
         SpawnCommand.register(event.getDispatcher());
         // Track A4 — ConfigCommand registered the V2 toggle subcommand
         // and was deleted along with V2Settings when V2 became the
