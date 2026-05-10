@@ -84,6 +84,12 @@ public final class KingdomDebugCommand {
                                                 .then(Commands.argument("name",
                                                                 StringArgumentType.string())
                                                         .executes(ctx -> provinceRecompute(ctx,
+                                                                StringArgumentType.getString(ctx, "name")))))
+                                        // Track D3.3b — list capability gate status for every capability.
+                                        .then(Commands.literal("capabilities")
+                                                .then(Commands.argument("name",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> capabilities(ctx,
                                                                 StringArgumentType.getString(ctx, "name")))))))
                         // Track D3.3 — top-level /litv province describe <provinceName>.
                         .then(Commands.literal("province")
@@ -321,6 +327,47 @@ public final class KingdomDebugCommand {
         send(ctx, "  " + villagesWithLord + "/" + k.getVillageIds().size()
                 + " villages have a noble overlord");
         return villagesWithLord;
+    }
+
+    /**
+     * Track D3.3b — evaluates every {@link tterrag1112.life_in_the_village
+     * .Kingdom.Capabilities.KingdomCapability} against the named kingdom
+     * and lists the satisfier office state for each. Useful for
+     * debugging "why is this button greyed out".
+     */
+    private static int capabilities(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/litv kingdom debug capabilities must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No kingdom named '" + name + "'."));
+            return 0;
+        }
+        send(ctx, "── Capabilities of " + name + " ──");
+        int allowed = 0;
+        for (var cap : tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .KingdomCapability.values()) {
+            var result = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                    .KingdomCapabilityEvaluator.evaluate(level, data, k, cap);
+            String tag = result.allowed() ? "ALLOW" : "DENY ";
+            send(ctx, "  " + tag + " " + cap.name() + " — " + result.reason());
+            if (result.allReports() != null) {
+                for (var r : result.allReports()) {
+                    send(ctx, "      [" + r.officeId() + "] " + r.reason());
+                }
+            }
+            if (result.allowed()) allowed++;
+        }
+        send(ctx, "  " + allowed + "/"
+                + tterrag1112.life_in_the_village.Kingdom.Capabilities
+                        .KingdomCapability.values().length
+                + " capabilities currently exercisable.");
+        return allowed;
     }
 
     /**

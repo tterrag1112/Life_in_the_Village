@@ -197,15 +197,29 @@ public class KingdomBookScreen extends Screen {
 
     private void buildLawWidgets(int px, int py, int pw) {
         KingdomLaw[] laws = KingdomLaw.values();
+        // Track D3.3b — capability gate. Coarse client-side check
+        // greys the button when no satisfier office is held. Server
+        // still enforces the full competence check.
+        Kingdom kCap = Kingdom.ClientKingdomCache.getById(kingdomId).orElse(null);
+        var passLawCap = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .KingdomCapability.PASS_LAW;
+        boolean canPassLaw = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .ClientCapabilityCheck.canExercise(kCap, passLawCap);
+        String passLawTooltip = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .ClientCapabilityCheck.buildTooltip(kCap, passLawCap);
         for (int i = 0; i < laws.length; i++) {
             KingdomLaw law = laws[i];
             boolean active = activeLaws.contains(law);
             int by = py + i * 28;
             if (by + 20 > bookY + BOOK_H - 32) break;
-            addRenderableWidget(StyledButton.builder(
+            StyledButton btn = StyledButton.builder(
                             Component.literal(active ? "Repeal" : "Enact"),
                             b -> sendAction(KingdomActionPacket.ActionType.TOGGLE_LAW, law.name(), 0))
-                    .pos(px + pw - 52, by).size(50, 16).build());
+                    .pos(px + pw - 52, by).size(50, 16).build();
+            btn.active = canPassLaw;
+            btn.setTooltip(net.minecraft.client.gui.components.Tooltip
+                    .create(Component.literal(passLawTooltip)));
+            addRenderableWidget(btn);
         }
     }
 
@@ -253,12 +267,25 @@ public class KingdomBookScreen extends Screen {
         decreeBox.setMaxLength(256);
         addRenderableWidget(decreeBox);
 
-        addRenderableWidget(StyledButton.builder(Component.literal("Issue Decree"), b -> {
+        // Track D3.3b — capability gate. ISSUE_DECREE requires
+        // King OR Chancellor.
+        Kingdom kCap = Kingdom.ClientKingdomCache.getById(kingdomId).orElse(null);
+        var decreeCap = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .KingdomCapability.ISSUE_DECREE;
+        boolean canDecree = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .ClientCapabilityCheck.canExercise(kCap, decreeCap);
+        String decreeTooltip = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .ClientCapabilityCheck.buildTooltip(kCap, decreeCap);
+        StyledButton decreeBtn = StyledButton.builder(Component.literal("Issue Decree"), b -> {
             if (decreeBox != null && !decreeBox.getValue().isEmpty()) {
                 sendAction(KingdomActionPacket.ActionType.ISSUE_DECREE, decreeBox.getValue(), 0);
                 decreeBox.setValue("");
             }
-        }).pos(px, py + 88).size(80, 18).build());
+        }).pos(px, py + 88).size(80, 18).build();
+        decreeBtn.active = canDecree;
+        decreeBtn.setTooltip(net.minecraft.client.gui.components.Tooltip
+                .create(Component.literal(decreeTooltip)));
+        addRenderableWidget(decreeBtn);
     }
 
     @Override

@@ -91,6 +91,14 @@ public record KingdomActionPacket(
 
             switch (pkt.action()) {
                 case TOGGLE_LAW -> {
+                    // Track D3.3b — capability gate. PASS_LAW
+                    // requires King OR Magistrate competently held.
+                    if (!checkCapability(player, level, data, kingdom,
+                            tterrag1112.life_in_the_village.Kingdom.Capabilities
+                                    .KingdomCapability.PASS_LAW,
+                            "pass a law")) {
+                        return;
+                    }
                     try {
                         KingdomLaw law = KingdomLaw.valueOf(
                                 pkt.stringParam());
@@ -141,6 +149,27 @@ public record KingdomActionPacket(
                                 kingdom.getRelation(targetId);
                         DiplomaticRelation rel =
                                 DiplomaticRelation.valueOf(parts[1]);
+
+                        // Track D3.3b — capability gate per relation
+                        // type. WAR → DECLARE_WAR (King OR General),
+                        // ALLIANCE / TRADE_PACT → DRAFT_TREATY (King
+                        // OR Diplomat).
+                        var requiredCap = switch (rel) {
+                            case WAR -> tterrag1112.life_in_the_village
+                                    .Kingdom.Capabilities
+                                    .KingdomCapability.DECLARE_WAR;
+                            case ALLIANCE, TRADE_PACT -> tterrag1112
+                                    .life_in_the_village.Kingdom.Capabilities
+                                    .KingdomCapability.DRAFT_TREATY;
+                            default -> null;
+                        };
+                        if (requiredCap != null
+                                && !checkCapability(player, level, data, kingdom,
+                                        requiredCap,
+                                        "change diplomatic stance to "
+                                                + rel.name())) {
+                            return;
+                        }
                         kingdom.setRelation(targetId, rel);
 
 
@@ -223,6 +252,14 @@ public record KingdomActionPacket(
                     } catch (Exception ignored) {}
                 }
                 case ISSUE_DECREE -> {
+                    // Track D3.3b — capability gate. ISSUE_DECREE
+                    // requires King OR Chancellor competently held.
+                    if (!checkCapability(player, level, data, kingdom,
+                            tterrag1112.life_in_the_village.Kingdom.Capabilities
+                                    .KingdomCapability.ISSUE_DECREE,
+                            "issue a royal decree")) {
+                        return;
+                    }
                     // Broadcast decree message to all players
                     // in the kingdom's villages
                     String decree = pkt.stringParam();
@@ -254,5 +291,26 @@ public record KingdomActionPacket(
         return name.charAt(0)
                 + name.substring(1).toLowerCase()
                 .replace("_", " ");
+    }
+
+    /**
+     * Track D3.3b — server-side capability check. Layered on top of
+     * the existing PowerGrant check (PowerGrant authorizes the
+     * <em>player</em>; capability authorizes the <em>kingdom</em>
+     * given its current office state). Sends the player a chat
+     * notice on denial.
+     */
+    private static boolean checkCapability(
+            ServerPlayer player, ServerLevel level, VillageSavedData data,
+            Kingdom kingdom,
+            tterrag1112.life_in_the_village.Kingdom.Capabilities.KingdomCapability cap,
+            String actionDescription) {
+        var result = tterrag1112.life_in_the_village.Kingdom.Capabilities
+                .KingdomCapabilityEvaluator.evaluate(level, data, kingdom, cap);
+        if (result.allowed()) return true;
+        player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                "Cannot " + actionDescription + " — "
+                        + result.reason()));
+        return false;
     }
 }

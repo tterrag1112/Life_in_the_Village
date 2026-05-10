@@ -933,6 +933,63 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-09 — Track D3.3b landed (offices + capability gating + office-grant ennoblement)
+
+Second half of the D3.3 split. Wires the kingdom's seven Phase 0 office stubs (Chancellor / Treasurer / Scholar / General / Magistrate / Spymaster / Diplomat) into actual capability gating, both server-side enforcement and client-side grey-out.
+
+#### User-confirmed design
+
+- **Capability gates: OR semantics.** A capability unlocks if EITHER the King OR the named delegated office is competently held. King is sovereign — implicitly satisfies every capability.
+- **Ennoblement: SQUIRE — lowest noble rank.** Commoner appointees to kingdom-tier offices (except King) auto-promote to rank index 1 in the culture's nobility table. No auto-house-founding (D3.2b's gate still applies).
+- **Competence floor: multiplier ≥ 1.0.** Holder must clear the office's `minLevel` (uses existing `Competence.computeMultiplier`). Vacancy fails the gate; player-held King is sovereign regardless; offline NPCs are assumed competent at minLevel to avoid chunk-load flicker.
+
+#### What this slice ships
+
+- `Kingdom/Capabilities/KingdomCapability` enum — 8 entries covering the operative kingdom-tier actions: PASS_LAW, ISSUE_DECREE, DECLARE_WAR, LEVY_TROOPS, DRAFT_TREATY, INTRIGUE_FOREIGN, INVESTIGATE_CRIME, ISSUE_CURRENCY.
+- `Kingdom/Capabilities/KingdomCapabilityEvaluator.evaluate` — pure server-side function returning `Result(allowed, satisfyingOfficeId, reason, allReports)`. Walks the satisfier list per capability, first competent satisfier wins. Returns rich per-office report state (skill level, multiplier, "vacant" / "under-skilled (LITERACY 35 < 50)" / "competent (LITERACY 75)") for tooltip surfaces.
+- `Kingdom/Capabilities/ClientCapabilityCheck` — coarse client-side mirror: tests "is at least one satisfier office held" without skill check (client lacks NPC skill data). Builds tooltip strings: "Authorised by Chancellor" / "Requires King or Magistrate (all vacant)".
+- Capability table (OR semantics):
+  - PASS_LAW          → King OR Magistrate
+  - ISSUE_DECREE      → King OR Chancellor
+  - DECLARE_WAR       → King OR General
+  - LEVY_TROOPS       → King OR General
+  - DRAFT_TREATY      → King OR Diplomat
+  - INTRIGUE_FOREIGN  → King OR Spymaster
+  - INVESTIGATE_CRIME → King OR Magistrate
+  - ISSUE_CURRENCY    → King OR Treasurer
+  Royal Scholar grants no capability of its own — Phase 4 will read its competence as a multiplier into Chancellor / Magistrate effectiveness.
+- `KingdomActionPacket` server-side enforcement layered on top of the existing `PowerGrant.hasPower(ENACT_LAW)` check:
+  - `TOGGLE_LAW` → `PASS_LAW`
+  - `ISSUE_DECREE` → `ISSUE_DECREE`
+  - `SET_RELATION` with `WAR` → `DECLARE_WAR`; with `ALLIANCE` / `TRADE_PACT` → `DRAFT_TREATY`
+  Denial sends a chat message: "Cannot pass a law — no competent satisfier — King: vacant, Magistrate: under-skilled (LITERACY 35 < 50)".
+- `KingdomBookScreen`:
+  - Law-toggle buttons grey out + show capability tooltip when no PASS_LAW satisfier is held.
+  - Issue Decree button greys out + shows tooltip when no ISSUE_DECREE satisfier is held.
+  - Relation-change button left always-active (next-relation type isn't known until click); server enforces.
+- `Npc/Nobility/OfficeAppointmentEnnoblement.onSeat` — called from `OfficeElection.runElection` and `OfficeElection.seatNpc`. No-op for non-kingdom orgs, the King office, NPCs already at rank ≥ 1, non-monarchy cultures, and unloaded NPCs. Sets `nobility.rankIndex = 1`, logs an "ennoblement.<officeId>" 3-day kingdom modifier (+1 legitimacy) for legibility.
+- Debug: `/litv kingdom debug capabilities <name>` walks all 8 capabilities, prints ALLOW/DENY + per-office report lines.
+
+#### Decisions worth recording
+
+- **Layered server-side gate.** PowerGrant authorizes the *player* (does this player hold an office that grants this power?). KingdomCapability authorizes the *kingdom* (does the kingdom have anyone competent enough to perform this action?). Both must pass. PowerGrant predates capability and stays. The two checks address different questions and overlap cleanly without conflict.
+- **Coarse client gate.** The client doesn't have NPC skill levels (we don't sync the SkillComponent over packets), so client-side grey-out tests only "office held" — the server still does the real competence check at action time. Net effect: a slightly-permissive client gate avoids flickering on chunk load while the server enforces truth and surfaces the actual reason via chat. We considered syncing a per-kingdom capability cache (server computes, attaches to Kingdom record, ships over the existing CODEC sync) but the Kingdom record is already at the 16-field DFU codec cap; bundling into KingdomGovernanceData adds churn for one screen's grey-out logic. The coarse-then-server approach is the smaller blast radius.
+- **Offline-NPC assumption.** When a holder NPC isn't loaded, the evaluator assumes competent-at-minLevel rather than denying. Reason: capability state would otherwise flicker as chunks load and unload — a reload of the world chunk holding the Magistrate would briefly forbid PASS_LAW even though no real change happened. The assumption errs on the permissive side; players whose office holders are persistently broken will notice via the daily provincial / kingdom UI ("Magistrate vacant") and the chat denial when they try to act.
+- **King-only capabilities not modeled.** The "Tiered" option from the design pass (King-reserved capabilities like PASS_LAW that even a Magistrate can't substitute for) was rejected per the user's "OR semantics" choice. Phase 4 / 6 (laws-and-intrigue, decline-and-conflict) may layer kingdom-stability gates on specific capabilities (e.g. DECLARE_WAR requires stability ≥ N) that are stricter than the office check; those go in the evaluator's reason chain when added.
+- **Ennoblement as smallest mutation.** Setting `rankIndex = 1` is the minimal change: it doesn't auto-found a House (D3.2b's gate still applies), doesn't change profession, doesn't move the NPC. The kingdom modifier "office.ennoblement.<id>" expires after 3 days, so it doesn't pile up. Holders who continue serving competently can later auto-found a House through the normal D3.2b path; holders who get vacated drop back to commoner only on rank-reset by Phase 4 mechanics (none today — once ennobled, always ennobled).
+- **Tooltip composition.** Tooltips read off the capability table directly; no string-table localisation today (matches the rest of the kingdom UI).
+
+#### Out-of-scope, flagged for Phase 4 / 5 / 6 / 7
+
+- **Royal Scholar competence boost into Chancellor / Magistrate** — registered in OfficeRegistry today but not read by the evaluator. Phase 4 will multiply its competence into law / decree effectiveness.
+- **Capability table re-balance** — the OR semantics + minLevel floor were chosen for the v1 sense of "is this kingdom plausibly able to act". Playtest data may push toward stricter gates (multiplier ≥ 1.05 to require a meaningfully effective holder, or AND semantics for capstone capabilities like ISSUE_CURRENCY).
+- **Stability / legitimacy gates layered on capabilities** — Phase 4 / 6's rebellion + decline mechanics may add "DECLARE_WAR requires stability ≥ 25" type gates on top of the office check.
+- **Office competence display in KingdomBookScreen** — today the tooltip shows "Authorised by Chancellor" but doesn't show the Chancellor's skill level / effectiveness multiplier. Phase 5's audience UI surface is the natural home for that.
+- **Capability denial logging in kingdom history** — denied actions today only chat to the player; future legibility could record "Player X attempted to declare war but no General was seated" as a kingdom history event.
+- **Player rank handling.** Player-held King is sovereign and bypasses the skill check entirely (no client-side player skill on the server), but a player holding a delegate office (e.g. Magistrate) currently registers as "held by player (capability check requires NPC skill)" and fails the gate. Phase 5's player-experience pass needs to decide whether players holding delegate offices should auto-satisfy the gate, ramp via in-game progression, or be forbidden from holding delegate offices.
+
+---
+
 ### 2026-05-09 — Track D3.3a landed (provinces + provincial governance + map overlay)
 
 D3.3 was split per the kingdom plan's "If ambiguous" guidance:
