@@ -49,6 +49,9 @@ public final class AudienceLoopDriver {
                     KingdomEventBus.fire(new KingdomEvent.PetitionResolved(
                             k.getId(), p.id(), p.playerUuid(),
                             p.kind().name(), "EXPIRED", 0, tick));
+                    // Track D3.5D — newsfeed entry for the expiry.
+                    KingdomNewsfeed.append(k, "petition.expired",
+                            "Expired " + p.kind().name() + " petition", tick);
                 }
             }
             totalSwept += k.sweepPetitions(tick);

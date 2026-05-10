@@ -974,6 +974,11 @@ public final class KingdomDebugCommand {
                 .PetitionPayload.AudienceGrievance(text);
         java.util.UUID petitionId = tterrag1112.life_in_the_village.Kingdom.Audience
                 .AudienceDriver.submit(level, data, k, player.getUUID(), payload, level.getGameTime());
+        if (petitionId == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Rate-limited; wait before submitting again."));
+            return 0;
+        }
         data.setDirty();
         send(ctx, "Submitted grievance " + petitionId.toString().substring(0, 8)
                 + " to " + kingdom);

@@ -27,7 +27,10 @@ public class KingdomBookScreen extends Screen {
         // Track D3.2b — noble dynasties owned by this kingdom.
         DYNASTY_TREE,
         // Track D3.5B — audience chamber: pending petitions + grievance submit.
-        AUDIENCE
+        AUDIENCE,
+        // Track D3.5D — charter request builder + newsfeed panel.
+        CHARTER_REQUEST,
+        NEWSFEED
     }
 
     private record NavEntry(String label, SectionType section, int historyPageIndex) {}
@@ -62,6 +65,11 @@ public class KingdomBookScreen extends Screen {
     private StyledEditBox decreeBox;
     /** Track D3.5B — grievance text input on the AUDIENCE page. */
     private StyledEditBox grievanceBox;
+    /** Track D3.5D — charter builder param input. */
+    private StyledEditBox charterParamBox;
+    /** Track D3.5D — currently-selected charter kind in the builder. */
+    private tterrag1112.life_in_the_village.Kingdom.Charters.CharterType charterBuilderKind
+            = tterrag1112.life_in_the_village.Kingdom.Charters.CharterType.TOLL_RIGHTS;
 
     public KingdomBookScreen(UUID kingdomId) {
         super(Component.literal("Kingdom Book"));
@@ -153,6 +161,9 @@ public class KingdomBookScreen extends Screen {
         navEntries.add(new NavEntry("Houses",       SectionType.DYNASTY_TREE, -1));
         // Track D3.5B — audience chamber.
         navEntries.add(new NavEntry("Audience",     SectionType.AUDIENCE,     -1));
+        // Track D3.5D — charter builder + newsfeed.
+        navEntries.add(new NavEntry("Charter Req",  SectionType.CHARTER_REQUEST, -1));
+        navEntries.add(new NavEntry("Newsfeed",     SectionType.NEWSFEED,        -1));
         page = Math.min(page, navEntries.size() - 1);
     }
 
@@ -160,6 +171,7 @@ public class KingdomBookScreen extends Screen {
         clearWidgets();
         decreeBox = null;
         grievanceBox = null;
+        charterParamBox = null;
 
         sidebar = new Sidebar<>(bookX + 2, bookY + 28, SIDEBAR_W - 2, 18,
                 List.of(
@@ -175,7 +187,10 @@ public class KingdomBookScreen extends Screen {
                         new Sidebar.Entry<>(SectionType.ROYAL_BUILDS, "Royal Builds", true),
                         new Sidebar.Entry<>(SectionType.DYNASTY_TREE, "Houses",       true),
                         // Track D3.5B — audience chamber.
-                        new Sidebar.Entry<>(SectionType.AUDIENCE,     "Audience",     true)
+                        new Sidebar.Entry<>(SectionType.AUDIENCE,     "Audience",     true),
+                        // Track D3.5D — charter builder + newsfeed.
+                        new Sidebar.Entry<>(SectionType.CHARTER_REQUEST, "Charter Req", true),
+                        new Sidebar.Entry<>(SectionType.NEWSFEED,       "Newsfeed",    true)
                 ),
                 this::currentSection,
                 section -> {
@@ -201,6 +216,8 @@ public class KingdomBookScreen extends Screen {
             case DIPLOMACY -> buildDiplomacyWidgets(px, py, pw);
             case DECREES   -> buildDecreeWidgets(px, py, pw);
             case AUDIENCE  -> buildAudienceWidgets(px, py, pw);
+            case CHARTER_REQUEST -> buildCharterRequestWidgets(px, py, pw);
+            case NEWSFEED  -> {}
             default        -> {}
         }
     }
@@ -432,6 +449,8 @@ public class KingdomBookScreen extends Screen {
             case ROYAL_BUILDS -> drawRoyalBuilds(g, px, py, pw, maxY);
             case DYNASTY_TREE -> drawDynastyTree(g, px, py, pw, maxY);
             case AUDIENCE     -> drawAudience(g, px, py, pw, maxY);
+            case CHARTER_REQUEST -> drawCharterRequest(g, px, py, pw, maxY);
+            case NEWSFEED     -> drawNewsfeed(g, px, py, pw, maxY);
         }
     }
 
@@ -886,6 +905,202 @@ public class KingdomBookScreen extends Screen {
         ClientPacketDistributor.sendToServer(
                 new tterrag1112.life_in_the_village.Networking
                         .KingdomPetitionSubmitPacket(kingdomId, bytes));
+    }
+
+    // =========================================================================
+    // Track D3.5D — Charter request builder section
+    // =========================================================================
+
+    /**
+     * Builds the cycle button + per-kind input box + submit button.
+     * The cycle button rotates {@link #charterBuilderKind} through
+     * the four niche charter types; per-kind label hints the input
+     * box's expected value.
+     */
+    private void buildCharterRequestWidgets(int px, int py, int pw) {
+        var Type = tterrag1112.life_in_the_village.Kingdom.Charters.CharterType.class;
+        var values = Type.getEnumConstants();
+        // Track D3.5D — the four niche kinds covered by this builder.
+        // TITLE_GRANT and LAND_GRANT have dedicated AUDIENCE-section
+        // buttons; this panel covers the remaining four.
+        java.util.List<tterrag1112.life_in_the_village.Kingdom.Charters.CharterType> niche =
+                java.util.List.of(
+                        tterrag1112.life_in_the_village.Kingdom.Charters.CharterType.TOLL_RIGHTS,
+                        tterrag1112.life_in_the_village.Kingdom.Charters.CharterType.TAX_EXEMPTION,
+                        tterrag1112.life_in_the_village.Kingdom.Charters.CharterType.MARKET_MONOPOLY,
+                        tterrag1112.life_in_the_village.Kingdom.Charters.CharterType.ORDINATION_RIGHTS);
+        // Cycle button.
+        addRenderableWidget(StyledButton.builder(
+                Component.literal("Type: " + charterBuilderKind.name()),
+                b -> {
+                    int idx = niche.indexOf(charterBuilderKind);
+                    if (idx < 0) idx = -1;
+                    charterBuilderKind = niche.get((idx + 1) % niche.size());
+                    buildWidgets();
+                })
+                .pos(px, py + 30).size(pw, 18).build());
+        // Param edit box (semantics depend on kind).
+        charterParamBox = new StyledEditBox(font, px, py + 60, pw, 18,
+                Component.literal(paramHintFor(charterBuilderKind)));
+        charterParamBox.setMaxLength(64);
+        addRenderableWidget(charterParamBox);
+        // Submit button.
+        addRenderableWidget(StyledButton.builder(
+                Component.literal("Request " + charterBuilderKind.name()),
+                b -> submitCharterRequest())
+                .pos(px, py + 86).size(pw, 18).build());
+    }
+
+    private static String paramHintFor(
+            tterrag1112.life_in_the_village.Kingdom.Charters.CharterType type) {
+        return switch (type) {
+            case TOLL_RIGHTS       -> "rate% (e.g. 5)";
+            case TAX_EXEMPTION     -> "exempt% (e.g. 50)";
+            case MARKET_MONOPOLY   -> "market type (e.g. BUTCHER)";
+            case ORDINATION_RIGHTS -> "religious order UUID";
+            case TITLE_GRANT       -> "rank index";
+            case LAND_GRANT        -> "size cells";
+        };
+    }
+
+    private void drawCharterRequest(GuiGraphics g, int px, int py, int pw, int maxY) {
+        g.drawString(font, "Request a charter", px, py, BookScreenColors.MID, false);
+        g.fill(px, py + 10, px + pw, py + 11, BookScreenColors.BORDER);
+
+        String hint = switch (charterBuilderKind) {
+            case TOLL_RIGHTS       -> "Toll on a road segment. Param = fee rate as %.";
+            case TAX_EXEMPTION     -> "Reduce the kingdom-tax obligation. Param = exempt %.";
+            case MARKET_MONOPOLY   -> "Exclusive market right (kingdom-wide). Param = market name.";
+            case ORDINATION_RIGHTS -> "Religious order may ordain priests. Param = order UUID.";
+            case TITLE_GRANT       -> "Use the AUDIENCE section's title button.";
+            case LAND_GRANT        -> "Use the AUDIENCE section's land button.";
+        };
+        // Wrap hint into two lines if needed.
+        for (var line : font.split(Component.literal(hint), pw)) {
+            g.drawString(font, line, px, py + 16, BookScreenColors.LIGHT, false);
+            py += 9;
+        }
+    }
+
+    /**
+     * Parses the charter-builder text input into the right
+     * {@link tterrag1112.life_in_the_village.Kingdom.Charters.CharterParams}
+     * variant and dispatches a CHARTER_REQUEST petition. Defaults
+     * applied on parse failure (empty input → sensible default).
+     */
+    private void submitCharterRequest() {
+        if (minecraft == null || minecraft.player == null) return;
+        var self = minecraft.player.getUUID();
+        String input = charterParamBox != null ? charterParamBox.getValue().trim() : "";
+        var params = parseCharterParams(charterBuilderKind, input, self);
+        if (params == null) return;
+        var payload = new tterrag1112.life_in_the_village.Kingdom.Audience
+                .PetitionPayload.CharterRequest(
+                charterBuilderKind.name() + " request",
+                self,
+                tterrag1112.life_in_the_village.Kingdom.Charters
+                        .GranteeRef.GranteeKind.PLAYER.name(),
+                params);
+        sendSubmit(payload);
+        if (charterParamBox != null) charterParamBox.setValue("");
+    }
+
+    private static tterrag1112.life_in_the_village.Kingdom.Charters.CharterParams
+            parseCharterParams(
+                    tterrag1112.life_in_the_village.Kingdom.Charters.CharterType type,
+                    String raw, java.util.UUID self) {
+        try {
+            return switch (type) {
+                case TOLL_RIGHTS -> {
+                    double rate = parseDouble(raw, 5.0) / 100.0;
+                    yield new tterrag1112.life_in_the_village.Kingdom.Charters
+                            .CharterParams.TollRights(self, rate);
+                }
+                case TAX_EXEMPTION -> {
+                    double rate = parseDouble(raw, 50.0) / 100.0;
+                    yield new tterrag1112.life_in_the_village.Kingdom.Charters
+                            .CharterParams.TaxExemption(rate);
+                }
+                case MARKET_MONOPOLY -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                        .CharterParams.MarketMonopoly(
+                        raw.isEmpty() ? "MARKET" : raw,
+                        tterrag1112.life_in_the_village.Kingdom.Charters
+                                .CharterParams.MarketMonopoly.Scope.KINGDOM,
+                        java.util.Optional.empty());
+                case ORDINATION_RIGHTS -> {
+                    java.util.UUID order = raw.isEmpty()
+                            ? self : java.util.UUID.fromString(raw);
+                    yield new tterrag1112.life_in_the_village.Kingdom.Charters
+                            .CharterParams.OrdinationRights(order);
+                }
+                case TITLE_GRANT -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                        .CharterParams.TitleGrant((int) parseDouble(raw, 1.0));
+                case LAND_GRANT -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                        .CharterParams.LandGrant(0, 0, (int) parseDouble(raw, 4.0));
+            };
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static double parseDouble(String s, double fallback) {
+        try { return s.isEmpty() ? fallback : Double.parseDouble(s); }
+        catch (NumberFormatException e) { return fallback; }
+    }
+
+    // =========================================================================
+    // Track D3.5D — Newsfeed section
+    // =========================================================================
+
+    private void drawNewsfeed(GuiGraphics g, int px, int py, int pw, int maxY) {
+        g.drawString(font, "Kingdom Newsfeed", px, py, BookScreenColors.MID, false);
+        g.fill(px, py + 10, px + pw, py + 11, BookScreenColors.BORDER);
+
+        Kingdom k = Kingdom.ClientKingdomCache.getById(kingdomId).orElse(null);
+        if (k == null) {
+            g.drawString(font, "No kingdom data available.", px, py + 16,
+                    BookScreenColors.LIGHT, false);
+            return;
+        }
+        var feed = k.getHistory().getNewsfeed();
+        if (feed.isEmpty()) {
+            g.drawString(font, "No recent activity.", px, py + 16,
+                    BookScreenColors.LIGHT, false);
+            return;
+        }
+
+        int rowH = 18;
+        int listTop = py + 18;
+        int maxRows = (maxY - listTop) / rowH;
+        // Newest first.
+        int n = feed.size();
+        int shown = Math.min(maxRows, n);
+        for (int i = 0; i < shown; i++) {
+            var e = feed.get(n - 1 - i);
+            int by = listTop + i * rowH;
+            int tagColor = colorForTag(e.tag());
+            g.drawString(font, "[" + e.tag() + "]", px, by, tagColor, false);
+            String text = e.summary();
+            int tagWidth = font.width("[" + e.tag() + "] ");
+            g.drawString(font, text, px + tagWidth, by, BookScreenColors.MID, false);
+            g.drawString(font, "tick " + e.tick(), px, by + 9,
+                    BookScreenColors.LIGHT, false);
+        }
+    }
+
+    private static int colorForTag(String tag) {
+        // Simple color-by-prefix scheme so newsfeed entries are
+        // scannable: red for hostile (war/intrigue), green for
+        // positive (charters/treaties ratified), grey otherwise.
+        if (tag.startsWith("treaty.broken") || tag.startsWith("intrigue")
+                || tag.startsWith("petition.denied")) {
+            return 0xFFB54040;
+        }
+        if (tag.startsWith("treaty.ratified") || tag.startsWith("charter.granted")
+                || tag.startsWith("petition.approved") || tag.startsWith("player.")) {
+            return 0xFF407040;
+        }
+        return BookScreenColors.LIGHT;
     }
 
     private void drawKingdomMap(GuiGraphics g, int px, int py, int pw, int maxY,

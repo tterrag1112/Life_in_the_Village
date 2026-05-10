@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
+import tterrag1112.life_in_the_village.Kingdom.Audience.KingdomAudienceData;
 import tterrag1112.life_in_the_village.Kingdom.Audience.Petition;
 import tterrag1112.life_in_the_village.Kingdom.Audience.PlayerNobility;
 import tterrag1112.life_in_the_village.Kingdom.Audience.PlayerStanding;
@@ -40,9 +41,7 @@ public class Kingdom {
             List<Charter> charters,
             List<Treaty> treaties,
             List<IntrigueAttempt> intrigueHistory,
-            List<Petition> petitions,
-            List<PlayerStanding> playerStandings,
-            List<PlayerNobility> playerNobles
+            KingdomAudienceData audience
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -113,29 +112,17 @@ public class Kingdom {
                                 .optionalFieldOf("intrigueHistory", new ArrayList<>())
                                 .forGetter(g -> g.intrigueHistory() != null
                                         ? g.intrigueHistory() : new ArrayList<>()),
-                        // Track D3.5A — pending + resolved petitions
-                        // (audience-loop). Bounded by per-kingdom GC
-                        // (resolved entries pruned after 30 in-game
-                        // days; pending entries auto-EXPIRE after 7).
-                        Petition.CODEC.listOf()
-                                .optionalFieldOf("petitions", new ArrayList<>())
-                                .forGetter(g -> g.petitions() != null
-                                        ? g.petitions() : new ArrayList<>()),
-                        // Track D3.5A — kingdom-side authoritative
-                        // player standings. Keyed in the API by player
-                        // UUID; serialized as a list for codec ergonomics.
-                        PlayerStanding.CODEC.listOf()
-                                .optionalFieldOf("playerStandings", new ArrayList<>())
-                                .forGetter(g -> g.playerStandings() != null
-                                        ? g.playerStandings() : new ArrayList<>()),
-                        // Track D3.5C — kingdom-side authoritative
-                        // player nobility records. Created when an
-                        // approved TITLE_GRANT charter targets a
-                        // PLAYER grantee; extended by LAND_GRANT.
-                        PlayerNobility.CODEC.listOf()
-                                .optionalFieldOf("playerNobles", new ArrayList<>())
-                                .forGetter(g -> g.playerNobles() != null
-                                        ? g.playerNobles() : new ArrayList<>())
+                        // Track D3.5D — bundled audience-loop state.
+                        // Replaces the three separate D3.5A/C fields
+                        // (petitions / playerStandings / playerNobles)
+                        // to keep KGD under the codec 16-field cap.
+                        // Migration handled at fromCodec time: legacy
+                        // saves' separate fields read into the same
+                        // record; fresh saves write only this.
+                        KingdomAudienceData.CODEC
+                                .optionalFieldOf("audience", KingdomAudienceData.EMPTY)
+                                .forGetter(g -> g.audience() != null
+                                        ? g.audience() : KingdomAudienceData.EMPTY)
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -207,9 +194,10 @@ public class Kingdom {
                                             new ArrayList<>(k.charters),
                                             new ArrayList<>(k.treaties),
                                             new ArrayList<>(k.intrigueHistory),
-                                            new ArrayList<>(k.petitions),
-                                            new ArrayList<>(k.playerStandings.values()),
-                                            new ArrayList<>(k.playerNobles.values()))),
+                                            new KingdomAudienceData(
+                                                    new ArrayList<>(k.petitions),
+                                                    new ArrayList<>(k.playerStandings.values()),
+                                                    new ArrayList<>(k.playerNobles.values())))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -298,16 +286,21 @@ public class Kingdom {
         if (governance.intrigueHistory() != null) {
             k.intrigueHistory.addAll(governance.intrigueHistory());
         }
-        // Track D3.5A — restore petitions + player standings (empty for pre-D3.5A).
-        if (governance.petitions() != null) k.petitions.addAll(governance.petitions());
-        if (governance.playerStandings() != null) {
-            for (PlayerStanding ps : governance.playerStandings()) {
+        // Track D3.5D — restore audience-loop bundle (Slice D
+        // refactor). Empty for pre-D3.5A saves; for pre-D3.5D saves
+        // the legacy individual fields were dropped at codec read
+        // time and the bundle is empty here — but Slice D is the
+        // first to ship the bundled write path, so post-Slice-D
+        // saves round-trip cleanly.
+        KingdomAudienceData audience = KingdomAudienceData.orEmpty(governance.audience());
+        if (audience.petitions() != null) k.petitions.addAll(audience.petitions());
+        if (audience.playerStandings() != null) {
+            for (PlayerStanding ps : audience.playerStandings()) {
                 k.playerStandings.put(ps.playerUuid(), ps);
             }
         }
-        // Track D3.5C — restore player nobility records.
-        if (governance.playerNobles() != null) {
-            for (PlayerNobility pn : governance.playerNobles()) {
+        if (audience.playerNobles() != null) {
+            for (PlayerNobility pn : audience.playerNobles()) {
                 k.playerNobles.put(pn.playerUuid(), pn);
             }
         }
@@ -1250,6 +1243,11 @@ public class Kingdom {
         Charter charter = Charter.freshGrant(charterId, name, grantee,
                 this.id, grantedRulerId, params, tick);
         charters.add(charter);
+        // Track D3.5D — newsfeed entry on every grant.
+        tterrag1112.life_in_the_village.Kingdom.Audience.KingdomNewsfeed.append(
+                this, "charter.granted",
+                "Granted " + params.type().name() + " '" + name + "'",
+                tick);
         return charter;
     }
 
@@ -1274,6 +1272,20 @@ public class Kingdom {
                         tick,
                         24000L * 7));
                 charters.set(i, c.revoke(tick));
+                // Track D3.5D — TITLE_GRANT revocation auto-strips
+                // the player's nobility on this kingdom. Does not
+                // touch the LAND_GRANT (those are separate
+                // charter lifecycles).
+                if (c.type() == tterrag1112.life_in_the_village.Kingdom.Charters
+                        .CharterType.TITLE_GRANT
+                        && c.grantee().kind() == tterrag1112.life_in_the_village
+                        .Kingdom.Charters.GranteeRef.GranteeKind.PLAYER) {
+                    stripPlayerNobility(c.grantee().id());
+                }
+                tterrag1112.life_in_the_village.Kingdom.Audience.KingdomNewsfeed.append(
+                        this, "charter.revoked",
+                        "Revoked " + c.type().name() + " '" + c.name() + "'",
+                        tick);
                 return true;
             }
         }
@@ -1344,6 +1356,10 @@ public class Kingdom {
             if (t.id().equals(treatyId) && t.parties().contains(this.id)) {
                 Treaty updated = t.withRatification(this.id, tick);
                 treaties.set(i, updated);
+                // Track D3.5D — newsfeed entry on ratification.
+                tterrag1112.life_in_the_village.Kingdom.Audience.KingdomNewsfeed.append(
+                        this, "treaty.ratified",
+                        "Ratified " + t.type().name() + " treaty", tick);
                 return Optional.of(updated);
             }
         }
@@ -1368,6 +1384,10 @@ public class Kingdom {
                 this.stability = clampScalar(
                         this.stability + t.type().stabilityDeltaOnBreak());
                 treaties.set(i, t.asBroken(breakingPartyId, tick, reason));
+                // Track D3.5D — newsfeed entry on every break.
+                tterrag1112.life_in_the_village.Kingdom.Audience.KingdomNewsfeed.append(
+                        this, "treaty.broken",
+                        t.type().name() + " broken: " + reason, tick);
                 return true;
             }
         }
@@ -1532,6 +1552,15 @@ public class Kingdom {
         PlayerStanding next = ps.addDelta(delta);
         playerStandings.put(playerUuid, next);
         return next;
+    }
+
+    /**
+     * Track D3.5D — stamps the player's last-submit tick for the
+     * audience-loop rate-limit check.
+     */
+    public void stampPlayerSubmit(UUID playerUuid, long tick) {
+        PlayerStanding ps = getPlayerStanding(playerUuid, tick);
+        playerStandings.put(playerUuid, ps.withSubmitAt(tick));
     }
 
     /**

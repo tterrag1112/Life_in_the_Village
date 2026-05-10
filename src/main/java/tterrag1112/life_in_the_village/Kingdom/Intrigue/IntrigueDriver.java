@@ -196,6 +196,17 @@ public final class IntrigueDriver {
                     Optional.ofNullable(targetProvince).map(Province::id).orElse(null),
                     tick));
         }
+        // Track D3.5D — newsfeed entries for both sides. Source
+        // sees their attempt outcome; target sees discovery only.
+        tterrag1112.life_in_the_village.Kingdom.Audience.KingdomNewsfeed.append(
+                source, success ? "intrigue.success" : "intrigue.failed",
+                "Sowed discontent in " + target.getName()
+                        + (success ? " (succeeded)" : " (failed)"), tick);
+        if (discovered) {
+            tterrag1112.life_in_the_village.Kingdom.Audience.KingdomNewsfeed.append(
+                    target, "intrigue.discovered",
+                    "Discovered intrigue from " + source.getName(), tick);
+        }
 
         LOGGER.info("[IntrigueDriver] {} sowed discontent in {} (success={}, discovered={}, hit={})",
                 source.getName(), target.getName(), success, discovered, hit);

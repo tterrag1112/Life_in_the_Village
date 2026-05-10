@@ -41,7 +41,14 @@ public record PlayerStanding(
         int score,
         long lastDecayTick,
         int lifetimeFavour,
-        int lifetimeWrath
+        int lifetimeWrath,
+        /**
+         * Track D3.5D — last tick this player submitted a petition
+         * to this kingdom. Drives the per-petitioner rate limit
+         * checked in {@link AudienceDriver#submit}. 0 means "never
+         * submitted" — back-compat for pre-D3.5D records.
+         */
+        long lastSubmitTick
 ) {
 
     public static final int MIN_SCORE = -100;
@@ -52,12 +59,21 @@ public record PlayerStanding(
     /** Decay one step every 7 in-game days. */
     public static final long DECAY_INTERVAL_TICKS = 7L * 24000L;
 
+    /**
+     * Per-petitioner submit rate limit. Track D3.5D: 1 in-game
+     * hour cooldown between submissions to the same kingdom.
+     * Trusted petitioners get a halved cooldown; hostile ones
+     * get a doubled cooldown.
+     */
+    public static final long SUBMIT_COOLDOWN_TICKS = 1000L;
+
     public static final Codec<PlayerStanding> CODEC = RecordCodecBuilder.create(i -> i.group(
             UUIDUtil.CODEC.fieldOf("playerUuid").forGetter(PlayerStanding::playerUuid),
             Codec.INT.optionalFieldOf("score", 0).forGetter(PlayerStanding::score),
             Codec.LONG.optionalFieldOf("lastDecayTick", 0L).forGetter(PlayerStanding::lastDecayTick),
             Codec.INT.optionalFieldOf("lifetimeFavour", 0).forGetter(PlayerStanding::lifetimeFavour),
-            Codec.INT.optionalFieldOf("lifetimeWrath", 0).forGetter(PlayerStanding::lifetimeWrath)
+            Codec.INT.optionalFieldOf("lifetimeWrath", 0).forGetter(PlayerStanding::lifetimeWrath),
+            Codec.LONG.optionalFieldOf("lastSubmitTick", 0L).forGetter(PlayerStanding::lastSubmitTick)
     ).apply(i, PlayerStanding::new));
 
     public boolean isTrusted() { return score >= TRUSTED_THRESHOLD; }
@@ -68,11 +84,32 @@ public record PlayerStanding(
         int delta = clamped - score;
         int newFavour = lifetimeFavour + Math.max(0, delta);
         int newWrath  = lifetimeWrath + Math.max(0, -delta);
-        return new PlayerStanding(playerUuid, clamped, lastDecayTick, newFavour, newWrath);
+        return new PlayerStanding(playerUuid, clamped, lastDecayTick,
+                newFavour, newWrath, lastSubmitTick);
     }
 
     public PlayerStanding addDelta(int delta) {
         return withScore(score + delta);
+    }
+
+    /** Stamps a fresh submit tick for the rate limit check. */
+    public PlayerStanding withSubmitAt(long tick) {
+        return new PlayerStanding(playerUuid, score, lastDecayTick,
+                lifetimeFavour, lifetimeWrath, tick);
+    }
+
+    /**
+     * True when {@code currentTick} is past
+     * {@code lastSubmitTick + cooldown}, with cooldown adjusted
+     * for trust band (trusted halved, hostile doubled, neutral
+     * baseline).
+     */
+    public boolean canSubmitAt(long currentTick) {
+        if (lastSubmitTick == 0L) return true;
+        long cooldown = SUBMIT_COOLDOWN_TICKS;
+        if (isTrusted())      cooldown /= 2;
+        else if (isHostile()) cooldown *= 2;
+        return currentTick - lastSubmitTick >= cooldown;
     }
 
     /**
@@ -84,7 +121,7 @@ public record PlayerStanding(
         if (lastDecayTick == 0L) {
             // First-touch baseline; don't move.
             return new PlayerStanding(playerUuid, score, currentTick,
-                    lifetimeFavour, lifetimeWrath);
+                    lifetimeFavour, lifetimeWrath, lastSubmitTick);
         }
         long elapsed = currentTick - lastDecayTick;
         if (elapsed < DECAY_INTERVAL_TICKS) return this;
@@ -95,10 +132,10 @@ public record PlayerStanding(
         }
         return new PlayerStanding(playerUuid, next,
                 lastDecayTick + steps * DECAY_INTERVAL_TICKS,
-                lifetimeFavour, lifetimeWrath);
+                lifetimeFavour, lifetimeWrath, lastSubmitTick);
     }
 
     public static PlayerStanding fresh(UUID playerUuid, long tick) {
-        return new PlayerStanding(playerUuid, 0, tick, 0, 0);
+        return new PlayerStanding(playerUuid, 0, tick, 0, 0, 0L);
     }
 }

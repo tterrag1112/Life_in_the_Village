@@ -75,6 +75,17 @@ public final class AudienceDriver {
     public static UUID submit(ServerLevel level, VillageSavedData data,
                               Kingdom kingdom, UUID playerUuid,
                               PetitionPayload payload, long tick) {
+        // Track D3.5D — per-petitioner rate limit. Trusted halved,
+        // hostile doubled, neutral baseline. Returning null UUID
+        // signals "rate-limited"; callers (debug commands, packet
+        // handlers) surface the cooldown to the player.
+        PlayerStanding ratePs = kingdom.getPlayerStanding(playerUuid, tick);
+        if (!ratePs.canSubmitAt(tick)) {
+            return null;
+        }
+        // Stamp the submit tick on the standing record.
+        kingdom.stampPlayerSubmit(playerUuid, tick);
+
         UUID petitionId = UUID.randomUUID();
         Petition petition = Petition.freshSubmission(
                 petitionId, playerUuid, kingdom.getId(), payload, tick);

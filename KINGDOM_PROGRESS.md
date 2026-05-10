@@ -933,6 +933,162 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-10 — Track D3.5D landed; Phase 5 complete
+
+Final quarter of the user-confirmed Phase 5 four-way split. Six
+deliverables pinned by the Slice C out-of-scope list. **Phase 5
+ships at 100% with this commit.**
+
+#### Locks honoured
+
+- **Standing kingdom-side authoritative** still holds — Slice D
+  bundles the audience state but doesn't move authority.
+- **Heir-traits hybrid roll** unchanged from Slice B.
+- **PIETY + SCHOLARSHIP traits** still used by NPC ruler AI.
+
+#### CC's calls
+
+- **Submit-rate cooldown = 1000 ticks (1 in-game hour).** Trusted
+  petitioners halved (~30 min); hostile petitioners doubled (~2h);
+  neutral baseline. Prevents trivial petition spam without
+  blocking thoughtful play.
+- **Newsfeed coloring scheme.** Red for hostile-context tags,
+  green for positive, grey otherwise. Three buckets is the
+  smallest scheme that's scannable; richer per-tag colors are
+  a polish target.
+- **KGD bundling drops legacy fields.** The codec group cap is
+  16; supporting BOTH legacy fields AND the bundle would land
+  KGD at 17, over the cap. Dev saves lose audience-loop state
+  on first load. Documented in `KingdomAudienceData` javadoc.
+
+#### What this slice ships
+
+- **`Kingdom/Audience/KingdomAudienceData`** record bundling
+  petitions + playerStandings + playerNobles. Single codec field
+  on `KingdomGovernanceData`. KGD now 14/16 (was 16/16 cap-locked
+  end of Slice C); two slots free for future work.
+- **`Kingdom.fromCodec`** restores audience-bundle fields into
+  the existing `petitions` / `playerStandings` / `playerNobles`
+  in-memory containers (unchanged in shape).
+- **`Kingdom.grantCharter` / `revokeCharter` / `ratifyTreaty` /
+  `breakTreaty`** all append a newsfeed entry on success.
+  Charter grant: "charter.granted"; revoke: "charter.revoked";
+  ratify: "treaty.ratified"; break: "treaty.broken".
+- **`IntrigueDriver.sowDiscontent`** appends "intrigue.success"
+  or "intrigue.failed" on the source kingdom; "intrigue.discovered"
+  on the target if discovery rolled true.
+- **`AudienceLoopDriver.dailyTick`** appends "petition.expired"
+  for each pending → EXPIRED transition.
+- **`Kingdom.revokeCharter`** TITLE_GRANT-with-PLAYER-grantee
+  auto-strip path: detects the type + grantee combo and calls
+  `stripPlayerNobility(charter.grantee().id())` before firing
+  the revocation modifier. LAND_GRANT survives (separate
+  charter lifecycle).
+- **`PlayerStanding`** extended:
+  - `lastSubmitTick` field (default 0L on legacy reads).
+  - `SUBMIT_COOLDOWN_TICKS = 1000L` (1 in-game hour).
+  - `canSubmitAt(currentTick)` predicate with trust-band scaling.
+  - `withSubmitAt(tick)` copy-helper.
+- **`Kingdom.stampPlayerSubmit(playerUuid, tick)`** writes the
+  stamped record back.
+- **`AudienceDriver.submit`** returns `null` when rate-limited.
+  `KingdomPetitionSubmitPacket.handle` displays "Slow down — wait
+  before submitting another petition." Debug command shows
+  "Rate-limited; wait before submitting again."
+- **`KingdomBookScreen.CHARTER_REQUEST` section:**
+  - Cycle button "Type: <kind>" rotates through TOLL_RIGHTS /
+    TAX_EXEMPTION / MARKET_MONOPOLY / ORDINATION_RIGHTS.
+  - `charterParamBox` text input (max 64 chars) with kind-
+    specific hint label.
+  - Submit button parses `input` via `parseCharterParams` into
+    the right `CharterParams` variant (with sensible default
+    on parse failure: 5% toll rate, 50% tax exempt, "MARKET"
+    monopoly type, self-UUID for religious order). Goes
+    through the existing `KingdomPetitionSubmitPacket` flow.
+- **`KingdomBookScreen.NEWSFEED` section:**
+  - Renders `kingdom.getHistory().getNewsfeed()` newest-first.
+  - Per-tag color tint (red / green / grey).
+  - Two-line per-entry layout: tag + summary on one line,
+    tick on the next.
+- Two new sidebar entries ("Charter Req" + "Newsfeed") and
+  matching nav entries.
+
+#### Decisions worth recording
+
+- **Bundling resets the field cap, doesn't move authority.**
+  `Kingdom.playerNobles` is still a LinkedHashMap on the Kingdom
+  instance; `KingdomAudienceData` is just the codec round-trip
+  shape. In-memory access patterns unchanged.
+- **TITLE_GRANT revocation only strips nobility, not land.**
+  Players keep their manor coords in `PlayerNobility.landGrantBlockX/Z/size`
+  even after the title is revoked. LAND_GRANT charter is
+  separately revocable and would call its own strip path
+  (Track E polish target).
+- **Charter builder is text-input pragma.** Per-kind ranges /
+  scopes / dropdowns are richer GUI but text-input + parse +
+  fallback is a clean v1. The wire format is the same as the
+  full-builder would produce; future polish swaps the input
+  widget without touching the submission path.
+- **Newsfeed is read-only client surface.** No client → server
+  newsfeed mutation; entries flow through `KingdomNewsfeed.append`
+  on the server side and round-trip through KGD.
+- **Cooldown is on the petitioner, not the petition kind.** A
+  player who just submitted an AUDIENCE_GRIEVANCE can't
+  immediately submit a CHARTER_REQUEST either. This matches
+  the audience-chamber metaphor (one audience per visit, not
+  one of each kind).
+
+#### Out-of-scope, flagged for later
+
+- **LAND_GRANT manor structure spawn** — Phase 6+ (castle-
+  builder integration). Coords still data-only.
+- **Pre-D3.5D save migration** — codec group cap forced the
+  drop of legacy fields. Real-world impact bounded since the
+  slice window was 24h.
+- **PLAYER grantee in non-titled charters as gameplay rules**
+  — TOLL_RIGHTS / TAX_EXEMPTION etc. accept PLAYER grantees in
+  the data, but no consumer code reads "is this player toll-
+  exempt" yet.
+- **Per-tag newsfeed pagination** — 64-entry buffer fits in
+  one screen; if it grew, the GUI would need scroll. Today
+  shown is `min(maxRows, 64)`.
+- **Public newsfeed for non-rulers** — currently any player
+  who can open the kingdom book can see the newsfeed.
+  Sensitive entries (intrigue) leak to non-rulers. Polish
+  target: per-tag visibility filter.
+- **Cross-kingdom newsfeed bridging** — when two kingdoms
+  enter / leave a treaty, both sides' newsfeeds get an entry
+  via the mutual `setRelation` cascade in D3.4b. Beyond that,
+  there's no automatic cross-kingdom news propagation.
+- **TITLE_GRANT charter expiry / auto-renewal** — charters
+  don't have an expiry today. Phase 6's decline mechanics may
+  add ones for fiscal pressure.
+
+#### Phase 5 retrospective (A + B + C + D)
+
+- **12 new files; ~25 modified.** Span of work covers data
+  layer (Petition / PlayerStanding / PlayerNobility /
+  KingdomAudienceData / NewsfeedEntry), driver layer
+  (AudienceDriver / AudienceLoopDriver / NpcRulerAuditor /
+  HeirTraitRoll / KingdomNewsfeed), wire layer
+  (KingdomPetitionPacket / KingdomPetitionSubmitPacket), GUI
+  (3 new sections in KingdomBookScreen), tick scheduling
+  (priorities 195-196), and 9 new KingdomEvent subtypes
+  (PetitionSubmitted/Resolved, StandingChanged, PlayerEnnobled,
+  PlayerLandGranted, NewsfeedAppended, etc.).
+- **Locked design fully landed:** kingdom-side standing
+  authoritative; heir-traits hybrid roll; PIETY + SCHOLARSHIP
+  trait axes; four-way phase split.
+- **Player UX surface:** AUDIENCE section (pending list +
+  approve/deny/withdraw + grievance submit + title/land
+  request); CHARTER_REQUEST section (full builder for niche
+  charter types); NEWSFEED section (color-tagged event log).
+  All flows server-authoritative with capability gating.
+- **No build verification.** The harness blocks maven; cross-
+  references reviewed manually across slices.
+
+---
+
 ### 2026-05-10 — Track D3.5C landed (titled grants flow + newsfeed surface + charter request GUI)
 
 Third quarter of the user-confirmed Phase 5 four-way split. Five

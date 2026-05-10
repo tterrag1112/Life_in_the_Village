@@ -125,6 +125,13 @@ public record KingdomPetitionSubmitPacket(
 
             UUID petitionId = AudienceDriver.submit(level, data, kingdom,
                     player.getUUID(), payload, level.getGameTime());
+            if (petitionId == null) {
+                player.displayClientMessage(
+                        net.minecraft.network.chat.Component.literal(
+                                "Slow down — wait before submitting another petition."),
+                        false);
+                return;
+            }
             data.setDirty();
             player.displayClientMessage(
                     net.minecraft.network.chat.Component.literal(
