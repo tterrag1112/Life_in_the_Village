@@ -4,7 +4,11 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
+import tterrag1112.life_in_the_village.Kingdom.Charters.Charter;
 import tterrag1112.life_in_the_village.Kingdom.Houses.House;
+import tterrag1112.life_in_the_village.Kingdom.Intrigue.IntrigueAttempt;
+import tterrag1112.life_in_the_village.Kingdom.Treaties.Treaty;
+import tterrag1112.life_in_the_village.Kingdom.Treaties.TreatyType;
 import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawInstance;
 import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawRegistry;
 import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState;
@@ -29,7 +33,10 @@ public class Kingdom {
             List<KingdomModifier> modifiers,
             List<Province> provinces,
             long lastProvinceRecomputeTick,
-            List<KingdomLawInstance> lawInstances
+            List<KingdomLawInstance> lawInstances,
+            List<Charter> charters,
+            List<Treaty> treaties,
+            List<IntrigueAttempt> intrigueHistory
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -76,7 +83,30 @@ public class Kingdom {
                         KingdomLawInstance.CODEC.listOf()
                                 .optionalFieldOf("lawInstances", new ArrayList<>())
                                 .forGetter(g -> g.lawInstances() != null
-                                        ? g.lawInstances() : new ArrayList<>())
+                                        ? g.lawInstances() : new ArrayList<>()),
+                        // Track D3.4b — persistent charters (TOLL_RIGHTS /
+                        // TAX_EXEMPTION / MARKET_MONOPOLY / TITLE_GRANT /
+                        // ORDINATION_RIGHTS / LAND_GRANT). Survive ruler
+                        // change; revocation has age-scaled cost.
+                        Charter.CODEC.listOf()
+                                .optionalFieldOf("charters", new ArrayList<>())
+                                .forGetter(g -> g.charters() != null
+                                        ? g.charters() : new ArrayList<>()),
+                        // Track D3.4b — diplomatic treaties (ALLIANCE /
+                        // NON_AGGRESSION / TRADE_DEAL / VASSALAGE).
+                        // The same treaty id appears on every party's
+                        // list. Migration from DiplomaticRelation
+                        // happens at fromCodec.
+                        Treaty.CODEC.listOf()
+                                .optionalFieldOf("treaties", new ArrayList<>())
+                                .forGetter(g -> g.treaties() != null
+                                        ? g.treaties() : new ArrayList<>()),
+                        // Track D3.4b — Spymaster intrigue history. Bounded
+                        // rolling buffer; cooldown checks read from this.
+                        IntrigueAttempt.CODEC.listOf()
+                                .optionalFieldOf("intrigueHistory", new ArrayList<>())
+                                .forGetter(g -> g.intrigueHistory() != null
+                                        ? g.intrigueHistory() : new ArrayList<>())
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -144,7 +174,10 @@ public class Kingdom {
                                             new ArrayList<>(k.modifiers),
                                             new ArrayList<>(k.provinces),
                                             k.lastProvinceRecomputeTick,
-                                            new ArrayList<>(k.lawInstances.values()))),
+                                            new ArrayList<>(k.lawInstances.values()),
+                                            new ArrayList<>(k.charters),
+                                            new ArrayList<>(k.treaties),
+                                            new ArrayList<>(k.intrigueHistory))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -227,6 +260,37 @@ public class Kingdom {
         // Track D3.3 — restore provinces (empty for pre-D3.3 saves).
         if (governance.provinces() != null) k.provinces.addAll(governance.provinces());
         k.lastProvinceRecomputeTick = governance.lastProvinceRecomputeTick();
+        // Track D3.4b — restore charters (empty for pre-D3.4b saves).
+        if (governance.charters() != null) k.charters.addAll(governance.charters());
+        // Track D3.4b — restore intrigue history (bounded; empty for pre-D3.4b).
+        if (governance.intrigueHistory() != null) {
+            k.intrigueHistory.addAll(governance.intrigueHistory());
+        }
+        // Track D3.4b — restore treaties (empty for pre-D3.4b saves);
+        // auto-migrate cooperative DiplomaticRelation entries into
+        // ALLIANCE / TRADE_DEAL treaties when no treaty list exists.
+        if (governance.treaties() != null && !governance.treaties().isEmpty()) {
+            k.treaties.addAll(governance.treaties());
+        } else if (relations != null && !relations.isEmpty()) {
+            for (var entry : relations.entrySet()) {
+                UUID other = entry.getKey();
+                DiplomaticRelation rel = entry.getValue();
+                TreatyType migratedType = switch (rel) {
+                    case ALLIANCE -> TreatyType.ALLIANCE;
+                    case TRADE    -> TreatyType.TRADE_DEAL;
+                    default       -> null;
+                };
+                if (migratedType == null) continue;
+                // Deterministic id for the migrated pair so both
+                // sides produce the same UUID independently.
+                long high = k.id.getMostSignificantBits()
+                        ^ Long.rotateLeft(other.getMostSignificantBits(), 17);
+                long low  = k.id.getLeastSignificantBits()
+                        ^ Long.rotateLeft(other.getLeastSignificantBits(), 13);
+                UUID treatyId = new UUID(high, low);
+                k.treaties.add(Treaty.autoMigrated(treatyId, migratedType, k.id, other));
+            }
+        }
         // Office state: stored value wins; otherwise migrate the legacy
         // ruler fields into a kingdom_king holding.
         if (offices.isPresent()) {
@@ -281,6 +345,31 @@ public class Kingdom {
      */
     private final java.util.LinkedHashMap<String, KingdomLawInstance> lawInstances
             = new java.util.LinkedHashMap<>();
+
+    /**
+     * Track D3.4b — persistent charters issued by this kingdom.
+     * Survive ruler change (no logic in
+     * {@code NobilityEventDispatcher.runSuccession} touches this list).
+     * Mutated via {@link #grantCharter}, {@link #revokeCharter},
+     * {@link #removeCharter}.
+     */
+    private final List<Charter> charters = new ArrayList<>();
+
+    /**
+     * Track D3.4b — diplomatic treaties this kingdom is party to.
+     * Same treaty id mirrors on every party's list. {@code getRelation}
+     * derives ALLIANCE / TRADE / VASSAL_OF / OVERLORD_OF from this
+     * list ahead of the residual {@code relations} map.
+     */
+    private final List<Treaty> treaties = new ArrayList<>();
+
+    /**
+     * Track D3.4b — Spymaster intrigue history. Bounded rolling
+     * buffer (capacity {@link IntrigueAttempt#BUFFER_CAPACITY}).
+     * Cooldown lookups read recent entries; full history kept for
+     * Phase 5 newsfeed surfacing.
+     */
+    private final List<IntrigueAttempt> intrigueHistory = new ArrayList<>();
     /**
      * Office state for this kingdom. Phase 0 storage only — see
      * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
@@ -532,11 +621,81 @@ public class Kingdom {
     // DIPLOMACY
     // =========================================================================
 
+    /**
+     * Track D3.4b — derived view: treaties authoritative for
+     * cooperation; the residual {@link #relations} map covers WAR
+     * and COLD_WAR. Priority order:
+     * <ol>
+     *   <li>Active VASSALAGE treaty (this is vassal) → ALLIANCE
+     *       (overlord obligated to defend; vassal can't war).</li>
+     *   <li>Active VASSALAGE treaty (this is overlord) → ALLIANCE.</li>
+     *   <li>Active ALLIANCE treaty → ALLIANCE.</li>
+     *   <li>Active TRADE_DEAL treaty → TRADE.</li>
+     *   <li>Residual WAR in relations map → WAR.</li>
+     *   <li>Active NON_AGGRESSION treaty → NEUTRAL (no positive
+     *       cooperation, but blocks WAR).</li>
+     *   <li>Residual COLD_WAR in relations map → COLD_WAR.</li>
+     *   <li>Otherwise NEUTRAL.</li>
+     * </ol>
+     */
     public DiplomaticRelation getRelation(UUID otherKingdomId) {
-        return relations.getOrDefault(otherKingdomId, DiplomaticRelation.NEUTRAL);
+        // Treaty-derived views first.
+        for (Treaty t : treaties) {
+            if (!t.isActive() || !t.involves(otherKingdomId)) continue;
+            switch (t.type()) {
+                case VASSALAGE -> { return DiplomaticRelation.ALLIANCE; }
+                case ALLIANCE  -> { return DiplomaticRelation.ALLIANCE; }
+                case TRADE_DEAL -> { return DiplomaticRelation.TRADE; }
+                case NON_AGGRESSION -> {
+                    // Don't return yet; WAR in residual still wins
+                    // over NEUTRAL-from-NON_AGGRESSION.
+                }
+            }
+        }
+        // Residual hostility.
+        DiplomaticRelation residual = relations.getOrDefault(otherKingdomId,
+                DiplomaticRelation.NEUTRAL);
+        if (residual == DiplomaticRelation.WAR
+                || residual == DiplomaticRelation.COLD_WAR) {
+            return residual;
+        }
+        // NON_AGGRESSION → NEUTRAL.
+        for (Treaty t : treaties) {
+            if (t.isActive() && t.type() == TreatyType.NON_AGGRESSION
+                    && t.involves(otherKingdomId)) {
+                return DiplomaticRelation.NEUTRAL;
+            }
+        }
+        return residual;
     }
 
+    /**
+     * Sets a residual relation (WAR / COLD_WAR / NEUTRAL).
+     * Cooperative relations (ALLIANCE / TRADE) come from treaties
+     * now and shouldn't be set here directly — but for back-compat
+     * with legacy callers, ALLIANCE / TRADE writes log a warning
+     * and create an auto-migrated treaty rather than mutating
+     * residual state.
+     *
+     * <p>Cascade-break rule: setting WAR while an ALLIANCE treaty
+     * is active auto-breaks the alliance first (per the user-
+     * confirmed precedence) and fires the corresponding
+     * TreatyBroken event via {@link #breakTreatyWith}.
+     */
     public void setRelation(UUID otherKingdomId, DiplomaticRelation relation) {
+        if (relation == DiplomaticRelation.WAR) {
+            // Cascade-break any active cooperative treaty.
+            for (Treaty t : new ArrayList<>(treaties)) {
+                if (!t.isActive() || !t.involves(otherKingdomId)) continue;
+                if (t.type() == TreatyType.ALLIANCE
+                        || t.type() == TreatyType.TRADE_DEAL
+                        || t.type() == TreatyType.NON_AGGRESSION
+                        || t.type() == TreatyType.VASSALAGE) {
+                    breakTreaty(t.id(), this.id, /*tick*/ 0L,
+                            "cascade.declared war on ally");
+                }
+            }
+        }
         if (relation == DiplomaticRelation.NEUTRAL) {
             relations.remove(otherKingdomId);
         } else {
@@ -969,5 +1128,234 @@ public class Kingdom {
     public boolean isProvinceRecomputeDue(long currentTick, long intervalTicks) {
         if (lastProvinceRecomputeTick < 0L) return true;
         return currentTick - lastProvinceRecomputeTick >= intervalTicks;
+    }
+
+    // =========================================================================
+    // Track D3.4b — charters
+    // =========================================================================
+
+    public List<Charter> getCharters() {
+        return Collections.unmodifiableList(charters);
+    }
+
+    public Optional<Charter> findCharter(UUID charterId) {
+        for (Charter c : charters) if (c.id().equals(charterId)) return Optional.of(c);
+        return Optional.empty();
+    }
+
+    /** Charters whose grantee.id matches; covers any GranteeKind. */
+    public List<Charter> chartersFor(UUID granteeId) {
+        List<Charter> out = new ArrayList<>();
+        for (Charter c : charters) {
+            if (c.grantee().id().equals(granteeId)) out.add(c);
+        }
+        return out;
+    }
+
+    /** Active (non-revoked) charters of the given type. */
+    public List<Charter> activeChartersOfType(
+            tterrag1112.life_in_the_village.Kingdom.Charters.CharterType type) {
+        List<Charter> out = new ArrayList<>();
+        for (Charter c : charters) {
+            if (c.active() && c.type() == type) out.add(c);
+        }
+        return out;
+    }
+
+    /**
+     * Issues a fresh charter. Returns the freshly-created instance
+     * so callers can inspect / log it.
+     */
+    public Charter grantCharter(String name,
+                                tterrag1112.life_in_the_village.Kingdom.Charters.GranteeRef grantee,
+                                tterrag1112.life_in_the_village.Kingdom.Charters.CharterParams params,
+                                Optional<UUID> grantedRulerId, long tick) {
+        UUID charterId = UUID.randomUUID();
+        Charter charter = Charter.freshGrant(charterId, name, grantee,
+                this.id, grantedRulerId, params, tick);
+        charters.add(charter);
+        return charter;
+    }
+
+    /**
+     * Revokes a charter — sets active=false, applies revocation cost
+     * (legitimacy hit + 7-day stability dip per
+     * {@link tterrag1112.life_in_the_village.Kingdom.Charters.CharterType}).
+     * Returns true on success.
+     */
+    public boolean revokeCharter(UUID charterId, long tick) {
+        for (int i = 0; i < charters.size(); i++) {
+            Charter c = charters.get(i);
+            if (c.id().equals(charterId) && c.active()) {
+                long ageDays = c.ageInDays(tick);
+                int legHit = c.type().legitimacyHit(ageDays);
+                int dip    = c.type().stabilityDip();
+                this.legitimacy = clampScalar(this.legitimacy - legHit);
+                addModifier(KingdomModifier.expiring(
+                        "charter.revocation." + c.type().name(),
+                        "Revocation of " + c.name(),
+                        -dip, 0,
+                        tick,
+                        24000L * 7));
+                charters.set(i, c.revoke(tick));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Removes a charter entirely. Used by garbage collection of
+     * long-revoked charters; not part of the legal revocation flow.
+     */
+    public boolean removeCharter(UUID charterId) {
+        return charters.removeIf(c -> c.id().equals(charterId));
+    }
+
+    // =========================================================================
+    // Track D3.4b — treaties
+    // =========================================================================
+
+    public List<Treaty> getTreaties() {
+        return Collections.unmodifiableList(treaties);
+    }
+
+    public Optional<Treaty> findTreaty(UUID treatyId) {
+        for (Treaty t : treaties) if (t.id().equals(treatyId)) return Optional.of(t);
+        return Optional.empty();
+    }
+
+    /** Active treaties this kingdom has with the named other kingdom. */
+    public List<Treaty> activeTreatiesWith(UUID otherKingdomId) {
+        List<Treaty> out = new ArrayList<>();
+        for (Treaty t : treaties) {
+            if (t.isActive() && t.involves(otherKingdomId)
+                    && !this.id.equals(otherKingdomId)) {
+                out.add(t);
+            }
+        }
+        return out;
+    }
+
+    /** Adds a treaty entry (used by both drafting and mirror-on-other-side). */
+    public void addTreaty(Treaty treaty) {
+        if (treaty == null) return;
+        for (Treaty existing : treaties) {
+            if (existing.id().equals(treaty.id())) return; // already present
+        }
+        treaties.add(treaty);
+    }
+
+    /** Replaces a treaty (e.g. after ratification or break) by id. */
+    public boolean replaceTreaty(Treaty replacement) {
+        for (int i = 0; i < treaties.size(); i++) {
+            if (treaties.get(i).id().equals(replacement.id())) {
+                treaties.set(i, replacement);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Records ratification of {@code treatyId} by THIS kingdom's
+     * ruler at {@code tick}. Returns the updated treaty when found,
+     * or empty when this kingdom isn't a party.
+     */
+    public Optional<Treaty> ratifyTreaty(UUID treatyId, long tick) {
+        for (int i = 0; i < treaties.size(); i++) {
+            Treaty t = treaties.get(i);
+            if (t.id().equals(treatyId) && t.parties().contains(this.id)) {
+                Treaty updated = t.withRatification(this.id, tick);
+                treaties.set(i, updated);
+                return Optional.of(updated);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Breaks a treaty on this kingdom's copy. Idempotent — calling
+     * on an already-broken treaty is a no-op. Applies legitimacy /
+     * stability hits per {@link TreatyType}. Caller should mirror
+     * the break on the other party's copy (the existing
+     * KingdomActionPacket SET_RELATION handler already mirrors via
+     * setRelation cascade, so both sides break correctly).
+     */
+    public boolean breakTreaty(UUID treatyId, UUID breakingPartyId,
+                               long tick, String reason) {
+        for (int i = 0; i < treaties.size(); i++) {
+            Treaty t = treaties.get(i);
+            if (t.id().equals(treatyId) && !t.broken()) {
+                this.legitimacy = clampScalar(
+                        this.legitimacy - t.type().legitimacyHitOnBreak());
+                this.stability = clampScalar(
+                        this.stability + t.type().stabilityDeltaOnBreak());
+                treaties.set(i, t.asBroken(breakingPartyId, tick, reason));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Track D3.4b — true if this kingdom is a vassal of any other
+     * kingdom right now. Disables DECLARE_WAR capability per the
+     * user-confirmed VASSALAGE rule.
+     */
+    public boolean isVassal() {
+        for (Treaty t : treaties) {
+            if (t.isActive() && t.type() == TreatyType.VASSALAGE
+                    && t.vassalOf().filter(this.id::equals).isPresent()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Returns the overlord kingdom UUID if {@link #isVassal}, else empty. */
+    public Optional<UUID> overlordKingdomId() {
+        for (Treaty t : treaties) {
+            if (t.isActive() && t.type() == TreatyType.VASSALAGE
+                    && t.vassalOf().filter(this.id::equals).isPresent()) {
+                return t.overlordOf();
+            }
+        }
+        return Optional.empty();
+    }
+
+    // =========================================================================
+    // Track D3.4b — intrigue history
+    // =========================================================================
+
+    public List<IntrigueAttempt> getIntrigueHistory() {
+        return Collections.unmodifiableList(intrigueHistory);
+    }
+
+    /**
+     * Appends an intrigue attempt to the rolling buffer. Trims to
+     * {@link IntrigueAttempt#BUFFER_CAPACITY} oldest-first.
+     */
+    public void recordIntrigueAttempt(IntrigueAttempt attempt) {
+        if (attempt == null) return;
+        intrigueHistory.add(attempt);
+        while (intrigueHistory.size() > IntrigueAttempt.BUFFER_CAPACITY) {
+            intrigueHistory.remove(0);
+        }
+    }
+
+    /** Last attempt this kingdom launched against {@code targetKingdomId}, or empty. */
+    public Optional<IntrigueAttempt> lastAttemptAgainst(UUID targetKingdomId) {
+        for (int i = intrigueHistory.size() - 1; i >= 0; i--) {
+            IntrigueAttempt a = intrigueHistory.get(i);
+            if (a.targetKingdomId().equals(targetKingdomId)) return Optional.of(a);
+        }
+        return Optional.empty();
+    }
+
+    /** Most recent attempt this kingdom launched against any target, or empty. */
+    public Optional<IntrigueAttempt> lastAttempt() {
+        if (intrigueHistory.isEmpty()) return Optional.empty();
+        return Optional.of(intrigueHistory.get(intrigueHistory.size() - 1));
     }
 }

@@ -933,6 +933,208 @@ user-confirmed design pass:
 
 ---
 
+### 2026-05-09 — Track D3.4b landed (charters + treaties + Spymaster intrigue)
+
+Second half of the user-confirmed D3.4 split. Three new mechanics
+arrive together: persistent charters with age-scaled revocation
+costs; first-class treaties replacing the DiplomaticRelation-as-
+authority model with a derived view; Spymaster intrigue with
+deterministic outcomes and counter-intelligence.
+
+#### User-confirmed design
+
+- **Charter catalogue:** six types (TOLL_RIGHTS / TAX_EXEMPTION /
+  MARKET_MONOPOLY / TITLE_GRANT / ORDINATION_RIGHTS / LAND_GRANT)
+  with revocation cost formula `base + 0.5 × ageInDays`
+  legitimacy hit + `base × 2` 7-day stability dip. Bases:
+  TITLE_GRANT=10, LAND_GRANT=8, MARKET_MONOPOLY=6, TOLL_RIGHTS=5,
+  ORDINATION_RIGHTS=4, TAX_EXEMPTION=3.
+- **Treaty precedence:** treaties authoritative for cooperation;
+  WAR / COLD_WAR residual; declaring WAR while ALLIANCE active
+  cascade-breaks the alliance first.
+- **Grantee diversity** via tagged-union `GranteeRef` rather than
+  forking PowerGrant.
+
+#### Decided here (CC's call per the prompt)
+
+- **Decree disposition** (design pass d): kept as peer concept.
+  ISSUE_DECREE remains a stateless chat broadcast from D3.3b;
+  doesn't fold into ToggleLaws. Reason: decrees are one-shot
+  pronouncements with no lifecycle / parameter state, so the
+  laws machinery doesn't fit.
+- **Spymaster competence inputs** (design pass e): primary skill
+  SOCIAL, secondary LITERACY (matches the Spymaster
+  `OfficeDefinition` already registered in D1). Counter-intel
+  reads target's same-office competence.
+- **Intrigue cooldowns + budget** (design pass f): per-kingdom
+  cooldown 7 in-game days between any sow attempts; per-target
+  cooldown 21 days; treasury cost 50b per attempt. Counter-intel
+  reduction factor 0.5 — a fully-effective target Spymaster
+  halves source success probability. Discovery probability
+  `0.4 × target competence` when target Spymaster competently
+  held.
+
+#### What this slice ships
+
+- `Kingdom/Charters/Charter` record — id, name, grantee,
+  granterKingdomId, grantedTick, grantedRulerId, type, params,
+  active, revokedTick. `freshGrant` factory; `revoke(tick)`
+  copy-helper sets active=false.
+- `Kingdom/Charters/CharterType` enum — six types each with
+  `revocationBaseLegitimacy` int. `legitimacyHit(ageInDays)`
+  applies the formula; `stabilityDip()` returns base × 2.
+- `Kingdom/Charters/CharterParams` sealed interface — six
+  variant records (`TollRights`, `TaxExemption`, `MarketMonopoly`
+  with KINGDOM/PROVINCE/VILLAGE scope, `TitleGrant`,
+  `OrdinationRights`, `LandGrant` with block-coords + sizeCells).
+  Dispatched codec via `Codec.STRING.dispatch("type", ...)`
+  matching the existing `RouteSegment` pattern.
+- `Kingdom/Charters/GranteeRef` — `(GranteeKind, UUID)` record;
+  GranteeKind = NOBLE_NPC / HOUSE / GUILD / VILLAGE /
+  RELIGIOUS_ORDER. Convenience factories per kind.
+- `Kingdom/Treaties/Treaty` record — id, type, parties, drafter,
+  draftedTick, per-party ratifiedTicks map, termsSummary,
+  broken / brokenBy / brokenTick / brokenReason.
+  `freshDraft` / `autoMigrated` factories;
+  `withRatification(party, tick)` / `asBroken(by, tick, reason)`
+  copy-helpers; `isActive` / `isAwaitingRatificationFrom` /
+  `involves` / `overlordOf` / `vassalOf` queries.
+- `Kingdom/Treaties/TreatyType` enum — ALLIANCE / NON_AGGRESSION /
+  TRADE_DEAL / VASSALAGE each with `legitimacyHitOnBreak` and
+  `stabilityDeltaOnBreak` numbers. ALLIANCE = −15 leg, −10 stab;
+  VASSALAGE = −20 leg, −15 stab; NON_AGGRESSION = −5 leg, −3 stab;
+  TRADE_DEAL = −8 leg, −5 stab.
+- `Kingdom/Intrigue/IntrigueAttempt` record — rolling buffer
+  capacity 28 (~12 in-game weeks). Carries source / target /
+  province / spymaster ids, success / discovered flags, stability
+  hit applied.
+- `Kingdom/Intrigue/IntrigueDriver.sowDiscontent` — full mechanic.
+  Deterministic seed `(sourceKingdomId, "intrigue",
+  targetKingdomId, gameDay)`. Cooldown checks (per-kingdom +
+  per-target). Treasury cost 50b. Source competence × 0.5
+  baseline success probability, reduced by counter-intel.
+  Stability dip −8 to target province via 14-day expiring
+  `KingdomModifier` tagged
+  `intrigue.discontent.<sourceKingdomName>`.
+- `Kingdom.lawInstances` already at 10 fields in
+  `KingdomGovernanceData`; this slice adds three more
+  (`charters`, `treaties`, `intrigueHistory`) bringing it to
+  13/16. Top-level `Kingdom.CODEC` stays at 16/16.
+- `Kingdom.getRelation(otherKingdomId)` rewritten as derived
+  view per the user-confirmed precedence:
+  1. Active VASSALAGE / ALLIANCE treaty → ALLIANCE.
+  2. Active TRADE_DEAL → TRADE.
+  3. Residual WAR / COLD_WAR map wins over NEUTRAL-from-NON_AGG.
+  4. Active NON_AGGRESSION → NEUTRAL.
+  5. Otherwise NEUTRAL.
+- `Kingdom.setRelation(WAR)` cascade-breaks any active
+  cooperative treaty involving the target, applies legitimacy /
+  stability hits.
+- `Kingdom` API for charters: `getCharters` / `findCharter` /
+  `chartersFor` / `activeChartersOfType` / `grantCharter` /
+  `revokeCharter` / `removeCharter`. Revoke applies the
+  age-scaled legitimacy hit and 7-day stability-dip modifier.
+- `Kingdom` API for treaties: `getTreaties` / `findTreaty` /
+  `activeTreatiesWith` / `addTreaty` / `replaceTreaty` /
+  `ratifyTreaty(treatyId, tick)` / `breakTreaty(id, by, tick,
+  reason)` / `isVassal()` / `overlordKingdomId()`. Break applies
+  legitimacy + stability deltas per `TreatyType`.
+- `Kingdom` API for intrigue: `getIntrigueHistory` /
+  `recordIntrigueAttempt` (FIFO trim) / `lastAttempt` /
+  `lastAttemptAgainst`.
+- `KingdomCapabilityEvaluator.evaluate` extended: vassal
+  kingdoms (active VASSALAGE treaty as vassal side) get DENIED
+  on DECLARE_WAR with reason "vassal kingdoms cannot declare
+  war independently".
+- `KingdomTaxEvent.collectTaxes` extended with VASSALAGE
+  tribute outflow before EDUCATION_STIPEND outflow. Default rate
+  `DEFAULT_VASSAL_TRIBUTE_RATE = 0.0` preserves net flow per the
+  kingdom-plan constraint.
+- One-shot migration in `Kingdom.fromCodec`: when
+  `governance.treaties` is empty AND legacy
+  `relations` has cooperative entries (ALLIANCE / TRADE),
+  auto-migrate each into a `Treaty.autoMigrated` record.
+  Treaty UUID derived deterministically from
+  `(thisKingdomId, otherKingdomId)` so both sides produce the
+  same id independently.
+- Six new `KingdomEvent` subtypes: `CharterGranted` /
+  `CharterRevoked` / `TreatyDrafted` / `TreatyRatified` /
+  `TreatyBroken` / `IntrigueLaunched` / `IntrigueDiscovered`.
+- Top-level debug commands:
+  - `/litv charter list <kingdom>`
+  - `/litv charter grant <kingdom> <type> <granteeUuid>`
+    (debug fast-path with default params per type)
+  - `/litv charter revoke <kingdom> <charterUuid>`
+  - `/litv treaty list <kingdom>`
+  - `/litv treaty propose <type> <kingdomA> <kingdomB>` (debug
+    fast-path: drafts + immediately ratifies both parties)
+  - `/litv treaty break <kingdom> <treatyUuid>` (mirrors break
+    across every party's copy)
+  - `/litv intrigue test_sow <source> <target>`
+- `/litv kingdom debug describe` extended with charter/treaty/
+  intrigue counts + vassal-status display.
+
+#### Decisions worth recording
+
+- **Treaty UUIDs for migration are deterministic per pair.** A
+  pre-D3.4b save with kingdom A having an ALLIANCE relation to
+  kingdom B produces the same treaty UUID whether A's Kingdom
+  loads first or B's, computed from
+  `MSB(A) ^ rotate(MSB(B), 17), LSB(A) ^ rotate(LSB(B), 13)`.
+  Both sides converge on a single record, so the
+  `replaceTreaty` / `breakTreaty` mirror calls Just Work.
+- **Cascade-break only mutates this kingdom's copy.**
+  `Kingdom.setRelation(WAR)` cascading to `breakTreaty` only
+  touches its own treaty list. The mirror happens because
+  `KingdomActionPacket.SET_RELATION` already calls
+  `setRelation` on both kingdoms (D3.3b enforcement). Both
+  sides' setRelation cascades fire; both sides break their
+  copies.
+- **VASSALAGE encoded by parties order, not a flag.**
+  `parties.get(0)` = vassal, `parties.get(1)` = overlord.
+  Treaty constructor doesn't enforce; debug commands ensure the
+  order; future audience-loop ratification will validate.
+- **Counter-intel = 0.5 reduction at full target competence.**
+  Source success probability `0.5 × sourceComp − 0.5 ×
+  max(0, targetComp − 1)`. Equilibrium: equally-skilled
+  Spymasters give source ~25% success. Tunable.
+- **Sown stability hits land on kingdom modifier list.**
+  Province-scoped stability is read off the kingdom modifier
+  list with the per-province subset filtered in (the modifier
+  ID encodes the source kingdom). Phase 5 newsfeed surfaces
+  this. Per-province modifier list (Province carries its own
+  KingdomModifier list per D3.3a) is the eventual home; this
+  slice keeps the modifier on the kingdom for cross-province
+  fanout legibility — a polish target.
+- **No GUI surface for charters / treaties yet.** Debug
+  commands carry the surface for v1; Phase 5 audience loop +
+  newsfeed are the natural visual home. Wiring a
+  charter-list / treaty-list panel into KingdomBookScreen now
+  would land work that gets re-touched immediately by Phase 5.
+
+#### Out-of-scope, flagged for Phase 5 / 6 / Track E / 7
+
+- **Audience-loop ratification** — Phase 5.1. Debug fast-path
+  `treaty propose` stands in for v1.
+- **Charter / treaty GUI panels in KingdomBookScreen** —
+  Phase 5 audience loop + newsfeed cover the surface.
+- **TOLL_RIGHTS toll deduction from caravans** — data shape
+  only; road-economy follow-up wires the actual deduction.
+- **MARKET_MONOPOLY enforcement** — data shape only; merchant
+  logic doesn't yet check the active monopoly list.
+- **ORDINATION_RIGHTS gating** — Phase 6 religion-as-authority
+  pass.
+- **Player-as-treaty-party** — VASSALAGE between a player-led
+  kingdom and an NPC kingdom needs the player audience-loop UX
+  from Phase 5.
+- **Provincial newsfeed surfacing of intrigue events** —
+  Phase 5.5.
+- **Per-province KingdomModifier subset for sown discontent** —
+  v1 applies the modifier kingdom-wide; ideally the dip
+  attaches to the targeted province only. Polish target.
+
+---
+
 ### 2026-05-09 — Track D3.4a landed (law typology refactor + GUI rewrite)
 
 First half of the user-confirmed D3.4 split. The flat

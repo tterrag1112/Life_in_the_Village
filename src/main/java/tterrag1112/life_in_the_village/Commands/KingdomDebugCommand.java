@@ -105,6 +105,68 @@ public final class KingdomDebugCommand {
                                                                 StringArgumentType.string())
                                                         .executes(ctx -> provinceDescribe(ctx,
                                                                 StringArgumentType.getString(ctx, "name")))))))
+                        // Track D3.4b — top-level /litv charter list/grant/revoke.
+                        .then(Commands.literal("charter")
+                                .then(Commands.literal("list")
+                                        .then(Commands.argument("name",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> charterList(ctx,
+                                                        StringArgumentType.getString(ctx, "name")))))
+                                .then(Commands.literal("grant")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("type",
+                                                                StringArgumentType.string())
+                                                        .then(Commands.argument("granteeUuid",
+                                                                        StringArgumentType.string())
+                                                                .executes(ctx -> charterGrant(ctx,
+                                                                        StringArgumentType.getString(ctx, "kingdom"),
+                                                                        StringArgumentType.getString(ctx, "type"),
+                                                                        StringArgumentType.getString(ctx, "granteeUuid")))))))
+                                .then(Commands.literal("revoke")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("charterUuid",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> charterRevoke(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                StringArgumentType.getString(ctx, "charterUuid")))))))
+                        // Track D3.4b — top-level /litv treaty list/propose/break.
+                        .then(Commands.literal("treaty")
+                                .then(Commands.literal("list")
+                                        .then(Commands.argument("name",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> treatyList(ctx,
+                                                        StringArgumentType.getString(ctx, "name")))))
+                                .then(Commands.literal("propose")
+                                        .then(Commands.argument("typeName",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("kingdomA",
+                                                                StringArgumentType.string())
+                                                        .then(Commands.argument("kingdomB",
+                                                                        StringArgumentType.string())
+                                                                .executes(ctx -> treatyPropose(ctx,
+                                                                        StringArgumentType.getString(ctx, "typeName"),
+                                                                        StringArgumentType.getString(ctx, "kingdomA"),
+                                                                        StringArgumentType.getString(ctx, "kingdomB")))))))
+                                .then(Commands.literal("break")
+                                        .then(Commands.argument("kingdom",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("treatyUuid",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> treatyBreak(ctx,
+                                                                StringArgumentType.getString(ctx, "kingdom"),
+                                                                StringArgumentType.getString(ctx, "treatyUuid")))))))
+                        // Track D3.4b — top-level /litv intrigue test_sow.
+                        .then(Commands.literal("intrigue")
+                                .then(Commands.literal("test_sow")
+                                        .then(Commands.argument("source",
+                                                        StringArgumentType.string())
+                                                .then(Commands.argument("target",
+                                                                StringArgumentType.string())
+                                                        .executes(ctx -> intrigueTestSow(ctx,
+                                                                StringArgumentType.getString(ctx, "source"),
+                                                                StringArgumentType.getString(ctx, "target")))))))
         );
     }
 
@@ -194,6 +256,19 @@ public final class KingdomDebugCommand {
                         + " prestige=" + h.prestige());
             }
         }
+        send(ctx, "── Charters / Treaties / Intrigue (D3.4b) ──");
+        long activeCharters = k.getCharters().stream().filter(c -> c.active()).count();
+        long activeTreaties = k.getTreaties().stream().filter(t -> t.isActive()).count();
+        send(ctx, "  charters: " + activeCharters + " active / "
+                + k.getCharters().size() + " total");
+        send(ctx, "  treaties: " + activeTreaties + " active / "
+                + k.getTreaties().size() + " total");
+        if (k.isVassal()) {
+            send(ctx, "  vassal of: " + k.overlordKingdomId()
+                    .map(id -> id.toString().substring(0, 8)).orElse("?"));
+        }
+        send(ctx, "  intrigue history: " + k.getIntrigueHistory().size()
+                + " entries");
         send(ctx, "── Provinces (D3.3) ──");
         if (k.getProvinces().isEmpty()) {
             send(ctx, "  (none — UNITARY, ≤3 villages, or not yet computed)");
@@ -537,6 +612,244 @@ public final class KingdomDebugCommand {
             ProvincialReport r = reports.get(i);
             send(ctx, "  tick " + r.tickGenerated() + " — " + r.summary());
         }
+        return 1;
+    }
+
+    // =========================================================================
+    // Track D3.4b — charter / treaty / intrigue debug handlers
+    // =========================================================================
+
+    private static int charterList(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom '" + name + "'.")); return 0; }
+        var list = k.getCharters();
+        send(ctx, "── Charters of " + name + " (" + list.size() + ") ──");
+        for (var c : list) {
+            send(ctx, "  [" + (c.active() ? "active" : "revoked")
+                    + "] " + c.type().name() + " '" + c.name() + "' "
+                    + c.id().toString().substring(0, 8)
+                    + " → " + c.grantee().kind().name() + " "
+                    + c.grantee().id().toString().substring(0, 8)
+                    + " (granted tick " + c.grantedTick() + ")");
+        }
+        return list.size();
+    }
+
+    /**
+     * Test-grants a charter. Defaults the params per type so the
+     * command stays terse (debug; production paths set real
+     * params via the GUI / packet flow).
+     */
+    private static int charterGrant(CommandContext<CommandSourceStack> ctx,
+                                    String kingdom, String typeStr, String granteeUuid) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        java.util.UUID gid;
+        try { gid = java.util.UUID.fromString(granteeUuid); }
+        catch (Exception e) { ctx.getSource().sendFailure(Component.literal("Bad UUID.")); return 0; }
+        tterrag1112.life_in_the_village.Kingdom.Charters.CharterType type;
+        try { type = tterrag1112.life_in_the_village.Kingdom.Charters.CharterType
+                .valueOf(typeStr.toUpperCase(java.util.Locale.ROOT)); }
+        catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal("Bad type. Valid: "
+                    + java.util.Arrays.toString(
+                        tterrag1112.life_in_the_village.Kingdom.Charters.CharterType.values())));
+            return 0;
+        }
+        // Default params per type for the debug grant.
+        var params = switch (type) {
+            case TOLL_RIGHTS       -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                    .CharterParams.TollRights(gid, 0.05);
+            case TAX_EXEMPTION     -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                    .CharterParams.TaxExemption(0.5);
+            case MARKET_MONOPOLY   -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                    .CharterParams.MarketMonopoly("MARKET", tterrag1112.life_in_the_village
+                    .Kingdom.Charters.CharterParams.MarketMonopoly.Scope.KINGDOM,
+                    java.util.Optional.empty());
+            case TITLE_GRANT       -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                    .CharterParams.TitleGrant(1);
+            case ORDINATION_RIGHTS -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                    .CharterParams.OrdinationRights(gid);
+            case LAND_GRANT        -> new tterrag1112.life_in_the_village.Kingdom.Charters
+                    .CharterParams.LandGrant(0, 0, 4);
+        };
+        var grantee = tterrag1112.life_in_the_village.Kingdom.Charters
+                .GranteeRef.ofNpc(gid);
+        var charter = k.grantCharter("[debug] " + type.name(), grantee, params,
+                java.util.Optional.empty(), level.getGameTime());
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .CharterGranted(k.getId(), charter.id(), type.name(),
+                        gid, grantee.kind().name(), level.getGameTime()));
+        data.setDirty();
+        send(ctx, "Granted " + type.name() + " " + charter.id().toString().substring(0, 8));
+        return 1;
+    }
+
+    private static int charterRevoke(CommandContext<CommandSourceStack> ctx,
+                                     String kingdom, String charterUuid) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        java.util.UUID cid;
+        try { cid = java.util.UUID.fromString(charterUuid); }
+        catch (Exception e) { ctx.getSource().sendFailure(Component.literal("Bad UUID.")); return 0; }
+        var charter = k.findCharter(cid).orElse(null);
+        if (charter == null) {
+            ctx.getSource().sendFailure(Component.literal("No charter."));
+            return 0;
+        }
+        long age = charter.ageInDays(level.getGameTime());
+        if (!k.revokeCharter(cid, level.getGameTime())) {
+            ctx.getSource().sendFailure(Component.literal("Already revoked."));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .CharterRevoked(k.getId(), cid, charter.type().name(),
+                        charter.grantee().id(), age, level.getGameTime()));
+        data.setDirty();
+        send(ctx, "Revoked " + charter.type().name() + " (age " + age
+                + "d, legitimacy hit " + charter.type().legitimacyHit(age)
+                + ", stability dip " + charter.type().stabilityDip() + ")");
+        return 1;
+    }
+
+    private static int treatyList(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        var list = k.getTreaties();
+        send(ctx, "── Treaties of " + name + " (" + list.size() + ") ──");
+        for (var t : list) {
+            String state = t.broken() ? "broken" : t.isActive() ? "active" : "drafted";
+            send(ctx, "  [" + state + "] " + t.type().name() + " "
+                    + t.id().toString().substring(0, 8)
+                    + " (parties: " + t.parties().size() + ")"
+                    + (t.broken() ? " reason='" + t.brokenReason() + "'" : ""));
+        }
+        return list.size();
+    }
+
+    private static int treatyPropose(CommandContext<CommandSourceStack> ctx,
+                                     String typeName, String kingdomA, String kingdomB) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom a = data.getKingdomByName(kingdomA).orElse(null);
+        Kingdom b = data.getKingdomByName(kingdomB).orElse(null);
+        if (a == null || b == null) {
+            ctx.getSource().sendFailure(Component.literal("Both kingdoms required."));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Kingdom.Treaties.TreatyType type;
+        try { type = tterrag1112.life_in_the_village.Kingdom.Treaties.TreatyType
+                .valueOf(typeName.toUpperCase(java.util.Locale.ROOT)); }
+        catch (Exception e) {
+            ctx.getSource().sendFailure(Component.literal("Bad type. Valid: "
+                    + java.util.Arrays.toString(
+                        tterrag1112.life_in_the_village.Kingdom.Treaties.TreatyType.values())));
+            return 0;
+        }
+        long tick = level.getGameTime();
+        java.util.UUID treatyId = java.util.UUID.randomUUID();
+        var treaty = tterrag1112.life_in_the_village.Kingdom.Treaties.Treaty.freshDraft(
+                treatyId, type, java.util.List.of(a.getId(), b.getId()),
+                java.util.Optional.empty(),
+                "[debug] " + type.name() + " between " + a.getName() + " + " + b.getName(),
+                tick);
+        // Ratify both immediately (debug fast-path).
+        treaty = treaty.withRatification(a.getId(), tick).withRatification(b.getId(), tick);
+        a.addTreaty(treaty);
+        b.addTreaty(treaty);
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .TreatyDrafted(treatyId, type.name(),
+                        java.util.List.of(a.getId(), b.getId()), null, tick));
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .TreatyRatified(treatyId, type.name(),
+                        java.util.List.of(a.getId(), b.getId()),
+                        java.util.List.of(a.getId(), b.getId()), tick));
+        data.setDirty();
+        send(ctx, "Drafted + ratified " + type.name() + " "
+                + treatyId.toString().substring(0, 8));
+        return 1;
+    }
+
+    private static int treatyBreak(CommandContext<CommandSourceStack> ctx,
+                                   String kingdom, String treatyUuid) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(kingdom).orElse(null);
+        if (k == null) { ctx.getSource().sendFailure(Component.literal("No kingdom.")); return 0; }
+        java.util.UUID tid;
+        try { tid = java.util.UUID.fromString(treatyUuid); }
+        catch (Exception e) { ctx.getSource().sendFailure(Component.literal("Bad UUID.")); return 0; }
+        var t = k.findTreaty(tid).orElse(null);
+        if (t == null) {
+            ctx.getSource().sendFailure(Component.literal("No treaty."));
+            return 0;
+        }
+        // Break on every party's copy.
+        for (java.util.UUID partyId : t.parties()) {
+            data.getKingdomById(partyId).ifPresent(p ->
+                    p.breakTreaty(tid, k.getId(), level.getGameTime(),
+                            "[debug] manual break"));
+        }
+        tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus.fire(
+                new tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent
+                        .TreatyBroken(tid, t.type().name(), k.getId(),
+                        "[debug] manual break", level.getGameTime()));
+        data.setDirty();
+        send(ctx, "Broke " + t.type().name() + " " + tid.toString().substring(0, 8)
+                + " on " + t.parties().size() + " party copies");
+        return 1;
+    }
+
+    private static int intrigueTestSow(CommandContext<CommandSourceStack> ctx,
+                                       String source, String target) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom src = data.getKingdomByName(source).orElse(null);
+        Kingdom tgt = data.getKingdomByName(target).orElse(null);
+        if (src == null || tgt == null) {
+            ctx.getSource().sendFailure(Component.literal("Both kingdoms required."));
+            return 0;
+        }
+        // Pick first province if available.
+        var province = tgt.getProvinces().isEmpty()
+                ? null : tgt.getProvinces().get(0);
+        var result = tterrag1112.life_in_the_village.Kingdom.Intrigue
+                .IntrigueDriver.sowDiscontent(level, data, src, tgt, province,
+                        level.getGameTime());
+        if (!result.attempted()) {
+            ctx.getSource().sendFailure(Component.literal("Denied: " + result.reason()));
+            return 0;
+        }
+        send(ctx, "Sow attempt: success=" + result.success()
+                + ", discovered=" + result.discovered()
+                + ", attemptId=" + result.attemptId().toString().substring(0, 8));
+        data.setDirty();
         return 1;
     }
 

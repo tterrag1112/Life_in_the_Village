@@ -26,6 +26,15 @@ public class KingdomTaxEvent {
 
     private static final long TAX_INTERVAL = 24000L;
 
+    /**
+     * Track D3.4b — default vassalage tribute rate (vassal kingdom
+     * forwards this fraction of its post-tax revenue to the overlord).
+     * Ships at 0.0 to preserve net economic flow per the kingdom-plan
+     * "Net economic flow at default parameters preserved" constraint.
+     * Tunable per culture in a follow-up; the chain is observable.
+     */
+    public static final double DEFAULT_VASSAL_TRIBUTE_RATE = 0.0;
+
     /** Set to true once the first-tick village-road bootstrap has run for this session. */
     private static boolean roadsBootstrapped = false;
 
@@ -167,6 +176,24 @@ public class KingdomTaxEvent {
         }
 
         kingdom.depositToTreasury(totalCollected);
+
+        // Track D3.4b — VASSALAGE tribute. If this kingdom is a
+        // vassal, forward DEFAULT_VASSAL_TRIBUTE_RATE × totalCollected
+        // to the overlord kingdom's treasury before any other outflow.
+        // Default rate matches the FealtyChain skim pattern (0.0 ships;
+        // observable when explicitly tuned).
+        kingdom.overlordKingdomId().ifPresent(overlordId -> {
+            long tribute = (long) (totalCollected * DEFAULT_VASSAL_TRIBUTE_RATE);
+            if (tribute <= 0L) return;
+            Kingdom overlord = data.getKingdomById(overlordId).orElse(null);
+            if (overlord == null) return;
+            long withdrawn = Math.min(tribute, kingdom.getTreasury());
+            kingdom.depositToTreasury(-withdrawn);
+            overlord.depositToTreasury(withdrawn);
+            System.out.println("Kingdom '" + kingdom.getName()
+                    + "' paid VASSALAGE tribute " + withdrawn
+                    + "b to overlord '" + overlord.getName() + "'");
+        });
 
         // Track D3.4 — EDUCATION_STIPEND ScalarLaw outflow. Drains
         // treasury once per tax cycle by (active scalar value) ×

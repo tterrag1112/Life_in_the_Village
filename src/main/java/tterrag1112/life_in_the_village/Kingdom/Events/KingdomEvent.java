@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Kingdom.Events;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -87,4 +88,62 @@ public sealed interface KingdomEvent {
     record LawRepealed(UUID kingdomId, String lawId,
                        String priorState, UUID actorUuid, long tick)
             implements KingdomEvent {}
+
+    // ── Track D3.4b — charter / treaty / intrigue events ──────────────────
+
+    /** A charter was issued. {@code type} matches CharterType.name(). */
+    record CharterGranted(UUID kingdomId, UUID charterId, String type,
+                          UUID granteeId, String granteeKind, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * A charter was revoked. Subscribers can read the legitimacy /
+     * stability cost off the kingdom's modifier list (tagged with
+     * {@code charter.revocation.<TYPE>}).
+     */
+    record CharterRevoked(UUID kingdomId, UUID charterId, String type,
+                          UUID granteeId, long ageInDays, long tick)
+            implements KingdomEvent {}
+
+    /** A treaty was drafted by a Scholar. Awaits ratification. */
+    record TreatyDrafted(UUID treatyId, String type,
+                         List<UUID> parties, UUID drafterUuid, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * A treaty was ratified by all parties. {@code ratifiers} is a
+     * snapshot of the per-party ruler ids that signed.
+     */
+    record TreatyRatified(UUID treatyId, String type,
+                          List<UUID> parties, List<UUID> ratifiers, long tick)
+            implements KingdomEvent {}
+
+    /**
+     * A treaty was broken by {@code breakingPartyId}. {@code reason}
+     * is a one-line tag ("declared war on ally", "unilateral",
+     * "vassalage rebellion"). Cascade-break sets reason to
+     * "cascade.<original_reason>" so subscribers can chain.
+     */
+    record TreatyBroken(UUID treatyId, String type, UUID breakingPartyId,
+                        String reason, long tick) implements KingdomEvent {}
+
+    /**
+     * Spymaster launched a sow-discontent attempt. The outcome is
+     * stochastic but seeded by {@code (kingdomId, "intrigue",
+     * targetKingdomId, gameDay)} per the user-confirmed
+     * determinism rule.
+     */
+    record IntrigueLaunched(UUID kingdomId, UUID targetKingdomId,
+                            UUID targetProvinceId, UUID spymasterUuid,
+                            boolean success, long tick) implements KingdomEvent {}
+
+    /**
+     * A target kingdom's counter-intelligence discovered an
+     * incoming intrigue attempt. Subscribers can surface the
+     * discovery in the target's audience-loop feed (Phase 5).
+     */
+    record IntrigueDiscovered(UUID targetKingdomId, UUID sourceKingdomId,
+                              UUID targetProvinceId, long tick)
+            implements KingdomEvent {}
 }
+

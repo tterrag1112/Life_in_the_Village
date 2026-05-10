@@ -70,6 +70,12 @@ public final class KingdomCapabilityEvaluator {
         if (kingdom == null || capability == null) {
             return Result.deny(capability, "no kingdom or capability");
         }
+        // Track D3.4b — VASSALAGE blocks DECLARE_WAR (vassals can
+        // not declare war independently of their overlord).
+        if (capability == KingdomCapability.DECLARE_WAR && kingdom.isVassal()) {
+            return Result.deny(capability,
+                    "vassal kingdoms cannot declare war independently");
+        }
         OfficeState offices = kingdom.getOffices();
         List<String> satisfiers = SATISFIERS.getOrDefault(capability, List.of());
 
