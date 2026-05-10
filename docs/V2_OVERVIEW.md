@@ -164,27 +164,50 @@ projects to top-down by ignoring Y.
 
 ---
 
-## 8. JSON dump schema (v1)
+## 8. JSON dump schema (v2)
 
-Top-level fields:
+**Schema v2** — additive over v1. v1 readers ignoring unknown
+fields still parse v2 dumps without error. Bump on incompatible
+changes only.
+
+### Three `command` modes
+
+- **`"dump"`** — on-demand, named village (`/litv layout debug dump <name>`).
+  Runs Layers 1-4 from scratch. `realization` section ABSENT
+  (Layer 5 didn't run).
+- **`"dump_at"`** — on-demand, player position
+  (`/litv layout debug dump_at <radius>`). Same shape as `"dump"`.
+- **`"auto"`** — auto-dump on V2 spawn (success or abort). Includes
+  the `realization` section. Set by
+  `V2VillageSpawnerAdapter.spawn`.
+
+The `auto` path triggers on every successful V2 spawn AND every
+abort (six abort branches: proximity check, UNVIABLE tier, no
+placement, fatal overlap, post-terrain unviable, no NBT success).
+Toggleable via JVM property `-Dlitv.debug.autoDumpLayouts=false`
+or the runtime command `/litv layout debug autodump <on|off|status>`.
+Default-on.
+
+### Top-level fields
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `schemaVersion` | int | always `1` for this version |
-| `command` | string | `"dump"` (named village) or `"dump_at"` (player position) |
+| `schemaVersion` | int | `2` for current version |
+| `command` | string | `"dump"` / `"dump_at"` / `"auto"` |
 | `tick` | long | server tick at dump time |
 | `worldSeed` | long | level seed |
 | `planSeed` | long | mixed seed used for V2 layers |
 | `dimension` | string | dimension key (e.g. `"minecraft:overworld"`) |
 | `origin` | `{x,y,z}` | dump origin (village anchor or player pos) |
-| `village` | object | `{name?, id?, culture}`; only `culture` for `dump_at` |
-| `siteContext` | object | see below |
-| `aborted` | bool? | present + true when tier=UNVIABLE; subsequent fields absent |
-| `abortReason` | string? | one-line abort note |
-| `buildings` | object | placed / dropped / unavailable / counts / reconciliation |
+| `village` | object | `{name?, id?, culture}` |
+| `siteContext` | object | see below; absent when proximity-check aborted before Layer 2 ran |
+| `aborted` | bool? | present + true when V2 aborted |
+| `abortReason` | string? | one-line abort note when aborted |
+| `buildings` | object | placed / dropped / unavailable / counts / reconciliation; absent at very-early aborts |
 | `roads` | object | skeleton + frontageOwners summary |
 | `phaseEvents` | array | PhasedPlanner diagnostics |
 | `gateways` | array | gate positions + role + source |
+| `realization` | object | **schema v2** — Layer 5 deltas (`"auto"` only); absent for `"dump"`/`"dump_at"` |
 
 **`siteContext`:**
 - `anchor`, `originalAnchor`: `{x,y,z}` — anchor before/after adjustment
@@ -222,6 +245,23 @@ each is a `RoadPrimitive` view:
 - `facingRoad`: `{kind, start, end, width}` — kind is `"SPINE_SEGMENT"` or `"CROSS_STREET"`
 - `frontage`: `{buildingFront, frontDirX, frontDirZ}`
 - `hasAdjunct`: bool? — present + true when an adjunct plot was reserved
+- **schema v2 fields (present only when `command="auto"`):**
+  - `realizationMode`: `"LEVEL"` / `"PLATFORM"` / `"DROP"` — TerrainAdapter's call for this building
+  - `padTargetY`: int — pad top Y (LEVEL = ground fill target; PLATFORM = solid pad top)
+  - `realizationReason`: string? — TerrainAdapter's reason string when present
+
+> **Why no `adjustedFrom`?** V2's `PlacedBuilding` is an immutable
+> record; Layer 5 never moves a building's `centre` or `rotation`.
+> The only "adjustment" is the pad height, captured by the flat
+> `padTargetY` field. If a future planner mutates positions,
+> schema v3 will add `adjustedFrom`.
+
+**Track E1 follow-up — `buildings.viabilityDropped[]`** (schema v2):
+plan-survivors that Layer 5 dropped. Each entry:
+- `type`: BuildingType enum name
+- `plannedCentre`: `{x,y,z}` — where the planner intended to place it
+- `source`: currently always `"terrain_adapter"` (Track E1F catches TerrainAdapter `DROP` mode). Overlap-audit and viability-validator drops surface via `realization.overlapConflicts[]` and `realization.viabilityFailureReasons[]` respectively.
+- `reason`: string?
 
 **`roads`:**
 - `skeleton.spineStart`, `skeleton.spineEnd`: `{x,y,z}`
@@ -243,6 +283,52 @@ each is a `RoadPrimitive` view:
 - `position`: `{x,y,z}`
 - `role`: `"PRIMARY"` or `"SIDE"`
 - `source`: `"spineEnd"` / `"spineStart"` / `"crossStreet.start"` / `"crossStreet.end"`
+
+### Realization section (schema v2, `"auto"` only)
+
+`realization` captures Layer 5's actual effects on the world.
+Present only when the dump was triggered by
+`V2VillageSpawnerAdapter.spawn`; on-demand `dump` / `dump_at`
+runs only Layers 1-4 so this section is omitted.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `overlapConflicts[]` | array | `OverlapAuditor.Conflict` entries: `{description, pos, aDesc, bDesc}`. Pre-Layer-5b decisions; non-fatal overlaps are still recorded for diagnosis. |
+| `overlapFatal` | bool? | present + true when `OverlapAuditor` triggered the fatal abort |
+| `terrainAdaptation` | object | `{levelCount, platformCount, dropCount}` — count of each TerrainAdapter mode |
+| `pads[]` | array | Per-pad entry for each non-DROP TerrainAdapter decision: `{type, centre, footprintWidth, footprintLength, mode, padTargetY, reason?}` |
+| `vegetationCleared` | object | Aggregate: `{totalBlocks, byBuildingCount, byRoadSegmentCount}` — sum of `VegetationClearer.clearForBuilding/forRoadSegment` int returns + call counts |
+| `placementErrors[]` | array | NBT placement failures: `{type, variantId?, reason}` — populated from `BuildingPlacer.placeAndRegister` returning empty or throwing |
+| `viabilityFailureReasons[]` | array | Kingdom-level strings from `ViabilityValidator.ViabilityCheck.failureReasons` when post-terrain validation failed |
+
+---
+
+## 12. Auto-dump on spawn (Track E1 follow-up)
+
+V2 auto-dumps every spawn via `V2VillageSpawnerAdapter.spawn`'s
+hook. Triggered by:
+
+- Success — full success path completed.
+- Six abort branches:
+  1. Proximity check failed (minimal: origin + reason).
+  2. Site tier UNVIABLE (siteContext + reason).
+  3. Layer 3-4 produced no viable village (Layers 1-4 + reason).
+  4. Overlap audit fatal (Layers 1-4 + overlap report + reason).
+  5. Post-terrain not viable (Layers 1-4 + terrain decisions + viability reasons).
+  6. NBT placement failed for all survivors (Layers 1-4 + everything Layer 5 logged + reason).
+
+The dump call is wrapped in try/catch; a serialization or IO
+failure logs a warning and does not block the spawn.
+
+### Toggle
+
+| Mechanism | When to use |
+|-----------|-------------|
+| JVM property `-Dlitv.debug.autoDumpLayouts=false` | Disable from server launch (e.g. production servers) |
+| `/litv layout debug autodump <on\|off\|status>` | Toggle at runtime without restart |
+
+The on-demand `dump` and `dump_at` commands are **not** affected
+by this toggle; they always run.
 
 ---
 

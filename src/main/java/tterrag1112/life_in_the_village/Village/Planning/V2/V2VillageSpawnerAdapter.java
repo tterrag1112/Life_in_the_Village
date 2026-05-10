@@ -47,6 +47,9 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBui
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Debug.AutoDumpConfig;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Debug.LayoutDumpSerializer;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Debug.RealizationLog;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.OverlapAuditor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.PadBuilder;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.RoadPainter;
@@ -117,8 +120,14 @@ public final class V2VillageSpawnerAdapter {
         long t0 = System.currentTimeMillis();
         VillageSavedData data = VillageSavedData.get(level);
 
+        // Track E1 follow-up — auto-dump accumulator. Every Layer 5
+        // step appends; the helper at the bottom writes the JSON.
+        RealizationLog realizationLog = new RealizationLog();
+
         if (!VillageSpawner.isFarEnoughFromExistingVillages(level, origin)) {
             LOGGER.info("V2: too close to existing village at {}", origin);
+            tryAutoDumpAbort(level, origin, villageName,
+                    "proximity check failed");
             return Optional.empty();
         }
 
@@ -140,6 +149,10 @@ public final class V2VillageSpawnerAdapter {
         }
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             LOGGER.info("V2: site UNVIABLE at {}; aborting", origin);
+            realizationLog.markAborted("tier=UNVIABLE; layers 3-4 skipped");
+            tryAutoDump(level, origin, villageName, null, culture,
+                    null, siteCtx, null, null, null, null, null,
+                    realizationLog);
             return Optional.empty();
         }
 
@@ -169,19 +182,31 @@ public final class V2VillageSpawnerAdapter {
             LOGGER.info("V2: planner produced no viable village at {}"
                     + " (placed={} viable={})", origin,
                     placement.placed().size(), placement.villageViable());
+            realizationLog.markAborted("planner produced no viable village ("
+                    + "placed=" + placement.placed().size()
+                    + " viable=" + placement.villageViable() + ")");
+            tryAutoDump(level, origin, villageName, null, culture,
+                    fmap, siteCtx, sel, recon, placement, roads, phased.events(),
+                    realizationLog);
             return Optional.empty();
         }
 
         // ── V2 Layer 5 sub-components, inlined to capture refs ──────────
         OverlapAuditor.OverlapReport audit =
                 OverlapAuditor.audit(placement.placed(), roads);
+        realizationLog.recordOverlap(audit);
         if (audit.fatal()) {
             LOGGER.info("V2: overlap audit fatal — aborting");
+            realizationLog.markAborted("overlap audit fatal");
+            tryAutoDump(level, origin, villageName, null, culture,
+                    fmap, siteCtx, sel, recon, placement, roads, phased.events(),
+                    realizationLog);
             return Optional.empty();
         }
 
         List<TerrainAdapter.AdaptationDecision> decisions =
                 TerrainAdapter.decide(placement.placed(), level);
+        realizationLog.recordTerrainDecisions(decisions);
         List<PlacedBuilding> survivors = new ArrayList<>();
         List<TerrainAdapter.AdaptationDecision> survivorDecisions = new ArrayList<>();
         List<DroppedBuilding> additionalDrops = new ArrayList<>();
@@ -203,16 +228,26 @@ public final class V2VillageSpawnerAdapter {
                 ViabilityValidator.validate(postTerrain, siteCtx.tier());
         if (!check.viable()) {
             LOGGER.info("V2: post-terrain not viable: {}", check.failureReasons());
+            realizationLog.recordViabilityFailure(check.failureReasons());
+            realizationLog.markAborted("post-terrain not viable: "
+                    + String.join("; ", check.failureReasons()));
+            tryAutoDump(level, origin, villageName, null, culture,
+                    fmap, siteCtx, sel, recon, postTerrain, roads, phased.events(),
+                    realizationLog);
             return Optional.empty();
         }
 
         // Vegetation + pads (must run before NBT placement so trees
         // don't intersect building footprints).
         for (PlacedBuilding b : survivors) {
-            VegetationClearer.clearForBuilding(level, b, BUILDING_VEGETATION_BUFFER);
+            int cleared = VegetationClearer.clearForBuilding(level, b,
+                    BUILDING_VEGETATION_BUFFER);
+            realizationLog.addBuildingVegetation(cleared);
         }
         for (RoadSegment seg : roads.skeleton().allSegments()) {
-            VegetationClearer.clearForRoadSegment(level, seg, ROAD_VEGETATION_BUFFER);
+            int cleared = VegetationClearer.clearForRoadSegment(level, seg,
+                    ROAD_VEGETATION_BUFFER);
+            realizationLog.addRoadVegetation(cleared);
         }
         for (TerrainAdapter.AdaptationDecision d : survivorDecisions) {
             PadBuilder.buildPad(level, d);
@@ -328,7 +363,12 @@ public final class V2VillageSpawnerAdapter {
                 Optional<Building> placedOpt = BuildingPlacer.placeAndRegister(
                         level, buildPos, structureId, name, b.type(),
                         b.rotation(), b.variantId(), tintPlan);
-                if (placedOpt.isEmpty()) { placedFail++; continue; }
+                if (placedOpt.isEmpty()) {
+                    placedFail++;
+                    realizationLog.recordPlacementError(b.type(), b.variantId(),
+                            "BuildingPlacer returned empty");
+                    continue;
+                }
 
                 Building placedBuilding = placedOpt.get();
                 village.addBuilding(placedBuilding);
@@ -368,11 +408,21 @@ public final class V2VillageSpawnerAdapter {
                 LOGGER.warn("V2: place failed for {} at {}: {}",
                         b.type(), buildPos, e.getMessage());
                 placedFail++;
+                realizationLog.recordPlacementError(b.type(), b.variantId(),
+                        e.getClass().getSimpleName() + ": "
+                                + (e.getMessage() == null ? "?" : e.getMessage()));
             }
         }
 
         if (placedBuildings.isEmpty()) {
             LOGGER.info("V2: no buildings placed at {}; aborting", origin);
+            realizationLog.markAborted("no buildings placed (NBT placement failed for all "
+                    + placedFail + " survivors)");
+            tryAutoDump(level, origin, villageName,
+                    village != null && village.getId() != null
+                            ? village.getId().toString() : null,
+                    culture, fmap, siteCtx, sel, recon, placement, roads,
+                    phased.events(), realizationLog);
             return Optional.empty();
         }
         data.setDirty();
@@ -418,7 +468,58 @@ public final class V2VillageSpawnerAdapter {
         LOGGER.info("V2: spawned '{}' tier={} placed={} fail={} drops={} elapsed={}ms",
                 villageName, siteCtx.tier(), placedOk, placedFail,
                 additionalDrops.size(), elapsed);
+        // Track E1 follow-up — auto-dump on successful spawn.
+        tryAutoDump(level, origin, villageName,
+                village.getId() != null ? village.getId().toString() : null,
+                culture, fmap, siteCtx, sel, recon, placement, roads,
+                phased.events(), realizationLog);
         return Optional.of(village);
+    }
+
+    // =========================================================================
+    // Track E1 follow-up — auto-dump helpers. Never throw upward.
+    // =========================================================================
+
+    private static void tryAutoDump(
+            ServerLevel level, BlockPos origin, String villageName, String villageId,
+            Culture culture, V2FeatureMap fmap, SiteContext siteCtx,
+            BuildingSelector.SelectionResult sel,
+            ReconciliationEngine.ReconciliationResult recon,
+            PlacementResult placement, RoadNetwork roads,
+            java.util.List<PhasedPlanner.PhaseEvent> events,
+            RealizationLog log) {
+        if (!AutoDumpConfig.isEnabled()) return;
+        try {
+            long tick = level.getGameTime();
+            var json = LayoutDumpSerializer.serializeAuto(level, origin, tick,
+                    villageName, villageId, culture, fmap, siteCtx, sel, recon,
+                    placement, roads, events, log);
+            String slug = villageName != null ? villageName
+                    : ("auto_" + origin.getX() + "_" + origin.getZ());
+            LayoutDumpSerializer.writeDump(level, slug, tick, json)
+                    .ifPresent(path -> LOGGER.info(
+                            "V2: auto-dumped layout to {}", path.toAbsolutePath()));
+        } catch (Throwable t) {
+            LOGGER.warn("V2: auto-dump failed: {}", t.getMessage());
+        }
+    }
+
+    /** Minimal-state abort dump for the proximity-check branch. */
+    private static void tryAutoDumpAbort(ServerLevel level, BlockPos origin,
+                                          String villageName, String reason) {
+        if (!AutoDumpConfig.isEnabled()) return;
+        try {
+            long tick = level.getGameTime();
+            var json = LayoutDumpSerializer.serializeAbort(level, origin, tick,
+                    villageName, reason);
+            String slug = villageName != null ? villageName
+                    : ("auto_" + origin.getX() + "_" + origin.getZ());
+            LayoutDumpSerializer.writeDump(level, slug, tick, json)
+                    .ifPresent(path -> LOGGER.info(
+                            "V2: auto-dumped abort to {}", path.toAbsolutePath()));
+        } catch (Throwable t) {
+            LOGGER.warn("V2: auto-dump abort failed: {}", t.getMessage());
+        }
     }
 
     // =========================================================================
