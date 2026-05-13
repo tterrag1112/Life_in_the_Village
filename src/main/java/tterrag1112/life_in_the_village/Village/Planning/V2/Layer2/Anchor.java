@@ -51,6 +51,15 @@ public record Anchor(
     public Anchor {
         if (quality < 0.0) quality = 0.0;
         if (quality > 1.0) quality = 1.0;
+        // Track E1A — bidirectional canonical form. A ridge running
+        // east-west is the same physical feature whether expressed as
+        // (1, 0) or (-1, 0); pick the non-negative-dirX representative
+        // so the same ridge always serializes identically. When
+        // dirX is exactly 0, prefer non-negative dirZ.
+        if (dirX < 0.0 || (dirX == 0.0 && dirZ < 0.0)) {
+            dirX = -dirX;
+            dirZ = -dirZ;
+        }
         metadata = metadata == null
                 ? Map.of()
                 : Collections.unmodifiableMap(new LinkedHashMap<>(metadata));

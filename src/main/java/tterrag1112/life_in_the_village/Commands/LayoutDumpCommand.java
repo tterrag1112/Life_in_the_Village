@@ -186,7 +186,7 @@ public final class LayoutDumpCommand {
                     a.id(), a.type().name(), a.quality(),
                     a.centre().getX(), a.centre().getY(), a.centre().getZ(),
                     a.extent().width(), a.extent().length());
-            if (a.hasOrientation()) {
+            if (a.type().isLinear()) {
                 line += String.format(" dir=(%.2f,%.2f)", a.dirX(), a.dirZ());
             }
             final String l = line;

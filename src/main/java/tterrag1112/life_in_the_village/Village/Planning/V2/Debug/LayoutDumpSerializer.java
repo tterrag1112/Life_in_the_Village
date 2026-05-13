@@ -351,9 +351,15 @@ public final class LayoutDumpSerializer {
         je.addProperty("width",   ext.width());
         je.addProperty("length",  ext.length());
         o.add("extent", je);
-        if (a.hasOrientation()) {
-            o.addProperty("dirX", a.dirX());
-            o.addProperty("dirZ", a.dirZ());
+        // Track E1A — linear anchor types always emit a nested
+        // dir object with normalized (dirX, dirZ). Non-linear
+        // types omit the field entirely (rather than serializing
+        // it as null).
+        if (a.type().isLinear()) {
+            JsonObject dir = new JsonObject();
+            dir.addProperty("dirX", a.dirX());
+            dir.addProperty("dirZ", a.dirZ());
+            o.add("dir", dir);
         }
         if (a.metadata() != null && !a.metadata().isEmpty()) {
             JsonObject m = new JsonObject();

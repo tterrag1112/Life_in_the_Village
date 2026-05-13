@@ -391,12 +391,19 @@ descending per type.
 | `centre` | `{x,y,z}` | world-space "point" for this anchor |
 | `quality` | float | `[0.0, 1.0]`; 1.0 = ideal example |
 | `extent` | `{originX, originZ, width, length}` | axis-aligned bbox in world blocks |
-| `dirX` / `dirZ` | float? | normalised orientation vector for linear types (omitted for non-linear) |
+| `dir` | `{dirX, dirZ}`? | normalised orientation vector for linear types only; the field is **always present and non-null** for `RIDGE_LINE`, `VALLEY_FLOOR`, `CLIFF_FACE`, `WATER_EDGE`, `RIVER_BEND`, `FOREST_EDGE`; **always absent** for non-linear types |
 | `metadata` | object? | type-specific extras (see below) |
 
 Orientation is a 2D unit vector rather than an enum bucket so
 strategies can do continuous alignment comparisons (dot product)
 or cardinal snapping (atan2 + round) as needed.
+
+**Bidirectional canonical form** (Track E1A) — a ridge running
+east-west is the same physical feature whether expressed as
+`(1, 0)` or `(-1, 0)`. The `Anchor` record's compact constructor
+canonicalises every direction to the non-negative-`dirX`
+representative; if `dirX == 0`, the non-negative-`dirZ`
+representative. Same feature → same serialized `dir` every time.
 
 ### Types
 
@@ -426,6 +433,30 @@ or cardinal snapping (atan2 + round) as needed.
 - **De-duplication** — same-type anchors merge when extents overlap by ≥50% OR centres are within 8 blocks. Cross-type anchors never merge. Survivor is the higher-quality copy; survivor's extent is unioned.
 - **Determinism** — pure function of `V2FeatureMap`; same scan → same anchors.
 - **Same scan window** as the rest of Layer 2 — radius 100 (200×200 blocks) at 2-block cell resolution.
+- **Linear direction always present** (Track E1A) — every linear-type anchor in a dump carries a non-null `dir` object. Non-linear types omit `dir` entirely (not `null`).
+
+### Abort dumps (Track E1A clarification)
+
+Auto-dumps fire on every V2 spawn, success or abort. The `assemble`
+serializer is null-defensive: each Layer 1–5 section is emitted
+when its input is non-null, and omitted when null. So abort dumps
+carry whatever state existed when the abort fired:
+
+| Abort branch | Layers complete | Sections present in dump |
+|--------------|------------------|---------------------------|
+| Proximity check (line 122) | — | header only (`schemaVersion`, `command`, `tick`, `origin`, `village`, `aborted`, `abortReason`) |
+| UNVIABLE tier (line 150) | 1, 2 | header + `siteContext` (including `anchors[]`) |
+| No viable village (line 168) | 1-4 | header + `siteContext` + `buildings` + `roads` + `phaseEvents` |
+| Overlap fatal (line 178) | 1-4 + overlap audit | header + above + `realization.overlapConflicts[]` + `overlapFatal: true` |
+| Post-terrain unviable | 1-4 + terrain decide + viability | above + `realization.viabilityFailureReasons[]` + per-pad detail |
+| No NBT success | 1-5 | full content; `placementErrors[]` populated |
+
+A one-line INFO log fires per abort summarising completed layers
+for grep-ability: `"V2: <abortReason> — layers complete: fmap=true siteCtx=true anchors=42 selection=false placement=false roads=false"`.
+
+The proximity abort is intentionally kept sparse — by the time
+it fires, no terrain scanning has happened so there's no Layer 1+
+state to serialize.
 
 ### Edge case behaviours
 

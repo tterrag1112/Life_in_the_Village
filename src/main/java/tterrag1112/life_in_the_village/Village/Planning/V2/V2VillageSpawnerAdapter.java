@@ -150,8 +150,11 @@ public final class V2VillageSpawnerAdapter {
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             LOGGER.info("V2: site UNVIABLE at {}; aborting", origin);
             realizationLog.markAborted("tier=UNVIABLE; layers 3-4 skipped");
+            // Track E1A — pass fmap too; the serializer doesn't consume
+            // it directly today but doing so keeps the call symmetric
+            // with later abort branches.
             tryAutoDump(level, origin, villageName, null, culture,
-                    null, siteCtx, null, null, null, null, null,
+                    fmap, siteCtx, null, null, null, null, null,
                     realizationLog);
             return Optional.empty();
         }
@@ -500,6 +503,21 @@ public final class V2VillageSpawnerAdapter {
             if (siteCtx != null) {
                 LOGGER.info("V2: {}",
                         LayoutDumpSerializer.anchorSummary(siteCtx.anchors()));
+            }
+            // Track E1A — on aborts, surface which layers had
+            // completed before the abort so dump consumers can read
+            // the partial state correctly.
+            if (log != null && log.aborted()) {
+                LOGGER.info(
+                        "V2: {} — layers complete: fmap={} siteCtx={} anchors={} "
+                                + "selection={} placement={} roads={}",
+                        log.abortReason().orElse("aborted"),
+                        fmap != null,
+                        siteCtx != null,
+                        siteCtx != null ? siteCtx.anchors().size() : 0,
+                        sel != null,
+                        placement != null,
+                        roads != null);
             }
             LayoutDumpSerializer.writeDump(level, slug, tick, json)
                     .ifPresent(path -> LOGGER.info(
