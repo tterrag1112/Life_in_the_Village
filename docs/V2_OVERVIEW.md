@@ -435,6 +435,143 @@ representative. Same feature → same serialized `dir` every time.
 - **Same scan window** as the rest of Layer 2 — radius 100 (200×200 blocks) at 2-block cell resolution.
 - **Linear direction always present** (Track E1A) — every linear-type anchor in a dump carries a non-null `dir` object. Non-linear types omit `dir` entirely (not `null`).
 
+### Strategy selection (Track E1B)
+
+After anchor detection, `SiteAnalyzer` runs `StrategySelector` to
+pick the best `LayoutStrategy` for the site's inclination + tier +
+anchor mix. The result is attached to `SiteContext` and serialised
+into `siteContext.strategy`. **Nothing downstream consumes the
+strategy yet** — spine planner / building selector / road planner
+all run unchanged. Prompt 3 wires consumption.
+
+#### Topology enum
+
+`LayoutTopology` — six glumbosch-style village forms:
+
+| Topology | Shape | Used by |
+|----------|-------|---------|
+| `HAUFENDORF` | Organic heap; nucleus + radial spurs | AGRICULTURAL / RESIDENTIAL / CIVIC / INDUSTRIAL fallbacks |
+| `REIHENDORF` | Linear along a feature axis | AGRICULTURAL / RESIDENTIAL on ridge / water / valley sites |
+| `ANGERDORF` | Oval-plaza with concentric ring | CIVIC / SACRED at TOWN+ |
+| `RUNDLING` | Circular defensive ring + radial gates | DEFENSIVE TOWN / CITY |
+| `EINZELHOF` | Single compound + handful of support | DEFENSIVE HAMLET / SACRED HAMLET / isolated outposts |
+| `CLUSTER` | Generic fallback; loose StraightRoad + Spur | Every inclination's `*_cluster_fallback` |
+
+#### Strategy record shape
+
+```java
+record LayoutStrategy(
+    String id,                       // "agricultural_haufendorf"
+    Inclination inclination,         // AGRICULTURAL etc.
+    LayoutTopology topology,
+    AnchorPreferences anchorPrefs,   // primaryTypes / secondaryTypes / requireLinearFeature / minPrimaryQuality
+    Set<String> primitives,          // RoadPrimitive.typeKey() strings
+    BuildingBindings bindings,       // BuildingType → preferred AnchorType list
+    StrategyConditions conditions,   // tierMin / tierMax / incompatibleAnchors
+    String description               // human-readable
+)
+```
+
+Sub-records:
+- `AnchorPreferences(primaryTypes, secondaryTypes, requireLinearFeature, minPrimaryQuality)`
+- `BuildingBindings(Map<BuildingType, List<AnchorType>>)` — declarative preference lists, not assignments
+- `StrategyConditions(tierMin, tierMax, incompatibleAnchors)`
+
+#### Selection algorithm
+
+`StrategySelector.select(ctx, anchors)`:
+1. Pull candidates from `LayoutStrategyRegistry.byInclination(inc)`.
+2. Process each in registry order:
+   - Reject if `tier` outside `[tierMin, tierMax]`.
+   - Reject if any `incompatibleAnchors` type is present at quality ≥ 0.5.
+   - Reject if no anchor of `primaryTypes` exists at quality ≥ `minPrimaryQuality`.
+   - Reject if `requireLinearFeature` and primary isn't linear.
+   - Otherwise score and continue.
+3. Highest score wins; ties broken by registry order.
+4. Zero scored candidates → fall back to the matching `<inclination>_cluster_fallback` strategy with score 0.
+
+**Scoring formula** (locked design):
+```
+score = primary.quality × 100
+      + 20 × min(3, count of matched secondary types within 96 blocks of primary)
+      + 25 if (requireLinearFeature && primary.isLinear)
+```
+
+Penalty path is the incompatible-anchor reject above.
+
+#### Registered strategies (21 default)
+
+| Inclination | Strategies (in order) |
+|-------------|------------------------|
+| AGRICULTURAL | `agricultural_reihendorf`, `agricultural_marschhufendorf`, `agricultural_haufendorf`, `agricultural_cluster_fallback` |
+| INDUSTRIAL | `industrial_mining`, `industrial_woodcutter`, `industrial_haufendorf`, `industrial_cluster_fallback` |
+| CIVIC | `civic_angerdorf` (TOWN+), `civic_haufendorf`, `civic_cluster_fallback` |
+| RESIDENTIAL | `residential_reihendorf`, `residential_haufendorf`, `residential_cluster_fallback` |
+| SACRED | `sacred_isolated` (HAMLET only), `sacred_angerdorf`, `sacred_cluster_fallback` |
+| DEFENSIVE | `defensive_keep` (CITY only), `defensive_rundling` (TOWN only), `defensive_einzelhof` (HAMLET only), `defensive_cluster_fallback` |
+
+#### Adding a new strategy
+
+One-entry change inside `LayoutStrategyRegistry.buildDefaults`:
+
+```java
+list.add(new LayoutStrategy(
+    "agricultural_terraced",
+    Inclination.AGRICULTURAL,
+    LayoutTopology.HAUFENDORF,
+    new AnchorPreferences(
+        Set.of(AnchorType.RIDGE_LINE),
+        Set.of(AnchorType.FLAT_FERTILE),
+        true,
+        0.5),
+    Set.of("CurvedRoad", "Stairway", "Spur"),
+    new BuildingBindings(Map.of(
+        BuildingType.TOWN_HALL, List.of(AnchorType.FLAT_FERTILE),
+        BuildingType.FARMHOUSE, List.of(AnchorType.FLAT_FERTILE))),
+    new StrategyConditions(ViabilityTier.HAMLET, ViabilityTier.TOWN, Set.of()),
+    "Hillside-terraced agricultural village"));
+```
+
+No class extension, no dispatch wiring, no parallel lookup tables. The `AnchorType` and `BuildingType` enums must already include the values referenced.
+
+#### Schema v3 `strategy` section
+
+Emitted under `siteContext` when a strategy was selected (every successful or post-anchor-detection-abort spawn):
+
+```json
+"strategy": {
+  "id": "agricultural_haufendorf",
+  "inclination": "AGRICULTURAL",
+  "topology": "HAUFENDORF",
+  "description": "Organic farming-heap village around a flat-fertile nucleus",
+  "score": 105.0,
+  "primaryAnchorId": "a0",
+  "secondaryAnchorIds": ["a14"],
+  "intendedPrimitives": ["StraightRoad", "Spur", "Ring"],
+  "intendedBindings": {
+    "TOWN_HALL": ["FLAT_FERTILE"],
+    "MARKET":    ["FLAT_FERTILE"],
+    "FARMHOUSE": ["FLAT_FERTILE"],
+    "HOUSE":     ["FLAT_FERTILE"]
+  },
+  "selectionLog": [
+    "Candidate agricultural_reihendorf: rejected, no primary anchor of types [...]",
+    "Candidate agricultural_marschhufendorf: rejected, no primary anchor of types [...]",
+    "Candidate agricultural_haufendorf: SELECTED, score 105.0",
+    "Candidate agricultural_cluster_fallback: eligible (no primary required), score 0.0"
+  ]
+}
+```
+
+`primaryAnchorId` is `null` only for the fallback path; non-fallback strategies always have one.
+
+#### Inspector commands
+
+- `/litv layout debug strategy <villageName>` — runs the analyzer at the village's anchor and prints the strategy + selection log to chat. Useful when triaging "why did this site pick reihendorf instead of haufendorf?"
+- `/litv layout debug dump <villageName>` — full JSON dump; includes the `strategy` section plus INFO-level summary in the server log on completion.
+
+---
+
 ### Abort dumps (Track E1A clarification)
 
 Auto-dumps fire on every V2 spawn, success or abort. The `assemble`

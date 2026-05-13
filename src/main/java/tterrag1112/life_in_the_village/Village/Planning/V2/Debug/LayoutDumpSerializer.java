@@ -17,9 +17,12 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveCont
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Anchor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.AnchorExtent;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.AnchorType;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.LayoutStrategy;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.StrategySelectionResult;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingSelector;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DependencyResolver;
@@ -335,6 +338,46 @@ public final class LayoutDumpSerializer {
             for (Anchor a : ctx.anchors()) anchors.add(anchorJson(a));
         }
         o.add("anchors", anchors);
+
+        // Track E1B — strategy selection (schema v3 additive).
+        if (ctx.strategy() != null) {
+            o.add("strategy", strategyJson(ctx.strategy()));
+        }
+        return o;
+    }
+
+    private static JsonObject strategyJson(StrategySelectionResult result) {
+        JsonObject o = new JsonObject();
+        LayoutStrategy s = result.strategy();
+        o.addProperty("id",          s.id());
+        o.addProperty("inclination", s.inclination().name());
+        o.addProperty("topology",    s.topology().name());
+        o.addProperty("description", s.description());
+        o.addProperty("score",       result.score());
+        if (result.primaryAnchor() != null) {
+            o.addProperty("primaryAnchorId", result.primaryAnchor().id());
+        } else {
+            o.add("primaryAnchorId", com.google.gson.JsonNull.INSTANCE);
+        }
+        JsonArray secondaries = new JsonArray();
+        for (Anchor a : result.secondaryAnchors()) secondaries.add(a.id());
+        o.add("secondaryAnchorIds", secondaries);
+
+        JsonArray prims = new JsonArray();
+        for (String p : s.primitives()) prims.add(p);
+        o.add("intendedPrimitives", prims);
+
+        JsonObject bindings = new JsonObject();
+        for (var entry : s.bindings().preferences().entrySet()) {
+            JsonArray prefs = new JsonArray();
+            for (AnchorType at : entry.getValue()) prefs.add(at.name());
+            bindings.add(entry.getKey().name(), prefs);
+        }
+        o.add("intendedBindings", bindings);
+
+        JsonArray log = new JsonArray();
+        for (String line : result.selectionLog()) log.add(line);
+        o.add("selectionLog", log);
         return o;
     }
 

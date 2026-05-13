@@ -122,6 +122,13 @@ public final class SiteAnalyzer {
         // planner / placer / road builder behaviour is unchanged.
         java.util.List<Anchor> anchors = AnchorDetector.detect(fmap, level);
         ctx = ctx.withAnchors(anchors);
+        // Track E1B — select a layout strategy from the anchor mix.
+        // Selection runs AFTER anchor detection (it consumes anchors)
+        // and BEFORE any downstream planner; spine planner already ran
+        // above and is unchanged. The result is purely informational
+        // until prompt 3 wires consumption.
+        StrategySelectionResult strategy = StrategySelector.select(ctx, anchors);
+        ctx = ctx.withStrategy(strategy);
         Diagnostics diag = new Diagnostics(tier, inc, anchorDec, axisDec, adj);
 
         LOGGER.info("variation: seed={} (drives inclination sampling, spine length,"

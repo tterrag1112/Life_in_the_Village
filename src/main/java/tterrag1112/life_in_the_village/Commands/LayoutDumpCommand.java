@@ -23,6 +23,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Anchor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.StrategySelectionResult;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.nio.file.Path;
@@ -79,7 +80,11 @@ public final class LayoutDumpCommand {
                                 .then(Commands.literal("anchors")
                                         .then(Commands.argument("villageName",
                                                         StringArgumentType.string())
-                                                .executes(LayoutDumpCommand::anchorsCommand))))));
+                                                .executes(LayoutDumpCommand::anchorsCommand)))
+                                .then(Commands.literal("strategy")
+                                        .then(Commands.argument("villageName",
+                                                        StringArgumentType.string())
+                                                .executes(LayoutDumpCommand::strategyCommand))))));
     }
 
     // =========================================================================
@@ -195,6 +200,66 @@ public final class LayoutDumpCommand {
         return anchors.size();
     }
 
+    /**
+     * Track E1B — chat-only strategy inspector. Re-runs SiteAnalyzer
+     * at the village's anchor (which internally runs StrategySelector)
+     * and prints the result + selection log to chat. No JSON output.
+     */
+    private static int strategyCommand(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        String villageName = StringArgumentType.getString(ctx, "villageName");
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = data.getVillageByName(villageName).orElse(null);
+        if (village == null) {
+            src.sendFailure(Component.literal(
+                    "No village named '" + villageName + "'."));
+            return 0;
+        }
+        BlockPos origin = village.getAnchorPos();
+        V2FeatureMap fmap = V2FeatureMap.scan(level, origin,
+                LayoutDumpSerializer.FEATURE_MAP_RADIUS);
+        Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
+        long seed = level.getSeed() ^ ((long) origin.hashCode() * 31L
+                + villageName.hashCode());
+        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed, level);
+        StrategySelectionResult result = siteCtx.strategy();
+        if (result == null) {
+            src.sendFailure(Component.literal(
+                    "Strategy selection produced no result."));
+            return 0;
+        }
+        src.sendSuccess(() -> Component.literal(
+                "strategy: " + result.strategy().id()
+                        + " (" + result.strategy().topology() + ")"
+                        + " score=" + String.format(java.util.Locale.ROOT,
+                                "%.1f", result.score())),
+                false);
+        if (result.primaryAnchor() != null) {
+            String primaryLine = "  primary: "
+                    + result.primaryAnchor().type() + " "
+                    + result.primaryAnchor().id()
+                    + " q=" + String.format(java.util.Locale.ROOT,
+                            "%.2f", result.primaryAnchor().quality());
+            src.sendSuccess(() -> Component.literal(primaryLine), false);
+        }
+        if (!result.secondaryAnchors().isEmpty()) {
+            StringBuilder sb = new StringBuilder("  secondaries: ");
+            for (int i = 0; i < result.secondaryAnchors().size(); i++) {
+                if (i > 0) sb.append(", ");
+                Anchor a = result.secondaryAnchors().get(i);
+                sb.append(a.type()).append(' ').append(a.id());
+            }
+            final String l = sb.toString();
+            src.sendSuccess(() -> Component.literal(l), false);
+        }
+        for (String line : result.selectionLog()) {
+            src.sendSuccess(() -> Component.literal("  " + line), false);
+        }
+        return 1;
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
@@ -216,9 +281,34 @@ public final class LayoutDumpCommand {
             LOGGER.info("V2 dump {} — {}", outFile.toAbsolutePath(), summary);
             src.sendSuccess(() -> Component.literal(summary), false);
         }
+        // Track E1B — strategy summary if present.
+        String stratSummary = summariseStrategyFromJson(root);
+        if (stratSummary != null) {
+            LOGGER.info("V2 dump {} — {}", outFile.toAbsolutePath(), stratSummary);
+            src.sendSuccess(() -> Component.literal(stratSummary), false);
+        }
         src.sendSuccess(() -> Component.literal(
                 "Layout dumped to " + outFile.toAbsolutePath()), false);
         return 1;
+    }
+
+    /** Reads {@code siteContext.strategy} from the JSON and formats a
+     *  one-line summary. Returns null when no strategy section. */
+    private static String summariseStrategyFromJson(JsonObject root) {
+        if (!root.has("siteContext")) return null;
+        JsonObject site = root.getAsJsonObject("siteContext");
+        if (!site.has("strategy")) return null;
+        JsonObject s = site.getAsJsonObject("strategy");
+        if (s == null) return null;
+        String id = s.has("id") ? s.get("id").getAsString() : "?";
+        String topo = s.has("topology") ? s.get("topology").getAsString() : "?";
+        double score = s.has("score") ? s.get("score").getAsDouble() : 0.0;
+        String primary = s.has("primaryAnchorId") && !s.get("primaryAnchorId").isJsonNull()
+                ? " primary=" + s.get("primaryAnchorId").getAsString()
+                : "";
+        return "strategy: " + id + " (" + topo + ", score "
+                + String.format(java.util.Locale.ROOT, "%.1f", score)
+                + ")" + primary;
     }
 
     /**

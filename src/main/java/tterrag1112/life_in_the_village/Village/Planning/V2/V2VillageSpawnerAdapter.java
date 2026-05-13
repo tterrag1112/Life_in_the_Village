@@ -503,6 +503,16 @@ public final class V2VillageSpawnerAdapter {
             if (siteCtx != null) {
                 LOGGER.info("V2: {}",
                         LayoutDumpSerializer.anchorSummary(siteCtx.anchors()));
+                // Track E1B — strategy summary.
+                if (siteCtx.strategy() != null) {
+                    var s = siteCtx.strategy();
+                    LOGGER.info(
+                            "V2 strategy: {} ({}) score={} primary={}",
+                            s.strategy().id(), s.strategy().topology(),
+                            String.format(java.util.Locale.ROOT, "%.1f", s.score()),
+                            s.primaryAnchor() != null
+                                    ? s.primaryAnchor().id() : "none");
+                }
             }
             // Track E1A — on aborts, surface which layers had
             // completed before the abort so dump consumers can read

@@ -49,28 +49,35 @@ public record SiteContext(
         Culture culture,
         long seed,
         List<Hub> hubs,
-        List<Anchor> anchors) {
+        List<Anchor> anchors,
+        StrategySelectionResult strategy) {
 
     public SiteContext {
         anchors = anchors == null ? List.of() : List.copyOf(anchors);
     }
 
     /** Convenience: create a context with an empty mutable hubs
-     *  list + empty anchors list. Layer 4 populates hubs; Track E1
-     *  anchors are populated by {@link AnchorDetector} from
-     *  {@link SiteAnalyzer}. */
+     *  list + empty anchors list + null strategy. Layer 4 populates
+     *  hubs; Track E1 anchors are populated by {@link AnchorDetector};
+     *  Track E1B strategy by {@link StrategySelector}. */
     public static SiteContext withEmptyHubs(BlockPos anchor, BlockPos originalAnchor,
                                             CardinalAxis primaryAxis, SpinePath spinePath,
                                             ViabilityTier tier, Inclination inclination,
                                             Culture culture, long seed) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
-                tier, inclination, culture, seed, new ArrayList<>(), List.of());
+                tier, inclination, culture, seed, new ArrayList<>(), List.of(), null);
     }
 
     /** Track E1 — copy-with anchors. */
     public SiteContext withAnchors(List<Anchor> newAnchors) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
-                tier, inclination, culture, seed, hubs, newAnchors);
+                tier, inclination, culture, seed, hubs, newAnchors, strategy);
+    }
+
+    /** Track E1B — copy-with strategy selection result. */
+    public SiteContext withStrategy(StrategySelectionResult newStrategy) {
+        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+                tier, inclination, culture, seed, hubs, anchors, newStrategy);
     }
 
     /** B2.8 — copy-with overrides for /building village spawn's
@@ -82,6 +89,6 @@ public record SiteContext(
                 anchor, originalAnchor, primaryAxis, spinePath,
                 newTier        != null ? newTier        : tier,
                 newInclination != null ? newInclination : inclination,
-                culture, seed, hubs, anchors);
+                culture, seed, hubs, anchors, strategy);
     }
 }
