@@ -138,7 +138,7 @@ public final class V2VillageSpawnerAdapter {
         // ── V2 Layers 1-4 ───────────────────────────────────────────────
         V2FeatureMap fmap = V2FeatureMap.scan(level, origin, FEATURE_MAP_RADIUS);
         Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
-        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
+        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed, level);
         // B2.8 — apply inclination/tier overrides post-analysis. Terrain
         // outputs (anchor, spine, axis) stay derived; only the
         // classification fields the planner branches on get replaced.
@@ -496,6 +496,11 @@ public final class V2VillageSpawnerAdapter {
                     placement, roads, events, log);
             String slug = villageName != null ? villageName
                     : ("auto_" + origin.getX() + "_" + origin.getZ());
+            // Track E1 anchor detection — INFO summary of anchor counts.
+            if (siteCtx != null) {
+                LOGGER.info("V2: {}",
+                        LayoutDumpSerializer.anchorSummary(siteCtx.anchors()));
+            }
             LayoutDumpSerializer.writeDump(level, slug, tick, json)
                     .ifPresent(path -> LOGGER.info(
                             "V2: auto-dumped layout to {}", path.toAbsolutePath()));

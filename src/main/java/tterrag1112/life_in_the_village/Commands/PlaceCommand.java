@@ -67,7 +67,7 @@ public final class PlaceCommand {
 
         V2FeatureMap fmap = V2FeatureMap.scan(level, centre, radius);
         Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
-        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed);
+        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed, level);
         send(src, "site: tier=" + siteCtx.tier()
                 + " inclination=" + siteCtx.inclination()
                 + " anchor=(" + siteCtx.anchor().getX() + ","

@@ -15,6 +15,8 @@ import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.PrimitiveContext;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Anchor;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.AnchorExtent;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
@@ -94,7 +96,7 @@ public final class LayoutDumpSerializer {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    public static final int SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 3;
     public static final int FEATURE_MAP_RADIUS = 96;
     public static final int DEFAULT_DUMP_AT_RADIUS = FEATURE_MAP_RADIUS;
 
@@ -121,7 +123,7 @@ public final class LayoutDumpSerializer {
 
         V2FeatureMap fmap = V2FeatureMap.scan(level, origin, radius);
         Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
-        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, planSeed);
+        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, planSeed, level);
 
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             JsonObject root = buildHeader(commandKind, tick, worldSeed, planSeed,
@@ -326,6 +328,43 @@ public final class LayoutDumpSerializer {
             }
         }
         o.add("hubs", hubs);
+
+        // Track E1 — anchors (schema v3 additive).
+        JsonArray anchors = new JsonArray();
+        if (ctx.anchors() != null) {
+            for (Anchor a : ctx.anchors()) anchors.add(anchorJson(a));
+        }
+        o.add("anchors", anchors);
+        return o;
+    }
+
+    private static JsonObject anchorJson(Anchor a) {
+        JsonObject o = new JsonObject();
+        o.addProperty("id", a.id());
+        o.addProperty("type", a.type().name());
+        o.add("centre", posJson(a.centre()));
+        o.addProperty("quality", a.quality());
+        AnchorExtent ext = a.extent();
+        JsonObject je = new JsonObject();
+        je.addProperty("originX", ext.originX());
+        je.addProperty("originZ", ext.originZ());
+        je.addProperty("width",   ext.width());
+        je.addProperty("length",  ext.length());
+        o.add("extent", je);
+        if (a.hasOrientation()) {
+            o.addProperty("dirX", a.dirX());
+            o.addProperty("dirZ", a.dirZ());
+        }
+        if (a.metadata() != null && !a.metadata().isEmpty()) {
+            JsonObject m = new JsonObject();
+            for (var entry : a.metadata().entrySet()) {
+                Object v = entry.getValue();
+                if (v instanceof Number n) m.addProperty(entry.getKey(), n);
+                else if (v instanceof Boolean bv) m.addProperty(entry.getKey(), bv);
+                else m.addProperty(entry.getKey(), v == null ? "" : v.toString());
+            }
+            o.add("metadata", m);
+        }
         return o;
     }
 
@@ -667,6 +706,29 @@ public final class LayoutDumpSerializer {
         if (s instanceof SpineSegment) return "SPINE_SEGMENT";
         if (s instanceof CrossStreet)  return "CROSS_STREET";
         return s.getClass().getSimpleName();
+    }
+
+    /**
+     * Track E1 — formats a one-line anchor count summary suitable
+     * for the INFO log + chat output. Example output:
+     * {@code "anchors detected: 5 FLAT_FERTILE, 2 FOREST_EDGE, 1 WATER_EDGE"}.
+     */
+    public static String anchorSummary(java.util.List<Anchor> anchors) {
+        if (anchors == null || anchors.isEmpty()) {
+            return "anchors detected: none";
+        }
+        java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        for (Anchor a : anchors) {
+            counts.merge(a.type().name(), 1, Integer::sum);
+        }
+        StringBuilder sb = new StringBuilder("anchors detected: ");
+        boolean first = true;
+        for (var e : counts.entrySet()) {
+            if (!first) sb.append(", ");
+            sb.append(e.getValue()).append(' ').append(e.getKey());
+            first = false;
+        }
+        return sb.toString();
     }
 
     public static Path pickOutputFile(ServerLevel level, String slug, long tick) {

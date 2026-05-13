@@ -164,11 +164,21 @@ projects to top-down by ignoring Y.
 
 ---
 
-## 8. JSON dump schema (v2)
+## 8. JSON dump schema (v3)
 
-**Schema v2** — additive over v1. v1 readers ignoring unknown
-fields still parse v2 dumps without error. Bump on incompatible
+**Schema v3** — additive over v2. v2 readers ignoring unknown
+fields still parse v3 dumps without error. Bump on incompatible
 changes only.
+
+### v3 additions (Track E1 anchor detection)
+
+- New `siteContext.anchors[]` array — permissive list of feature
+  anchors detected by `AnchorDetector` (flat zones, peaks,
+  cliffs, water edges, etc.). Each anchor carries
+  `{id, type, centre, quality, extent, dirX?, dirZ?, metadata?}`.
+  See [§13 Anchor types](#13-anchor-types-track-e1).
+
+### v2 additions (E1 follow-up)
 
 ### Three `command` modes
 
@@ -192,7 +202,7 @@ Default-on.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `schemaVersion` | int | `2` for current version |
+| `schemaVersion` | int | `3` for current version |
 | `command` | string | `"dump"` / `"dump_at"` / `"auto"` |
 | `tick` | long | server tick at dump time |
 | `worldSeed` | long | level seed |
@@ -360,6 +370,74 @@ by this toggle; they always run.
 - Filename-hostile characters in the village name are replaced
   with `_`.
 - The absolute path prints to chat on success.
+
+---
+
+## 13. Anchor types (Track E1)
+
+`SiteAnalyzer` produces a permissive list of feature anchors via
+`AnchorDetector`. Anchors are NOT consumed by the existing spine
+planner / placer / road builder — they're scaffolding for the
+strategy / network-growth prompts that come next. Detection
+returns every anchor of quality ≥ 0.2, sorted by quality
+descending per type.
+
+### Anchor record shape
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | string | sequential `"a0"`, `"a1"`, … in detection order |
+| `type` | enum string | one of the 11 anchor types below |
+| `centre` | `{x,y,z}` | world-space "point" for this anchor |
+| `quality` | float | `[0.0, 1.0]`; 1.0 = ideal example |
+| `extent` | `{originX, originZ, width, length}` | axis-aligned bbox in world blocks |
+| `dirX` / `dirZ` | float? | normalised orientation vector for linear types (omitted for non-linear) |
+| `metadata` | object? | type-specific extras (see below) |
+
+Orientation is a 2D unit vector rather than an enum bucket so
+strategies can do continuous alignment comparisons (dot product)
+or cardinal snapping (atan2 + round) as needed.
+
+### Types
+
+**Topographic / geometric:**
+- `FLAT_FERTILE` — connected `{OPEN, SHORE}` cells with `localSlope ≤ 1`. Quality = area_ratio × flatness_factor. Metadata: `usableCellCount`, `averageFlatness`, `biomeHint?` (sampled at centre when `level` is available).
+- `DEFENSIBLE_PEAK` — `HighGround` peak with ≥3 cardinal-side drops of ≥5 blocks. Quality = prominence/30 × steepSides/4. Metadata: `relativeElevation`, `steepSides`, `topCellCount`.
+- `DEFENSIBLE_RING` — `HighGround` region with flat top + ≥80% perimeter drops ≥6. Quality = topAreaRatio × perimeterCompleteness. Metadata: `relativeElevation`, `flatTopCells`, `perimeterCompleteness`.
+- `RIDGE_LINE` — cells locally maximal along one axis (perpendicular neighbours drop ≥4) chained into runs ≥5 cells. Linear. Metadata: `lengthCells`, `prominence`.
+- `VALLEY_FLOOR` — cells locally minimal along one axis (perpendicular neighbours rise ≥4) chained into runs. Linear. Metadata: `lengthCells`, `depth`.
+- `CLIFF_FACE` — `StoneRegion` with `avgSlope ≥ 4`. Quality = areaFactor × slopeFactor. Linear; orientation = longer bbox axis. Metadata: `avgSlope`, `area`, `coreCells`.
+
+**Hydrology:**
+- `WATER_EDGE` — flat-landside cells adjacent to WATER, flood-filled into segments. Linear; orientation = longer bbox axis. Metadata: `boundaryLength`, `landsideCellCount`, `flatRatio`.
+- `RIVER_BEND` — water-edge components with aspect ratio ≥ 0.5 + length ≥ 8 cells (skinny rectangles = straight river; square-ish = bend). Linear; orientation = bbox diagonal. Metadata: `aspectRatio`, `landsideCellCount`.
+- `ISLAND` — OPEN/SHORE component that touches no scan boundary AND has ≥85% perimeter bordering WATER. Metadata: `cellCount`, `surroundCompleteness`.
+
+**Vegetation:**
+- `FOREST_EDGE` — bbox-perimeter FOREST cells of a `ForestRegion` with at least one open-flat neighbour. Linear; orientation = longer bbox axis. Metadata: `boundaryLength`, `clearAdjacentCount`, `forestArea`.
+- `NATURAL_CLEARING` — OPEN/SHORE component not touching scan boundary AND ≥75% perimeter bordering FOREST. Metadata: `clearingArea`, `wallCompleteness`.
+
+**Cultural (reserved):**
+- `CROSSROADS` — placeholder; detection returns empty until prompt-2+ wires the cross-village road graph.
+
+### Detection guarantees
+
+- **Permissive threshold** — every anchor with `quality ≥ 0.20` is returned; below that filtered out.
+- **De-duplication** — same-type anchors merge when extents overlap by ≥50% OR centres are within 8 blocks. Cross-type anchors never merge. Survivor is the higher-quality copy; survivor's extent is unioned.
+- **Determinism** — pure function of `V2FeatureMap`; same scan → same anchors.
+- **Same scan window** as the rest of Layer 2 — radius 100 (200×200 blocks) at 2-block cell resolution.
+
+### Edge case behaviours
+
+- **Superflat** — dedup merges into one large `FLAT_FERTILE` anchor of high quality. No other types.
+- **Pure mountain** — `CLIFF_FACE` + `DEFENSIBLE_PEAK` + `DEFENSIBLE_RING` + `RIDGE_LINE`. No `FLAT_FERTILE` or water types. If no anchor passes the 0.2 threshold, the list is empty; downstream `ViabilityTier` evaluation handles the unspawnable case.
+- **All-forest** — `FOREST_EDGE` + `NATURAL_CLEARING`. Small interior clearings may also fire `FLAT_FERTILE`.
+- **All-water** — no land anchors; empty list. `SiteAnalyzer`'s existing UNVIABLE tier already blocks the spawn.
+
+### Inspector commands
+
+- `/litv layout debug anchors <villageName>` — runs the analyzer at the village's anchor and prints the anchor list to chat (no JSON output).
+- `/litv layout debug dump <villageName>` — full JSON dump; includes anchors as part of the `siteContext` section + INFO-level summary in the server log on completion.
 
 ---
 

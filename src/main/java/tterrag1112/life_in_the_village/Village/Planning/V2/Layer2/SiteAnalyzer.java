@@ -78,11 +78,29 @@ public final class SiteAnalyzer {
     // =========================================================================
 
     public static SiteContext analyze(V2FeatureMap fmap, Culture culture, long seed) {
-        return analyzeWithDiagnostics(fmap, culture, seed).context;
+        return analyze(fmap, culture, seed, null);
+    }
+
+    /**
+     * Track E1 anchor detection — overload taking the
+     * {@link ServerLevel} so {@link AnchorDetector} can sample
+     * biomes at flat-fertile anchor centres. Existing zero-level
+     * call sites can keep calling the legacy overload; biome
+     * lookups silently skip when {@code level == null}.
+     */
+    public static SiteContext analyze(V2FeatureMap fmap, Culture culture, long seed,
+                                       net.minecraft.server.level.ServerLevel level) {
+        return analyzeWithDiagnostics(fmap, culture, seed, level).context;
     }
 
     public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
                                                 long seed) {
+        return analyzeWithDiagnostics(fmap, culture, seed, null);
+    }
+
+    public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
+                                                long seed,
+                                                net.minecraft.server.level.ServerLevel level) {
         TierDecision tier = computeTier(fmap);
         InclinationDecision inc = computeInclination(fmap, culture, seed, tier);
         AnchorDecision anchorDec = computeAnchor(fmap, inc.inclination);
@@ -99,6 +117,11 @@ public final class SiteAnalyzer {
         SiteContext ctx = SiteContext.withEmptyHubs(
                 finalAnchor, anchorDec.anchor, axisDec.axis, spinePath,
                 tier.tier, inc.inclination, culture, seed);
+        // Track E1 — detect anchors and attach to the context.
+        // Anchor detection is permissive and read-only; existing
+        // planner / placer / road builder behaviour is unchanged.
+        java.util.List<Anchor> anchors = AnchorDetector.detect(fmap, level);
+        ctx = ctx.withAnchors(anchors);
         Diagnostics diag = new Diagnostics(tier, inc, anchorDec, axisDec, adj);
 
         LOGGER.info("variation: seed={} (drives inclination sampling, spine length,"
