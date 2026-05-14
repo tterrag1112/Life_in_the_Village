@@ -218,7 +218,7 @@ public final class PhasedPlanner {
                 state.skeleton.crossStreets().size(), state.viable);
 
         return new Result(placement, network, List.copyOf(state.events),
-                List.copyOf(state.nucleusContexts));
+                java.util.Map.copyOf(state.nucleusContexts));
     }
 
     // =========================================================================
@@ -542,8 +542,10 @@ public final class PhasedPlanner {
         Best best = findBestCandidate(state, type, profile, foundation);
         if (best == null) {
             String detail = foundation
-                    ? "no terrain-admissible cell within frontage distance of spine"
-                    : "no positive-scoring cell within frontage distance of any segment";
+                    ? "no terrain-admissible cell within frontage distance of "
+                            + "any network primary edge"
+                    : "no positive-scoring cell within frontage distance of "
+                            + "any network edge (primary or cross-street)";
             state.dropped.add(new DroppedBuilding(type, DropReason.NO_VIABLE_CANDIDATE, detail));
             if (profile.required()) state.viable = false;
             LOGGER.info("dropped {}: NO_VIABLE_CANDIDATE phase={} required={} ({})",
@@ -562,10 +564,12 @@ public final class PhasedPlanner {
         // for the dump's per-building attribution. Recomputes
         // SpatialFit at the chosen cell so the visualizer can show
         // "this HOUSE was pulled by farmhouse@a3" / "this BLACKSMITH
-        // was pulled by the RESOURCE primary anchor."
+        // was pulled by the RESOURCE primary anchor." Only stored
+        // when a nucleus pulled the placement; un-affined buildings
+        // have no map entry (rather than a null placeholder).
         NucleusContext nucCtx = computeSpatialFit(
                 best.pos, type, profile, state).context();
-        state.nucleusContexts.add(nucCtx);
+        if (nucCtx != null) state.nucleusContexts.put(pb, nucCtx);
         state.events.add(PhaseEvent.placed(type, foundation, best.score));
         LOGGER.info("placed {}: phase={} centre=({},{},{}) variant={} fp={}x{} rot={}"
                 + " score={} (terrain={} adjacency={} centrality={}){}",
@@ -595,7 +599,7 @@ public final class PhasedPlanner {
     private static Best findBestCandidate(State state, BuildingType type,
                                           PlacementProfile profile, boolean foundation) {
         List<RoadSegment> roads = foundation
-                ? new java.util.ArrayList<>(state.skeleton.spineSegments())
+                ? new java.util.ArrayList<>(state.skeleton.primarySegments())
                 : state.skeleton.allSegments();
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
@@ -961,11 +965,8 @@ public final class PhasedPlanner {
             // Try to rescue with a road_width-cap straight connector.
             // A successful rescue inserts a degenerate CrossStreet.
             // (V1: this branch is rarely exercised; left as defensive.)
-            int idx = state.placed.indexOf(pb);
             state.placed.remove(pb);
-            if (idx >= 0 && idx < state.nucleusContexts.size()) {
-                state.nucleusContexts.remove(idx);
-            }
+            state.nucleusContexts.remove(pb);
             state.dropped.add(new DroppedBuilding(pb.type(),
                     DropReason.ISOLATED_AFTER_REASSESS,
                     "frontage road no longer in connected skeleton"));
@@ -998,7 +999,8 @@ public final class PhasedPlanner {
         // Anchor "village centre" junction — record without enumerating
         // segments. The anchor sits at the seam between the
         // backward-walk and forward-walk spine pieces; any spine
-        // segment containing it is reachable via skeleton.spineSegments().
+        // segment containing it is reachable via skeleton.primarySegments()
+        // (chord-decomposed network edges).
         sk.addJunction(new Junction(state.ctx.anchor(), List.of()));
         for (CrossStreet cs : sk.crossStreets()) {
             // Cross-street junctions list the cross-street and the
@@ -1007,8 +1009,8 @@ public final class PhasedPlanner {
             // V1 — junction membership is mostly for downstream
             // plaza/decoration code).
             List<RoadSegment> meeting = new ArrayList<>();
-            if (!sk.spineSegments().isEmpty()) {
-                meeting.add(sk.spineSegments().get(0));
+            if (!sk.primarySegments().isEmpty()) {
+                meeting.add(sk.primarySegments().get(0));
             }
             meeting.add(cs);
             sk.addJunction(new Junction(cs.spineJunction(), meeting));
@@ -1043,7 +1045,7 @@ public final class PhasedPlanner {
         double adjacency = 0;
         for (Map.Entry<AdjacencyFactor, Double> e : profile.adjacencyWeights().entrySet()) {
             adjacency += e.getValue() * Scoring.adjacencyFactor(e.getKey(), pos, type,
-                    state.ctx, state.placed, state.skeleton.spineSegments(),
+                    state.ctx, state.placed, state.skeleton.primarySegments(),
                     state.villageRadius);
         }
         // Track E1 prompt-4 — replace the old radial-centrality with
@@ -1856,13 +1858,15 @@ public final class PhasedPlanner {
         final java.util.Random rng;
         final VariantResolver variantResolver = new VariantResolver();
         final List<PlacedBuilding> placed = new ArrayList<>();
-        /** Track E1 prompt-4 — per-placement nucleus attribution
-         *  parallel to {@link #placed}. {@code nucleusContexts.get(i)}
-         *  describes which nucleus pulled {@code placed.get(i)}; null
-         *  when the building had no matching nucleus rule (placed by
-         *  base terrain residual only). Exposed via Result for the
+        /** Track E1 prompt-4 — per-placement nucleus attribution.
+         *  Keyed by the placed building so absence is honest (buildings
+         *  without a matching nucleus rule simply have no entry rather
+         *  than a null placeholder in a parallel list — the old List
+         *  representation NPE'd at {@code List.copyOf} when nulls were
+         *  inserted for un-affined types). Exposed via Result for the
          *  dump serializer. */
-        final List<NucleusContext> nucleusContexts = new ArrayList<>();
+        final java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts
+                = new java.util.LinkedHashMap<>();
         final List<DroppedBuilding> dropped = new ArrayList<>();
         final List<Reservation> reservations = new ArrayList<>();
         final List<PhaseEvent> events = new ArrayList<>();
@@ -1880,7 +1884,15 @@ public final class PhasedPlanner {
             this.sizes = new StructureSizeCache(level);
             this.villageRadius = villageRadiusFor(ctx.tier());
             this.culture = ctx.culture().id();
-            this.skeleton = new Skeleton(ctx.spinePath(), SPINE_WIDTH);
+            // Track E1 prompt 3 fix-up — Skeleton is now built from
+            // the network directly. The pre-fix-up path
+            // (network → deriveSpinePath → Skeleton) made it look
+            // like the SpinePath was the planner's source of truth;
+            // really it was a thin sequential wrapper over the same
+            // edges. Constructing from ctx.network() removes the
+            // intermediate and makes the data flow honest.
+            this.skeleton = new Skeleton(ctx.network(), ctx.primaryAxis(),
+                    ctx.anchor(), SPINE_WIDTH);
             // Salted with PHASED_PLANNER_SALT so cross-street decisions
             // don't share Random state with SiteAnalyzer's inclination
             // sampler (which uses a different salt off the same seed).
@@ -1903,12 +1915,12 @@ public final class PhasedPlanner {
 
     public record Result(PlacementResult placement, RoadNetwork network,
                          List<PhaseEvent> events,
-                         List<NucleusContext> nucleusContexts) {
+                         java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts) {
         /** Backwards-compat 3-arg constructor for callers that don't
          *  care about the nucleus attribution. */
         public Result(PlacementResult placement, RoadNetwork network,
                       List<PhaseEvent> events) {
-            this(placement, network, events, List.of());
+            this(placement, network, events, java.util.Map.of());
         }
     }
 

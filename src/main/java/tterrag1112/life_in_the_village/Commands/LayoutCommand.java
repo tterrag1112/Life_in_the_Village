@@ -196,8 +196,8 @@ public final class LayoutCommand {
         int totalSegments = path.segments().size() + skeleton.crossStreets().size();
         send(src, "roads (" + totalSegments + " segments + "
                 + skeleton.junctions().size() + " junctions):");
-        for (int i = 0; i < skeleton.spineSegments().size(); i++) {
-            SpineSegment seg = skeleton.spineSegments().get(i);
+        for (int i = 0; i < skeleton.primarySegments().size(); i++) {
+            SpineSegment seg = skeleton.primarySegments().get(i);
             send(src, "  spine-" + (i + 1) + ": width=" + seg.width()
                     + " from " + posStr(seg.start()) + " to " + posStr(seg.end()));
         }

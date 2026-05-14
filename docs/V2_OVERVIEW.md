@@ -42,7 +42,7 @@ Entry point: `Village/Planning/V2/V2VillageSpawnerAdapter.spawn(level, origin, .
 | Layer | Class | Consumes | Produces | Side-effects |
 |-------|-------|----------|----------|--------------|
 | 1 — Feature scan | `V2FeatureMap.scan` | level + origin + radius | `V2FeatureMap` (terrain grid, water/cliff/forest metadata) | read-only |
-| 2 — Site analysis | `SiteAnalyzer.analyze` | feature map + culture + seed | `SiteContext` (anchor, originalAnchor, primary axis, spine path, viability tier, inclination, hubs) | read-only |
+| 2 — Site analysis | `SiteAnalyzer.analyze` | feature map + culture + seed + (optional) inclination / tier overrides | `SiteContext` (anchor, originalAnchor, primary axis, network, derived spine path, viability tier, inclination, anchors, strategy) | read-only |
 | 3 — Building selection + placement | `BuildingSelector.select` → `ReconciliationEngine.reconcile` → `DependencyResolver.topoSort` → `PhasedPlanner.run` (Phase-3 part) | site context + feature map + inclination profile | `SelectionResult`, `ReconciliationResult`, `PlacementResult` (`placed` / `dropped` / `unavailable` + `placedCounts` + `villageViable`) | read-only |
 | 4 — Road planning | `PhasedPlanner.run` (Phase-4 part) | site context + sorted types + unavailable list | `RoadNetwork(skeleton, frontageOwners)` + `List<PhaseEvent>` | read-only |
 | 5 — Adapt + finalise | `OverlapAuditor.audit` → `TerrainAdapter.decide` → `ViabilityValidator.validate` → `VegetationClearer` → `PadBuilder` → NBT placement | placed buildings + skeleton + level | survivor list + placed structures | **mutates the world** (vegetation removed, pads placed, structures spawned) |
@@ -58,6 +58,45 @@ A "synth `VillageLayout`" is built (Phase 19) at end of layer 5 so
 V1 downstream consumers (lore, kingdom claim, debug visualisers)
 have something to read. **It carries strictly less information
 than the V2 records.** Don't dump from it.
+
+### 1a. Layer-2 internal order (Track E1 prompt 3 fix-up)
+
+Within `SiteAnalyzer.analyze`, the order is now:
+
+1. `computeTier(fmap)` → terrain-derived tier.
+2. `computeInclination(fmap, culture, seed, tier)` → terrain-derived inclination.
+3. **Apply spawn-command overrides** (if present) → `effectiveTier`,
+   `effectiveInclination`. The terrain-derived values are kept in
+   `Diagnostics` for the dump; everything downstream sees only the
+   effective values.
+4. `computeAnchor`, `choosePrimaryAxis`, `adjustAnchor` — terrain-
+   only, inclination-independent.
+5. `AnchorDetector.detect` → permissive `Anchor` list.
+6. `StrategySelector.select(ctx, anchors)` → sees the **effective**
+   inclination + tier.
+7. `NetworkPlanner.plan(ctx, fmap, seed)` → grown from the selected
+   strategy.
+8. `NetworkPlanner.deriveSpinePath(network, axis, anchor)` →
+   **derived, deprecated** linear view. Retained on the SiteContext
+   for backwards-compat readers (commands, dump serializer). No
+   planning code in Layers 3–5 consumes `spinePath` any more.
+
+Pre-fix-up the adapter applied overrides post-analysis, after the
+network was already planned against the terrain-sampled inclination
+— producing `/spawn AGRICULTURAL CITY` → CIVIC angerdorf network
+with AGRICULTURAL building selection mismatches.
+
+### 1b. Network vs spine path (Track E1 prompt 3 fix-up)
+
+The `Skeleton` (Layer 4) is now constructed from the
+`NetworkSpec` directly, not from a `SpinePath`. The
+chord-decomposed view is exposed as
+`Skeleton.primarySegments()` (was `spineSegments()`); cross-
+streets continue to be added by Phase 4a planning.
+`Skeleton.spinePath()` remains as a lazy-derived view computed
+on-demand via `NetworkPlanner.deriveSpinePath`. `RoadPainter`
+(Layer 5) paints from `Skeleton.edges()` (the network's
+primitives) rather than `spinePath().segments()`.
 
 ---
 

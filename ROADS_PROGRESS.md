@@ -6595,3 +6595,52 @@ DEFENSIVE settlement-at-gates).
 - Visualizer (defer until layout stabilises).
 - Skills updates.
 - Cross-village clustering / traffic-density gateway model.
+
+---
+
+## Track E1 prompt 3 fix-up — network grower completion (2026-05-14)
+
+Three carry-overs from prompt 3 that surfaced when prompt 4's
+test spawns hit `PhasedPlanner.run`. All three are "prompt 3
+wasn't finished" rather than new scope.
+
+#### Road-system perspective (what changed)
+
+1. **Skeleton built from `NetworkSpec`, not `SpinePath`.** New
+   ctor: `Skeleton(NetworkSpec, CardinalAxis, BlockPos, int)`.
+   `spineSegments()` → `primarySegments()` (rename across 8 call
+   sites). `spinePath()` becomes a lazy-derived view computed
+   via `NetworkPlanner.deriveSpinePath` for backwards-compat
+   readers (commands, debug serializer, cross-street planning
+   for linear topologies). The pre-fix-up chain
+   `network → deriveSpinePath → SpinePath → Skeleton → placer`
+   collapses to `network → Skeleton → placer`. Chord
+   decomposition (Ring=16, CurvedRoad=6, Arc=8, …) is unchanged;
+   `Skeleton.allSegments()` produces an identical SpineSegment
+   list bit-for-bit.
+2. **`RoadPainter` paints from `Skeleton.edges()` directly.**
+   Pre-fix-up iterated `skeleton.spinePath().segments()`; the
+   primitives were the same in the same order, so painted output
+   is identical. The change is naming honesty.
+3. **Drop-reason strings reference the network.** "spine" /
+   "any segment" → "any network primary edge" / "any network
+   edge (primary or cross-street)".
+
+#### Invariants honoured
+
+- No RoadPrimitive permits-clause changes.
+- No new primitives / shapes / strategies.
+- Skeleton.allSegments() semantics preserved (primary +
+  cross-streets).
+- Determinism preserved.
+- Planning-layer correctness over realiser heroics — fix lives
+  in Layer 2 (SiteAnalyzer override timing), Layer 4 (Skeleton,
+  state.nucleusContexts), and Layer 5 (RoadPainter rebind).
+
+#### Out of scope
+
+- ReconciliationEngine cascade (HOUSING aggregate dependency
+  surfacing FARMHOUSE drops): prompt 5.
+- `industrial_haufendorf` fallback composition: prompt 4/5.
+- Composition rebalance: prompt 5.
+- Visualizer + skills.

@@ -138,15 +138,17 @@ public final class V2VillageSpawnerAdapter {
         // ── V2 Layers 1-4 ───────────────────────────────────────────────
         V2FeatureMap fmap = V2FeatureMap.scan(level, origin, FEATURE_MAP_RADIUS);
         Culture culture = CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID);
-        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed, level);
-        // B2.8 — apply inclination/tier overrides post-analysis. Terrain
-        // outputs (anchor, spine, axis) stay derived; only the
-        // classification fields the planner branches on get replaced.
-        if (inclinationOverride != null || tierOverride != null) {
-            siteCtx = siteCtx.withOverrides(inclinationOverride, tierOverride);
-            LOGGER.info("V2: site overrides applied — tier={} inclination={}",
-                    siteCtx.tier(), siteCtx.inclination());
-        }
+        // Track E1 prompt 3 fix-up — pass spawn-command overrides INTO
+        // SiteAnalyzer so they apply pre-strategy-selection. Pre-
+        // fix-up overrides were applied post-analysis via
+        // siteCtx.withOverrides, which produced strategy ↔ network ↔
+        // selection mismatches for explicit /spawn AGRICULTURAL CITY
+        // (analyzer sampled CIVIC from terrain, picked civic_angerdorf,
+        // planned an ANGERDORF network, THEN got the inclination
+        // mutated to AGRICULTURAL — building selection ran on a
+        // civic-shaped network with farm-village content).
+        SiteContext siteCtx = SiteAnalyzer.analyze(fmap, culture, seed, level,
+                inclinationOverride, tierOverride);
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             LOGGER.info("V2: site UNVIABLE at {}; aborting", origin);
             realizationLog.markAborted("tier=UNVIABLE; layers 3-4 skipped");
@@ -155,7 +157,7 @@ public final class V2VillageSpawnerAdapter {
             // with later abort branches.
             tryAutoDump(level, origin, villageName, null, culture,
                     fmap, siteCtx, null, null, null, null, null,
-                    java.util.List.of(), realizationLog);
+                    java.util.Map.of(), realizationLog);
             return Optional.empty();
         }
 
@@ -490,7 +492,7 @@ public final class V2VillageSpawnerAdapter {
             ReconciliationEngine.ReconciliationResult recon,
             PlacementResult placement, RoadNetwork roads,
             java.util.List<PhasedPlanner.PhaseEvent> events,
-            java.util.List<PhasedPlanner.NucleusContext> nucleusContexts,
+            java.util.Map<PlacedBuilding, PhasedPlanner.NucleusContext> nucleusContexts,
             RealizationLog log) {
         if (!AutoDumpConfig.isEnabled()) return;
         try {

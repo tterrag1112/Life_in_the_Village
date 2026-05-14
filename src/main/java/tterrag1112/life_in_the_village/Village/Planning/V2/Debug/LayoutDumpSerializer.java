@@ -179,7 +179,8 @@ public final class LayoutDumpSerializer {
                                             ReconciliationEngine.ReconciliationResult recon,
                                             PlacementResult placement, RoadNetwork roads,
                                             List<PhasedPlanner.PhaseEvent> events,
-                                            List<PhasedPlanner.NucleusContext> nucleusContexts,
+                                            java.util.Map<PlacedBuilding, PhasedPlanner.NucleusContext>
+                                                    nucleusContexts,
                                             RealizationLog log) {
         long worldSeed = level.getSeed();
         long planSeed = worldSeed
@@ -242,7 +243,8 @@ public final class LayoutDumpSerializer {
                                        ReconciliationEngine.ReconciliationResult recon,
                                        PlacementResult placement, RoadNetwork roads,
                                        List<PhasedPlanner.PhaseEvent> events,
-                                       List<PhasedPlanner.NucleusContext> nucleusContexts,
+                                       java.util.Map<PlacedBuilding, PhasedPlanner.NucleusContext>
+                                               nucleusContexts,
                                        RealizationLog log) {
         JsonObject root = buildHeader(commandKind, tick, worldSeed, planSeed,
                 level, origin, villageName, villageId, culture);
@@ -258,7 +260,7 @@ public final class LayoutDumpSerializer {
 
         if (placement != null) {
             root.add("buildings", buildingsJson(placement, sel, recon, log,
-                    nucleusContexts != null ? nucleusContexts : List.of()));
+                    nucleusContexts != null ? nucleusContexts : java.util.Map.of()));
         }
         if (roads != null) {
             root.add("roads", roadsJson(roads, level, worldSeed));
@@ -552,12 +554,13 @@ public final class LayoutDumpSerializer {
                                              BuildingSelector.SelectionResult sel,
                                              ReconciliationEngine.ReconciliationResult recon,
                                              RealizationLog log,
-                                             List<PhasedPlanner.NucleusContext> nucleusContexts) {
+                                             java.util.Map<PlacedBuilding,
+                                                     PhasedPlanner.NucleusContext>
+                                                     nucleusContexts) {
         JsonObject o = new JsonObject();
         o.addProperty("villageViable", placement.villageViable());
 
         JsonArray placed = new JsonArray();
-        int idx = 0;
         for (PlacedBuilding pb : placement.placed()) {
             JsonObject b = new JsonObject();
             b.addProperty("type", pb.type().name());
@@ -587,12 +590,12 @@ public final class LayoutDumpSerializer {
                 b.addProperty("hasAdjunct", true);
             }
             // Track E1 prompt-4 — nucleus attribution for the dump
-            // visualizer. Indexes parallel placement.placed(); null
-            // when the building had no matching nucleus pull (placed
-            // by base terrain residual only).
-            if (idx < nucleusContexts.size()
-                    && nucleusContexts.get(idx) != null) {
-                PhasedPlanner.NucleusContext nc = nucleusContexts.get(idx);
+            // visualizer. Map lookup: absent entry means the building
+            // had no matching nucleus rule (placed by base terrain
+            // residual only). Honest absence rather than a null in a
+            // parallel list.
+            PhasedPlanner.NucleusContext nc = nucleusContexts.get(pb);
+            if (nc != null) {
                 JsonObject nctx = new JsonObject();
                 nctx.addProperty("primaryNucleusKind", nc.kind().name());
                 if (nc.anchorId() != null) {
@@ -614,7 +617,6 @@ public final class LayoutDumpSerializer {
                 });
             }
             placed.add(b);
-            idx++;
         }
         o.add("placed", placed);
 

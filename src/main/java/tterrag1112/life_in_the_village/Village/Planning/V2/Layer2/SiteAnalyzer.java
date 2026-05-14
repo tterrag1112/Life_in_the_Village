@@ -79,20 +79,66 @@ public final class SiteAnalyzer {
      */
     public static SiteContext analyze(V2FeatureMap fmap, Culture culture, long seed,
                                        net.minecraft.server.level.ServerLevel level) {
-        return analyzeWithDiagnostics(fmap, culture, seed, level).context;
+        return analyzeWithDiagnostics(fmap, culture, seed, level, null, null).context;
+    }
+
+    /**
+     * Track E1 prompt 3 fix-up — overload taking explicit
+     * inclination / tier overrides from a spawn command. Overrides
+     * are applied immediately after terrain-derived tier +
+     * inclination determination and before strategy selection +
+     * network planning, so the strategy, network, and building
+     * selection all reflect the final tier / inclination. Pass
+     * {@code null} for either override to keep the terrain-derived
+     * value.
+     */
+    public static SiteContext analyze(V2FeatureMap fmap, Culture culture, long seed,
+                                       net.minecraft.server.level.ServerLevel level,
+                                       Inclination inclinationOverride,
+                                       ViabilityTier tierOverride) {
+        return analyzeWithDiagnostics(fmap, culture, seed, level,
+                inclinationOverride, tierOverride).context;
     }
 
     public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
                                                 long seed) {
-        return analyzeWithDiagnostics(fmap, culture, seed, null);
+        return analyzeWithDiagnostics(fmap, culture, seed, null, null, null);
     }
 
     public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
                                                 long seed,
                                                 net.minecraft.server.level.ServerLevel level) {
+        return analyzeWithDiagnostics(fmap, culture, seed, level, null, null);
+    }
+
+    public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
+                                                long seed,
+                                                net.minecraft.server.level.ServerLevel level,
+                                                Inclination inclinationOverride,
+                                                ViabilityTier tierOverride) {
         TierDecision tier = computeTier(fmap);
         InclinationDecision inc = computeInclination(fmap, culture, seed, tier);
-        AnchorDecision anchorDec = computeAnchor(fmap, inc.inclination);
+        // Track E1 prompt 3 fix-up — apply explicit spawn-command
+        // overrides BEFORE strategy selection and network planning,
+        // so the strategy, network, and building selection all
+        // observe the final tier / inclination. Pre-fix-up the
+        // adapter applied overrides post-analysis, after the
+        // network was already planned against the terrain-sampled
+        // inclination — producing /spawn AGRICULTURAL CITY → CIVIC
+        // angerdorf network with AGRICULTURAL building selection
+        // mismatches.
+        ViabilityTier effectiveTier = tierOverride != null
+                ? tierOverride : tier.tier;
+        Inclination effectiveInclination = inclinationOverride != null
+                ? inclinationOverride : inc.inclination;
+        if (tierOverride != null || inclinationOverride != null) {
+            LOGGER.info("site overrides applied pre-strategy: tier={} inclination={}"
+                    + " (terrain-sampled tier={} inclination={})",
+                    effectiveTier, effectiveInclination,
+                    tier.tier, inc.inclination);
+        }
+
+        AnchorDecision anchorDec = computeAnchor(fmap, effectiveInclination);
         AxisDecision axisDec = choosePrimaryAxis(fmap, anchorDec.anchor);
         AnchorAdjustment adj = adjustAnchor(fmap, anchorDec.anchor);
 
@@ -104,7 +150,7 @@ public final class SiteAnalyzer {
         // the network spec once primitives are emitted.
         SiteContext ctx = SiteContext.withEmptyHubs(
                 finalAnchor, anchorDec.anchor, axisDec.axis, /*spinePath*/ null,
-                tier.tier, inc.inclination, culture, seed);
+                effectiveTier, effectiveInclination, culture, seed);
         java.util.List<Anchor> anchors = AnchorDetector.detect(fmap, level);
         ctx = ctx.withAnchors(anchors);
         StrategySelectionResult strategy = StrategySelector.select(ctx, anchors);
@@ -124,7 +170,7 @@ public final class SiteAnalyzer {
                 + " topology variation, cross-street count + position, building"
                 + " selection, topo-tie shuffle)", seed);
         LOGGER.info("site: tier={} inclination={} culture={} seed={}",
-                tier.tier, inc.inclination, culture.id(), seed);
+                effectiveTier, effectiveInclination, culture.id(), seed);
         LOGGER.info("anchor: original=({},{},{}) adjusted=({},{},{}) reason={}",
                 anchorDec.anchor.getX(), anchorDec.anchor.getY(), anchorDec.anchor.getZ(),
                 finalAnchor.getX(), finalAnchor.getY(), finalAnchor.getZ(),

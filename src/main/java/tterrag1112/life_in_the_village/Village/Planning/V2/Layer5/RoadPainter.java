@@ -21,15 +21,23 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
  *
  * <p>Two passes:
  * <ul>
- *   <li>Spine path: iterate {@code skeleton.spinePath().segments()},
- *       dispatch by primitive type. {@code StraightRoad} →
- *       chord-walk; {@code CurvedRoad} → bezier-bow walk;
- *       {@code Arc} → polar walk. At each centerline sample, paint
- *       a {@code SpineSegment.width()}-wide perpendicular strip
- *       perpendicular to the LOCAL tangent.</li>
+ *   <li>Network edges: iterate {@code skeleton.edges()} and
+ *       dispatch by primitive type. {@code StraightRoad} → chord-
+ *       walk; {@code CurvedRoad} → bezier-bow walk; {@code Arc} /
+ *       {@code Ring} → polar walk. At each centerline sample,
+ *       paint a perpendicular strip whose width is the skeleton's
+ *       primary-segment width.</li>
  *   <li>Cross-streets: chord-walk; cross-streets are always
  *       cardinal-aligned per Layer 4.</li>
  * </ul>
+ *
+ * <p>Track E1 prompt 3 fix-up — was iterating
+ * {@code skeleton.spinePath().segments()}, a derived linearised
+ * view that misrepresented non-linear topologies (Ring + Spurs
+ * looked like a "spine"). Now paints from
+ * {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec network edges}
+ * directly. Functionally bit-identical (derived spinePath had the
+ * same primitives in the same order) but reads honestly.
  *
  * <p>Material from {@code culture.roadMaterial()} (fallback
  * {@link Blocks#DIRT_PATH}). Air clearance above the new pave to
@@ -49,12 +57,17 @@ public final class RoadPainter {
         BlockState material = resolveMaterial(culture.planningBias().roadMaterial());
         long worldSeed = level.getSeed();
         int total = 0;
-        // Spine path: per-primitive painting (handles drift / arcs).
-        int spineWidth = roads.skeleton().spineSegments().isEmpty()
+        // Track E1 prompt 3 fix-up — paint each network edge's
+        // primitive directly instead of iterating a derived
+        // spinePath view. Bit-identical to the pre-fix-up output
+        // (same primitives, same order) but reads honestly: the
+        // skeleton's source of truth is the network, not a spine.
+        int spineWidth = roads.skeleton().primarySegments().isEmpty()
                 ? 3
-                : roads.skeleton().spineSegments().get(0).width();
-        for (RoadPrimitive prim : roads.skeleton().spinePath().segments()) {
-            total += paintPrimitive(level, prim, spineWidth, material, worldSeed);
+                : roads.skeleton().primarySegments().get(0).width();
+        for (var edge : roads.skeleton().edges()) {
+            total += paintPrimitive(level, edge.primitive(), spineWidth,
+                    material, worldSeed);
         }
         // Cross-streets: straight-strip paint, no drift (cross-streets
         // are short and cardinal — meandering reads as a layout error).
