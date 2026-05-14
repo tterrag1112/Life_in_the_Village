@@ -50,10 +50,12 @@ import java.util.Set;
 /**
  * V2 Phased Planner — Phases 3 through 6.
  *
- * <p>Phase 2 (spine path) is produced by {@code SpinePathPlanner}
+ * <p>Phase 2 (road network) is produced by
+ * {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkPlanner}
  * inside {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer}
  * and arrives on the {@code SiteContext} before this orchestrator
- * is invoked. Phase 3 places foundation buildings
+ * is invoked. A backwards-compat {@code SpinePath} view is derived
+ * from the network's edges. Phase 3 places foundation buildings
  * (TOWN_HALL + buildings with terrain aggregates) along the spine.
  * Phase 4 iterates the remaining selection, inserting perpendicular
  * cross streets when a cluster of K consecutive buildings fails for
@@ -216,6 +218,21 @@ public final class PhasedPlanner {
     private static void planCrossStreetsProactively(State state,
                                                     List<BuildingType> sortedSelection,
                                                     Set<BuildingType> foundationTypes) {
+        // Track E1 prompt-3 — cross streets are only meaningful for
+        // linear-spine topologies. Non-linear topologies (HAUFENDORF,
+        // ANGERDORF, RUNDLING, EINZELHOF) already carry rich edge
+        // structure (Ring + Spurs) and don't benefit from
+        // perpendicular subdivisions of the spine path.
+        if (state.ctx.network() != null) {
+            switch (state.ctx.network().topology()) {
+                case REIHENDORF, CLUSTER -> { /* fall through to plan */ }
+                default -> {
+                    LOGGER.info("phase 4a: skipped (topology={})",
+                            state.ctx.network().topology());
+                    return;
+                }
+            }
+        }
         // 1. Capacity math.
         int countRemaining = 0;
         int totalRemainingFrontage = 0;
@@ -913,10 +930,9 @@ public final class PhasedPlanner {
     }
 
     /** Trim cross streets that no buildings face. Spine path trimming
-     *  is deferred — the multi-segment spine path produced by
-     *  SpinePathPlanner already truncates on terrain failure, and
-     *  finer trimming would require segment-level frontage span
-     *  arithmetic that's out of scope for this cycle. */
+     *  is deferred — the network grower produces edges sized to the
+     *  selected topology + tier, and segment-level frontage span
+     *  arithmetic for finer trimming is out of scope for this cycle. */
     private static void trimUnusedSegments(State state) {
         List<CrossStreet> toRemove = new ArrayList<>();
         for (CrossStreet cs : state.skeleton.crossStreets()) {
@@ -987,8 +1003,36 @@ public final class PhasedPlanner {
         double dist = distance(pos, state.ctx.anchor());
         double radial = 1.0 - Math.min(1.0, dist / Math.max(1, state.villageRadius));
         double centrality = Math.max(0, 1 - Math.abs(profile.centrality() - radial));
+        // Track E1 prompt-3 — primary-binding affinity. If the
+        // strategy bound this building type to an anchor, cells
+        // within BINDING_AFFINITY_RADIUS of the anchor's centre get
+        // a strong centrality boost so placement gravitates toward
+        // the bound position. Cells outside that radius are
+        // unaffected.
+        if (state.ctx.network() != null) {
+            for (var pb : state.ctx.network().primaryBindings()) {
+                if (pb.type() != type) continue;
+                double d = distance(pos, pb.position());
+                if (d < BINDING_AFFINITY_RADIUS) {
+                    double affinity = 1.0 - d / BINDING_AFFINITY_RADIUS;
+                    centrality += affinity * BINDING_AFFINITY_WEIGHT;
+                }
+                break;  // one binding per type
+            }
+        }
         return new ScoreBreakdown(terrain, adjacency, centrality);
     }
+
+    /** Track E1 prompt-3 — radius (blocks) within which a primary-
+     *  binding building gets a centrality boost. ~villageRadius/2
+     *  so the bonus is meaningful inside the village but doesn't
+     *  pull buildings across long distances. */
+    private static final double BINDING_AFFINITY_RADIUS = 20.0;
+    /** Scaling factor for the binding affinity centrality bonus.
+     *  Calibrated against existing centrality magnitudes (0..1) —
+     *  2.0 means a bound cell can outscore a non-bound cell by up
+     *  to +2.0 in centrality, dominating the term. */
+    private static final double BINDING_AFFINITY_WEIGHT = 2.0;
 
     // =========================================================================
     // Geometry helpers (footprint, frontage, rotation, segments)

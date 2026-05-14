@@ -164,11 +164,31 @@ projects to top-down by ignoring Y.
 
 ---
 
-## 8. JSON dump schema (v3)
+## 8. JSON dump schema (v4)
 
-**Schema v3** — additive over v2. v2 readers ignoring unknown
-fields still parse v3 dumps without error. Bump on incompatible
-changes only.
+**Schema v4** — additive over v3. v3 readers ignoring unknown
+fields still parse v4 dumps without error. Note: `roads.skeleton
+.spinePathPrimitives[]` no longer guarantees `StraightRoad`-only
+content — the network grower may emit any RoadPrimitive type
+into the derived spine path (Ring, Spur, ArmApproach, …).
+
+### v4 additions (Track E1 prompt-3 — network grower)
+
+- New `siteContext.network` object — the road-network spec
+  produced by `NetworkPlanner`:
+  - `topology`: `LayoutTopology` enum name (`"HAUFENDORF"` /
+    `"REIHENDORF"` / `"ANGERDORF"` / `"RUNDLING"` /
+    `"EINZELHOF"` / `"CLUSTER"`)
+  - `nodes[]`: array of `{id, kind, pos}` where `kind` is one of
+    `ANCHOR` / `GATEWAY` / `JUNCTION` / `SYNTHETIC`
+  - `edges[]`: array of `{id, from, to, primitive, width,
+    primitive_raw}` where `primitive` is the RoadPrimitive
+    `typeKey()` and `primitive_raw` is the full centerline view
+    (same shape as a `spinePath.segments[]` entry)
+  - `primaryBindings[]`: array of `{type, position, anchorId,
+    reason}` declaring lead-building anchor bindings
+- `siteContext.spinePath` is now **derived** from
+  `network.edges[]`; kept for backwards-compat readers.
 
 ### v3 additions (Track E1 anchor detection)
 
@@ -202,7 +222,7 @@ Default-on.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `schemaVersion` | int | `3` for current version |
+| `schemaVersion` | int | `4` for current version |
 | `command` | string | `"dump"` / `"dump_at"` / `"auto"` |
 | `tick` | long | server tick at dump time |
 | `worldSeed` | long | level seed |

@@ -54,22 +54,11 @@ public final class SiteAnalyzer {
     private static final int COAST_INLAND_OFFSET = 6;
     /** Highground prominence required to override anchor for DEFENSIVE. */
     private static final int DEFENSIVE_PROMINENCE_THRESHOLD = 8;
-    /** Spine length per direction by tier (half-spine, total = 2x).
-     *  Each tier carries (min, target, max) — Layer 2 samples a half
-     *  per direction so the village isn't always symmetric. Total
-     *  spine target per spec: CITY 160, TOWN 100, HAMLET 40, OUTPOST 20. */
-    private static final EnumMap<ViabilityTier, int[]> TIER_HALF_LENGTH_RANGE;
-    static {
-        TIER_HALF_LENGTH_RANGE = new EnumMap<>(ViabilityTier.class);
-        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.CITY,    new int[]{60, 80, 90});
-        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.TOWN,    new int[]{40, 50, 65});
-        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.HAMLET,  new int[]{15, 20, 25});
-        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.OUTPOST, new int[]{ 8, 10, 12});
-        TIER_HALF_LENGTH_RANGE.put(ViabilityTier.UNVIABLE, new int[]{10, 10, 10});
-    }
-    /** Salt for the spine-length sampler so it's independent of the
-     *  inclination sampler. */
-    private static final long SPINE_LENGTH_SALT = 0x571E_DEC1_DEAD_BEEFL;
+    // Track E1 prompt-3 — spine length per-tier moved to NetworkPlanner;
+    // SiteAnalyzer no longer plans the spine directly. The half-length
+    // brackets used by the deleted SpinePathPlanner are equivalent to
+    // {@link NetworkPlanner#spineLengthRange} (private) plus tier-
+    // specific REIHENDORF samplers.
 
     private SiteAnalyzer() {}
 
@@ -108,32 +97,32 @@ public final class SiteAnalyzer {
         AnchorAdjustment adj = adjustAnchor(fmap, anchorDec.anchor);
 
         BlockPos finalAnchor = adj.adjusted != null ? adj.adjusted : anchorDec.anchor;
-        int[] halfRange = TIER_HALF_LENGTH_RANGE.getOrDefault(tier.tier,
-                new int[]{20, 20, 20});
-        Random spineRng = new Random(seed ^ SPINE_LENGTH_SALT);
-        SpinePath spinePath = SpinePathPlanner.plan(fmap, finalAnchor,
-                axisDec.axis, halfRange[0], halfRange[1], halfRange[2], spineRng);
 
+        // Track E1 prompt-3 — build a partial context for strategy
+        // selection (anchors + strategy) before the network planner
+        // runs. SpinePath is null at this stage; it's derived from
+        // the network spec once primitives are emitted.
         SiteContext ctx = SiteContext.withEmptyHubs(
-                finalAnchor, anchorDec.anchor, axisDec.axis, spinePath,
+                finalAnchor, anchorDec.anchor, axisDec.axis, /*spinePath*/ null,
                 tier.tier, inc.inclination, culture, seed);
-        // Track E1 — detect anchors and attach to the context.
-        // Anchor detection is permissive and read-only; existing
-        // planner / placer / road builder behaviour is unchanged.
         java.util.List<Anchor> anchors = AnchorDetector.detect(fmap, level);
         ctx = ctx.withAnchors(anchors);
-        // Track E1B — select a layout strategy from the anchor mix.
-        // Selection runs AFTER anchor detection (it consumes anchors)
-        // and BEFORE any downstream planner; spine planner already ran
-        // above and is unchanged. The result is purely informational
-        // until prompt 3 wires consumption.
         StrategySelectionResult strategy = StrategySelector.select(ctx, anchors);
         ctx = ctx.withStrategy(strategy);
+
+        // Track E1 prompt-3 — grow the network from the selected
+        // strategy + anchors. The spine path is now a derived view of
+        // the network's edges so existing consumers (PhasedPlanner,
+        // RoadPainter, LayoutCommand, …) keep reading it unchanged.
+        NetworkSpec network = NetworkPlanner.plan(ctx, fmap, seed);
+        SpinePath derivedSpine = NetworkPlanner.deriveSpinePath(network,
+                axisDec.axis, finalAnchor);
+        ctx = ctx.withNetwork(network, derivedSpine);
         Diagnostics diag = new Diagnostics(tier, inc, anchorDec, axisDec, adj);
 
-        LOGGER.info("variation: seed={} (drives inclination sampling, spine length,"
-                + " cross-street count + position, building selection,"
-                + " topo-tie shuffle)", seed);
+        LOGGER.info("variation: seed={} (drives inclination sampling, network"
+                + " topology variation, cross-street count + position, building"
+                + " selection, topo-tie shuffle)", seed);
         LOGGER.info("site: tier={} inclination={} culture={} seed={}",
                 tier.tier, inc.inclination, culture.id(), seed);
         LOGGER.info("anchor: original=({},{},{}) adjusted=({},{},{}) reason={}",
@@ -141,8 +130,8 @@ public final class SiteAnalyzer {
                 finalAnchor.getX(), finalAnchor.getY(), finalAnchor.getZ(),
                 adj.reason);
         LOGGER.info("primary axis: {} ({})", axisDec.axis, axisDec.reason);
-        LOGGER.info("spine path: {} segments, totalLength={}",
-                spinePath.segments().size(), spinePath.totalLength());
+        LOGGER.info("derived spine path: {} segments, totalLength={}",
+                derivedSpine.segments().size(), derivedSpine.totalLength());
 
         return new Result(ctx, diag);
     }

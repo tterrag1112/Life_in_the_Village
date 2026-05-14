@@ -6459,3 +6459,76 @@ Gradle network-blocked in this sandbox. Static review confirmed:
   argument validation.
 
 **Track C is now complete.**
+
+---
+
+## Track E1 prompt 3 — V2 network grower (2026-05-14)
+
+Third of five layout-rework prompts. Replaces V2's linear
+SpinePathPlanner with a topology-aware NetworkPlanner that reads
+the strategy decision from prompt 2 and produces a graph of nodes
++ edges shaped by the village form (HAUFENDORF / REIHENDORF /
+ANGERDORF / RUNDLING / EINZELHOF / CLUSTER).
+
+#### What changed (road-system perspective)
+
+- `SpinePathPlanner` deleted. `NetworkPlanner` is the new Layer 2
+  planner; it runs after strategy selection.
+- `NetworkSpec(topology, nodes[], edges[], primaryBindings[])` is
+  the new output. The legacy `SpinePath` is derived from the
+  network's edges so all 29 existing spine-read sites
+  (`PhasedPlanner.findBestCandidate`, `RoadPainter.paintAll`,
+  `LayoutCommand`, `LayoutDumpSerializer`, `V2VillageSpawnerAdapter`,
+  `InternalRoadCommitter`) keep working unchanged.
+- Five `RoadPrimitive` types that had stub paint logic now paint
+  for real: `Ring`, `Spur`, `ArmApproach`, `SmoothedPath`,
+  `Bridge`. Each delegates to the existing `paintStraight` /
+  `paintCurvedBow` / `paintArc` with type-specific input
+  marshalling. `Stairway` remains stubbed; recipes that would
+  want it use `Spur` instead.
+- `Skeleton.computeSpineSegments` now chord-decomposes curvy
+  primitives: `Ring` → 16 chords around the circumference;
+  `Arc` → 8; `CurvedRoad` → 6; `Spur` / `ArmApproach` /
+  `Bridge` / `Stairway` → 1 chord; `SmoothedPath` → one chord
+  per waypoint pair. Frontage scoring around curves now picks
+  up cells along the actual curve, not just the chord.
+- `PhasedPlanner.scorePosition` adds a binding-affinity term
+  (up to +2.0 centrality boost for cells within 20 blocks of a
+  primary-binding position). Strong enough to dominate other
+  terms when terrain allows it; cells still pass the existing
+  admissibility filter so unbuildable bound positions
+  degrade to "best buildable nearby cell."
+- `PhasedPlanner.planCrossStreetsProactively` early-returns for
+  HAUFENDORF / ANGERDORF / RUNDLING / EINZELHOF (Ring + Spur
+  topologies don't benefit from perpendicular subdivisions of
+  the spine). REIHENDORF + CLUSTER keep the existing
+  cross-street planning.
+
+#### Invariants honoured
+
+- No abstract method renames. `RoadPrimitive` permits clause
+  unchanged. `RoadSegment` / `SpineSegment` shapes unchanged.
+- Extended `RoadPainter` via dispatch additions, not per-type
+  subclasses.
+- Planning-layer correctness over realiser heroics — when a
+  topology can't fit, the recipe falls back to a `recipeShortSpine`
+  through the same primary anchor, rather than re-trying paint
+  with different cells.
+
+#### Out of scope (deferred to prompts 4 & 5)
+
+- Secondary-placement nucleus-proximity rules — HOUSE /
+  FARMHOUSE / STOCKPILE still scatter via the general frontage
+  selector.
+- Composition rebalance / realistic tier counts — inclination
+  profiles unchanged.
+- Stairway paint.
+- Per-culture network shapes — all cultures share the same
+  recipe set.
+
+#### Out of scope (always)
+
+- Visualizer (defer until layout stabilises).
+- Skills updates.
+- Multi-village network spans — each village's network is
+  self-contained.

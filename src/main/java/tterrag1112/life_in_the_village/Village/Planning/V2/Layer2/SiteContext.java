@@ -50,34 +50,48 @@ public record SiteContext(
         long seed,
         List<Hub> hubs,
         List<Anchor> anchors,
-        StrategySelectionResult strategy) {
+        StrategySelectionResult strategy,
+        NetworkSpec network) {
 
     public SiteContext {
         anchors = anchors == null ? List.of() : List.copyOf(anchors);
     }
 
     /** Convenience: create a context with an empty mutable hubs
-     *  list + empty anchors list + null strategy. Layer 4 populates
-     *  hubs; Track E1 anchors are populated by {@link AnchorDetector};
-     *  Track E1B strategy by {@link StrategySelector}. */
+     *  list + empty anchors list + null strategy + null network.
+     *  Layer 4 populates hubs; Track E1 anchors are populated by
+     *  {@link AnchorDetector}; Track E1B strategy by
+     *  {@link StrategySelector}; Track E1 prompt-3 network by
+     *  {@link NetworkPlanner}. */
     public static SiteContext withEmptyHubs(BlockPos anchor, BlockPos originalAnchor,
                                             CardinalAxis primaryAxis, SpinePath spinePath,
                                             ViabilityTier tier, Inclination inclination,
                                             Culture culture, long seed) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
-                tier, inclination, culture, seed, new ArrayList<>(), List.of(), null);
+                tier, inclination, culture, seed, new ArrayList<>(), List.of(),
+                null, null);
     }
 
     /** Track E1 — copy-with anchors. */
     public SiteContext withAnchors(List<Anchor> newAnchors) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
-                tier, inclination, culture, seed, hubs, newAnchors, strategy);
+                tier, inclination, culture, seed, hubs, newAnchors, strategy, network);
     }
 
     /** Track E1B — copy-with strategy selection result. */
     public SiteContext withStrategy(StrategySelectionResult newStrategy) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
-                tier, inclination, culture, seed, hubs, anchors, newStrategy);
+                tier, inclination, culture, seed, hubs, anchors, newStrategy, network);
+    }
+
+    /** Track E1 prompt-3 — copy-with the planned road network and
+     *  the derived spine path. Network is the source of truth;
+     *  the spine is a derived view kept for backwards-compat
+     *  consumers (RoadPainter, debug commands). */
+    public SiteContext withNetwork(NetworkSpec newNetwork, SpinePath derivedSpine) {
+        return new SiteContext(anchor, originalAnchor, primaryAxis,
+                derivedSpine != null ? derivedSpine : spinePath,
+                tier, inclination, culture, seed, hubs, anchors, strategy, newNetwork);
     }
 
     /** B2.8 — copy-with overrides for /building village spawn's
@@ -89,6 +103,6 @@ public record SiteContext(
                 anchor, originalAnchor, primaryAxis, spinePath,
                 newTier        != null ? newTier        : tier,
                 newInclination != null ? newInclination : inclination,
-                culture, seed, hubs, anchors, strategy);
+                culture, seed, hubs, anchors, strategy, network);
     }
 }

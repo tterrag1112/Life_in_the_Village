@@ -78,8 +78,27 @@ public final class RoadPainter {
         if (prim instanceof RoadPrimitive.Arc arc) {
             return paintArc(level, arc, width, material, worldSeed);
         }
-        // Other primitive types not produced by SpinePathPlanner in
-        // V1; fall through with chord-walk approximation.
+        if (prim instanceof RoadPrimitive.Ring ring) {
+            return paintRing(level, ring, width, material, worldSeed);
+        }
+        if (prim instanceof RoadPrimitive.Spur spur) {
+            return paintSpur(level, spur, width, material, worldSeed);
+        }
+        if (prim instanceof RoadPrimitive.ArmApproach aa) {
+            return paintStraight(level, aa.dockingAnchor(), aa.armEndpoint(),
+                    width, material, /*drift*/ 2.0, worldSeed);
+        }
+        if (prim instanceof RoadPrimitive.SmoothedPath sp) {
+            return paintSmoothedPath(level, sp, width, material, worldSeed);
+        }
+        if (prim instanceof RoadPrimitive.Bridge br) {
+            return paintStraight(level, br.from(), br.to(), width, material,
+                    /*drift*/ 1.5, worldSeed);
+        }
+        // Stairway is not produced by NetworkPlanner recipes today (the
+        // Y-jumping centerline needs a dedicated painter that's out of
+        // scope for prompt 3). Recipes that would want it use Spur or
+        // StraightRoad instead.
         return 0;
     }
 
@@ -222,6 +241,93 @@ public final class RoadPainter {
                     material, cursor);
         }
         return painted;
+    }
+
+    /** Walk a full-circle Ring. One sample per block of circumference;
+     *  paint a width strip perpendicular to the radial at each
+     *  sample. Functionally equivalent to {@link #paintArc} with
+     *  {@code arcSpan = 2π}. */
+    private static int paintRing(ServerLevel level, RoadPrimitive.Ring ring,
+                                 int width, BlockState material, long worldSeed) {
+        int radius = ring.radius();
+        int samples = Math.max(16, (int) Math.ceil(2 * Math.PI * radius));
+        int half = (width + 1) / 2;
+        double driftAmplitude = ring.driftAmplitude();
+        double circ = 2 * Math.PI * radius;
+        boolean drift = driftAmplitude > 0 && circ >= 8;
+        long localSeed = drift
+                ? DriftNoise.localSeed(worldSeed, ring.centre(), ring.centre())
+                ^ ((long) radius * 2654435761L)
+                : 0L;
+        double ampScale = drift ? Math.min(1.0, circ / 64.0) : 0.0;
+        int painted = 0;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int i = 0; i <= samples; i++) {
+            double t = i / (double) samples;
+            double angle = t * 2 * Math.PI;
+            double tx = -Math.sin(angle);
+            double tz = Math.cos(angle);
+            double perpX = -tz;
+            double perpZ = tx;
+            double driftOff = drift
+                    ? DriftNoise.sample(t, localSeed) * driftAmplitude * ampScale
+                    : 0.0;
+            int cx = ring.centre().getX()
+                    + (int) Math.round(Math.cos(angle) * radius + perpX * driftOff);
+            int cz = ring.centre().getZ()
+                    + (int) Math.round(Math.sin(angle) * radius + perpZ * driftOff);
+            painted += paintStripAt(level, cx, cz, perpX, perpZ, half, material, cursor);
+        }
+        return painted;
+    }
+
+    /** Walk a Spur from its snapped branch point along
+     *  {@code directionRad} for {@code length} blocks. Treated as a
+     *  short StraightRoad with the same drift conventions. */
+    private static int paintSpur(ServerLevel level, RoadPrimitive.Spur spur,
+                                 int width, BlockState material, long worldSeed) {
+        BlockPos hint = spur.branchPointHint();
+        BlockPos start = nearestOnCenterline(spur.parentCenterline(), hint);
+        int endX = start.getX()
+                + (int) Math.round(Math.cos(spur.directionRad()) * spur.length());
+        int endZ = start.getZ()
+                + (int) Math.round(Math.sin(spur.directionRad()) * spur.length());
+        BlockPos end = new BlockPos(endX, start.getY(), endZ);
+        return paintStraight(level, start, end, width, material,
+                spur.driftAmplitude(), worldSeed);
+    }
+
+    /** Paint a SmoothedPath by walking consecutive waypoint pairs as
+     *  short straights. Drift on each segment is the path's amplitude
+     *  scaled down by chord length so very short links don't wobble
+     *  noticeably. */
+    private static int paintSmoothedPath(ServerLevel level,
+                                         RoadPrimitive.SmoothedPath sp,
+                                         int width, BlockState material,
+                                         long worldSeed) {
+        java.util.List<BlockPos> wp = sp.waypoints();
+        if (wp.size() < 2) return 0;
+        int painted = 0;
+        for (int i = 0; i + 1 < wp.size(); i++) {
+            painted += paintStraight(level, wp.get(i), wp.get(i + 1), width,
+                    material, sp.driftAmplitude(), worldSeed);
+        }
+        return painted;
+    }
+
+    /** Nearest point on a centerline polyline to {@code hint}.
+     *  Local helper mirroring {@code RoadPrimitive.Spur.nearestOnCenterline}
+     *  (which is private to the primitive). */
+    private static BlockPos nearestOnCenterline(java.util.List<BlockPos> line,
+                                                BlockPos hint) {
+        if (line.isEmpty()) return hint;
+        BlockPos best = line.get(0);
+        double bestD = best.distSqr(hint);
+        for (BlockPos p : line) {
+            double d = p.distSqr(hint);
+            if (d < bestD) { bestD = d; best = p; }
+        }
+        return best;
     }
 
     /** Paint a perpendicular strip of total width 2*half+1 at the

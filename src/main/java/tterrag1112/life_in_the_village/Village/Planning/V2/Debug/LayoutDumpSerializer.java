@@ -19,6 +19,10 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Anchor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.AnchorExtent;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.AnchorType;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.LayoutStrategy;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkNode;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.PrimaryBinding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
@@ -99,7 +103,7 @@ public final class LayoutDumpSerializer {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    public static final int SCHEMA_VERSION = 3;
+    public static final int SCHEMA_VERSION = 4;
     public static final int FEATURE_MAP_RADIUS = 96;
     public static final int DEFAULT_DUMP_AT_RADIUS = FEATURE_MAP_RADIUS;
 
@@ -343,6 +347,58 @@ public final class LayoutDumpSerializer {
         if (ctx.strategy() != null) {
             o.add("strategy", strategyJson(ctx.strategy()));
         }
+        // Track E1 prompt-3 — network spec (schema v4 additive).
+        // Carries the topology, full node graph, edges with their
+        // centerlines, and primary bindings. Replaces the spine-only
+        // model with a richer graph; `roads.skeleton.spinePathPrimitives`
+        // continues to emit but may contain any RoadPrimitive type now,
+        // not just StraightRoad.
+        if (ctx.network() != null) {
+            o.add("network", networkSpecJson(ctx.network(), level, seed));
+        }
+        return o;
+    }
+
+    private static JsonObject networkSpecJson(NetworkSpec spec, ServerLevel level,
+                                              long seed) {
+        JsonObject o = new JsonObject();
+        o.addProperty("topology", spec.topology().name());
+        JsonArray nodes = new JsonArray();
+        for (NetworkNode n : spec.nodes()) {
+            JsonObject jn = new JsonObject();
+            jn.addProperty("id", n.id());
+            jn.addProperty("kind", n.kind().name());
+            jn.add("pos", posJson(n.pos()));
+            nodes.add(jn);
+        }
+        o.add("nodes", nodes);
+
+        PrimitiveContext pctx = PrimitiveContext.basic(level, seed);
+        JsonArray edges = new JsonArray();
+        for (NetworkEdge e : spec.edges()) {
+            JsonObject je = new JsonObject();
+            je.addProperty("id", e.id());
+            je.addProperty("from", e.fromNodeId());
+            je.addProperty("to",   e.toNodeId());
+            je.addProperty("primitive", e.primitive().typeKey());
+            je.addProperty("width", e.width());
+            // Centerline preview (downsampled to 1 sample per 2
+            // blocks) for visualizer parity with spinePathPrimitives.
+            je.add("primitive_raw", roadPrimitiveJson(e.primitive(), pctx));
+            edges.add(je);
+        }
+        o.add("edges", edges);
+
+        JsonArray bindings = new JsonArray();
+        for (PrimaryBinding pb : spec.primaryBindings()) {
+            JsonObject jb = new JsonObject();
+            jb.addProperty("type", pb.type().name());
+            jb.add("position", posJson(pb.position()));
+            jb.addProperty("anchorId", pb.anchorId());
+            jb.addProperty("reason", pb.reason());
+            bindings.add(jb);
+        }
+        o.add("primaryBindings", bindings);
         return o;
     }
 
