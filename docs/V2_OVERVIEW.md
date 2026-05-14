@@ -172,6 +172,38 @@ fields still parse v4 dumps without error. Note: `roads.skeleton
 content — the network grower may emit any RoadPrimitive type
 into the derived spine path (Ring, Spur, ArmApproach, …).
 
+### v4 additions (Track E1 prompt-4 — secondary placement)
+
+- New `siteContext.strategy.nucleusRules` object — echo of the
+  strategy's nucleus configuration: `civicNucleus` (and optional
+  `resourceNucleus` / `sacredNucleus`) as `{kind, anchorId?,
+  buildingType?}` refs; `ruralNucleusTypes[]` building-type names;
+  per-building `affinities` (each `{preferred, weight,
+  idealDistance, maxDistance, fallback?}`); per-pair
+  `penalties[]` (`{a, b, minDistance, penaltyWeight}`).
+- New per-placed-building `nucleusContext` object:
+  `{primaryNucleusKind, primaryNucleusAnchorId?,
+  primaryNucleusBuildingType?, distanceToPrimaryNucleus}`.
+  Indicates which nucleus pulled the placement. Absent when the
+  building had no matching affinity (placed by base terrain
+  residual only).
+
+**Per-inclination default nucleus rules** (applied when a strategy
+passes `null` for its `nucleusRules`):
+| Inclination | Civic nucleus | Rural nuclei | HOUSE pull | Penalties |
+|-------------|---------------|--------------|------------|-----------|
+| AGRICULTURAL | primary anchor | `{FARMHOUSE}` | RURAL (12, 30) → CIVIC fallback | HOUSE↔BLACKSMITH min 8 |
+| RESIDENTIAL  | primary anchor | — | CIVIC (8, 25) | — |
+| CIVIC        | primary anchor | — | CIVIC (18, 35) | HOUSE↔BLACKSMITH min 6; CHAPEL↔BLACKSMITH min 12 |
+| INDUSTRIAL   | primary anchor | — | CIVIC (10, 28) | HOUSE↔MINE min 20 |
+| SACRED       | primary anchor | — | SACRED (18, 36) | CHAPEL↔BLACKSMITH min 15; SHRINE↔* min 8 |
+| DEFENSIVE    | primary anchor | — | GATEWAY (6, 18) → CIVIC fallback | HOUSE↔TOWN_HALL min 12 |
+
+The placer scores each cell as
+`terrain + adjacency + spatial_fit + binding_affinity`, where
+`spatial_fit` =
+`0.70 × nucleus_score + 0.15 × road_bonus − 0.30 × proximity_penalty`.
+
 ### v4 additions (Track E1 prompt-3 — network grower)
 
 - New `siteContext.network` object — the road-network spec

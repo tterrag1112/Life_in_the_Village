@@ -155,7 +155,7 @@ public final class V2VillageSpawnerAdapter {
             // with later abort branches.
             tryAutoDump(level, origin, villageName, null, culture,
                     fmap, siteCtx, null, null, null, null, null,
-                    realizationLog);
+                    java.util.List.of(), realizationLog);
             return Optional.empty();
         }
 
@@ -190,7 +190,7 @@ public final class V2VillageSpawnerAdapter {
                     + " viable=" + placement.villageViable() + ")");
             tryAutoDump(level, origin, villageName, null, culture,
                     fmap, siteCtx, sel, recon, placement, roads, phased.events(),
-                    realizationLog);
+                    phased.nucleusContexts(), realizationLog);
             return Optional.empty();
         }
 
@@ -203,7 +203,7 @@ public final class V2VillageSpawnerAdapter {
             realizationLog.markAborted("overlap audit fatal");
             tryAutoDump(level, origin, villageName, null, culture,
                     fmap, siteCtx, sel, recon, placement, roads, phased.events(),
-                    realizationLog);
+                    phased.nucleusContexts(), realizationLog);
             return Optional.empty();
         }
 
@@ -236,7 +236,7 @@ public final class V2VillageSpawnerAdapter {
                     + String.join("; ", check.failureReasons()));
             tryAutoDump(level, origin, villageName, null, culture,
                     fmap, siteCtx, sel, recon, postTerrain, roads, phased.events(),
-                    realizationLog);
+                    phased.nucleusContexts(), realizationLog);
             return Optional.empty();
         }
 
@@ -425,7 +425,7 @@ public final class V2VillageSpawnerAdapter {
                     village != null && village.getId() != null
                             ? village.getId().toString() : null,
                     culture, fmap, siteCtx, sel, recon, placement, roads,
-                    phased.events(), realizationLog);
+                    phased.events(), phased.nucleusContexts(), realizationLog);
             return Optional.empty();
         }
         data.setDirty();
@@ -475,7 +475,7 @@ public final class V2VillageSpawnerAdapter {
         tryAutoDump(level, origin, villageName,
                 village.getId() != null ? village.getId().toString() : null,
                 culture, fmap, siteCtx, sel, recon, placement, roads,
-                phased.events(), realizationLog);
+                phased.events(), phased.nucleusContexts(), realizationLog);
         return Optional.of(village);
     }
 
@@ -490,13 +490,14 @@ public final class V2VillageSpawnerAdapter {
             ReconciliationEngine.ReconciliationResult recon,
             PlacementResult placement, RoadNetwork roads,
             java.util.List<PhasedPlanner.PhaseEvent> events,
+            java.util.List<PhasedPlanner.NucleusContext> nucleusContexts,
             RealizationLog log) {
         if (!AutoDumpConfig.isEnabled()) return;
         try {
             long tick = level.getGameTime();
             var json = LayoutDumpSerializer.serializeAuto(level, origin, tick,
                     villageName, villageId, culture, fmap, siteCtx, sel, recon,
-                    placement, roads, events, log);
+                    placement, roads, events, nucleusContexts, log);
             String slug = villageName != null ? villageName
                     : ("auto_" + origin.getX() + "_" + origin.getZ());
             // Track E1 anchor detection — INFO summary of anchor counts.

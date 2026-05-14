@@ -6532,3 +6532,66 @@ ANGERDORF / RUNDLING / EINZELHOF / CLUSTER).
 - Skills updates.
 - Multi-village network spans — each village's network is
   self-contained.
+
+---
+
+## Track E1 prompt 4 — V2 secondary placement (2026-05-14)
+
+Fourth of five layout-rework prompts. Replaces V2's frontage-
+distance scoring with nucleus-proximity scoring so building
+placement reflects each strategy's intended cluster pattern
+(AGRICULTURAL RURAL-around-FARMHOUSE, CIVIC core + ring-outside
+HOUSE, INDUSTRIAL workshop-near-resource, SACRED quiet-zone,
+DEFENSIVE settlement-at-gates).
+
+#### Road-system perspective (what changed)
+
+- The hard frontage-distance cutoff in
+  `PhasedPlanner.findBestCandidate` is replaced with a soft
+  maximum at `villageRadius × 2.0`. Cells beyond this from every
+  network edge are still filtered out, but cells previously
+  rejected (cell-to-road > footprint-length-derived
+  frontageDistance) are now eligible. The building's geometry
+  still places it road-adjacent — the larger candidate pool plus
+  nucleus-proximity scoring is what drives cluster shaping.
+- Road frontage is now a SECONDARY scoring signal: a linear-ramp
+  bonus from 1 (at d=0) to 0 (at d=`ROAD_BONUS_RADIUS=6`). The
+  primary signal is nucleus proximity. Sketch of the final cell
+  score:
+  ```
+  spatial_fit = 0.70 × nucleus_score
+              + 0.15 × road_bonus
+              − 0.30 × proximity_penalty
+  ```
+- `RoadPainter` / `Skeleton` / `NetworkPlanner` are unchanged.
+  The network grown by prompt 3 is the same; only how buildings
+  attach to it has shifted.
+- `getBatch(ctx, type)` orders placement as 7 passes over
+  `sortedSelection`: primary bindings → rural nucleus →
+  civic core → resource core → HOUSE → decorative → farm plots
+  (farm plots deferred to FarmSectorPlanner's per-farmhouse
+  invocation in Layer 5).
+
+#### Invariants honoured
+
+- No abstract method renames. RoadPrimitive permits clause
+  unchanged. Skeleton / SpineSegment / RoadSegment shapes
+  unchanged.
+- Extended `LayoutStrategy` via record secondary constructor
+  (8-arg back-compat); zero registry call-site changes for
+  strategies that inherit inclination defaults.
+- Planning-layer correctness over realiser heroics — the score
+  rewrite, batch reordering, and frontage relaxation all live
+  in Layer 4. Layer 5 painting is untouched.
+
+#### Out of scope (deferred to prompt 5)
+
+- Composition rebalance / realistic tier counts.
+- Stairway paint (still deferred from prompt 3).
+- Per-culture nucleus rules.
+
+#### Out of scope (always)
+
+- Visualizer (defer until layout stabilises).
+- Skills updates.
+- Cross-village clustering / traffic-density gateway model.

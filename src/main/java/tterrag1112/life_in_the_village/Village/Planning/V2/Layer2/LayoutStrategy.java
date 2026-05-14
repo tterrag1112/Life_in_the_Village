@@ -10,7 +10,8 @@ import java.util.Set;
  * <p>A strategy is pure data: an id, the inclination it serves,
  * its village {@link LayoutTopology} (glumbosch form), anchor
  * preferences, the road-primitive set it intends to use, per-
- * building anchor-type bindings, and pre-scoring conditions.
+ * building anchor-type bindings, pre-scoring conditions, and
+ * (Track E1 prompt-4) nucleus rules for building distribution.
  *
  * <h3>Extensibility</h3>
  * Adding a new strategy is a one-entry registration in
@@ -31,7 +32,8 @@ import java.util.Set;
  *         BuildingType.TOWN_HALL, List.of(AnchorType.FLAT_FERTILE),
  *         BuildingType.FARMHOUSE, List.of(AnchorType.FLAT_FERTILE))),
  *     new StrategyConditions(ViabilityTier.HAMLET, ViabilityTier.TOWN, Set.of()),
- *     "Hillside-terraced agricultural village"
+ *     "Hillside-terraced agricultural village",
+ *     null  // inherit inclination-default nucleus rules
  * ));
  * }</pre>
  *
@@ -61,6 +63,12 @@ import java.util.Set;
  *      Pre-scoring filter (tier band + anchor incompatibilities).
  * @param description
  *      Human-readable one-liner; surfaces in selection-log lines.
+ * @param nucleusRules
+ *      Track E1 prompt-4 — per-strategy nucleus configuration. Pass
+ *      {@code null} to inherit the inclination default from
+ *      {@link NucleusRules#forInclination(Inclination, LayoutTopology)}.
+ *      Strategies with unusual placement needs (isolated SACRED
+ *      HAMLET, defensive einzelhof) supply explicit rules.
  */
 public record LayoutStrategy(
         String id,
@@ -70,7 +78,8 @@ public record LayoutStrategy(
         Set<String> primitives,
         BuildingBindings bindings,
         StrategyConditions conditions,
-        String description) {
+        String description,
+        NucleusRules nucleusRules) {
 
     public LayoutStrategy {
         if (id == null || id.isBlank()) {
@@ -87,5 +96,21 @@ public record LayoutStrategy(
         if (conditions == null)  conditions  = StrategyConditions.any();
         primitives = primitives == null ? Set.of() : Set.copyOf(primitives);
         if (description == null) description = "";
+        if (nucleusRules == null) {
+            nucleusRules = NucleusRules.forInclination(inclination, topology);
+        }
+    }
+
+    /** Backwards-compat 8-arg constructor for registry call sites
+     *  that don't supply explicit nucleus rules. Delegates to the
+     *  canonical 9-arg with {@code null} so the compact
+     *  constructor falls back to
+     *  {@link NucleusRules#forInclination(Inclination, LayoutTopology)}. */
+    public LayoutStrategy(String id, Inclination inclination,
+                          LayoutTopology topology, AnchorPreferences anchorPrefs,
+                          Set<String> primitives, BuildingBindings bindings,
+                          StrategyConditions conditions, String description) {
+        this(id, inclination, topology, anchorPrefs, primitives, bindings,
+                conditions, description, null);
     }
 }

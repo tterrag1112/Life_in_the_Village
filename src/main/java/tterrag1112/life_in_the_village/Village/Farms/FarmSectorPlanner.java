@@ -76,22 +76,28 @@ public final class FarmSectorPlanner {
     private FarmSectorPlanner() {}
 
     /**
-     * Plans a {@link FarmSector} (zero or one per village in B2.5)
-     * plus the {@link FarmPlot}s allocated to each farmhouse.
-     * Persists both into {@code data}; the renderer + FarmerGoal
-     * read from {@code VillageSavedData} downstream.
+     * Plans one {@link FarmSector} per farmhouse and writes the
+     * resulting sectors + plots into {@code data}.
+     *
+     * <p>Track E1 prompt-4 — was single-sector per village (one
+     * centroid). Now seeds a sector at each FARMHOUSE so AGRICULTURAL
+     * villages with multiple farmhouses get individually-visible
+     * plot rings around each farmhouse instead of one big shared
+     * polygon. Adjacent sectors don't double-plot: each iteration
+     * adds previously-emitted sector polygons to the obstacle set
+     * for the next farmhouse's centre search.
      */
-    public static FarmSector plan(V2FeatureMap fmap,
-                                  Collection<Building> placedBuildings,
-                                  Collection<GardenPlot> reservedParks,
-                                  Culture culture,
-                                  Inclination inclination,
-                                  VillageSizeTier tier,
-                                  UUID villageId,
-                                  long seed,
-                                  long createdTick,
-                                  VillageSavedData data) {
-        if (fmap == null || tier == null || data == null) return null;
+    public static List<FarmSector> plan(V2FeatureMap fmap,
+                                        Collection<Building> placedBuildings,
+                                        Collection<GardenPlot> reservedParks,
+                                        Culture culture,
+                                        Inclination inclination,
+                                        VillageSizeTier tier,
+                                        UUID villageId,
+                                        long seed,
+                                        long createdTick,
+                                        VillageSavedData data) {
+        if (fmap == null || tier == null || data == null) return List.of();
         // B2.8 — gate purely on farmhouse count, not inclination. A
         // RESIDENTIAL or CIVIC village that ended up with farmhouses
         // (V2 selection allows this for various reasons) still needs
@@ -100,47 +106,75 @@ public final class FarmSectorPlanner {
         List<Building> farmhouses = collectFarmhouses(placedBuildings);
         if (farmhouses.isEmpty()) {
             LOGGER.debug("FarmSectorPlanner: village {} has no farmhouses; skipping", villageId);
-            return null;
+            return List.of();
         }
 
         Random rng = new Random(seed ^ FARM_RNG_SALT);
-
         int radius = tierRadius(tier, priorityOf(culture));
 
-        // Pick a sector centre — best arable cell within reach of
-        // the farmhouse cluster, masked against buildings + parks.
-        BlockPos farmhouseCentre = centroid(farmhouses);
-        BlockPos sectorCentre = pickArableCentre(
-                fmap, farmhouseCentre, placedBuildings, reservedParks, radius);
+        List<FarmSector> sectors = new ArrayList<>();
+        List<Polygon> emittedSectorBounds = new ArrayList<>();
+        int totalPlots = 0;
+        for (int i = 0; i < farmhouses.size(); i++) {
+            Building fh = farmhouses.get(i);
+            FarmSector sector = planSingleSector(fmap, fh, placedBuildings,
+                    reservedParks, emittedSectorBounds, culture, tier,
+                    villageId, i, radius, rng, createdTick, data);
+            if (sector != null) {
+                sectors.add(sector);
+                emittedSectorBounds.add(sector.bounds());
+                totalPlots += sector.plotIds().size();
+            }
+        }
+        LOGGER.info("FarmSectorPlanner: village {} emitted {} sectors "
+                + "({} plots across {} farmhouses)",
+                villageId, sectors.size(), totalPlots, farmhouses.size());
+        return sectors;
+    }
+
+    /** Track E1 prompt-4 — single-farmhouse sector + plots.
+     *  Each call picks an arable centre near {@code farmhouse},
+     *  builds the sector polygon (avoiding already-placed buildings,
+     *  parks, and any prior-iteration sector polygons), allocates
+     *  per-tier plots, and writes the sector + plots to
+     *  {@code data}. */
+    private static FarmSector planSingleSector(V2FeatureMap fmap,
+                                               Building farmhouse,
+                                               Collection<Building> placedBuildings,
+                                               Collection<GardenPlot> reservedParks,
+                                               List<Polygon> emittedSectorBounds,
+                                               Culture culture,
+                                               VillageSizeTier tier,
+                                               UUID villageId, int sectorIndex,
+                                               int radius, Random rng,
+                                               long createdTick,
+                                               VillageSavedData data) {
+        BlockPos seedPos = farmhouse.getShape().getOrigin();
+        BlockPos sectorCentre = pickArableCentreAvoiding(
+                fmap, seedPos, placedBuildings, reservedParks,
+                emittedSectorBounds, radius);
         if (sectorCentre == null) {
-            LOGGER.debug("FarmSectorPlanner: village {} no arable centre passed "
-                    + "threshold; skipping", villageId);
+            LOGGER.debug("FarmSectorPlanner: farmhouse {} (village {}) — "
+                    + "no arable centre passed threshold; skipping",
+                    farmhouse.getId(), villageId);
             return null;
         }
-
-        // Build the sector polygon — 4-vertex terrain-trimmed
-        // rectangle around the centre.
-        Polygon bounds = buildPolygon(fmap, sectorCentre, radius,
-                placedBuildings, reservedParks);
-
-        // Allocate plots within the polygon.
+        Polygon bounds = buildPolygonAvoiding(fmap, sectorCentre, radius,
+                placedBuildings, reservedParks, emittedSectorBounds);
         UUID sectorId = UUID.nameUUIDFromBytes(
-                ("farm-sector/" + villageId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                ("farm-sector/" + villageId + "/" + sectorIndex)
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         List<FarmPlot> plots = allocatePlots(
-                fmap, bounds, farmhouses, tier, culture, sectorId, rng);
+                fmap, bounds, List.of(farmhouse), tier, culture, sectorId, rng);
         for (FarmPlot p : plots) data.addFarmPlot(p);
 
         FarmSector sector = new FarmSector(
                 sectorId, villageId, bounds,
                 plots.stream().map(FarmPlot::getId).toList(),
-                farmhouses.stream().map(Building::getId).toList(),
-                List.of(),  // tool shed positions filled by renderer
+                List.of(farmhouse.getId()),
+                List.of(),
                 createdTick);
         data.addFarmSector(sector);
-
-        LOGGER.info("FarmSectorPlanner: village {} reserved sector {} "
-                + "(radius={}, {} plots across {} farmhouses)",
-                villageId, sectorId, radius, plots.size(), farmhouses.size());
         return sector;
     }
 
@@ -190,29 +224,25 @@ public final class FarmSectorPlanner {
         return out;
     }
 
-    private static BlockPos centroid(List<Building> farmhouses) {
-        long sumX = 0, sumZ = 0;
-        for (Building b : farmhouses) {
-            BlockPos p = b.getShape().getOrigin();
-            sumX += p.getX();
-            sumZ += p.getZ();
-        }
-        int n = farmhouses.size();
-        return new BlockPos((int) (sumX / n), 0, (int) (sumZ / n));
-    }
+    // Track E1 prompt-4 — the centroid() helper from the pre-prompt-4
+    // single-sector model is no longer needed; each farmhouse seeds
+    // its own sector centre directly via planSingleSector.
 
     // ── Centre selection ───────────────────────────────────────────────
 
-    /** Walks cells outward from {@code farmhouseCentre}, scoring each
-     *  for arable suitability while skipping cells inside (or
-     *  obstacle-buffered around) buildings and parks. Returns the
-     *  highest-scoring cell within {@code 2 × radius} of the
-     *  farmhouse centroid, or null on miss. */
-    private static BlockPos pickArableCentre(V2FeatureMap fmap,
-                                             BlockPos farmhouseCentre,
-                                             Collection<Building> buildings,
-                                             Collection<GardenPlot> parks,
-                                             int radius) {
+    /** Track E1 prompt-4 — single-farmhouse arable-centre picker.
+     *  Walks cells outward from {@code farmhouseCentre}, scoring
+     *  each for arable suitability while skipping cells inside
+     *  buildings, parks, or any of the previously-emitted sector
+     *  polygons {@code avoidPolygons}. Returns the highest-scoring
+     *  cell within {@code 2 × radius} of the farmhouse, or null
+     *  on miss. */
+    private static BlockPos pickArableCentreAvoiding(V2FeatureMap fmap,
+                                                     BlockPos farmhouseCentre,
+                                                     Collection<Building> buildings,
+                                                     Collection<GardenPlot> parks,
+                                                     List<Polygon> avoidPolygons,
+                                                     int radius) {
         BlockPos best = null;
         double bestScore = ARABLE_THRESHOLD;
         int searchRadius = radius * 2;
@@ -223,6 +253,7 @@ public final class FarmSectorPlanner {
                 int z = farmhouseCentre.getZ() + dz;
                 if (!fmap.inBounds(x, z)) continue;
                 if (insideObstacle(x, z, buildings, parks)) continue;
+                if (insideAnyPolygon(x, z, avoidPolygons)) continue;
                 Cell c = fmap.cellAt(x, z);
                 double score = arableScore(c, fmap.cellSize());
                 if (score > bestScore) {
@@ -232,6 +263,18 @@ public final class FarmSectorPlanner {
             }
         }
         return best;
+    }
+
+    /** True iff {@code (x, z)} lies inside any of the supplied
+     *  polygons. */
+    private static boolean insideAnyPolygon(int x, int z,
+                                            List<Polygon> polygons) {
+        if (polygons == null || polygons.isEmpty()) return false;
+        BlockPos probe = new BlockPos(x, 0, z);
+        for (Polygon p : polygons) {
+            if (Polygon.contains(p, probe)) return true;
+        }
+        return false;
     }
 
     /** Composite arable score: rewards OPEN cells with low slope and
@@ -270,10 +313,14 @@ public final class FarmSectorPlanner {
 
     // ── Polygon construction ───────────────────────────────────────────
 
-    private static Polygon buildPolygon(V2FeatureMap fmap, BlockPos centre,
-                                        int radius,
-                                        Collection<Building> buildings,
-                                        Collection<GardenPlot> parks) {
+    /** Track E1 prompt-4 — polygon construction with additional
+     *  "avoid these polygons" parameter so adjacent sector polygons
+     *  don't overlap. */
+    private static Polygon buildPolygonAvoiding(V2FeatureMap fmap, BlockPos centre,
+                                                int radius,
+                                                Collection<Building> buildings,
+                                                Collection<GardenPlot> parks,
+                                                List<Polygon> avoidPolygons) {
         // Start with a square; trim each corner inward if it lands on
         // an obstacle or steep slope. This produces simple 4-vertex
         // terrain-trimmed rectangles per the user direction.
@@ -287,6 +334,7 @@ public final class FarmSectorPlanner {
             // valid arable terrain.
             int attempts = 0;
             while ((insideObstacle(cx, cz, buildings, parks)
+                    || insideAnyPolygon(cx, cz, avoidPolygons)
                     || !cellOk(fmap, cx, cz)) && attempts < radius) {
                 cx -= cornerOffsetsX[i] / Math.max(1, radius);
                 cz -= cornerOffsetsZ[i] / Math.max(1, radius);

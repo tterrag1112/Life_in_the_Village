@@ -18,7 +18,15 @@ import tterrag1112.life_in_the_village.Village.Planning.StructureSizeCache;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Cell;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Anchor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkNode;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NodeKind;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusAffinity;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusKind;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusRef;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusRules;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ProximityPenalty;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
@@ -152,21 +160,39 @@ public final class PhasedPlanner {
         // from state.placed (Phase 3 hasn't run yet).
         planCrossStreetsProactively(state, sortedSelection, foundationTypes);
 
-        // Phase 3 — foundation placement. Skeleton already has the
-        // spine + cross-streets, so corridor-rejection in
-        // findBestCandidate keeps foundation buildings clear of
-        // junctions.
-        for (BuildingType type : sortedSelection) {
-            if (foundationTypes.contains(type)) placeOne(state, type, /*foundation*/ true);
+        // Track E1 prompt-4 — seven-batch placement order. The seven
+        // batches run in sequence so each subsequent pass can read the
+        // already-placed nuclei (rural farmhouses, civic core, resource
+        // core). Within each pass, the existing topo-sorted order is
+        // preserved so dependencies still resolve correctly.
+        //
+        //   1 — primary bindings (lead types at strategy-bound anchors)
+        //   2 — rural nucleus  (FARMHOUSE for AGRICULTURAL)
+        //   3 — civic core     (TOWN_HALL, MARKET, INN, BAKERY, CHAPEL,
+        //                       BLACKSMITH near civic nucleus)
+        //   4 — resource core  (MINE, WOODCUTTER and their workshops)
+        //   5 — HOUSE distribution (the bulk; reads all prior nuclei)
+        //   6 — decorative / small (STOCKPILE, WELL, etc.)
+        //   7 — farm plots (deferred; FarmSectorPlanner in Layer 5)
+        //
+        // Batches 1 + 2 are flagged as "foundation" for cell-scoring
+        // purposes so they can land off-road if a strong nucleus pull
+        // exists. Batch 7 runs post-spawn in Layer 5 and isn't a
+        // PhasedPlanner concern.
+        int[] perBatchCounts = new int[8];
+        for (int batch = 1; batch <= 6; batch++) {
+            for (BuildingType type : sortedSelection) {
+                if (getBatch(state.ctx, type) != batch) continue;
+                boolean foundation = (batch == 1 || batch == 2)
+                        || foundationTypes.contains(type);
+                if (placeOne(state, type, foundation)) perBatchCounts[batch]++;
+            }
         }
-
-        // Phase 4b — iterative placement. Single-shot, no insertion,
-        // no retry. Buildings either fit on the planned skeleton or
-        // drop.
-        for (BuildingType type : sortedSelection) {
-            if (foundationTypes.contains(type)) continue;
-            placeOne(state, type, /*foundation*/ false);
-        }
+        LOGGER.info("placement: {} primary, {} rural, {} civic, {} resource,"
+                + " {} houses, {} decorative; drops {}",
+                perBatchCounts[1], perBatchCounts[2], perBatchCounts[3],
+                perBatchCounts[4], perBatchCounts[5], perBatchCounts[6],
+                state.dropped.size());
 
         // Phase 5.
         reassess(state);
@@ -191,7 +217,8 @@ public final class PhasedPlanner {
                 state.placed.size(), state.dropped.size(),
                 state.skeleton.crossStreets().size(), state.viable);
 
-        return new Result(placement, network, List.copyOf(state.events));
+        return new Result(placement, network, List.copyOf(state.events),
+                List.copyOf(state.nucleusContexts));
     }
 
     // =========================================================================
@@ -531,6 +558,14 @@ public final class PhasedPlanner {
         state.placed.add(pb);
         state.reservations.add(new Reservation(best.footprintAabb,
                 best.frontageAabb, best.adjunctAabb, type));
+        // Track E1 prompt-4 — capture the dominant nucleus context
+        // for the dump's per-building attribution. Recomputes
+        // SpatialFit at the chosen cell so the visualizer can show
+        // "this HOUSE was pulled by farmhouse@a3" / "this BLACKSMITH
+        // was pulled by the RESOURCE primary anchor."
+        NucleusContext nucCtx = computeSpatialFit(
+                best.pos, type, profile, state).context();
+        state.nucleusContexts.add(nucCtx);
         state.events.add(PhaseEvent.placed(type, foundation, best.score));
         LOGGER.info("placed {}: phase={} centre=({},{},{}) variant={} fp={}x{} rot={}"
                 + " score={} (terrain={} adjacency={} centrality={}){}",
@@ -587,11 +622,18 @@ public final class PhasedPlanner {
                 // a side reliably; skip.
                 if (nr.distance < 1) continue;
 
-                // Frontage distance check: does the cell sit within the
-                // building's frontage_distance of the road segment?
+                // Track E1 prompt-4 — relax the hard frontage cutoff
+                // to a soft maximum. Cells previously rejected
+                // (cell-to-road > frontageDistance) are now eligible
+                // when within {@code villageRadius * FRONTAGE_SOFT_MAX_RATIO}
+                // of any road. The nucleus-proximity score picks which
+                // of those cells wins; road frontage is a bonus rather
+                // than the primary signal.
                 int fpPerp = fp.length();
                 int frontageDistance = (nr.segment.width() + 1) / 2 + (fpPerp + 1) / 2;
-                if (nr.distance > frontageDistance) continue;
+                double softMax = Math.max(frontageDistance,
+                        state.villageRadius * FRONTAGE_SOFT_MAX_RATIO);
+                if (nr.distance > softMax) continue;
 
                 Rotation rotation = chooseFacing(pos, nr.point);
                 Vec3 frontDir = cardinalFrontDir(rotation);
@@ -919,7 +961,11 @@ public final class PhasedPlanner {
             // Try to rescue with a road_width-cap straight connector.
             // A successful rescue inserts a degenerate CrossStreet.
             // (V1: this branch is rarely exercised; left as defensive.)
+            int idx = state.placed.indexOf(pb);
             state.placed.remove(pb);
+            if (idx >= 0 && idx < state.nucleusContexts.size()) {
+                state.nucleusContexts.remove(idx);
+            }
             state.dropped.add(new DroppedBuilding(pb.type(),
                     DropReason.ISOLATED_AFTER_REASSESS,
                     "frontage road no longer in connected skeleton"));
@@ -1000,15 +1046,18 @@ public final class PhasedPlanner {
                     state.ctx, state.placed, state.skeleton.spineSegments(),
                     state.villageRadius);
         }
-        double dist = distance(pos, state.ctx.anchor());
-        double radial = 1.0 - Math.min(1.0, dist / Math.max(1, state.villageRadius));
-        double centrality = Math.max(0, 1 - Math.abs(profile.centrality() - radial));
-        // Track E1 prompt-3 — primary-binding affinity. If the
-        // strategy bound this building type to an anchor, cells
-        // within BINDING_AFFINITY_RADIUS of the anchor's centre get
-        // a strong centrality boost so placement gravitates toward
-        // the bound position. Cells outside that radius are
-        // unaffected.
+        // Track E1 prompt-4 — replace the old radial-centrality with
+        // nucleus proximity + road frontage bonus - proximity penalty.
+        // The combined value still lives in the {@code centrality}
+        // field so the existing ScoreBreakdown shape stays compatible;
+        // its semantic is now "spatial fit." Per-building nucleus
+        // attribution lives on State.nucleusContexts for the dump.
+        double centrality = computeSpatialFit(pos, type, profile, state).score;
+
+        // Track E1 prompt-3 — primary-binding affinity. Lead types
+        // bound to a strategy anchor get a strong pull toward that
+        // position; the binding wins ties even when the building's
+        // nucleus affinity disagrees.
         if (state.ctx.network() != null) {
             for (var pb : state.ctx.network().primaryBindings()) {
                 if (pb.type() != type) continue;
@@ -1017,7 +1066,7 @@ public final class PhasedPlanner {
                     double affinity = 1.0 - d / BINDING_AFFINITY_RADIUS;
                     centrality += affinity * BINDING_AFFINITY_WEIGHT;
                 }
-                break;  // one binding per type
+                break;
             }
         }
         return new ScoreBreakdown(terrain, adjacency, centrality);
@@ -1035,6 +1084,227 @@ public final class PhasedPlanner {
     private static final double BINDING_AFFINITY_WEIGHT = 2.0;
 
     // =========================================================================
+    // Track E1 prompt-4 — nucleus-proximity scoring
+    // =========================================================================
+
+    /** Magnitude scalars for the spatial-fit composition. base
+     *  terrain remains its existing 0..1; nucleus / road / penalty
+     *  weights here govern how much each pulls relative to the others.
+     *  Calibration matches the prompt's sketch: nucleus dominates at
+     *  ~0..0.7, road bonus contributes 0..0.15, penalty 0..-0.3. */
+    private static final double NUCLEUS_SCORE_WEIGHT  = 0.70;
+    private static final double ROAD_BONUS_WEIGHT     = 0.15;
+    private static final double PENALTY_WEIGHT        = 0.30;
+    /** Width of the road-frontage bonus falloff (blocks). */
+    private static final double ROAD_BONUS_RADIUS     = 6.0;
+    /** Per-building soft maximum distance from any network edge.
+     *  Cells beyond this from every edge are filtered out in
+     *  {@code findBestCandidate}. Scales with village radius so
+     *  bigger villages allow buildings farther off-road. */
+    static final double FRONTAGE_SOFT_MAX_RATIO       = 2.0;
+
+    /** Spatial-fit summary for one (cell, type) pair: combined score
+     *  plus the dominant nucleus context (for the dump). */
+    private record SpatialFit(double score, NucleusContext context) {}
+
+    /** Nucleus attribution for a placed building — which kind of
+     *  nucleus pulled the placement, and (when resolvable) which
+     *  specific anchor or building instance was the strongest pull. */
+    public record NucleusContext(NucleusKind kind, String anchorId,
+                                  BuildingType buildingType, double distance) {}
+
+    /** Compute spatial fit for the cell+type. Inspects the strategy's
+     *  nucleus rules, evaluates each affinity (with single-level
+     *  fallback), adds a small road-frontage bonus, subtracts any
+     *  proximity penalty, and returns the dominant nucleus context
+     *  for debug attribution. */
+    private static SpatialFit computeSpatialFit(BlockPos pos, BuildingType type,
+                                                PlacementProfile profile, State state) {
+        NucleusRules rules = nucleusRulesOf(state);
+        double nucleus = 0;
+        NucleusContext context = null;
+
+        if (rules != null && rules.affinities().containsKey(type)) {
+            NucleusAffinity aff = rules.affinities().get(type);
+            NucleusEval primary = evalAffinity(pos, type, aff, rules, state);
+            if (primary != null) {
+                nucleus += primary.score;
+                context = primary.context;
+            } else if (aff.fallback() != null) {
+                NucleusEval fb = evalAffinity(pos, type, aff.fallback(), rules, state);
+                if (fb != null) {
+                    nucleus += fb.score;
+                    context = fb.context;
+                }
+            }
+        }
+        if (context == null) {
+            // Residual centrality from the pre-prompt-4 model so
+            // un-affined buildings still place reasonably.
+            double dist = distance(pos, state.ctx.anchor());
+            double radial = 1.0 - Math.min(1.0, dist / Math.max(1, state.villageRadius));
+            nucleus = Math.max(0, 1 - Math.abs(profile.centrality() - radial)) * 0.3;
+        }
+
+        double roadBonus = computeRoadBonus(pos, state);
+        double penalty = computePenalty(pos, type, state);
+
+        double score = nucleus * NUCLEUS_SCORE_WEIGHT
+                + roadBonus * ROAD_BONUS_WEIGHT
+                - penalty * PENALTY_WEIGHT;
+        return new SpatialFit(score, context);
+    }
+
+    /** Strategy's nucleusRules, or null when no strategy is selected. */
+    private static NucleusRules nucleusRulesOf(State state) {
+        if (state.ctx.strategy() == null
+                || state.ctx.strategy().strategy() == null) return null;
+        return state.ctx.strategy().strategy().nucleusRules();
+    }
+
+    /** Walks nuclei of the affinity's preferred kind, picks the one
+     *  yielding the highest triangle-curve score. Returns null when
+     *  no nucleus of that kind exists. */
+    private static NucleusEval evalAffinity(BlockPos pos, BuildingType type,
+                                            NucleusAffinity aff, NucleusRules rules,
+                                            State state) {
+        List<NucleusInstance> nuclei = enumerateNuclei(aff.preferred(), rules, state);
+        if (nuclei.isEmpty()) return null;
+        double bestScore = 0;
+        NucleusContext bestContext = null;
+        for (NucleusInstance n : nuclei) {
+            double d = distance(pos, n.pos);
+            if (d >= aff.maxDistance()) continue;
+            double curve = triangleScore(d, aff.idealDistance(), aff.maxDistance());
+            double s = aff.weight() * curve;
+            if (s > bestScore) {
+                bestScore = s;
+                bestContext = new NucleusContext(aff.preferred(),
+                        n.anchorId, n.buildingType, d);
+            }
+        }
+        return bestContext == null ? null : new NucleusEval(bestScore, bestContext);
+    }
+
+    /** Triangle curve: 1 at d=idealDistance, linear ramp to 0 at d=0
+     *  and d=maxDistance. Degenerate when idealDistance == 0 to a
+     *  single descending ramp from 1 (at d=0) to 0 (at d=maxDistance). */
+    private static double triangleScore(double d, double ideal, double max) {
+        if (max <= 0) return 0;
+        if (ideal <= 0) return Math.max(0, 1 - d / max);
+        if (d <= ideal) return d / ideal;
+        return Math.max(0, 1 - (d - ideal) / Math.max(1, max - ideal));
+    }
+
+    /** Enumerate every nucleus of the given kind currently in scope.
+     *  CIVIC / SACRED / RESOURCE: read from {@code rules.*Nucleus}
+     *  refs against the strategy's anchors; RURAL: every placed
+     *  building whose type is in {@code rules.ruralNucleusTypes};
+     *  GATEWAY: every GATEWAY {@link NetworkNode} from the network. */
+    private static List<NucleusInstance> enumerateNuclei(NucleusKind kind,
+                                                         NucleusRules rules,
+                                                         State state) {
+        List<NucleusInstance> out = new ArrayList<>();
+        switch (kind) {
+            case CIVIC -> addRefAsNucleus(out, rules.civicNucleus(), state);
+            case SACRED -> {
+                NucleusRef r = rules.sacredNucleus();
+                if (r != null) addRefAsNucleus(out, r, state);
+                else addRefAsNucleus(out, rules.civicNucleus(), state);
+            }
+            case RESOURCE -> {
+                NucleusRef r = rules.resourceNucleus();
+                if (r != null) addRefAsNucleus(out, r, state);
+            }
+            case RURAL -> {
+                for (PlacedBuilding pb : state.placed) {
+                    if (rules.ruralNucleusTypes().contains(pb.type())) {
+                        out.add(new NucleusInstance(pb.centre(),
+                                /*anchorId*/ null, pb.type()));
+                    }
+                }
+            }
+            case GATEWAY -> {
+                if (state.ctx.network() == null) break;
+                for (NetworkNode n : state.ctx.network().nodes()) {
+                    if (n.kind() == NodeKind.GATEWAY) {
+                        out.add(new NucleusInstance(n.pos(), n.id(), null));
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Resolve a {@link NucleusRef} into one or more nucleus positions. */
+    private static void addRefAsNucleus(List<NucleusInstance> out,
+                                        NucleusRef ref, State state) {
+        if (ref == null) return;
+        if (ref instanceof NucleusRef.PrimaryAnchorRef) {
+            Anchor a = state.ctx.strategy() != null
+                    ? state.ctx.strategy().primaryAnchor() : null;
+            if (a != null) {
+                out.add(new NucleusInstance(a.centre(), a.id(), null));
+            } else {
+                // Fall back to ctx.anchor() — the analyzed anchor —
+                // when the strategy's primary anchor is null
+                // (cluster-fallback selection path).
+                out.add(new NucleusInstance(state.ctx.anchor(), null, null));
+            }
+        } else if (ref instanceof NucleusRef.AnchorRef ar) {
+            for (Anchor a : state.ctx.anchors()) {
+                if (a.id().equals(ar.anchorId())) {
+                    out.add(new NucleusInstance(a.centre(), a.id(), null));
+                    break;
+                }
+            }
+        } else if (ref instanceof NucleusRef.BuildingRef br) {
+            for (PlacedBuilding pb : state.placed) {
+                if (pb.type() == br.type()) {
+                    out.add(new NucleusInstance(pb.centre(), null, pb.type()));
+                }
+            }
+        }
+    }
+
+    /** Tight road-frontage bonus: linear ramp from 1 (at d=0) to 0
+     *  (at d=ROAD_BONUS_RADIUS). Bigger than the strict frontage
+     *  cutoff so cells one block off-road still register. */
+    private static double computeRoadBonus(BlockPos pos, State state) {
+        NearestRoad nr = nearestRoadOf(pos, state.skeleton.allSegments());
+        if (nr == null) return 0;
+        return Math.max(0, 1 - nr.distance / ROAD_BONUS_RADIUS);
+    }
+
+    /** Sum of penalty contributions from already-placed buildings
+     *  that fall under a {@link ProximityPenalty} rule with {@code type}.
+     *  Each violating pair contributes
+     *  {@code penaltyWeight * (1 - dist/minDistance)}. */
+    private static double computePenalty(BlockPos pos, BuildingType type, State state) {
+        NucleusRules rules = nucleusRulesOf(state);
+        if (rules == null || rules.penalties().isEmpty()) return 0;
+        double total = 0;
+        for (ProximityPenalty p : rules.penalties()) {
+            for (PlacedBuilding pb : state.placed) {
+                if (!p.matches(type, pb.type())) continue;
+                double d = distance(pos, pb.centre());
+                if (d >= p.minDistance()) continue;
+                total += p.penaltyWeight() * (1 - d / Math.max(1, p.minDistance()));
+            }
+        }
+        return total;
+    }
+
+    /** A nucleus's position and (optionally) the source anchor /
+     *  building-instance metadata used for dump attribution. */
+    private record NucleusInstance(BlockPos pos, String anchorId,
+                                   BuildingType buildingType) {}
+
+    /** Affinity-evaluation tuple: score contribution + which nucleus
+     *  yielded it. */
+    private record NucleusEval(double score, NucleusContext context) {}
+
+    // =========================================================================
     // Geometry helpers (footprint, frontage, rotation, segments)
     // =========================================================================
 
@@ -1046,6 +1316,51 @@ public final class PhasedPlanner {
             if (pp.required() || !pp.requiresAggregates().isEmpty()) out.add(t);
         }
         return out;
+    }
+
+    /** Track E1 prompt-4 — placement-batch classifier. Returns the
+     *  batch (1..7) the building type belongs to in the seven-pass
+     *  distribution. The classifier reads the strategy's nucleus
+     *  rules so a building's batch depends on the village's
+     *  inclination (HOUSE is batch 5 everywhere; FARMHOUSE is
+     *  batch 2 in AGRICULTURAL strategies but batch 5 otherwise). */
+    private static int getBatch(SiteContext ctx, BuildingType type) {
+        NucleusRules rules = ctx.network() != null
+                && ctx.strategy() != null
+                && ctx.strategy().strategy() != null
+                ? ctx.strategy().strategy().nucleusRules()
+                : null;
+
+        // Batch 1 — primary-bound lead types.
+        if (ctx.network() != null) {
+            for (var pb : ctx.network().primaryBindings()) {
+                if (pb.type() == type) return 1;
+            }
+        }
+        // Batch 2 — rural nucleus types per strategy (typically
+        // FARMHOUSE for AGRICULTURAL).
+        if (rules != null && rules.ruralNucleusTypes().contains(type)) return 2;
+        // Bulk-distributed HOUSE goes to batch 5 regardless of any
+        // CIVIC pull (HOUSE is "the rest of the village," not a
+        // core lead).
+        if (type == BuildingType.HOUSE) return 5;
+        // Decorative / small.
+        if (type == BuildingType.STOCKPILE
+                || type == BuildingType.WELL
+                || type == BuildingType.WAREHOUSE) return 6;
+        // Batch 3 vs 4: rules.affinities determines which.
+        // RESOURCE-preferring types go in batch 4; CIVIC / SACRED /
+        // GATEWAY-preferring types go in batch 3.
+        if (rules != null && rules.affinities().containsKey(type)) {
+            NucleusKind k = rules.affinities().get(type).preferred();
+            if (k == NucleusKind.RESOURCE) return 4;
+            return 3;
+        }
+        // Fallback: anything else goes in batch 5 with HOUSE
+        // (treats unknown types as bulk-distributed). Keeps every
+        // building eligible for placement even when the strategy's
+        // nucleusRules doesn't enumerate it.
+        return 5;
     }
 
     /** Mirrors V1 PlanContext.chooseFacing: the building at {@code pos}
@@ -1541,6 +1856,13 @@ public final class PhasedPlanner {
         final java.util.Random rng;
         final VariantResolver variantResolver = new VariantResolver();
         final List<PlacedBuilding> placed = new ArrayList<>();
+        /** Track E1 prompt-4 — per-placement nucleus attribution
+         *  parallel to {@link #placed}. {@code nucleusContexts.get(i)}
+         *  describes which nucleus pulled {@code placed.get(i)}; null
+         *  when the building had no matching nucleus rule (placed by
+         *  base terrain residual only). Exposed via Result for the
+         *  dump serializer. */
+        final List<NucleusContext> nucleusContexts = new ArrayList<>();
         final List<DroppedBuilding> dropped = new ArrayList<>();
         final List<Reservation> reservations = new ArrayList<>();
         final List<PhaseEvent> events = new ArrayList<>();
@@ -1580,7 +1902,15 @@ public final class PhasedPlanner {
     // ----------------------------------- Diagnostics + result types -----------
 
     public record Result(PlacementResult placement, RoadNetwork network,
-                         List<PhaseEvent> events) {}
+                         List<PhaseEvent> events,
+                         List<NucleusContext> nucleusContexts) {
+        /** Backwards-compat 3-arg constructor for callers that don't
+         *  care about the nucleus attribution. */
+        public Result(PlacementResult placement, RoadNetwork network,
+                      List<PhaseEvent> events) {
+            this(placement, network, events, List.of());
+        }
+    }
 
     public record PhaseEvent(Kind kind, BuildingType type, String detail,
                              ScoreBreakdown score) {

@@ -160,7 +160,8 @@ public final class LayoutDumpSerializer {
                 commandKind, tick, worldSeed, planSeed, level, origin,
                 villageName, villageId, culture,
                 siteCtx, sel, recon, phased.placement(), phased.network(),
-                phased.events(), /*realizationLog*/ null);
+                phased.events(), phased.nucleusContexts(),
+                /*realizationLog*/ null);
     }
 
     /**
@@ -178,6 +179,7 @@ public final class LayoutDumpSerializer {
                                             ReconciliationEngine.ReconciliationResult recon,
                                             PlacementResult placement, RoadNetwork roads,
                                             List<PhasedPlanner.PhaseEvent> events,
+                                            List<PhasedPlanner.NucleusContext> nucleusContexts,
                                             RealizationLog log) {
         long worldSeed = level.getSeed();
         long planSeed = worldSeed
@@ -187,7 +189,7 @@ public final class LayoutDumpSerializer {
                 villageName, villageId,
                 culture != null ? culture
                         : CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID),
-                siteCtx, sel, recon, placement, roads, events, log);
+                siteCtx, sel, recon, placement, roads, events, nucleusContexts, log);
     }
 
     /** Minimal abort dump — origin + reason only. */
@@ -240,6 +242,7 @@ public final class LayoutDumpSerializer {
                                        ReconciliationEngine.ReconciliationResult recon,
                                        PlacementResult placement, RoadNetwork roads,
                                        List<PhasedPlanner.PhaseEvent> events,
+                                       List<PhasedPlanner.NucleusContext> nucleusContexts,
                                        RealizationLog log) {
         JsonObject root = buildHeader(commandKind, tick, worldSeed, planSeed,
                 level, origin, villageName, villageId, culture);
@@ -254,7 +257,8 @@ public final class LayoutDumpSerializer {
         }
 
         if (placement != null) {
-            root.add("buildings", buildingsJson(placement, sel, recon, log));
+            root.add("buildings", buildingsJson(placement, sel, recon, log,
+                    nucleusContexts != null ? nucleusContexts : List.of()));
         }
         if (roads != null) {
             root.add("roads", roadsJson(roads, level, worldSeed));
@@ -434,6 +438,77 @@ public final class LayoutDumpSerializer {
         JsonArray log = new JsonArray();
         for (String line : result.selectionLog()) log.add(line);
         o.add("selectionLog", log);
+
+        // Track E1 prompt-4 — strategy's nucleus configuration. Echo
+        // the rules so the visualizer can render the per-building
+        // affinities + proximity penalties + nucleus-type taxonomy.
+        if (s.nucleusRules() != null) {
+            o.add("nucleusRules", nucleusRulesJson(s.nucleusRules()));
+        }
+        return o;
+    }
+
+    private static JsonObject nucleusRulesJson(
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusRules rules) {
+        JsonObject o = new JsonObject();
+        o.add("civicNucleus", nucleusRefJson(rules.civicNucleus()));
+        if (rules.resourceNucleus() != null) {
+            o.add("resourceNucleus", nucleusRefJson(rules.resourceNucleus()));
+        }
+        if (rules.sacredNucleus() != null) {
+            o.add("sacredNucleus", nucleusRefJson(rules.sacredNucleus()));
+        }
+        JsonArray rural = new JsonArray();
+        for (BuildingType t : rules.ruralNucleusTypes()) rural.add(t.name());
+        o.add("ruralNucleusTypes", rural);
+
+        JsonObject affs = new JsonObject();
+        for (var e : rules.affinities().entrySet()) {
+            affs.add(e.getKey().name(), nucleusAffinityJson(e.getValue()));
+        }
+        o.add("affinities", affs);
+
+        JsonArray penalties = new JsonArray();
+        for (var p : rules.penalties()) {
+            JsonObject jp = new JsonObject();
+            jp.addProperty("a", p.a().name());
+            jp.addProperty("b", p.b().name());
+            jp.addProperty("minDistance", p.minDistance());
+            jp.addProperty("penaltyWeight", p.penaltyWeight());
+            penalties.add(jp);
+        }
+        o.add("penalties", penalties);
+        return o;
+    }
+
+    private static JsonObject nucleusRefJson(
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusRef ref) {
+        JsonObject o = new JsonObject();
+        if (ref instanceof tterrag1112.life_in_the_village.Village.Planning.V2
+                .Layer2.NucleusRef.PrimaryAnchorRef) {
+            o.addProperty("kind", "PRIMARY_ANCHOR");
+        } else if (ref instanceof tterrag1112.life_in_the_village.Village.Planning.V2
+                .Layer2.NucleusRef.AnchorRef ar) {
+            o.addProperty("kind", "ANCHOR");
+            o.addProperty("anchorId", ar.anchorId());
+        } else if (ref instanceof tterrag1112.life_in_the_village.Village.Planning.V2
+                .Layer2.NucleusRef.BuildingRef br) {
+            o.addProperty("kind", "BUILDING");
+            o.addProperty("buildingType", br.type().name());
+        }
+        return o;
+    }
+
+    private static JsonObject nucleusAffinityJson(
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusAffinity aff) {
+        JsonObject o = new JsonObject();
+        o.addProperty("preferred", aff.preferred().name());
+        o.addProperty("weight", aff.weight());
+        o.addProperty("idealDistance", aff.idealDistance());
+        o.addProperty("maxDistance", aff.maxDistance());
+        if (aff.fallback() != null) {
+            o.add("fallback", nucleusAffinityJson(aff.fallback()));
+        }
         return o;
     }
 
@@ -476,11 +551,13 @@ public final class LayoutDumpSerializer {
     private static JsonObject buildingsJson(PlacementResult placement,
                                              BuildingSelector.SelectionResult sel,
                                              ReconciliationEngine.ReconciliationResult recon,
-                                             RealizationLog log) {
+                                             RealizationLog log,
+                                             List<PhasedPlanner.NucleusContext> nucleusContexts) {
         JsonObject o = new JsonObject();
         o.addProperty("villageViable", placement.villageViable());
 
         JsonArray placed = new JsonArray();
+        int idx = 0;
         for (PlacedBuilding pb : placement.placed()) {
             JsonObject b = new JsonObject();
             b.addProperty("type", pb.type().name());
@@ -509,6 +586,25 @@ public final class LayoutDumpSerializer {
             if (pb.adjunct() != null) {
                 b.addProperty("hasAdjunct", true);
             }
+            // Track E1 prompt-4 — nucleus attribution for the dump
+            // visualizer. Indexes parallel placement.placed(); null
+            // when the building had no matching nucleus pull (placed
+            // by base terrain residual only).
+            if (idx < nucleusContexts.size()
+                    && nucleusContexts.get(idx) != null) {
+                PhasedPlanner.NucleusContext nc = nucleusContexts.get(idx);
+                JsonObject nctx = new JsonObject();
+                nctx.addProperty("primaryNucleusKind", nc.kind().name());
+                if (nc.anchorId() != null) {
+                    nctx.addProperty("primaryNucleusAnchorId", nc.anchorId());
+                }
+                if (nc.buildingType() != null) {
+                    nctx.addProperty("primaryNucleusBuildingType",
+                            nc.buildingType().name());
+                }
+                nctx.addProperty("distanceToPrimaryNucleus", nc.distance());
+                b.add("nucleusContext", nctx);
+            }
             // Track E1 follow-up — flat per-building realization fields.
             if (log != null) {
                 log.decisionFor(pb).ifPresent(d -> {
@@ -518,6 +614,7 @@ public final class LayoutDumpSerializer {
                 });
             }
             placed.add(b);
+            idx++;
         }
         o.add("placed", placed);
 
