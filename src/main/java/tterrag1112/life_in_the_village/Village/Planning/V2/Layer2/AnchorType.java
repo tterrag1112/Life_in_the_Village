@@ -61,4 +61,21 @@ public enum AnchorType {
             default -> false;
         };
     }
+
+    /** Track E1 prompt 5 — true for anchor types that represent a
+     *  specific natural-resource feature (mineable cliffs, harvestable
+     *  forest edges, fishable / millable water). FLAT_FERTILE is
+     *  deliberately NOT a resource anchor — every site has flat
+     *  ground; it's the universal fallback. The strategy selector
+     *  uses this predicate to give resource-anchored strategies a
+     *  presence bonus when their preferred resource exists on the
+     *  site at any quality above the (lowered) primary-quality floor,
+     *  so a moderately-good cliff/forest/river site reliably picks
+     *  the matching strategy over the haufendorf fallback. */
+    public boolean isResourceAnchor() {
+        return switch (this) {
+            case CLIFF_FACE, FOREST_EDGE, WATER_EDGE, RIVER_BEND -> true;
+            default -> false;
+        };
+    }
 }

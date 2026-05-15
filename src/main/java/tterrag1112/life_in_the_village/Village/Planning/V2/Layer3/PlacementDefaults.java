@@ -148,6 +148,19 @@ public final class PlacementDefaults {
                 Set.of()));
 
         // Production --------------------------------------------------
+        // Track E1 prompt 5 — FARMHOUSE no longer consumes HOUSING.
+        // A farmhouse IS the homestead of an extended farm family —
+        // it houses its occupants directly. Pre-fix-up the spurious
+        // Requires(HOUSING, 2) caused the ReconciliationEngine to
+        // cascade-drop farmhouses on housing-tight rosters. Audit
+        // principle: self-providing housing types (HOUSE, FARMHOUSE,
+        // and by extension any future cottage-like building) must
+        // not consume HOUSING. Workplaces that draw workers from
+        // outside (TOWN_HALL, CASTLE, TREASURY) legitimately do.
+        // NOBLE_MANOR is intentionally mixed (provides HOUSING 3,
+        // consumes 1) representing manor staff + one external
+        // housekeeper; the net +2 keeps the village housing budget
+        // honest, so it's left alone.
         m.put(BuildingType.FARMHOUSE, new PlacementProfile(
                 false, Priority.PRODUCTION, SizeClass.MEDIUM, 0.2,
                 List.of(),
@@ -158,7 +171,7 @@ public final class PlacementDefaults {
                 Set.of(),
                 List.of(new Provides(Category.FOOD, 3),
                         new Provides(Category.EMPLOYMENT, 2)),
-                List.of(new Requires(Category.HOUSING, 2, false))));
+                List.of()));
 
         // MILLER needs a river — no river → not selected.
         m.put(BuildingType.MILLER, new PlacementProfile(

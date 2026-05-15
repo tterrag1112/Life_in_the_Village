@@ -161,6 +161,7 @@ public final class LayoutDumpSerializer {
                 villageName, villageId, culture,
                 siteCtx, sel, recon, phased.placement(), phased.network(),
                 phased.events(), phased.nucleusContexts(),
+                phased.droppedBindings(),
                 /*realizationLog*/ null);
     }
 
@@ -181,6 +182,7 @@ public final class LayoutDumpSerializer {
                                             List<PhasedPlanner.PhaseEvent> events,
                                             java.util.Map<PlacedBuilding, PhasedPlanner.NucleusContext>
                                                     nucleusContexts,
+                                            java.util.Set<BuildingType> droppedBindings,
                                             RealizationLog log) {
         long worldSeed = level.getSeed();
         long planSeed = worldSeed
@@ -190,7 +192,8 @@ public final class LayoutDumpSerializer {
                 villageName, villageId,
                 culture != null ? culture
                         : CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID),
-                siteCtx, sel, recon, placement, roads, events, nucleusContexts, log);
+                siteCtx, sel, recon, placement, roads, events, nucleusContexts,
+                droppedBindings, log);
     }
 
     /** Minimal abort dump — origin + reason only. */
@@ -245,12 +248,14 @@ public final class LayoutDumpSerializer {
                                        List<PhasedPlanner.PhaseEvent> events,
                                        java.util.Map<PlacedBuilding, PhasedPlanner.NucleusContext>
                                                nucleusContexts,
+                                       java.util.Set<BuildingType> droppedBindings,
                                        RealizationLog log) {
         JsonObject root = buildHeader(commandKind, tick, worldSeed, planSeed,
                 level, origin, villageName, villageId, culture);
 
         if (siteCtx != null) {
-            root.add("siteContext", siteContextJson(siteCtx, level, worldSeed));
+            root.add("siteContext",
+                    siteContextJson(siteCtx, level, worldSeed, sel, droppedBindings));
         }
 
         if (log != null && log.aborted()) {
@@ -300,7 +305,18 @@ public final class LayoutDumpSerializer {
     // Section serializers — preserved verbatim from the v1 command
     // =========================================================================
 
+    /** Track E1 prompt 5 — 3-arg form preserved for the UNVIABLE
+     *  early-abort path where sel + droppedBindings aren't yet
+     *  computed. Delegates to the full form with both nulled, so the
+     *  composition + bindingDropped fields are simply absent rather
+     *  than empty. */
     private static JsonObject siteContextJson(SiteContext ctx, ServerLevel level, long seed) {
+        return siteContextJson(ctx, level, seed, null, null);
+    }
+
+    private static JsonObject siteContextJson(SiteContext ctx, ServerLevel level, long seed,
+                                              BuildingSelector.SelectionResult sel,
+                                              java.util.Set<BuildingType> droppedBindings) {
         JsonObject o = new JsonObject();
         o.add("anchor", posJson(ctx.anchor()));
         o.add("originalAnchor", posJson(ctx.originalAnchor()));
@@ -360,13 +376,35 @@ public final class LayoutDumpSerializer {
         // continues to emit but may contain any RoadPrimitive type now,
         // not just StraightRoad.
         if (ctx.network() != null) {
-            o.add("network", networkSpecJson(ctx.network(), level, seed));
+            o.add("network", networkSpecJson(ctx.network(), level, seed, droppedBindings));
         }
+
+        // Track E1 prompt 5 — siteContext.composition. Per-building
+        // counts after BuildingSelector ran (which already applied
+        // the per-strategy exclusion filter). Visibility for the
+        // strategy↔composition coupling: if industrial_haufendorf
+        // strips MINE, this shows MINE absent (or zero); the
+        // operator can verify the strategy filter is doing its job
+        // without needing to cross-reference roster + strategy.
+        if (sel != null) {
+            JsonObject comp = new JsonObject();
+            java.util.Map<BuildingType, Integer> counts =
+                    new java.util.EnumMap<>(BuildingType.class);
+            for (BuildingType t : sel.selected()) {
+                counts.merge(t, 1, Integer::sum);
+            }
+            for (var e : counts.entrySet()) {
+                comp.addProperty(e.getKey().name(), e.getValue());
+            }
+            o.add("composition", comp);
+        }
+
         return o;
     }
 
     private static JsonObject networkSpecJson(NetworkSpec spec, ServerLevel level,
-                                              long seed) {
+                                              long seed,
+                                              java.util.Set<BuildingType> droppedBindings) {
         JsonObject o = new JsonObject();
         o.addProperty("topology", spec.topology().name());
         JsonArray nodes = new JsonArray();
@@ -402,6 +440,16 @@ public final class LayoutDumpSerializer {
             jb.add("position", posJson(pb.position()));
             jb.addProperty("anchorId", pb.anchorId());
             jb.addProperty("reason", pb.reason());
+            // Track E1 prompt 5 — bindingDropped. True when the
+            // placer's strict near-anchor search found no
+            // admissible cell within BINDING_AFFINITY_RADIUS and
+            // fell back to unrestricted placement. The actual
+            // placement may still be sensible — the general selector
+            // picked it — but this surfaces that the strategy's
+            // anchor intent was not honoured.
+            jb.addProperty("bindingDropped",
+                    droppedBindings != null
+                            && droppedBindings.contains(pb.type()));
             bindings.add(jb);
         }
         o.add("primaryBindings", bindings);

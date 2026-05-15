@@ -171,6 +171,98 @@ future prompt. Platforms on steeper ground will look rough for
 now — the alternative is the village aborting with `missing
 TOWN_HALL after terrain drops`, which is worse.
 
+### 1f. Composition profiles (Track E1 prompt 5 rebalance)
+
+`InclinationProfile` holds per-inclination `Map<BuildingType,
+int[4]>` tables indexed by `ViabilityTier.ordinal()` (CITY=0,
+TOWN=1, HAMLET=2, OUTPOST=3). Pre-rebalance the inclination
+rosters were FARMHOUSE-dominant everywhere (CITY AGRICULTURAL:
+25 FARMHOUSEs to 12 HOUSEs); post-rebalance they reflect the
+ACOUP-flavoured medieval economy:
+
+- **Farmhouses scale sub-linearly with tier.** CITY has more
+  FARMHOUSEs than HAMLET in absolute terms but proportionally
+  far fewer — cities import food from outlying agricultural
+  villages rather than growing it within their walls. CITY
+  AGRICULTURAL flipped from FARMHOUSE:HOUSE ≈ 2:1 to ≈ 1:6.
+- **Houses scale super-linearly with tier.** Most growth from
+  HAMLET → TOWN → CITY is non-farm population — artisans,
+  merchants, civic workers, day labourers. CITY HOUSE counts
+  are 3–6× HAMLET counts.
+- **Civic buildings scale roughly linearly.** A CITY has ~3×
+  HAMLET's civic count with diminishing returns.
+- **Sacred sites get pilgrim infrastructure.** SACRED gets
+  extra INNs scaled with religious importance — pilgrims need
+  somewhere to sleep.
+- **Resource buildings only ride resource-anchored
+  strategies.** MINE / WOODCUTTER appear in INDUSTRIAL rosters
+  but `industrial_haufendorf` strips them via
+  `LayoutStrategy.excludedBuildings` (see 1g below).
+- **MILLER tracks BAKERY everywhere.** Pre-rebalance 5 of 6
+  inclinations had BAKERY without MILLER, causing the
+  reconciliation cascade to trade-fulfil FLOUR on every site.
+  Adding MILLER counts equal to BAKERY counts removes the
+  cascade at its source.
+
+Profile values are the *target initial selection* before
+reconciliation drops, trade-fulfillment, and the
+`BuildingSelector.sampleCount` ±25% triangular variance. Tune
+individual numbers freely; the *principles* are what should
+stay stable.
+
+### 1g. Strategy↔composition coupling (Track E1 prompt 5)
+
+`LayoutStrategy` gained an `excludedBuildings: Set<BuildingType>`
+field. `BuildingSelector` applies the per-strategy exclusion
+filter before NBT availability. Pre-prompt-5 a TOWN INDUSTRIAL
+site with weak cliffs picked `industrial_haufendorf` (the
+fallback) but the composition still asked for MINE / WOODCUTTER
+— and those dropped at placement time with "no anchor binding."
+Post-prompt-5 the strategy declares what it cannot place
+(`{MINE, WOODCUTTER, STONEMASON}` for `industrial_haufendorf`)
+and the composition selector filters them out cleanly.
+
+Strategy-selection scoring (`StrategySelector`) also lowered the
+primary-quality floors for the four resource-anchored strategies
+(`industrial_mining` / `industrial_woodcutter` 0.5 → 0.3,
+`agricultural_reihendorf` 0.5 → 0.3, `agricultural_marschhufendorf`
+0.6 → 0.4) and added a `RESOURCE_PRESENCE_BONUS = 80` flat bonus
+when the chosen primary anchor type is a *resource* anchor
+(CLIFF_FACE / FOREST_EDGE / WATER_EDGE / RIVER_BEND — not
+FLAT_FERTILE). A q=0.3 cliff therefore scores 30 + bonus 80 = 110
+and reliably beats `industrial_haufendorf`'s 80-something from a
+high-quality FLAT_FERTILE primary. The fallback only wins on
+sites with no usable resource anchor.
+
+### 1h. Primary binding contract (Track E1 prompt 5)
+
+Pre-prompt-5 `PrimaryBinding` was a soft scoring nudge only — a
+20-block centrality bonus that buildings could legitimately
+ignore if other scoring components pulled harder. A MARKET bound
+to anchor `a1` could land 130+ blocks away.
+
+Post-prompt-5 primary bindings are **strict-with-small-fallback**:
+
+1. The placer's `findBestCandidate` accepts an optional
+   `boundPos`. When set, cells outside `BINDING_AFFINITY_RADIUS =
+   20` blocks of the binding's anchor centre are skipped.
+2. If the strict pass finds no admissible cell, the caller
+   (`placeOne`) records the type in `state.droppedBindings` and
+   re-runs `findBestCandidate` unrestricted. The general selector
+   places the building wherever frontage scoring picks.
+3. The dump surfaces this on each binding via
+   `siteContext.network.primaryBindings[].bindingDropped`.
+
+A 20-block cutoff means placed bindings are within 20 blocks of
+their anchor centre OR the binding is marked as dropped — never
+both silent. Large-footprint buildings (MARKET 21×42, big
+TOWN_HALL variants) will drop bindings more often because their
+geometric setback `fp.length / 2` alone approaches the cutoff;
+the general selector picks a placement by frontage scoring.
+Acceptable — the strategy still produces a coherent village
+without those specific bindings honored. (c-i decision: single
+20-block constant rather than separate scoring + cutoff radii.)
+
 ---
 
 ## 2. RoadPrimitive types in use
@@ -283,6 +375,23 @@ fields still parse v4 dumps without error. Note: `roads.skeleton
 .spinePathPrimitives[]` no longer guarantees `StraightRoad`-only
 content — the network grower may emit any RoadPrimitive type
 into the derived spine path (Ring, Spur, ArmApproach, …).
+
+### v4 additions (Track E1 prompt 5 — composition + bindings)
+
+- New `siteContext.composition` object — building-type → count
+  map AFTER `BuildingSelector` runs (which already applies the
+  per-strategy `excludedBuildings` filter). Surfaces what the
+  strategy filter actually chose so dumps don't need to
+  cross-reference the per-inclination roster + strategy.
+  Example for `industrial_haufendorf`: `{HOUSE: 14, MARKET: 1,
+  BLACKSMITH: 2, …}` with no MINE / WOODCUTTER / STONEMASON.
+- New `bindingDropped: boolean` field on each entry of
+  `siteContext.network.primaryBindings[]`. True when the strict
+  near-anchor placement search found no admissible cell within
+  `BINDING_AFFINITY_RADIUS = 20` blocks of the anchor centre and
+  fell back to the unrestricted general selector. Placed
+  position may still be sensible, but the strategy's anchor
+  intent was not honoured.
 
 ### v4 additions (Track E1 prompt-4 — secondary placement)
 

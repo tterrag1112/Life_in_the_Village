@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer2;
 
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 
 import java.util.Set;
@@ -69,6 +70,17 @@ import java.util.Set;
  *      {@link NucleusRules#forInclination(Inclination, LayoutTopology)}.
  *      Strategies with unusual placement needs (isolated SACRED
  *      HAMLET, defensive einzelhof) supply explicit rules.
+ * @param excludedBuildings
+ *      Track E1 prompt 5 — building types this strategy actively
+ *      excludes from its composition, beyond what the per-inclination
+ *      roster declares. Used to keep the strategy's composition
+ *      honest about what it can place: a fallback strategy without
+ *      a resource anchor (e.g. {@code industrial_haufendorf}) lists
+ *      MINE / WOODCUTTER here so they aren't selected only to drop
+ *      for missing anchor binding. {@link BuildingSelector} applies
+ *      this filter before NBT-availability. Empty set (the default
+ *      from the 8-arg back-compat constructor) means no extra
+ *      exclusions.
  */
 public record LayoutStrategy(
         String id,
@@ -79,7 +91,8 @@ public record LayoutStrategy(
         BuildingBindings bindings,
         StrategyConditions conditions,
         String description,
-        NucleusRules nucleusRules) {
+        NucleusRules nucleusRules,
+        Set<BuildingType> excludedBuildings) {
 
     public LayoutStrategy {
         if (id == null || id.isBlank()) {
@@ -99,18 +112,32 @@ public record LayoutStrategy(
         if (nucleusRules == null) {
             nucleusRules = NucleusRules.forInclination(inclination, topology);
         }
+        excludedBuildings = excludedBuildings == null
+                ? Set.of()
+                : Set.copyOf(excludedBuildings);
     }
 
     /** Backwards-compat 8-arg constructor for registry call sites
-     *  that don't supply explicit nucleus rules. Delegates to the
-     *  canonical 9-arg with {@code null} so the compact
-     *  constructor falls back to
-     *  {@link NucleusRules#forInclination(Inclination, LayoutTopology)}. */
+     *  that don't supply explicit nucleus rules or excluded
+     *  buildings. Delegates to the canonical 10-arg with {@code null}
+     *  twice so the compact constructor falls back to the per-
+     *  inclination nucleus rules and an empty exclusion set. */
     public LayoutStrategy(String id, Inclination inclination,
                           LayoutTopology topology, AnchorPreferences anchorPrefs,
                           Set<String> primitives, BuildingBindings bindings,
                           StrategyConditions conditions, String description) {
         this(id, inclination, topology, anchorPrefs, primitives, bindings,
-                conditions, description, null);
+                conditions, description, null, null);
+    }
+
+    /** Back-compat 9-arg constructor (prompt-4 form, no excluded
+     *  buildings). Delegates with empty exclusion set. */
+    public LayoutStrategy(String id, Inclination inclination,
+                          LayoutTopology topology, AnchorPreferences anchorPrefs,
+                          Set<String> primitives, BuildingBindings bindings,
+                          StrategyConditions conditions, String description,
+                          NucleusRules nucleusRules) {
+        this(id, inclination, topology, anchorPrefs, primitives, bindings,
+                conditions, description, nucleusRules, null);
     }
 }

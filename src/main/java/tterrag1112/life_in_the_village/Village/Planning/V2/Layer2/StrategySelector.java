@@ -37,11 +37,17 @@ import java.util.Set;
  *       score {@code 0}.</li>
  * </ol>
  *
- * <h3>Scoring formula (locked design)</h3>
+ * <h3>Scoring formula</h3>
  * {@code score = primary.quality * 100}<br>
  * {@code      + 20 * min(3, matched_secondary_type_count)}<br>
  * {@code      + 25 if (requireLinearFeature && primary.isLinear)}<br>
+ * {@code      + 80 if (primary.type().isResourceAnchor())}  — Track E1 prompt 5<br>
  * Penalty path is handled by the incompatible-anchor reject above.
+ * Resource-anchor bonus (CLIFF_FACE / FOREST_EDGE / WATER_EDGE /
+ * RIVER_BEND, explicitly not FLAT_FERTILE) keeps resource-anchored
+ * strategies competitive against the universally-eligible haufendorf
+ * fallbacks even when the fallback's FLAT_FERTILE primary is
+ * high-quality.
  *
  * <h3>Determinism</h3>
  * Pure function of inputs. Registry iteration order is stable.
@@ -65,6 +71,19 @@ public final class StrategySelector {
     public static final double SECONDARY_PER_TYPE      = 20.0;
     public static final int    SECONDARY_TYPE_CAP      = 3;
     public static final double LINEAR_FEATURE_BONUS    = 25.0;
+    /** Track E1 prompt 5 — flat bonus added when a strategy's primary
+     *  anchor type is a {@linkplain AnchorType#isResourceAnchor()
+     *  resource anchor} (cliff / forest edge / waterline) and a site
+     *  anchor of that type is present at quality above the strategy's
+     *  primary-quality floor. Sized to flip a moderate-quality cliff
+     *  / forest at q=0.3 (score 30) past a high-quality flat at q=0.8
+     *  (score 80) so resource-anchored strategies win whenever their
+     *  preferred feature exists at all; the haufendorf fallbacks
+     *  (FLAT_FERTILE primary) only win when no resource anchor of
+     *  any quality is present. FLAT_FERTILE is universal and so
+     *  excluded from the bonus deliberately — otherwise every site
+     *  would get the bonus and the term would collapse to noise. */
+    public static final double RESOURCE_PRESENCE_BONUS = 80.0;
 
     private StrategySelector() {}
 
@@ -163,6 +182,17 @@ public final class StrategySelector {
                     && primary.type().isLinear()) {
                 score += LINEAR_FEATURE_BONUS;
             }
+            // Track E1 prompt 5 — resource-anchor presence bonus.
+            // The strategy declared a resource-anchor primary
+            // (cliff / forest / water) and a matching anchor exists
+            // at the site above the strategy's quality floor: this
+            // is what makes resource-anchored strategies reliably
+            // beat the haufendorf fallback whose FLAT_FERTILE
+            // primary score otherwise dominates on most sites.
+            boolean appliesResourceBonus = primary.type().isResourceAnchor();
+            if (appliesResourceBonus) {
+                score += RESOURCE_PRESENCE_BONUS;
+            }
 
             log.add("Candidate " + candidate.id() + ": eligible, score "
                     + fmt(score) + " (primary " + primary.type() + " "
@@ -172,6 +202,8 @@ public final class StrategySelector {
                     + (candidate.anchorPrefs().requireLinearFeature()
                             && primary.type().isLinear()
                             ? "; +" + (int) LINEAR_FEATURE_BONUS + " linear" : "")
+                    + (appliesResourceBonus
+                            ? "; +" + (int) RESOURCE_PRESENCE_BONUS + " resource-anchor" : "")
                     + ")");
 
             if (score > winnerScore) {

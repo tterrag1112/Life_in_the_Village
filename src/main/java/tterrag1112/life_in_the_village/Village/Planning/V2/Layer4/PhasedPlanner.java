@@ -218,7 +218,8 @@ public final class PhasedPlanner {
                 state.skeleton.crossStreets().size(), state.viable);
 
         return new Result(placement, network, List.copyOf(state.events),
-                java.util.Map.copyOf(state.nucleusContexts));
+                java.util.Map.copyOf(state.nucleusContexts),
+                java.util.Set.copyOf(state.droppedBindings));
     }
 
     // =========================================================================
@@ -538,8 +539,40 @@ public final class PhasedPlanner {
             return false;
         }
 
-        // Find the best frontage-eligible candidate cell.
-        Best best = findBestCandidate(state, type, profile, foundation);
+        // Track E1 prompt 5 — strict-with-small-fallback primary
+        // bindings. If a binding declared this {@code type} belongs
+        // at anchor X, the placer first restricts the candidate
+        // search to cells within {@code BINDING_AFFINITY_RADIUS}
+        // (20 blocks) of X. If no admissible cell falls in that
+        // window, the binding is "dropped" (recorded for the dump)
+        // and the search re-runs unrestricted — the general selector
+        // decides instead.
+        //
+        // Pre-prompt-5 bindings were a soft scoring incentive only;
+        // a MARKET bound to anchor a1 could land 130 blocks away if
+        // its non-binding scoring components outweighed the
+        // affinity bonus. The strict cutoff makes the binding's
+        // intent real.
+        //
+        // Footnote on large footprints: the largest authored
+        // buildings (MARKET at 21×42, big TOWN_HALL variants) have
+        // fp.length/2 ≈ 21 — already past the 20-block cutoff before
+        // the geometric setback even matters. Their bindings will
+        // legitimately drop more often than small-footprint ones,
+        // and the general selector picks a placement by frontage
+        // scoring. Acceptable behaviour — the strategy still
+        // produces a coherent village without those specific
+        // bindings honored; scaling the radius by footprint is more
+        // knob than benefit.
+        BlockPos boundPos = findPrimaryBindingPosition(state, type);
+        Best best = findBestCandidate(state, type, profile, foundation, boundPos);
+        if (best == null && boundPos != null) {
+            state.droppedBindings.add(type);
+            LOGGER.info("dropped binding for {}: no admissible cell within {} blocks of {};"
+                    + " retrying unrestricted",
+                    type, (int) BINDING_AFFINITY_RADIUS, boundPos);
+            best = findBestCandidate(state, type, profile, foundation, null);
+        }
         if (best == null) {
             // Track E1 prompt 3 fix-up 3 — drop-reason wording
             // honesty. Pre-fix-up the iterative path's message
@@ -605,11 +638,31 @@ public final class PhasedPlanner {
      *        any existing reservation</li>
      *  </ul>
      */
+
+    /** Track E1 prompt 5 — looks up a primary binding for {@code type}
+     *  on the network and returns its anchor position, or null if no
+     *  binding matches. Multi-instance binding handling is unchanged
+     *  from prompt 3: the first matching binding wins, so multiple
+     *  buildings of the same type would all aim at the same anchor.
+     *  That's the existing semantics; fixing per-instance binding is
+     *  a separate prompt. */
+    private static BlockPos findPrimaryBindingPosition(State state, BuildingType type) {
+        if (state.ctx.network() == null) return null;
+        for (var pb : state.ctx.network().primaryBindings()) {
+            if (pb.type() == type) return pb.position();
+        }
+        return null;
+    }
+
     private static Best findBestCandidate(State state, BuildingType type,
-                                          PlacementProfile profile, boolean foundation) {
+                                          PlacementProfile profile, boolean foundation,
+                                          BlockPos boundPos) {
         List<RoadSegment> roads = foundation
                 ? new java.util.ArrayList<>(state.skeleton.primarySegments())
                 : state.skeleton.allSegments();
+        // Track E1 prompt 5 — squared radius for the strict bound
+        // cutoff; computed once outside the inner loop.
+        final double bindRadiusSq = BINDING_AFFINITY_RADIUS * BINDING_AFFINITY_RADIUS;
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
             for (int j = 0; j < state.fmap.gridSize(); j++) {
@@ -619,6 +672,18 @@ public final class PhasedPlanner {
                 if (cell.localSlope() > MAX_SLOPE) continue;
 
                 BlockPos pos = state.fmap.cellWorldPos(i, j);
+
+                // Track E1 prompt 5 — strict bound-position cutoff.
+                // When {@code boundPos} is non-null, the building
+                // has a primary binding and pos must lie within the
+                // binding radius. The caller wraps this with a
+                // retry-unrestricted on failure (placeOne), so this
+                // is purely the strict pass.
+                if (boundPos != null) {
+                    double bdx = pos.getX() - boundPos.getX();
+                    double bdz = pos.getZ() - boundPos.getZ();
+                    if (bdx * bdx + bdz * bdz > bindRadiusSq) continue;
+                }
 
                 // Variant + footprint + rotation against the nearest road.
                 String variantId = state.variantResolver.pickVariantIdForV2(
@@ -1099,10 +1164,24 @@ public final class PhasedPlanner {
         return new ScoreBreakdown(terrain, adjacency, centrality);
     }
 
-    /** Track E1 prompt-3 — radius (blocks) within which a primary-
-     *  binding building gets a centrality boost. ~villageRadius/2
-     *  so the bonus is meaningful inside the village but doesn't
-     *  pull buildings across long distances. */
+    /** Track E1 prompt-3 + prompt 5 — dual-role radius for primary
+     *  bindings. Two uses, one number:
+     *  <ul>
+     *    <li><b>Soft affinity falloff (prompt 3).</b> Bound cells
+     *        inside this radius get an affinity boost in the
+     *        centrality term; the boost falls linearly to zero at
+     *        the edge.</li>
+     *    <li><b>Hard placement cutoff (prompt 5).</b> The strict
+     *        bound search restricts candidate cells to within this
+     *        radius of the binding anchor; cells past it are
+     *        skipped. The unrestricted retry fires only when the
+     *        strict pass finds nothing.</li>
+     *  </ul>
+     *  ~villageRadius/2 so the cutoff is meaningful inside HAMLET/
+     *  TOWN villages but doesn't pull buildings across long
+     *  distances. (c-i decision: single constant rather than two
+     *  separate radii; the strict cutoff and the soft falloff share
+     *  the same physical meaning of "near the anchor.") */
     private static final double BINDING_AFFINITY_RADIUS = 20.0;
     /** Scaling factor for the binding affinity centrality bonus.
      *  Calibrated against existing centrality magnitudes (0..1) —
@@ -1900,6 +1979,12 @@ public final class PhasedPlanner {
         final List<DroppedBuilding> dropped = new ArrayList<>();
         final List<Reservation> reservations = new ArrayList<>();
         final List<PhaseEvent> events = new ArrayList<>();
+        /** Track E1 prompt 5 — primary bindings whose strict near-
+         *  anchor placement failed and fell back to the general
+         *  selector. Surfaced on {@link Result#droppedBindings()} for
+         *  the dump's per-binding {@code bindingDropped} field. */
+        final java.util.Set<BuildingType> droppedBindings =
+                new java.util.HashSet<>();
         boolean viable = true;
         /** B2.8 — building types whose missing dependencies were
          *  resolved by trade in ReconciliationEngine; placeOne
@@ -1945,12 +2030,22 @@ public final class PhasedPlanner {
 
     public record Result(PlacementResult placement, RoadNetwork network,
                          List<PhaseEvent> events,
-                         java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts) {
+                         java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
+                         java.util.Set<BuildingType> droppedBindings) {
         /** Backwards-compat 3-arg constructor for callers that don't
          *  care about the nucleus attribution. */
         public Result(PlacementResult placement, RoadNetwork network,
                       List<PhaseEvent> events) {
-            this(placement, network, events, java.util.Map.of());
+            this(placement, network, events, java.util.Map.of(),
+                    java.util.Set.of());
+        }
+
+        /** Back-compat 4-arg constructor (pre-prompt-5 form). */
+        public Result(PlacementResult placement, RoadNetwork network,
+                      List<PhaseEvent> events,
+                      java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts) {
+            this(placement, network, events, nucleusContexts,
+                    java.util.Set.of());
         }
     }
 

@@ -145,12 +145,18 @@ public final class LayoutStrategyRegistry {
                 "agricultural_reihendorf",
                 Inclination.AGRICULTURAL,
                 LayoutTopology.REIHENDORF,
+                // Track E1 prompt 5 — minPrimaryQuality lowered 0.5 → 0.3.
+                // A q=0.3 ridge / waterline is still a coherent
+                // linear feature; the resource-anchor presence bonus
+                // (StrategySelector.RESOURCE_PRESENCE_BONUS) lifts
+                // these into reliable winners over the haufendorf
+                // fallback when ANY such feature is present.
                 new AnchorPreferences(
                         Set.of(AnchorType.RIDGE_LINE, AnchorType.VALLEY_FLOOR,
                                 AnchorType.WATER_EDGE, AnchorType.RIVER_BEND),
                         Set.of(AnchorType.FLAT_FERTILE, AnchorType.FOREST_EDGE),
                         true,
-                        0.5),
+                        0.3),
                 Set.of(PRIM_STRAIGHT, PRIM_CURVED, PRIM_SPUR),
                 bindings(
                         BuildingType.TOWN_HALL,  List.of(AnchorType.FLAT_FERTILE),
@@ -162,11 +168,19 @@ public final class LayoutStrategyRegistry {
                 "agricultural_marschhufendorf",
                 Inclination.AGRICULTURAL,
                 LayoutTopology.REIHENDORF,
+                // Track E1 prompt 5 — minPrimaryQuality lowered 0.6 → 0.4.
+                // Reclaimed-marsh villages should fire on any usable
+                // waterline; the 0.6 floor was high enough that only
+                // pristine river bends qualified and the strategy
+                // never fired in the variety batch. Keeps the
+                // strategy distinct from reihendorf (which sits at
+                // 0.3) so the better-quality riverine sites still
+                // route here.
                 new AnchorPreferences(
                         Set.of(AnchorType.WATER_EDGE, AnchorType.RIVER_BEND),
                         Set.of(AnchorType.FLAT_FERTILE),
                         true,
-                        0.6),
+                        0.4),
                 Set.of(PRIM_STRAIGHT, PRIM_BRIDGE, PRIM_SPUR),
                 bindings(
                         BuildingType.TOWN_HALL,  List.of(AnchorType.FLAT_FERTILE),
@@ -204,11 +218,20 @@ public final class LayoutStrategyRegistry {
                 "industrial_mining",
                 Inclination.INDUSTRIAL,
                 LayoutTopology.CLUSTER,
+                // Track E1 prompt 5 — minPrimaryQuality lowered 0.5 → 0.3.
+                // A q=0.3 cliff face is still a buildable mineable
+                // wall; pre-fix-up TOWN-tier industrial sites with
+                // CLIFF_FACE q=0.30 and FOREST_EDGE q=0.62 fell to
+                // industrial_haufendorf because both resource
+                // primaries failed their 0.5 floor. The lowered
+                // floor + resource-anchor presence bonus together
+                // make mining the obvious winner whenever any usable
+                // cliff exists.
                 new AnchorPreferences(
                         Set.of(AnchorType.CLIFF_FACE),
                         Set.of(AnchorType.FLAT_FERTILE),
                         false,
-                        0.5),
+                        0.3),
                 Set.of(PRIM_STRAIGHT, PRIM_SPUR, PRIM_STAIRWAY),
                 bindings(
                         BuildingType.MINE,       List.of(AnchorType.CLIFF_FACE),
@@ -221,11 +244,17 @@ public final class LayoutStrategyRegistry {
                 "industrial_woodcutter",
                 Inclination.INDUSTRIAL,
                 LayoutTopology.CLUSTER,
+                // Track E1 prompt 5 — minPrimaryQuality lowered 0.5 → 0.3.
+                // Same reasoning as industrial_mining: a usable
+                // forest edge at q=0.3 is enough wood to support
+                // a cutter cluster. Resource-anchor presence bonus
+                // ensures this beats industrial_haufendorf when any
+                // forest is present.
                 new AnchorPreferences(
                         Set.of(AnchorType.FOREST_EDGE),
                         Set.of(AnchorType.FLAT_FERTILE, AnchorType.NATURAL_CLEARING),
                         false,
-                        0.5),
+                        0.3),
                 Set.of(PRIM_STRAIGHT, PRIM_SPUR, PRIM_CURVED),
                 bindings(
                         BuildingType.WOODCUTTER, List.of(AnchorType.FOREST_EDGE),
@@ -251,7 +280,20 @@ public final class LayoutStrategyRegistry {
                         BuildingType.MARKET,     List.of(AnchorType.FLAT_FERTILE),
                         BuildingType.HOUSE,      List.of(AnchorType.FLAT_FERTILE)),
                 StrategyConditions.any(),
-                "Industrial cluster on a flat plot with no resource anchor"));
+                "Industrial cluster on a flat plot with no resource anchor",
+                // Track E1 prompt 5 — strategy↔composition coupling.
+                // This is the resource-anchor-less industrial
+                // fallback. MINE / WOODCUTTER / STONEMASON need a
+                // cliff or forest anchor to bind to; without one
+                // they place spuriously on flat ground (no real
+                // resource source) or drop with "no anchor binding."
+                // Excluding them at composition time keeps the
+                // selection honest. BLACKSMITH / CARPENTRY stay in
+                // (trade-fulfilled from neighbouring resource
+                // villages per ReconciliationEngine).
+                null,  // inherit inclination-default nucleus rules
+                Set.of(BuildingType.MINE, BuildingType.WOODCUTTER,
+                        BuildingType.STONEMASON)));
         list.add(fallback("industrial_cluster_fallback", Inclination.INDUSTRIAL,
                 "Generic industrial cluster fallback"));
         return list;

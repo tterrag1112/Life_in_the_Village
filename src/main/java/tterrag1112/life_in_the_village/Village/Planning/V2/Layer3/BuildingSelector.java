@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.LayoutStrategy;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 
@@ -21,6 +22,11 @@ import java.util.Set;
  *
  * <h3>Filters applied (in order)</h3>
  * <ol>
+ *   <li>Strategy-level exclusion ({@link LayoutStrategy#excludedBuildings})
+ *       — Track E1 prompt 5. Buildings the selected strategy can't
+ *       support (e.g. MINE in {@code industrial_haufendorf} which
+ *       has no cliff anchor) are dropped at selection time so they
+ *       don't reach the placer and drop there.</li>
  *   <li>Hard terrain aggregates ({@link PlacementProfile#requiresAggregates}) —
  *       silently skipped if absent.</li>
  *   <li>NBT availability ({@link BuildingAvailability#isAvailable}) —
@@ -66,17 +72,33 @@ public final class BuildingSelector {
         Style style = Style.RURAL;
         Random rng = new Random(ctx.seed() ^ SELECTION_SALT);
 
+        // Track E1 prompt 5 — strategy-level exclusion. Resolved at
+        // the start so the filter is one map read per type. When the
+        // strategy hasn't been selected yet (UNVIABLE-adjacent early
+        // dumps), the set is empty and the loop falls through.
+        Set<BuildingType> excluded = ctx.strategy() != null
+                && ctx.strategy().strategy() != null
+                ? ctx.strategy().strategy().excludedBuildings()
+                : Set.of();
+
         for (BuildingType type : profile.baseCounts().keySet()) {
             int target = profile.countFor(type, tier);
             if (target <= 0) continue;
 
+            // 1. Strategy-level exclusion.
+            if (excluded.contains(type)) {
+                LOGGER.info("selection {}: excluded by strategy {} (target was {})",
+                        type, ctx.strategy().strategy().id(), target);
+                continue;
+            }
+
             PlacementProfile pp = PlacementDefaults.get(type);
             if (pp == null) continue;
 
-            // 1. Hard terrain aggregates.
+            // 2. Hard terrain aggregates.
             if (!aggregatesPresent(pp.requiresAggregates(), fmap)) continue;
 
-            // 2. NBT availability.
+            // 3. NBT availability.
             if (!availability.isAvailable(culture, style, type, LEVEL)) {
                 unavailable.add(new UnavailableBuilding(type,
                         "no NBT authored for " + culture));
