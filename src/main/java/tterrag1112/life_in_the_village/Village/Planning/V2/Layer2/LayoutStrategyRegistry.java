@@ -84,7 +84,57 @@ public final class LayoutStrategyRegistry {
         for (var e : map.entrySet()) {
             e.setValue(List.copyOf(e.getValue()));
         }
+        // Track E1 prompt 3 fix-up 2 — eager topology↔primitive
+        // validation. Catches authoring gaps like industrial /
+        // residential haufendorf shipping without Ring (the bug
+        // that made the audit half-land). Throws at class load so
+        // the mod fails to start rather than silently degrading.
+        validateTopologyPrimitives(map);
         return Collections.unmodifiableMap(map);
+    }
+
+    /** Track E1 prompt 3 fix-up 2 — topology↔primitive compatibility
+     *  check, fail-fast at class load.
+     *
+     *  <p>Hard requirements: HAUFENDORF, ANGERDORF, and RUNDLING
+     *  are nucleus-around-a-loop topologies — the loop is the
+     *  topology's defining feature, so they MUST declare
+     *  {@link #PRIM_RING}. EINZELHOF, REIHENDORF, and CLUSTER
+     *  have no hard primitive requirement.
+     *
+     *  <p>Throws {@link IllegalStateException} naming the
+     *  strategy, topology, and missing primitive(s). Surfacing
+     *  the failure at static init means the mod fails to start
+     *  rather than swallowing the error at first village spawn. */
+    private static void validateTopologyPrimitives(
+            Map<Inclination, List<LayoutStrategy>> map) {
+        for (List<LayoutStrategy> list : map.values()) {
+            for (LayoutStrategy s : list) {
+                Set<String> required = requiredPrimitivesFor(s.topology());
+                if (required.isEmpty()) continue;
+                Set<String> declared = s.primitives();
+                Set<String> missing = new LinkedHashSet<>();
+                for (String r : required) {
+                    if (!declared.contains(r)) missing.add(r);
+                }
+                if (!missing.isEmpty()) {
+                    throw new IllegalStateException(
+                            "LayoutStrategyRegistry: strategy '" + s.id()
+                                    + "' (topology=" + s.topology()
+                                    + ") missing required primitive(s): " + missing
+                                    + ". Topologies HAUFENDORF/ANGERDORF/RUNDLING"
+                                    + " must declare Ring; add PRIM_RING to its"
+                                    + " intendedPrimitives Set.");
+                }
+            }
+        }
+    }
+
+    private static Set<String> requiredPrimitivesFor(LayoutTopology topology) {
+        return switch (topology) {
+            case HAUFENDORF, ANGERDORF, RUNDLING -> Set.of(PRIM_RING);
+            case EINZELHOF, REIHENDORF, CLUSTER -> Set.of();
+        };
     }
 
     // ── AGRICULTURAL ──────────────────────────────────────────────────────
@@ -192,7 +242,10 @@ public final class LayoutStrategyRegistry {
                         Set.of(AnchorType.CLIFF_FACE, AnchorType.FOREST_EDGE),
                         false,
                         0.0),
-                Set.of(PRIM_STRAIGHT, PRIM_SPUR),
+                // Track E1 prompt 3 fix-up 2 — HAUFENDORF requires
+                // Ring (organic heap around a nucleus). Audit gap
+                // missed in prompt 3.
+                Set.of(PRIM_STRAIGHT, PRIM_SPUR, PRIM_RING),
                 bindings(
                         BuildingType.BLACKSMITH, List.of(AnchorType.FLAT_FERTILE),
                         BuildingType.MARKET,     List.of(AnchorType.FLAT_FERTILE),
@@ -278,7 +331,10 @@ public final class LayoutStrategyRegistry {
                         Set.of(),
                         false,
                         0.0),
-                Set.of(PRIM_STRAIGHT, PRIM_SPUR),
+                // Track E1 prompt 3 fix-up 2 — HAUFENDORF requires
+                // Ring (organic heap around a nucleus). Audit gap
+                // missed in prompt 3.
+                Set.of(PRIM_STRAIGHT, PRIM_SPUR, PRIM_RING),
                 bindings(
                         BuildingType.HOUSE,      List.of(AnchorType.FLAT_FERTILE),
                         BuildingType.WELL,       List.of(AnchorType.FLAT_FERTILE)),

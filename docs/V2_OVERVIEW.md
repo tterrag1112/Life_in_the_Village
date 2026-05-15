@@ -98,6 +98,46 @@ on-demand via `NetworkPlanner.deriveSpinePath`. `RoadPainter`
 (Layer 5) paints from `Skeleton.edges()` (the network's
 primitives) rather than `spinePath().segments()`.
 
+### 1c. Topology↔primitive requirements (Track E1 prompt 3 fix-up 2)
+
+`LayoutStrategyRegistry.validateTopologyPrimitives` runs at
+class load (eager, fail-fast) and asserts hard topology↔primitive
+requirements:
+
+| Topology | Required primitive(s) |
+|---|---|
+| HAUFENDORF | Ring |
+| ANGERDORF | Ring |
+| RUNDLING | Ring |
+| EINZELHOF | — |
+| REIHENDORF | — |
+| CLUSTER | — |
+
+A strategy declaring HAUFENDORF/ANGERDORF/RUNDLING without
+`PRIM_RING` in `primitives` causes class init to throw
+`IllegalStateException` naming the strategy, topology, and
+missing primitive(s). The mod fails to load — a silent auto-fix
+would hide authoring mistakes (this is exactly the bug that
+made `industrial_haufendorf` and `residential_haufendorf` ship
+without Ring in prompt 3 and degenerate into 30-block
+straight-spine villages).
+
+### 1d. Terrain-adaptation thresholds (Track E1 prompt 3 fix-up 2 — stopgap)
+
+`TerrainAdapter.LARGE_PLATFORM_THRESHOLD` was 10; raised to 16.
+A per-priority `LOAD_BEARING_THRESHOLD_MULT = 1.5` bump
+multiplies the ceiling for `Priority.CIVIC` and
+`Priority.INFRASTRUCTURE` buildings (→ 24), so primary-bound
+load-bearing types (TOWN_HALL, MARKET, INN, CHAPEL, WELL, …)
+get a stronger effort before dropping.
+
+**This is an explicit stopgap, not the real terrain-adaptation
+rework.** No new adaptation modes (retaining walls, excavation,
+terracing, cantilever). The richer rework lands in a separate
+future prompt. Platforms on steeper ground will look rough for
+now — the alternative is the village aborting with `missing
+TOWN_HALL after terrain drops`, which is worse.
+
 ---
 
 ## 2. RoadPrimitive types in use
