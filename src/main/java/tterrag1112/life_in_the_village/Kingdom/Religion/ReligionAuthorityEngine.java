@@ -131,7 +131,7 @@ public final class ReligionAuthorityEngine {
         // → same default, so tension only fires when the kingdom
         // OVERRIDES the culture default with a different state religion.
         var culture = CultureResolver.ofKingdom(kingdom);
-        String dominant = ReligionRegistry.dominantReligionFor(culture);
+        String dominant = ReligionRegistry.dominantReligionFor(culture.displayName());
         boolean mismatch = !dominant.equalsIgnoreCase(official);
         for (Province p : kingdom.getProvinces()) {
             String tag = TENSION_MODIFIER_PREFIX + p.id();

@@ -182,12 +182,13 @@ public class KingdomTaxEvent {
         // to the overlord kingdom's treasury before any other outflow.
         // Default rate matches the FealtyChain skim pattern (0.0 ships;
         // observable when explicitly tuned).
+        long finalTotalCollected = totalCollected;
         kingdom.overlordKingdomId().ifPresent(overlordId -> {
-            long tribute = (long) (totalCollected * DEFAULT_VASSAL_TRIBUTE_RATE);
+            long tribute = (long) (finalTotalCollected * DEFAULT_VASSAL_TRIBUTE_RATE);
             if (tribute <= 0L) return;
             Kingdom overlord = data.getKingdomById(overlordId).orElse(null);
             if (overlord == null) return;
-            long withdrawn = Math.min(tribute, kingdom.getTreasury());
+            long withdrawn = Math.min(tribute, kingdom.getTreasury().toBronze());
             kingdom.depositToTreasury(-withdrawn);
             overlord.depositToTreasury(withdrawn);
             System.out.println("Kingdom '" + kingdom.getName()
@@ -204,7 +205,7 @@ public class KingdomTaxEvent {
             int scholarVillages = countScholarVillages(level, kingdom, data);
             long outflow = (long) Math.floor(stipend * scholarVillages);
             if (outflow > 0L) {
-                long withdrawn = Math.min(outflow, kingdom.getTreasury());
+                long withdrawn = Math.min(outflow, kingdom.getTreasury().toBronze());
                 kingdom.depositToTreasury(-withdrawn);
                 System.out.println("Kingdom '" + kingdom.getName()
                         + "' paid education stipend " + withdrawn + "b ("

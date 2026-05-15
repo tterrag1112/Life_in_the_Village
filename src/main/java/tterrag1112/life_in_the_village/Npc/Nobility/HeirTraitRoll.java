@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Npc.Nobility;
 
+import net.minecraft.util.RandomSource;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitAxis;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitVector;
@@ -62,7 +63,7 @@ public final class HeirTraitRoll {
      * determinism (typically the entity's RNG).
      */
     public static void apply(TownspersonMob child, TownspersonMob parentA,
-                             TownspersonMob parentB, Random random) {
+                             TownspersonMob parentB, RandomSource random) {
         TraitVector childTraits = child.getTraitVector();
         TraitVector aTraits = parentA != null ? parentA.getTraitVector() : null;
         TraitVector bTraits = parentB != null ? parentB.getTraitVector() : null;

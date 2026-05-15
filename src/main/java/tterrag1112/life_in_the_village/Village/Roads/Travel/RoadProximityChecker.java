@@ -99,6 +99,7 @@ public final class RoadProximityChecker {
             case TRUNK      ->  8;
             case CONNECTOR  ->  5;
             case LOCAL      ->  3;
+            case SEA -> 0;
         };
     }
 
@@ -109,6 +110,7 @@ public final class RoadProximityChecker {
             case TRUNK      -> 2;
             case CONNECTOR  -> 1;
             case LOCAL      -> 0;
+            case SEA -> 0;
         };
     }
 }

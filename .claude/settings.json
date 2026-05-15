@@ -1,0 +1,20 @@
+{
+  "sandbox": {
+    "network": {
+      "allowedDomains": [
+        "maven.neoforged.net",
+        "libraries.minecraft.net",
+        "repo1.maven.org",
+        "repo.maven.apache.org",
+        "services.gradle.org",
+        "plugins.gradle.org",
+        "maven.parchmentmc.org",
+        "piston-meta.mojang.com",
+        "piston-data.mojang.com",
+        "resources.download.minecraft.net",
+        "*.githubusercontent.com",
+        "github.com"
+      ]
+    }
+  }
+}

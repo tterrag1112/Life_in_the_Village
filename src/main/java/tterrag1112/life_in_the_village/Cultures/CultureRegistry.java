@@ -167,7 +167,8 @@ public final class CultureRegistry {
                         /* vassalEligibleCultures */  List.of("default"),
                         /* hostileCultures */         List.of(),
                         /* minNobilityTier */         1,
-                        /* provinceSeatThreshold */   3));
+                        /* provinceSeatThreshold */   3,
+                        RebellionThresholds.DEFAULT));
     }
 
     // ── Highmarch ─────────────────────────────────────────────────────────
@@ -247,7 +248,8 @@ public final class CultureRegistry {
                         /* vassalEligibleCultures */  List.of("plainfolk", "tidereach"),
                         /* hostileCultures */         List.of("plainfolk"),
                         /* minNobilityTier */         0,
-                        /* provinceSeatThreshold */   6));
+                        /* provinceSeatThreshold */   6,
+                        RebellionThresholds.DEFAULT));
     }
 
     // ── Silkwood ──────────────────────────────────────────────────────────
@@ -330,7 +332,8 @@ public final class CultureRegistry {
                         /* vassalEligibleCultures */  List.of("tidereach"),
                         /* hostileCultures */         List.of("highmarch"),
                         /* minNobilityTier */         1,
-                        /* provinceSeatThreshold */   2));
+                        /* provinceSeatThreshold */   2,
+                        RebellionThresholds.DEFAULT));
     }
 
     // ── Tidereach ─────────────────────────────────────────────────────────
@@ -410,6 +413,7 @@ public final class CultureRegistry {
                         /* vassalEligibleCultures */  List.of("silkwood", "plainfolk"),
                         /* hostileCultures */         List.of(),
                         /* minNobilityTier */         0,
-                        /* provinceSeatThreshold */   4));
+                        /* provinceSeatThreshold */   4,
+                        RebellionThresholds.DEFAULT));
     }
 }

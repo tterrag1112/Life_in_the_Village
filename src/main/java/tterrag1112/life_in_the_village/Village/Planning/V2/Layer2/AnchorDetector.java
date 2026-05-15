@@ -187,7 +187,7 @@ public final class AnchorDetector {
                     try {
                         meta.put("biomeHint",
                                 level.getBiome(centre).unwrapKey()
-                                        .map(k -> k.location().toString())
+                                        .map(k -> k.identifier().toString())
                                         .orElse("unknown"));
                     } catch (Throwable t) {
                         // Biome lookup failed (e.g. unloaded chunk); skip.

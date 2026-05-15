@@ -268,10 +268,10 @@ public class Kingdom {
             }
         } else if (laws != null && !laws.isEmpty()) {
             for (KingdomLaw legacy : laws) {
-                String id = legacy.name().toLowerCase(java.util.Locale.ROOT);
-                if (KingdomLawRegistry.find(id).isEmpty()) continue;
-                k.lawInstances.put(id, new KingdomLawInstance(
-                        id, KingdomLawState.ACTIVE,
+                String lawId = legacy.name().toLowerCase(java.util.Locale.ROOT);
+                if (KingdomLawRegistry.find(lawId).isEmpty()) continue;
+                k.lawInstances.put(lawId, new KingdomLawInstance(
+                        lawId, KingdomLawState.ACTIVE,
                         Optional.empty(), Optional.empty(),
                         0L, Optional.empty(), Optional.empty(),
                         0L));
@@ -886,7 +886,7 @@ public class Kingdom {
     public KingdomLawInstance draftLaw(String lawId, Optional<UUID> drafter, long tick) {
         KingdomLawInstance existing = lawInstances.get(lawId);
         if (existing != null) return existing;
-        KingdomLaw law = KingdomLawRegistry.byId(lawId);
+        tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLaw law = KingdomLawRegistry.byId(lawId);
         KingdomLawInstance fresh = KingdomLawInstance.freshDraft(law, drafter, tick);
         lawInstances.put(lawId, fresh);
         return fresh;
@@ -929,7 +929,7 @@ public class Kingdom {
     public boolean enactLaw(String lawId, long tick) {
         KingdomLawInstance inst = lawInstances.get(lawId);
         if (inst == null || !inst.isProposed()) return false;
-        KingdomLaw law = KingdomLawRegistry.byId(lawId);
+        tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLaw law = KingdomLawRegistry.byId(lawId);
         var cost = law.enactmentCost();
         treasuryBronze = Math.max(0L, treasuryBronze - cost.treasuryBronze());
         stability = clampScalar(stability + cost.stabilityDelta());
@@ -949,7 +949,7 @@ public class Kingdom {
         KingdomLawInstance inst = lawInstances.get(lawId);
         if (inst == null) return false;
         if (inst.isActive()) {
-            KingdomLaw law = KingdomLawRegistry.byId(lawId);
+            tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLaw law = KingdomLawRegistry.byId(lawId);
             var cost = law.enactmentCost();
             treasuryBronze += cost.treasuryBronze() / 2L;
             stability = clampScalar(stability - cost.stabilityDelta() / 2);

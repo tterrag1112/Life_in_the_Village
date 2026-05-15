@@ -136,7 +136,7 @@ public final class PoiDiscovery {
         level.registryAccess().lookupOrThrow(Registries.STRUCTURE)
                 .listElements()
                 .forEach(holder ->
-                        idByStructure.put(holder.value(), holder.key().location()));
+                        idByStructure.put(holder.value(), holder.key().identifier()));
 
         for (int cx = cxMin; cx <= cxMax; cx++) {
             for (int cz = czMin; cz <= czMax; cz++) {

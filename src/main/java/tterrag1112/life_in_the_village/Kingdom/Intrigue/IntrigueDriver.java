@@ -129,7 +129,7 @@ public final class IntrigueDriver {
             return SowResult.deny("per-target cooldown active");
         }
         // Treasury cost.
-        if (source.getTreasury() < SOW_TREASURY_COST) {
+        if (source.getTreasury().toBronze() < SOW_TREASURY_COST) {
             return SowResult.deny("insufficient treasury (" + source.getTreasury()
                     + "b / " + SOW_TREASURY_COST + "b required)");
         }

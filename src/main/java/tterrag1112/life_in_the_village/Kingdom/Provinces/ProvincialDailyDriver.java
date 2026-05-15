@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Kingdom.Provinces;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Nobility.FealtyChain;
 
 /**
  * Track D3.3 — daily entry point for per-province bookkeeping.

@@ -286,7 +286,7 @@ public final class LayoutDumpSerializer {
         root.addProperty("tick", tick);
         root.addProperty("worldSeed", worldSeed);
         root.addProperty("planSeed", planSeed);
-        root.addProperty("dimension", level.dimension().location().toString());
+        root.addProperty("dimension", level.dimension().identifier().toString());
         root.add("origin", posJson(origin));
         JsonObject v = new JsonObject();
         if (villageName != null) v.addProperty("name", villageName);

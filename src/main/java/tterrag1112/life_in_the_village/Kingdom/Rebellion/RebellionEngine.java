@@ -187,7 +187,7 @@ public final class RebellionEngine {
                 ^ (tick / 24000L);
         var rng = new java.util.Random(seed);
         // Treasury-dependent: if too poor to negotiate, ACCEPT or CRUSH only.
-        boolean canNegotiate = kingdom.getTreasury() >= NEGOTIATE_TREASURY_COST;
+        boolean canNegotiate = kingdom.getTreasury().toBronze() >= NEGOTIATE_TREASURY_COST;
         Choice choice;
         double roll = rng.nextDouble();
         if (canNegotiate && roll < 0.45) choice = Choice.NEGOTIATE;
@@ -230,7 +230,7 @@ public final class RebellionEngine {
                                         Choice choice, UUID resolvedBy, long tick) {
         switch (choice) {
             case NEGOTIATE -> {
-                long debited = Math.min(NEGOTIATE_TREASURY_COST, kingdom.getTreasury());
+                long debited = Math.min(NEGOTIATE_TREASURY_COST, kingdom.getTreasury().toBronze());
                 kingdom.depositToTreasury(-debited);
                 kingdom.replaceProvinceStability(province.id(),
                         Math.max(province.stability(), NEGOTIATE_STABILITY_FLOOR));

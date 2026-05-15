@@ -141,6 +141,7 @@ public final class EdgeMaterialResolver {
             case GREAT_ROAD -> null;
             case CONNECTOR, LOCAL -> cultureFromDockNode(edge, graph, data);
             case TRUNK -> cultureFromMaintainers(edge, data);
+            case SEA -> null;
         };
     }
 
