@@ -541,11 +541,20 @@ public final class PhasedPlanner {
         // Find the best frontage-eligible candidate cell.
         Best best = findBestCandidate(state, type, profile, foundation);
         if (best == null) {
+            // Track E1 prompt 3 fix-up 3 — drop-reason wording
+            // honesty. Pre-fix-up the iterative path's message
+            // claimed "no positive-scoring cell" — score.total()
+            // is structurally non-negative for un-penalty types,
+            // so the score check is almost never the real killer.
+            // The actual failure is admissibility (pos slope /
+            // category, centre slope / category, reservation
+            // overlap, corridor intersection). Both foundation
+            // and iterative paths share the same admissibility
+            // gates; only the segment selection differs (primary
+            // vs primary+cross-street).
             String detail = foundation
-                    ? "no terrain-admissible cell within frontage distance of "
-                            + "any network primary edge"
-                    : "no positive-scoring cell within frontage distance of "
-                            + "any network edge (primary or cross-street)";
+                    ? "no admissible candidate position on any primary network edge"
+                    : "no admissible candidate position on any network edge";
             state.dropped.add(new DroppedBuilding(type, DropReason.NO_VIABLE_CANDIDATE, detail));
             if (profile.required()) state.viable = false;
             LOGGER.info("dropped {}: NO_VIABLE_CANDIDATE phase={} required={} ({})",
@@ -626,30 +635,41 @@ public final class PhasedPlanner {
                 // a side reliably; skip.
                 if (nr.distance < 1) continue;
 
-                // Track E1 prompt-4 — relax the hard frontage cutoff
-                // to a soft maximum. Cells previously rejected
-                // (cell-to-road > frontageDistance) are now eligible
-                // when within {@code villageRadius * FRONTAGE_SOFT_MAX_RATIO}
-                // of any road. The nucleus-proximity score picks which
-                // of those cells wins; road frontage is a bonus rather
-                // than the primary signal.
-                int fpPerp = fp.length();
-                int frontageDistance = (nr.segment.width() + 1) / 2 + (fpPerp + 1) / 2;
-                double softMax = Math.max(frontageDistance,
-                        state.villageRadius * FRONTAGE_SOFT_MAX_RATIO);
-                if (nr.distance > softMax) continue;
+                // Track E1 prompt 3 fix-up 3 — frontage-zone band.
+                // pos is now treated as the BUILDING'S FRONT-EDGE
+                // CELL, not a generic sample probe. Restricting pos
+                // to the canonical frontage strip (just outside the
+                // road) means {@code pos} and the derived building
+                // centre are within one footprint-depth/2 of each
+                // other, so the centre-side admissibility re-check
+                // becomes one terrain roll instead of two.
+                //
+                // Pre-fix-up the soft cap was {@code villageRadius
+                // * 2.0} — cells hundreds of blocks from any road
+                // were eligible, and their derived centre was
+                // snapped back to the canonical setback near the
+                // road. On rough terrain (Ring crossing varied
+                // relief) the centre cell was different terrain
+                // from the pos cell; demanding both to pass
+                // {@code slope ≤ MAX_SLOPE = 3} doubled the
+                // rejection probability and produced the wholesale
+                // Phase-4 NO_VIABLE_CANDIDATE failures the sacred
+                // TOWN dump showed.
+                int idealFrontage = nr.segment.width() / 2 + 1;
+                int maxFrontage = idealFrontage + FRONTAGE_BAND_WIDTH;
+                if (nr.distance < idealFrontage) continue;
+                if (nr.distance > maxFrontage) continue;
 
                 Rotation rotation = chooseFacing(pos, nr.point);
                 Vec3 frontDir = cardinalFrontDir(rotation);
 
-                // Compute the building's geometric centre offset
-                // perpendicular FROM the road. Cardinal-snapped frontDir
-                // (driving NBT rotation) is NOT a valid basis for
-                // geometric offset on diagonal spines — it can decompose
-                // mostly along-spine. Use the segment's TRUE
-                // perpendicular instead, with the AABB extent PROJECTED
-                // onto that perpendicular so the clearance is correct
-                // regardless of spine angle.
+                // Local edge perpendicular. The cardinal-snapped
+                // {@code frontDir} (above, driving NBT rotation)
+                // isn't a valid basis for geometric offset on
+                // diagonal spines — it can decompose mostly
+                // along-spine. Use the segment's TRUE perpendicular
+                // so the away-from-road direction is correct
+                // regardless of chord angle.
                 double sdx = nr.segment.end().getX() - nr.segment.start().getX();
                 double sdz = nr.segment.end().getZ() - nr.segment.start().getZ();
                 double slen = Math.sqrt(sdx * sdx + sdz * sdz);
@@ -662,34 +682,39 @@ public final class PhasedPlanner {
                         + (pos.getZ() - nr.point.getZ()) * pZ;
                 int side = cellPerp >= 0 ? +1 : -1;
 
-                // Post-rotation AABB half-extents.
-                boolean swap = rotation == Rotation.CLOCKWISE_90
-                        || rotation == Rotation.COUNTERCLOCKWISE_90;
-                double halfX = (swap ? fp.length() : fp.width()) / 2.0;
-                double halfZ = (swap ? fp.width() : fp.length()) / 2.0;
+                // Track E1 prompt 3 fix-up 3 — centre is now a
+                // small setback from {@code pos} along the local
+                // edge normal, not anchored to {@code nr.point}.
+                // {@code pos} is the building's front-edge cell;
+                // centre sits {@code fp.length / 2} blocks deeper
+                // into the lot along the same perpendicular line.
+                //
+                // Pre-fix-up: {@code centre = nr.point + side *
+                // requiredOffset * perp}, which placed the centre
+                // at the canonical road setback regardless of where
+                // {@code pos} was sampled. For sample cells far
+                // from the road, {@code |pos - centre|} reached 25+
+                // blocks (the "diagonal spine 25-block gap" the
+                // user spotted). The frontage-zone constraint above
+                // already bounds {@code pos} to road-adjacent
+                // cells, so the centre lands one footprint-depth
+                // back from the road regardless — same canonical
+                // setback semantics, just expressed honestly.
+                double setback = fp.length() / 2.0;
+                int centreX = pos.getX()
+                        + (int) Math.round(pX * side * setback);
+                int centreZ = pos.getZ()
+                        + (int) Math.round(pZ * side * setback);
 
-                // AABB projection extent along the true perpendicular.
-                // Conservative for diagonal spines (the building's
-                // axis-aligned AABB pokes farther into the perpendicular
-                // direction than its half-side suggests).
-                double extentPerp = Math.abs(halfX * pX) + Math.abs(halfZ * pZ);
-
-                double frontageDepth = nr.segment.width();
-                double requiredOffset = nr.segment.width() / 2.0
-                        + frontageDepth
-                        + extentPerp
-                        + 0.5;  // round-up safety margin
-
-                int centreX = nr.point.getX()
-                        + (int) Math.round(pX * side * requiredOffset);
-                int centreZ = nr.point.getZ()
-                        + (int) Math.round(pZ * side * requiredOffset);
-
-                // Verify the computed centre is in scan bounds and on
-                // admissible terrain. The cell passed the OPEN/SHORE +
-                // slope filter; the centre may be ~25 blocks away on a
-                // diagonal spine and could land in water / forest /
-                // off-grid.
+                // Verify the computed centre is in scan bounds and
+                // on admissible terrain. Post-fix-up the centre is
+                // one footprint-depth/2 from pos along the local
+                // perpendicular — same cell or one of its immediate
+                // neighbours, not the multi-block jump the
+                // pre-fix-up code could produce on diagonal spines.
+                // The check stays in place to catch the rare cell
+                // where the half-setback lands in a different
+                // terrain class (water edge, forest seam).
                 if (!state.fmap.inBounds(centreX, centreZ)) continue;
                 Cell centreCell = state.fmap.cellAt(centreX, centreZ);
                 BlockCategory centreCat = centreCell.category();
@@ -1099,11 +1124,16 @@ public final class PhasedPlanner {
     private static final double PENALTY_WEIGHT        = 0.30;
     /** Width of the road-frontage bonus falloff (blocks). */
     private static final double ROAD_BONUS_RADIUS     = 6.0;
-    /** Per-building soft maximum distance from any network edge.
-     *  Cells beyond this from every edge are filtered out in
-     *  {@code findBestCandidate}. Scales with village radius so
-     *  bigger villages allow buildings farther off-road. */
-    static final double FRONTAGE_SOFT_MAX_RATIO       = 2.0;
+    /** Track E1 prompt 3 fix-up 3 — width of the frontage-zone
+     *  tolerance band (blocks) past {@code road_half_width + 1}.
+     *  {@code pos} must satisfy
+     *  {@code nr.distance ∈ [road_half + 1, road_half + 1 +
+     *  FRONTAGE_BAND_WIDTH]} to be eligible. A 2-block band gives
+     *  the placer ~3 perpendicular cell rows per side per segment
+     *  to choose from — enough flexibility to dodge terrain
+     *  irregularities, tight enough that {@code pos} is genuinely
+     *  the building's front-edge cell. */
+    private static final int FRONTAGE_BAND_WIDTH      = 2;
 
     /** Spatial-fit summary for one (cell, type) pair: combined score
      *  plus the dominant nucleus context (for the dump). */

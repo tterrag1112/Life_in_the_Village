@@ -122,6 +122,39 @@ made `industrial_haufendorf` and `residential_haufendorf` ship
 without Ring in prompt 3 and degenerate into 30-block
 straight-spine villages).
 
+### 1e. Centre derivation contract (Track E1 prompt 3 fix-up 3)
+
+`PhasedPlanner.findBestCandidate` treats the sampled cell `pos`
+as the **building's front-edge cell**, not a generic probe. Two
+rules:
+
+1. **Frontage zone.** `pos` is eligible only if
+   `nr.distance ∈ [road_half_width + 1, road_half_width + 1 +
+   FRONTAGE_BAND_WIDTH]` (currently a 3-cell-wide strip per side
+   per segment). Cells outside this band are rejected — they
+   wouldn't be a valid frontage cell anyway, and pre-fix-up they
+   produced redundant centres back at the canonical road
+   setback.
+2. **Centre = pos + footprint-depth/2 × local perpendicular.**
+   The derived building centre sits one footprint-depth/2
+   blocks behind `pos` along the segment's local normal. On any
+   chord angle (axis-aligned or diagonal), `pos` and `centre`
+   are within ~`fp.length / 2` blocks of each other. The
+   centre-side admissibility re-check is now essentially a
+   sanity check on a nearby cell — same terrain class on
+   reasonable ground.
+
+Pre-fix-up the centre was anchored to `nr.point + side *
+requiredOffset * perp` regardless of where `pos` was sampled —
+on a permissive soft cap `villageRadius × 2.0`, sample cells
+20+ blocks from the road still iterated, derived centres at the
+canonical setback, and required BOTH `pos` AND that far-flung
+centre to pass `slope ≤ MAX_SLOPE = 3`. Two independent terrain
+rolls; on Rings crossing varied relief, the second roll
+rejected wholesale and produced the post-prompt-3 sacred-TOWN
+abort pattern (1 of 12 buildings placed, "no positive-scoring
+cell" drop reason).
+
 ### 1d. Terrain-adaptation thresholds (Track E1 prompt 3 fix-up 2 — stopgap)
 
 `TerrainAdapter.LARGE_PLATFORM_THRESHOLD` was 10; raised to 16.
