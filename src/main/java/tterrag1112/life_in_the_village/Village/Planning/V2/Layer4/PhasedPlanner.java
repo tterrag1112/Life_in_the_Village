@@ -137,26 +137,36 @@ public final class PhasedPlanner {
         // NBT-fallback semantics live where they always have. The
         // resulting StructureSizeCache implements FootprintProvider
         // so the synthetic-friendly overload below sees the same
-        // object shape.
+        // object shape. Availability is the production singleton —
+        // the same one the call site at findBestCandidate hardcoded
+        // pre-seam, so the live spawn path's variant-resolution
+        // behaviour is unchanged.
         return run(ctx, fmap, sortedSelection, unavailable,
-                new StructureSizeCache(level), tradeFulfilledTypes);
+                new StructureSizeCache(level),
+                StructureAvailabilityRegistry.INSTANCE,
+                tradeFulfilledTypes);
     }
 
     /**
      * Track E1 — headless overload. The {@link
      * tterrag1112.life_in_the_village.Village.Planning.FootprintProvider}
      * replaces the {@link ServerLevel} the live path uses to construct
-     * a {@code StructureSizeCache}. All other behaviour is identical.
+     * a {@code StructureSizeCache}, and the {@link
+     * tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability}
+     * replaces the hardcoded {@code StructureAvailabilityRegistry
+     * .INSTANCE} read inside placement. All other behaviour is
+     * identical.
      */
     public static Result run(SiteContext ctx, V2FeatureMap fmap,
                              List<BuildingType> sortedSelection,
                              List<UnavailableBuilding> unavailable,
                              tterrag1112.life_in_the_village.Village.Planning.FootprintProvider footprints,
+                             tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability availability,
                              Set<BuildingType> tradeFulfilledTypes) {
         // Spine path is now planned by SiteAnalyzer (Layer 2) and
         // arrives on the SiteContext. Skeleton wraps it as a list of
         // SpineSegments (one per primitive in the path).
-        State state = new State(ctx, fmap, footprints);
+        State state = new State(ctx, fmap, footprints, availability);
         state.tradeFulfilledTypes = tradeFulfilledTypes != null
                 ? Set.copyOf(tradeFulfilledTypes) : Set.of();
         Set<BuildingType> foundationTypes = computeFoundationTypes(sortedSelection);
@@ -632,10 +642,15 @@ public final class PhasedPlanner {
                 BlockPos pos = state.fmap.cellWorldPos(i, j);
 
                 // Variant + footprint + rotation against the nearest road.
+                // Track E1 — variant-id seam. Reads availability from
+                // State so the harness can substitute a synthetic
+                // provider; the live `run(... ServerLevel ...)` overload
+                // defaults this to `StructureAvailabilityRegistry.INSTANCE`
+                // so the live spawn path stays byte-identical.
                 String variantId = state.variantResolver.pickVariantIdForV2(
                         type, pos, state.ctx.anchor(), state.villageRadius,
                         state.culture, Style.RURAL, state.rng,
-                        StructureAvailabilityRegistry.INSTANCE);
+                        state.availability);
                 StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
                         Style.RURAL, type, variantId, LEVEL, Rotation.NONE);
                 Footprint fp = new Footprint(info.width(), info.length());
@@ -1871,6 +1886,12 @@ public final class PhasedPlanner {
         final SiteContext ctx;
         final V2FeatureMap fmap;
         final tterrag1112.life_in_the_village.Village.Planning.FootprintProvider sizes;
+        /** Track E1 — variant-id seam. Live path passes
+         *  {@code StructureAvailabilityRegistry.INSTANCE}; harness path
+         *  passes a synthetic {@code BuildingAvailability}. Was a
+         *  hardcoded singleton at the call site pre-seam; now travels
+         *  on State so the same call site works for both paths. */
+        final tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability availability;
         final int villageRadius;
         final String culture;
         final Skeleton skeleton;
@@ -1897,10 +1918,12 @@ public final class PhasedPlanner {
         Set<BuildingType> tradeFulfilledTypes = Set.of();
 
         State(SiteContext ctx, V2FeatureMap fmap,
-              tterrag1112.life_in_the_village.Village.Planning.FootprintProvider sizes) {
+              tterrag1112.life_in_the_village.Village.Planning.FootprintProvider sizes,
+              tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability availability) {
             this.ctx = ctx;
             this.fmap = fmap;
             this.sizes = sizes;
+            this.availability = availability;
             this.villageRadius = villageRadiusFor(ctx.tier());
             this.culture = ctx.culture().id();
             // Track E1 prompt 3 fix-up — Skeleton is now built from
