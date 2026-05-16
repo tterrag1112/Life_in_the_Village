@@ -85,10 +85,15 @@ public final class RunExecutor {
         Set<BuildingType> tradeFulfilled = new HashSet<>();
         for (var tf : recon.tradeFulfilled()) tradeFulfilled.add(tf.requiringType());
 
-        // Layer 4.
+        // Layer 4. Pass the synthetic availability through to
+        // PhasedPlanner so the variant-id call site inside placement
+        // sees the same universal-availability provider the selector
+        // saw — pre-seam this was hardcoded to the production
+        // StructureAvailabilityRegistry singleton and threw headless.
         FixedFootprintProvider footprints = new FixedFootprintProvider();
         PhasedPlanner.Result phased = PhasedPlanner.run(
-                siteCtx, fmap, sorted, unavailable, footprints, tradeFulfilled);
+                siteCtx, fmap, sorted, unavailable, footprints,
+                availability, tradeFulfilled);
         PlacementResult placement = phased.placement();
         RoadNetwork roads = phased.network();
 
