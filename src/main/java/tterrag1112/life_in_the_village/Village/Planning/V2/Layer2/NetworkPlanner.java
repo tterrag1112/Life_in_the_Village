@@ -9,6 +9,7 @@ import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -224,6 +225,22 @@ public final class NetworkPlanner {
                         RoadShape.RoadTier.VILLAGE_ROAD),
                         synId, anchorId);
             }
+
+            // Track E1 prompt 6 — arterial radials radiating outward
+            // from the Ring perimeter. TOWN = 3, CITY = 5, HAMLET =
+            // 0 (per-secondary Spurs above stay the only secondary
+            // edges at HAMLET, preserving the small-village geometry).
+            // Each radial: StraightRoad from Ring perimeter to a new
+            // JUNCTION node at (radialEnd = ringPerim + outwardLen),
+            // plus optionally a short outer Spur perpendicular at the
+            // endpoint representing an outer cluster of houses. The
+            // 5-radial starburst at CITY hits ~380 blocks of arterial
+            // frontage, enough to host the new CITY composition's
+            // 60-65 building budget.
+            emitRadialsFromRing(b, ctx, primaryPos, radius, secondaries,
+                    LayoutTopology.HAUFENDORF, /*emitOuterSpurs*/ true,
+                    allowed, rng);
+
             // Gateways via ArmApproach / Straight.
             addRingGateway(b, primaryPos, radius, primaryGateway,
                     "PRIMARY", ctx, allowed);
@@ -290,6 +307,58 @@ public final class NetworkPlanner {
                         synId, anchorId);
             }
         }
+
+        // Track E1 prompt 6 — arterial cross-street branches
+        // alternating sides of the spine at evenly-spaced fractions.
+        // TOWN = 3 cross-streets at fractions {1/4, 2/4, 3/4}, CITY
+        // = 5 at {1/6, 2/6, ..., 5/6}. The cross at fraction = 1/2
+        // attaches at the primary anchor itself; others land at
+        // synthetic spine points. Side alternates so the resulting
+        // shape stays balanced — a star of branches off the spine
+        // rather than all on one side. Length comes from
+        // crossStreetLengthRange and is capped by Spur's
+        // MAX_SPUR_LENGTH = 48.
+        if (allowed.contains("Spur")) {
+            int crossCount = radialCountFor(LayoutTopology.REIHENDORF, ctx.tier());
+            if (crossCount > 0) {
+                int[] crossLen = crossStreetLengthRange(ctx.tier());
+                List<BlockPos> spineCl = List.of(start, primaryPos, end);
+                double spineLen = Math.sqrt(
+                        (double) horizDistSq(start, end));
+                double spineDX = (end.getX() - start.getX()) / Math.max(1.0, spineLen);
+                double spineDZ = (end.getZ() - start.getZ()) / Math.max(1.0, spineLen);
+                // Perpendicular: rotate spine direction by +90°.
+                double perpDX = -spineDZ;
+                double perpDZ = spineDX;
+                for (int i = 0; i < crossCount; i++) {
+                    double frac = (i + 1) / (double) (crossCount + 1);
+                    BlockPos attach = new BlockPos(
+                            start.getX() + (int) Math.round(spineDX * frac * spineLen),
+                            primaryPos.getY(),
+                            start.getZ() + (int) Math.round(spineDZ * frac * spineLen));
+                    int sideSign = (i % 2 == 0) ? +1 : -1;
+                    int len = sampleInt(crossLen[0], crossLen[1], rng);
+                    if (len < MIN_SPUR_LENGTH) continue;
+                    if (len > MAX_SPUR_LENGTH) len = MAX_SPUR_LENGTH;
+                    BlockPos crossEnd = new BlockPos(
+                            attach.getX() + (int) Math.round(perpDX * sideSign * len),
+                            attach.getY(),
+                            attach.getZ() + (int) Math.round(perpDZ * sideSign * len));
+                    // Mid-spine cross-street attaches at primary; the
+                    // off-mid ones get synthetic anchor points.
+                    String attachId = (chebDist(attach, primaryPos)
+                            < MIN_SPUR_LENGTH)
+                            ? anchorNode
+                            : b.addSynthetic(attach);
+                    String endId = b.addJunction(crossEnd);
+                    b.addEdge(new RoadPrimitive.Spur(spineCl, attach,
+                            bearingRad(attach, crossEnd), len, EDGE_DRIFT,
+                            RoadShape.RoadTier.VILLAGE_ROAD),
+                            attachId, endId);
+                }
+            }
+        }
+
         // Gateways live at the spine endpoints; no extra edges needed.
         // Mark them as GATEWAY nodes for the visualizer.
         b.relabel(startNode, "gateway:SECONDARY", NodeKind.GATEWAY);
@@ -340,6 +409,16 @@ public final class NetworkPlanner {
                         synId, anchorId);
             }
         }
+
+        // Track E1 prompt 6 — arterial radials outside the Ring.
+        // ANGERDORF gets the same radial starburst as HAUFENDORF
+        // but WITHOUT the outer-Spur tassels: the inner Arc already
+        // handles ANGERDORF's decorative role and outer Spurs would
+        // overload the visual. TOWN = 3, CITY = 5.
+        emitRadialsFromRing(b, ctx, primaryPos, radius, secondaries,
+                LayoutTopology.ANGERDORF, /*emitOuterSpurs*/ false,
+                allowed, rng);
+
         addRingGateway(b, primaryPos, radius, primaryGateway, "PRIMARY",
                 ctx, allowed);
         addRingGateway(b, primaryPos, radius, secondaryGateway, "SECONDARY",
@@ -402,6 +481,64 @@ public final class NetworkPlanner {
                         bearingRad(onRing, secPos), spurLen, EDGE_DRIFT,
                         RoadShape.RoadTier.VILLAGE_ROAD),
                         synId, anchorId);
+            }
+        }
+
+        // Track E1 prompt 6 — inter-Ring radials connecting the
+        // inner and outer Rings (TOWN+: outer Ring is non-zero).
+        // TOWN = 2 inter-Ring radials, CITY = 5. Length = (outer −
+        // inner), short enough to never trip MAX_SPUR_LENGTH but
+        // still adds substantial frontage at CITY (5 × ~14 = 70
+        // blocks across the inter-Ring band, where buildings fit
+        // tightly perpendicular to a short straight). RUNDLING's
+        // signature is the concentric rings + ArmApproach
+        // compass-rose; inter-Ring radials reinforce the defensive-
+        // settlement feel without breaking it.
+        if (outer > 0 && allowed.contains("StraightRoad")) {
+            int interCount = radialCountFor(LayoutTopology.RUNDLING, ctx.tier());
+            if (interCount > 0) {
+                double[] angles = distributeRadialAngles(interCount,
+                        secondaries, primaryPos, rng);
+                for (double a : angles) {
+                    BlockPos innerAttach = polarPoint(primaryPos, inner, a);
+                    BlockPos outerAttach = polarPoint(primaryPos, outer, a);
+                    int len = chebDist(innerAttach, outerAttach);
+                    if (len < MIN_SPUR_LENGTH) continue;
+                    String innerSyn = b.addSynthetic(innerAttach);
+                    String outerSyn = b.addSynthetic(outerAttach);
+                    b.addEdge(new RoadPrimitive.StraightRoad(innerAttach,
+                            outerAttach, EDGE_DRIFT / 2.0,
+                            RoadShape.RoadTier.VILLAGE_ROAD),
+                            innerSyn, outerSyn);
+                }
+            }
+
+            // Outer Spurs past the outer Ring (CITY only): 3 short
+            // Spurs at angles independent of the inter-Ring radials
+            // (consume the same RNG sequence for determinism but
+            // the gaps re-resolve naturally). Represents "settlement
+            // outside the wall" — gates-of-the-city growth that
+            // typical medieval cities accumulated.
+            int outerSpurCount = crossLinkCountFor(LayoutTopology.RUNDLING,
+                    ctx.tier());
+            int outerLen = outerSpurLengthFor(ctx.tier());
+            if (outerSpurCount > 0 && outerLen >= MIN_SPUR_LENGTH
+                    && allowed.contains("Spur")) {
+                double[] angles = distributeRadialAngles(outerSpurCount,
+                        secondaries, primaryPos, rng);
+                List<BlockPos> outerRingCl = ringSamplePoints(
+                        primaryPos, outer, 16);
+                for (double a : angles) {
+                    BlockPos onOuter = polarPoint(primaryPos, outer, a);
+                    BlockPos spurEnd = polarPoint(primaryPos,
+                            outer + outerLen, a);
+                    String onOuterSyn = b.addSynthetic(onOuter);
+                    String endSyn = b.addJunction(spurEnd);
+                    b.addEdge(new RoadPrimitive.Spur(outerRingCl, onOuter,
+                            a, outerLen, EDGE_DRIFT,
+                            RoadShape.RoadTier.VILLAGE_ROAD),
+                            onOuterSyn, endSyn);
+                }
             }
         }
     }
@@ -474,6 +611,61 @@ public final class NetworkPlanner {
                     NodeKind.GATEWAY);
             addLinearEdge(b, type, primaryPos, primaryGateway, primaryNodeId,
                     gpId, rng);
+
+            // Track E1 prompt 6 — arterial spokes radiating from the
+            // primary anchor, plus cross-streets connecting pairs of
+            // spoke endpoints. CLUSTER is the inclination-fallback
+            // topology (industrial_mining, agricultural_cluster_
+            // fallback) so the spokes are organised "compass-rose"
+            // rather than around a Ring — there's no ring to attach
+            // to. TOWN = 4 spokes + 1 cross-street, CITY = 5 spokes
+            // + 2 cross-streets. Spokes use secondary-anchor
+            // directions when available so industrial_mining's
+            // CLIFF_FACE bindings actually map to a spoke endpoint
+            // near the mineable wall.
+            //
+            // NOTE on future refinement: a real medieval mining
+            // village is a two-node graph (mine site + residential
+            // cluster) connected by an arterial — a DUMBBELL or
+            // RESOURCE_LINK topology. CLUSTER's compass-rose shape
+            // is a rough fit; introducing the proper topology is a
+            // future prompt. For now, the frontage is what matters.
+            int spokeCount = radialCountFor(LayoutTopology.CLUSTER,
+                    ctx.tier());
+            if (spokeCount > 0) {
+                int[] spokeLen = radialLengthRange(ctx.tier());
+                double[] angles = distributeRadialAngles(spokeCount,
+                        secondaries, primaryPos, rng);
+                List<BlockPos> spokeEnds = new ArrayList<>(spokeCount);
+                List<String> spokeEndNodes = new ArrayList<>(spokeCount);
+                for (double a : angles) {
+                    int len = sampleInt(spokeLen[0], spokeLen[1], rng);
+                    BlockPos end = polarPoint(primaryPos, len, a);
+                    String endNode = b.addJunction(end);
+                    spokeEnds.add(end);
+                    spokeEndNodes.add(endNode);
+                    addLinearEdge(b, type, primaryPos, end, primaryNodeId,
+                            endNode, rng);
+                }
+                // Cross-streets: connect pairs of adjacent spoke
+                // endpoints. CITY = 2 connects spoke 0-1 and 2-3;
+                // TOWN = 1 connects 0-1. Skip if the chord length
+                // exceeds MAX_SPUR_LENGTH * 2 (degenerate large gap).
+                int crossCount = crossLinkCountFor(LayoutTopology.CLUSTER,
+                        ctx.tier());
+                for (int i = 0; i < crossCount; i++) {
+                    int idx1 = (2 * i) % spokeEnds.size();
+                    int idx2 = (2 * i + 1) % spokeEnds.size();
+                    if (idx1 == idx2) continue;
+                    BlockPos p1 = spokeEnds.get(idx1);
+                    BlockPos p2 = spokeEnds.get(idx2);
+                    int d = chebDist(p1, p2);
+                    if (d < MIN_SPUR_LENGTH || d > MAX_SPUR_LENGTH * 2) continue;
+                    addLinearEdge(b, type, p1, p2,
+                            spokeEndNodes.get(idx1), spokeEndNodes.get(idx2),
+                            rng);
+                }
+            }
         }
     }
 
@@ -516,6 +708,56 @@ public final class NetworkPlanner {
                         bearingRad(onSpine, secPos), spurLen, EDGE_DRIFT,
                         RoadShape.RoadTier.VILLAGE_ROAD),
                         synId, anchorId);
+            }
+        }
+    }
+
+    /** Track E1 prompt 6 — emit arterial radial edges from a Ring
+     *  perimeter outward, with optional short perpendicular outer
+     *  Spurs at the radial endpoints. Shared by HAUFENDORF (uses
+     *  outer Spurs) and ANGERDORF (no outer Spurs — Arc fills that
+     *  decorative role).
+     *
+     *  Angles come from {@link #distributeRadialAngles} (secondary-
+     *  biased + even-spaced fallback + min-30°-separation + phase
+     *  jitter). No emission at HAMLET / OUTPOST / UNVIABLE
+     *  (radialCountFor returns 0). Requires StraightRoad in allowed
+     *  primitives; Spur required for the outer-Spur emission. */
+    private static void emitRadialsFromRing(Builder b, SiteContext ctx,
+            BlockPos ringCentre, int ringRadius, List<Anchor> secondaries,
+            LayoutTopology topology, boolean emitOuterSpurs,
+            Set<String> allowed, Random rng) {
+        int M = radialCountFor(topology, ctx.tier());
+        if (M <= 0) return;
+        if (!allowed.contains("StraightRoad")) return;
+
+        int[] lenRange = radialLengthRange(ctx.tier());
+        int outerSpurLen = emitOuterSpurs ? outerSpurLengthFor(ctx.tier()) : 0;
+        double[] angles = distributeRadialAngles(M, secondaries, ringCentre, rng);
+
+        for (double angle : angles) {
+            int radialLen = sampleInt(lenRange[0], lenRange[1], rng);
+            BlockPos ringAttach = polarPoint(ringCentre, ringRadius, angle);
+            BlockPos radialEnd = polarPoint(ringCentre, ringRadius + radialLen, angle);
+            String ringSyn = b.addSynthetic(ringAttach);
+            String endNode = b.addJunction(radialEnd);
+            b.addEdge(new RoadPrimitive.StraightRoad(ringAttach, radialEnd,
+                    EDGE_DRIFT, RoadShape.RoadTier.VILLAGE_ROAD),
+                    ringSyn, endNode);
+
+            if (emitOuterSpurs && outerSpurLen >= MIN_SPUR_LENGTH
+                    && allowed.contains("Spur")) {
+                // Perpendicular Spur at the radial terminus. Side
+                // alternates per radial via the angle's index parity
+                // (encoded in the angle's sign of sin(angle*M)).
+                double perp = angle + Math.PI / 2;
+                BlockPos spurEnd = polarPoint(radialEnd, outerSpurLen, perp);
+                List<BlockPos> radialCenterline = List.of(ringAttach, radialEnd);
+                String spurEndSyn = b.addJunction(spurEnd);
+                b.addEdge(new RoadPrimitive.Spur(radialCenterline, radialEnd,
+                        perp, outerSpurLen, EDGE_DRIFT,
+                        RoadShape.RoadTier.VILLAGE_ROAD),
+                        endNode, spurEndSyn);
             }
         }
     }
@@ -651,6 +893,236 @@ public final class NetworkPlanner {
             case HAMLET  -> 24;
             case OUTPOST, UNVIABLE -> 12;
         };
+    }
+
+    // =========================================================================
+    // Track E1 prompt 6 — tier-keyed secondary edge counts.
+    // =========================================================================
+    //
+    // Prompt 3 delivered tier-keyed primary feature SIZE (Ring radius,
+    // spine length) but the COUNT of secondary edges per recipe stayed
+    // at "one per filtered secondary anchor." A CITY HAUFENDORF on a
+    // 2-secondary site emitted 2 Spurs — same as a HAMLET on the same
+    // site. That capped CITY-tier frontage at ~250 blocks regardless
+    // of how much composition the inclination profile (prompt 5) asks
+    // for. CITY AGRICULTURAL wants ~72 buildings; 250 blocks of
+    // frontage at the post-prompt-3-fix-up-3 ~15-block slot spacing
+    // hosts ~16 cleanly. The math doesn't reach without expanding the
+    // network.
+    //
+    // These tables add tier-keyed secondary edge counts per topology
+    // (radials for HAUFENDORF / ANGERDORF / CLUSTER, cross-streets
+    // for REIHENDORF, inter-Ring radials for RUNDLING, outer Spurs
+    // for RUNDLING CITY only). HAMLET stays at zero so existing
+    // small-village geometry doesn't regress.
+
+    /** Number of arterial radial / cross-street / spoke edges a
+     *  topology emits per tier. These are emitted IN ADDITION to the
+     *  existing per-secondary-anchor Spurs (which stay unchanged) so
+     *  composition + network capacity track together. */
+    private static int radialCountFor(LayoutTopology topology, ViabilityTier tier) {
+        return switch (topology) {
+            case HAUFENDORF -> switch (tier) {
+                case CITY -> 5;
+                case TOWN -> 3;
+                case HAMLET, OUTPOST, UNVIABLE -> 0;
+            };
+            case REIHENDORF -> switch (tier) {
+                case CITY -> 5;
+                case TOWN -> 3;
+                case HAMLET, OUTPOST, UNVIABLE -> 0;
+            };
+            case ANGERDORF -> switch (tier) {
+                case CITY -> 5;
+                case TOWN -> 3;
+                case HAMLET, OUTPOST, UNVIABLE -> 0;
+            };
+            case RUNDLING -> switch (tier) {
+                case CITY -> 5;
+                case TOWN -> 2;
+                case HAMLET, OUTPOST, UNVIABLE -> 0;
+            };
+            case CLUSTER -> switch (tier) {
+                case CITY -> 5;
+                case TOWN -> 4;
+                case HAMLET, OUTPOST, UNVIABLE -> 0;
+            };
+            case EINZELHOF -> 0;  // EINZELHOF uses its own hardcoded cap of 3.
+        };
+    }
+
+    /** Extra cross-link edges connecting non-adjacent radial
+     *  endpoints — currently used by CLUSTER (between spoke
+     *  endpoints) and RUNDLING (outer Spurs past the outer Ring).
+     *  Zero for other topologies. */
+    private static int crossLinkCountFor(LayoutTopology topology, ViabilityTier tier) {
+        return switch (topology) {
+            case CLUSTER -> switch (tier) {
+                case CITY -> 2;
+                case TOWN -> 1;
+                default -> 0;
+            };
+            case RUNDLING -> switch (tier) {
+                case CITY -> 3;
+                default -> 0;
+            };
+            default -> 0;
+        };
+    }
+
+    /** Radial / spoke length range per tier (blocks). Used for the
+     *  arterial radials that radiate outward from the primary
+     *  nucleus in HAUFENDORF / ANGERDORF / CLUSTER. CITY radials
+     *  extend roughly half the village radius past the Ring (or
+     *  primary anchor for CLUSTER); TOWN scales down ~⅔. */
+    private static int[] radialLengthRange(ViabilityTier tier) {
+        return switch (tier) {
+            case CITY    -> new int[]{30, 50};
+            case TOWN    -> new int[]{20, 35};
+            case HAMLET, OUTPOST, UNVIABLE -> new int[]{0, 0};
+        };
+    }
+
+    /** Short Spur length emitted perpendicular at the end of a
+     *  HAUFENDORF / ANGERDORF radial (the "outer cluster" — a
+     *  hamlet of houses where the arterial reaches its terminus).
+     *  RUNDLING CITY also emits outer Spurs beyond the outer Ring
+     *  at this length. */
+    private static int outerSpurLengthFor(ViabilityTier tier) {
+        return switch (tier) {
+            case CITY -> 16;
+            case TOWN -> 12;
+            case HAMLET, OUTPOST, UNVIABLE -> 0;
+        };
+    }
+
+    /** REIHENDORF cross-street length range per tier — branches
+     *  perpendicular to the spine, alternating sides so the resulting
+     *  shape stays balanced. Length is bounded by Spur's hard cap
+     *  ({@link #MAX_SPUR_LENGTH} = 48). */
+    private static int[] crossStreetLengthRange(ViabilityTier tier) {
+        return switch (tier) {
+            case CITY    -> new int[]{30, 45};
+            case TOWN    -> new int[]{20, 30};
+            case HAMLET, OUTPOST, UNVIABLE -> new int[]{0, 0};
+        };
+    }
+
+    /** Track E1 prompt 6 — minimum angular separation between any
+     *  two radials in the distribute-radial-angles algorithm. The
+     *  base spacing for M=5 radials is 72° even before snapping to
+     *  secondary anchors; only secondary snapping can push two
+     *  radials within 30° of each other, in which case the relaxer
+     *  pushes the closer pair apart symmetrically. */
+    private static final double MIN_RADIAL_SEPARATION_RAD = Math.toRadians(30);
+
+    /** Distribute M radial bearings around {@code primary}, biased
+     *  toward the K closest secondary anchors when {@code K = min(M,
+     *  secondaries.size()) > 0} and filling the rest at evenly-spaced
+     *  angles in the largest remaining gaps. A deterministic phase
+     *  offset from {@code rng} rotates the unconstrained fill so two
+     *  similar sites produce visibly different geometry. After
+     *  placement, any pair within {@link #MIN_RADIAL_SEPARATION_RAD}
+     *  is symmetrically pushed apart. Returns angles in radians
+     *  (0..2π), sorted ascending. */
+    private static double[] distributeRadialAngles(int M, List<Anchor> secondaries,
+                                                    BlockPos primary, Random rng) {
+        if (M <= 0) return new double[0];
+
+        // K = min(M, N) closest filtered secondaries get a radial each.
+        List<Anchor> filtered = new ArrayList<>(filterSecondaries(secondaries));
+        filtered.sort(Comparator.comparingDouble(a -> {
+            long dx = a.centre().getX() - primary.getX();
+            long dz = a.centre().getZ() - primary.getZ();
+            return (double) (dx * dx + dz * dz);
+        }));
+        int K = Math.min(M, filtered.size());
+
+        // Phase offset is consumed even when K == 0 so the RNG
+        // sequence stays stable independent of anchor count for the
+        // same site. (Otherwise a site that loses or gains a
+        // secondary anchor due to terrain changes would re-roll
+        // every downstream sampleInt.)
+        double phase = rng.nextDouble() * 2 * Math.PI;
+
+        List<Double> placed = new ArrayList<>(M);
+        for (int i = 0; i < K; i++) {
+            placed.add(normalizeAngle(bearingRad(primary, filtered.get(i).centre())));
+        }
+
+        int remaining = M - K;
+        if (remaining > 0 && K == 0) {
+            // No anchors — pure even distribution with phase jitter.
+            for (int i = 0; i < remaining; i++) {
+                placed.add(normalizeAngle(phase + i * (2 * Math.PI / remaining)));
+            }
+        } else if (remaining > 0) {
+            // Place each remaining angle at the midpoint of the
+            // largest current gap. Each pass adds one angle, so the
+            // gap structure evolves; recompute every iteration.
+            for (int rem = 0; rem < remaining; rem++) {
+                Collections.sort(placed);
+                double bestGap = -1;
+                double bestMid = phase;
+                int n = placed.size();
+                for (int i = 0; i < n; i++) {
+                    double a = placed.get(i);
+                    double bAng = placed.get((i + 1) % n);
+                    double gap = (bAng - a + 2 * Math.PI) % (2 * Math.PI);
+                    if (n == 1) gap = 2 * Math.PI;  // single anchor: full sweep
+                    if (gap > bestGap) {
+                        bestGap = gap;
+                        bestMid = normalizeAngle(a + gap / 2);
+                    }
+                }
+                placed.add(bestMid);
+            }
+        }
+
+        double[] arr = new double[M];
+        for (int i = 0; i < M; i++) arr[i] = placed.get(i);
+        java.util.Arrays.sort(arr);
+
+        // Min-separation relaxation. Iterates up to 4 passes; the
+        // base even-spacing for M >= 4 is already > 30°, so only
+        // anchor-snap collisions need adjustment and one pass
+        // typically converges.
+        for (int iter = 0; iter < 4; iter++) {
+            boolean adjusted = false;
+            for (int i = 0; i < M; i++) {
+                int j = (i + 1) % M;
+                double a = arr[i];
+                double bAng = arr[j];
+                double gap = (bAng - a + 2 * Math.PI) % (2 * Math.PI);
+                if (gap > 0 && gap < MIN_RADIAL_SEPARATION_RAD) {
+                    double push = (MIN_RADIAL_SEPARATION_RAD - gap) / 2;
+                    arr[i] = normalizeAngle(a - push);
+                    arr[j] = normalizeAngle(bAng + push);
+                    adjusted = true;
+                }
+            }
+            if (!adjusted) break;
+            java.util.Arrays.sort(arr);
+        }
+
+        return arr;
+    }
+
+    private static double normalizeAngle(double rad) {
+        double r = rad % (2 * Math.PI);
+        if (r < 0) r += 2 * Math.PI;
+        return r;
+    }
+
+    /** Compute a point at {@code (centre + radius * (cos(angle),
+     *  sin(angle)))}. Used to find radial attach points on the
+     *  Ring perimeter without going through the
+     *  {@link #projectOntoRing} secondary-snap path. */
+    private static BlockPos polarPoint(BlockPos centre, int radius, double angle) {
+        return new BlockPos(
+                centre.getX() + (int) Math.round(Math.cos(angle) * radius),
+                centre.getY(),
+                centre.getZ() + (int) Math.round(Math.sin(angle) * radius));
     }
 
     // =========================================================================
@@ -831,6 +1303,18 @@ public final class NetworkPlanner {
         String addSynthetic(BlockPos pos) {
             String id = "synthetic:" + syntheticCounter++;
             nodes.add(new NetworkNode(id, pos, NodeKind.SYNTHETIC));
+            return id;
+        }
+
+        /** Track E1 prompt 6 — JUNCTION nodes for radial / spoke
+         *  endpoints. Semantically these are "real intersections
+         *  in the road network at synthesised positions" rather
+         *  than pure SYNTHETIC scaffolding. The painter doesn't
+         *  treat them differently; the kind just makes dumps + the
+         *  visualizer more honest. */
+        String addJunction(BlockPos pos) {
+            String id = "junction:" + junctionCounter++;
+            nodes.add(new NetworkNode(id, pos, NodeKind.JUNCTION));
             return id;
         }
 

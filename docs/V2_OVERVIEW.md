@@ -234,6 +234,73 @@ and reliably beats `industrial_haufendorf`'s 80-something from a
 high-quality FLAT_FERTILE primary. The fallback only wins on
 sites with no usable resource anchor.
 
+### 1i. Network capacity scaling (Track E1 prompt 6)
+
+Each topology's recipe in `NetworkPlanner.java` carries a tier-keyed
+table of *secondary edge counts*. Prompt 3 delivered tier-scaled
+primary-feature size (Ring radius, spine length); prompt 6 adds
+tier-scaled COUNT of additional arterial edges so CITY-tier networks
+host the CITY-tier composition that prompt 5 locked in.
+
+Numbers per topology (count of *arterial* radials / cross-streets /
+spokes, in addition to the existing per-secondary-anchor Spurs which
+still emit unchanged):
+
+| Topology | HAMLET | TOWN | CITY |
+|---|---|---|---|
+| HAUFENDORF radials (out from Ring) | 0 | 3 | 5 |
+| REIHENDORF cross-streets (alternating sides of spine) | 0 | 3 | 5 |
+| ANGERDORF radials (out from Ring) | 0 | 3 | 5 |
+| RUNDLING inter-Ring radials | 0 | 2 | 5 |
+| RUNDLING outer Spurs (beyond outer Ring) | 0 | 0 | 3 |
+| CLUSTER spokes (out from primary) | 0 | 4 | 5 |
+| CLUSTER cross-streets (between spoke endpoints) | 0 | 1 | 2 |
+| EINZELHOF | (unchanged — hardcoded cap 3) |
+
+Total CITY-tier centerline: HAUFENDORF ~380, REIHENDORF ~370,
+ANGERDORF ~370, RUNDLING ~390, CLUSTER ~350. At the post-prompt-3-
+fix-up-3 ~15-block slot spacing, ~380 blocks of frontage supports
+~50 buildings cleanly — enough for the 60-65 CITY composition with
+drops in single digits.
+
+**Directional selection** (`distributeRadialAngles` in
+`NetworkPlanner.java`): given `M` desired radials and a list of
+filtered secondary anchors:
+1. Sort filtered secondaries by Euclidean distance from primary.
+2. `K = min(M, N)` closest secondaries get a radial each, at their
+   bearing direction.
+3. Remaining `M - K` radials are placed at the midpoints of the
+   currently-largest angular gaps. When K=0, pure even spacing
+   `360°/M` with a deterministic phase offset from `rng.nextDouble()`
+   so two similar sites differ.
+4. Any pair within `MIN_RADIAL_SEPARATION_RAD = 30°` is symmetrically
+   pushed apart (4 relaxation passes max).
+5. Phase offset is consumed even at K=0 so the RNG sequence stays
+   stable independent of anchor count for the same site.
+
+**Topology distinctions preserved.** HAUFENDORF gets a starburst (no
+outer Ring — that's RUNDLING's signature). ANGERDORF gets radials
+WITHOUT outer Spurs (the inner Arc already handles decorative
+flourish). RUNDLING gets inter-Ring radials reinforcing the
+concentric-Ring + compass-rose feel rather than breaking it.
+
+**CLUSTER footnote.** The compass-rose spoke pattern is a rough fit
+for `industrial_mining`; the proper shape is a two-node graph (mine
+site + residential cluster connected by an arterial). Introducing a
+DUMBBELL or RESOURCE_LINK topology variant for that case is a
+future refinement; for now CLUSTER's expanded spokes provide the
+frontage capacity at the cost of geometric authenticity.
+
+**Stairway not yet paintable** — known limitation flagged for a
+future fix-up. `RoadPainter.paintAll` returns 0 for Stairway
+primitives (line ~115, comment: "Stairway is not produced by
+NetworkPlanner recipes today (the Y-jumping centerline needs a
+dedicated painter)"). No prompt-6 recipe emits Stairway, so this
+doesn't affect current spawns. It will matter when (a) the proper
+two-cluster industrial_mining topology lands and wants a Stairway
+from a high cliff mine down to a low residential cluster, or (b) a
+future prompt adds steep-terrain topology variants. Worth tracking.
+
 ### 1h. Primary binding contract (Track E1 prompt 5)
 
 Pre-prompt-5 `PrimaryBinding` was a soft scoring nudge only — a
