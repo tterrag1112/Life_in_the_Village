@@ -39,12 +39,52 @@ import java.util.Map;
  * violence, clustering coherence, drop histogram. These move
  * intentionally as the system evolves; gating them would make every
  * legitimate change a fight with the harness.
+ *
+ * <p><b>Undefined-metric encoding.</b> Non-finite metric values
+ * (NaN / Infinity from aborted runs, single-building bbox math,
+ * single-instance clustering, etc.) serialise as
+ * {@link #SENTINEL_UNDEFINED} and restore to {@link Double#NaN} on
+ * read. A finite {@code 0.0} — the HOUSE-bug canary among others —
+ * is never sentinel'd. Diff treats undefined↔undefined as no
+ * change, defined↔defined as the normal delta, and a gating metric
+ * going from defined to undefined as a regression in observability
+ * (it should fail).
  */
 public final class Baseline {
 
     public static final double PER_TYPE_RATE_DELTA  = 0.10;
     public static final double PLACED_RATE_DELTA    = 0.05;
     public static final double MAIN_COMPONENT_DELTA = 0.05;
+
+    /**
+     * Sentinel that represents a non-finite metric in JSON.
+     *
+     * <p>NaN and Infinity are common in the baseline — they're how
+     * the harness honestly represents "metric undefined for this
+     * run" (compactness with ≤1 building, clustering coherence with
+     * a type count < 2, geometry on aborted runs). Gson cannot
+     * round-trip NaN through standard JSON, so the serializer maps
+     * non-finite → this sentinel and the reader maps it back to
+     * {@link Double#NaN}.
+     *
+     * <p><b>Why {@code -1.0}.</b> Every metric in {@link RunMetrics}
+     * is non-negative (placement rates in [0,1], counts ≥ 0,
+     * distances and bbox ratios ≥ 0, clustering coherence ≥ 0). A
+     * negative number is therefore unambiguous: it cannot be a real
+     * value. {@code -1.0} round-trips exactly through Gson and
+     * compares with strict equality on read-back.
+     *
+     * <p><b>What this is not.</b> The sentinel is for serialization
+     * only. In-memory and at the table renderer, undefined stays
+     * {@link Double#NaN} (so {@code Double.isNaN} checks keep
+     * working). And — critically — a real finite {@code 0.0} is
+     * never sentinel'd: the HOUSE-bug canary depends on a genuine
+     * near-zero placement rate surviving to the baseline and the
+     * table untouched. {@link #nanSafe(double)} fires only on
+     * {@link Double#isNaN} / {@link Double#isInfinite}, never on a
+     * finite value.
+     */
+    public static final double SENTINEL_UNDEFINED = -1.0;
 
     private Baseline() {}
 
@@ -174,18 +214,45 @@ public final class Baseline {
         if (!root.has(field)) return out;
         for (Map.Entry<String, com.google.gson.JsonElement> e
                 : root.getAsJsonObject(field).entrySet()) {
-            try { out.put(BuildingType.valueOf(e.getKey()),
-                    e.getValue().isJsonNull() ? Double.NaN : e.getValue().getAsDouble()); }
+            try {
+                double v = e.getValue().isJsonNull()
+                        ? Double.NaN : e.getValue().getAsDouble();
+                if (v == SENTINEL_UNDEFINED) v = Double.NaN;
+                out.put(BuildingType.valueOf(e.getKey()), v);
+            }
             catch (IllegalArgumentException ignored) {}
         }
         return out;
     }
 
-    private static Object nanSafe(double v) { return Double.isNaN(v) ? null : v; }
+    /**
+     * Maps a metric value to a {@link Number} fit for {@code
+     * JsonObject.addProperty(String, Number)}. Non-finite values
+     * (NaN, ±Infinity) become {@link #SENTINEL_UNDEFINED}; finite
+     * values — including a real {@code 0.0} — pass through
+     * unchanged.
+     */
+    private static Number nanSafe(double v) {
+        return Double.isFinite(v) ? v : SENTINEL_UNDEFINED;
+    }
 
+    /**
+     * Inverse of {@link #nanSafe(double)} for read-back. The
+     * sentinel restores to {@link Double#NaN} so in-memory NaN
+     * checks downstream (in {@link #diff} and in {@link Table})
+     * keep working. A finite {@code 0.0} read from JSON stays
+     * {@code 0.0}.
+     *
+     * <p>A legacy baseline written by the prior {@code null}-based
+     * serializer also restores to NaN (the {@code isJsonNull}
+     * branch) so a re-record after this fix isn't required just to
+     * read older baselines, though re-recording is recommended for
+     * clarity.
+     */
     private static double fromNanSafe(JsonObject o, String field) {
         if (!o.has(field) || o.get(field).isJsonNull()) return Double.NaN;
-        return o.get(field).getAsDouble();
+        double v = o.get(field).getAsDouble();
+        return v == SENTINEL_UNDEFINED ? Double.NaN : v;
     }
 
     // =========================================================================
@@ -241,8 +308,17 @@ public final class Baseline {
                         cur.networkComponents() - base.networkComponents()));
             }
             // Gating metric 4: frac_buildings_on_main_component.
-            if (!Double.isNaN(base.fracBuildingsOnMainComponent())
-                    && !Double.isNaN(cur.fracBuildingsOnMainComponent())) {
+            // Asymmetric treatment of the undefined boundary:
+            //   defined → defined: normal delta check.
+            //   defined → undefined: FAIL. A gating metric losing
+            //       observability is a regression (per the harness
+            //       contract: "a gating metric going undefined is a
+            //       regression in observability").
+            //   undefined → defined: improvement; don't fail.
+            //   undefined → undefined: no change; don't fail.
+            boolean baseDef = !Double.isNaN(base.fracBuildingsOnMainComponent());
+            boolean curDef  = !Double.isNaN(cur.fracBuildingsOnMainComponent());
+            if (baseDef && curDef) {
                 double mainDrop = base.fracBuildingsOnMainComponent()
                         - cur.fracBuildingsOnMainComponent();
                 if (mainDrop > MAIN_COMPONENT_DELTA) {
@@ -251,6 +327,11 @@ public final class Baseline {
                             cur.fracBuildingsOnMainComponent(),
                             -mainDrop));
                 }
+            } else if (baseDef && !curDef) {
+                failures.add(new Failure(key,
+                        "fracBuildingsOnMainComponent(observability-lost)",
+                        base.fracBuildingsOnMainComponent(), Double.NaN,
+                        Double.NaN));
             }
         }
         return new DiffResult(failures, false);
