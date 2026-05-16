@@ -133,10 +133,30 @@ public final class PhasedPlanner {
                              List<UnavailableBuilding> unavailable,
                              ServerLevel level,
                              Set<BuildingType> tradeFulfilledTypes) {
+        // Live path: build the cache here so the warn-once state and
+        // NBT-fallback semantics live where they always have. The
+        // resulting StructureSizeCache implements FootprintProvider
+        // so the synthetic-friendly overload below sees the same
+        // object shape.
+        return run(ctx, fmap, sortedSelection, unavailable,
+                new StructureSizeCache(level), tradeFulfilledTypes);
+    }
+
+    /**
+     * Track E1 — headless overload. The {@link
+     * tterrag1112.life_in_the_village.Village.Planning.FootprintProvider}
+     * replaces the {@link ServerLevel} the live path uses to construct
+     * a {@code StructureSizeCache}. All other behaviour is identical.
+     */
+    public static Result run(SiteContext ctx, V2FeatureMap fmap,
+                             List<BuildingType> sortedSelection,
+                             List<UnavailableBuilding> unavailable,
+                             tterrag1112.life_in_the_village.Village.Planning.FootprintProvider footprints,
+                             Set<BuildingType> tradeFulfilledTypes) {
         // Spine path is now planned by SiteAnalyzer (Layer 2) and
         // arrives on the SiteContext. Skeleton wraps it as a list of
         // SpineSegments (one per primitive in the path).
-        State state = new State(ctx, fmap, level);
+        State state = new State(ctx, fmap, footprints);
         state.tradeFulfilledTypes = tradeFulfilledTypes != null
                 ? Set.copyOf(tradeFulfilledTypes) : Set.of();
         Set<BuildingType> foundationTypes = computeFoundationTypes(sortedSelection);
@@ -1959,8 +1979,7 @@ public final class PhasedPlanner {
     private static final class State {
         final SiteContext ctx;
         final V2FeatureMap fmap;
-        final ServerLevel level;
-        final StructureSizeCache sizes;
+        final tterrag1112.life_in_the_village.Village.Planning.FootprintProvider sizes;
         final int villageRadius;
         final String culture;
         final Skeleton skeleton;
@@ -1992,11 +2011,11 @@ public final class PhasedPlanner {
          *  {@code run} after construction. */
         Set<BuildingType> tradeFulfilledTypes = Set.of();
 
-        State(SiteContext ctx, V2FeatureMap fmap, ServerLevel level) {
+        State(SiteContext ctx, V2FeatureMap fmap,
+              tterrag1112.life_in_the_village.Village.Planning.FootprintProvider sizes) {
             this.ctx = ctx;
             this.fmap = fmap;
-            this.level = level;
-            this.sizes = new StructureSizeCache(level);
+            this.sizes = sizes;
             this.villageRadius = villageRadiusFor(ctx.tier());
             this.culture = ctx.culture().id();
             // Track E1 prompt 3 fix-up — Skeleton is now built from

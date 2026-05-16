@@ -50,7 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Populated once during the planning phase on the server thread.
  * Not thread-safe; do not access from multiple threads.
  */
-public class StructureSizeCache {
+public class StructureSizeCache implements FootprintProvider {
 
     private static final Logger LOGGER =
             LoggerFactory.getLogger(StructureSizeCache.class);

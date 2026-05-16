@@ -3,7 +3,6 @@ package tterrag1112.life_in_the_village.Village.Planning.V2.Layer5;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Footprint;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Priority;
@@ -82,19 +81,31 @@ public final class TerrainAdapter {
 
     public static List<AdaptationDecision> decide(List<PlacedBuilding> placed,
                                                   ServerLevel level) {
+        return decide(placed,
+                new tterrag1112.life_in_the_village.Village.Planning.V2.Layer1
+                        .LiveTerrainSource(level));
+    }
+
+    /**
+     * Track E1 — headless overload. Identical logic, height reads via
+     * the seam.
+     */
+    public static List<AdaptationDecision> decide(List<PlacedBuilding> placed,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource source) {
         List<AdaptationDecision> out = new ArrayList<>(placed.size());
         for (PlacedBuilding b : placed) {
-            out.add(decideFor(b, level));
+            out.add(decideFor(b, source));
         }
         return out;
     }
 
-    private static AdaptationDecision decideFor(PlacedBuilding b, ServerLevel level) {
+    private static AdaptationDecision decideFor(PlacedBuilding b,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource source) {
         int[] aabb = footprintAabb(b);
         List<Integer> heights = new ArrayList<>();
         for (int x = aabb[0]; x <= aabb[2]; x++) {
             for (int z = aabb[1]; z <= aabb[3]; z++) {
-                int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                int y = source.height(x, z);
                 heights.add(y);
             }
         }

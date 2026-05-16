@@ -67,7 +67,7 @@ public final class SiteAnalyzer {
     // =========================================================================
 
     public static SiteContext analyze(V2FeatureMap fmap, Culture culture, long seed) {
-        return analyze(fmap, culture, seed, null);
+        return analyze(fmap, culture, seed, (net.minecraft.server.level.ServerLevel) null);
     }
 
     /**
@@ -100,9 +100,26 @@ public final class SiteAnalyzer {
                 inclinationOverride, tierOverride).context;
     }
 
+    /**
+     * Track E1 — headless overload. The {@link
+     * tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource}
+     * passes through to {@link AnchorDetector#detect(V2FeatureMap,
+     * tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource)};
+     * everything else is identical to the {@link ServerLevel}
+     * overload.
+     */
+    public static SiteContext analyze(V2FeatureMap fmap, Culture culture, long seed,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource source,
+            Inclination inclinationOverride,
+            ViabilityTier tierOverride) {
+        return analyzeWithDiagnostics(fmap, culture, seed, source,
+                inclinationOverride, tierOverride).context;
+    }
+
     public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
                                                 long seed) {
-        return analyzeWithDiagnostics(fmap, culture, seed, null, null, null);
+        return analyzeWithDiagnostics(fmap, culture, seed,
+                (net.minecraft.server.level.ServerLevel) null, null, null);
     }
 
     public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
@@ -116,6 +133,23 @@ public final class SiteAnalyzer {
                                                 net.minecraft.server.level.ServerLevel level,
                                                 Inclination inclinationOverride,
                                                 ViabilityTier tierOverride) {
+        return analyzeWithDiagnostics(fmap, culture, seed,
+                level == null ? null
+                        : new tterrag1112.life_in_the_village.Village.Planning.V2
+                                .Layer1.LiveTerrainSource(level),
+                inclinationOverride, tierOverride);
+    }
+
+    /**
+     * Track E1 — headless overload of {@link #analyzeWithDiagnostics}.
+     * Identical to the {@link ServerLevel} overload save for the
+     * source of biome lookups in {@link AnchorDetector}.
+     */
+    public static Result analyzeWithDiagnostics(V2FeatureMap fmap, Culture culture,
+            long seed,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource source,
+            Inclination inclinationOverride,
+            ViabilityTier tierOverride) {
         TierDecision tier = computeTier(fmap);
         InclinationDecision inc = computeInclination(fmap, culture, seed, tier);
         // Track E1 prompt 3 fix-up — apply explicit spawn-command
@@ -151,7 +185,7 @@ public final class SiteAnalyzer {
         SiteContext ctx = SiteContext.withEmptyHubs(
                 finalAnchor, anchorDec.anchor, axisDec.axis, /*spinePath*/ null,
                 effectiveTier, effectiveInclination, culture, seed);
-        java.util.List<Anchor> anchors = AnchorDetector.detect(fmap, level);
+        java.util.List<Anchor> anchors = AnchorDetector.detect(fmap, source);
         ctx = ctx.withAnchors(anchors);
         StrategySelectionResult strategy = StrategySelector.select(ctx, anchors);
         ctx = ctx.withStrategy(strategy);

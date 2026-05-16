@@ -113,11 +113,24 @@ public final class AnchorDetector {
      * metadata).
      */
     public static List<Anchor> detect(V2FeatureMap fmap, ServerLevel level) {
+        return detect(fmap, level == null ? null
+                : new tterrag1112.life_in_the_village.Village.Planning.V2.Layer1
+                        .LiveTerrainSource(level));
+    }
+
+    /**
+     * Track E1 — {@link TerrainSource}-flavoured overload used by the
+     * headless harness. {@code source} may be null — when null, biome
+     * lookups are skipped exactly as in the {@link ServerLevel}
+     * overload's null path.
+     */
+    public static List<Anchor> detect(V2FeatureMap fmap,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource source) {
         if (fmap == null) return List.of();
         List<Anchor> all = new ArrayList<>();
 
         Map<AnchorType, List<Anchor>> byType = new LinkedHashMap<>();
-        addType(byType, AnchorType.FLAT_FERTILE,     detectFlatFertile(fmap, level));
+        addType(byType, AnchorType.FLAT_FERTILE,     detectFlatFertile(fmap, source));
         addType(byType, AnchorType.DEFENSIBLE_PEAK,  detectDefensiblePeak(fmap));
         addType(byType, AnchorType.DEFENSIBLE_RING,  detectDefensibleRing(fmap));
         addType(byType, AnchorType.RIDGE_LINE,       detectRidgeLine(fmap));
@@ -160,7 +173,8 @@ public final class AnchorDetector {
      * {@link #FLAT_FERTILE_SATURATION_CELLS} clamped to 1, and
      * flatness_factor = 1 − avgLocalSlope / 2.
      */
-    private static List<Anchor> detectFlatFertile(V2FeatureMap fmap, ServerLevel level) {
+    private static List<Anchor> detectFlatFertile(V2FeatureMap fmap,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.TerrainSource source) {
         int n = fmap.gridSize();
         boolean[][] visited = new boolean[n][n];
         List<Anchor> out = new ArrayList<>();
@@ -183,12 +197,15 @@ public final class AnchorDetector {
                 Map<String, Object> meta = new LinkedHashMap<>();
                 meta.put("usableCellCount", comp.cellCount);
                 meta.put("averageFlatness", round3(1.0 - avgSlope / 2.0));
-                if (level != null) {
+                if (source != null) {
                     try {
-                        meta.put("biomeHint",
-                                level.getBiome(centre).unwrapKey()
-                                        .map(k -> k.identifier().toString())
-                                        .orElse("unknown"));
+                        var holder = source.biomeAt(centre);
+                        if (holder != null) {
+                            meta.put("biomeHint",
+                                    holder.unwrapKey()
+                                            .map(k -> k.identifier().toString())
+                                            .orElse("unknown"));
+                        }
                     } catch (Throwable t) {
                         // Biome lookup failed (e.g. unloaded chunk); skip.
                     }
