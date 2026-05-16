@@ -119,11 +119,22 @@ processResources {
 }
 
 
+repositories {
+    mavenCentral()
+}
+
 dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     jarJar('com.squareup.okhttp3:okhttp:4.12.0') {
         version { prefer '4.12.0' }
     }
+
+    // Track E1 — headless layout harness. JUnit 5 runs the planner
+    // over a synthetic terrain×seed battery and gates regressions
+    // against a committed baseline.
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     // Example mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
@@ -173,7 +184,22 @@ sourceSets.main.resources.srcDir generateModMetadata
 // To avoid having to run "generateModMetadata" manually, make it run on every project reload
 neoForge.ideSyncTask generateModMetadata
 
-// Example configuration to allow publishing using the maven-publish plugin
+// Track E1 — headless harness test runner. `harness.mode` defaults to
+// `check` (diff vs baseline, fail on regression). Run with
+// `-Dharness.mode=record` to overwrite the baseline.
+test {
+    useJUnitPlatform()
+    systemProperty 'harness.mode',
+            System.getProperty('harness.mode', 'check')
+    systemProperty 'harness.baseline',
+            System.getProperty('harness.baseline',
+                    "${rootDir}/harness/baseline.json")
+    testLogging {
+        events 'passed', 'failed', 'skipped', 'standardOut', 'standardError'
+        showStandardStreams = true
+    }
+}
+
 publishing {
     publications {
         register('mavenJava', MavenPublication) {

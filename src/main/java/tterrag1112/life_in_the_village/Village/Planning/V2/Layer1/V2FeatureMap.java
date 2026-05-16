@@ -6,7 +6,6 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -118,6 +117,16 @@ public final class V2FeatureMap {
      * @param radius scan radius in blocks. Grid side = {@code 2*radius/CELL_SIZE}.
      */
     public static V2FeatureMap scan(Level level, BlockPos centre, int radius) {
+        return scan(new LiveTerrainSource(level), centre, radius);
+    }
+
+    /**
+     * Track E1 — scan via the headless {@link TerrainSource} seam.
+     * Identical logic to the {@link Level} overload; the live path
+     * delegates here through a {@link LiveTerrainSource} so both
+     * paths share one source of truth for classification.
+     */
+    public static V2FeatureMap scan(TerrainSource source, BlockPos centre, int radius) {
         long t0 = System.currentTimeMillis();
         int gridSize = (2 * radius) / CELL_SIZE;
         Cell[][] cells = new Cell[gridSize][gridSize];
@@ -127,17 +136,15 @@ public final class V2FeatureMap {
         int[][] elev = new int[gridSize][gridSize];
         BlockCategory[][] cat0 = new BlockCategory[gridSize][gridSize];
         int[][] waterY = new int[gridSize][gridSize];
-        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
         for (int i = 0; i < gridSize; i++) {
             int wx = cellWorldX(centre, radius, i);
             for (int j = 0; j < gridSize; j++) {
                 int wz = cellWorldZ(centre, radius, j);
-                int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, wx, wz) - 1;
+                int y = source.height(wx, wz);
                 elev[i][j] = y;
-                cursor.set(wx, y, wz);
-                BlockState surface = level.getBlockState(cursor);
-                CategoryProbe probe = classifySurface(level, cursor, surface, wx, y, wz);
+                BlockState surface = source.blockAt(wx, y, wz);
+                CategoryProbe probe = classifySurface(source, surface, wx, y, wz);
                 cat0[i][j] = probe.category;
                 waterY[i][j] = probe.waterY;
             }
@@ -207,7 +214,7 @@ public final class V2FeatureMap {
     /** Carries category + observed water y back from {@link #classifySurface}. */
     private record CategoryProbe(BlockCategory category, int waterY) {}
 
-    private static CategoryProbe classifySurface(Level level, BlockPos.MutableBlockPos cursor,
+    private static CategoryProbe classifySurface(TerrainSource source,
                                                  BlockState surface, int wx, int surfaceY, int wz) {
         // STRUCTURE wins outright if surface is a culture-style block.
         if (isStructureBlock(surface)) {
@@ -218,8 +225,7 @@ public final class V2FeatureMap {
         // BELOW the lowest air, so the water surface is at surfaceY+1.
         // Probe one block higher first; if that's water, this column is
         // water.
-        cursor.set(wx, surfaceY + 1, wz);
-        BlockState above = level.getBlockState(cursor);
+        BlockState above = source.blockAt(wx, surfaceY + 1, wz);
         if (isWaterFluid(above)) {
             return new CategoryProbe(BlockCategory.WATER, surfaceY + 1);
         }
@@ -230,7 +236,7 @@ public final class V2FeatureMap {
         // FOREST: surface is a log, OR ≥FOREST_MIN_TREE_BLOCKS log/leaf
         // blocks in the column above.
         boolean surfaceIsLog = surface.is(BlockTags.LOGS);
-        if (surfaceIsLog || hasTreeColumn(level, cursor, wx, surfaceY, wz)) {
+        if (surfaceIsLog || hasTreeColumn(source, wx, surfaceY, wz)) {
             return new CategoryProbe(BlockCategory.FOREST, -1);
         }
 
@@ -260,13 +266,12 @@ public final class V2FeatureMap {
         return state.is(BlockTags.BASE_STONE_OVERWORLD);
     }
 
-    private static boolean hasTreeColumn(Level level, BlockPos.MutableBlockPos cursor,
+    private static boolean hasTreeColumn(TerrainSource source,
                                          int wx, int surfaceY, int wz) {
         int hits = 0;
-        int top = Math.min(level.getMaxY(), surfaceY + FOREST_COLUMN_HEIGHT);
+        int top = Math.min(source.maxY(), surfaceY + FOREST_COLUMN_HEIGHT);
         for (int y = surfaceY + 1; y <= top; y++) {
-            cursor.set(wx, y, wz);
-            BlockState st = level.getBlockState(cursor);
+            BlockState st = source.blockAt(wx, y, wz);
             if (st.is(BlockTags.LOGS) || st.is(BlockTags.LEAVES)) {
                 hits++;
                 if (hits >= FOREST_MIN_TREE_BLOCKS) return true;
