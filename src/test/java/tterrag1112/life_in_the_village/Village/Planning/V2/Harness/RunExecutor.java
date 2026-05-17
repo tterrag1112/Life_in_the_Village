@@ -7,6 +7,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.SyntheticTerrainSource;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
@@ -20,6 +21,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBui
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.FixedFootprintProvider;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.SpineSegment;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.TerrainAdapter;
 
 import java.util.HashSet;
@@ -53,7 +55,23 @@ public final class RunExecutor {
 
     private RunExecutor() {}
 
-    public static RunMetrics execute(Battery.Run run) {
+    /** Track E1 — debug fan-out plumbing. Extra context the harness
+     *  surfaces alongside metrics so {@link HarnessDebugSink} can write
+     *  a per-config HEADER without touching planner internals. None
+     *  of these fields gate the battery or the baseline diff. */
+    public record RunContext(
+            String strategyId,
+            int networkNodes,
+            int networkEdges,
+            int primaryBindings,
+            int spineSegmentCount,
+            double spineTotalLength) {}
+
+    /** Pair carried by {@link #execute} so the debug sink gets the
+     *  HEADER context alongside the metrics. */
+    public record ExecResult(RunMetrics metrics, RunContext context) {}
+
+    public static ExecResult execute(Battery.Run run) {
         long t0 = System.currentTimeMillis();
         SyntheticTerrainSource source = new SyntheticTerrainSource(run.shape(), ORIGIN);
 
@@ -68,7 +86,9 @@ public final class RunExecutor {
                 source, run.config().inclination(), run.config().tier());
 
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
-            return abortedMetrics(run, t0, /*requested*/ List.of(), null, null, null);
+            return new ExecResult(
+                    abortedMetrics(run, t0, /*requested*/ List.of(), null, null, null),
+                    contextFrom(siteCtx, null));
         }
 
         // Layer 3.
@@ -105,7 +125,36 @@ public final class RunExecutor {
                 : TerrainAdapter.decide(placement.placed(), source);
 
         long elapsed = System.currentTimeMillis() - t0;
-        return MetricsComputer.compute(run, sorted, placement, roads, decisions, elapsed);
+        RunMetrics metrics = MetricsComputer.compute(
+                run, sorted, placement, roads, decisions, elapsed);
+        return new ExecResult(metrics, contextFrom(siteCtx, roads));
+    }
+
+    private static RunContext contextFrom(SiteContext siteCtx, RoadNetwork roads) {
+        String strategyId = "<none>";
+        if (siteCtx != null && siteCtx.strategy() != null
+                && siteCtx.strategy().strategy() != null) {
+            strategyId = siteCtx.strategy().strategy().id();
+        }
+        int nodes = 0, edges = 0, bindings = 0;
+        NetworkSpec spec = siteCtx == null ? null : siteCtx.network();
+        if (spec != null) {
+            nodes = spec.nodes().size();
+            edges = spec.edges().size();
+            bindings = spec.primaryBindings().size();
+        }
+        int spineCount = 0;
+        double spineLen = 0.0;
+        if (roads != null && roads.skeleton() != null) {
+            List<SpineSegment> segs = roads.skeleton().primarySegments();
+            spineCount = segs.size();
+            for (SpineSegment s : segs) {
+                double dx = s.end().getX() - s.start().getX();
+                double dz = s.end().getZ() - s.start().getZ();
+                spineLen += Math.sqrt(dx * dx + dz * dz);
+            }
+        }
+        return new RunContext(strategyId, nodes, edges, bindings, spineCount, spineLen);
     }
 
     private static RunMetrics abortedMetrics(Battery.Run run, long t0,
