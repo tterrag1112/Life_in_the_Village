@@ -60,36 +60,53 @@ public class HeadlessHarnessTest {
         Path baselinePath = Paths.get(
                 System.getProperty("harness.baseline", DEFAULT_BASELINE));
 
-        List<Battery.Run> runs = Battery.all();
-        List<RunMetrics> current = new ArrayList<>(runs.size());
-        long t0 = System.currentTimeMillis();
-        for (Battery.Run r : runs) {
-            current.add(RunExecutor.execute(r));
-        }
-        long elapsed = System.currentTimeMillis() - t0;
-        System.out.printf("Harness: %d runs in %d ms (%.1f ms/run)%n",
-                current.size(), elapsed, elapsed / (double) current.size());
+        // Track E1 — per-config debug file fan-out. Behaviour-neutral:
+        // start() never throws, finish() always runs in the try/finally
+        // below so the planner logger state is restored even on a
+        // failed diff. With capture working, planner logs are sunk to
+        // per-config files under build/harness-debug/ instead of stdout.
+        HarnessDebugSink sink = new HarnessDebugSink();
+        sink.start();
 
-        if ("record".equalsIgnoreCase(mode)) {
-            Baseline.write(baselinePath, current);
-            System.out.println(Table.render(current, current,
-                    new Baseline.DiffResult(List.of(), false)));
-            System.out.println("Harness: recorded baseline -> " + baselinePath);
-            return;
-        }
+        String tableText = "(harness aborted before render — see test failure)\n";
+        try {
+            List<Battery.Run> runs = Battery.all();
+            List<RunMetrics> current = new ArrayList<>(runs.size());
+            long t0 = System.currentTimeMillis();
+            for (Battery.Run r : runs) {
+                RunExecutor.ExecResult result = RunExecutor.execute(r);
+                current.add(result.metrics());
+                sink.drainAndWrite(r, result);
+            }
+            long elapsed = System.currentTimeMillis() - t0;
+            System.out.printf("Harness: %d runs in %d ms (%.1f ms/run)%n",
+                    current.size(), elapsed, elapsed / (double) current.size());
 
-        // check mode.
-        if (!Files.exists(baselinePath)) {
-            fail("No baseline at " + baselinePath
-                    + " — run with -Dharness.mode=record first.");
-        }
-        List<RunMetrics> baseline = Baseline.read(baselinePath);
-        Baseline.DiffResult diff = Baseline.diff(baseline, current);
-        System.out.println(Table.render(current, baseline, diff));
+            if ("record".equalsIgnoreCase(mode)) {
+                Baseline.write(baselinePath, current);
+                tableText = Table.render(current, current,
+                        new Baseline.DiffResult(List.of(), false));
+                System.out.println(tableText);
+                System.out.println("Harness: recorded baseline -> " + baselinePath);
+                return;
+            }
 
-        if (!diff.passed()) {
-            fail("Headless harness: " + diff.failures().size()
-                    + " gated regression(s) vs baseline. See table above.");
+            // check mode.
+            if (!Files.exists(baselinePath)) {
+                fail("No baseline at " + baselinePath
+                        + " — run with -Dharness.mode=record first.");
+            }
+            List<RunMetrics> baseline = Baseline.read(baselinePath);
+            Baseline.DiffResult diff = Baseline.diff(baseline, current);
+            tableText = Table.render(current, baseline, diff);
+            System.out.println(tableText);
+
+            if (!diff.passed()) {
+                fail("Headless harness: " + diff.failures().size()
+                        + " gated regression(s) vs baseline. See table above.");
+            }
+        } finally {
+            sink.finish(tableText);
         }
     }
 }
