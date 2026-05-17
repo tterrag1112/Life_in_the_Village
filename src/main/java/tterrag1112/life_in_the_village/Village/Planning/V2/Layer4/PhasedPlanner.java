@@ -775,6 +775,21 @@ public final class PhasedPlanner {
                 int maxFrontage = idealFrontage + FRONTAGE_BAND_WIDTH;
                 if (nr.distance < idealFrontage) continue;
                 if (nr.distance > maxFrontage) continue;
+                // Track E1 prompt-4 — relax the hard frontage cutoff
+                // to a soft maximum. Cells previously rejected
+                // (cell-to-road > frontageDistance) are now eligible
+                // when within {@code villageRadius * FRONTAGE_SOFT_MAX_RATIO}
+                // of any road. The nucleus-proximity score picks which
+                // of those cells wins; road frontage is a bonus rather
+                // than the primary signal.
+                int fpPerp = fp.length();
+                int frontageDistance = (nr.segment.width() + 1) / 2 + (fpPerp + 1) / 2;
+                double softMaxRatio = foundation
+                        ? FRONTAGE_SOFT_MAX_RATIO
+                        : FRONTAGE_SOFT_MAX_RATIO_4B;
+                double softMax = Math.max(frontageDistance,
+                        state.villageRadius * softMaxRatio);
+                if (nr.distance > softMax) continue;
 
                 Rotation rotation = chooseFacing(pos, nr.point);
                 Vec3 frontDir = cardinalFrontDir(rotation);
@@ -1285,6 +1300,16 @@ public final class PhasedPlanner {
      *  irregularities, tight enough that {@code pos} is genuinely
      *  the building's front-edge cell. */
     private static final int FRONTAGE_BAND_WIDTH      = 2;
+
+    /** Track E1 Phase A — widened ratio for phase-4b (foundation=false).
+     *  Phase-3 foundation types (TOWN_HALL, FARMHOUSE, civic core...)
+     *  place under low reservation pressure with the conservative
+     *  ratio; phase-4b types (HOUSE, STOCKPILE, WELL, STABLE...) run
+     *  after the foundation pass has saturated the admissible cell
+     *  pool, so they need a deeper admissible band to keep candidate
+     *  generation above zero. Conservative 2× so buildings can sit a
+     *  little deeper from the road, not float off it. */
+    static final double FRONTAGE_SOFT_MAX_RATIO_4B    = 4.0;
 
     /** Spatial-fit summary for one (cell, type) pair: combined score
      *  plus the dominant nucleus context (for the dump). */
