@@ -1405,19 +1405,6 @@ public final class PhasedPlanner {
                 ? ctx.strategy().strategy().nucleusRules()
                 : null;
 
-        // Bulk-distributed HOUSE goes to batch 5 even when a strategy
-        // binds it to a primary anchor for scoring. The binding still
-        // contributes its centrality bonus via scorePosition's
-        // primaryBindings affinity boost (≈ lines 1098-1108); batch
-        // assignment is a separate concern and must reflect placement
-        // ORDER. HOUSE is "the rest of the village," not a core lead,
-        // and 13 of the strategies bind it to FLAT_FERTILE — so this
-        // override must precede the primaryBindings check below, or
-        // HOUSE ends up in batch 1 with foundation=true (primary
-        // segments only) and saturates after the lead and rural-
-        // nucleus placements leave no candidate band.
-        if (type == BuildingType.HOUSE) return 5;
-
         // Batch 1 — primary-bound lead types.
         if (ctx.network() != null) {
             for (var pb : ctx.network().primaryBindings()) {
@@ -1427,6 +1414,10 @@ public final class PhasedPlanner {
         // Batch 2 — rural nucleus types per strategy (typically
         // FARMHOUSE for AGRICULTURAL).
         if (rules != null && rules.ruralNucleusTypes().contains(type)) return 2;
+        // Bulk-distributed HOUSE goes to batch 5 regardless of any
+        // CIVIC pull (HOUSE is "the rest of the village," not a
+        // core lead).
+        if (type == BuildingType.HOUSE) return 5;
         // Decorative / small.
         if (type == BuildingType.STOCKPILE
                 || type == BuildingType.WELL
