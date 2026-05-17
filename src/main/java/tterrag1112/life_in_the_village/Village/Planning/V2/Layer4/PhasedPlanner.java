@@ -80,6 +80,13 @@ public final class PhasedPlanner {
     private static final int LEVEL = 1;
     /** Max localSlope for a candidate cell. */
     private static final int MAX_SLOPE = 3;
+    /** Track E1 — debug flag for per-{@code findBestCandidate}-call
+     *  rejection histograms. Read once at class load so the per-call
+     *  check is a constant-folded field load. Behavior-neutral; gated
+     *  off by default. Enable with
+     *  {@code -Dharness.debug.candidates=true}. */
+    private static final boolean DEBUG_CANDIDATES =
+            Boolean.getBoolean("harness.debug.candidates");
     /** V1 spine width (logical, for frontage math). Distinct from
      *  the painted width V1 RoadShape applies at decoration time. */
     public static final int SPINE_WIDTH = 3;
@@ -693,9 +700,18 @@ public final class PhasedPlanner {
         // Track E1 prompt 5 — squared radius for the strict bound
         // cutoff; computed once outside the inner loop.
         final double bindRadiusSq = BINDING_AFFINITY_RADIUS * BINDING_AFFINITY_RADIUS;
+        // Track E1 — debug-only per-call rejection histogram. Gated by
+        // {@code -Dharness.debug.candidates=true}; counters are always
+        // incremented (int adds are free) but only logged when the
+        // property is set. Used to attribute NO_VIABLE_CANDIDATE drops
+        // to the specific filter that rejected them. Behavior-neutral.
+        final boolean debugCands = DEBUG_CANDIDATES;
+        int cellsScanned = 0, rejReservation = 0, rejCorridor = 0,
+                rejScore = 0, rejAdjunct = 0, accepted = 0;
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
             for (int j = 0; j < state.fmap.gridSize(); j++) {
+                cellsScanned++;
                 Cell cell = state.fmap.cell(i, j);
                 BlockCategory cat = cell.category();
                 if (cat != BlockCategory.OPEN && cat != BlockCategory.SHORE) continue;
@@ -830,7 +846,10 @@ public final class PhasedPlanner {
                         frontDir, nr.segment.width());
                 Aabb stripAabb = frontageAabb(strip);
 
-                if (overlapsAnyReservation(fpAabb, stripAabb, state.reservations)) continue;
+                if (overlapsAnyReservation(fpAabb, stripAabb, state.reservations)) {
+                    rejReservation++;
+                    continue;
+                }
 
                 // Reject candidates whose AABB intersects ANY road
                 // corridor in the skeleton (not just the segment the
@@ -839,14 +858,20 @@ public final class PhasedPlanner {
                 // — TOWN_HALL gets pushed slightly along the spine
                 // away from the cross-street. Uses the same shared
                 // RoadCorridors utility as OverlapAuditor.
-                if (intersectsAnyCorridor(fpAabb, state.skeleton.allSegments())) continue;
+                if (intersectsAnyCorridor(fpAabb, state.skeleton.allSegments())) {
+                    rejCorridor++;
+                    continue;
+                }
 
                 // Score uses the cell's position (the original sampling
                 // point). Cell and computed centre are within the same
                 // scoring band so the difference is negligible at V1
                 // thresholds.
                 ScoreBreakdown score = scorePosition(pos, type, profile, state);
-                if (score.total() <= 0) continue;
+                if (score.total() <= 0) {
+                    rejScore++;
+                    continue;
+                }
 
                 // B2.1 — adjunct rectangle planning. Resolves manifest
                 // preference + registry default into a reserved AABB
@@ -857,14 +882,26 @@ public final class PhasedPlanner {
                 Direction parentFrontDir = frontDirToDirection(frontDir);
                 AdjunctPlanOutcome adjunctOutcome = planAdjunct(
                         type, centre, fpAabb, parentFrontDir, variantRecord, state);
-                if (adjunctOutcome.requiredFailed) continue;
+                if (adjunctOutcome.requiredFailed) {
+                    rejAdjunct++;
+                    continue;
+                }
 
+                accepted++;
                 if (best == null || score.total() > best.score.total()) {
                     best = new Best(centre, fp, rotation, variantId, strip,
                             nr.segment, fpAabb, stripAabb, score,
                             adjunctOutcome.planned, adjunctOutcome.aabb);
                 }
             }
+        }
+        if (debugCands) {
+            LOGGER.info("candidates type={} foundation={} cellsScanned={} "
+                    + "rejected[reservation={} corridor={} score={} adjunct={}] "
+                    + "accepted={} reservations={}",
+                    type, foundation, cellsScanned,
+                    rejReservation, rejCorridor, rejScore, rejAdjunct,
+                    accepted, state.reservations.size());
         }
         return best;
     }
@@ -1477,6 +1514,19 @@ public final class PhasedPlanner {
                 ? ctx.strategy().strategy().nucleusRules()
                 : null;
 
+        // Bulk-distributed HOUSE goes to batch 5 even when a strategy
+        // binds it to a primary anchor for scoring. The binding still
+        // contributes its centrality bonus via scorePosition's
+        // primaryBindings affinity boost (≈ lines 1098-1108); batch
+        // assignment is a separate concern and must reflect placement
+        // ORDER. HOUSE is "the rest of the village," not a core lead,
+        // and 13 of the strategies bind it to FLAT_FERTILE — so this
+        // override must precede the primaryBindings check below, or
+        // HOUSE ends up in batch 1 with foundation=true (primary
+        // segments only) and saturates after the lead and rural-
+        // nucleus placements leave no candidate band.
+        if (type == BuildingType.HOUSE) return 5;
+
         // Batch 1 — primary-bound lead types.
         if (ctx.network() != null) {
             for (var pb : ctx.network().primaryBindings()) {
@@ -1486,10 +1536,6 @@ public final class PhasedPlanner {
         // Batch 2 — rural nucleus types per strategy (typically
         // FARMHOUSE for AGRICULTURAL).
         if (rules != null && rules.ruralNucleusTypes().contains(type)) return 2;
-        // Bulk-distributed HOUSE goes to batch 5 regardless of any
-        // CIVIC pull (HOUSE is "the rest of the village," not a
-        // core lead).
-        if (type == BuildingType.HOUSE) return 5;
         // Decorative / small.
         if (type == BuildingType.STOCKPILE
                 || type == BuildingType.WELL
