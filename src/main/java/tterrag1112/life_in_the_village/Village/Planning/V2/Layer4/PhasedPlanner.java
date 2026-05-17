@@ -686,8 +686,11 @@ public final class PhasedPlanner {
                 // than the primary signal.
                 int fpPerp = fp.length();
                 int frontageDistance = (nr.segment.width() + 1) / 2 + (fpPerp + 1) / 2;
+                double softMaxRatio = foundation
+                        ? FRONTAGE_SOFT_MAX_RATIO
+                        : FRONTAGE_SOFT_MAX_RATIO_4B;
                 double softMax = Math.max(frontageDistance,
-                        state.villageRadius * FRONTAGE_SOFT_MAX_RATIO);
+                        state.villageRadius * softMaxRatio);
                 if (nr.distance > softMax) continue;
 
                 Rotation rotation = chooseFacing(pos, nr.point);
@@ -1176,6 +1179,16 @@ public final class PhasedPlanner {
      *  {@code findBestCandidate}. Scales with village radius so
      *  bigger villages allow buildings farther off-road. */
     static final double FRONTAGE_SOFT_MAX_RATIO       = 2.0;
+
+    /** Track E1 Phase A — widened ratio for phase-4b (foundation=false).
+     *  Phase-3 foundation types (TOWN_HALL, FARMHOUSE, civic core...)
+     *  place under low reservation pressure with the conservative
+     *  ratio; phase-4b types (HOUSE, STOCKPILE, WELL, STABLE...) run
+     *  after the foundation pass has saturated the admissible cell
+     *  pool, so they need a deeper admissible band to keep candidate
+     *  generation above zero. Conservative 2× so buildings can sit a
+     *  little deeper from the road, not float off it. */
+    static final double FRONTAGE_SOFT_MAX_RATIO_4B    = 4.0;
 
     /** Spatial-fit summary for one (cell, type) pair: combined score
      *  plus the dominant nucleus context (for the dump). */
