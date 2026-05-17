@@ -212,6 +212,14 @@ test {
     systemProperty 'harness.baseline',
             System.getProperty('harness.baseline',
                     "${rootDir}/harness/baseline.json")
+    // Track E1 — debug-only per-`findBestCandidate`-call rejection
+    // histogram, gated by the static field in `PhasedPlanner`.
+    // Forwarded here because `JAVA_TOOL_OPTIONS` did not propagate to
+    // the forked test JVM in this ModDevGradle / FML configuration;
+    // an explicit forward is the persistent fix. Default is `false`
+    // so the gradle daemon JVM doesn't accidentally enable it.
+    systemProperty 'harness.debug.candidates',
+            System.getProperty('harness.debug.candidates', 'false')
     testLogging {
         events 'passed', 'failed', 'skipped', 'standardOut', 'standardError'
         showStandardStreams = true
