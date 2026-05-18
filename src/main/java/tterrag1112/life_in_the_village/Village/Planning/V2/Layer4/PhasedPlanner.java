@@ -46,7 +46,6 @@ import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantResolv
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -219,24 +218,26 @@ public final class PhasedPlanner {
         // PhasedPlanner concern.
         int[] perBatchCounts = new int[8];
         for (int batch = 1; batch <= 6; batch++) {
-            // Track E1 Cascade 2 — within each batch, attempt types
-            // in ascending order of selection count so the largest
-            // cohort (HOUSE in batch 5, ~45 instances in CITY/AGRI)
-            // does not drain the admissible cell pool before small
-            // cohorts (STABLE/MILLER at count 1) get any cell. Stable
-            // sort preserves the topo order for equal counts, so
-            // requires_present dependencies declared earlier in the
-            // selection (e.g. MILLER before BAKERY when both have
-            // count 1) stay safe. In CITY the pool is large enough
-            // that HOUSE places its full cohort regardless of order;
-            // in HAMLET HOUSE simply leaves a handful of cells for
-            // STABLE/MILLER, which is the intended fix.
+            // Track E1 Cascade 2 v2 — within each batch, attempt all
+            // non-HOUSE instances in their original topo order, then
+            // all HOUSE instances last. HOUSE is the sole pathological
+            // cohort (3-10× larger than every other type); deferring
+            // it stops the bulk from draining the admissible pool
+            // before small cohorts (STABLE/MILLER) get a chance.
+            // Every non-HOUSE type sees exactly its baseline_v2
+            // relative order, so no other cohort can regress through
+            // reorder pressure (the v1 count-sort's defect — it
+            // demoted large-footprint FARMHOUSE behind the count-1
+            // swarm in TOWN/CIVIC; that doesn't happen here).
+            // Determinism preserved (stable partition).
             List<BuildingType> batchOrder = new ArrayList<>();
+            List<BuildingType> houseTail = new ArrayList<>();
             for (BuildingType type : sortedSelection) {
-                if (getBatch(state.ctx, type) == batch) batchOrder.add(type);
+                if (getBatch(state.ctx, type) != batch) continue;
+                if (type == BuildingType.HOUSE) houseTail.add(type);
+                else batchOrder.add(type);
             }
-            batchOrder.sort(Comparator.comparingInt(
-                    t -> selectionCounts.getOrDefault(t, 0)));
+            batchOrder.addAll(houseTail);
             for (BuildingType type : batchOrder) {
                 boolean foundation = (batch == 1 || batch == 2)
                         || foundationTypes.contains(type);
