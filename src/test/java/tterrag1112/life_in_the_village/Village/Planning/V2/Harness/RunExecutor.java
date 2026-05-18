@@ -69,7 +69,15 @@ public final class RunExecutor {
 
     /** Pair carried by {@link #execute} so the debug sink gets the
      *  HEADER context alongside the metrics. */
-    public record ExecResult(RunMetrics metrics, RunContext context) {}
+    public record ExecResult(RunMetrics metrics, RunContext context,
+                             RunDetails details) {}
+
+    /** In-memory references the debug sink needs to compute the
+     *  connectivity audit and emit a v4-shaped JSON dump without
+     *  reaching back into the planner. All fields nullable for the
+     *  UNVIABLE-abort path. */
+    public record RunDetails(SiteContext siteCtx,
+                             PhasedPlanner.Result phased) {}
 
     public static ExecResult execute(Battery.Run run) {
         long t0 = System.currentTimeMillis();
@@ -88,7 +96,8 @@ public final class RunExecutor {
         if (siteCtx.tier() == ViabilityTier.UNVIABLE) {
             return new ExecResult(
                     abortedMetrics(run, t0, /*requested*/ List.of(), null, null, null),
-                    contextFrom(siteCtx, null));
+                    contextFrom(siteCtx, null),
+                    new RunDetails(siteCtx, null));
         }
 
         // Layer 3.
@@ -127,7 +136,8 @@ public final class RunExecutor {
         long elapsed = System.currentTimeMillis() - t0;
         RunMetrics metrics = MetricsComputer.compute(
                 run, sorted, placement, roads, decisions, elapsed);
-        return new ExecResult(metrics, contextFrom(siteCtx, roads));
+        return new ExecResult(metrics, contextFrom(siteCtx, roads),
+                new RunDetails(siteCtx, phased));
     }
 
     private static RunContext contextFrom(SiteContext siteCtx, RoadNetwork roads) {

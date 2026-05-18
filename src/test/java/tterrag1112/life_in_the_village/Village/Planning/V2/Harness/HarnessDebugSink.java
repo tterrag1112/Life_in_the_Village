@@ -152,20 +152,37 @@ public final class HarnessDebugSink {
     }
 
     /** Slice the buffer for one config's planner run and write its
-     *  per-config file. Always writes the HEADER, populates the
-     *  CANDIDATE TABLE only when capture is working. */
+     *  per-config file. Always writes the HEADER + CONNECTIVITY AUDIT;
+     *  populates the CANDIDATE TABLE only when capture is working;
+     *  emits the v4-shaped .dump.json sibling only when the
+     *  {@code -Dharness.debug.candidates} flag is set. */
     public void drainAndWrite(Battery.Run run, RunExecutor.ExecResult result) {
         if (outDir == null) return;
         List<String> slice = sliceForRun();
-        String fileName = run.shape().name() + "_"
-                + run.config().label().replace('/', '_') + ".txt";
-        Path file = outDir.resolve(fileName);
+        String base = run.shape().name() + "_"
+                + run.config().label().replace('/', '_');
+        Path txtFile = outDir.resolve(base + ".txt");
         String content = render(run, result, slice);
         try {
-            Files.writeString(file, content);
+            Files.writeString(txtFile, content);
         } catch (IOException e) {
             System.err.println("[harness-debug] write failed for "
-                    + file + ": " + e);
+                    + txtFile + ": " + e);
+        }
+        if (Boolean.getBoolean("harness.debug.candidates")) {
+            Path dumpFile = outDir.resolve(base + ".dump.json");
+            try {
+                Files.writeString(dumpFile, HarnessDump.toJson(run, result));
+            } catch (IOException e) {
+                System.err.println("[harness-debug] dump write failed for "
+                        + dumpFile + ": " + e);
+            } catch (Throwable t) {
+                // Dump generation must never crash the battery —
+                // metric values come from in-memory data, not from
+                // this JSON.
+                System.err.println("[harness-debug] dump generation failed for "
+                        + dumpFile + ": " + t);
+            }
         }
     }
 
@@ -233,20 +250,42 @@ public final class HarnessDebugSink {
         out.append("dropHist     = ").append(formatDropHist(m.dropHistogram())).append('\n');
 
         out.append("\n=== CANDIDATE TABLE ===\n");
+        appendCandidateTable(out, lines);
+
+        out.append('\n');
+        // Track E1 Phase A regression diagnostic — always-on audit
+        // (no log capture needed; reads in-memory placement +
+        // network). Computed against the same union-find used by
+        // MetricsComputer.fracBuildingsOnMainComponent so the
+        // role/main classification matches the gated metric exactly.
+        RunExecutor.RunDetails details = result.details();
+        if (details != null && details.phased() != null) {
+            out.append(ConnectivityAudit.render(
+                    ConnectivityAudit.compute(
+                            details.phased().placement(),
+                            details.phased().network())));
+        } else {
+            out.append("=== CONNECTIVITY AUDIT ===\n");
+            out.append("(no planner result — aborted run)\n");
+        }
+        return out.toString();
+    }
+
+    private void appendCandidateTable(StringBuilder out, List<String> lines) {
         if (!captureWorking) {
             out.append("candidate counters: not captured (").append(
                     wireFailureReason != null
                             ? "log capture wiring failed: " + wireFailureReason
                             : "run with JAVA_TOOL_OPTIONS=-Dharness.debug.candidates=true")
                     .append(")\n");
-            return out.toString();
+            return;
         }
         List<TypeRow> rows = aggregate(lines);
         boolean anyCandidateLines = rows.stream().anyMatch(r -> r.attempts > 0);
         if (!anyCandidateLines) {
             out.append("candidate counters: not captured (run with "
                     + "JAVA_TOOL_OPTIONS=-Dharness.debug.candidates=true)\n");
-            return out.toString();
+            return;
         }
         out.append(String.format(
                 "%-14s %-6s %-5s %-4s %-4s %-4s %-8s %-22s %-4s %-10s%n",
@@ -269,7 +308,6 @@ public final class HarnessDebugSink {
                     r.firstReservations,
                     r.lastReservations));
         }
-        return out.toString();
     }
 
     private static String formatTypeMap(Map<BuildingType, Integer> map) {
