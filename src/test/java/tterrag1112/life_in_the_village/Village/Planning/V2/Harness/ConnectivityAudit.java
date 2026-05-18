@@ -11,8 +11,8 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.SpineSegment;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -76,7 +76,7 @@ public final class ConnectivityAudit {
     /** Empty result for aborted/empty configs. */
     public static Result empty() {
         return new Result(List.of(), new Summary(0,
-                new EnumMap<>(Map.of()), 0, 0, 0, 0, 0, 0, 0));
+                new LinkedHashMap<>(), 0, 0, 0, 0, 0, 0, 0));
     }
 
     public static Result compute(PlacementResult placement, RoadNetwork roads) {
