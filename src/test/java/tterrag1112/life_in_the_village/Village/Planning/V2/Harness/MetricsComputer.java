@@ -12,7 +12,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.TerrainAdapter
 
 import java.util.ArrayList;
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -204,35 +203,16 @@ public final class MetricsComputer {
         List<RoadSegment> segs = roads.skeleton().allSegments();
         if (segs.isEmpty()) return new int[]{0, 0, placed.size()};
 
-        // Union-find on endpoint tokens.
-        Map<String, Integer> idx = new HashMap<>();
-        int[] parent = new int[segs.size() * 2];
-        for (int i = 0; i < parent.length; i++) parent[i] = i;
-        int[] segRoot = new int[segs.size()];
-        for (int i = 0; i < segs.size(); i++) {
-            RoadSegment s = segs.get(i);
-            int a = endpointIdx(idx, parent, key(s.start()));
-            int b = endpointIdx(idx, parent, key(s.end()));
-            union(parent, a, b);
-            segRoot[i] = a;
-        }
-
-        // Count distinct components by collecting roots used.
-        Map<Integer, Integer> compSize = new HashMap<>();
-        int[] segComp = new int[segs.size()];
-        for (int i = 0; i < segs.size(); i++) {
-            int r = find(parent, segRoot[i]);
-            segComp[i] = r;
-            compSize.merge(r, 1, Integer::sum);
-        }
-        int components = compSize.size();
-
-        // Main component = the largest-by-segment-count.
-        int mainRoot = -1;
-        int mainCount = -1;
-        for (Map.Entry<Integer, Integer> e : compSize.entrySet()) {
-            if (e.getValue() > mainCount) { mainCount = e.getValue(); mainRoot = e.getKey(); }
-        }
+        // Track E1 — epsilon-tolerant union-find over segment
+        // endpoints. Both {@code networkComponents} and
+        // {@code fracBuildingsOnMainComponent} read from the same
+        // result so they stay mutually consistent under the EPS
+        // calibration. See {@link ConnectivityUnionFind} for why.
+        ConnectivityUnionFind.Result uf = ConnectivityUnionFind.compute(
+                segs, roads.skeleton().junctions());
+        int[] segComp = uf.segComp();
+        int components = uf.components();
+        int mainRoot = uf.mainRoot();
 
         // For each placed building, find the nearest segment and check
         // whether it's in the main component.
@@ -248,26 +228,6 @@ public final class MetricsComputer {
             if (nearest >= 0 && segComp[nearest] == mainRoot) onMain++;
         }
         return new int[]{components, onMain, placed.size()};
-    }
-
-    private static int endpointIdx(Map<String, Integer> idx, int[] parent, String k) {
-        Integer existing = idx.get(k);
-        if (existing != null) return existing;
-        int i = idx.size();
-        idx.put(k, i);
-        return i;
-    }
-
-    private static String key(BlockPos p) { return p.getX() + ":" + p.getZ(); }
-
-    private static int find(int[] parent, int i) {
-        while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; }
-        return i;
-    }
-
-    private static void union(int[] parent, int a, int b) {
-        int ra = find(parent, a), rb = find(parent, b);
-        if (ra != rb) parent[ra] = rb;
     }
 
     // =========================================================================

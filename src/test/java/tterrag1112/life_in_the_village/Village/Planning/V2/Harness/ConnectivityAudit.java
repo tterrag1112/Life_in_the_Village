@@ -11,7 +11,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.SpineSegment;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +75,17 @@ public final class ConnectivityAudit {
     /** Empty result for aborted/empty configs. */
     public static Result empty() {
         return new Result(List.of(), new Summary(0,
-                new LinkedHashMap<>(), 0, 0, 0, 0, 0, 0, 0));
+                emptyRoleCounts(), 0, 0, 0, 0, 0, 0, 0));
+    }
+
+    private static Map<String, Integer> emptyRoleCounts() {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        m.put("spine", 0);
+        m.put("arm", 0);
+        m.put("cross", 0);
+        m.put("stub", 0);
+        m.put("isolated", 0);
+        return m;
     }
 
     public static Result compute(PlacementResult placement, RoadNetwork roads) {
@@ -88,9 +97,11 @@ public final class ConnectivityAudit {
         if (skeleton == null) return empty();
         List<RoadSegment> segs = new ArrayList<>(skeleton.allSegments());
         if (segs.isEmpty()) {
+            Map<String, Integer> isolatedOnly = emptyRoleCounts();
+            isolatedOnly.put("isolated", placement.placed().size());
             return new Result(List.of(),
                     new Summary(placement.placed().size(),
-                            Map.of("isolated", placement.placed().size()),
+                            isolatedOnly,
                             0, placement.placed().size(),
                             0, 0, 0, 0, 0));
         }
@@ -111,35 +122,19 @@ public final class ConnectivityAudit {
             }
         }
 
-        // Union-find over endpoint coords — mirrors
-        // MetricsComputer.connectivity verbatim so the on-main split
-        // matches the gated metric exactly.
-        Map<String, Integer> idx = new HashMap<>();
-        int[] parent = new int[segs.size() * 2];
-        for (int i = 0; i < parent.length; i++) parent[i] = i;
-        int[] segRoot = new int[segs.size()];
-        for (int i = 0; i < segs.size(); i++) {
-            RoadSegment s = segs.get(i);
-            int a = endpointIdx(idx, parent, key(s.start()));
-            int b = endpointIdx(idx, parent, key(s.end()));
-            union(parent, a, b);
-            segRoot[i] = a;
-        }
-        Map<Integer, Integer> compSize = new HashMap<>();
-        int[] segComp = new int[segs.size()];
-        for (int i = 0; i < segs.size(); i++) {
-            int r = find(parent, segRoot[i]);
-            segComp[i] = r;
-            compSize.merge(r, 1, Integer::sum);
-        }
-        int mainRoot = -1;
-        int mainCount = -1;
-        for (Map.Entry<Integer, Integer> e : compSize.entrySet()) {
-            if (e.getValue() > mainCount) {
-                mainCount = e.getValue();
-                mainRoot = e.getKey();
-            }
-        }
+        // Track E1 — epsilon-tolerant union-find shared with
+        // MetricsComputer.connectivity. Per-building on-main split
+        // matches the gated metric exactly. Strict union is computed
+        // alongside so segments that join main only via epsilon get
+        // a distinct "arm" role in the audit.
+        ConnectivityUnionFind.Result uf = ConnectivityUnionFind.compute(
+                segs, skeleton.junctions());
+        int[] segComp = uf.segComp();
+        int mainRoot = uf.mainRoot();
+
+        ConnectivityUnionFind.Result strict = ConnectivityUnionFind.computeStrict(segs);
+        int[] segCompStrict = strict.segComp();
+        int mainRootStrict = strict.mainRoot();
 
         // Spine segment indices for the perp-to-spine distance.
         List<Integer> spineIndices = new ArrayList<>();
@@ -147,11 +142,7 @@ public final class ConnectivityAudit {
             if (segs.get(i) instanceof SpineSegment) spineIndices.add(i);
         }
 
-        Map<String, Integer> roleCounts = new java.util.LinkedHashMap<>();
-        roleCounts.put("spine", 0);
-        roleCounts.put("cross", 0);
-        roleCounts.put("stub", 0);
-        roleCounts.put("isolated", 0);
+        Map<String, Integer> roleCounts = emptyRoleCounts();
 
         List<BuildingRow> rows = new ArrayList<>(placement.placed().size());
         double[] perps = new double[placement.placed().size()];
@@ -170,9 +161,20 @@ public final class ConnectivityAudit {
             boolean main = nearest >= 0 && segComp[nearest] == mainRoot;
             if (main) onMain++; else offMain++;
 
+            // Track E1 — five-way role split. "arm" surfaces the
+            // segments that reach the main component only via the
+            // epsilon-tolerant union: under strict endpoint match
+            // they would have shown as "isolated", but the off-by-N
+            // arm-attachment they exhibit physically overlaps the
+            // ring at road-width tolerance. Counting these as
+            // off-main was the source of the 27/36
+            // fracBuildingsOnMainComponent regression.
             String role;
             if (!main) {
                 role = "isolated";
+            } else if (nearest >= 0
+                    && segCompStrict[nearest] != mainRootStrict) {
+                role = "arm";
             } else if (segs.get(nearest) instanceof SpineSegment) {
                 role = "spine";
             } else if (segs.get(nearest) instanceof CrossStreet) {
@@ -244,26 +246,6 @@ public final class ConnectivityAudit {
         double cx = ax + t * dx, cz = az + t * dz;
         double ex = px - cx, ez = pz - cz;
         return Math.sqrt(ex * ex + ez * ez);
-    }
-
-    private static int endpointIdx(Map<String, Integer> idx, int[] parent, String k) {
-        Integer existing = idx.get(k);
-        if (existing != null) return existing;
-        int i = idx.size();
-        idx.put(k, i);
-        return i;
-    }
-
-    private static String key(BlockPos p) { return p.getX() + ":" + p.getZ(); }
-
-    private static int find(int[] parent, int i) {
-        while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; }
-        return i;
-    }
-
-    private static void union(int[] parent, int a, int b) {
-        int ra = find(parent, a), rb = find(parent, b);
-        if (ra != rb) parent[ra] = rb;
     }
 
     /** Render the audit as a fixed-width text block for the per-config
