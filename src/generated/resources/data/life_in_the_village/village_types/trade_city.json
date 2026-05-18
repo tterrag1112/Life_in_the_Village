@@ -1,0 +1,85 @@
+{
+  "type": "trade_city",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "PLAZA",
+    "street_density": 1.3,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "GUILD_HALL",
+      "structure": "guild_hall/level_1"
+    },
+    {
+      "type": "TEMPLE",
+      "structure": "temple/level_1"
+    },
+    {
+      "type": "MARKET",
+      "max_count": 3,
+      "min_count": 3,
+      "structure": "market/level_1"
+    },
+    {
+      "type": "WAREHOUSE",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "INN",
+      "max_count": 3,
+      "min_count": 2,
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "STABLE",
+      "structure": "stable/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "CARPENTRY",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "STONEMASON",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "WEAVER",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "BAKERY",
+      "structure": "bakery/level_1"
+    },
+    {
+      "type": "GUARD_TOWER",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "guard_tower/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 8,
+      "min_count": 5,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "FLAT",
+  "town_square_capacity": 8
+}

@@ -1,0 +1,51 @@
+{
+  "type": "farming_hamlet",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": true,
+    "max_rings": 2,
+    "shape_type": "LINEAR",
+    "street_density": 1.0,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "CHAPEL",
+      "structure": "chapel/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "MARKET",
+      "structure": "market/level_1"
+    },
+    {
+      "type": "MILLER",
+      "structure": "miller/level_1"
+    },
+    {
+      "type": "BAKERY",
+      "structure": "bakery/level_1"
+    },
+    {
+      "type": "FARMHOUSE",
+      "max_count": 4,
+      "min_count": 2,
+      "structure": "farmhouse/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "FLAT",
+  "town_square_capacity": 3
+}

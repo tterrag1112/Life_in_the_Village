@@ -1,0 +1,53 @@
+{
+  "type": "frontier_outpost",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "OUTPOST",
+    "street_density": 1.0,
+    "walled_by_default": true
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "BARRACKS",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "barracks/level_1"
+    },
+    {
+      "type": "GUARD_TOWER",
+      "max_count": 4,
+      "min_count": 4,
+      "structure": "guard_tower/level_1"
+    },
+    {
+      "type": "WATCHTOWER",
+      "structure": "watchtower/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "WOODCUTTER",
+      "structure": "woodcutter/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 3,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "SLOPE_AWARE",
+  "town_square_capacity": 3
+}

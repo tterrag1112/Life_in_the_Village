@@ -1,0 +1,45 @@
+{
+  "type": "cliff_hamlet",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "ROADSIDE",
+    "street_density": 1.0,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "MARKET",
+      "structure": "market/level_1"
+    },
+    {
+      "type": "WATCHTOWER",
+      "structure": "watchtower/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 5,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "MOUNTAIN",
+  "town_square_capacity": 2
+}

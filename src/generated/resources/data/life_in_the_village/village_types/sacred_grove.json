@@ -1,0 +1,57 @@
+{
+  "type": "sacred_grove",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "GROVE",
+    "street_density": 1.0,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "SHRINE",
+      "structure": "shrine/level_1"
+    },
+    {
+      "type": "TEMPLE",
+      "structure": "temple/level_1"
+    },
+    {
+      "type": "LIBRARY",
+      "structure": "library/level_1"
+    },
+    {
+      "type": "APOTHECARY",
+      "structure": "apothecary/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "BAKERY",
+      "structure": "bakery/level_1"
+    },
+    {
+      "type": "WEAVER",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "CANDLEMAKER",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 5,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "SLOPE_AWARE",
+  "town_square_capacity": 5
+}

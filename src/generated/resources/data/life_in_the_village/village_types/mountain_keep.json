@@ -1,0 +1,71 @@
+{
+  "type": "mountain_keep",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "HILLTOP",
+    "street_density": 1.0,
+    "walled_by_default": true
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "CASTLE",
+      "structure": "castle/level_1"
+    },
+    {
+      "type": "BARRACKS",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "barracks/level_1"
+    },
+    {
+      "type": "GUARD_TOWER",
+      "max_count": 4,
+      "min_count": 4,
+      "structure": "guard_tower/level_1"
+    },
+    {
+      "type": "WATCHTOWER",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "watchtower/level_1"
+    },
+    {
+      "type": "PRISON",
+      "structure": "prison/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "ARMORER",
+      "structure": "armorer/level_1"
+    },
+    {
+      "type": "STONEMASON",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "TEMPLE",
+      "structure": "temple/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 5,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "MOUNTAIN",
+  "town_square_capacity": 4
+}

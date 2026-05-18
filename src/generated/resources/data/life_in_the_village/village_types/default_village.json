@@ -1,0 +1,65 @@
+{
+  "type": "default_village",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "RADIAL",
+    "street_density": 1.0,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "MARKET",
+      "structure": "market/level_1"
+    },
+    {
+      "type": "GUILD_HALL",
+      "structure": "guild_hall/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "CARPENTRY",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "STONEMASON",
+      "structure": "stonemason/level_1"
+    },
+    {
+      "type": "WEAVER",
+      "structure": "weaver/level_1"
+    },
+    {
+      "type": "GUARD_TOWER",
+      "structure": "guard_tower/level_1"
+    },
+    {
+      "type": "FARMHOUSE",
+      "structure": "farmhouse/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 4,
+      "min_count": 4,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "FLAT",
+  "town_square_capacity": 5
+}

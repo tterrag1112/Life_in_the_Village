@@ -1,0 +1,59 @@
+{
+  "type": "pier_village",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "DOCKSIDE",
+    "street_density": 1.0,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "PIER",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "DOCKS",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "FISHERY",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "farmhouse/level_1"
+    },
+    {
+      "type": "WAREHOUSE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "MARKET",
+      "structure": "market/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "CARPENTRY",
+      "structure": "carpentry/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 5,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "WATERFRONT",
+  "town_square_capacity": 3
+}

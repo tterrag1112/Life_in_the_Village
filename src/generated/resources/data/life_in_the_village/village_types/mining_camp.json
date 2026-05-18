@@ -1,0 +1,57 @@
+{
+  "type": "mining_camp",
+  "culture": "default",
+  "shape_profile": {
+    "forced_axis": false,
+    "max_rings": 2,
+    "shape_type": "CLUSTERED",
+    "street_density": 0.7,
+    "walled_by_default": false
+  },
+  "starter_buildings": [
+    {
+      "type": "TOWN_HALL",
+      "structure": "town_hall/level_1"
+    },
+    {
+      "type": "MINE",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "mine/level_1"
+    },
+    {
+      "type": "BLACKSMITH",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "STONEMASON",
+      "structure": "blacksmith/level_1"
+    },
+    {
+      "type": "STOCKPILE",
+      "max_count": 2,
+      "min_count": 2,
+      "structure": "stockpile/level_1"
+    },
+    {
+      "type": "INN",
+      "structure": "inn/level_1"
+    },
+    {
+      "type": "BARRACKS",
+      "structure": "barracks/level_1"
+    },
+    {
+      "type": "WOODCUTTER",
+      "structure": "woodcutter/level_1"
+    },
+    {
+      "type": "HOUSE",
+      "max_count": 5,
+      "min_count": 3,
+      "structure": "house/level_1"
+    }
+  ],
+  "terrain_strategy": "SLOPE_AWARE",
+  "town_square_capacity": 2
+}
