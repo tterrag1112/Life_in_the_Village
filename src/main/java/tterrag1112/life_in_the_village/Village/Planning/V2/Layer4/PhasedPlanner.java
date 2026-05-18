@@ -772,24 +772,18 @@ public final class PhasedPlanner {
                 // Phase-4 NO_VIABLE_CANDIDATE failures the sacred
                 // TOWN dump showed.
                 int idealFrontage = nr.segment.width() / 2 + 1;
-                int maxFrontage = idealFrontage + FRONTAGE_BAND_WIDTH;
+                // Track E1 Phase A — phase-4b (foundation=false) widens
+                // the admissible band so the ~620-cell pool isn't
+                // saturated by the foundation pass. Phase-3 keeps the
+                // conservative 2-block band; phase-4b runs after
+                // reservation pressure has built and needs a deeper
+                // band to keep candidate generation above zero.
+                int bandWidth = foundation
+                        ? FRONTAGE_BAND_WIDTH
+                        : FRONTAGE_BAND_WIDTH_4B;
+                int maxFrontage = idealFrontage + bandWidth;
                 if (nr.distance < idealFrontage) continue;
                 if (nr.distance > maxFrontage) continue;
-                // Track E1 prompt-4 — relax the hard frontage cutoff
-                // to a soft maximum. Cells previously rejected
-                // (cell-to-road > frontageDistance) are now eligible
-                // when within {@code villageRadius * FRONTAGE_SOFT_MAX_RATIO}
-                // of any road. The nucleus-proximity score picks which
-                // of those cells wins; road frontage is a bonus rather
-                // than the primary signal.
-                int fpPerp = fp.length();
-                int frontageDistance = (nr.segment.width() + 1) / 2 + (fpPerp + 1) / 2;
-                double softMaxRatio = foundation
-                        ? FRONTAGE_SOFT_MAX_RATIO
-                        : FRONTAGE_SOFT_MAX_RATIO_4B;
-                double softMax = Math.max(frontageDistance,
-                        state.villageRadius * softMaxRatio);
-                if (nr.distance > softMax) continue;
 
                 Rotation rotation = chooseFacing(pos, nr.point);
                 Vec3 frontDir = cardinalFrontDir(rotation);
@@ -1301,15 +1295,18 @@ public final class PhasedPlanner {
      *  the building's front-edge cell. */
     private static final int FRONTAGE_BAND_WIDTH      = 2;
 
-    /** Track E1 Phase A — widened ratio for phase-4b (foundation=false).
-     *  Phase-3 foundation types (TOWN_HALL, FARMHOUSE, civic core...)
-     *  place under low reservation pressure with the conservative
-     *  ratio; phase-4b types (HOUSE, STOCKPILE, WELL, STABLE...) run
-     *  after the foundation pass has saturated the admissible cell
-     *  pool, so they need a deeper admissible band to keep candidate
-     *  generation above zero. Conservative 2× so buildings can sit a
-     *  little deeper from the road, not float off it. */
-    static final double FRONTAGE_SOFT_MAX_RATIO_4B    = 4.0;
+    /** Track E1 Phase A — widened frontage band for phase-4b
+     *  (foundation=false). Phase-3 foundation types (TOWN_HALL,
+     *  FARMHOUSE, civic core...) place under low reservation pressure
+     *  with the conservative 2-block band; phase-4b types (HOUSE,
+     *  STOCKPILE, WELL, STABLE...) run after the foundation pass has
+     *  saturated the ~620-cell admissible pool and need a deeper band
+     *  to keep candidate generation above zero. Conservative 5-block
+     *  band so buildings sit a little deeper from the road, not float
+     *  off it. With SPINE_WIDTH=3 the phase-4b admissible perpendicular
+     *  distance becomes [2, 7] instead of [2, 4] — ~2.3× cells per
+     *  road-block, pool grows from ~620 to ~1500. */
+    private static final int FRONTAGE_BAND_WIDTH_4B   = 5;
 
     /** Spatial-fit summary for one (cell, type) pair: combined score
      *  plus the dominant nucleus context (for the dump). */
