@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
@@ -81,7 +82,23 @@ public final class BuildingSelector {
                 ? ctx.strategy().strategy().excludedBuildings()
                 : Set.of();
 
-        for (BuildingType type : profile.baseCounts().keySet()) {
+        // Track E1 — composition determinism. Iterate the roster in
+        // {@link BuildingType#ordinal()} order so the shared {@link
+        // Random} draws below assign the same nextDouble() to the
+        // same type on every JVM start. Pre-fix the iteration was
+        // {@code profile.baseCounts().keySet()}, which on a
+        // {@code Map.copyOf}-backed map (the {@link InclinationProfile}
+        // factory's return type) is salted by the per-JVM
+        // ImmutableCollections.MapN startup salt — different runs
+        // permuted the RNG/type mapping and jittered selection counts
+        // (e.g. HAMLET/AGRI {FARMHOUSE 4↔5, HOUSE 5↔6} across runs).
+        // InclinationProfile's canonical constructor now also wraps
+        // its map in an EnumMap; this sort is the belt to that
+        // suspenders.
+        List<BuildingType> orderedTypes =
+                new ArrayList<>(profile.baseCounts().keySet());
+        orderedTypes.sort(Comparator.comparingInt(Enum::ordinal));
+        for (BuildingType type : orderedTypes) {
             int target = profile.countFor(type, tier);
             if (target <= 0) continue;
 
