@@ -29,8 +29,10 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpe
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
-import tterrag1112.life_in_the_village.Profession.NpcProfessionXp;
+import tterrag1112.life_in_the_village.Entities.NpcDailyOffset;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketApproach;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import javax.annotation.Nullable;
@@ -45,6 +47,9 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
     private   static final int    MARKET_RETRY_TICKS   = 600;
     private   static final long   MIN_SELL_INTERVAL    = 20000L;
     private   static final long   ROLE_CHECK_INTERVAL  = 24000L; // ← new
+
+    /** XP awarded to {@link Skill#CRAFTING} per completed production cycle. */
+    public static final float XP_PER_PRODUCTION_CYCLE = 3f;
 
     // ── Core state ───────────────────────────────────────────────────────────
     protected final TownspersonMob entity;
@@ -105,12 +110,12 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
                                               ProductionRecipe recipe, int batchSize) {
         BlockPos station = findWorkstation(level, building).orElse(null);
 
-        // Combine: base × profession override × role (apprentice slowdown) ÷ NPC XP bonus
+        // Combine: base × profession override × role (apprentice slowdown) ÷ CRAFTING-skill bonus
         int scaledTicks = Math.max(20,
                 (int)(recipe.ticks() * batchSize
                         * productionSpeedMultiplier()
                         * roleSpeedMultiplier()
-                        / NpcProfessionXp.getSpeedMultiplier(entity)));
+                        / craftingSpeedMultiplier(entity)));
 
         Map<Item, Integer> consumes = new LinkedHashMap<>();
         recipe.inputs().forEach((item, count) ->
@@ -165,7 +170,56 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
 
     protected List<Item> sellableOutputs() { return List.of(); }
 
+    /**
+     * Base daytime tick at which the daily sell window opens. Subclasses
+     * may override the base; the per-NPC offset is applied automatically
+     * by {@link #effectiveSellWindowDayTick}.
+     */
     protected int sellWindowDayTick() { return 10000; }
+
+    /**
+     * {@link #sellWindowDayTick} plus this NPC's deterministic daily
+     * offset, so a population of workshop NPCs doesn't all open their
+     * sell window at the same daytime tick.
+     */
+    private int effectiveSellWindowDayTick() {
+        return sellWindowDayTick() + NpcDailyOffset.offset(entity.getUUID());
+    }
+
+    /**
+     * CRAFTING-skill → production speed multiplier. Preserves the legacy
+     * Novice/Journeyman/Expert/Master/Grandmaster curve shape, sourced
+     * from {@link SkillComponent} CRAFTING level instead of the legacy
+     * single-int profession XP.
+     *
+     * <pre>
+     *  0-19 (Novice)      → 1.00× baseline
+     * 20-39 (Journeyman)  → 1.10×
+     * 40-59 (Expert)      → 1.25×
+     * 60-84 (Master)      → 1.45×
+     * 85-100 (Grandmaster)→ 1.70×
+     * </pre>
+     */
+    private static float craftingSpeedMultiplier(TownspersonMob npc) {
+        int lv = npc.getSkills().getLevel(Skill.CRAFTING);
+        if (lv >= 85) return 1.70f;
+        if (lv >= 60) return 1.45f;
+        if (lv >= 40) return 1.25f;
+        if (lv >= 20) return 1.10f;
+        return 1.00f;
+    }
+
+    /**
+     * CRAFTING-skill → bonus-output chance per cycle. Curve mirrors the
+     * legacy quality-chance table; see {@link #craftingSpeedMultiplier}.
+     */
+    private static float craftingQualityChance(TownspersonMob npc) {
+        int lv = npc.getSkills().getLevel(Skill.CRAFTING);
+        if (lv >= 85) return 0.30f;
+        if (lv >= 60) return 0.15f;
+        if (lv >= 40) return 0.05f;
+        return 0.00f;
+    }
 
     protected Map<Item, Integer> resourcesToBuy(ServerLevel level, Building building) {
         return Map.of();
@@ -477,11 +531,12 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
                     entity.getPersonalInventory().addItem(byproduct.copy());
                 }
 
-                // Award NPC XP for completing a production run
-                NpcProfessionXp.add(entity, NpcProfessionXp.XP_PER_PRODUCTION_CYCLE);
+                // Award CRAFTING skill XP for completing a production run.
+                entity.getSkills().addXp(Skill.CRAFTING,
+                        XP_PER_PRODUCTION_CYCLE, level.getGameTime());
 
                 // Quality bonus — senior NPCs occasionally produce an extra output
-                float qualityChance = NpcProfessionXp.getQualityChance(entity);
+                float qualityChance = craftingQualityChance(entity);
                 if (qualityChance > 0 && entity.getRandom().nextFloat() < qualityChance) {
                     entity.getPersonalInventory().addItem(
                             new ItemStack(currentRecipe.output(), currentBatchSize));
@@ -533,7 +588,17 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
         entity.setCurrentActivity("Selling goods");
         if (market == null) { goIdle(); return; }
 
-        if (!moveToOrArrived(market.getShape().getOrigin())) return;
+        MarketApproach.Spot spot = MarketApproach.resolveSellSpot(
+                entity, market, VillageSavedData.get(level));
+        if (!moveToOrArrived(spot.pos())) return;
+
+        // Over soft capacity? Stand back and retry on this NPC's
+        // personal offset, rather than mobbing the counter.
+        if (!spot.atCounter()) {
+            entity.setCurrentActivity("Waiting for counter");
+            goIdle();
+            return;
+        }
 
         executeSell(level, computeSurplusToSell(level));
         lastDailySellTick = level.getGameTime();
@@ -548,7 +613,16 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
         entity.setCurrentActivity("Waiting at market");
         if (market == null) { goIdle(); return; }
 
-        if (!moveToOrArrived(market.getShape().getOrigin())) return;
+        MarketApproach.Spot spot = MarketApproach.resolveSellSpot(
+                entity, market, VillageSavedData.get(level));
+        if (!moveToOrArrived(spot.pos())) return;
+
+        // Over soft capacity? Wait in standoff this cycle, retry next.
+        if (!spot.atCounter()) {
+            entity.setCurrentActivity("Waiting for counter");
+            goIdle();
+            return;
+        }
 
         if (marketTimer == 0) {
             Map<Item, Integer> toBuy = resourcesToBuy(level, workBuilding);
@@ -795,7 +869,7 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
     private boolean isSellTime(long gameTime) {
         long dayTime   = gameTime % 24000;
         long todayBase = gameTime - dayTime;
-        return dayTime >= sellWindowDayTick()
+        return dayTime >= effectiveSellWindowDayTick()
                 && lastDailySellTick < todayBase
                 && (gameTime - lastDailySellTick) >= MIN_SELL_INTERVAL;
     }

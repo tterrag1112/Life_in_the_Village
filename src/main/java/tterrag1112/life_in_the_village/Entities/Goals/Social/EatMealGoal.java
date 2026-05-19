@@ -7,8 +7,9 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import tterrag1112.life_in_the_village.Entities.WorkSchedule;
+import tterrag1112.life_in_the_village.Entities.NpcDailyOffset;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -83,7 +84,7 @@ public class EatMealGoal extends Goal {
     public boolean canUse() {
         if (!entity.hasHome()) return false;
         if (!(entity.level() instanceof ServerLevel)) return false;
-        if (!WorkSchedule.isMealTime(entity)) {
+        if (!isMealTimeForThisNpc()) {
             ateThisWindow = false;
             return false;
         }
@@ -92,7 +93,19 @@ public class EatMealGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
-        return phase != Phase.DONE && WorkSchedule.isMealTime(entity);
+        return phase != Phase.DONE && isMealTimeForThisNpc();
+    }
+
+    /**
+     * Meal phase, shifted by this NPC's deterministic daily offset so a
+     * population doesn't all hit the meal window at the same tick. The
+     * underlying schedule still owns the meal phase definition; we just
+     * pass the resolver a perceived-time advanced by the offset.
+     */
+    private boolean isMealTimeForThisNpc() {
+        long now = entity.level().getDayTime();
+        long perceived = now + NpcDailyOffset.offset(entity.getUUID());
+        return ScheduleResolver.isMealTime(entity, perceived);
     }
 
     @Override

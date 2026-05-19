@@ -93,8 +93,12 @@ public final class ProfessionGoalFactory {
     public static final int P_SOCIAL_LOW     = 6;
     public static final int P_WORK_PRIMARY   = 8;
     public static final int P_WORK_SECONDARY = 9;
-    public static final int P_IDLE           = 10;
-    public static final int P_AMBIENT        = 11;
+    /** Subordinate work band — non-dominant secondary work goals that
+     *  must yield to a concurrent {@link #P_WORK_SECONDARY} goal
+     *  (e.g. buying raw materials yielding to selling finished goods). */
+    public static final int P_WORK_TERTIARY  = 10;
+    public static final int P_IDLE           = 11;
+    public static final int P_AMBIENT        = 12;
 
     // =========================================================================
     // Entry point
@@ -105,6 +109,13 @@ public final class ProfessionGoalFactory {
      * current profession and life stage. Safe to call repeatedly
      * (e.g. on profession change or life stage transition).
      */
+    /**
+     * Whether to run {@link GoalPriorityValidator} after each
+     * registration. Always-on by default; flip off if it ever proves
+     * costly during mass-spawn paths.
+     */
+    public static boolean VALIDATE_AFTER_REGISTER = true;
+
     public static void register(TownspersonMob npc) {
         npc.goalSelector.removeAllGoals(g -> true);
         npc.targetSelector.removeAllGoals(g -> true);
@@ -112,6 +123,10 @@ public final class ProfessionGoalFactory {
         registerUniversal(npc);
         registerLifeStage(npc);
         registerProfession(npc);
+
+        if (VALIDATE_AFTER_REGISTER) {
+            GoalPriorityValidator.validate(npc);
+        }
     }
 
     // =========================================================================
@@ -221,7 +236,9 @@ public final class ProfessionGoalFactory {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new BlacksmithGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new PostListingGoal(npc, npc.getSellableItems(Profession.BLACKSMITH)));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
+            // Buying raw materials yields to selling finished goods —
+            // subordinate band so SellToMarket dominates.
+            npc.goalSelector.addGoal(P_WORK_TERTIARY,
                     new BuyFromNpcGoal(npc,
                             npc::needsOre,
                             () -> net.minecraft.world.item.Items.RAW_IRON,
@@ -262,18 +279,14 @@ public final class ProfessionGoalFactory {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new CandlemakerGoal(npc));
         });
 
-// Update BLACKSMITH to use the migrated goal:
-        REGISTRARS.put(Profession.BLACKSMITH, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BlacksmithGoal(npc));
-        });
-
         REGISTRARS.put(Profession.MINER, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new MinerGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new SellToMarketGoal(npc, npc.getSellableItems(Profession.MINER)));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new PostListingGoal(npc, npc.getSellableItems(Profession.MINER)));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
+            // Pickaxe purchase yields to selling finished ore.
+            npc.goalSelector.addGoal(P_WORK_TERTIARY,
                     new BuyFromNpcGoal(npc,
                             npc::needsPickaxe,
                             () -> net.minecraft.world.item.Items.IRON_PICKAXE,

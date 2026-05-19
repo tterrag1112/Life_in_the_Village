@@ -1223,13 +1223,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             }
         }
 
-        // ── NPC experience ────────────────────────────────────────────────────
-        int npcXp  = tterrag1112.life_in_the_village.Profession.NpcProfessionXp.get(this);
-        int npcLvl = tterrag1112.life_in_the_village.Profession.NpcProfessionXp.getLevel(this);
+        // ── CRAFTING skill (replaces legacy NpcProfessionXp) ─────────────────
+        tterrag1112.life_in_the_village.Npc.Skills.Skill craftSkill =
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.CRAFTING;
+        int craftLvl = skills.getLevel(craftSkill);
+        int craftXp  = (int) skills.getXp(craftSkill);
         player.displayClientMessage(Component.literal(
-                "NPC XP: " + npcXp
-                        + "  |  Tier: " + tterrag1112.life_in_the_village.Profession.NpcProfessionXp.TIER_NAMES[npcLvl]
-                        + " (lv" + npcLvl + ")"), false);
+                "Crafting XP: " + craftXp
+                        + "  |  Tier: "
+                        + tterrag1112.life_in_the_village.Npc.Skills.SkillComponent.tierFor(craftLvl)
+                        + " (lv" + craftLvl + ")"), false);
 
         // ── Role ──────────────────────────────────────────────────────────────
         tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role =
@@ -1725,15 +1728,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Visitor metadata (Phase 4 task 29) ──────────────────────────────
         visitorState.load(input);
 
-        // ── Skills (migrate legacy NpcProfessionXp on first load) ───────────
-        if (!skills.load(input)) {
-            int legacyXp = tterrag1112.life_in_the_village.Profession.NpcProfessionXp.get(this);
-            // Legacy field stays readable for one release per the migration
-            // window; just consult it without clearing.
-            long now = level() instanceof net.minecraft.server.level.ServerLevel sl
-                    ? sl.getGameTime() : 0L;
-            skills.migrateLegacyProfessionXp(getProfession(), legacyXp, now);
-        }
+        // ── Skills ──────────────────────────────────────────────────────────
+        // load() leaves the component at default zeros if no record was
+        // saved (e.g. brand-new NPC pre-applyVillageCulture);
+        // initializeFromProfession runs at spawn-time for fresh NPCs.
+        skills.load(input);
 
         // ── P0a-13: repaint job ─────────────────────────────────────────────
         var repaintBuilding = input.read("repaint.buildingId", Codec.STRING);
