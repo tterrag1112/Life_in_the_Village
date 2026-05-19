@@ -50,6 +50,10 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
 
     /** XP awarded to {@link Skill#CRAFTING} per completed production cycle. */
     public static final float XP_PER_PRODUCTION_CYCLE = 3f;
+    /** Additional XP when the cycle's output matches a village
+     *  {@link CraftingOrder open commission}. Mirrors the legacy
+     *  {@code NpcProfessionXp.XP_PER_COMMISSION} value (10). */
+    public static final float XP_PER_COMMISSION = 10f;
 
     // ── Core state ───────────────────────────────────────────────────────────
     protected final TownspersonMob entity;
@@ -298,6 +302,24 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
         return Optional.ofNullable(lowestItem);
     }
 
+    /**
+     * True when {@code output} matches an open {@link CraftingOrder} on
+     * this NPC's assigned village. Used to grant
+     * {@link #XP_PER_COMMISSION} bonus on cycles that produce
+     * commissioned items.
+     */
+    private boolean isCommissionTarget(ServerLevel level, Item output) {
+        if (output == null) return false;
+        return entity.getAssignedVillageName()
+                .flatMap(name -> VillageSavedData.get(level).getVillageByName(name))
+                .map(village -> VillageSavedData.get(level)
+                        .getOrdersForVillage(village.getId())
+                        .stream()
+                        .filter(CraftingOrder::isOpen)
+                        .anyMatch(o -> output == resolveItem(o.getItemId())))
+                .orElse(false);
+    }
+
     private Optional<Item> activeSpecialOrderItem(ServerLevel level) {
         return entity.getAssignedVillageName()
                 .flatMap(name -> VillageSavedData.get(level).getVillageByName(name))
@@ -534,6 +556,17 @@ public abstract class AbstractWorkstationProductionGoal extends Goal {
                 // Award CRAFTING skill XP for completing a production run.
                 entity.getSkills().addXp(Skill.CRAFTING,
                         XP_PER_PRODUCTION_CYCLE, level.getGameTime());
+
+                // Bonus XP when the cycle's output is a current village
+                // commission. The order itself is closed downstream by
+                // a player delivering through BuildingStorageAccess; we
+                // grant XP at the NPC's point of work because that's
+                // where the craftsmanship happens.
+                if (currentRecipe != null
+                        && isCommissionTarget(level, currentRecipe.output())) {
+                    entity.getSkills().addXp(Skill.CRAFTING,
+                            XP_PER_COMMISSION, level.getGameTime());
+                }
 
                 // Quality bonus — senior NPCs occasionally produce an extra output
                 float qualityChance = craftingQualityChance(entity);

@@ -10,26 +10,37 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Post-registration scan that makes {@link ProfessionGoalFactory}'s
  * documented "no two exclusive goals share a priority" promise real.
  *
- * <p>After all goals are registered for an NPC, we group
- * {@link net.minecraft.world.entity.ai.goal.WrappedGoal} entries by
- * priority. For any priority with two or more goals where at least
- * two carry {@link Goal.Flag#MOVE}, we log a WARN naming the profession,
- * the priority, and the conflicting goal class names. Log-only — never
- * throws, so a live server stays up even if a future profession adds
- * an unforeseen conflict.</p>
+ * <h3>Rule</h3>
+ * A priority is <b>safe</b> when:
+ * <ul>
+ *   <li>It has &le;1 {@link Goal.Flag#MOVE} goal, <b>or</b></li>
+ *   <li>Every MOVE goal at that priority is {@linkplain #GATED_BY_WINDOW
+ *       window-gated} — its {@code canUse()} short-circuits to {@code false}
+ *       outside a narrow declared window (target-present, meal phase,
+ *       leisure phase, homeless &amp; off-work, caravan-active,
+ *       crime-present, etc.).</li>
+ * </ul>
+ * Anything else WARN-logs: profession, priority, full goal list, and the
+ * specific members that are not gated. Log-only via SLF4J; never throws.
  *
- * <h3>Allowlist</h3>
- * Some same-priority MOVE goals are intentionally benign because their
- * {@code canUse} only returns {@code true} in a narrow window that
- * doesn't overlap the other contenders at the same priority. Those goal
- * classes appear in {@link #BENIGN_BY_GATE} and are excluded from
- * conflict counting. Adding to this list is deliberate; never widen it
- * silently.
+ * <h3>Accepted residual blind spot</h3>
+ * Two gated goals whose windows actually overlap will not be flagged.
+ * The shipped goal set is small and the gated windows are narrow by
+ * construction, so the practical risk is low. The validator catches the
+ * dominant failure mode — a broadly-active errand goal piled on top of a
+ * narrowly-gated one at the same priority.
+ *
+ * <h3>Maintenance</h3>
+ * Adding a class to {@link #GATED_BY_WINDOW} is deliberate: each entry's
+ * comment must cite the {@code canUse} short-circuit it relies on. If
+ * the goal's {@code canUse} ever loosens, remove it from the set —
+ * a real WARN is preferable to a silent guardrail.
  */
 public final class GoalPriorityValidator {
 
@@ -37,63 +48,67 @@ public final class GoalPriorityValidator {
             LoggerFactory.getLogger(GoalPriorityValidator.class);
 
     /**
-     * Goal classes whose {@code canUse} short-circuits except in a
-     * narrow, mutually-exclusive window. They count toward the
-     * priority slot but never against a conflict warning.
-     *
-     * <p>Justifications (must match a corresponding canUse comment):</p>
-     * <ul>
-     *   <li>{@code ConstableInvestigationGoal} — only active when the
-     *       NPC currently holds the INVESTIGATE_CRIME power.</li>
-     *   <li>{@code GreetPlayerGoal} — only active when seated by
-     *       {@code GreeterAssignment}.</li>
-     *   <li>{@code VisitorGoal} — only active for NPCs flagged as a
-     *       visitor by {@code VisitorFluxEngine}.</li>
-     *   <li>{@code EatMealGoal} — only active during the MEAL phase
-     *       window.</li>
-     *   <li>{@code MentorGoal} — only active for elderly NPCs with a
-     *       master-tier primary skill and a co-located mentee.</li>
-     *   <li>{@code HobbyGoal} — only active during LEISURE phase with
-     *       a resolvable hobby location.</li>
-     *   <li>{@code BuyGoodsGoal} — only active when the NPC has an
-     *       unmet shopping list and money.</li>
-     *   <li>{@code CourtingGoal} — only active for unmarried adults
-     *       with an eligible nearby target.</li>
-     *   <li>{@code PostalGoal} — only active for scribes with an
-     *       outstanding letter to deliver.</li>
-     *   <li>{@code CaravanGuardGoal} — only active for guards
-     *       assigned to a moving caravan.</li>
-     * </ul>
+     * Goal classes whose {@code canUse} is narrow by construction.
+     * Citations point at the specific guard line that closes the goal
+     * outside its window.
      */
-    private static final Set<String> BENIGN_BY_GATE = Set.of(
+    private static final Set<String> GATED_BY_WINDOW = Set.of(
+            // Crime/INVESTIGATE_CRIME power held — ConstableInvestigationGoal.java:51
             "ConstableInvestigationGoal",
+            // Externally seated `target` field — GreetPlayerGoal.java:81
             "GreetPlayerGoal",
+            // VisitorState.isVisitor() — VisitorGoal.java:63
             "VisitorGoal",
+            // ScheduleResolver.isMealTime narrow phase — EatMealGoal.canUse
             "EatMealGoal",
+            // ELDERLY + master skill + isWorkTime + mentee target —
+            // MentorGoal.java:52,57,60,66
             "MentorGoal",
+            // DayPhase.LEISURE or dayOff — HobbyGoal.java:55,57
             "HobbyGoal",
-            "BuyGoodsGoal",
-            "CourtingGoal",
+            // SCRIBE + isSocialTime + has-letter — PostalGoal.java:57-58
             "PostalGoal",
+            // FamilyRole.HEAD + adult + unmarried + eligible target —
+            // CourtingGoal.java:33-35, target check at :44+
+            "CourtingGoal",
+            // isCaravanMember — CaravanGuardGoal.java:46
             "CaravanGuardGoal",
-            // P_PATHFIND: gated by !hasHome && !isWorkTime so never
-            // contends with the leader/guard work goals.
+            // !hasHome && !isWorkTime — SeekHouseGoal canUse
             "SeekHouseGoal",
-            // P_COMBAT: gated by entity.shouldBeHome().
+            // shouldBeHome (typically nightly) — ReturnHomeGoal.java:43
             "ReturnHomeGoal",
-            // P_COMBAT (vanilla): gated by entity.getTarget() != null.
+            // Vanilla: target != null — only set by HurtByTargetGoal /
+            // GuardAttackGoal, civilians stay clean.
             "MeleeAttackGoal",
-            // P_WORK_SECONDARY: defers to BuilderMaintenanceGoal via
-            // BuilderMaintenanceGoal.findPendingRepair() cross-check.
+            // getRepaintJob() != null + maintenance not pending —
+            // BuilderRepaintGoal.java:77-78, cross-check at :80-82
             "BuilderRepaintGoal"
+            // NOTE: BuyGoodsGoal was previously listed here. Removed —
+            // its canUse is broadly true during off-work hours whenever
+            // household food/tool need is non-zero (the same shape as
+            // SellToMarketGoal / BuyFromNpcGoal, which we treat as the
+            // canonical NOT-gated examples).
     );
+
+    /**
+     * Toggle for {@link ProfessionGoalFactory}. Validator is log-only;
+     * leaving it on by default exposes regressions immediately.
+     */
+    /**
+     * Dedup: only log each {@code (profession, priority, signature)} once
+     * per JVM session. Mass-spawn flows register the same goal set across
+     * many NPCs; without dedup the log floods with identical entries.
+     */
+    private static final Set<String> ALREADY_LOGGED =
+            ConcurrentHashMap.newKeySet();
 
     private GoalPriorityValidator() {}
 
     /**
-     * Scan {@code npc.goalSelector} for unallowed same-priority MOVE
-     * conflicts and WARN-log any found. Returns the number of
-     * conflicts logged.
+     * Scan {@code npc.goalSelector} once and WARN-log any priority slot
+     * whose MOVE-goal set violates the safety rule.
+     *
+     * @return number of warnings emitted (0 on a clean profession)
      */
     public static int validate(TownspersonMob npc) {
         Map<Integer, List<Goal>> byPriority = new HashMap<>();
@@ -107,20 +122,30 @@ public final class GoalPriorityValidator {
 
         int warnings = 0;
         for (var entry : byPriority.entrySet()) {
-            List<Goal> contenders = new ArrayList<>();
+            List<Goal> moveGoals = new ArrayList<>();
             for (Goal g : entry.getValue()) {
-                if (!g.getFlags().contains(Goal.Flag.MOVE)) continue;
-                if (BENIGN_BY_GATE.contains(g.getClass().getSimpleName())) continue;
-                contenders.add(g);
+                if (g.getFlags().contains(Goal.Flag.MOVE)) moveGoals.add(g);
             }
-            if (contenders.size() < 2) continue;
+            if (moveGoals.size() < 2) continue;
 
-            List<String> names = new ArrayList<>(contenders.size());
-            for (Goal g : contenders) names.add(g.getClass().getSimpleName());
+            List<String> ungated = new ArrayList<>();
+            for (Goal g : moveGoals) {
+                if (!GATED_BY_WINDOW.contains(g.getClass().getSimpleName())) {
+                    ungated.add(g.getClass().getSimpleName());
+                }
+            }
+            if (ungated.isEmpty()) continue;
+
+            List<String> all = new ArrayList<>(moveGoals.size());
+            for (Goal g : moveGoals) all.add(g.getClass().getSimpleName());
 
             warnings++;
-            LOGGER.warn("[GoalPriorityValidator] {} @ priority {}: conflicting MOVE goals {}",
-                    profession, entry.getKey(), names);
+            String key = profession + ":" + entry.getKey() + ":" + all;
+            if (ALREADY_LOGGED.add(key)) {
+                LOGGER.warn("[GoalPriorityValidator] {} @ priority {}: MOVE goals {}; "
+                                + "non-gated: {}",
+                        profession, entry.getKey(), all, ungated);
+            }
         }
         return warnings;
     }
