@@ -4,6 +4,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
 
@@ -59,6 +60,30 @@ import java.util.Map;
 public record InclinationProfile(
         Inclination inclination,
         Map<BuildingType, int[]> baseCounts) {
+
+    /** Track E1 — composition determinism. Canonical constructor
+     *  wraps the incoming map in an {@link EnumMap} so iteration of
+     *  {@code baseCounts.keySet()} is by {@link BuildingType#ordinal()}
+     *  declaration order, not the JVM-startup-salted iteration of
+     *  {@link Map#copyOf}. {@code Map.copyOf(EnumMap)} silently
+     *  promotes to an {@code ImmutableCollections.MapN}, whose
+     *  iteration order varies across JVM starts; that fed
+     *  {@link BuildingSelector#select}'s shared {@code Random} draws
+     *  with a different per-type order each run, jittering the
+     *  per-type sampled counts (e.g. FARMHOUSE 4↔5 in HAMLET/AGRI).
+     *  EnumMap wrapped in {@code Collections.unmodifiableMap} gives
+     *  immutability with deterministic ordinal iteration. */
+    public InclinationProfile {
+        if (baseCounts == null || baseCounts.isEmpty()) {
+            baseCounts = Collections.unmodifiableMap(
+                    new EnumMap<>(BuildingType.class));
+        } else {
+            EnumMap<BuildingType, int[]> stable =
+                    new EnumMap<>(BuildingType.class);
+            stable.putAll(baseCounts);
+            baseCounts = Collections.unmodifiableMap(stable);
+        }
+    }
 
     /** Returns the target count for {@code type} at {@code tier},
      *  or 0 if the type isn't in this inclination's roster. */
