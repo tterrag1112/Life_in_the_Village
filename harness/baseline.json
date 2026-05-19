@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": 1779069063853,
+  "recordedAt": 1779161626126,
   "runCount": 36,
   "runs": [
     {
@@ -2261,11 +2261,12 @@
         "TOWN_HALL": 1,
         "INN": 1,
         "FARMHOUSE": 2,
-        "HOUSE": 7,
+        "HOUSE": 6,
         "MARKET": 1,
         "BLACKSMITH": 2,
         "CARPENTRY": 2,
         "CHAPEL": 1,
+        "BAKERY": 1,
         "STABLE": 1,
         "MILLER": 1
       },
@@ -2274,18 +2275,18 @@
         "INN": 1.0,
         "STOCKPILE": 0.0,
         "FARMHOUSE": 1.0,
-        "HOUSE": 0.4666666666666667,
+        "HOUSE": 0.4,
         "MARKET": 1.0,
         "BLACKSMITH": 1.0,
         "CARPENTRY": 1.0,
         "CHAPEL": 1.0,
         "WELL": 0.0,
-        "BAKERY": 0.0,
+        "BAKERY": 1.0,
         "STABLE": 1.0,
         "MILLER": 1.0,
         "WAREHOUSE": 0.0
       },
-      "compactness": 0.2679738562091503,
+      "compactness": 0.2761437908496732,
       "fracBuildingsOnNetwork": 0.8421052631578947,
       "roadCoverage": 0.5210355987055016,
       "networkComponents": 1,
@@ -2294,7 +2295,7 @@
       "vegetationPerPlaced": 0.0,
       "clusteringCoherence": {
         "FARMHOUSE": 5.980515782778694,
-        "HOUSE": 1.3624559129983087,
+        "HOUSE": 1.9729500515596425,
         "BLACKSMITH": 3.8897528860832407,
         "CARPENTRY": 1.982606309515984
       },
