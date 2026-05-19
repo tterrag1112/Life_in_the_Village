@@ -224,25 +224,30 @@ public class BuilderMaintenanceGoal extends Goal {
      * Priority: RUINED > DILAPIDATED > WEATHERED (if not recently maintained).
      */
     private Building findRepairTarget(ServerLevel level) {
-        VillageSavedData data = VillageSavedData.get(level);
+        return findPendingRepair(entity, level);
+    }
 
-        Village village = entity.getAssignedVillageName()
+    /**
+     * Static cross-check used by {@link BuilderRepaintGoal} so the
+     * maintenance goal stays dominant when both share a priority slot.
+     * Returns the highest-priority building needing repair, or
+     * {@code null} when nothing is pending.
+     */
+    public static Building findPendingRepair(TownspersonMob npc,
+                                             ServerLevel level) {
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = npc.getAssignedVillageName()
                 .flatMap(data::getVillageByName)
                 .orElse(null);
         if (village == null) return null;
-
 
         return village.getBuildingIds().stream()
                 .map(data::getBuildingById)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
-                // Skip the town hall — players are responsible for it
                 .filter(b -> b.getType() != BuildingType.TOWN_HALL)
-                // Skip recently repaired buildings
-                // Prioritise worst condition first
                 .max(Comparator.comparingInt(b ->
                         conditionPriority(b.getCondition())))
-                // Must actually need attention
                 .filter(b -> b.getCondition() != BuildingCondition.MAINTAINED
                         && b.getCondition() != BuildingCondition.NEW)
                 .orElse(null);

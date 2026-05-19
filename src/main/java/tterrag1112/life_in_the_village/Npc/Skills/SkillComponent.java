@@ -213,25 +213,6 @@ public final class SkillComponent {
         }
     }
 
-    /**
-     * One-shot legacy migration: maps a single legacy XP value (the
-     * {@code npcProfXp} int from {@code NpcProfessionXp}) into the primary
-     * skill of the supplied profession. All other skills stay at 0 — the
-     * spec's "Existing saves load with all skills at 0" rule for non-
-     * primary slots.
-     */
-    public void migrateLegacyProfessionXp(Profession profession,
-                                          int legacyXp,
-                                          long currentTick) {
-        Arrays.fill(xp, 0f);
-        Arrays.fill(lastXpTick, currentTick);
-        if (legacyXp <= 0) return;
-        ProfessionSkills.of(profession).ifPresent(ps -> {
-            xp[ps.primary().ordinal()] =
-                    Math.min(LEVEL_XP[MAX_LEVEL], (float) legacyXp);
-        });
-    }
-
     // ── Persistence ─────────────────────────────────────────────────────────
 
     public void save(ValueOutput output) {

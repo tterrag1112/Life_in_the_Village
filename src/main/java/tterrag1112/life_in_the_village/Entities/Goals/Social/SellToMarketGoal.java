@@ -15,6 +15,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketApproach;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
@@ -114,18 +115,30 @@ public class SellToMarketGoal extends Goal {
 
     private void walkToMarket() {
         if (market == null) { goIdle(); return; }
+        if (!(entity.level() instanceof ServerLevel level)) { goIdle(); return; }
 
-        BlockPos target = market.getShape().getOrigin();
+        // Own stall path keeps the legacy own-stall origin target; the
+        // approach resolver handles the rest. If our own stall was the
+        // target, atCounter() is always true.
+        MarketApproach.Spot spot = MarketApproach.resolveSellSpot(
+                entity, market, VillageSavedData.get(level));
+        BlockPos target = spot.pos();
         double distSq = entity.distanceToSqr(
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
             entity.getNavigation().moveTo(
                     target.getX(), target.getY(), target.getZ(), 1.0);
-        } else {
-            entity.getNavigation().stop();
-            phase = Phase.SELLING;
+            return;
         }
+
+        entity.getNavigation().stop();
+        if (!spot.atCounter()) {
+            // Soft capacity reached; come back next check interval.
+            goIdle();
+            return;
+        }
+        phase = Phase.SELLING;
     }
 
     private void sell(ServerLevel level) {

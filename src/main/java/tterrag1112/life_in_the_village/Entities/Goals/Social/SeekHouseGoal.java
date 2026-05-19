@@ -35,6 +35,10 @@ public class SeekHouseGoal extends Goal {
     public boolean canUse() {
         if (entity.hasHome()) return false;
         if (entity.getLifeStage() == LifeStage.CHILD) return false;
+        // House-hunting must never contend with the work-hour goals
+        // sharing P_PATHFIND (VillageLeaderGoal / KingdomRulerGoal /
+        // GuardPatrolGoal). Restrict to outside work hours.
+        if (entity.isWorkTime()) return false;
 
         checkTimer++;
         if (checkTimer < CHECK_INTERVAL) return false;
