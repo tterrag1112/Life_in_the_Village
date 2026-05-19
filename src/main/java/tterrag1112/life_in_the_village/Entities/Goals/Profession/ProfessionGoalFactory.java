@@ -56,15 +56,16 @@ import java.util.function.Function;
  *  0  — reserved (never used; avoids mojang edge cases)
  *  1  — survival: FloatGoal, CaravanGuardGoal (override all else)
  *  2  — combat: MeleeAttack, GuardEquip, ReturnHome (urgent)
- *  3  — pathfinding: GuardPatrol, VillageLeader, SeekHouse
+ *  3  — pathfinding: GuardPatrol, VillageLeader, KingdomRuler
  *  4  — social (high): EatMeal (during meal window)
- *  5  — social (mid): Socialize, ChildPlay, ElderlyRelax
- *  6  — social (low): Greeting, Courting, ChildBirth
- *  7  — (unused — buffer)
+ *  5  — social (mid): Socialize, ChildPlay, Mentor
+ *  6  — social (low): Greeting, Courting, ChildBirth, Hobby, BuyGoods
+ *  7  — homeseek: SeekHouseGoal (homeless + off-work only)
  *  8  — profession work (primary): FarmerGoal, BlacksmithGoal, etc.
- *  9  — profession work (secondary): SellToMarket, PostListing, BuyFromNpc
- * 10  — idle: WanderInBuilding, RandomLookAround
- * 11  — ambient: LookAtPlayer
+ *  9  — profession work (secondary): SellToMarket, PostListing, BuilderMaintenance
+ * 10  — profession work (tertiary): BuyFromNpc, BuilderRepaint
+ * 11  — idle: WanderInBuilding
+ * 12  — ambient: LookAtPlayer, RandomLookAround, ElderlyRelax
  * </pre>
  *
  * <h3>Usage</h3>
@@ -91,6 +92,11 @@ public final class ProfessionGoalFactory {
     public static final int P_SOCIAL_HIGH    = 4;
     public static final int P_SOCIAL_MID     = 5;
     public static final int P_SOCIAL_LOW     = 6;
+    /** Dedicated band for the homeless-house-seek behavior. Distinct
+     *  from {@link #P_PATHFIND} so it doesn't share a slot with the
+     *  leader/ruler/guard duty goals; the goal's own canUse gate
+     *  (homeless &amp; off-work) keeps it temporally exclusive. */
+    public static final int P_HOMESEEK       = 7;
     public static final int P_WORK_PRIMARY   = 8;
     public static final int P_WORK_SECONDARY = 9;
     /** Subordinate work band — non-dominant secondary work goals that
@@ -137,7 +143,7 @@ public final class ProfessionGoalFactory {
         npc.goalSelector.addGoal(P_SURVIVAL,  new FloatGoal(npc));
         npc.goalSelector.addGoal(P_SURVIVAL,  new OpenDoorGoal(npc, true));
         npc.goalSelector.addGoal(P_COMBAT,    new ReturnHomeGoal(npc));
-        npc.goalSelector.addGoal(P_PATHFIND,  new SeekHouseGoal(npc));
+        npc.goalSelector.addGoal(P_HOMESEEK,  new SeekHouseGoal(npc));
         npc.goalSelector.addGoal(P_SOCIAL_HIGH, new EatMealGoal(npc));
         npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
         // Hobby goal (Phase 2 task 14) — slots above WanderInBuilding so
@@ -185,7 +191,11 @@ public final class ProfessionGoalFactory {
                 }
             }
             case ELDERLY -> {
-                npc.goalSelector.addGoal(P_SOCIAL_MID, new ElderlyRelaxGoal(npc));
+                // ElderlyRelax is a do-nothing fallback — any real
+                // elderly behavior (MentorGoal, Hobby, social) should
+                // preempt it. Sit it at P_AMBIENT so it never thrashes
+                // a higher-intent MOVE goal.
+                npc.goalSelector.addGoal(P_AMBIENT, new ElderlyRelaxGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
                 // Phase 2 task 15 — elderly with master-tier skill mentor a
                 // younger colleague at the same workplace.
@@ -315,10 +325,10 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.BUILDER, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new BuilderGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderMaintenanceGoal(npc));
-            // P0a-13: player-requested repaints — runs alongside the
-            // primary build queue and the maintenance pass; canUse()
-            // gates on whether a job is attached to the NPC.
-            npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderRepaintGoal(npc));
+            // Repaint is subordinate to maintenance: maintenance stays at
+            // P_WORK_SECONDARY, repaint drops to P_WORK_TERTIARY so the
+            // priority itself encodes "maintenance dominant".
+            npc.goalSelector.addGoal(P_WORK_TERTIARY, new BuilderRepaintGoal(npc));
         });
 
         // ── Leadership ───────────────────────────────────────────────────────

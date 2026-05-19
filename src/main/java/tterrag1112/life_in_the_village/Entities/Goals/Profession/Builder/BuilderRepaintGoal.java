@@ -77,11 +77,6 @@ public class BuilderRepaintGoal extends Goal {
         if (job == null) return false;
         if (job.state() == RepaintJob.State.COMPLETE) return false;
         if (level.getGameTime() < job.nextVisitTick()) return false;
-        // Maintenance dominates: defer the repaint queue while there's
-        // a building actively in disrepair.
-        if (BuilderMaintenanceGoal.findPendingRepair(entity, level) != null) {
-            return false;
-        }
 
         targetBuilding = VillageSavedData.get(level)
                 .getBuildingById(job.buildingId()).orElse(null);
