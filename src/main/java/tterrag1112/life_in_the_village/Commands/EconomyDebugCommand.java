@@ -156,7 +156,7 @@ public final class EconomyDebugCommand {
     private static final List<String> MIGRATED_CALLERS = List.of(
             "Entities/HouseholdWealthManager.tickHouseholdSpending",
             "Entities/Goals/Profession/Workshop/AbstractWorkstationProductionGoal.executeBuy",
-            "Entities/Goals/Social/BuyGoodsGoal (renamed from BuyFromMarketGoal)"
+            "Npc/Brain/Behaviors/BuyGoodsBehavior (Phase 6.2.a, migrated from BuyGoodsGoal/BuyFromMarketGoal)"
     );
 
     private static int handleMigrateStatus(CommandContext<CommandSourceStack> ctx) {

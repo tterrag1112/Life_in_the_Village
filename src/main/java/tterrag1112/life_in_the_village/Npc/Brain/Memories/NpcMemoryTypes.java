@@ -78,6 +78,17 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>
             SHELTER_TARGET = register("shelter_target", BlockPos.CODEC);
 
+    // ── Phase 6.2.a — first Goal→Behavior migrations ────────────────────────
+
+    /** TTL cool-down: present → too soon to start another hobby session.
+     *  Stamped at SitatHobbyBehavior.stop. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            HOBBY_COOLDOWN = register("hobby_cooldown", Codec.LONG);
+
+    /** TTL cool-down: present → already ate (or attempted) this meal window. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            MEAL_COOLDOWN = register("meal_cooldown", Codec.LONG);
+
     // ── Phase 6.1+ — forward-declared ───────────────────────────────────────
 
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>

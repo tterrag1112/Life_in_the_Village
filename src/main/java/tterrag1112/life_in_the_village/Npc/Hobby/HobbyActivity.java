@@ -5,7 +5,8 @@ import com.mojang.serialization.Codec;
 /**
  * What an NPC actually does once they've reached the hobby
  * {@link HobbyLocation}. Each value drives a small behaviour clip in
- * {@link HobbyGoal#performTick}: held item, look pose, occasional
+ * {@code HobbyBehavior#performTick} (Phase 6.2.a, migrated from
+ * HobbyGoal): held item, look pose, occasional
  * gesture. Spec line 200 calls for animation reuse only — no new
  * animation assets in v1.
  *

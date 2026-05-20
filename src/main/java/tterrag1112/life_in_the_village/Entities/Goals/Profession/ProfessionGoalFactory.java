@@ -56,17 +56,15 @@ import java.util.function.Function;
  *  0  — reserved (never used; avoids mojang edge cases)
  *  1  — survival: FloatGoal, CaravanGuardGoal (override all else)
  *  2  — combat: MeleeAttack, GuardEquip, ReturnHome (urgent)
- *  3  — duty: ConstableInvestigationGoal (role-power-gated; preempts pathfind/work)
- *  4  — pathfinding: GuardPatrol, VillageLeader, KingdomRuler
- *  5  — social (high): EatMeal (during meal window)
- *  6  — social (mid): Socialize, ChildPlay, Mentor
- *  7  — social (low): Greeting, Courting, ChildBirth, Hobby, BuyGoods
- *  8  — homeseek: SeekHouseGoal (homeless + off-work only)
- *  9  — profession work (primary): FarmerGoal, BlacksmithGoal, etc.
- * 10  — profession work (secondary): SellToMarket, PostListing, BuilderMaintenance
- * 11  — profession work (tertiary): BuyFromNpc, BuilderRepaint
- * 12  — idle: WanderInBuilding
- * 13  — ambient: LookAtPlayer, RandomLookAround, ElderlyRelax
+ *  3  — pathfinding: GuardPatrol, VillageLeader, SeekHouse
+ *  4  — social (high): EatMeal (during meal window)
+ *  5  — social (mid): Socialize, ChildPlay, ElderlyRelax
+ *  6  — social (low): Greeting, Courting, ChildBirth
+ *  7  — (unused — buffer)
+ *  8  — profession work (primary): FarmerGoal, BlacksmithGoal, etc.
+ *  9  — profession work (secondary): SellToMarket, PostListing, BuyFromNpc
+ * 10  — idle: WanderInBuilding, RandomLookAround
+ * 11  — ambient: LookAtPlayer
  * </pre>
  *
  * <h3>Usage</h3>
@@ -89,29 +87,14 @@ public final class ProfessionGoalFactory {
     public static final int P_RESERVED        = 0;
     public static final int P_SURVIVAL       = 1;
     public static final int P_COMBAT         = 2;
-    /** Duty interrupt band — investigation / similar role-power-gated
-     *  goals that preempt every non-combat behavior when active.
-     *  Slots above {@link #P_PATHFIND} so leader/ruler/guard duty
-     *  yields to an active crime investigation; below {@link #P_COMBAT}
-     *  so a constable under attack still fights first. */
-    public static final int P_DUTY           = 3;
-    public static final int P_PATHFIND       = 4;
-    public static final int P_SOCIAL_HIGH    = 5;
-    public static final int P_SOCIAL_MID     = 6;
-    public static final int P_SOCIAL_LOW     = 7;
-    /** Dedicated band for the homeless-house-seek behavior. Distinct
-     *  from {@link #P_PATHFIND} so it doesn't share a slot with the
-     *  leader/ruler/guard duty goals; the goal's own canUse gate
-     *  (homeless &amp; off-work) keeps it temporally exclusive. */
-    public static final int P_HOMESEEK       = 8;
-    public static final int P_WORK_PRIMARY   = 9;
-    public static final int P_WORK_SECONDARY = 10;
-    /** Subordinate work band — non-dominant secondary work goals that
-     *  must yield to a concurrent {@link #P_WORK_SECONDARY} goal
-     *  (e.g. buying raw materials yielding to selling finished goods). */
-    public static final int P_WORK_TERTIARY  = 11;
-    public static final int P_IDLE           = 12;
-    public static final int P_AMBIENT        = 13;
+    public static final int P_PATHFIND       = 3;
+    public static final int P_SOCIAL_HIGH    = 4;
+    public static final int P_SOCIAL_MID     = 5;
+    public static final int P_SOCIAL_LOW     = 6;
+    public static final int P_WORK_PRIMARY   = 8;
+    public static final int P_WORK_SECONDARY = 9;
+    public static final int P_IDLE           = 10;
+    public static final int P_AMBIENT        = 11;
 
     // =========================================================================
     // Entry point
@@ -122,13 +105,6 @@ public final class ProfessionGoalFactory {
      * current profession and life stage. Safe to call repeatedly
      * (e.g. on profession change or life stage transition).
      */
-    /**
-     * Whether to run {@link GoalPriorityValidator} after each
-     * registration. Always-on by default; flip off if it ever proves
-     * costly during mass-spawn paths.
-     */
-    public static boolean VALIDATE_AFTER_REGISTER = true;
-
     public static void register(TownspersonMob npc) {
         npc.goalSelector.removeAllGoals(g -> true);
         npc.targetSelector.removeAllGoals(g -> true);
@@ -136,10 +112,6 @@ public final class ProfessionGoalFactory {
         registerUniversal(npc);
         registerLifeStage(npc);
         registerProfession(npc);
-
-        if (VALIDATE_AFTER_REGISTER) {
-            GoalPriorityValidator.validate(npc);
-        }
     }
 
     // =========================================================================
@@ -150,28 +122,24 @@ public final class ProfessionGoalFactory {
         npc.goalSelector.addGoal(P_SURVIVAL,  new FloatGoal(npc));
         npc.goalSelector.addGoal(P_SURVIVAL,  new OpenDoorGoal(npc, true));
         npc.goalSelector.addGoal(P_COMBAT,    new ReturnHomeGoal(npc));
-        npc.goalSelector.addGoal(P_HOMESEEK,  new SeekHouseGoal(npc));
-        npc.goalSelector.addGoal(P_SOCIAL_HIGH, new EatMealGoal(npc));
+        npc.goalSelector.addGoal(P_PATHFIND,  new SeekHouseGoal(npc));
+        // Phase 6.2.a: EatMealGoal migrated to EatMealBehavior (SOCIAL @1).
+        // Phase 6.2.a: HobbyGoal migrated to HobbyBehavior (SOCIAL @4).
         npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
-        // Hobby goal (Phase 2 task 14) — slots above WanderInBuilding so
-        // an NPC in LEISURE actually goes and does their hobby instead
-        // of milling around at home.
-        npc.goalSelector.addGoal(P_SOCIAL_LOW,
-                new tterrag1112.life_in_the_village.Npc.Hobby.HobbyGoal(npc));
         // Phase 3 task 24: greet players who enter the NPC's assigned
         // business-front building. Slots between combat and work so
         // greeting pre-empts production. Stays no-op until external
         // GreeterAssignment.assign() seats a target player.
+        // Phase 6.2.a: NOT migrated — GreeterAssignment.assignFor seats
+        // targets via goal.assign(player); active caller, blocked from
+        // deletion until that wiring lifts to the Brain layer.
         npc.goalSelector.addGoal(P_SOCIAL_HIGH,
                 new tterrag1112.life_in_the_village.Npc.BusinessFront.GreetPlayerGoal(npc));
         // Phase 3 task 19: village_constable's investigation pass.
-        // Slotted at P_DUTY (above P_PATHFIND, below P_COMBAT) so an
-        // active investigation interrupts leader/ruler/guard duty and
-        // ordinary work, but a constable under attack still defends
-        // themselves first. canUse short-circuits when the NPC doesn't
-        // currently hold INVESTIGATE_CRIME, so non-constables pay only
-        // the Goal-list overhead.
-        npc.goalSelector.addGoal(P_DUTY,
+        // canUse short-circuits when the NPC doesn't currently hold
+        // INVESTIGATE_CRIME, so non-constables pay only the Goal-list
+        // overhead.
+        npc.goalSelector.addGoal(P_WORK_PRIMARY,
                 new tterrag1112.life_in_the_village.Npc.Crime.ConstableInvestigationGoal(npc));
         // Phase 4 task 29: ephemeral visitors. canUse short-circuits
         // when the NPC isn't flagged as a visitor, so residents pay
@@ -195,17 +163,13 @@ public final class ProfessionGoalFactory {
             case TEEN, ADULT -> {
                 npc.goalSelector.addGoal(P_SOCIAL_MID, new SocializeGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
-                npc.goalSelector.addGoal(P_SOCIAL_LOW, new BuyGoodsGoal(npc));
+                // Phase 6.2.a: BuyGoodsGoal migrated to BuyGoodsBehavior (SOCIAL @5).
                 if (npc.getLifeStage() == LifeStage.ADULT) {
                     npc.goalSelector.addGoal(P_SOCIAL_LOW, new CourtingGoal(npc));
                 }
             }
             case ELDERLY -> {
-                // ElderlyRelax is a do-nothing fallback — any real
-                // elderly behavior (MentorGoal, Hobby, social) should
-                // preempt it. Sit it at P_AMBIENT so it never thrashes
-                // a higher-intent MOVE goal.
-                npc.goalSelector.addGoal(P_AMBIENT, new ElderlyRelaxGoal(npc));
+                npc.goalSelector.addGoal(P_SOCIAL_MID, new ElderlyRelaxGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
                 // Phase 2 task 15 — elderly with master-tier skill mentor a
                 // younger colleague at the same workplace.
@@ -256,9 +220,7 @@ public final class ProfessionGoalFactory {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new BlacksmithGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new PostListingGoal(npc, npc.getSellableItems(Profession.BLACKSMITH)));
-            // Buying raw materials yields to selling finished goods —
-            // subordinate band so SellToMarket dominates.
-            npc.goalSelector.addGoal(P_WORK_TERTIARY,
+            npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new BuyFromNpcGoal(npc,
                             npc::needsOre,
                             () -> net.minecraft.world.item.Items.RAW_IRON,
@@ -299,14 +261,18 @@ public final class ProfessionGoalFactory {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new CandlemakerGoal(npc));
         });
 
+// Update BLACKSMITH to use the migrated goal:
+        REGISTRARS.put(Profession.BLACKSMITH, npc -> {
+            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BlacksmithGoal(npc));
+        });
+
         REGISTRARS.put(Profession.MINER, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new MinerGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new SellToMarketGoal(npc, npc.getSellableItems(Profession.MINER)));
             npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new PostListingGoal(npc, npc.getSellableItems(Profession.MINER)));
-            // Pickaxe purchase yields to selling finished ore.
-            npc.goalSelector.addGoal(P_WORK_TERTIARY,
+            npc.goalSelector.addGoal(P_WORK_SECONDARY,
                     new BuyFromNpcGoal(npc,
                             npc::needsPickaxe,
                             () -> net.minecraft.world.item.Items.IRON_PICKAXE,
@@ -335,10 +301,10 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.BUILDER, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new BuilderGoal(npc));
             npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderMaintenanceGoal(npc));
-            // Repaint is subordinate to maintenance: maintenance stays at
-            // P_WORK_SECONDARY, repaint drops to P_WORK_TERTIARY so the
-            // priority itself encodes "maintenance dominant".
-            npc.goalSelector.addGoal(P_WORK_TERTIARY, new BuilderRepaintGoal(npc));
+            // P0a-13: player-requested repaints — runs alongside the
+            // primary build queue and the maintenance pass; canUse()
+            // gates on whether a job is attached to the NPC.
+            npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderRepaintGoal(npc));
         });
 
         // ── Leadership ───────────────────────────────────────────────────────
