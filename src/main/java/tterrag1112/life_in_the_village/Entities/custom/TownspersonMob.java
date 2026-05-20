@@ -1403,6 +1403,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .LAST_SHOPPING_TICK.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .COURTING_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .POSTAL_RUN_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .GREET_TARGET.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_GESTURE_COOLDOWN.get(),
@@ -1473,13 +1479,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.CORE, 0, coreBehaviors);
 
-        // IDLE — priorities (Phase 6.1.c ordering):
-        // 0=Shelter, 1=IdleGesture, 2=MoodReact, 3=Greeting, 4=Sit,
-        // 5=InternalWander, 6=Escort, 7=PersonalSpace.
-        // Shelter is urgent (rain), the reactive PersonalSpace nudge is
-        // last so deliberate behaviors win contention.
+        // IDLE — Phase 6.2.b ordering (GreetPlayer added at top — assigned
+        // greeter duty preempts everything else).
+        // 0=GreetPlayer, 1=Shelter, 2=IdleGesture, 3=MoodReact,
+        // 4=Greeting, 5=Sit, 6=InternalWander, 7=Escort, 8=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> idleBehaviors =
                 ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetPlayerBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1499,11 +1506,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // SOCIAL — Phase 6.2.a ordering (EatMeal high, Hobby/BuyGoods mid):
-        // 0=Shelter, 1=EatMeal, 2=Engage, 3=Initiate, 4=Hobby, 5=BuyGoods,
-        // 6=Greeting, 7=Sit, 8=Escort, 9=PersonalSpace.
+        // SOCIAL — Phase 6.2.b ordering (GreetPlayer high, Courting after BuyGoods):
+        // 0=GreetPlayer, 1=Shelter, 2=EatMeal, 3=Engage, 4=Initiate,
+        // 5=Hobby, 6=BuyGoods, 7=Courting, 8=Greeting, 9=Sit, 10=Escort,
+        // 11=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
                 ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetPlayerBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1516,6 +1526,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .HobbyBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .BuyGoodsBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .CourtingBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetingAcknowledgmentBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors

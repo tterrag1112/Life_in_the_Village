@@ -1,17 +1,15 @@
 package tterrag1112.life_in_the_village.Npc.BusinessFront;
 
-import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 
 import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -38,7 +36,12 @@ import java.util.UUID;
  */
 public final class GreeterAssignment {
 
-    private static final Logger LOGGER = LogUtils.getLogger();
+    /** Anti-spam: same player can't re-trigger a greet within this gap.
+     *  Was previously {@code GreetPlayerGoal.RE_GREET_COOLDOWN_TICKS}. */
+    public static final int RE_GREET_COOLDOWN_TICKS = 1200;
+    /** Lifetime of a {@code GREET_TARGET} memory before it self-expires.
+     *  Covers ATTEND_TIMEOUT_TICKS (600) plus a generous approach budget. */
+    private static final long ASSIGNMENT_TTL_TICKS = 2400L;
 
     private GreeterAssignment() {}
 
@@ -94,7 +97,7 @@ public final class GreeterAssignment {
         BusinessFrontState existing = BusinessFrontTracker.get(building.getId()).orElse(null);
         if (existing != null
                 && player.getUUID().equals(existing.targetPlayerId())
-                && now - existing.attendingSinceTick() < GreetPlayerGoal.RE_GREET_COOLDOWN_TICKS) {
+                && now - existing.attendingSinceTick() < RE_GREET_COOLDOWN_TICKS) {
             return;
         }
 
@@ -103,14 +106,12 @@ public final class GreeterAssignment {
                 .findFirst().orElse(null);
         if (greeter == null) return;
 
-        // Find the GreetPlayerGoal on the worker; assign.
-        GreetPlayerGoal goal = findGreetGoal(greeter);
-        if (goal == null) {
-            LOGGER.debug("[GreeterAssignment] {} has no GreetPlayerGoal — wired by ProfessionGoalFactory at registration",
-                    greeter.getNpcName());
-            return;
-        }
-        goal.assign(player);
+        // Phase 6.2.b — assignment is now a memory write. The Brain's
+        // GreetPlayerBehavior watches GREET_TARGET and runs the approach
+        // + attend + dismiss state machine. TTL covers the full
+        // ATTEND_TIMEOUT_TICKS (600) plus reasonable approach time.
+        greeter.getBrain().setMemoryWithExpiry(
+                NpcMemoryTypes.GREET_TARGET.get(), player, ASSIGNMENT_TTL_TICKS);
         BusinessFrontTracker.put(BusinessFrontTracker.getOrCreate(building.getId())
                 .withGreeter(greeter.getUUID(), player.getUUID(), now,
                         BusinessFrontStatus.GREETER_APPROACHING));
@@ -121,8 +122,7 @@ public final class GreeterAssignment {
         if (greeterId == null || level == null) return;
         TownspersonMob greeter = TownspersonMob.findByUUID(level, greeterId).orElse(null);
         if (greeter == null) return;
-        GreetPlayerGoal goal = findGreetGoal(greeter);
-        if (goal != null) goal.clear();
+        greeter.getBrain().eraseMemory(NpcMemoryTypes.GREET_TARGET.get());
     }
 
     // ── Internals ──────────────────────────────────────────────────────────
@@ -132,13 +132,6 @@ public final class GreeterAssignment {
         UUID buildingId = building.getId();
         return level.getEntitiesOfClass(TownspersonMob.class, box,
                 npc -> npc.getAssignedBuildingId().filter(id -> id.equals(buildingId)).isPresent());
-    }
-
-    private static GreetPlayerGoal findGreetGoal(TownspersonMob greeter) {
-        for (var wrapped : greeter.goalSelector.getAvailableGoals()) {
-            if (wrapped.getGoal() instanceof GreetPlayerGoal g) return g;
-        }
-        return null;
     }
 
     /** Spec ranking: SERVICE_FACING > owner > master > first. */

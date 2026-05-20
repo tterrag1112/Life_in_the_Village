@@ -1,8 +1,11 @@
 package tterrag1112.life_in_the_village.Npc.Brain;
 
+import com.google.common.collect.ImmutableList;
 import net.minecraft.world.entity.ai.Brain;
+import net.minecraft.world.entity.ai.behavior.BehaviorControl;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.PostalBehavior;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.EnumMap;
@@ -30,6 +33,17 @@ public final class ProfessionBrainFactory {
 
     private static final Map<Profession, ProfessionBrainRegistrar> REGISTRARS =
             new EnumMap<>(Profession.class);
+
+    static {
+        // Phase 6.2.b — SCRIBE: postal delivery during SOCIAL activity.
+        // First profession-specific behavior. addActivity is additive —
+        // we layer onto the existing SOCIAL list set up by makeBrain.
+        REGISTRARS.put(Profession.SCRIBE, (npc, brain) -> {
+            ImmutableList<BehaviorControl<? super TownspersonMob>> scribeSocial =
+                    ImmutableList.of(new PostalBehavior());
+            brain.addActivity(NpcActivities.SOCIAL.get(), 7, scribeSocial);
+        });
+    }
 
     /**
      * Hook for future phases. Call before any NPC is constructed (e.g.

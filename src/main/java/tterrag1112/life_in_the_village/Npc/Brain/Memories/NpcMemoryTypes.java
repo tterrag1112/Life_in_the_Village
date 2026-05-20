@@ -89,6 +89,21 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
             MEAL_COOLDOWN = register("meal_cooldown", Codec.LONG);
 
+    // ── Phase 6.2.b — social cluster part 2 ──────────────────────────────────
+
+    /** TTL cool-down for courting attempts (replaces CourtingGoal.checkTimer). */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            COURTING_COOLDOWN = register("courting_cooldown", Codec.LONG);
+
+    /** TTL cool-down between postal delivery runs (replaces PostalGoal.scanTimer). */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            POSTAL_RUN_COOLDOWN = register("postal_run_cooldown", Codec.LONG);
+
+    /** Externally-seated greeter target (LivingEntity — typically a ServerPlayer).
+     *  No codec — entity references aren't persisted (mirrors INTERACTION_TARGET). */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<LivingEntity>>
+            GREET_TARGET = registerNoCodec("greet_target");
+
     // ── Phase 6.1+ — forward-declared ───────────────────────────────────────
 
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>

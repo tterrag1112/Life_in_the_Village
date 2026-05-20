@@ -125,16 +125,10 @@ public final class ProfessionGoalFactory {
         npc.goalSelector.addGoal(P_PATHFIND,  new SeekHouseGoal(npc));
         // Phase 6.2.a: EatMealGoal migrated to EatMealBehavior (SOCIAL @1).
         // Phase 6.2.a: HobbyGoal migrated to HobbyBehavior (SOCIAL @4).
+        // Phase 6.2.b: GreetPlayerGoal migrated to GreetPlayerBehavior
+        //   (universal IDLE @0 + SOCIAL @0); GreeterAssignment now writes
+        //   the GREET_TARGET memory instead of calling goal.assign().
         npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
-        // Phase 3 task 24: greet players who enter the NPC's assigned
-        // business-front building. Slots between combat and work so
-        // greeting pre-empts production. Stays no-op until external
-        // GreeterAssignment.assign() seats a target player.
-        // Phase 6.2.a: NOT migrated — GreeterAssignment.assignFor seats
-        // targets via goal.assign(player); active caller, blocked from
-        // deletion until that wiring lifts to the Brain layer.
-        npc.goalSelector.addGoal(P_SOCIAL_HIGH,
-                new tterrag1112.life_in_the_village.Npc.BusinessFront.GreetPlayerGoal(npc));
         // Phase 3 task 19: village_constable's investigation pass.
         // canUse short-circuits when the NPC doesn't currently hold
         // INVESTIGATE_CRIME, so non-constables pay only the Goal-list
@@ -164,9 +158,10 @@ public final class ProfessionGoalFactory {
                 npc.goalSelector.addGoal(P_SOCIAL_MID, new SocializeGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
                 // Phase 6.2.a: BuyGoodsGoal migrated to BuyGoodsBehavior (SOCIAL @5).
-                if (npc.getLifeStage() == LifeStage.ADULT) {
-                    npc.goalSelector.addGoal(P_SOCIAL_LOW, new CourtingGoal(npc));
-                }
+                // Phase 6.2.b: CourtingGoal migrated to CourtingBehavior
+                //   (universal SOCIAL — the family-state gate is in the
+                //   behavior's checkExtraStartConditions, no life-stage
+                //   wiring needed).
             }
             case ELDERLY -> {
                 npc.goalSelector.addGoal(P_SOCIAL_MID, new ElderlyRelaxGoal(npc));
@@ -346,9 +341,8 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.SCRIBE, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY,
                     new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScribeWorkGoal(npc));
-            // Phase 2 task 18: postal round during SOCIAL phase.
-            npc.goalSelector.addGoal(P_SOCIAL_LOW,
-                    new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.PostalGoal(npc));
+            // Phase 6.2.b: PostalGoal migrated to PostalBehavior — wired
+            // via ProfessionBrainFactory.SCRIBE registrar (SOCIAL @7).
         });
         REGISTRARS.put(Profession.LIBRARIAN, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
                 new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.LibrarianWorkGoal(npc)));
