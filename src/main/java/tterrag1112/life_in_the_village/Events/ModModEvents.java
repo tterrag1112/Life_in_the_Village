@@ -232,6 +232,12 @@ public class ModModEvents {
                 RequestKingdomMapSyncPacket.TYPE,
                 RequestKingdomMapSyncPacket.CODEC,
                 RequestKingdomMapSyncPacket::handle);
+
+        // Track 4 — gift primer (SocialVerbsPanel "Gift" button).
+        registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.PrimeGiftPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.PrimeGiftPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.PrimeGiftPacket::handle);
         registrar.playToClient(
                 KingdomMapSyncPacket.TYPE,
                 KingdomMapSyncPacket.STREAM_CODEC,

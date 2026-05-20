@@ -47,6 +47,22 @@ public class ModDataComponents {
                             .persistent(tterrag1112.life_in_the_village.Npc.Letters.ExtendedBookContent.CODEC)
                             .networkSynchronized(tterrag1112.life_in_the_village.Npc.Letters.ExtendedBookContent.STREAM_CODEC));
 
+    /** Track 4 — structured terms attached to a JOB_CONTRACT stack. */
+    public static final DeferredHolder<DataComponentType<?>,
+            DataComponentType<tterrag1112.life_in_the_village.Items.JobContractTerms>>
+            JOB_CONTRACT_TERMS = register("job_contract_terms",
+                    builder -> builder
+                            .persistent(tterrag1112.life_in_the_village.Items.JobContractTerms.CODEC)
+                            .networkSynchronized(tterrag1112.life_in_the_village.Items.JobContractTerms.STREAM_CODEC));
+
+    /** Track 4 — bound stall lease terms on a STALL_LEASE stack. */
+    public static final DeferredHolder<DataComponentType<?>,
+            DataComponentType<tterrag1112.life_in_the_village.Items.StallLeaseTerms>>
+            STALL_LEASE_TERMS = register("stall_lease_terms",
+                    builder -> builder
+                            .persistent(tterrag1112.life_in_the_village.Items.StallLeaseTerms.CODEC)
+                            .networkSynchronized(tterrag1112.life_in_the_village.Items.StallLeaseTerms.STREAM_CODEC));
+
     private static <T>DeferredHolder<DataComponentType<?>, DataComponentType<T>> register(String name, UnaryOperator<DataComponentType.Builder<T>> builderOperator) {
 
         return DATA_COMPONENT_TYPES.register(name, () -> builderOperator.apply(DataComponentType.builder()).build());

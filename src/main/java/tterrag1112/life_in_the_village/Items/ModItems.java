@@ -32,6 +32,20 @@ public class ModItems {
             WrittenLetterItem::new,
             props -> new Item.Properties().stacksTo(1));
 
+    /** Track 4 — universal hire / commission / apprenticeship contract.
+     *  Carries a {@link JobContractTerms} data component. */
+    public static final DeferredItem<Item> JOB_CONTRACT = ITEMS.registerItem(
+            "job_contract",
+            JobContractItem::new,
+            props -> new Item.Properties().stacksTo(1));
+
+    /** Track 4 — bound market-stall lease. Carries a
+     *  {@link StallLeaseTerms} data component. */
+    public static final DeferredItem<Item> STALL_LEASE = ITEMS.registerItem(
+            "stall_lease",
+            StallLeaseItem::new,
+            props -> new Item.Properties().stacksTo(1));
+
 
 
 
