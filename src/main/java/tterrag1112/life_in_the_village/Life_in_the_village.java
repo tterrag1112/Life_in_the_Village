@@ -24,7 +24,6 @@ import tterrag1112.life_in_the_village.Entities.ModEntities;
 import tterrag1112.life_in_the_village.Entities.client.TownspersonRenderer;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcActivities;
-import tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes;
 import tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.BuildingInhabitantRegistry;
@@ -69,11 +68,12 @@ public class Life_in_the_village {
         // Register the Deferred Register to the mod event bus so tabs get registered
         CREATIVE_MODE_TABS.register(modEventBus);
 
-        // Phase 6.0 — Brain infrastructure (memories, activities, sensors, schedules)
+        // Phase 6.0 — Brain infrastructure (memories, activities, sensors).
+        // Schedules are driven by NpcSchedules.tick() at the entity level —
+        // vanilla Schedule was removed in 1.21.11 in favour of Timeline.
         NpcMemoryTypes.register(modEventBus);
         NpcActivities.register(modEventBus);
         NpcSensorTypes.register(modEventBus);
-        NpcSchedules.register(modEventBus);
 
         // Register ourselves for server and other game events we are interested in.
         // Note that this is necessary if and only if we want *this* class (Life_in_the_village) to respond directly to events.

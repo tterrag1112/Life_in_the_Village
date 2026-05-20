@@ -1319,6 +1319,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // consistent pre-Goal snapshot each step. Goals continue to drive
         // all movement and look targeting; no Brain behavior writes
         // WALK_TARGET / attack target / look target in this phase.
+        tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules
+                .tick(this, level.getDayTime());
         this.getBrain().tick(level, this);
         super.customServerAiStep(level);
         tickAging(level);
@@ -1385,8 +1387,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     @Override
     protected Brain<?> makeBrain(Dynamic<?> dynamic) {
         Brain<TownspersonMob> brain = brainProvider().makeBrain(dynamic);
-        brain.setSchedule(tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules
-                .TOWNSPERSON_DEFAULT.get());
+        // 1.21.11 removed vanilla Schedule / BuiltInRegistries.SCHEDULE in
+        // favour of EnvironmentAttribute<Activity>. We drive activity
+        // switching ourselves from customServerAiStep via NpcSchedules.tick.
 
         ImmutableList<BehaviorControl<? super TownspersonMob>> coreBehaviors =
                 ImmutableList.of(
