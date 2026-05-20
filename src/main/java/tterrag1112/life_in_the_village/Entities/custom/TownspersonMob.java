@@ -18,9 +18,18 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.*;
+import net.minecraft.world.entity.AnimationState;
+import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.behavior.BehaviorControl;
 import net.minecraft.world.entity.ai.goal.WrappedGoal;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.sensing.Sensor;
+import net.minecraft.world.entity.ai.sensing.SensorType;
+import net.minecraft.world.entity.schedule.Activity;
+import com.google.common.collect.ImmutableList;
+import com.mojang.serialization.Dynamic;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.RangedAttackMob;
 import net.minecraft.world.entity.player.Player;
@@ -119,6 +128,29 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             SynchedEntityData.defineId(TownspersonMob.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<String> CARAVAN_ID =
             SynchedEntityData.defineId(TownspersonMob.class, EntityDataSerializers.STRING);
+    /** Phase 6.0 — visible "carry display" item, synced for client rendering.
+     *  Set by {@code CarryHoldAnimationBehavior} from the Brain memory; entirely
+     *  separate from the real inventory in {@link #economy}. */
+    private static final EntityDataAccessor<ItemStack> CARRY_DISPLAY_ITEM =
+            SynchedEntityData.defineId(TownspersonMob.class, EntityDataSerializers.ITEM_STACK);
+
+    // Entity event ids for Brain-triggered animation states (Phase 6.0).
+    private static final byte ENTITY_EVENT_GESTURE_WAVE        = 64;
+    private static final byte ENTITY_EVENT_GESTURE_STRETCH     = 65;
+    private static final byte ENTITY_EVENT_GESTURE_LOOK_AROUND = 66;
+
+    /** Client-rendered idle gesture animation state. Started by
+     *  {@link #handleEntityEvent} when the server broadcasts a gesture
+     *  event from {@link #triggerIdleGesture}. */
+    public final AnimationState idleGestureState = new AnimationState();
+    /** Client-rendered carry-hold animation. Started/stopped when the
+     *  synced {@link #CARRY_DISPLAY_ITEM} changes between empty and non-empty. */
+    public final AnimationState carryHoldState = new AnimationState();
+
+    /** Transient sign-bias written by {@code MoodReactionBehavior}, read
+     *  by {@code IdleGestureBehavior}'s variant picker. Not persisted —
+     *  the next Brain tick will recompute it from CURRENT_MOOD_SNAPSHOT. */
+    private int idleGestureBias = 0;
 
     // =========================================================================
     // COMPONENTS — domain logic delegates
@@ -293,6 +325,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         builder.define(GROUP_ID, "");
         builder.define(IS_GROUP_LEADER, false);
         builder.define(CARAVAN_ID, "");
+        builder.define(CARRY_DISPLAY_ITEM, ItemStack.EMPTY);
     }
 
     @Override
@@ -1281,10 +1314,165 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     @Override
     protected void customServerAiStep(ServerLevel level) {
+        // Phase 6.0 — tick the Brain BEFORE the Goal-driven super so the
+        // observation layer (sensors, animation-only behaviors) sees a
+        // consistent pre-Goal snapshot each step. Goals continue to drive
+        // all movement and look targeting; no Brain behavior writes
+        // WALK_TARGET / attack target / look target in this phase.
+        this.getBrain().tick(level, this);
         super.customServerAiStep(level);
         tickAging(level);
         tickHouseCheck(level);
         tickConversationLock(level);
+    }
+
+    // =========================================================================
+    // BRAIN — Phase 6.0 observation layer
+    // =========================================================================
+
+    // Lazy-built so DeferredHolders are resolved at first entity construction
+    // (after registry freeze) — not at class load.
+    private static ImmutableList<MemoryModuleType<?>> brainMemories() {
+        return ImmutableList.of(
+                MemoryModuleType.HOME,
+                MemoryModuleType.JOB_SITE,
+                MemoryModuleType.NEAREST_LIVING_ENTITIES,
+                MemoryModuleType.NEAREST_PLAYERS,
+                MemoryModuleType.NEAREST_VISIBLE_PLAYER,
+                MemoryModuleType.NEAREST_BED,
+                MemoryModuleType.HURT_BY,
+                MemoryModuleType.HURT_BY_ENTITY,
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .CURRENT_MOOD_SNAPSHOT.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .IDLE_GESTURE_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .CARRYING_DISPLAY_ITEM.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .RECENT_INTERACTION_PARTNERS.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .CONVERSATION_CANDIDATES.get()
+        );
+    }
+
+    private static ImmutableList<SensorType<? extends Sensor<? super TownspersonMob>>>
+            brainSensors() {
+        return ImmutableList.of(
+                SensorType.NEAREST_LIVING_ENTITIES,
+                SensorType.NEAREST_PLAYERS,
+                SensorType.NEAREST_BED,
+                SensorType.HURT_BY,
+                tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
+                        .MOOD_SNAPSHOT.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
+                        .HOME_AND_JOB_SITE.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
+                        .CONVERSATION_CANDIDATES.get()
+        );
+    }
+
+    @Override
+    protected Brain.Provider<TownspersonMob> brainProvider() {
+        return Brain.provider(brainMemories(), brainSensors());
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Brain<TownspersonMob> getBrain() {
+        return (Brain<TownspersonMob>) super.getBrain();
+    }
+
+    @Override
+    protected Brain<?> makeBrain(Dynamic<?> dynamic) {
+        Brain<TownspersonMob> brain = brainProvider().makeBrain(dynamic);
+        brain.setSchedule(tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules
+                .TOWNSPERSON_DEFAULT.get());
+
+        ImmutableList<BehaviorControl<? super TownspersonMob>> coreBehaviors =
+                ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .CarryHoldAnimationBehavior()
+                );
+        brain.addActivity(Activity.CORE, 0, coreBehaviors);
+
+        // Priorities increment from the start value: IdleGesture=0, MoodReaction=1.
+        ImmutableList<BehaviorControl<? super TownspersonMob>> idleBehaviors =
+                ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .IdleGestureBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .MoodReactionBehavior()
+                );
+        brain.addActivity(Activity.IDLE, 0, idleBehaviors);
+
+        // Forward activities for future phases — register empty so the
+        // schedule can switch into them without NPEs. Phase 6.1+ fills them.
+        ImmutableList<BehaviorControl<? super TownspersonMob>> empty = ImmutableList.of();
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 0, empty);
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .SOCIAL.get(), 0, empty);
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .REST.get(), 0, empty);
+
+        brain.setCoreActivities(java.util.Set.of(Activity.CORE));
+        brain.setDefaultActivity(Activity.IDLE);
+        brain.useDefaultActivity();
+
+        tterrag1112.life_in_the_village.Npc.Brain.ProfessionBrainFactory
+                .configureBrain(this, brain);
+
+        return brain;
+    }
+
+    // =========================================================================
+    // BRAIN — animation hooks
+    // =========================================================================
+
+    /** Server-side: broadcast a gesture event so the client starts the
+     *  matching {@link AnimationState}. Pure visual; no movement, no
+     *  look-target change. */
+    public void triggerIdleGesture(int variant) {
+        if (level().isClientSide()) return;
+        byte id = switch (variant) {
+            case tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .IdleGestureBehavior.GESTURE_WAVE -> ENTITY_EVENT_GESTURE_WAVE;
+            case tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .IdleGestureBehavior.GESTURE_STRETCH -> ENTITY_EVENT_GESTURE_STRETCH;
+            default -> ENTITY_EVENT_GESTURE_LOOK_AROUND;
+        };
+        level().broadcastEntityEvent(this, id);
+    }
+
+    /** Sets the synced carry display item. Empty stack clears the
+     *  carry-hold animation on the client. Does NOT touch the real inventory. */
+    public void setCarryDisplayItem(ItemStack stack) {
+        ItemStack current = entityData.get(CARRY_DISPLAY_ITEM);
+        boolean wasEmpty = current.isEmpty();
+        boolean nowEmpty = stack.isEmpty();
+        entityData.set(CARRY_DISPLAY_ITEM, stack.copy());
+        if (!level().isClientSide() && wasEmpty != nowEmpty) {
+            // Toggle the carry-hold anim via entity event so all clients
+            // see the same animation lifecycle.
+            level().broadcastEntityEvent(this, nowEmpty ? (byte) 68 : (byte) 67);
+        }
+    }
+
+    public ItemStack getCarryDisplayItem() { return entityData.get(CARRY_DISPLAY_ITEM); }
+
+    public int getIdleGestureBias() { return idleGestureBias; }
+    public void setIdleGestureBias(int bias) { this.idleGestureBias = bias; }
+
+    @Override
+    public void handleEntityEvent(byte id) {
+        switch (id) {
+            case ENTITY_EVENT_GESTURE_WAVE,
+                 ENTITY_EVENT_GESTURE_STRETCH,
+                 ENTITY_EVENT_GESTURE_LOOK_AROUND -> idleGestureState.start(this.tickCount);
+            case 67 -> carryHoldState.start(this.tickCount);
+            case 68 -> carryHoldState.stop();
+            default -> super.handleEntityEvent(id);
+        }
     }
 
     private void tickConversationLock(ServerLevel level) {
