@@ -149,6 +149,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private static final byte ENTITY_EVENT_GESTURE_SIGH          = 73;
     private static final byte ENTITY_EVENT_GESTURE_SLOUCH        = 74;
     private static final byte ENTITY_EVENT_GESTURE_LEAN          = 75;
+    // Phase 6.1.b — sit/stand transitions.
+    private static final byte ENTITY_EVENT_SIT_DOWN              = 76;
+    private static final byte ENTITY_EVENT_STAND_UP              = 77;
 
     /** Generic idle-gesture animation. Several gesture variants share
      *  this state — the entity-event ID is what distinguishes them on
@@ -167,6 +170,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public final AnimationState sighState          = new AnimationState();
     public final AnimationState slouchState        = new AnimationState();
     public final AnimationState leanState          = new AnimationState();
+    // Phase 6.1.b — sit/stand transitions (~10 ticks; pose itself uses
+    // vanilla Pose.SITTING, no per-tick animation needed).
+    public final AnimationState sitDownState       = new AnimationState();
+    public final AnimationState standUpState       = new AnimationState();
 
     /** Last gesture fired, used by renderer to pick a sub-pose when
      *  several gestures share {@link #idleGestureState}. */
@@ -1372,6 +1379,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 MemoryModuleType.HURT_BY,
                 MemoryModuleType.HURT_BY_ENTITY,
                 MemoryModuleType.LOOK_TARGET,
+                MemoryModuleType.WALK_TARGET,
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .NEAREST_FREE_SEAT.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .SIT_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .LAST_INTERIOR_WANDER.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .LAST_PERSONAL_SPACE_NUDGE.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .CONVERSATION_PARTNER.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
@@ -1397,7 +1415,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
                         .HOME_AND_JOB_SITE.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
-                        .CONVERSATION_CANDIDATES.get()
+                        .CONVERSATION_CANDIDATES.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
+                        .NEARBY_FREE_SEATS.get()
         );
     }
 
@@ -1419,21 +1439,29 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // favour of EnvironmentAttribute<Activity>. We drive activity
         // switching ourselves from customServerAiStep via NpcSchedules.tick.
 
-        // CORE: always-on behaviors. LookAtTargetSink consumes LOOK_TARGET
-        // memory and drives head rotation when set — Phase 6.1.a writes
-        // LOOK_TARGET only from GreetingAcknowledgmentBehavior, under
-        // BrainNavGuard.canRotateHead.
+        // CORE: always-on behaviors.
+        //  - LookAtTargetSink consumes LOOK_TARGET memory and drives head
+        //    rotation when set (Phase 6.1.a writes LOOK_TARGET only from
+        //    GreetingAcknowledgmentBehavior, under canRotateHead).
+        //  - MoveToTargetSink is the canonical consumer of WALK_TARGET
+        //    memory (Phase 6.1.b). Every WALK_TARGET writer guards with
+        //    BrainNavGuard.canSteerNavigation first.
         ImmutableList<BehaviorControl<? super TownspersonMob>> coreBehaviors =
                 ImmutableList.of(
                         new net.minecraft.world.entity.ai.behavior
                                 .LookAtTargetSink(45, 90),
+                        new net.minecraft.world.entity.ai.behavior
+                                .MoveToTargetSink(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .CarryHoldAnimationBehavior()
                 );
         brain.addActivity(Activity.CORE, 0, coreBehaviors);
 
-        // IDLE — priorities increment from start: IdleGesture=0,
-        // MoodReaction=1, GreetingAcknowledgment=2.
+        // IDLE — priorities increment from start:
+        // 0=IdleGesture, 1=MoodReaction, 2=GreetingAcknowledgment,
+        // 3=SitAtFurniture, 4=InternalBuildingWander, 5=PersonalSpace.
+        // The deliberate nav-using behaviors (sit, wander) outrank the
+        // reactive PersonalSpace nudge.
         ImmutableList<BehaviorControl<? super TownspersonMob>> idleBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1441,16 +1469,26 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .MoodReactionBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .GreetingAcknowledgmentBehavior()
+                                .GreetingAcknowledgmentBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SitAtFurnitureBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .InternalBuildingWanderBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .PersonalSpaceBehavior()
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // SOCIAL — Phase 6.1.a: only the greeting; mood + idle gesture
-        // are IDLE-bound so they don't bleed into SOCIAL.
+        // SOCIAL — Phase 6.1.a + 6.1.b additions.
+        // 0=Greeting, 1=SitAtFurniture, 2=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .GreetingAcknowledgmentBehavior()
+                                .GreetingAcknowledgmentBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SitAtFurnitureBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .PersonalSpaceBehavior()
                 );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .SOCIAL.get(), 0, socialBehaviors);
@@ -1514,6 +1552,18 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     public ItemStack getCarryDisplayItem() { return entityData.get(CARRY_DISPLAY_ITEM); }
 
+    /** Phase 6.1.b — broadcast a sit-down transition event. */
+    public void triggerSitDown() {
+        if (level().isClientSide()) return;
+        level().broadcastEntityEvent(this, ENTITY_EVENT_SIT_DOWN);
+    }
+
+    /** Phase 6.1.b — broadcast a stand-up transition event. */
+    public void triggerStandUp() {
+        if (level().isClientSide()) return;
+        level().broadcastEntityEvent(this, ENTITY_EVENT_STAND_UP);
+    }
+
     public tterrag1112.life_in_the_village.Npc.Brain.MoodBand getMoodBand() { return moodBand; }
     public void setMoodBand(tterrag1112.life_in_the_village.Npc.Brain.MoodBand band) {
         this.moodBand = band != null ? band : tterrag1112.life_in_the_village.Npc.Brain.MoodBand.NEUTRAL;
@@ -1534,6 +1584,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             case ENTITY_EVENT_GESTURE_LEAN          -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.LEAN,          leanState);
             case ENTITY_EVENT_CARRY_HOLD_START      -> carryHoldState.start(this.tickCount);
             case ENTITY_EVENT_CARRY_HOLD_STOP       -> carryHoldState.stop();
+            case ENTITY_EVENT_SIT_DOWN              -> sitDownState.start(this.tickCount);
+            case ENTITY_EVENT_STAND_UP              -> standUpState.start(this.tickCount);
             default -> super.handleEntityEvent(id);
         }
     }

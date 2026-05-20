@@ -56,6 +56,23 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<List<LivingEntity>>>
             CONVERSATION_CANDIDATES = registerNoCodec("conversation_candidates");
 
+    // ── Phase 6.1.b — first navigating behaviors ────────────────────────────
+
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>
+            NEAREST_FREE_SEAT = register("nearest_free_seat", BlockPos.CODEC);
+
+    /** TTL cool-down memory: present → too soon to sit again. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            SIT_COOLDOWN = register("sit_cooldown", Codec.LONG);
+
+    /** TTL cool-down memory: present → recently completed an internal wander. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            LAST_INTERIOR_WANDER = register("last_interior_wander", Codec.LONG);
+
+    /** TTL cool-down memory: present → recently nudged for personal space. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            LAST_PERSONAL_SPACE_NUDGE = register("last_personal_space_nudge", Codec.LONG);
+
     // ── Phase 6.1+ — forward-declared ───────────────────────────────────────
 
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>

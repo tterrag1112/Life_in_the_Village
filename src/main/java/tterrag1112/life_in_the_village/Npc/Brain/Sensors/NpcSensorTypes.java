@@ -26,6 +26,9 @@ public final class NpcSensorTypes {
     public static final DeferredHolder<SensorType<?>, SensorType<ConversationCandidatesSensor>>
             CONVERSATION_CANDIDATES = reg("conversation_candidates", ConversationCandidatesSensor::new);
 
+    public static final DeferredHolder<SensorType<?>, SensorType<NearbyFreeSeatsSensor>>
+            NEARBY_FREE_SEATS = reg("nearby_free_seats", NearbyFreeSeatsSensor::new);
+
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <S extends Sensor<TownspersonMob>>
             DeferredHolder<SensorType<?>, SensorType<S>> reg(
