@@ -134,23 +134,50 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private static final EntityDataAccessor<ItemStack> CARRY_DISPLAY_ITEM =
             SynchedEntityData.defineId(TownspersonMob.class, EntityDataSerializers.ITEM_STACK);
 
-    // Entity event ids for Brain-triggered animation states (Phase 6.0).
-    private static final byte ENTITY_EVENT_GESTURE_WAVE        = 64;
-    private static final byte ENTITY_EVENT_GESTURE_STRETCH     = 65;
-    private static final byte ENTITY_EVENT_GESTURE_LOOK_AROUND = 66;
+    // Entity event ids for Brain-triggered animation states.
+    // 64-66 allocated in Phase 6.0; 69-75 allocated in Phase 6.1.a.
+    // 67-68 reserved for the carry-hold toggle.
+    private static final byte ENTITY_EVENT_GESTURE_WAVE          = 64;
+    private static final byte ENTITY_EVENT_GESTURE_STRETCH       = 65;
+    private static final byte ENTITY_EVENT_GESTURE_LOOK_AROUND   = 66;
+    private static final byte ENTITY_EVENT_CARRY_HOLD_START      = 67;
+    private static final byte ENTITY_EVENT_CARRY_HOLD_STOP       = 68;
+    private static final byte ENTITY_EVENT_GESTURE_YAWN          = 69;
+    private static final byte ENTITY_EVENT_GESTURE_NOD           = 70;
+    private static final byte ENTITY_EVENT_GESTURE_FRIENDLY_WAVE = 71;
+    private static final byte ENTITY_EVENT_GESTURE_HEAD_SHAKE    = 72;
+    private static final byte ENTITY_EVENT_GESTURE_SIGH          = 73;
+    private static final byte ENTITY_EVENT_GESTURE_SLOUCH        = 74;
+    private static final byte ENTITY_EVENT_GESTURE_LEAN          = 75;
 
-    /** Client-rendered idle gesture animation state. Started by
-     *  {@link #handleEntityEvent} when the server broadcasts a gesture
-     *  event from {@link #triggerIdleGesture}. */
+    /** Generic idle-gesture animation. Several gesture variants share
+     *  this state — the entity-event ID is what distinguishes them on
+     *  the rendering side (clients can read {@link #lastGestureFired}
+     *  to pick a sub-animation). */
     public final AnimationState idleGestureState = new AnimationState();
     /** Client-rendered carry-hold animation. Started/stopped when the
      *  synced {@link #CARRY_DISPLAY_ITEM} changes between empty and non-empty. */
     public final AnimationState carryHoldState = new AnimationState();
+    // Phase 6.1.a — additional per-gesture animation states. Plumbed
+    // so future renderer authoring can drive distinct poses per state.
+    public final AnimationState yawnState          = new AnimationState();
+    public final AnimationState nodState           = new AnimationState();
+    public final AnimationState friendlyWaveState  = new AnimationState();
+    public final AnimationState headShakeState     = new AnimationState();
+    public final AnimationState sighState          = new AnimationState();
+    public final AnimationState slouchState        = new AnimationState();
+    public final AnimationState leanState          = new AnimationState();
 
-    /** Transient sign-bias written by {@code MoodReactionBehavior}, read
-     *  by {@code IdleGestureBehavior}'s variant picker. Not persisted —
-     *  the next Brain tick will recompute it from CURRENT_MOOD_SNAPSHOT. */
-    private int idleGestureBias = 0;
+    /** Last gesture fired, used by renderer to pick a sub-pose when
+     *  several gestures share {@link #idleGestureState}. */
+    public tterrag1112.life_in_the_village.Npc.Brain.Gesture lastGestureFired =
+            tterrag1112.life_in_the_village.Npc.Brain.Gesture.LOOK_AROUND;
+
+    /** Transient mood band written by {@code MoodReactionBehavior}, read
+     *  by {@code IdleGesturePalette} when computing gesture weights.
+     *  Not persisted — the next Brain tick recomputes it. */
+    private tterrag1112.life_in_the_village.Npc.Brain.MoodBand moodBand =
+            tterrag1112.life_in_the_village.Npc.Brain.MoodBand.NEUTRAL;
 
     // =========================================================================
     // COMPONENTS — domain logic delegates
@@ -1344,6 +1371,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 MemoryModuleType.NEAREST_BED,
                 MemoryModuleType.HURT_BY,
                 MemoryModuleType.HURT_BY_ENTITY,
+                MemoryModuleType.LOOK_TARGET,
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
@@ -1391,30 +1419,47 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // favour of EnvironmentAttribute<Activity>. We drive activity
         // switching ourselves from customServerAiStep via NpcSchedules.tick.
 
+        // CORE: always-on behaviors. LookAtTargetSink consumes LOOK_TARGET
+        // memory and drives head rotation when set — Phase 6.1.a writes
+        // LOOK_TARGET only from GreetingAcknowledgmentBehavior, under
+        // BrainNavGuard.canRotateHead.
         ImmutableList<BehaviorControl<? super TownspersonMob>> coreBehaviors =
                 ImmutableList.of(
+                        new net.minecraft.world.entity.ai.behavior
+                                .LookAtTargetSink(45, 90),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .CarryHoldAnimationBehavior()
                 );
         brain.addActivity(Activity.CORE, 0, coreBehaviors);
 
-        // Priorities increment from the start value: IdleGesture=0, MoodReaction=1.
+        // IDLE — priorities increment from start: IdleGesture=0,
+        // MoodReaction=1, GreetingAcknowledgment=2.
         ImmutableList<BehaviorControl<? super TownspersonMob>> idleBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .IdleGestureBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .MoodReactionBehavior()
+                                .MoodReactionBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetingAcknowledgmentBehavior()
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
+        // SOCIAL — Phase 6.1.a: only the greeting; mood + idle gesture
+        // are IDLE-bound so they don't bleed into SOCIAL.
+        ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
+                ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetingAcknowledgmentBehavior()
+                );
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .SOCIAL.get(), 0, socialBehaviors);
+
         // Forward activities for future phases — register empty so the
-        // schedule can switch into them without NPEs. Phase 6.1+ fills them.
+        // schedule can switch into them without NPEs. Phase 6.1.b+ fills them.
         ImmutableList<BehaviorControl<? super TownspersonMob>> empty = ImmutableList.of();
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 0, empty);
-        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
-                .SOCIAL.get(), 0, empty);
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .REST.get(), 0, empty);
 
@@ -1435,14 +1480,21 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Server-side: broadcast a gesture event so the client starts the
      *  matching {@link AnimationState}. Pure visual; no movement, no
      *  look-target change. */
-    public void triggerIdleGesture(int variant) {
+    public void triggerGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture gesture) {
+        if (gesture == null) return;
+        this.lastGestureFired = gesture;
         if (level().isClientSide()) return;
-        byte id = switch (variant) {
-            case tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                    .IdleGestureBehavior.GESTURE_WAVE -> ENTITY_EVENT_GESTURE_WAVE;
-            case tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                    .IdleGestureBehavior.GESTURE_STRETCH -> ENTITY_EVENT_GESTURE_STRETCH;
-            default -> ENTITY_EVENT_GESTURE_LOOK_AROUND;
+        byte id = switch (gesture) {
+            case WAVE          -> ENTITY_EVENT_GESTURE_WAVE;
+            case STRETCH       -> ENTITY_EVENT_GESTURE_STRETCH;
+            case LOOK_AROUND   -> ENTITY_EVENT_GESTURE_LOOK_AROUND;
+            case YAWN          -> ENTITY_EVENT_GESTURE_YAWN;
+            case NOD           -> ENTITY_EVENT_GESTURE_NOD;
+            case FRIENDLY_WAVE -> ENTITY_EVENT_GESTURE_FRIENDLY_WAVE;
+            case HEAD_SHAKE    -> ENTITY_EVENT_GESTURE_HEAD_SHAKE;
+            case SIGH          -> ENTITY_EVENT_GESTURE_SIGH;
+            case SLOUCH        -> ENTITY_EVENT_GESTURE_SLOUCH;
+            case LEAN          -> ENTITY_EVENT_GESTURE_LEAN;
         };
         level().broadcastEntityEvent(this, id);
     }
@@ -1455,27 +1507,41 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         boolean nowEmpty = stack.isEmpty();
         entityData.set(CARRY_DISPLAY_ITEM, stack.copy());
         if (!level().isClientSide() && wasEmpty != nowEmpty) {
-            // Toggle the carry-hold anim via entity event so all clients
-            // see the same animation lifecycle.
-            level().broadcastEntityEvent(this, nowEmpty ? (byte) 68 : (byte) 67);
+            level().broadcastEntityEvent(this,
+                    nowEmpty ? ENTITY_EVENT_CARRY_HOLD_STOP : ENTITY_EVENT_CARRY_HOLD_START);
         }
     }
 
     public ItemStack getCarryDisplayItem() { return entityData.get(CARRY_DISPLAY_ITEM); }
 
-    public int getIdleGestureBias() { return idleGestureBias; }
-    public void setIdleGestureBias(int bias) { this.idleGestureBias = bias; }
+    public tterrag1112.life_in_the_village.Npc.Brain.MoodBand getMoodBand() { return moodBand; }
+    public void setMoodBand(tterrag1112.life_in_the_village.Npc.Brain.MoodBand band) {
+        this.moodBand = band != null ? band : tterrag1112.life_in_the_village.Npc.Brain.MoodBand.NEUTRAL;
+    }
 
     @Override
     public void handleEntityEvent(byte id) {
         switch (id) {
-            case ENTITY_EVENT_GESTURE_WAVE,
-                 ENTITY_EVENT_GESTURE_STRETCH,
-                 ENTITY_EVENT_GESTURE_LOOK_AROUND -> idleGestureState.start(this.tickCount);
-            case 67 -> carryHoldState.start(this.tickCount);
-            case 68 -> carryHoldState.stop();
+            case ENTITY_EVENT_GESTURE_WAVE          -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.WAVE,          idleGestureState);
+            case ENTITY_EVENT_GESTURE_STRETCH       -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.STRETCH,       idleGestureState);
+            case ENTITY_EVENT_GESTURE_LOOK_AROUND   -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.LOOK_AROUND,   idleGestureState);
+            case ENTITY_EVENT_GESTURE_YAWN          -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.YAWN,          yawnState);
+            case ENTITY_EVENT_GESTURE_NOD           -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.NOD,           nodState);
+            case ENTITY_EVENT_GESTURE_FRIENDLY_WAVE -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.FRIENDLY_WAVE, friendlyWaveState);
+            case ENTITY_EVENT_GESTURE_HEAD_SHAKE    -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.HEAD_SHAKE,    headShakeState);
+            case ENTITY_EVENT_GESTURE_SIGH          -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.SIGH,          sighState);
+            case ENTITY_EVENT_GESTURE_SLOUCH        -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.SLOUCH,        slouchState);
+            case ENTITY_EVENT_GESTURE_LEAN          -> startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture.LEAN,          leanState);
+            case ENTITY_EVENT_CARRY_HOLD_START      -> carryHoldState.start(this.tickCount);
+            case ENTITY_EVENT_CARRY_HOLD_STOP       -> carryHoldState.stop();
             default -> super.handleEntityEvent(id);
         }
+    }
+
+    private void startGesture(tterrag1112.life_in_the_village.Npc.Brain.Gesture g,
+                              AnimationState state) {
+        this.lastGestureFired = g;
+        state.start(this.tickCount);
     }
 
     private void tickConversationLock(ServerLevel level) {
