@@ -73,6 +73,11 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
             LAST_PERSONAL_SPACE_NUDGE = register("last_personal_space_nudge", Codec.LONG);
 
+    // ── Phase 6.1.c — coordinated behaviors ─────────────────────────────────
+
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>
+            SHELTER_TARGET = register("shelter_target", BlockPos.CODEC);
+
     // ── Phase 6.1+ — forward-declared ───────────────────────────────────────
 
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>
