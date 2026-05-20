@@ -1397,6 +1397,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .SHELTER_TARGET.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .HOBBY_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .MEAL_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .LAST_SHOPPING_TICK.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_GESTURE_COOLDOWN.get(),
@@ -1493,17 +1499,23 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // SOCIAL — Phase 6.1.c ordering:
-        // 0=Shelter, 1=Engage, 2=Initiate, 3=Greeting, 4=Sit, 5=Escort,
-        // 6=PersonalSpace. Active engagement preempts pairing search.
+        // SOCIAL — Phase 6.2.a ordering (EatMeal high, Hobby/BuyGoods mid):
+        // 0=Shelter, 1=EatMeal, 2=Engage, 3=Initiate, 4=Hobby, 5=BuyGoods,
+        // 6=Greeting, 7=Sit, 8=Escort, 9=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .EatMealBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .EngageInConversationBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .InitiateConversationBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .HobbyBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .BuyGoodsBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetingAcknowledgmentBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors

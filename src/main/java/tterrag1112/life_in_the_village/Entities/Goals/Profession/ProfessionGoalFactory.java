@@ -123,17 +123,16 @@ public final class ProfessionGoalFactory {
         npc.goalSelector.addGoal(P_SURVIVAL,  new OpenDoorGoal(npc, true));
         npc.goalSelector.addGoal(P_COMBAT,    new ReturnHomeGoal(npc));
         npc.goalSelector.addGoal(P_PATHFIND,  new SeekHouseGoal(npc));
-        npc.goalSelector.addGoal(P_SOCIAL_HIGH, new EatMealGoal(npc));
+        // Phase 6.2.a: EatMealGoal migrated to EatMealBehavior (SOCIAL @1).
+        // Phase 6.2.a: HobbyGoal migrated to HobbyBehavior (SOCIAL @4).
         npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
-        // Hobby goal (Phase 2 task 14) — slots above WanderInBuilding so
-        // an NPC in LEISURE actually goes and does their hobby instead
-        // of milling around at home.
-        npc.goalSelector.addGoal(P_SOCIAL_LOW,
-                new tterrag1112.life_in_the_village.Npc.Hobby.HobbyGoal(npc));
         // Phase 3 task 24: greet players who enter the NPC's assigned
         // business-front building. Slots between combat and work so
         // greeting pre-empts production. Stays no-op until external
         // GreeterAssignment.assign() seats a target player.
+        // Phase 6.2.a: NOT migrated — GreeterAssignment.assignFor seats
+        // targets via goal.assign(player); active caller, blocked from
+        // deletion until that wiring lifts to the Brain layer.
         npc.goalSelector.addGoal(P_SOCIAL_HIGH,
                 new tterrag1112.life_in_the_village.Npc.BusinessFront.GreetPlayerGoal(npc));
         // Phase 3 task 19: village_constable's investigation pass.
@@ -164,7 +163,7 @@ public final class ProfessionGoalFactory {
             case TEEN, ADULT -> {
                 npc.goalSelector.addGoal(P_SOCIAL_MID, new SocializeGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
-                npc.goalSelector.addGoal(P_SOCIAL_LOW, new BuyGoodsGoal(npc));
+                // Phase 6.2.a: BuyGoodsGoal migrated to BuyGoodsBehavior (SOCIAL @5).
                 if (npc.getLifeStage() == LifeStage.ADULT) {
                     npc.goalSelector.addGoal(P_SOCIAL_LOW, new CourtingGoal(npc));
                 }

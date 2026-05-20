@@ -222,7 +222,7 @@ public final class HouseholdManager {
 
     /**
      * Returns all household members of the same house as the given NPC,
-     * including the NPC itself. Used by EatMealGoal to find dining companions.
+     * including the NPC itself. Used by EatMealBehavior (Phase 6.2.a) to find dining companions.
      */
     public static List<TownspersonMob> getHouseholdMembers(
             TownspersonMob npc,

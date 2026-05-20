@@ -18,7 +18,7 @@ import java.util.*;
  *
  * <h3>Behavioural uses</h3>
  * <ul>
- *   <li>{@link tterrag1112.life_in_the_village.Entities.Goals.Social.EatMealGoal}
+ *   <li>{@code EatMealBehavior} (Phase 6.2.a, migrated from EatMealGoal)
  *       checks household membership to make NPCs face each other while eating.</li>
  *   <li>{@link tterrag1112.life_in_the_village.Entities.Goals.Social.SocialWalkGoal}
  *       uses household membership to pair NPCs for walks.</li>
