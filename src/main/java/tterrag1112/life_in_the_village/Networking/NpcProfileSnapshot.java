@@ -99,8 +99,27 @@ public record NpcProfileSnapshot(
         // -------------------------------------------------------------
         List<UUID>   topRelationshipIds,
         List<Integer> topRelationshipScores,
-        List<String>  topRelationshipModes
+        List<String>  topRelationshipModes,
+
+        // -------------------------------------------------------------
+        // Track 5a.5 — dedicated nav-target hint. Replaces the proxy
+        // approach (canShowVillageBook / canOpenCompanyWorker as
+        // visibility flags). Builder fills this per the Step-5 priority
+        // rule with "hide when contextual route already serves"
+        // tightening; SocialVerbsPanel renders the nav button iff
+        // hasNavTarget && navTargetKind != NONE.
+        // -------------------------------------------------------------
+        boolean hasNavTarget,
+        NavTargetKind navTargetKind
 ) {
+
+    public enum NavTargetKind {
+        NONE,
+        OFFICE_SCREEN,
+        COMPANY_WORKER,
+        PARTY_STATUS,
+        PROFESSION_DEFAULT
+    }
 
     /** Sentinel representing "no village association". */
     public static final UUID NIL_UUID = new UUID(0L, 0L);
@@ -169,6 +188,9 @@ public record NpcProfileSnapshot(
                         s.topRelationshipScores.forEach(buf::writeVarInt);
                         buf.writeVarInt(s.topRelationshipModes.size());
                         s.topRelationshipModes.forEach(buf::writeUtf);
+
+                        buf.writeBoolean(s.hasNavTarget);
+                        buf.writeUtf(s.navTargetKind.name());
                     },
                     buf -> {
                         UUID   npcId          = buf.readUUID();
@@ -236,6 +258,11 @@ public record NpcProfileSnapshot(
                         List<String> relModes = new ArrayList<>(relModeCount);
                         for (int i = 0; i < relModeCount; i++) relModes.add(buf.readUtf());
 
+                        boolean hasNav = buf.readBoolean();
+                        NavTargetKind navKind;
+                        try { navKind = NavTargetKind.valueOf(buf.readUtf()); }
+                        catch (IllegalArgumentException e) { navKind = NavTargetKind.NONE; }
+
                         return new NpcProfileSnapshot(
                                 npcId, name, isMale, age, lifeStage, profession,
                                 combat, skinId, hairStyle, hairColor, traits,
@@ -251,6 +278,7 @@ public record NpcProfileSnapshot(
                                 canShowCraftingOrders, canRentStall,
                                 goals,
                                 verbIds, verbLab,
-                                relIds, relScores, relModes);
+                                relIds, relScores, relModes,
+                                hasNav, navKind);
                     });
 }

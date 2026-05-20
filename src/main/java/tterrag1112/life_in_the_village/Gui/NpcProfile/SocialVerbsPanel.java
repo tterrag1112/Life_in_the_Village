@@ -84,14 +84,17 @@ public class SocialVerbsPanel implements NpcProfilePanel {
                 .pos(0, idx * 24).size(140, 20).build());
         idx++;
 
-        // 2. Nav button — single context-appropriate destination.
-        //    Re-uses the legacy flag fields on the snapshot as a
-        //    proxy for "the nav target exists" until the snapshot
-        //    record gains a dedicated boolean.
-        if (s.canShowVillageBook()) {
-            idx = addNavButton(npcId, "Open Village Book", idx);
-        } else if (s.canOpenCompanyWorker()) {
-            idx = addNavButton(npcId, "Manage Worker", idx);
+        // 2. Nav button — single context-appropriate destination
+        //    resolved server-side per Step-5 priority.
+        if (s.hasNavTarget() && s.navTargetKind() != NpcProfileSnapshot.NavTargetKind.NONE) {
+            String label = switch (s.navTargetKind()) {
+                case OFFICE_SCREEN      -> "Open Office";
+                case COMPANY_WORKER     -> "Manage Worker";
+                case PARTY_STATUS       -> "Party Status";
+                case PROFESSION_DEFAULT -> "Profession Details";
+                case NONE               -> "";
+            };
+            idx = addNavButton(npcId, label, idx);
         }
 
         // 3. Surviving verb buttons (whitelisted).

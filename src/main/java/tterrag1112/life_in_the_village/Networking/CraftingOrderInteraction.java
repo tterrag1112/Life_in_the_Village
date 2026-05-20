@@ -22,76 +22,26 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Handles the player-facing side of the crafting order system.
+ * Player-facing side of the crafting-order system.
  *
- * <h3>Interaction model</h3>
- * <ul>
- *   <li><b>VILLAGE_LEADER normal interact</b> — opens the village book as usual,
- *       then sends a one-line hint if open orders exist.</li>
- *   <li><b>VILLAGE_LEADER sneak interact</b> — shows the full order board in
- *       chat with clickable claim buttons.</li>
- *   <li><b>STOCKPILE_KEEPER normal interact</b> — opens the stockpile screen
- *       as usual, then lists orders this NPC has posted.</li>
- *   <li><b>Delivery</b> — {@link #onItemsDeposited} is called from
- *       {@code BuildingStorageAccess.storeItemFromPlayer} whenever a player
- *       puts items into any building chest that belongs to a village.</li>
- * </ul>
- *
- * <h3>Claiming</h3>
- * Clickable claim buttons in chat send the command
- * {@code /order claim <orderId>} — register this command in
- * {@code ModModEvents.onRegisterCommands} to call
- * {@link CraftingOrderManager#claimOrder}.
- * Alternatively, a sneak+interact on the village leader with an order
- * already visible claims the first unclaimed order automatically.
+ * <p>Track 4 removed the right-click chat-hint paths
+ * ({@code showOrderHint} on leader interact, {@code showStockpileOrders}
+ * on stockpile interact). The VillageBookScreen COMMISSIONS tab is now
+ * the only player-facing surface for orders. What survives here is
+ * the chat-board (used by {@code /order list}) and the
+ * delivery callback wired into {@code BuildingStorageAccess}.</p>
  */
 public final class CraftingOrderInteraction {
 
     private CraftingOrderInteraction() {}
 
     // =========================================================================
-    // Called from TownspersonMob VILLAGE_LEADER interaction
+    // Order board (chat) — invoked by /order list
     // =========================================================================
 
     /**
-     * Normal interact — show a one-line hint if open orders exist.
-     * Called alongside the existing VillageBookScreen packet.
-     */
-    public static void showOrderHint(ServerPlayer player,
-                                     TownspersonMob leader,
-                                     ServerLevel level) {
-        VillageSavedData data = VillageSavedData.get(level);
-        Village village = leader.getAssignedVillageName()
-                .flatMap(data::getVillageByName)
-                .orElse(null);
-        if (village == null) return;
-
-        long openCount = data.getOrdersForVillage(village.getId())
-                .stream()
-                .filter(CraftingOrder::isOpen)
-                .count();
-
-        if (openCount == 0) return;
-
-        player.displayClientMessage(
-                Component.literal("[" + leader.getNpcName() + "] ")
-                        .withStyle(ChatFormatting.YELLOW)
-                        .append(Component.literal(
-                                        "We have " + openCount + " open commission"
-                                                + (openCount > 1 ? "s" : "")
-                                                + " on the notice board. ")
-                                .withStyle(ChatFormatting.WHITE))
-                        .append(Component.literal("[View Orders]")
-                                .withStyle(style -> style
-                                        .withColor(ChatFormatting.AQUA)
-                                        .withUnderlined(true)
-                                        .withClickEvent(new ClickEvent.RunCommand("/order list")))),
-                false);
-    }
-
-    /**
-     * Sneak interact — show the full order board in chat.
-     * Each claimable order has a clickable [Claim] button.
+     * Shows the full order board in chat with clickable [Claim]
+     * buttons. Each claimable order has a clickable [Claim] button.
      */
     public static void showOrderBoard(ServerPlayer player,
                                       TownspersonMob leader,
@@ -170,79 +120,6 @@ public final class CraftingOrderInteraction {
                                         + village.getName() + " to fulfil your order.")
                         .withStyle(ChatFormatting.DARK_GRAY),
                 false);
-    }
-
-    // =========================================================================
-    // Called from TownspersonMob STOCKPILE_KEEPER interaction
-    // =========================================================================
-
-    /**
-     * Shows the orders that this stockpile keeper has posted.
-     * Called alongside the existing openStockpileScreen flow.
-     */
-    public static void showStockpileOrders(ServerPlayer player,
-                                           TownspersonMob keeper,
-                                           ServerLevel level) {
-        VillageSavedData data = VillageSavedData.get(level);
-        UUID keeperUUID = keeper.getUUID();
-
-        Village village = keeper.getAssignedVillageName()
-                .flatMap(data::getVillageByName)
-                .orElse(null);
-        if (village == null) return;
-
-        List<CraftingOrder> myOrders = data.getOrdersForVillage(village.getId())
-                .stream()
-                .filter(o -> o.isActive()
-                        && o.getRequestingNpcId().equals(keeperUUID))
-                .toList();
-
-        if (myOrders.isEmpty()) return;
-
-        player.displayClientMessage(
-                Component.literal("[" + keeper.getNpcName()
-                                + "] I need the following — bring them here:")
-                        .withStyle(ChatFormatting.YELLOW),
-                false);
-
-        for (CraftingOrder order : myOrders) {
-            Item item = resolveItem(order.getItemId());
-            String itemName = item != null
-                    ? item.getName().getString()
-                    : order.getItemId().replace("minecraft:", "").replace("_", " ");
-
-            String progressStr = order.isClaimed()
-                    ? " (" + order.getDeliveredCount() + "/" + order.getQuantity() + " delivered)"
-                    : "";
-
-            MutableComponent row = Component.literal("  • ")
-                    .withStyle(ChatFormatting.DARK_GRAY)
-                    .append(Component.literal(order.getRemainingCount() + "x " + itemName)
-                            .withStyle(ChatFormatting.WHITE))
-                    .append(Component.literal(" — ")
-                            .withStyle(ChatFormatting.DARK_GRAY))
-                    .append(Component.literal(
-                                    CurrencyValue.of(order.getBronzeReward()).toString())
-                            .withStyle(ChatFormatting.GOLD))
-                    .append(Component.literal(progressStr)
-                            .withStyle(ChatFormatting.GRAY));
-
-            if (order.isOpen()) {
-                boolean alreadyClaiming = data.getOrdersForVillage(village.getId())
-                        .stream()
-                        .anyMatch(o -> o.isClaimedBy(player.getUUID()));
-                if (!alreadyClaiming) {
-                    row = row.append(Component.literal(" [Claim]")
-                            .withStyle(style -> style
-                                    .withColor(ChatFormatting.GREEN)
-                                    .withUnderlined(true)
-                                    .withClickEvent(new ClickEvent.RunCommand(
-                                            "/order claim " + order.getOrderId()))));
-                }
-            }
-
-            player.displayClientMessage(row, false);
-        }
     }
 
     // =========================================================================

@@ -101,12 +101,9 @@ public final class PlayerVerbRegistry {
         register(new CommissionBookCopyVerb());
         register(new BorrowBookVerb());
         register(new TakeLessonVerb());
-        // Phase 2 task 18 letter/book verbs removed in Track 4:
-        // - write_letter consolidated into the SCRIBE physical route
-        // - send_letter covered by the WRITTEN_LETTER held-item path
-        // - read_book covered by vanilla book-in-hand reading + the
-        //   take_lesson librarian path. Their *Verb classes remain in
-        //   tree as zombie implementations until a follow-up cleanup.
+        // Track 4: write_letter / send_letter / read_book verbs were
+        // consolidated into the SCRIBE composer + held-item physical
+        // routes. The Impl classes were deleted in Track 5a.4.
         // Phase 3 task 06: office framework verbs.
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.PetitionForOfficeVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.AppointToOfficeVerb());
@@ -122,6 +119,8 @@ public final class PlayerVerbRegistry {
         // Phase 3 task 21: medicine & healer verbs.
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.RequestTreatmentVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.DonateHerbsVerb());
+        // Track 5a — stall-lease counter verb (Merchants at MARKET).
+        register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.RentStallVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.BuyRemedyVerb());
         // Phase 2 task 16: apprenticeship.
         register(new ApprenticeUnderMeVerb());
