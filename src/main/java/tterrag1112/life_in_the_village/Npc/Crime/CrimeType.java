@@ -21,6 +21,13 @@ public enum CrimeType {
     SMUGGLING       (CrimeSeverity.MODERATE),
     SEAL_VIOLATION  (CrimeSeverity.MINOR),
     TAX_EVASION     (CrimeSeverity.MODERATE),
+    // DEFERRED — no detector. The trial pipeline auto-derives testimony
+    // text from the witness's NpcMemoryLog (TrialExecutor builds each
+    // TrialTestimony from the existing TrialEvidence list); there's no
+    // path for a witness to state something at variance with their
+    // memory, so there's nothing to detect as a lie. Implementing
+    // PERJURY needs an upstream witness-statement event + a falsifiability
+    // check at trial. Out of scope for Track 3.
     PERJURY         (CrimeSeverity.MODERATE),
     BRIBERY         (CrimeSeverity.SERIOUS);
 

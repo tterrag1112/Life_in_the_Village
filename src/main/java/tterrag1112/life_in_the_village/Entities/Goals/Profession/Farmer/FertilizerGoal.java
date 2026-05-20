@@ -268,7 +268,10 @@ public class FertilizerGoal extends Goal {
 
                 entity.swing(InteractionHand.MAIN_HAND);
 
-                // TODO: Update crop quality tracker here
+                if (assignedPlot != null) {
+                    assignedPlot.getOrCreateQualityTracker()
+                            .onFertilizerApplied(cropPos, level.getGameTime());
+                }
             }
         } catch (Exception e) {
             // Property access failed, skip this crop

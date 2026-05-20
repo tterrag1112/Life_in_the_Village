@@ -367,6 +367,7 @@ class VillageDailyTickSystem implements TickSubsystem {
 
         village.depositToTreasury(cost.toBronze());
         village.setPathTier(next);
+        data.markDirty();
 
         VillageBiomeStyle style = village.getBounds(data)
                 .map(b -> VillageBiomeStyle.detect(

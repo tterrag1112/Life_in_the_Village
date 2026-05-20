@@ -80,14 +80,12 @@ public final class GoalPriorityValidator {
             // Vanilla: target != null — only set by HurtByTargetGoal /
             // GuardAttackGoal, civilians stay clean.
             "MeleeAttackGoal",
-            // getRepaintJob() != null + maintenance not pending —
-            // BuilderRepaintGoal.java:77-78, cross-check at :80-82
-            "BuilderRepaintGoal"
-            // NOTE: BuyGoodsGoal was previously listed here. Removed —
-            // its canUse is broadly true during off-work hours whenever
-            // household food/tool need is non-zero (the same shape as
-            // SellToMarketGoal / BuyFromNpcGoal, which we treat as the
-            // canonical NOT-gated examples).
+            // getRepaintJob() != null — BuilderRepaintGoal canUse
+            "BuilderRepaintGoal",
+            // TRIP_COOLDOWN_TICKS (~half day + per-NPC offset) AND
+            // currentFood < LOW_STOCK_FRACTION * target — BuyGoodsGoal
+            // canUse + buildShoppingPlan.
+            "BuyGoodsGoal"
     );
 
     /**

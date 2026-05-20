@@ -7,6 +7,7 @@ import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import tterrag1112.life_in_the_village.Entities.NpcDailyOffset;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelQuote;
@@ -53,6 +54,20 @@ public class BuyGoodsGoal extends Goal {
     private static final int MAX_BUY_PER_TRIP = 16;
     private static final double MAX_SPEND_FRACTION = 0.4;
 
+    /**
+     * Minimum ticks between shopping trips. Half an in-game day plus the
+     * per-NPC offset so a population staggers trips deterministically and
+     * doesn't re-converge after a wave.
+     */
+    private static final long TRIP_COOLDOWN_TICKS = 12000L;
+
+    /**
+     * Household food stock must dip below this fraction of target before
+     * a shopping trip is justified. Combined with the cooldown this
+     * makes the goal genuinely window-gated rather than near-always-true.
+     */
+    private static final double LOW_STOCK_FRACTION = 0.5;
+
     private static final List<Item> FOOD_PRIORITY = List.of(
             Items.BREAD, Items.COOKED_BEEF, Items.COOKED_PORKCHOP,
             Items.COOKED_CHICKEN, Items.BAKED_POTATO,
@@ -63,6 +78,8 @@ public class BuyGoodsGoal extends Goal {
     private int checkTimer = 0;
     private final List<PendingPurchase> pending = new ArrayList<>();
     private BlockPos travelTarget = null;
+    /** Tick of the last completed shopping trip. */
+    private long lastShoppingTick = Long.MIN_VALUE;
 
     public BuyGoodsGoal(TownspersonMob entity) {
         this.entity = entity;
@@ -78,6 +95,17 @@ public class BuyGoodsGoal extends Goal {
         checkTimer = 0;
 
         if (!(entity.level() instanceof ServerLevel level)) return false;
+
+        // Cooldown gate: one shopping trip per ~half day, staggered by
+        // the per-NPC daily offset so a household population doesn't
+        // re-converge on the same daytick after a wave.
+        long now = level.getGameTime();
+        long cooldown = TRIP_COOLDOWN_TICKS + NpcDailyOffset.offset(entity.getUUID());
+        if (lastShoppingTick != Long.MIN_VALUE
+                && now - lastShoppingTick < cooldown) {
+            return false;
+        }
+
         VillageSavedData data = VillageSavedData.get(level);
         Village village = entity.getAssignedVillageName()
                 .flatMap(data::getVillageByName).orElse(null);
@@ -114,6 +142,10 @@ public class BuyGoodsGoal extends Goal {
             case BUYING -> {
                 entity.setCurrentActivity("Shopping");
                 executePending(level);
+                // Stamp the trip regardless of whether every line
+                // succeeded — the cooldown is about "we took a
+                // shopping trip", not "we filled the basket".
+                lastShoppingTick = level.getGameTime();
                 goIdle();
             }
             case IDLE -> {}
@@ -131,11 +163,16 @@ public class BuyGoodsGoal extends Goal {
                 .orElse(1);
 
         int currentFood = countFoodInHouseAndInventory(level, data);
-        int foodNeeded = (householdSize * FOOD_PER_MEMBER) - currentFood;
+        int foodTarget  = householdSize * FOOD_PER_MEMBER;
+        int foodNeeded  = foodTarget - currentFood;
+        // Genuine "stock low" gate — don't shop for a +1 top-up; wait
+        // until stock drops below LOW_STOCK_FRACTION of target. Pairs
+        // with TRIP_COOLDOWN_TICKS in canUse for a true window gate.
+        boolean stockLow = currentFood < foodTarget * LOW_STOCK_FRACTION;
         long maxSpend = (long) (entity.getWallet().toBronze() * MAX_SPEND_FRACTION);
         long budget = maxSpend;
 
-        if (foodNeeded > 0) {
+        if (foodNeeded > 0 && stockLow) {
             int remaining = Math.min(foodNeeded, MAX_BUY_PER_TRIP);
             for (Item food : FOOD_PRIORITY) {
                 if (remaining <= 0 || budget <= 0) break;

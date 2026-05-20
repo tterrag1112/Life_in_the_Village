@@ -7,6 +7,8 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Events.EventDispatcher;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
+import tterrag1112.life_in_the_village.Npc.Office.OfficeDefinition;
+import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.LinkedHashMap;
@@ -70,7 +72,29 @@ public final class HistoryProducer implements EventDispatcher {
             Map<String, String> details = baseDetails(subject, village);
             record(level, village, HistoryEventType.COMING_OF_AGE, now, details,
                     List.of(subject.getUUID()));
+        } else if (event instanceof NpcLifeEvent.OfficeChange change) {
+            Map<String, String> details = baseDetails(subject, village);
+            details.put("office_name", officeNameFor(change.officeId()));
+            record(level, village, HistoryEventType.OFFICE_APPOINTED, now, details,
+                    List.of(subject.getUUID()));
+        } else if (event instanceof NpcLifeEvent.Demoted demoted) {
+            // Vacate path: the OfficeElection / vacateAllHeldBy code fires
+            // Demoted for the outgoing holder. Successor (if any) is logged
+            // via the OfficeChange branch above; the two together produce
+            // the full transition pair.
+            Map<String, String> details = baseDetails(subject, village);
+            details.put("office_name", officeNameFor(demoted.officeId()));
+            record(level, village, HistoryEventType.OFFICE_VACATED, now, details,
+                    List.of(subject.getUUID()));
         }
+    }
+
+    private static String officeNameFor(String officeId) {
+        if (officeId == null) return "(unknown)";
+        // Vacate path encodes the reason as "officeId:reason" — strip it.
+        String id = officeId.contains(":") ? officeId.substring(0, officeId.indexOf(':')) : officeId;
+        OfficeDefinition def = OfficeRegistry.get(id);
+        return def != null ? def.displayName() : id;
     }
 
     // ── Public producer API ────────────────────────────────────────────────

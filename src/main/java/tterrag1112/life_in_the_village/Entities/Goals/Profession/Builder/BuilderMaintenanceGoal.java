@@ -224,19 +224,8 @@ public class BuilderMaintenanceGoal extends Goal {
      * Priority: RUINED > DILAPIDATED > WEATHERED (if not recently maintained).
      */
     private Building findRepairTarget(ServerLevel level) {
-        return findPendingRepair(entity, level);
-    }
-
-    /**
-     * Static cross-check used by {@link BuilderRepaintGoal} so the
-     * maintenance goal stays dominant when both share a priority slot.
-     * Returns the highest-priority building needing repair, or
-     * {@code null} when nothing is pending.
-     */
-    public static Building findPendingRepair(TownspersonMob npc,
-                                             ServerLevel level) {
         VillageSavedData data = VillageSavedData.get(level);
-        Village village = npc.getAssignedVillageName()
+        Village village = entity.getAssignedVillageName()
                 .flatMap(data::getVillageByName)
                 .orElse(null);
         if (village == null) return null;

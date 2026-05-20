@@ -279,6 +279,26 @@ public final class ApprenticeshipManager {
     public static void apprenticeAbandons(ServerLevel level, ApprenticeshipContract c) {
         ApprenticeshipSavedData reg = ApprenticeshipSavedData.get(level);
         reg.update(c.withStatus(ContractStatus.ABANDONED));
+        fileContractBreach(level, c);
+    }
+
+    /**
+     * Files a {@link tterrag1112.life_in_the_village.Npc.Crime.CrimeType#CONTRACT_BREACH}
+     * report against the abandoning apprentice. Skipped when the master
+     * is a player (player↔NPC breach has different legal handling) or
+     * when the apprentice entity isn't loaded (location unknown).
+     */
+    private static void fileContractBreach(ServerLevel level, ApprenticeshipContract c) {
+        TownspersonMob apprentice =
+                TownspersonMob.findByUUID(level, c.apprenticeId()).orElse(null);
+        if (apprentice == null) return;
+        tterrag1112.life_in_the_village.Npc.Crime.CrimeReporter
+                .builder(tterrag1112.life_in_the_village.Npc.Crime.CrimeType.CONTRACT_BREACH, level)
+                .perpetrator(c.apprenticeId())
+                .victim(c.masterIsPlayer() ? null : c.masterId())
+                .location(apprentice.blockPosition())
+                .note("Abandoned apprenticeship contract " + c.contractId())
+                .commit();
     }
 
     /** Master dismisses apprentice — spec line 200. */

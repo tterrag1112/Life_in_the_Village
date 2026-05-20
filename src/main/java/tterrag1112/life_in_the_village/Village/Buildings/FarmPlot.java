@@ -333,6 +333,25 @@ public class FarmPlot {
     public CropType getCropType()     { return cropType; }
     public UUID     getFarmhouseId()  { return farmhouseId; }
 
+    /**
+     * In-memory crop quality tracker for this plot. Created lazily on
+     * first access. Not persisted in v1 — quality state resets when the
+     * server restarts. Full persistence belongs in a later phase
+     * because {@link tterrag1112.life_in_the_village.Village.Agriculture
+     * .CropQualityTracker} doesn't ship a top-level codec yet.
+     */
+    private transient tterrag1112.life_in_the_village.Village.Agriculture.CropQualityTracker
+            qualityTracker;
+
+    public tterrag1112.life_in_the_village.Village.Agriculture.CropQualityTracker
+            getOrCreateQualityTracker() {
+        if (qualityTracker == null) {
+            qualityTracker = new tterrag1112.life_in_the_village.Village
+                    .Agriculture.CropQualityTracker(id);
+        }
+        return qualityTracker;
+    }
+
     public void setName(String name)           { this.name = name; }
     public void setOrigin(BlockPos origin)     { this.origin = origin; }
     public void setRadius(int radius)          { this.radius = radius; }
