@@ -144,12 +144,12 @@ public class BusinessFrontScreen extends Screen {
     // ── Wire helpers ──────────────────────────────────────────────────────
 
     private void sendPrimaryAction() {
-        // TRADE is the universal primary; the server-side handler
-        // resolves the actual UI per profession (trade screen for
-        // merchant/smith, borrow screen for library, commission for
-        // scribe, request-treatment for healer, etc).
+        // OPEN_PRIMARY — server-side resolves the actual UI per
+        // profession/building-type (trade for merchant/smith, library
+        // borrow for librarian, scribe commission, healer treatment,
+        // priest blessing, etc).
         ClientPacketDistributor.sendToServer(new NpcProfileActionPacket(
-                data.npcId(), NpcProfileActionPacket.Action.TRADE));
+                data.npcId(), NpcProfileActionPacket.Action.OPEN_PRIMARY));
         this.onClose();
     }
 

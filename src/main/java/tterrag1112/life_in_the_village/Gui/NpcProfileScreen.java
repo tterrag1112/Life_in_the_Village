@@ -12,7 +12,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.Framework.Portrait;
 import tterrag1112.life_in_the_village.Gui.Framework.PortraitCache;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
-import tterrag1112.life_in_the_village.Gui.NpcProfile.ActionBarPanel;
+import tterrag1112.life_in_the_village.Gui.NpcProfile.SocialVerbsPanel;
 import tterrag1112.life_in_the_village.Gui.NpcProfile.IdentityPanel;
 import tterrag1112.life_in_the_village.Gui.NpcProfile.NpcProfilePanel;
 import tterrag1112.life_in_the_village.Gui.NpcProfile.NpcProfilePanelRegistry;
@@ -94,7 +94,7 @@ public class NpcProfileScreen extends Screen {
         int pageH = DIMS.h() - 14;
         pageArea = new NpcProfilePanel.PageArea(pageX, panelY + 14, pageW, pageH);
 
-        // Build panels — ActionBarPanel needs add/remove widget callbacks
+        // Build panels — SocialVerbsPanel needs add/remove widget callbacks
         panels = NpcProfilePanelRegistry.build(
                 btn -> { addRenderableWidget(btn); btn.visible = false; },
                 btn -> { removeWidget(btn); });
@@ -110,16 +110,16 @@ public class NpcProfileScreen extends Screen {
         layoutActionButtons();
     }
 
-    /** Repositions ActionBarPanel buttons inside the page area. */
+    /** Repositions SocialVerbsPanel buttons inside the page area. */
     private void layoutActionButtons() {
         NpcProfilePanel panel = panels.get(NpcProfilePanelRegistry.Section.ACTIONS);
-        if (!(panel instanceof ActionBarPanel abp)) return;
+        if (!(panel instanceof SocialVerbsPanel svp)) return;
 
         boolean actionsActive = activeSection == NpcProfilePanelRegistry.Section.ACTIONS;
         int bx = pageArea.x() + 4;
         int by = pageArea.y() + 22;
         int idx = 0;
-        for (StyledButton btn : abp.getButtons()) {
+        for (StyledButton btn : svp.getButtons()) {
             btn.setX(bx);
             btn.setY(by + idx * 24);
             btn.visible = actionsActive;

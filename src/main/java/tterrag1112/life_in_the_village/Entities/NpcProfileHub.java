@@ -4,28 +4,34 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
-import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerGuildData;
-import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
-import tterrag1112.life_in_the_village.Networking.*;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.TradeHandler;
+import tterrag1112.life_in_the_village.Guilds.Companies.Company;
+import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Networking.NpcProfileActionPacket;
+import tterrag1112.life_in_the_village.Networking.NpcProfileSnapshot;
+import tterrag1112.life_in_the_village.Networking.NpcProfileSyncPacket;
+import tterrag1112.life_in_the_village.Networking.OpenNpcProfilePacket;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Server-side orchestrator for the NPC profile screen lifecycle.
+ * Server-side orchestrator for the informational NPC profile screen.
  *
- * <p>All public methods are called from packet handlers on the main thread
- * (via {@code IPayloadContext.enqueueWork}).
+ * <p>Track 4 redesign: the profile is INFORMATIVE only. Player actions
+ * have moved to physical/contextual triggers handled by
+ * {@code NpcInteractionHandler}. The profile retains a single nav
+ * button whose target is resolved per the Step-5 priority rule.</p>
  *
  * <h3>Flow</h3>
  * <pre>
  * 1. Player right-clicks NPC → NpcInteractionHandler.handle calls open()
  * 2. Server locks NPC, builds snapshot, sends OpenNpcProfilePacket
- * 3. Client may call handleSyncRequest() at any time to refresh
- * 4. Client action button → handleAction()
- * 5. Client closes screen → handleClose() which unlocks the NPC
+ * 3. Auto-greet line fires on open (Q10)
+ * 4. Client closes screen → handleClose() unlocks the NPC
+ * 5. Optional nav button → handleAction(OPEN_NAV_TARGET) → context-specific screen
  * </pre>
  */
 public final class NpcProfileHub {
@@ -39,14 +45,9 @@ public final class NpcProfileHub {
     // Open — called by NpcInteractionHandler
     // =========================================================================
 
-    /**
-     * Locks the NPC, builds the initial snapshot, and sends
-     * {@link OpenNpcProfilePacket} to the player.
-     */
     public static void open(TownspersonMob npc, ServerPlayer player, ServerLevel level) {
         if (!npc.lockForConversation(player.getUUID(),
                 level.getGameTime(), CONVERSATION_TIMEOUT_TICKS)) {
-            // Another player already has this NPC in conversation
             player.displayClientMessage(
                     net.minecraft.network.chat.Component.literal(
                             "[" + npc.getNpcName() + "] I'm busy right now."),
@@ -55,17 +56,27 @@ public final class NpcProfileHub {
         }
         NpcProfileSnapshot snapshot = NpcProfileSnapshotBuilder.build(npc, player, level);
         PacketDistributor.sendToPlayer(player, new OpenNpcProfilePacket(snapshot));
+
+        // Auto-greet on open (Q10) — fires the greet verb's effect so the
+        // dialogue line goes out without requiring an extra button press.
+        // No caller depends on greet firing as an explicit invocation
+        // (verified — no cooldown/rel/memory side-effects in GreetVerb).
+        var greet = tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry
+                .get("greet").orElse(null);
+        if (greet != null) {
+            greet.invoke(tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerb
+                    .context(player, npc, level));
+        }
     }
 
     // =========================================================================
-    // Sync request — client requests a data refresh
+    // Sync / close
     // =========================================================================
 
     public static void handleSyncRequest(UUID npcId,
                                          ServerPlayer player,
                                          ServerLevel level) {
         TownspersonMob.findByUUID(level, npcId).ifPresent(npc -> {
-            // Renew the lock timeout so active screens don't auto-expire
             npc.lockForConversation(player.getUUID(),
                     level.getGameTime(), CONVERSATION_TIMEOUT_TICKS);
             NpcProfileSnapshot snapshot = NpcProfileSnapshotBuilder.build(npc, player, level);
@@ -73,17 +84,13 @@ public final class NpcProfileHub {
         });
     }
 
-    // =========================================================================
-    // Close — client closed the screen
-    // =========================================================================
-
     public static void handleClose(UUID npcId, ServerPlayer player, ServerLevel level) {
         TownspersonMob.findByUUID(level, npcId)
                 .ifPresent(npc -> npc.unlockConversation(player.getUUID()));
     }
 
     // =========================================================================
-    // Action dispatch
+    // Action dispatch (only OPEN_PROFILE + OPEN_NAV_TARGET survive)
     // =========================================================================
 
     public static void handleAction(UUID npcId,
@@ -95,142 +102,124 @@ public final class NpcProfileHub {
         TownspersonMob npc = npcOpt.get();
 
         switch (action) {
-            case TRADE               -> doTrade(npc, player, level);
-            case OPEN_GUILD          -> doOpenGuild(npc, player, level);
-            case ASSIGN_WORK         -> doAssignWork(npc, player, level);
-            case OPEN_COMPANY_WORKER -> doOpenCompanyWorker(npc, player, level);
-            case SHOW_VILLAGE_BOOK   -> doShowVillageBook(npc, player, level);
-            case SHOW_CRAFTING_ORDERS -> doShowCraftingOrders(npc, player, level);
-            case RENT_STALL          -> doRentStall(npc, player, level);
-            case GIVE_GIFT           -> doGiveGift(npc, player, level);
-            // Phase 3 task 24: "View Profile" small button on the
-            // BusinessFrontScreen routes here. open() sets the
-            // conversation lock and pushes OpenNpcProfilePacket.
-            case OPEN_PROFILE        -> open(npc, player, level);
+            case OPEN_PROFILE     -> open(npc, player, level);
+            case OPEN_NAV_TARGET  -> openNavTarget(npc, player, level);
+            case OPEN_PRIMARY     -> openBusinessFrontPrimary(npc, player, level);
         }
     }
 
     // =========================================================================
-    // Action implementations
+    // BusinessFrontScreen primary-action resolution
     // =========================================================================
 
-    private static void doTrade(TownspersonMob npc, ServerPlayer player, ServerLevel level) {
-        npc.unlockConversation(player.getUUID());
-        TradeHandler.openTradeScreen(player, npc);
-    }
-
-    private static void doOpenGuild(TownspersonMob npc,
-                                    ServerPlayer player,
-                                    ServerLevel level) {
-        VillageSavedData vdata = VillageSavedData.get(level);
-        Optional<UUID> guildIdOpt = npc.getAssignedVillageName()
-                .flatMap(vdata::getVillageByName)
-                .flatMap(v -> vdata.getGuildForVillage(v.getId()))
-                .map(GuildData::guildId);
-
-        if (guildIdOpt.isEmpty()) return;
-
-        UUID guildId = guildIdOpt.get();
-        PlayerGuildData guildData = PlayerGuildData.get(level);
-        if (!guildData.isRegistered(player.getUUID())) {
-            guildData.registerPlayer(player.getUUID(),
-                    player.getName().getString(), guildId);
-            guildData.setDirty();
+    /**
+     * Routes the BusinessFrontScreen primary button per profession.
+     * Most profession primaries open a profession-specific UI; a few
+     * (priest, healer) trigger a verb invocation.
+     */
+    private static void openBusinessFrontPrimary(TownspersonMob npc,
+                                                  ServerPlayer player,
+                                                  ServerLevel level) {
+        Profession prof = npc.getProfession();
+        switch (prof) {
+            case MERCHANT -> {
+                npc.unlockConversation(player.getUUID());
+                tterrag1112.life_in_the_village.Village.Economy.Currency.TradeHandler
+                        .openTradeScreen(player, npc);
+            }
+            case BLACKSMITH, CARPENTER, MILLER, BAKER, STONEMASON, WEAVER,
+                 CANDLEMAKER, MINER -> {
+                npc.unlockConversation(player.getUUID());
+                tterrag1112.life_in_the_village.Village.Economy.Currency.TradeHandler
+                        .openTradeScreen(player, npc);
+            }
+            case PRIEST   -> invokeVerb("request_blessing", npc, player, level);
+            case HEALER   -> invokeVerb("request_treatment", npc, player, level);
+            case LIBRARIAN -> invokeVerb("borrow_book", npc, player, level);
+            case SCRIBE   -> invokeVerb("commission_letter", npc, player, level);
+            case SCHOLAR  -> invokeVerb("take_lesson", npc, player, level);
+            case INNKEEPER -> npc.handleInnkeeperInteraction(player, level);
+            default -> {
+                // Profession has no specific primary — leave a chat hint.
+                player.displayClientMessage(
+                        net.minecraft.network.chat.Component.literal(
+                                "[" + npc.getNpcName() + "] How can I help?"),
+                        false);
+            }
         }
-
-        npc.unlockConversation(player.getUUID());
-        tterrag1112.life_in_the_village.Gui.GuildScreen.sendOpenPacket(
-                player, guildId, level, guildData, vdata,
-                PlayerPartySavedData.get(level));
     }
 
-    private static void doAssignWork(TownspersonMob npc,
-                                     ServerPlayer player,
-                                     ServerLevel level) {
-        tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager
-                .handleWorkRequest(player, npc, level);
-        pushSync(npc, player, level);
+    private static void invokeVerb(String verbId, TownspersonMob npc,
+                                   ServerPlayer player, ServerLevel level) {
+        tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry.get(verbId)
+                .ifPresent(v -> v.invoke(
+                        tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerb
+                                .context(player, npc, level)));
     }
 
-    private static void doOpenCompanyWorker(TownspersonMob npc,
-                                            ServerPlayer player,
-                                            ServerLevel level) {
-        tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData
-                .get(level)
-                .getCompanyForWorker(npc.getUUID())
-                .ifPresent(company -> {
-                    if (company.getOwnerPlayerId().equals(player.getUUID())) {
-                        npc.unlockConversation(player.getUUID());
-                        tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen
-                                .open(player, npc, company);
-                    }
-                });
-    }
+    // =========================================================================
+    // Nav target resolution (Step-5 priority)
+    // =========================================================================
 
-    private static void doShowVillageBook(TownspersonMob npc,
-                                          ServerPlayer player,
-                                          ServerLevel level) {
-        npc.getAssignedVillageName().ifPresent(vName -> {
-            VillageSavedData data = VillageSavedData.get(level);
-            data.getVillageByName(vName).ifPresent(village -> {
+    /**
+     * Resolves and opens the single context-appropriate secondary screen
+     * for {@code npc}. Priority:
+     * <ol>
+     *   <li>Office holder → office screen (VillageBookScreen for
+     *       VILLAGE_LEADER, KingdomBookScreen for KINGDOM_RULER).</li>
+     *   <li>Owned company worker → CompanyWorkerScreen.</li>
+     *   <li>Profession default → profession-specific screen if one exists.</li>
+     * </ol>
+     */
+    private static void openNavTarget(TownspersonMob npc, ServerPlayer player, ServerLevel level) {
+        Profession prof = npc.getProfession();
+        VillageSavedData data = VillageSavedData.get(level);
+
+        // 1. Office holder routes.
+        if (prof == Profession.VILLAGE_LEADER) {
+            Village v = npc.getAssignedVillageName().flatMap(data::getVillageByName).orElse(null);
+            if (v != null) {
                 npc.unlockConversation(player.getUUID());
                 tterrag1112.life_in_the_village.Gui.VillageBookScreen
-                        .sendOpenPacket(player, village.getId(), level, data);
-            });
-        });
-    }
-
-    private static void doShowCraftingOrders(TownspersonMob npc,
-                                             ServerPlayer player,
-                                             ServerLevel level) {
-        npc.getAssignedVillageName().ifPresent(vName -> {
-            VillageSavedData data = VillageSavedData.get(level);
-            data.getVillageByName(vName).ifPresent(village -> {
-                npc.unlockConversation(player.getUUID());
-                tterrag1112.life_in_the_village.Gui.VillageBookScreen
-                        .sendOpenPacket(player, village.getId(), level, data, "COMMISSIONS");
-            });
-        });
-    }
-
-    private static void doRentStall(TownspersonMob npc,
-                                    ServerPlayer player,
-                                    ServerLevel level) {
-        // Delegate to the existing stall handler in NpcInteractionHandler
-        tterrag1112.life_in_the_village.Entities.NpcInteractionHandler
-                .handleRentStallAction(npc, player, level);
-        pushSync(npc, player, level);
-    }
-
-    private static void doGiveGift(TownspersonMob npc,
-                                   ServerPlayer player,
-                                   ServerLevel level) {
-        // Flat +3 delta; remove one non-stack item from player's main hand
-        net.minecraft.world.item.ItemStack held = player.getMainHandItem();
-        if (held.isEmpty()) {
-            player.displayClientMessage(
-                    net.minecraft.network.chat.Component.literal(
-                            "[" + npc.getNpcName() + "] You don't have anything to give me."),
-                    false);
-            return;
+                        .sendOpenPacket(player, v.getId(), level, data);
+                return;
+            }
         }
-        held.shrink(1);
-        int newDelta = npc.adjustRelationship(player.getUUID(), 3);
-        player.displayClientMessage(
-                net.minecraft.network.chat.Component.literal(
-                        "[" + npc.getNpcName() + "] Thank you for the gift! "
-                                + "(personal standing: " + (newDelta >= 0 ? "+" : "")
-                                + newDelta + ")"),
-                false);
-        pushSync(npc, player, level);
+        if (prof == Profession.KINGDOM_RULER) {
+            // KingdomBookScreen has its own open path; nothing wired here yet.
+            // Fall through to default.
+        }
+
+        // 2. Owned company worker.
+        if (prof == Profession.COMPANY_WORKER) {
+            Company company = CompanySavedData.get(level)
+                    .getCompanyForWorker(npc.getUUID()).orElse(null);
+            if (company != null && company.getOwnerPlayerId().equals(player.getUUID())) {
+                npc.unlockConversation(player.getUUID());
+                tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen
+                        .open(player, npc, company);
+                return;
+            }
+        }
+
+        // 3. Profession default — no profession-specific screen wired
+        //    today. Polish follow-up may add e.g. a MerchantStallScreen.
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
+    // =========================================================================
+    // Nav-target availability (read from snapshot builder)
+    // =========================================================================
 
-    private static void pushSync(TownspersonMob npc,
-                                 ServerPlayer player,
-                                 ServerLevel level) {
-        NpcProfileSnapshot snap = NpcProfileSnapshotBuilder.build(npc, player, level);
-        PacketDistributor.sendToPlayer(player, new NpcProfileSyncPacket(snap));
+    /** Returns true when {@link #openNavTarget} would do something useful. */
+    public static boolean hasNavTarget(TownspersonMob npc, ServerPlayer player, ServerLevel level) {
+        Profession prof = npc.getProfession();
+        if (prof == Profession.VILLAGE_LEADER) return true;
+        if (prof == Profession.COMPANY_WORKER) {
+            return CompanySavedData.get(level)
+                    .getCompanyForWorker(npc.getUUID())
+                    .map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
+                    .orElse(false);
+        }
+        return false;
     }
 }

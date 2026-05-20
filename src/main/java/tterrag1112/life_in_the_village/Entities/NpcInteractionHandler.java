@@ -1,34 +1,31 @@
 package tterrag1112.life_in_the_village.Entities;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.ChatFormatting;
-import tterrag1112.life_in_the_village.DataAttachments.ModData;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
+import tterrag1112.life_in_the_village.Components.ModDataComponents;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.WanderingTraderGoal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
-import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
-import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerGuildData;
-import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerParty;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
-import tterrag1112.life_in_the_village.Networking.CraftingOrderInteraction;
-import tterrag1112.life_in_the_village.Entities.NpcProfileHub;
+import tterrag1112.life_in_the_village.Items.JobContractTerms;
+import tterrag1112.life_in_the_village.Items.ModItems;
+import tterrag1112.life_in_the_village.Items.StallLeaseTerms;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Profession.*;
+import tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker;
+import tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingTypeFlags;
+import tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerb;
+import tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.TradeHandler;
-import tterrag1112.life_in_the_village.Village.Economy.FarmBusinessLevel;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
 
@@ -38,106 +35,366 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Thin delegator for player→NPC right-click interactions.
+ * Player→NPC right-click dispatcher.
  *
- * <p>All professions except {@code WANDERING_TRADER} now open the unified
- * NPC profile screen via {@link NpcProfileHub#open}. Individual actions
- * (trade, guild, assign work, etc.) are triggered from within the screen
- * and handled back here or in the Hub as needed.
+ * <h3>Dispatch priority (Track 4 redesign)</h3>
+ * Matched in this order; first match wins. The order is significant —
+ * gift primer dominates by design (Q7 / 3.3) so players can intentionally
+ * over-ride any item route by priming first.
+ * <ol>
+ *   <li><b>Debug stick</b> — vanilla {@code Items.STICK}: plain → debug
+ *       info chat dump, sneak → inventory dump. Dev affordance.</li>
+ *   <li><b>Gift primer active</b> — held item is consumed as a gift even
+ *       if it would otherwise route somewhere else. Empty hand cancels
+ *       the primer and falls through.</li>
+ *   <li><b>WRITTEN_LETTER held</b> → LetterDelivery handoff.</li>
+ *   <li><b>JOB_CONTRACT held</b> → routed per
+ *       {@link JobContractTerms} (hire / apprenticeship / commission).</li>
+ *   <li><b>STALL_LEASE held</b> → redeem at a market.</li>
+ *   <li><b>Source-book held</b> + SCRIBE → book copy commission stub.</li>
+ *   <li><b>Healer-donation item held</b> + HEALER → donation stub.</li>
+ *   <li><b>Coin/coin-pouch held</b> + PRIEST → offering stub.</li>
+ *   <li><b>WANDERING_TRADER</b> (plain) → trade screen.</li>
+ *   <li><b>BUILDER</b> (plain) → repaint screen; sneak falls through.</li>
+ *   <li><b>VILLAGE_LEADER / KINGDOM_RULER</b> (plain, empty hand) →
+ *       VillageBookScreen / KingdomBookScreen direct; sneak → profile
+ *       (Q3).</li>
+ *   <li><b>Inside business-front + plain</b> → BusinessFrontScreen.</li>
+ *   <li><b>Default</b> → {@link NpcProfileHub#open}.</li>
+ * </ol>
  *
- * <p>The old per-profession private methods are retained and package-accessible
- * so that {@link NpcProfileHub} can invoke them when processing action packets.
+ * <p>Per-profession legacy methods (merchant / guildworker / guard / etc.)
+ * are gone — they were superseded by either physical item routes
+ * (JOB_CONTRACT for hiring) or contextual business-front routes.</p>
  */
 public final class NpcInteractionHandler {
 
     private NpcInteractionHandler() {}
 
     // =========================================================================
-    // Entry point — thin delegator
+    // Entry point
     // =========================================================================
 
     public static InteractionResult handle(TownspersonMob npc,
                                            Player player,
                                            InteractionHand hand) {
         if (npc.level().isClientSide()) return InteractionResult.SUCCESS;
-
-        // ── Debug: stick right-click ─────────────────────────────────────────
-        // Normal click → full debug info (phase, blocking reason, XP, role, etc.)
-        // Shift + click → list NPC's personal inventory contents
-        if (hand == InteractionHand.MAIN_HAND
-                && player.getMainHandItem().is(Items.STICK)) {
-            if (player.isShiftKeyDown()) {
-                npc.showInventoryInfo(player);
-            } else {
-                npc.showDebugInfo(player);
-            }
-            return InteractionResult.SUCCESS;
-        }
-
+        if (hand != InteractionHand.MAIN_HAND) return InteractionResult.PASS;
         if (!(npc.level() instanceof ServerLevel level)) return InteractionResult.PASS;
         if (!(player instanceof ServerPlayer sp)) return InteractionResult.PASS;
 
-        // ── Letter delivery (Phase 2 task 18) ────────────────────────────────
-        // Right-click on NPC with a WrittenLetterItem in main hand
-        // delivers the letter and runs the receive pipeline if the
-        // recipient matches.
-        if (hand == InteractionHand.MAIN_HAND
-                && player.getMainHandItem().is(
-                        tterrag1112.life_in_the_village.Items.ModItems.WRITTEN_LETTER.get())) {
+        ItemStack held = player.getMainHandItem();
+
+        // 1. Debug stick (vanilla) — dev affordance.
+        if (held.is(Items.STICK)) {
+            if (player.isShiftKeyDown()) npc.showInventoryInfo(player);
+            else npc.showDebugInfo(player);
+            return InteractionResult.SUCCESS;
+        }
+
+        // 2. Gift primer wins over every item route. Empty-hand cancels.
+        if (GiftPrimer.isPrimed(sp, npc)) {
+            if (held.isEmpty()) {
+                GiftPrimer.clear(sp.getUUID(), npc.getUUID());
+                sp.displayClientMessage(Component.literal(
+                                "[" + npc.getNpcName() + "] Never mind, then.")
+                        .withStyle(ChatFormatting.GRAY), true);
+                // Fall through to default profile.
+            } else {
+                applyGift(npc, sp, level, held);
+                return InteractionResult.SUCCESS;
+            }
+        }
+
+        // 3. WRITTEN_LETTER handoff.
+        if (held.is(ModItems.WRITTEN_LETTER.get())) {
             return tterrag1112.life_in_the_village.Npc.Letters.LetterDelivery
-                    .handleHandoff(npc, sp, level, player.getMainHandItem());
+                    .handleHandoff(npc, sp, level, held);
         }
 
-        // Wandering traders bypass the profile screen
-        if (npc.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.WANDERING_TRADER) {
-            return handleWanderingTrader(npc, sp, level);
+        // 4. JOB_CONTRACT — route by terms.
+        if (held.is(ModItems.JOB_CONTRACT.get())) {
+            return handleJobContract(npc, sp, level, held);
         }
 
-        // P0a-13: builders open the repaint screen on plain right-click;
-        // shift-click falls through to the profile (kept accessible for
-        // reputation, hobbies, etc.).
-        if (npc.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.BUILDER
-                && !player.isShiftKeyDown()) {
+        // 5. STALL_LEASE redemption.
+        if (held.is(ModItems.STALL_LEASE.get())) {
+            return handleStallLease(npc, sp, level, held);
+        }
+
+        // 6. Book held + SCRIBE → book-copy commission.
+        if (held.is(Items.WRITTEN_BOOK) && npc.getProfession() == Profession.SCRIBE) {
+            return handleBookCopyCommission(npc, sp, level, held);
+        }
+
+        // 7. Healer donation (golden_carrot / glistering_melon_slice — proxy
+        //    for the planned lit:healer_donation tag).
+        if (npc.getProfession() == Profession.HEALER && isHealerDonation(held)) {
+            return handleHealerDonation(npc, sp, level, held);
+        }
+
+        // 8. Coin offering + PRIEST.
+        if (npc.getProfession() == Profession.PRIEST && CoinHelper.isCoin(held)) {
+            return handlePriestOffering(npc, sp, level, held);
+        }
+
+        // 9. Wandering trader trades immediately.
+        if (npc.getProfession() == Profession.WANDERING_TRADER) {
+            WanderingTraderGoal g = npc.getGoal(WanderingTraderGoal.class);
+            if (g != null) g.openTradeScreen(sp);
+            return InteractionResult.SUCCESS;
+        }
+
+        // 10. Builder repaint (plain only). Sneak falls through to profile.
+        if (npc.getProfession() == Profession.BUILDER && !player.isShiftKeyDown()) {
             return tterrag1112.life_in_the_village.Village.Decoration.Variants
                     .RepaintRequestDispatch.handle(npc, sp, level);
         }
 
-        // Phase 3 task 24: business-front routing. If the player is
-        // currently inside a BUSINESS_FRONT building during work hours
-        // and the NPC works there, open the BusinessFrontScreen instead
-        // of the full profile. Off-hours falls through to the
-        // closed-refusal path; non-business buildings fall through to
-        // the existing profile screen.
+        // 11. Village leader / kingdom ruler (plain, empty hand) → office screen.
+        Profession prof = npc.getProfession();
+        if (held.isEmpty() && !player.isShiftKeyDown()
+                && (prof == Profession.VILLAGE_LEADER || prof == Profession.KINGDOM_RULER)) {
+            return handleLeaderDirect(npc, sp, level);
+        }
+
+        // 12. Business-front routing.
         InteractionResult businessRouted = tryRouteBusinessFront(npc, sp, level);
         if (businessRouted != null) return businessRouted;
 
-        // All other professions → unified profile screen
+        // 13. Default — informative profile.
         NpcProfileHub.open(npc, sp, level);
         return InteractionResult.SUCCESS;
     }
 
-    /**
-     * Returns a non-null result iff this right-click is handled by the
-     * business-front routing (business screen opened, or "we're closed"
-     * refusal sent). Returns null when the caller should fall through
-     * to the legacy {@link NpcProfileHub#open} path.
-     */
+    // =========================================================================
+    // Gift primer effect
+    // =========================================================================
+
+    private static void applyGift(TownspersonMob npc, ServerPlayer player,
+                                  ServerLevel level, ItemStack held) {
+        // Reuse the GiveGiftVerb's effect for consistency.
+        var verb = PlayerVerbRegistry.get("give_gift").orElse(null);
+        if (verb != null) {
+            var ctx = PlayerVerb.context(player, npc, level);
+            verb.invoke(ctx);
+        } else {
+            // Verb missing — minimal fallback: consume + small rel bump.
+            held.shrink(1);
+            npc.adjustRelationship(player.getUUID(), 3);
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] Thank you.")
+                    .withStyle(ChatFormatting.GREEN), false);
+        }
+        GiftPrimer.clear(player.getUUID(), npc.getUUID());
+    }
+
+    // =========================================================================
+    // JOB_CONTRACT routing
+    // =========================================================================
+
+    private static InteractionResult handleJobContract(TownspersonMob npc,
+                                                       ServerPlayer player,
+                                                       ServerLevel level,
+                                                       ItemStack held) {
+        JobContractTerms terms = held.get(ModDataComponents.JOB_CONTRACT_TERMS.get());
+        if (terms == null) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] This contract is blank.")
+                    .withStyle(ChatFormatting.GRAY), false);
+            return InteractionResult.SUCCESS;
+        }
+        if (npc.getProfession() != terms.profession()) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] This contract isn't for my profession.")
+                    .withStyle(ChatFormatting.GRAY), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        // Apprenticeship paths
+        if (terms.isApprenticeship()) {
+            UUID master = terms.masterUuid().orElse(null);
+            if (master != null && master.equals(player.getUUID())) {
+                // Player is the master; NPC is the apprentice candidate.
+                var verb = PlayerVerbRegistry.get("take_apprentice").orElse(null);
+                if (verb != null) verb.invoke(PlayerVerb.context(player, npc, level));
+            } else {
+                // NPC is the master; player is the apprentice candidate.
+                var verb = PlayerVerbRegistry.get("apprentice_under_me").orElse(null);
+                if (verb != null) verb.invoke(PlayerVerb.context(player, npc, level));
+            }
+            held.shrink(1);
+            return InteractionResult.SUCCESS;
+        }
+
+        // Crafting commission
+        if (terms.isCommission()) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] I'll get started on "
+                                    + terms.targetItemId().orElse("the order")
+                                    + ". Come back when it's ready.")
+                    .withStyle(ChatFormatting.GREEN), false);
+            // TODO Track 5: enqueue an actual production target on the NPC's
+            // workplace. v1 acknowledges + consumes the contract.
+            held.shrink(1);
+            return InteractionResult.SUCCESS;
+        }
+
+        // Plain hire — route through the workplace assignment flow.
+        WorkplaceAssignmentManager.handleWorkRequest(player, npc, level);
+        // Don't consume on hire — the player keeps the contract as proof
+        // until they /profession leave. Future polish can change this.
+        return InteractionResult.SUCCESS;
+    }
+
+    // =========================================================================
+    // STALL_LEASE redemption
+    // =========================================================================
+
+    private static InteractionResult handleStallLease(TownspersonMob npc,
+                                                      ServerPlayer player,
+                                                      ServerLevel level,
+                                                      ItemStack held) {
+        StallLeaseTerms terms = held.get(ModDataComponents.STALL_LEASE_TERMS.get());
+        if (terms == null) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] This lease has no terms.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+        if (!terms.ownerUuid().equals(player.getUUID())) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] This lease belongs to someone else.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        // Find the market this NPC works at (must be a MERCHANT at a MARKET).
+        VillageSavedData data = VillageSavedData.get(level);
+        Building market = npc.getAssignedBuildingId()
+                .flatMap(data::getBuildingById)
+                .filter(b -> b.getType() == BuildingType.MARKET)
+                .orElse(null);
+        if (market == null) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] I'm not a market merchant.")
+                    .withStyle(ChatFormatting.GRAY), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        // Bound to a different market?
+        if (terms.marketBuildingId().isPresent()
+                && !terms.marketBuildingId().get().equals(market.getId())) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] This lease is for a different market.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        long rentUntil = terms.isPurchase()
+                ? Long.MAX_VALUE
+                : level.getGameTime() + terms.durationTicks();
+
+        Optional<MarketStall> claimed = MarketStallPlacer.claimSlot(
+                level, market,
+                player.getUUID(),
+                MarketStall.OwnerType.PLAYER,
+                rentUntil, data);
+
+        if (claimed.isEmpty()) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] All stalls are taken.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+        data.addMarketStall(claimed.get());
+        held.shrink(1);
+        player.displayClientMessage(Component.literal(
+                        "[" + npc.getNpcName() + "] Stall "
+                                + (claimed.get().getSlotIndex() + 1) + " is yours.")
+                .withStyle(ChatFormatting.GREEN), false);
+        return InteractionResult.SUCCESS;
+    }
+
+    // =========================================================================
+    // Held-item profession routes (book / herbs / coin)
+    // =========================================================================
+
+    private static InteractionResult handleBookCopyCommission(TownspersonMob npc,
+                                                              ServerPlayer player,
+                                                              ServerLevel level,
+                                                              ItemStack held) {
+        // Stub: delegate to commission_book_copy verb. Real composer GUI
+        // is a polish follow-up.
+        var verb = PlayerVerbRegistry.get("commission_book_copy").orElse(null);
+        if (verb != null) verb.invoke(PlayerVerb.context(player, npc, level));
+        return InteractionResult.SUCCESS;
+    }
+
+    private static boolean isHealerDonation(ItemStack stack) {
+        // TODO Track 5: replace with a proper lit:healer_donation item tag.
+        return stack.is(Items.GOLDEN_CARROT)
+                || stack.is(Items.GLISTERING_MELON_SLICE)
+                || stack.is(Items.SUSPICIOUS_STEW)
+                || stack.is(Items.HONEY_BOTTLE);
+    }
+
+    private static InteractionResult handleHealerDonation(TownspersonMob npc,
+                                                          ServerPlayer player,
+                                                          ServerLevel level,
+                                                          ItemStack held) {
+        var verb = PlayerVerbRegistry.get("donate_herbs").orElse(null);
+        if (verb != null) verb.invoke(PlayerVerb.context(player, npc, level));
+        return InteractionResult.SUCCESS;
+    }
+
+    private static InteractionResult handlePriestOffering(TownspersonMob npc,
+                                                          ServerPlayer player,
+                                                          ServerLevel level,
+                                                          ItemStack held) {
+        var verb = PlayerVerbRegistry.get("make_offering").orElse(null);
+        if (verb != null) verb.invoke(PlayerVerb.context(player, npc, level));
+        return InteractionResult.SUCCESS;
+    }
+
+    // =========================================================================
+    // Village leader / kingdom ruler direct path
+    // =========================================================================
+
+    private static InteractionResult handleLeaderDirect(TownspersonMob npc,
+                                                        ServerPlayer player,
+                                                        ServerLevel level) {
+        if (npc.getProfession() == Profession.VILLAGE_LEADER) {
+            VillageSavedData data = VillageSavedData.get(level);
+            npc.getAssignedVillageName()
+                    .flatMap(data::getVillageByName)
+                    .ifPresent(v -> tterrag1112.life_in_the_village.Gui.VillageBookScreen
+                            .sendOpenPacket(player, v.getId(), level, data));
+            return InteractionResult.SUCCESS;
+        }
+        // KINGDOM_RULER — open kingdom book if available; fall back to profile.
+        // Track 5 may wire a richer kingdom screen.
+        NpcProfileHub.open(npc, player, level);
+        return InteractionResult.SUCCESS;
+    }
+
+    // =========================================================================
+    // Business-front routing (preserved from earlier track, slightly trimmed)
+    // =========================================================================
+
     private static InteractionResult tryRouteBusinessFront(TownspersonMob npc,
                                                            ServerPlayer sp,
                                                            ServerLevel level) {
-        Optional<UUID> presentBuildingId = tterrag1112.life_in_the_village.Npc.BusinessFront
-                .BuildingPresenceTracker.getBuildingFor(sp.getUUID());
+        Optional<UUID> presentBuildingId = BuildingPresenceTracker.getBuildingFor(sp.getUUID());
         if (presentBuildingId.isEmpty()) return null;
         UUID buildingId = presentBuildingId.get();
 
         Optional<Building> buildingOpt = VillageSavedData.get(level).getBuildingById(buildingId);
         if (buildingOpt.isEmpty()) return null;
         Building building = buildingOpt.get();
-        if (!tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingTypeFlags
-                .hasBusinessFront(building.getType())
-                && !tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingTypeFlags
-                .hasServiceFront(building.getType())) {
-            return null; // residence / unflagged — legacy profile path
+        if (!BuildingTypeFlags.hasBusinessFront(building.getType())
+                && !BuildingTypeFlags.hasServiceFront(building.getType())) {
+            return null;
         }
 
         boolean npcWorksHere = npc.getAssignedBuildingId()
@@ -145,28 +402,9 @@ public final class NpcInteractionHandler {
                 .isPresent();
         if (!npcWorksHere) return null;
 
-        // Profession-specific overrides — these professions own their
-        // GUI (village book, merchant trade, guild panel) and skip the
-        // shared business-front screen even when the building flags
-        // mark it as a service / business front. Returning null here
-        // hands control back to the legacy NpcProfileHub path which
-        // routes the leader → village book, merchant → trade UI, etc.
-        // Eventually the shared GUI will absorb these; for now they
-        // stay on their own dedicated screens.
-        Profession prof = npc.getProfession();
-        if (prof == Profession.VILLAGE_LEADER
-                || prof == Profession.KINGDOM_RULER
-                || prof == Profession.MERCHANT
-                || prof == Profession.WANDERING_TRADER
-                || prof == Profession.GUILDMASTER
-                || prof == Profession.GUILDWORKER) {
-            return null;
-        }
-
-        // Off-hours: refusal + repeat-mood-penalty.
+        // Off-hours: refusal + repeat-mood-penalty (preserved behavior).
         if (!npc.isWorkTime()) {
-            sp.displayClientMessage(
-                    net.minecraft.network.chat.Component.literal(
+            sp.displayClientMessage(Component.literal(
                             "[" + npc.getNpcName() + "] We're closed. Come back during work hours."),
                     /* actionBar */ true);
             int refusals = tterrag1112.life_in_the_village.Npc.BusinessFront
@@ -179,21 +417,14 @@ public final class NpcInteractionHandler {
             return InteractionResult.SUCCESS;
         }
 
-        // Work hours: open BusinessFrontScreen.
         tterrag1112.life_in_the_village.Village.Village village = npc.getAssignedVillageName()
                 .flatMap(VillageSavedData.get(level)::getVillageByName)
                 .orElse(null);
 
-        // Build the per-NPC verb list using the same gating the
-        // profile screen uses (PlayerVerb#isAvailable). The screen
-        // renders one button per entry, so cap to a sensible row
-        // count to keep the layout sane.
-        var verbCtx = tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerb
-                .context(sp, npc, level);
+        var verbCtx = PlayerVerb.context(sp, npc, level);
         List<String> verbIds = new ArrayList<>();
         List<String> verbLabels = new ArrayList<>();
-        for (var verb : tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry
-                .availableFor(verbCtx)) {
+        for (var verb : PlayerVerbRegistry.availableFor(verbCtx)) {
             verbIds.add(verb.id());
             verbLabels.add(verb.label().getString());
             if (verbIds.size() >= 8) break;
@@ -212,482 +443,95 @@ public final class NpcInteractionHandler {
     }
 
     // =========================================================================
-    // Public helpers called by NpcProfileHub action dispatch
+    // Public helpers retained for legacy callers
     // =========================================================================
 
     /**
-     * Exposed for {@link NpcProfileHub} to call when the player presses the
-     * "Rent Stall" action inside the profile screen.
+     * Public rent-stall flow kept for debug commands and the future
+     * StallLeaseScreen mint path (deferred — see report).
      */
-    public static void handleRentStallAction(TownspersonMob npc,
-                                             ServerPlayer player,
-                                             ServerLevel level) {
-        tryRentStall(npc, player, level);
-    }
-
-    // =========================================================================
-    // Profession handlers
-    // =========================================================================
-
-    private static InteractionResult handleMerchant(TownspersonMob npc,
-                                                    ServerPlayer player,
-                                                    ServerLevel level) {
-        if (player.isShiftKeyDown()) {
-            // Shift-click: attempt to rent a stall, or open work assignment
-            if (tryRentStall(npc, player, level)) {
-                return InteractionResult.SUCCESS;
-            }
-            WorkplaceAssignmentManager.handleWorkRequest(player, npc, level);
-        } else {
-            var goal = npc.getGoal(MerchantGoal.class);
-            if (goal != null && goal.isOpenForTrade()) {
-                TradeHandler.openTradeScreen(player, npc);
-            } else {
-                // Show stall availability hint alongside the "not open" message
-                showStallHint(npc, player, level);
-                player.displayClientMessage(
-                        Component.literal("[" + npc.getNpcName()
-                                        + "] I'm not open for trade right now. "
-                                        + "Come back during business hours.")
-                                .withStyle(ChatFormatting.GRAY),
-                        false);
-            }
-        }
-        return InteractionResult.SUCCESS;
-    }
-    /**
-     * Shows how many stall slots are available and their cost.
-     * Called on normal right-click when the merchant is not open for trade,
-     * so the player always knows they can rent a stall even off-hours.
-     */
-    private static void showStallHint(TownspersonMob npc,
-                                      ServerPlayer player,
-                                      ServerLevel level) {
+    public static boolean tryRentStall(TownspersonMob npc,
+                                       ServerPlayer player,
+                                       ServerLevel level) {
+        // Inlined the legacy implementation to avoid re-exporting it on
+        // a per-profession handler. Same shape as before.
         VillageSavedData data = VillageSavedData.get(level);
-
         Building market = npc.getAssignedBuildingId()
                 .flatMap(data::getBuildingById)
-                .filter(b -> b.getType()
-                        == tterrag1112.life_in_the_village.Village.Buildings.BuildingType.MARKET)
-                .orElse(null);
-        if (market == null) return;
-
-        int totalSlots = MarketStallPlacer.findAnchorSlots(level, market).size();
-        int occupied   = data.getStallsForMarket(market.getId()).stream()
-                .filter(MarketStall::isActive).mapToInt(s -> 1).sum();
-        int free = totalSlots - occupied;
-
-        if (free <= 0) return; // no hint if market is full
-
-        player.displayClientMessage(
-                Component.literal("[" + npc.getNpcName()
-                                + "] We have " + free + " stall"
-                                + (free == 1 ? "" : "s") + " available. "
-                                + "Rent: " + MarketStallPlacer.RENT_PER_DAY + " bronze/day, "
-                                + "purchase: " + MarketStallPlacer.PURCHASE_PRICE + " bronze. "
-                                + "Shift-click me to claim one.")
-                        .withStyle(ChatFormatting.AQUA),
-                false);
-    }
-
-    /**
-     * Attempts to rent or purchase a market stall for the player.
-     *
-     * <ul>
-     *   <li>If the player already has a stall here, tells them so.</li>
-     *   <li>If the player holds Shift and has enough for purchase price, purchases.</li>
-     *   <li>Otherwise rents for one week as a trial.</li>
-     * </ul>
-     *
-     * @return true if anything was communicated (even a refusal), so the
-     *         caller knows not to fall through to work-assignment logic.
-     */
-    private static boolean tryRentStall(TownspersonMob npc,
-                                        ServerPlayer player,
-                                        ServerLevel level) {
-        VillageSavedData data = VillageSavedData.get(level);
-
-        Building market = npc.getAssignedBuildingId()
-                .flatMap(data::getBuildingById)
-                .filter(b -> b.getType()
-                        == tterrag1112.life_in_the_village.Village.Buildings.BuildingType.MARKET)
+                .filter(b -> b.getType() == BuildingType.MARKET)
                 .orElse(null);
         if (market == null) return false;
 
-        // Check if player already has a stall in this market
-        boolean alreadyHasStall = data.getStallsForMarket(market.getId()).stream()
-                .anyMatch(s -> s.isActive()
-                        && s.getOwnerUUID().equals(player.getUUID()));
-        // Replace the early-return block for existing stall with:
-        Optional<MarketStall> existingStall = data.getStallsForMarket(market.getId())
-                .stream()
+        Optional<MarketStall> existing = data.getStallsForMarket(market.getId()).stream()
                 .filter(s -> s.isActive() && s.getOwnerUUID().equals(player.getUUID()))
                 .findFirst();
 
-        if (existingStall.isPresent()) {
-            MarketStall stall = existingStall.get();
-
+        if (existing.isPresent()) {
+            MarketStall stall = existing.get();
             if (stall.isPurchased()) {
-                player.displayClientMessage(
-                        Component.literal("[" + npc.getNpcName()
-                                        + "] You own stall #" + (stall.getSlotIndex() + 1)
-                                        + " permanently.")
-                                .withStyle(ChatFormatting.YELLOW),
-                        false);
+                player.displayClientMessage(Component.literal(
+                                "[" + npc.getNpcName() + "] You own stall #"
+                                        + (stall.getSlotIndex() + 1) + " permanently.")
+                        .withStyle(ChatFormatting.YELLOW), false);
                 return true;
             }
-
-            // Offer renewal
-            long ticksLeft = stall.getRentPaidUntilTick() - level.getGameTime();
-            long daysLeft  = Math.max(0L, ticksLeft / 24000L);
             long renewCost = MarketStallPlacer.RENT_PER_DAY * 7L;
-
-            long playerWealth = CoinHelper.getPlayerWealth(
-                            player).toBronze();
-
+            long playerWealth = CoinHelper.getPlayerWealth(player).toBronze();
             if (playerWealth < renewCost) {
-                player.displayClientMessage(
-                        Component.literal("[" + npc.getNpcName()
-                                        + "] Your stall has " + daysLeft + " day(s) left. "
-                                        + "You need " + renewCost + " bronze to renew for 7 days.")
-                                .withStyle(ChatFormatting.YELLOW),
-                        false);
+                player.displayClientMessage(Component.literal(
+                                "[" + npc.getNpcName() + "] You need " + renewCost
+                                        + " bronze to renew for 7 days.")
+                        .withStyle(ChatFormatting.YELLOW), false);
                 return true;
             }
-
-            // Deduct and extend
             CoinHelper.playerPay(player, CurrencyValue.of(renewCost));
-
-            npc.getAssignedVillageName()
-                    .flatMap(data::getVillageByName)
+            npc.getAssignedVillageName().flatMap(data::getVillageByName)
                     .ifPresent(v -> v.depositToTreasury(renewCost));
-
             stall.setRentPaidUntilTick(
-                    Math.max(stall.getRentPaidUntilTick(), level.getGameTime())
-                            + 24000L * 7L);
+                    Math.max(stall.getRentPaidUntilTick(), level.getGameTime()) + 24000L * 7L);
             data.setDirty();
-
-            player.displayClientMessage(
-                    Component.literal("[" + npc.getNpcName()
-                                    + "] Stall #" + (stall.getSlotIndex() + 1)
-                                    + " renewed for 7 days. " + renewCost + " bronze paid.")
-                            .withStyle(ChatFormatting.GREEN),
-                    false);
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] Stall #"
+                                    + (stall.getSlotIndex() + 1) + " renewed for 7 days.")
+                    .withStyle(ChatFormatting.GREEN), false);
             return true;
         }
 
-        // Check free slots
         int totalSlots = MarketStallPlacer.findAnchorSlots(level, market).size();
-        int occupied   = (int) data.getStallsForMarket(market.getId()).stream()
+        int occupied = (int) data.getStallsForMarket(market.getId()).stream()
                 .filter(MarketStall::isActive).count();
         if (occupied >= totalSlots) {
-            player.displayClientMessage(
-                    Component.literal("[" + npc.getNpcName()
-                                    + "] I'm sorry, all our stalls are taken.")
-                            .withStyle(ChatFormatting.RED),
-                    false);
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] All stalls are taken.")
+                    .withStyle(ChatFormatting.RED), false);
             return true;
         }
 
-        // Determine cost and rental type
         long playerWealth = CoinHelper.getPlayerWealth(player).toBronze();
-
         boolean purchasing = playerWealth >= MarketStallPlacer.PURCHASE_PRICE;
         long cost = purchasing
                 ? MarketStallPlacer.PURCHASE_PRICE
-                : MarketStallPlacer.RENT_PER_DAY * 7L; // one week up front
-
+                : MarketStallPlacer.RENT_PER_DAY * 7L;
         if (playerWealth < cost) {
-            long shortfall = cost - playerWealth;
-            player.displayClientMessage(
-                    Component.literal("[" + npc.getNpcName()
-                                    + "] You need " + shortfall
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] You need " + (cost - playerWealth)
                                     + " more bronze for a stall.")
-                            .withStyle(ChatFormatting.RED),
-                    false);
+                    .withStyle(ChatFormatting.RED), false);
             return true;
         }
-
-        // Deduct from player
         CoinHelper.playerPay(player, CurrencyValue.of(cost));
-
-        // Deposit into village treasury
-        npc.getAssignedVillageName()
-                .flatMap(data::getVillageByName)
+        npc.getAssignedVillageName().flatMap(data::getVillageByName)
                 .ifPresent(v -> v.depositToTreasury(cost));
-
-        long rentUntil = purchasing
-                ? Long.MAX_VALUE
-                : level.getGameTime() + 24000L * 7L;
-
-        MarketStallPlacer.claimSlot(
-                        level, market,
-                        player.getUUID(),
-                        MarketStall.OwnerType.PLAYER,
-                        rentUntil, data)
+        long rentUntil = purchasing ? Long.MAX_VALUE : level.getGameTime() + 24000L * 7L;
+        MarketStallPlacer.claimSlot(level, market, player.getUUID(),
+                        MarketStall.OwnerType.PLAYER, rentUntil, data)
                 .ifPresent(stall -> {
                     data.addMarketStall(stall);
-                    String type = purchasing ? "purchased" : "rented for 7 days";
-                    player.displayClientMessage(
-                            Component.literal("[" + npc.getNpcName()
-                                            + "] Stall " + (stall.getSlotIndex() + 1)
-                                            + " is yours! " + cost + " bronze paid ("
-                                            + type + "). Stock it and stand behind "
-                                            + "the counter to start selling.")
-                                    .withStyle(ChatFormatting.GREEN),
-                            false);
+                    player.displayClientMessage(Component.literal(
+                                    "[" + npc.getNpcName() + "] Stall "
+                                            + (stall.getSlotIndex() + 1) + " is yours.")
+                            .withStyle(ChatFormatting.GREEN), false);
                 });
-
         return true;
-    }
-
-    /** Builds a SimpleContainer snapshot of the player's inventory for CoinHelper. */
-    private static net.minecraft.world.SimpleContainer buildPlayerContainer(
-            ServerPlayer player) {
-        var inv = player.getInventory();
-        net.minecraft.world.SimpleContainer c =
-                new net.minecraft.world.SimpleContainer(inv.getContainerSize());
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            c.setItem(i, inv.getItem(i));
-        }
-        return c;
-    }
-
-    private static InteractionResult handleGuard(TownspersonMob npc,
-                                                 ServerPlayer player,
-                                                 ServerLevel level) {
-        WorkplaceAssignmentManager.handleWorkRequest(player, npc, level);
-        return InteractionResult.SUCCESS;
-    }
-
-    private static InteractionResult handleInnkeeper(TownspersonMob npc,
-                                                     ServerPlayer player,
-                                                     ServerLevel level) {
-        npc.handleInnkeeperInteraction(player, level);
-        return InteractionResult.SUCCESS;
-    }
-
-    private static InteractionResult handleGuildWorker(TownspersonMob npc,
-                                                       ServerPlayer player,
-                                                       ServerLevel level,
-                                                       InteractionHand hand) {
-        if (hand != InteractionHand.MAIN_HAND) return InteractionResult.PASS;
-
-        VillageSavedData vdata = VillageSavedData.get(level);
-        Optional<UUID> guildIdOpt = npc.getAssignedVillageName()
-                .flatMap(vdata::getVillageByName)
-                .flatMap(village -> vdata.getGuildForVillage(village.getId()))
-                .map(GuildData::guildId);
-
-        if (guildIdOpt.isEmpty()) {
-            player.displayClientMessage(
-                    Component.literal("[" + npc.getNpcName()
-                                    + "] This village has no guild hall yet.")
-                            .withStyle(ChatFormatting.GRAY),
-                    false);
-        } else {
-            UUID guildId = guildIdOpt.get();
-            PlayerGuildData guildData =
-                    PlayerGuildData.get(level);
-
-            // Register player with the guild if not already a member
-            if (!guildData.isRegistered(player.getUUID())) {
-                guildData.registerPlayer(player.getUUID(),
-                        player.getName().getString(), guildId);
-                guildData.setDirty();
-                player.displayClientMessage(
-                        Component.literal("Welcome to the Adventurers Guild! "
-                                        + "You are now registered as a Bronze adventurer.")
-                                .withStyle(ChatFormatting.GOLD),
-                        false);
-            }
-
-            // Open the guild GUI screen
-            tterrag1112.life_in_the_village.Gui.GuildScreen.sendOpenPacket(
-                    player, guildId, level, guildData, vdata,
-                    PlayerPartySavedData.get(level));
-        }
-        return InteractionResult.SUCCESS;
-    }
-
-    private static InteractionResult handleVillageLeader(TownspersonMob npc,
-                                                         ServerPlayer player,
-                                                         ServerLevel level) {
-        if (player.isShiftKeyDown()) {
-            // Shift-interact: show crafting orders
-            //CraftingOrderInteraction.handleShiftInteract(player, npc, level);
-            CraftingOrderInteraction.showOrderHint(player, npc, level);
-
-        } else {
-            // Normal: open village book + hint at orders
-
-            // Open the village book
-            npc.getAssignedVillageName().ifPresent(villageName -> {
-                VillageSavedData data = VillageSavedData.get(level);
-                data.getVillageByName(villageName).ifPresent(village ->
-                        tterrag1112.life_in_the_village.Gui.VillageBookScreen
-                                .sendOpenPacket(player, village.getId(),
-                                        level, data));
-            });
-        }
-        return InteractionResult.SUCCESS;
-    }
-
-    private static InteractionResult handleAdventurer(TownspersonMob npc,
-                                                      ServerPlayer player,
-                                                      ServerLevel level,
-                                                      InteractionHand hand) {
-        if (npc.getCombatRole() == null || hand != InteractionHand.MAIN_HAND) {
-            return InteractionResult.PASS;
-        }
-
-        PlayerPartySavedData partyData = PlayerPartySavedData.get(level);
-        Optional<PlayerParty> partyOpt = partyData.getPartyContaining(npc.getUUID());
-
-        if (partyOpt.isPresent()) {
-            PlayerParty party = partyOpt.get();
-            if (party.getLeaderPlayerId().equals(player.getUUID())) {
-                // Show party member status
-                party.getMember(npc.getUUID()).ifPresent(m ->
-                        player.displayClientMessage(
-                                Component.literal(
-                                                m.role().symbol + " " + m.role().getDisplayName()
-                                                        + " | Lv." + m.level()
-                                                        + " | " + m.kills() + " kills\n"
-                                                        + "  " + m.role().description)
-                                        .withStyle(ChatFormatting.AQUA),
-                                false));
-            } else {
-                player.displayClientMessage(
-                        Component.literal("[" + npc.getNpcName()
-                                        + "] I'm with another party right now.")
-                                .withStyle(ChatFormatting.GRAY),
-                        false);
-            }
-        } else {
-            player.displayClientMessage(
-                    Component.literal("[" + npc.getNpcName()
-                                    + "] I'm ready for adventure! "
-                                    + "Use /party invite near me to recruit.")
-                            .withStyle(ChatFormatting.GOLD),
-                    false);
-        }
-        return InteractionResult.SUCCESS;
-    }
-
-    private static InteractionResult handleCompanyWorker(TownspersonMob npc,
-                                                         ServerPlayer player,
-                                                         ServerLevel level) {
-        CompanySavedData compData = CompanySavedData.get(level);
-        Optional<Company> companyOpt = compData.getCompanyForWorker(npc.getUUID());
-
-        companyOpt.ifPresentOrElse(
-                company -> {
-                    if (company.getOwnerPlayerId().equals(player.getUUID())) {
-                        tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen
-                                .open(player, npc, company);
-                    } else {
-                        player.displayClientMessage(
-                                Component.literal("[" + npc.getNpcName()
-                                                + "] I work for " + company.getName() + ".")
-                                        .withStyle(ChatFormatting.GRAY),
-                                false);
-                    }
-                },
-                () -> player.displayClientMessage(
-                        Component.literal("[" + npc.getNpcName()
-                                        + "] I'm not employed right now.")
-                                .withStyle(ChatFormatting.GRAY),
-                        false)
-        );
-        return InteractionResult.SUCCESS;
-    }
-
-    private static InteractionResult handleWorkAssignable(TownspersonMob npc,
-                                                          ServerPlayer player,
-                                                          ServerLevel level) {
-        if (player.isShiftKeyDown()) {
-            if (npc.getProfession() == Profession.FARMER) {
-                if (player instanceof ServerPlayer serverPlayer) {
-                    joinAsFarmhand(serverPlayer, level, npc);
-                    return InteractionResult.SUCCESS;
-                }
-            } else{
-                WorkplaceAssignmentManager.handleWorkRequest(player, npc, level);
-            }
-        }
-        // Normal interact just shows the greeting (already shown above)
-        return InteractionResult.SUCCESS;
-    }
-    private static void joinAsFarmhand(ServerPlayer player, ServerLevel level, TownspersonMob npc) {
-        VillageSavedData data = VillageSavedData.get(level);
-        PlayerProfessionData profData = player.getData(ModData.PROFESSION_DATA);
-
-        // Get this farmer's farmhouse
-        Building farmhouse = npc.getAssignedBuildingId()
-                .flatMap(data::getBuildingById)
-                .filter(b -> b.getType() == BuildingType.FARMHOUSE)
-                .orElse(null);
-
-        if (farmhouse == null) {
-            player.displayClientMessage(Component.literal(
-                            "[" + npc.getNpcName() + "] I don't have a farmhouse to offer you work at."),
-                    false);
-            return;
-        }
-
-        // Get village ID
-        UUID villageId = npc.getAssignedVillageName()
-                .flatMap(data::getVillageByName)
-                .map(tterrag1112.life_in_the_village.Village.Village::getId)
-                .orElse(null);
-
-        if (villageId == null) {
-            player.displayClientMessage(Component.literal(
-                            "[" + npc.getNpcName() + "] Something went wrong."),
-                    false);
-            return;
-        }
-
-        // Create workplace entry
-        PlayerWorkplace.WorkplaceEntry entry = new PlayerWorkplace.WorkplaceEntry(
-                farmhouse.getId(),
-                villageId,
-                PlayerProfession.FARMER,
-                false,
-                level.getGameTime(),
-                level.getGameTime(),
-                null  // No current assignment
-        );
-
-        profData.setWorkplace(PlayerProfession.FARMER, entry);
-        player.setData(ModData.PROFESSION_DATA, profData);
-
-        // Get business level for welcome message
-        FarmBusinessLevel businessLevel = data.getOrCreateFarmBusinessLevel(farmhouse.getId());
-
-        player.displayClientMessage(Component.literal(
-                        "[" + npc.getNpcName() + "] Welcome to " + businessLevel.getBusinessLevelName()
-                                + "! You're now a farmhand here. I'll give you tasks to complete.")
-                .withStyle(net.minecraft.ChatFormatting.GREEN), false);
-
-        // Issue first assignment
-        WorkplaceAssignmentManager.issueAssignment(
-                player, npc, PlayerProfession.FARMER, profData, level);
-    }
-
-    private static InteractionResult handleWanderingTrader(TownspersonMob npc,
-                                                           ServerPlayer player,
-                                                           ServerLevel level) {
-        WanderingTraderGoal goal = npc.getGoal(WanderingTraderGoal.class);
-        if (goal != null) {
-            goal.openTradeScreen(player);
-        } else {
-            player.displayClientMessage(
-                    Component.literal("[" + npc.getNpcName()
-                            + "] My wares are not ready yet."),
-                    false);
-        }
-        return InteractionResult.SUCCESS;
     }
 }

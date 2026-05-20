@@ -86,7 +86,8 @@ public record NpcProfileSnapshot(
         // -------------------------------------------------------------
         // Player verbs (Phase 1 task 09) — verb ids for which
         // {@code isAvailable} returns true under this snapshot's
-        // implicit context. ActionBarPanel renders one button per id.
+        // implicit context. SocialVerbsPanel filters this against its
+        // whitelist of social-only verbs.
         // -------------------------------------------------------------
         List<String> availableVerbIds,
         List<String> verbLabels,

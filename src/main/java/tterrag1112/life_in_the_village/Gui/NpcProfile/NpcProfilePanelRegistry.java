@@ -24,7 +24,7 @@ public final class NpcProfilePanelRegistry {
 
     /**
      * Builds a fresh panel map. {@code addWidget}/{@code removeWidget} are
-     * forwarded to {@link ActionBarPanel} so it can manage its buttons.
+     * forwarded to {@link SocialVerbsPanel} so it can manage its buttons.
      */
     public static Map<Section, NpcProfilePanel> build(
             Consumer<tterrag1112.life_in_the_village.Gui.Framework.StyledButton> addWidget,
@@ -35,7 +35,7 @@ public final class NpcProfilePanelRegistry {
         map.put(Section.WORK,       new WorkPanel());
         map.put(Section.REPUTATION, new ReputationPanel());
         map.put(Section.DIALOGUE,   new DialoguePanel());
-        map.put(Section.ACTIONS,    new ActionBarPanel(addWidget, removeWidget));
+        map.put(Section.ACTIONS,    new SocialVerbsPanel(addWidget, removeWidget));
         return map;
     }
 }
