@@ -6,12 +6,15 @@ import net.minecraft.world.entity.ai.behavior.Behavior;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
+import tterrag1112.life_in_the_village.Npc.Brain.MoodBand;
 
 /**
- * Reads CURRENT_MOOD_SNAPSHOT and biases the entity's next-gesture
- * selection. Pure mood→tuning translation; no movement, no animation
- * triggering of its own — {@link IdleGestureBehavior} reads
- * {@code TownspersonMob#getIdleGestureBias()} when picking a variant.
+ * Reads {@code CURRENT_MOOD_SNAPSHOT} and writes the corresponding
+ * {@link MoodBand} into the entity's transient field. The
+ * {@code IdleGesturePalette} consumes the band when computing weights.
+ *
+ * <p>Phase 6.1.a — replaces the Phase 6.0 single-int ±1 bias.
+ * Animation-only contract still holds (no movement, no look target).
  */
 public class MoodReactionBehavior extends Behavior<TownspersonMob> {
 
@@ -28,19 +31,18 @@ public class MoodReactionBehavior extends Behavior<TownspersonMob> {
 
     @Override
     protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
-        applyBias(entity);
+        applyBand(entity);
     }
 
     @Override
     protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
-        applyBias(entity);
+        applyBand(entity);
     }
 
-    private static void applyBias(TownspersonMob entity) {
-        int mood = entity.getBrain()
+    private static void applyBand(TownspersonMob entity) {
+        int snapshot = entity.getBrain()
                 .getMemory(NpcMemoryTypes.CURRENT_MOOD_SNAPSHOT.get())
                 .orElse(0);
-        int bias = mood >= 25 ? 1 : (mood <= -25 ? -1 : 0);
-        entity.setIdleGestureBias(bias);
+        entity.setMoodBand(MoodBand.fromSnapshot(snapshot));
     }
 }
