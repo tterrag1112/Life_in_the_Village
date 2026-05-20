@@ -135,8 +135,8 @@ public final class NpcProfileHub {
             }
             case PRIEST   -> invokeVerb("request_blessing", npc, player, level);
             case HEALER   -> invokeVerb("request_treatment", npc, player, level);
-            case LIBRARIAN -> invokeVerb("borrow_book", npc, player, level);
-            case SCRIBE   -> invokeVerb("commission_letter", npc, player, level);
+            case LIBRARIAN -> openLibraryScreen(npc, player, level);
+            case SCRIBE   -> openScribeCounter(npc, player, level);
             case SCHOLAR  -> invokeVerb("take_lesson", npc, player, level);
             case INNKEEPER -> npc.handleInnkeeperInteraction(player, level);
             default -> {
@@ -147,6 +147,46 @@ public final class NpcProfileHub {
                         false);
             }
         }
+    }
+
+    /** Track 5a.1 — open the ScribeCounter composer screen. */
+    private static void openScribeCounter(TownspersonMob npc, ServerPlayer player,
+                                          ServerLevel level) {
+        UUID workshop = npc.getAssignedBuildingId().orElse(new UUID(0L, 0L));
+        String vName = npc.getAssignedVillageName().orElse("");
+        npc.unlockConversation(player.getUUID());
+        PacketDistributor.sendToPlayer(player,
+                new tterrag1112.life_in_the_village.Networking.OpenScribeCounterPacket(
+                        npc.getUUID(), npc.getNpcName(), workshop, vName));
+    }
+
+    /** Track 5a.8 — open the LibraryScreen with the library's catalogue. */
+    private static void openLibraryScreen(TownspersonMob npc, ServerPlayer player,
+                                          ServerLevel level) {
+        UUID lib = npc.getAssignedBuildingId().orElse(null);
+        if (lib == null) return;
+        var cat = VillageSavedData.get(level).getOrCreateLibraryCatalogue(lib);
+        java.util.List<tterrag1112.life_in_the_village.Networking
+                .OpenLibraryScreenPacket.Entry> entries = new java.util.ArrayList<>();
+        cat.all().forEach(book -> entries.add(
+                new tterrag1112.life_in_the_village.Networking.OpenLibraryScreenPacket.Entry(
+                        book.bookId(), book.title(), book.author(),
+                        book.copyCount(),
+                        cat.isAvailableForLending(book.bookId()))));
+        npc.unlockConversation(player.getUUID());
+        PacketDistributor.sendToPlayer(player,
+                new tterrag1112.life_in_the_village.Networking.OpenLibraryScreenPacket(
+                        npc.getUUID(), npc.getNpcName(), lib, entries));
+    }
+
+    /** Track 5a.2 — open the StallLease screen at a market merchant. */
+    private static void openStallLeaseScreen(TownspersonMob npc, ServerPlayer player,
+                                             ServerLevel level) {
+        UUID market = npc.getAssignedBuildingId().orElse(new UUID(0L, 0L));
+        npc.unlockConversation(player.getUUID());
+        PacketDistributor.sendToPlayer(player,
+                new tterrag1112.life_in_the_village.Networking.OpenStallLeasePacket(
+                        npc.getUUID(), npc.getNpcName(), market));
     }
 
     private static void invokeVerb(String verbId, TownspersonMob npc,
@@ -202,7 +242,26 @@ public final class NpcProfileHub {
             }
         }
 
-        // 3. Profession default — no profession-specific screen wired
+        // 3. Adventurer party member — surface party status in chat.
+        //    WorkPanel now also shows this; the nav button is a quick
+        //    refresh hook until a dedicated party screen lands.
+        if (prof == Profession.ADVENTURER && npc.getCombatRole() != null) {
+            var party = tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData
+                    .get(level).getPartyContaining(npc.getUUID()).orElse(null);
+            if (party != null && party.getLeaderPlayerId().equals(player.getUUID())) {
+                party.getMember(npc.getUUID()).ifPresent(m ->
+                        player.displayClientMessage(
+                                net.minecraft.network.chat.Component.literal(
+                                                m.role().symbol + " " + m.role().getDisplayName()
+                                                        + " | Lv." + m.level()
+                                                        + " | " + m.kills() + " kills")
+                                        .withStyle(net.minecraft.ChatFormatting.AQUA),
+                                false));
+                return;
+            }
+        }
+
+        // 4. Profession default — no profession-specific screen wired
         //    today. Polish follow-up may add e.g. a MerchantStallScreen.
     }
 

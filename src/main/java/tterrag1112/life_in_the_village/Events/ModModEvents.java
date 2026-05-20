@@ -238,6 +238,30 @@ public class ModModEvents {
                 tterrag1112.life_in_the_village.Networking.PrimeGiftPacket.TYPE,
                 tterrag1112.life_in_the_village.Networking.PrimeGiftPacket.CODEC,
                 tterrag1112.life_in_the_village.Networking.PrimeGiftPacket::handle);
+
+        // Track 5a — ScribeCounter screen + composer actions.
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Networking.OpenScribeCounterPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.OpenScribeCounterPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.OpenScribeCounterPacket::handle);
+        registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.ScribeCounterActionPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.ScribeCounterActionPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.ScribeCounterActionPacket::handle);
+        // Track 5a — StallLease screen + action.
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Networking.OpenStallLeasePacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.OpenStallLeasePacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.OpenStallLeasePacket::handle);
+        registrar.playToServer(
+                tterrag1112.life_in_the_village.Networking.StallLeaseActionPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.StallLeaseActionPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.StallLeaseActionPacket::handle);
+        // Track 5a — Library screen.
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Networking.OpenLibraryScreenPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.OpenLibraryScreenPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.OpenLibraryScreenPacket::handle);
         registrar.playToClient(
                 KingdomMapSyncPacket.TYPE,
                 KingdomMapSyncPacket.STREAM_CODEC,

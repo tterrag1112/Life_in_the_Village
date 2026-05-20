@@ -11,6 +11,8 @@ public class ModTags {
 
     public static class Items{
         public static final TagKey<Item> IS_CURRENCY = createTag("is_currency");
+        /** Track 5a — items a HEALER NPC accepts as a donation. */
+        public static final TagKey<Item> HEALER_DONATION = createTag("healer_donation");
 
         private static TagKey<Item> createTag(String name) {
             return TagKey.create(Registries.ITEM, Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, name));

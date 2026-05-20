@@ -332,11 +332,7 @@ public final class NpcInteractionHandler {
     }
 
     private static boolean isHealerDonation(ItemStack stack) {
-        // TODO Track 5: replace with a proper lit:healer_donation item tag.
-        return stack.is(Items.GOLDEN_CARROT)
-                || stack.is(Items.GLISTERING_MELON_SLICE)
-                || stack.is(Items.SUSPICIOUS_STEW)
-                || stack.is(Items.HONEY_BOTTLE);
+        return stack.is(tterrag1112.life_in_the_village.Utilities.ModTags.Items.HEALER_DONATION);
     }
 
     private static InteractionResult handleHealerDonation(TownspersonMob npc,

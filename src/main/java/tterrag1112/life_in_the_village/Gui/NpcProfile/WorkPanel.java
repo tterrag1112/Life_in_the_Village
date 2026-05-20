@@ -50,6 +50,43 @@ public class WorkPanel implements NpcProfilePanel {
         // Activity
         if (!s.currentActivity().isEmpty()) {
             StatBox.draw(g, font, x, y, bw, 22, "Activity", s.currentActivity());
+            y += 25;
+        }
+
+        // Track 5a.3 — adventurer party-member status. Surfaces what
+        // the deleted "handleAdventurer" chat dump used to communicate.
+        if ("Adventurer".equalsIgnoreCase(s.professionName())
+                || s.professionName().toLowerCase().contains("adventurer")
+                || !s.combatRoleName().isEmpty()) {
+            renderAdventurerStatus(g, font, x, y, bw, s);
+        }
+    }
+
+    private static void renderAdventurerStatus(GuiGraphics g, Font font,
+                                               int x, int y, int bw,
+                                               NpcProfileSnapshot s) {
+        g.drawString(font, "Adventurer", x, y, BookScreenColors.DARK, false);
+        y += 12;
+
+        if (!s.combatRoleName().isEmpty()) {
+            StatBox.draw(g, font, x, y, bw, 22, "Combat Role",
+                    s.combatRoleName().replace('_', ' '));
+            y += 25;
+        }
+        if (!s.adventurerTitle().isEmpty()) {
+            StatBox.draw(g, font, x, y, bw, 22, "Title", s.adventurerTitle());
+            y += 25;
+        }
+
+        // Party-status hint: server-side, if this NPC is in the
+        // viewing player's party, the nav-button kind is PARTY_STATUS
+        // and the profile gains a "Party Status" nav button. The
+        // detailed expedition / kill-count info still arrives through
+        // the nav-button chat dump until a dedicated party screen lands.
+        if (s.hasNavTarget()
+                && s.navTargetKind() == NpcProfileSnapshot.NavTargetKind.PARTY_STATUS) {
+            g.drawString(font, "In your party — click 'Party Status' for details.",
+                    x, y, BookScreenColors.LIGHT, false);
         }
     }
 

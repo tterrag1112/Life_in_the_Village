@@ -27,6 +27,13 @@ public class ModItemTagProvider extends ItemTagsProvider {
                 .add(Items.EMERALD)
                 .add(Items.GOLD_INGOT);
 
-
+        // Track 5a.6 — replaces the hardcoded healer-donation list in
+        // NpcInteractionHandler. Same starter set; expand here as the
+        // healer content pass lands.
+        tag(ModTags.Items.HEALER_DONATION)
+                .add(Items.GOLDEN_CARROT)
+                .add(Items.GLISTERING_MELON_SLICE)
+                .add(Items.SUSPICIOUS_STEW)
+                .add(Items.HONEY_BOTTLE);
     }
 }

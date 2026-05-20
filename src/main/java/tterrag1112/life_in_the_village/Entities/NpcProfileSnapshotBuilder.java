@@ -111,6 +111,10 @@ public final class NpcProfileSnapshotBuilder {
         boolean canRentStall = prof == Profession.MERCHANT
                 && buildingOpt.map(b -> b.getType() == BuildingType.MARKET).orElse(false);
 
+        // Track 5a.5 — nav target selection.
+        NpcProfileSnapshot.NavTargetKind navKind = resolveNavKind(npc, player, level);
+        boolean hasNav = navKind != NpcProfileSnapshot.NavTargetKind.NONE;
+
         // ── Life-goal labels (Phase 1 task 07) ───────────────────────────────
         java.util.List<String> goalLabels = new java.util.ArrayList<>();
         for (var goal : npc.getLifeGoals().active()) {
@@ -188,6 +192,49 @@ public final class NpcProfileSnapshotBuilder {
                 goalLabels,
                 verbIds,
                 verbLabels,
-                relIds, relScores, relModes);
+                relIds, relScores, relModes,
+
+                hasNav, navKind);
+    }
+
+    /**
+     * Step-5 nav-target selection (with "hide when contextual route
+     * already serves" tightening). Order: office → company-worker →
+     * adventurer-party → profession-default → NONE.
+     */
+    private static NpcProfileSnapshot.NavTargetKind resolveNavKind(
+            tterrag1112.life_in_the_village.Entities.custom.TownspersonMob npc,
+            net.minecraft.server.level.ServerPlayer player,
+            net.minecraft.server.level.ServerLevel level) {
+        Profession prof = npc.getProfession();
+
+        // Office screens — VILLAGE_LEADER currently the only wired one;
+        // KINGDOM_RULER falls through until its book wires up here.
+        if (prof == Profession.VILLAGE_LEADER) {
+            return NpcProfileSnapshot.NavTargetKind.OFFICE_SCREEN;
+        }
+
+        // Owned company worker — hide if a contextual route reaches
+        // CompanyWorkerScreen here too (today: no contextual route,
+        // so always offer the nav).
+        if (prof == Profession.COMPANY_WORKER) {
+            boolean owned = CompanySavedData.get(level)
+                    .getCompanyForWorker(npc.getUUID())
+                    .map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
+                    .orElse(false);
+            if (owned) return NpcProfileSnapshot.NavTargetKind.COMPANY_WORKER;
+        }
+
+        // Party-member adventurer in the player's party.
+        if (prof == Profession.ADVENTURER && npc.getCombatRole() != null) {
+            var party = tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData
+                    .get(level).getPartyContaining(npc.getUUID()).orElse(null);
+            if (party != null && party.getLeaderPlayerId().equals(player.getUUID())) {
+                return NpcProfileSnapshot.NavTargetKind.PARTY_STATUS;
+            }
+        }
+
+        // No profession-default screen exists today.
+        return NpcProfileSnapshot.NavTargetKind.NONE;
     }
 }
