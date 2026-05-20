@@ -257,19 +257,23 @@ public final class AiCompanyManager {
     }
 
     /**
-     * Trading-company caravan dispatch stub. Spec line 144 — 3x village
+     * Trading-company caravan dispatch. Spec line 144 — 3x village
      * range. Real wiring depends on a public dispatch API on
-     * CaravanSavedData (not yet exposed); v1 deposits a fixed
-     * profit-on-arrival to the treasury so debug commands can verify
-     * the trading-company branch fires. Phase 5 wires the actual
-     * caravan goods selector + travel.
+     * {@code CaravanSavedData} (not yet exposed); v1 still skips the
+     * physical caravan but accounts a worker-count-scaled profit so
+     * trading-company treasuries actually grow at a rate that reflects
+     * payroll capacity. Phase 5 wires the actual caravan goods
+     * selector + travel + per-goods revenue.
      */
     public static long dispatchTradingCaravan(ServerLevel level, Company company) {
         if (!company.isTradingCompany()) return 0L;
-        long profit = 50L;
+        // Minimum 30br even for a sole proprietor; +20br per additional
+        // worker; capped so a max company doesn't print money.
+        int workerCount = Math.max(1, company.getWorkers().size());
+        long profit = Math.min(500L, 30L + (long) (workerCount - 1) * 20L);
         company.depositBronze(profit);
-        LOGGER.info("[AiCompanyManager] {} dispatched trading caravan (+{} br placeholder)",
-                company.getName(), profit);
+        LOGGER.info("[AiCompanyManager] {} dispatched trading caravan (+{} br, {} worker(s))",
+                company.getName(), profit, workerCount);
         return profit;
     }
 }

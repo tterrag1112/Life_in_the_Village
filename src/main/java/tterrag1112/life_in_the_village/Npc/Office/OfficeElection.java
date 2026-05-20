@@ -316,13 +316,24 @@ public final class OfficeElection {
                         NpcLifeEventBus.fire(new NpcLifeEvent.Demoted(npc, def.id())));
             }
         }
-        // Promoted: new NPC holder.
+        // Promoted + OfficeChange: new NPC holder.
         if (next != null && !next.isVacant() && next.holderIsNpc()) {
             UUID nextId = next.holderUuid().orElseThrow();
             boolean wasHolding = previous != null && previous.isHeldBy(nextId);
             if (!wasHolding) {
-                TownspersonMob.findByUUID(level, nextId).ifPresent(npc ->
-                        NpcLifeEventBus.fire(new NpcLifeEvent.Promoted(npc, def.id())));
+                UUID prevUuid = (previous != null && !previous.isVacant())
+                        ? previous.holderUuid().orElse(null)
+                        : null;
+                TownspersonMob.findByUUID(level, nextId).ifPresent(npc -> {
+                    NpcLifeEventBus.fire(new NpcLifeEvent.Promoted(npc, def.id()));
+                    // Phase 3 doc 06 — fire OfficeChange so downstream
+                    // subscribers (history log, appearance rebuilder,
+                    // EventLifeEventProducer inauguration scheduling)
+                    // see the transition. Previously omitted, breaking
+                    // each of those silently.
+                    NpcLifeEventBus.fire(
+                            new NpcLifeEvent.OfficeChange(npc, def.id(), prevUuid));
+                });
             }
         }
     }

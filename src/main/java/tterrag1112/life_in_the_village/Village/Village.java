@@ -96,7 +96,7 @@ public class Village {
     // Needs — recomputed daily, only lastNeedsUpdate persisted
     private Map<NeedCategory, VillageNeed> needs = new EnumMap<>(NeedCategory.class);
     private long lastNeedsUpdate = -1L;
-    private VillagePath.PathTier pathTier;
+    private VillagePath.PathTier pathTier = VillagePath.PathTier.DIRT;
 
     @Nullable private BlockPos mainGateEndpoint;
 
@@ -258,7 +258,10 @@ public class Village {
             // Phase 20a — persisted LayoutPlan piggy-backs here because
             // Village.CODEC was already at the apply16 ceiling.
             Optional<tterrag1112.life_in_the_village.Village.Planning
-                    .LayoutPlan> layoutPlan
+                    .LayoutPlan> layoutPlan,
+            // Track 3 — per-village path tier (was a no-op static
+            // before; now persisted so progression survives reload).
+            VillagePath.PathTier pathTier
     ) {
         static final Codec<VillageLayoutMeta> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -310,7 +313,13 @@ public class Village {
                                 .forGetter(VillageLayoutMeta::gatheringPoints),
                         tterrag1112.life_in_the_village.Village.Planning
                                 .LayoutPlan.CODEC.optionalFieldOf("layoutPlan")
-                                .forGetter(VillageLayoutMeta::layoutPlan)
+                                .forGetter(VillageLayoutMeta::layoutPlan),
+                        Codec.STRING
+                                .xmap(VillagePath.PathTier::valueOf,
+                                      VillagePath.PathTier::name)
+                                .optionalFieldOf("pathTier",
+                                        VillagePath.PathTier.DIRT)
+                                .forGetter(VillageLayoutMeta::pathTier)
                 ).apply(i, VillageLayoutMeta::new));
 
         static VillageLayoutMeta empty() {
@@ -319,7 +328,8 @@ public class Village {
                     0, 0, 1,
                     new ArrayList<>(), 0L, new ArrayList<>(),
                     true, Optional.empty(), Optional.empty(),
-                    0, new ArrayList<>(), Optional.empty());
+                    0, new ArrayList<>(), Optional.empty(),
+                    VillagePath.PathTier.DIRT);
         }
 
         static VillageLayoutMeta from(Village v) {
@@ -338,7 +348,8 @@ public class Village {
                     Optional.ofNullable(v.mainGateEndpoint),
                     v.townSquareRadius,
                     new ArrayList<>(v.gatheringPoints),
-                    Optional.ofNullable(v.plan));
+                    Optional.ofNullable(v.plan),
+                    v.pathTier != null ? v.pathTier : VillagePath.PathTier.DIRT);
         }
 
         void applyTo(Village v) {
@@ -364,6 +375,7 @@ public class Village {
                 v.gatheringPoints.addAll(gatheringPoints);
             }
             layoutPlan.ifPresent(p -> v.plan = p);
+            v.pathTier = pathTier != null ? pathTier : VillagePath.PathTier.DIRT;
         }
     }
 
@@ -1086,11 +1098,11 @@ public class Village {
     // =========================================================================
 
     public VillagePath.PathTier getPathTier() {
-        return VillagePath.PathTier.DIRT;
+        return pathTier != null ? pathTier : VillagePath.PathTier.DIRT;
     }
 
-    public static void setPathTier(VillagePath.PathTier tier) {
-        // TODO: per-village persistence
+    public void setPathTier(VillagePath.PathTier tier) {
+        this.pathTier = tier != null ? tier : VillagePath.PathTier.DIRT;
     }
 
     public String getVillageType()                 { return villageType; }

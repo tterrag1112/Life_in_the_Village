@@ -106,13 +106,36 @@ public class FarmBusinessLevel {
         if (newLevel > businessLevel) {
             businessLevel = newLevel;
             System.out.println("Farm business leveled up to " + businessLevel);
-            // TODO: Broadcast notification to owner
+            notifyOwnerOfLevelUp(level);
         }
 
         // Quality improves with consistent sales
         qualityRating = Math.min(1.0f, qualityRating + 0.001f);
 
         lastUpdateTick = level.getGameTime();
+    }
+
+    /**
+     * Sends a chat notification to the player owner of this farm when
+     * the business levels up. NPC-owner notification is intentionally
+     * left as a future hook — the household-head lookup isn't a clean
+     * one-liner today and the mood bump would be speculative.
+     */
+    private void notifyOwnerOfLevelUp(ServerLevel level) {
+        VillageSavedData data = VillageSavedData.get(level);
+        if (!data.isPlayerOwned(farmhouseId)) return;
+        data.getPropertyForBuilding(farmhouseId).ifPresent(prop -> {
+            net.minecraft.server.level.ServerPlayer owner =
+                    level.getServer().getPlayerList().getPlayer(prop.playerId());
+            if (owner == null) return;
+            String msg = String.format(java.util.Locale.ROOT,
+                    "Your farm reached %s (level %d) — %d plots, %d br weekly revenue.",
+                    getBusinessLevelName(), businessLevel, plotCount, weeklyRevenue);
+            owner.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal(msg)
+                            .withStyle(net.minecraft.ChatFormatting.GREEN),
+                    false);
+        });
     }
 
     /**
