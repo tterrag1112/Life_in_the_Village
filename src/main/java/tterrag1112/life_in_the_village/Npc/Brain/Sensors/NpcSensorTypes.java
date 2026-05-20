@@ -29,6 +29,12 @@ public final class NpcSensorTypes {
     public static final DeferredHolder<SensorType<?>, SensorType<NearbyFreeSeatsSensor>>
             NEARBY_FREE_SEATS = reg("nearby_free_seats", NearbyFreeSeatsSensor::new);
 
+    public static final DeferredHolder<SensorType<?>, SensorType<WeatherShelterSensor>>
+            WEATHER_SHELTER = reg("weather_shelter", WeatherShelterSensor::new);
+
+    public static final DeferredHolder<SensorType<?>, SensorType<EscortRelationshipSensor>>
+            ESCORT_RELATIONSHIP = reg("escort_relationship", EscortRelationshipSensor::new);
+
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <S extends Sensor<TownspersonMob>>
             DeferredHolder<SensorType<?>, SensorType<S>> reg(

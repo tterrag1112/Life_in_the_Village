@@ -1394,6 +1394,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CONVERSATION_PARTNER.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .CONVERSATION_ROLE.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .ESCORT_LEADER.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .SHELTER_TARGET.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_GESTURE_COOLDOWN.get(),
@@ -1420,7 +1426,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
                         .CONVERSATION_CANDIDATES.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
-                        .NEARBY_FREE_SEATS.get()
+                        .NEARBY_FREE_SEATS.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
+                        .WEATHER_SHELTER.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
+                        .ESCORT_RELATIONSHIP.get()
         );
     }
 
@@ -1460,13 +1470,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.CORE, 0, coreBehaviors);
 
-        // IDLE — priorities increment from start:
-        // 0=IdleGesture, 1=MoodReaction, 2=GreetingAcknowledgment,
-        // 3=SitAtFurniture, 4=InternalBuildingWander, 5=PersonalSpace.
-        // The deliberate nav-using behaviors (sit, wander) outrank the
-        // reactive PersonalSpace nudge.
+        // IDLE — priorities (Phase 6.1.c ordering):
+        // 0=Shelter, 1=IdleGesture, 2=MoodReact, 3=Greeting, 4=Sit,
+        // 5=InternalWander, 6=Escort, 7=PersonalSpace.
+        // Shelter is urgent (rain), the reactive PersonalSpace nudge is
+        // last so deliberate behaviors win contention.
         ImmutableList<BehaviorControl<? super TownspersonMob>> idleBehaviors =
                 ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SeekShelterBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .IdleGestureBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1478,18 +1490,29 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .InternalBuildingWanderBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .FollowEscortLeaderBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior()
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // SOCIAL — Phase 6.1.a + 6.1.b additions.
-        // 0=Greeting, 1=SitAtFurniture, 2=PersonalSpace.
+        // SOCIAL — Phase 6.1.c ordering:
+        // 0=Shelter, 1=Engage, 2=Initiate, 3=Greeting, 4=Sit, 5=Escort,
+        // 6=PersonalSpace. Active engagement preempts pairing search.
         ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
                 ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SeekShelterBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .EngageInConversationBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .InitiateConversationBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetingAcknowledgmentBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SitAtFurnitureBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .FollowEscortLeaderBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior()
                 );
