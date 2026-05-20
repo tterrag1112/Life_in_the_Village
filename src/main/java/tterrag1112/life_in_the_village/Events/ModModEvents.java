@@ -312,6 +312,9 @@ public class ModModEvents {
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         BuildingCommand.register(event.getDispatcher());
+        // Phase 6.0 — /lit brain dump <selector>
+        tterrag1112.life_in_the_village.Commands.BrainCommands
+                .register(event.getDispatcher());
         FarmPlotCommands.onRegisterCommands(event);
         KingdomCommands.onRegisterCommands(event);
         GuildCommands.onRegisterCommands(event);
