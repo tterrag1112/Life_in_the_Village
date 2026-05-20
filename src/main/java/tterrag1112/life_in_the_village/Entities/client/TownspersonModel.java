@@ -1,26 +1,47 @@
 package tterrag1112.life_in_the_village.Entities.client;
 
-import net.minecraft.client.animation.AnimationDefinition;
-import net.minecraft.client.animation.KeyframeAnimations;
+import net.minecraft.client.animation.KeyframeAnimation;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.PartPose;
 import net.minecraft.client.model.geom.builders.*;
 import net.minecraft.util.Mth;
-import net.minecraft.world.entity.AnimationState;
-import org.joml.Vector3f;
 import tterrag1112.life_in_the_village.Npc.Animations.NpcAnimations;
 import tterrag1112.life_in_the_village.Npc.Brain.Gesture;
 
 public class TownspersonModel<S extends TownspersonRenderer.TownspersonRenderState> extends HumanoidModel<TownspersonRenderer.TownspersonRenderState> {
 
-    /** Reusable scratch vector for KeyframeAnimations.animate — the
-     *  static helper requires one. Safe as a static field because
-     *  setupAnim only runs on the client render thread. */
-    private static final Vector3f ANIM_CACHE = new Vector3f();
+    // ── Phase 6.1.5 — animations baked against this model's root. ──────────
+    // 1.21.11 changed the API: AnimationDefinition.bake(root) returns a
+    // KeyframeAnimation pre-bound to this model's ModelPart instances;
+    // each frame setupAnim calls bakedAnim.apply(state, ageInTicks).
+    private final KeyframeAnimation waveAnim;
+    private final KeyframeAnimation stretchAnim;
+    private final KeyframeAnimation lookAroundAnim;
+    private final KeyframeAnimation yawnAnim;
+    private final KeyframeAnimation nodAnim;
+    private final KeyframeAnimation friendlyWaveAnim;
+    private final KeyframeAnimation headShakeAnim;
+    private final KeyframeAnimation sighAnim;
+    private final KeyframeAnimation slouchAnim;
+    private final KeyframeAnimation leanAnim;
+    private final KeyframeAnimation sitDownAnim;
+    private final KeyframeAnimation standUpAnim;
 
     public TownspersonModel(ModelPart root) {
         super(root);
+        this.waveAnim          = NpcAnimations.WAVE.bake(root);
+        this.stretchAnim       = NpcAnimations.STRETCH.bake(root);
+        this.lookAroundAnim    = NpcAnimations.LOOK_AROUND.bake(root);
+        this.yawnAnim          = NpcAnimations.YAWN.bake(root);
+        this.nodAnim           = NpcAnimations.NOD.bake(root);
+        this.friendlyWaveAnim  = NpcAnimations.FRIENDLY_WAVE.bake(root);
+        this.headShakeAnim     = NpcAnimations.HEAD_SHAKE.bake(root);
+        this.sighAnim          = NpcAnimations.SIGH.bake(root);
+        this.slouchAnim        = NpcAnimations.SLOUCH.bake(root);
+        this.leanAnim          = NpcAnimations.LEAN.bake(root);
+        this.sitDownAnim       = NpcAnimations.SIT_DOWN.bake(root);
+        this.standUpAnim       = NpcAnimations.STAND_UP.bake(root);
     }
 
     public static LayerDefinition createBodyLayer(CubeDeformation cubeDeformation) {
@@ -57,89 +78,65 @@ public class TownspersonModel<S extends TownspersonRenderer.TownspersonRenderSta
         }
 
         // ── Phase 6.1.5 conditional pose overrides ───────────────────────
-        // Seated pose: applied before AnimationState animations so a
-        // sitting NPC can still nod / wave from the chest up.
         if (renderState.sitting) {
             applySeatedPose();
         }
-        // Carry-hold pose: applied while the carry-hold state is active.
-        // Will visually clash with arm gestures fired during carrying —
-        // accepted per Phase 6.1.5 conflict policy.
         if (renderState.carryHoldState.isStarted()) {
             applyCarryHoldPose();
         }
 
-        // ── Phase 6.1.5 AnimationState-driven gestures ───────────────────
-        // Call order = precedence for shared parts. Per-gesture states
-        // come after the shared idleGestureState so a dedicated gesture
-        // (NOD on head, YAWN on head) wins over a stale LOOK_AROUND.
-        AnimationDefinition idleDef = idleGestureDefFor(renderState.lastGestureFired);
-        if (idleDef != null) {
-            playAnimation(renderState.idleGestureState, idleDef, renderState.ageInTicks);
+        // ── Phase 6.1.5 baked animations ─────────────────────────────────
+        // Call order = precedence for shared parts. Each KeyframeAnimation
+        // is a no-op when its AnimationState isn't started.
+        KeyframeAnimation idleBake = idleGestureBakeFor(renderState.lastGestureFired);
+        if (idleBake != null) {
+            idleBake.apply(renderState.idleGestureState, renderState.ageInTicks);
         }
-        playAnimation(renderState.yawnState,         NpcAnimations.YAWN,          renderState.ageInTicks);
-        playAnimation(renderState.nodState,          NpcAnimations.NOD,           renderState.ageInTicks);
-        playAnimation(renderState.friendlyWaveState, NpcAnimations.FRIENDLY_WAVE, renderState.ageInTicks);
-        playAnimation(renderState.headShakeState,    NpcAnimations.HEAD_SHAKE,    renderState.ageInTicks);
-        playAnimation(renderState.sighState,         NpcAnimations.SIGH,          renderState.ageInTicks);
-        playAnimation(renderState.slouchState,       NpcAnimations.SLOUCH,        renderState.ageInTicks);
-        playAnimation(renderState.leanState,         NpcAnimations.LEAN,          renderState.ageInTicks);
-        playAnimation(renderState.sitDownState,      NpcAnimations.SIT_DOWN,      renderState.ageInTicks);
-        playAnimation(renderState.standUpState,      NpcAnimations.STAND_UP,      renderState.ageInTicks);
-    }
-
-    /** HumanoidModel's ancestor chain in 1.21.11 does NOT expose
-     *  {@code Model.animate(AnimationState, AnimationDefinition, float)},
-     *  so we use the static {@link KeyframeAnimations#animate} helper
-     *  directly. No-op when the state isn't started. */
-    private void playAnimation(AnimationState state, AnimationDefinition def, float ageInTicks) {
-        state.ifStarted(s -> KeyframeAnimations.animate(
-                this, def, s.getTimeInMillis(ageInTicks), 1.0F, ANIM_CACHE));
+        yawnAnim.apply(renderState.yawnState,                 renderState.ageInTicks);
+        nodAnim.apply(renderState.nodState,                   renderState.ageInTicks);
+        friendlyWaveAnim.apply(renderState.friendlyWaveState, renderState.ageInTicks);
+        headShakeAnim.apply(renderState.headShakeState,       renderState.ageInTicks);
+        sighAnim.apply(renderState.sighState,                 renderState.ageInTicks);
+        slouchAnim.apply(renderState.slouchState,             renderState.ageInTicks);
+        leanAnim.apply(renderState.leanState,                 renderState.ageInTicks);
+        sitDownAnim.apply(renderState.sitDownState,           renderState.ageInTicks);
+        standUpAnim.apply(renderState.standUpState,           renderState.ageInTicks);
     }
 
     /** Maps the idleGestureState's last-fired gesture to one of the three
-     *  animations that share that state (WAVE / STRETCH / LOOK_AROUND).
-     *  Other gestures have dedicated AnimationStates and are not handled
-     *  via the shared idle state, so they return null here. */
-    private static AnimationDefinition idleGestureDefFor(Gesture g) {
+     *  baked animations that share that state. */
+    private KeyframeAnimation idleGestureBakeFor(Gesture g) {
         if (g == null) return null;
         return switch (g) {
-            case WAVE        -> NpcAnimations.WAVE;
-            case STRETCH     -> NpcAnimations.STRETCH;
-            case LOOK_AROUND -> NpcAnimations.LOOK_AROUND;
+            case WAVE        -> waveAnim;
+            case STRETCH     -> stretchAnim;
+            case LOOK_AROUND -> lookAroundAnim;
             default          -> null;
         };
     }
 
     /** Seated pose — legs fold forward at the hip, arms relax. Pure
      *  rotation overrides (no position offsets) so the pose cleanly
-     *  reverts on the next frame when {@code sitting} flips back to
-     *  false. The slight body z-tilt sells the "perched" silhouette
-     *  without needing to lower the model origin. */
+     *  reverts when {@code sitting} flips back to false. */
     private void applySeatedPose() {
-        // Legs fold forward 90° at the hip.
         this.leftLeg.xRot  = -((float) Math.PI / 2f);
         this.rightLeg.xRot = -((float) Math.PI / 2f);
         this.leftLeg.yRot  = 0f;
         this.rightLeg.yRot = 0f;
         this.leftLeg.zRot  = 0f;
         this.rightLeg.zRot = 0f;
-        // Slight forward body lean to read as seated rather than levitating.
         this.body.xRot = 0.1f;
-        // Relax arms at sides.
         this.leftArm.xRot  = 0f;
         this.rightArm.xRot = 0f;
         this.leftArm.zRot  =  0.05f;
         this.rightArm.zRot = -0.05f;
     }
 
-    /** Carry-hold pose — both arms forward at ~90° down then forward,
-     *  hands roughly at waist height in front. */
+    /** Carry-hold pose — both arms forward at ~90°, slight inward roll. */
     private void applyCarryHoldPose() {
-        float forward = -((float) Math.PI / 2f); // 90° forward at shoulder
+        float forward = -((float) Math.PI / 2f);
         this.rightArm.xRot = forward;
         this.leftArm.xRot  = forward;
-        // Slight inward roll so hands meet in front.
         this.rightArm.zRot = -0.15f;
         this.leftArm.zRot  =  0.15f;
     }
