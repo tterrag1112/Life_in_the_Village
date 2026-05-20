@@ -1,15 +1,23 @@
 package tterrag1112.life_in_the_village.Entities.client;
 
 import net.minecraft.client.animation.AnimationDefinition;
+import net.minecraft.client.animation.KeyframeAnimations;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.PartPose;
 import net.minecraft.client.model.geom.builders.*;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.AnimationState;
+import org.joml.Vector3f;
 import tterrag1112.life_in_the_village.Npc.Animations.NpcAnimations;
 import tterrag1112.life_in_the_village.Npc.Brain.Gesture;
 
 public class TownspersonModel<S extends TownspersonRenderer.TownspersonRenderState> extends HumanoidModel<TownspersonRenderer.TownspersonRenderState> {
+
+    /** Reusable scratch vector for KeyframeAnimations.animate — the
+     *  static helper requires one. Safe as a static field because
+     *  setupAnim only runs on the client render thread. */
+    private static final Vector3f ANIM_CACHE = new Vector3f();
 
     public TownspersonModel(ModelPart root) {
         super(root);
@@ -67,17 +75,26 @@ public class TownspersonModel<S extends TownspersonRenderer.TownspersonRenderSta
         // (NOD on head, YAWN on head) wins over a stale LOOK_AROUND.
         AnimationDefinition idleDef = idleGestureDefFor(renderState.lastGestureFired);
         if (idleDef != null) {
-            this.animate(renderState.idleGestureState, idleDef, renderState.ageInTicks);
+            playAnimation(renderState.idleGestureState, idleDef, renderState.ageInTicks);
         }
-        this.animate(renderState.yawnState,         NpcAnimations.YAWN,          renderState.ageInTicks);
-        this.animate(renderState.nodState,          NpcAnimations.NOD,           renderState.ageInTicks);
-        this.animate(renderState.friendlyWaveState, NpcAnimations.FRIENDLY_WAVE, renderState.ageInTicks);
-        this.animate(renderState.headShakeState,    NpcAnimations.HEAD_SHAKE,    renderState.ageInTicks);
-        this.animate(renderState.sighState,         NpcAnimations.SIGH,          renderState.ageInTicks);
-        this.animate(renderState.slouchState,       NpcAnimations.SLOUCH,        renderState.ageInTicks);
-        this.animate(renderState.leanState,         NpcAnimations.LEAN,          renderState.ageInTicks);
-        this.animate(renderState.sitDownState,      NpcAnimations.SIT_DOWN,      renderState.ageInTicks);
-        this.animate(renderState.standUpState,      NpcAnimations.STAND_UP,      renderState.ageInTicks);
+        playAnimation(renderState.yawnState,         NpcAnimations.YAWN,          renderState.ageInTicks);
+        playAnimation(renderState.nodState,          NpcAnimations.NOD,           renderState.ageInTicks);
+        playAnimation(renderState.friendlyWaveState, NpcAnimations.FRIENDLY_WAVE, renderState.ageInTicks);
+        playAnimation(renderState.headShakeState,    NpcAnimations.HEAD_SHAKE,    renderState.ageInTicks);
+        playAnimation(renderState.sighState,         NpcAnimations.SIGH,          renderState.ageInTicks);
+        playAnimation(renderState.slouchState,       NpcAnimations.SLOUCH,        renderState.ageInTicks);
+        playAnimation(renderState.leanState,         NpcAnimations.LEAN,          renderState.ageInTicks);
+        playAnimation(renderState.sitDownState,      NpcAnimations.SIT_DOWN,      renderState.ageInTicks);
+        playAnimation(renderState.standUpState,      NpcAnimations.STAND_UP,      renderState.ageInTicks);
+    }
+
+    /** HumanoidModel's ancestor chain in 1.21.11 does NOT expose
+     *  {@code Model.animate(AnimationState, AnimationDefinition, float)},
+     *  so we use the static {@link KeyframeAnimations#animate} helper
+     *  directly. No-op when the state isn't started. */
+    private void playAnimation(AnimationState state, AnimationDefinition def, float ageInTicks) {
+        state.ifStarted(s -> KeyframeAnimations.animate(
+                this, def, s.getTimeInMillis(ageInTicks), 1.0F, ANIM_CACHE));
     }
 
     /** Maps the idleGestureState's last-fired gesture to one of the three
