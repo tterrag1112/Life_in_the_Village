@@ -16,9 +16,16 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
  * fields are all freely writable from Brain behaviors — they don't
  * compete with Goals.
  *
+ * <p><b>Phase 6.1.b update — structural exclusion lifted.</b>
+ * WALK_TARGET is now part of the brain memory list and
+ * {@code MoveToTargetSink} consumes it from CORE. Every WALK_TARGET
+ * writer MUST call {@link #canSteerNavigation} first; there is no
+ * passive guarantee anymore. Same rule applies to LOOK_TARGET writers
+ * and {@link #canRotateHead}.
+ *
  * <p>This is a best-effort check, not a hard lock. A Goal may claim
- * head rotation on the very next tick after the guard returns true;
- * the resulting visual is a brief snap, not a crash. The point is to
+ * the channel on the very next tick after the guard returns true; the
+ * resulting visual is a brief snap, not a crash. The point is to
  * prevent the common case (Brain stomping a Goal that's actively
  * driving the entity in the same tick).
  */

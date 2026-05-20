@@ -53,6 +53,14 @@ public class GreetingAcknowledgmentBehavior extends Behavior<TownspersonMob> {
     }
 
     @Override
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        // Release LOOK_TARGET so the head doesn't stay pinned on the
+        // partner after the greeting expires — LookAtTargetSink would
+        // otherwise restart on the still-present memory.
+        entity.getBrain().eraseMemory(MemoryModuleType.LOOK_TARGET);
+    }
+
+    @Override
     protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
         TownspersonMob partner = findPartner(entity, gameTime);
         if (partner == null) return;
