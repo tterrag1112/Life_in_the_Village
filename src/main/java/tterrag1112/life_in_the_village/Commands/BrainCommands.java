@@ -8,7 +8,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.Brain;
@@ -64,11 +64,11 @@ public final class BrainCommands {
         Set<Activity> active = brain.getActiveActivities();
         src.sendSuccess(() -> Component.literal("Active activities: " + active), false);
 
-        // Schedule's expectation at current day-time
-        if (brain.getSchedule() != null) {
-            Activity expected = brain.getSchedule().getActivityAt((int) dayTime);
-            src.sendSuccess(() -> Component.literal("Schedule expects: " + expected), false);
-        }
+        // Schedule's expectation at current day-time (vanilla Schedule
+        // was removed in 1.21.11; this uses our NpcSchedules table).
+        Activity expected = tterrag1112.life_in_the_village.Npc.Brain
+                .NpcSchedules.activityAt(dayTime);
+        src.sendSuccess(() -> Component.literal("Schedule expects: " + expected), false);
 
         // Running behaviors
         var running = brain.getRunningBehaviors();
@@ -88,7 +88,7 @@ public final class BrainCommands {
             Optional<? extends ExpirableValue<?>> v = entry.getValue();
             if (v == null || v.isEmpty()) continue;
             count++;
-            ResourceLocation key = BuiltInRegistries.MEMORY_MODULE_TYPE.getKey(entry.getKey());
+            Identifier key = BuiltInRegistries.MEMORY_MODULE_TYPE.getKey(entry.getKey());
             ExpirableValue<?> ev = v.get();
             String val = String.valueOf(ev.getValue());
             String ttl = ev.canExpire() ? " (ttl=" + ev.getTimeToLive() + ")" : "";

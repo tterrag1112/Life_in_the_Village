@@ -1,47 +1,53 @@
 package tterrag1112.life_in_the_village.Npc.Brain;
 
-import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.entity.schedule.Activity;
-import net.minecraft.world.entity.schedule.Schedule;
-import net.minecraft.world.entity.schedule.ScheduleBuilder;
-import net.neoforged.bus.api.IEventBus;
-import net.neoforged.neoforge.registries.DeferredHolder;
-import net.neoforged.neoforge.registries.DeferredRegister;
-import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 
 /**
- * Base townsperson daily schedule (Phase 6.0). One entry only — per-
- * profession deltas land in Phase 6.2/6.3 once the work activity has
- * actual behaviors driving it.
+ * Townsperson daily time-table mapping day-time → {@link Activity}.
  *
- * <p>Schedule activities are switched by the vanilla {@code Brain}
- * machinery during {@code tick()}; the Schedule is the time → Activity
- * mapping and is independent from any movement.
+ * <p>Vanilla {@code Schedule} / {@code BuiltInRegistries.SCHEDULE} was
+ * replaced in 1.21.11 by {@code EnvironmentAttribute&lt;Activity&gt;}, which
+ * needs datapack files we don't have. For Phase 6.0 we just walk the
+ * table ourselves and call {@link Brain#setActiveActivityIfPossible}.
+ * Per-profession deltas land in Phase 6.2/6.3.
+ *
+ * <pre>
+ *   0-2000   IDLE
+ *   2000-6000 WORK
+ *   6000-7000 SOCIAL
+ *   7000-11000 WORK
+ *   11000-13000 SOCIAL
+ *   13000-23000 REST
+ *   23000-24000 IDLE
+ * </pre>
  */
 public final class NpcSchedules {
 
     private NpcSchedules() {}
 
-    public static final DeferredRegister<Schedule> SCHEDULES =
-            DeferredRegister.create(BuiltInRegistries.SCHEDULE,
-                    Life_in_the_village.MODID);
-
-    public static final DeferredHolder<Schedule, Schedule> TOWNSPERSON_DEFAULT =
-            SCHEDULES.register("townsperson_default", NpcSchedules::buildDefault);
-
-    private static Schedule buildDefault() {
-        return new ScheduleBuilder(new Schedule())
-                .changeActivityAt(0,     Activity.IDLE)
-                .changeActivityAt(2000,  NpcActivities.WORK.get())
-                .changeActivityAt(6000,  NpcActivities.SOCIAL.get())
-                .changeActivityAt(7000,  NpcActivities.WORK.get())
-                .changeActivityAt(11000, NpcActivities.SOCIAL.get())
-                .changeActivityAt(13000, NpcActivities.REST.get())
-                .changeActivityAt(23000, Activity.IDLE)
-                .build();
+    /** Returns the activity that {@code TOWNSPERSON_DEFAULT} expects at
+     *  the given day-time (will be normalized to [0, 24000)). */
+    public static Activity activityAt(long dayTime) {
+        long t = ((dayTime % 24000L) + 24000L) % 24000L;
+        if (t < 2000)  return Activity.IDLE;
+        if (t < 6000)  return NpcActivities.WORK.get();
+        if (t < 7000)  return NpcActivities.SOCIAL.get();
+        if (t < 11000) return NpcActivities.WORK.get();
+        if (t < 13000) return NpcActivities.SOCIAL.get();
+        if (t < 23000) return NpcActivities.REST.get();
+        return Activity.IDLE;
     }
 
-    public static void register(IEventBus bus) {
-        SCHEDULES.register(bus);
+    /** Drives the Brain's active activity from day-time. Called from
+     *  {@link TownspersonMob#customServerAiStep}. Cheap — only flips the
+     *  active activity when the table-derived activity changes. */
+    public static void tick(TownspersonMob npc, long dayTime) {
+        Activity expected = activityAt(dayTime);
+        Brain<TownspersonMob> brain = npc.getBrain();
+        if (!brain.isActive(expected)) {
+            brain.setActiveActivityIfPossible(expected);
+        }
     }
 }
