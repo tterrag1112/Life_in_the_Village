@@ -30,7 +30,6 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.WorkPhase;
-import tterrag1112.life_in_the_village.Profession.NpcProfessionXp;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -131,7 +130,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 (int)(recipe.ticks() * batchSize
                         * productionSpeedMultiplier()
                         * roleSpeedMultiplier()
-                        / NpcProfessionXp.getSpeedMultiplier(entity)));
+                        / NpcProf.getSpeedMultiplier(entity)));
         Map<Item, Integer> consumes = new LinkedHashMap<>();
         recipe.inputs().forEach((item, count) -> consumes.put(item, count * batchSize));
         fuelPerBatch(recipe).forEach((item, count) ->
@@ -358,7 +357,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 for (ItemStack byproduct : currentRecipe.byproducts()) {
                     entity.getPersonalInventory().addItem(byproduct.copy());
                 }
-                NpcProfessionXp.add(entity, NpcProfessionXp.XP_PER_PRODUCTION_CYCLE);
+                NpcProfessionXP.add(entity, NpcProfessionXp.XP_PER_PRODUCTION_CYCLE);
                 float qualityChance = NpcProfessionXp.getQualityChance(entity);
                 if (qualityChance > 0 && entity.getRandom().nextFloat() < qualityChance) {
                     entity.getPersonalInventory().addItem(

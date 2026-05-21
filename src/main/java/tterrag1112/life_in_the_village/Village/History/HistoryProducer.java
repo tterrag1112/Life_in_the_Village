@@ -83,7 +83,7 @@ public final class HistoryProducer implements EventDispatcher {
             // via the OfficeChange branch above; the two together produce
             // the full transition pair.
             Map<String, String> details = baseDetails(subject, village);
-            details.put("office_name", officeNameFor(demoted.officeId()));
+            details.put("office_name", officeNameFor(demoted.role()));
             record(level, village, HistoryEventType.OFFICE_VACATED, now, details,
                     List.of(subject.getUUID()));
         }
