@@ -1,8 +1,18 @@
 package tterrag1112.life_in_the_village.Npc.Brain;
 
+import com.google.common.collect.ImmutableList;
 import net.minecraft.world.entity.ai.Brain;
+import net.minecraft.world.entity.ai.behavior.BehaviorControl;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.PostalBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BakerProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BlacksmithProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CandlemakerProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CarpenterProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MillerProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.StonemasonProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.WeaverProductionBehavior;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.EnumMap;
@@ -30,6 +40,41 @@ public final class ProfessionBrainFactory {
 
     private static final Map<Profession, ProfessionBrainRegistrar> REGISTRARS =
             new EnumMap<>(Profession.class);
+
+    static {
+        // Phase 6.2.b — SCRIBE: postal delivery during SOCIAL activity.
+        REGISTRARS.put(Profession.SCRIBE, (npc, brain) -> {
+            ImmutableList<BehaviorControl<? super TownspersonMob>> scribeSocial =
+                    ImmutableList.of(new PostalBehavior());
+            brain.addActivity(NpcActivities.SOCIAL.get(), 7, scribeSocial);
+        });
+
+        // Phase 6.2.d.1 — workshop family: each profession adds its
+        // ProductionBehavior to WORK @ 0. AbstractProductionBehavior writes
+        // CARGO_DESTINATION when surplus accumulates, which SellToMarketBehavior
+        // (universal, also in WORK) consumes to do the market trip.
+        REGISTRARS.put(Profession.BAKER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new BakerProductionBehavior())));
+        REGISTRARS.put(Profession.BLACKSMITH, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new BlacksmithProductionBehavior())));
+        REGISTRARS.put(Profession.CANDLEMAKER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new CandlemakerProductionBehavior())));
+        REGISTRARS.put(Profession.CARPENTER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new CarpenterProductionBehavior())));
+        REGISTRARS.put(Profession.MILLER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new MillerProductionBehavior())));
+        REGISTRARS.put(Profession.STONEMASON, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new StonemasonProductionBehavior())));
+        REGISTRARS.put(Profession.WEAVER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new WeaverProductionBehavior())));
+    }
 
     /**
      * Hook for future phases. Call before any NPC is constructed (e.g.

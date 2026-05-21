@@ -3,13 +3,9 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.player.Player;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Baker.BakerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith.BlacksmithGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderMaintenanceGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderRepaintGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Candlemaker.CandlemakerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Carpenter.CarpenterGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmhandGoal;
@@ -21,11 +17,8 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.VillageL
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.CaravanMerchantGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.WanderingTraderGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miller.MillerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miner.MinerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper.StockpileKeeperGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Stonemason.StonemasonGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Weaver.WeaverGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopStallDecisionGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
@@ -121,20 +114,14 @@ public final class ProfessionGoalFactory {
     private static void registerUniversal(TownspersonMob npc) {
         npc.goalSelector.addGoal(P_SURVIVAL,  new FloatGoal(npc));
         npc.goalSelector.addGoal(P_SURVIVAL,  new OpenDoorGoal(npc, true));
-        npc.goalSelector.addGoal(P_COMBAT,    new ReturnHomeGoal(npc));
-        npc.goalSelector.addGoal(P_PATHFIND,  new SeekHouseGoal(npc));
+        // Phase 6.2.c: ReturnHomeGoal migrated to ReturnHomeBehavior (REST @1).
+        // Phase 6.2.c: SeekHouseGoal migrated to SeekHouseBehavior (IDLE @1 + SOCIAL @2).
         // Phase 6.2.a: EatMealGoal migrated to EatMealBehavior (SOCIAL @1).
         // Phase 6.2.a: HobbyGoal migrated to HobbyBehavior (SOCIAL @4).
+        // Phase 6.2.b: GreetPlayerGoal migrated to GreetPlayerBehavior
+        //   (universal IDLE @0 + SOCIAL @0); GreeterAssignment now writes
+        //   the GREET_TARGET memory instead of calling goal.assign().
         npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
-        // Phase 3 task 24: greet players who enter the NPC's assigned
-        // business-front building. Slots between combat and work so
-        // greeting pre-empts production. Stays no-op until external
-        // GreeterAssignment.assign() seats a target player.
-        // Phase 6.2.a: NOT migrated — GreeterAssignment.assignFor seats
-        // targets via goal.assign(player); active caller, blocked from
-        // deletion until that wiring lifts to the Brain layer.
-        npc.goalSelector.addGoal(P_SOCIAL_HIGH,
-                new tterrag1112.life_in_the_village.Npc.BusinessFront.GreetPlayerGoal(npc));
         // Phase 3 task 19: village_constable's investigation pass.
         // canUse short-circuits when the NPC doesn't currently hold
         // INVESTIGATE_CRIME, so non-constables pay only the Goal-list
@@ -164,17 +151,17 @@ public final class ProfessionGoalFactory {
                 npc.goalSelector.addGoal(P_SOCIAL_MID, new SocializeGoal(npc));
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
                 // Phase 6.2.a: BuyGoodsGoal migrated to BuyGoodsBehavior (SOCIAL @5).
-                if (npc.getLifeStage() == LifeStage.ADULT) {
-                    npc.goalSelector.addGoal(P_SOCIAL_LOW, new CourtingGoal(npc));
-                }
+                // Phase 6.2.b: CourtingGoal migrated to CourtingBehavior
+                //   (universal SOCIAL — the family-state gate is in the
+                //   behavior's checkExtraStartConditions, no life-stage
+                //   wiring needed).
             }
             case ELDERLY -> {
-                npc.goalSelector.addGoal(P_SOCIAL_MID, new ElderlyRelaxGoal(npc));
+                // Phase 6.2.c: ElderlyRelaxGoal migrated to ElderlyRelaxBehavior
+                //   (universal IDLE — self-gates on isElderly()).
+                // Phase 6.2.c: MentorGoal migrated to MentorBehavior
+                //   (universal SOCIAL — self-gates on ELDERLY + skill threshold).
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
-                // Phase 2 task 15 — elderly with master-tier skill mentor a
-                // younger colleague at the same workplace.
-                npc.goalSelector.addGoal(P_SOCIAL_MID,
-                        new tterrag1112.life_in_the_village.Entities.Goals.Social.MentorGoal(npc));
             }
         }
     }
@@ -216,55 +203,28 @@ public final class ProfessionGoalFactory {
                     new SellToMarketGoal(npc, npc.getSellableItems(Profession.FARMHAND)));
         });
 
+        // Phase 6.2.d.1 — 7 workshop production goals migrated to per-profession
+        // ProductionBehaviors wired via ProfessionBrainFactory (WORK @ 0).
+        // SellToMarket / PostListing / BuyFromNpc errands for the migrated
+        // professions also move to the Brain layer: the workshop's deposit
+        // phase writes CARGO_DESTINATION which SellToMarketBehavior consumes.
+        //
+        // Cleanup: the previous BLACKSMITH double-registration at this position
+        // (which had been overwritten by the empty-stub second registrar at
+        // ~line 259) is naturally resolved — both registrars removed.
         REGISTRARS.put(Profession.BLACKSMITH, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BlacksmithGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new PostListingGoal(npc, npc.getSellableItems(Profession.BLACKSMITH)));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new BuyFromNpcGoal(npc,
-                            npc::needsOre,
-                            () -> net.minecraft.world.item.Items.RAW_IRON,
-                            () -> 16, 1200));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new SellToMarketGoal(npc, npc.getSellableItems(Profession.BLACKSMITH)));
-            npc.goalSelector.addGoal(P_SOCIAL_LOW,        // ← new
-                    new WorkshopStallDecisionGoal(npc));
+            npc.goalSelector.addGoal(P_SOCIAL_LOW, new WorkshopStallDecisionGoal(npc));
         });
 
         REGISTRARS.put(Profession.CARPENTER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new CarpenterGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new SellToMarketGoal(npc, npc.getSellableItems(Profession.CARPENTER)));
-            npc.goalSelector.addGoal(P_SOCIAL_LOW,        // ← new
-                    new WorkshopStallDecisionGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new PostListingGoal(npc, npc.getSellableItems(Profession.CARPENTER)));
-        });
-        REGISTRARS.put(Profession.MILLER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new MillerGoal(npc));
-
+            npc.goalSelector.addGoal(P_SOCIAL_LOW, new WorkshopStallDecisionGoal(npc));
         });
 
-        REGISTRARS.put(Profession.BAKER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BakerGoal(npc));
-        });
-
-        REGISTRARS.put(Profession.STONEMASON, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new StonemasonGoal(npc));
-        });
-
-        REGISTRARS.put(Profession.WEAVER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new WeaverGoal(npc));
-        });
-
-        REGISTRARS.put(Profession.CANDLEMAKER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new CandlemakerGoal(npc));
-        });
-
-// Update BLACKSMITH to use the migrated goal:
-        REGISTRARS.put(Profession.BLACKSMITH, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BlacksmithGoal(npc));
-        });
+        REGISTRARS.put(Profession.MILLER, npc -> {});
+        REGISTRARS.put(Profession.BAKER, npc -> {});
+        REGISTRARS.put(Profession.STONEMASON, npc -> {});
+        REGISTRARS.put(Profession.WEAVER, npc -> {});
+        REGISTRARS.put(Profession.CANDLEMAKER, npc -> {});
 
         REGISTRARS.put(Profession.MINER, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY, new MinerGoal(npc));
@@ -346,9 +306,8 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.SCRIBE, npc -> {
             npc.goalSelector.addGoal(P_WORK_PRIMARY,
                     new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScribeWorkGoal(npc));
-            // Phase 2 task 18: postal round during SOCIAL phase.
-            npc.goalSelector.addGoal(P_SOCIAL_LOW,
-                    new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.PostalGoal(npc));
+            // Phase 6.2.b: PostalGoal migrated to PostalBehavior — wired
+            // via ProfessionBrainFactory.SCRIBE registrar (SOCIAL @7).
         });
         REGISTRARS.put(Profession.LIBRARIAN, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
                 new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.LibrarianWorkGoal(npc)));

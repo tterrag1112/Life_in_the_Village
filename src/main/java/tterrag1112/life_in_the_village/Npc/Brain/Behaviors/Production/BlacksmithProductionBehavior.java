@@ -1,4 +1,4 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -7,8 +7,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.AnvilBlock;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.AbstractWorkstationProductionGoal;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -35,14 +33,14 @@ import java.util.*;
  * blacksmith building and consumed there for crafting. Finished goods are
  * deposited to the blacksmith building and sold at market.
  */
-public class BlacksmithGoal extends AbstractWorkstationProductionGoal {
+public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
     /** Set in chooseRecipe; read by buildSteps, resolveInputSource, fuelPerBatch. */
     private boolean isSmeltRecipe = false;
 
-    public BlacksmithGoal(TownspersonMob entity) { super(entity); }
+    
 
     // =========================================================================
     // Abstract implementations

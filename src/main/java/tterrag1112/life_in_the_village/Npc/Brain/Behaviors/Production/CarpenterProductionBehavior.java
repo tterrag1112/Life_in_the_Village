@@ -1,4 +1,4 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Carpenter;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -7,8 +7,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.CraftingTableBlock;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.AbstractWorkstationProductionGoal;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -19,13 +17,13 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecip
 import java.util.*;
 
 /**
- * NPC carpenter. Extends {@link AbstractWorkstationProductionGoal}.
+ * NPC carpenter. Migrated to AbstractProductionBehavior (Phase 6.2.d.1).
  *
  * Single station (crafting table), single-ingredient recipes, no fuel.
  * The default {@code buildSteps} via {@code findWorkstation} handles everything —
  * no step override needed.
  */
-public class CarpenterGoal extends AbstractWorkstationProductionGoal {
+public class CarpenterProductionBehavior extends AbstractProductionBehavior {
 
     private static final int CRAFT_TICKS = 60;
     private static final int MAX_BATCH   = 8;
@@ -47,7 +45,7 @@ public class CarpenterGoal extends AbstractWorkstationProductionGoal {
         ALL_OUTPUTS = Collections.unmodifiableSet(out);
     }
 
-    public CarpenterGoal(TownspersonMob entity) { super(entity); }
+    
 
     // =========================================================================
     // Abstract implementations

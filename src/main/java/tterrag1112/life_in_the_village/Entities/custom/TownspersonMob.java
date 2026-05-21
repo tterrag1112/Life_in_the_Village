@@ -1406,6 +1406,24 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .LAST_SHOPPING_TICK.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .COURTING_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .POSTAL_RUN_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .GREET_TARGET.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .SEEK_HOUSE_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .ELDERLY_RELAX_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .MENTOR_SESSION_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .WORK_PHASE.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .CARGO_DESTINATION.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .LAST_SELL_TICK.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_GESTURE_COOLDOWN.get(),
@@ -1476,13 +1494,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.CORE, 0, coreBehaviors);
 
-        // IDLE — priorities (Phase 6.1.c ordering):
-        // 0=Shelter, 1=IdleGesture, 2=MoodReact, 3=Greeting, 4=Sit,
-        // 5=InternalWander, 6=Escort, 7=PersonalSpace.
-        // Shelter is urgent (rain), the reactive PersonalSpace nudge is
-        // last so deliberate behaviors win contention.
+        // IDLE — Phase 6.2.c ordering (SeekHouse high — homelessness urgent;
+        // ElderlyRelax late — ambient flavor only).
+        // 0=GreetPlayer, 1=SeekHouse, 2=Shelter, 3=IdleGesture, 4=MoodReact,
+        // 5=Greeting, 6=Sit, 7=InternalWander, 8=Escort, 9=ElderlyRelax,
+        // 10=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> idleBehaviors =
                 ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetPlayerBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SeekHouseBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1498,17 +1520,24 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .FollowEscortLeaderBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .ElderlyRelaxBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior()
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // SOCIAL — Phase 6.2.a ordering (EatMeal high, Hobby/BuyGoods mid):
-        // 0=Shelter, 1=EatMeal, 2=Engage, 3=Initiate, 4=Hobby, 5=BuyGoods,
-        // 6=Greeting, 7=Sit, 8=Escort, 9=PersonalSpace.
+        // SOCIAL — Phase 6.2.c ordering (SeekHouse @ 2, Mentor before Greeting):
+        // 0=GreetPlayer, 1=Shelter, 2=SeekHouse, 3=EatMeal, 4=Engage,
+        // 5=Initiate, 6=Hobby, 7=BuyGoods, 8=Courting, 9=Mentor,
+        // 10=Greeting, 11=Sit, 12=Escort, 13=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetPlayerBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SeekHouseBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .EatMealBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1519,6 +1548,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .HobbyBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .BuyGoodsBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .CourtingBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .MentorBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetingAcknowledgmentBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1531,13 +1564,27 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .SOCIAL.get(), 0, socialBehaviors);
 
-        // Forward activities for future phases — register empty so the
-        // schedule can switch into them without NPEs. Phase 6.1.b+ fills them.
-        ImmutableList<BehaviorControl<? super TownspersonMob>> empty = ImmutableList.of();
+        // REST — Phase 6.2.c populated. 0=ReturnHome (find bed, sleep).
+        ImmutableList<BehaviorControl<? super TownspersonMob>> restBehaviors =
+                ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .ReturnHomeBehavior()
+                );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
-                .WORK.get(), 0, empty);
+                .REST.get(), 0, restBehaviors);
+
+        // WORK — Phase 6.2.d.1: SellToMarketBehavior (universal, memory-gated)
+        // consumes CARGO_DESTINATION from workshop ProductionBehaviors that
+        // are layered in via ProfessionBrainFactory. Non-workshop NPCs leave
+        // CARGO_DESTINATION absent, so this behavior is dormant for them
+        // (their SellToMarketGoal still drives Goal-side selling).
+        ImmutableList<BehaviorControl<? super TownspersonMob>> workBehaviors =
+                ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Production.SellToMarketBehavior()
+                );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
-                .REST.get(), 0, empty);
+                .WORK.get(), 1, workBehaviors);
 
         brain.setCoreActivities(java.util.Set.of(Activity.CORE));
         brain.setDefaultActivity(Activity.IDLE);
