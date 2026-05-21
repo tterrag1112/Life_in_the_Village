@@ -194,9 +194,15 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             lastRoleAssignTick = now;
         }
 
-        // Gather crop plots assigned to this farmhouse
+        // Gather crop plots assigned to this farmhouse.
+        // Phase 6.3.3.h.1 — tick fallow recovery for every plot before
+        // filtering. Fallow plots are excluded from the planting/harvest
+        // candidate set; recovery is per-plot so it advances even when
+        // the plot isn't actively worked.
         List<FarmPlot> allPlots = data.getFarmPlotsForFarmhouse(farmhouse.getId()).stream()
                 .filter(p -> p.getSubtype() == FarmPlot.PlotSubtype.CROP_FIELD)
+                .peek(p -> p.tickFallowRecovery(level.getGameTime()))
+                .filter(p -> !p.isFallow())
                 .collect(Collectors.toList());
 
         if (allPlots.isEmpty()) { goIdle(); return; }
@@ -375,11 +381,16 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         List<ItemStack> drops = Block.getDrops(state, level, cropPos, null);
         float seasonMult = SeasonTracker.getYieldMultiplier(level);
+        // Phase 6.3.3.h.1 — soil quality factor composited into the
+        // existing seasonMult formula. soilQuality ranges 0.1–1.5.
+        FarmPlot harvestedPlot = findPlotContaining(level, cropPos);
+        float soilMult = harvestedPlot != null ? harvestedPlot.getSoilQuality() : 1.0f;
+        float yieldMult = seasonMult * soilMult;
 
         for (ItemStack drop : drops) {
             int scaledCount = 0;
             for (int i = 0; i < drop.getCount(); i++) {
-                if (entity.getRandom().nextFloat() < seasonMult) scaledCount++;
+                if (entity.getRandom().nextFloat() < yieldMult) scaledCount++;
             }
             scaledCount = Math.max(1, scaledCount);
 
@@ -527,6 +538,12 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
                     entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
                     1, level.getGameTime());
+            // Phase 6.3.3.h.1 — record the planting; soilQuality
+            // decrements (with same-family penalty per CropFamily.of),
+            // cropHistory trims to MAX_HISTORY, plot may auto-enter
+            // fallow if quality fell past SOIL_FALLOW_ENTER.
+            plot.onPlanted(plot.getCropType(), level.getGameTime());
+            VillageSavedData.get(level).setDirty();
         }
 
         toReplant.remove(0);

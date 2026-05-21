@@ -212,15 +212,33 @@ public class FarmPlot {
                     BlockPos.CODEC.listOf()
                             .optionalFieldOf("polygonVertices", List.of())
                             .forGetter(p -> p.polygon == null ? List.of()
-                                    : p.polygon.vertices())
+                                    : p.polygon.vertices()),
+                    // Phase 6.3.3.h.1 — soil quality / fallow state. All
+                    // optional with sensible defaults so legacy saves load
+                    // cleanly (pristine soil, empty history, no fallow).
+                    Codec.FLOAT.optionalFieldOf("soilQuality", 1.0f)
+                            .forGetter(FarmPlot::getSoilQuality),
+                    Codec.STRING.listOf().optionalFieldOf("cropHistory", List.of())
+                            .forGetter(FarmPlot::getCropHistory),
+                    Codec.LONG.optionalFieldOf("fallowSinceTick", 0L)
+                            .forGetter(FarmPlot::getFallowSinceTick),
+                    Codec.LONG.optionalFieldOf("lastCompostedTick", 0L)
+                            .forGetter(FarmPlot::getLastCompostedTick)
             ).apply(instance, (id, name, origin, radius, cropType, farmhouseId,
-                              subtype, sectorId, polygonVertices) -> {
+                              subtype, sectorId, polygonVertices,
+                              soilQuality, cropHistory, fallowSinceTick, lastCompostedTick) -> {
                 FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
                 sectorId.ifPresent(plot::setSectorId);
                 if (polygonVertices != null && polygonVertices.size() >= 3) {
                     plot.setPolygon(new Polygon(polygonVertices));
                 }
+                plot.soilQuality = soilQuality;
+                if (cropHistory != null && !cropHistory.isEmpty()) {
+                    plot.cropHistory.addAll(cropHistory);
+                }
+                plot.fallowSinceTick = fallowSinceTick;
+                plot.lastCompostedTick = lastCompostedTick;
                 return plot;
             })
     );
@@ -242,6 +260,30 @@ public class FarmPlot {
     /** B2.5 — terrain-following polygon. Null falls back to the
      *  legacy circle-via-origin/radius used by {@link #contains}. */
     private       Polygon   polygon;
+
+    // ── Phase 6.3.3.h.1 — soil quality + fallow state ─────────────────
+    /** 0.1 floor → 1.5 ceiling. Default 1.0 (pristine). Drives the
+     *  yield multiplier in {@code FarmerBehavior.harvest()}. */
+    private float soilQuality = 1.0f;
+    /** Capped at {@link #MAX_HISTORY} (last 4 plantings). Stores
+     *  {@link CropType#name()} strings for codec stability across
+     *  enum additions/removals. */
+    private final java.util.List<String> cropHistory = new java.util.ArrayList<>();
+    /** Game tick when the plot entered fallow. 0 means not fallow. */
+    private long fallowSinceTick;
+    /** Game tick of the most recent composting. 0 means never. */
+    private long lastCompostedTick;
+
+    public static final int   MAX_HISTORY            = 4;
+    public static final float SOIL_FLOOR             = 0.1f;
+    public static final float SOIL_CEILING           = 1.5f;
+    public static final float SOIL_FALLOW_ENTER      = 0.3f;
+    public static final float SOIL_FALLOW_EXIT       = 0.7f;
+    public static final float SOIL_DEC_PLANT         = 0.02f;
+    public static final float SOIL_DEC_SAME_FAMILY   = 0.05f;
+    public static final float SOIL_RECOVER_PER_DAY   = 0.01f;
+    public static final float SOIL_COMPOST_BOOST     = 0.15f;
+    public static final long  DAY_TICKS              = 24000L;
 
 
     public FarmPlot(UUID id, String name, BlockPos origin,
@@ -367,4 +409,72 @@ public class FarmPlot {
 
     public Polygon getPolygon() { return polygon; }
     public void setPolygon(Polygon polygon) { this.polygon = polygon; }
+
+    // ── Phase 6.3.3.h.1 — soil / rotation / fallow API ────────────────
+
+    public float getSoilQuality()             { return soilQuality; }
+    public java.util.List<String> getCropHistory() {
+        return java.util.Collections.unmodifiableList(cropHistory);
+    }
+    public long  getFallowSinceTick()         { return fallowSinceTick; }
+    public long  getLastCompostedTick()       { return lastCompostedTick; }
+    public boolean isFallow()                 { return fallowSinceTick > 0L; }
+
+    public void setSoilQuality(float v) {
+        this.soilQuality = Math.max(SOIL_FLOOR, Math.min(SOIL_CEILING, v));
+    }
+
+    /** Records a planting against this plot. Decrements soil quality
+     *  (bigger hit on same-family repeat), trims cropHistory to
+     *  {@link #MAX_HISTORY}, and may auto-enter fallow when quality
+     *  falls below {@link #SOIL_FALLOW_ENTER}. */
+    public void onPlanted(CropType justPlanted, long now) {
+        boolean sameFamily = !cropHistory.isEmpty()
+                && CropFamily.of(CropType.valueOf(cropHistory.get(cropHistory.size() - 1)))
+                       == CropFamily.of(justPlanted);
+        setSoilQuality(soilQuality - (sameFamily ? SOIL_DEC_SAME_FAMILY : SOIL_DEC_PLANT));
+        cropHistory.add(justPlanted.name());
+        while (cropHistory.size() > MAX_HISTORY) cropHistory.remove(0);
+        if (soilQuality <= SOIL_FALLOW_ENTER && fallowSinceTick == 0L) {
+            fallowSinceTick = now;
+        }
+    }
+
+    /** Per-day recovery while fallow; auto-exits fallow once quality
+     *  recovers above {@link #SOIL_FALLOW_EXIT}. */
+    public void tickFallowRecovery(long now) {
+        if (fallowSinceTick == 0L) return;
+        long daysFallow = (now - fallowSinceTick) / DAY_TICKS;
+        if (daysFallow <= 0L) return;
+        setSoilQuality(soilQuality + SOIL_RECOVER_PER_DAY * (float) daysFallow);
+        fallowSinceTick = now;
+        if (soilQuality >= SOIL_FALLOW_EXIT) fallowSinceTick = 0L;
+    }
+
+    /** Records a composting event; boosts soil quality and stamps the
+     *  cooldown clock. */
+    public void onComposted(long now) {
+        setSoilQuality(soilQuality + SOIL_COMPOST_BOOST);
+        lastCompostedTick = now;
+        if (soilQuality >= SOIL_FALLOW_EXIT) fallowSinceTick = 0L;
+    }
+
+    /**
+     * CropFamily classification (Phase 6.3.3.h.2). Same-family
+     * consecutive planting triggers the larger soil hit; rotation
+     * across families preserves quality.
+     */
+    public enum CropFamily {
+        GRAINS, ROOTS, ORCHARD, PASTURE_GRASS;
+
+        public static CropFamily of(CropType t) {
+            return switch (t) {
+                case WHEAT, GRAIN, MIXED          -> GRAINS;
+                case CARROTS, POTATOES, BEETROOT,
+                     VEGETABLE                    -> ROOTS;
+                case ORCHARD                      -> ORCHARD;
+                case PASTURE                      -> PASTURE_GRASS;
+            };
+        }
+    }
 }
