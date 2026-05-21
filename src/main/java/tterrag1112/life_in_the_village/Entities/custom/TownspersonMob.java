@@ -270,6 +270,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final tterrag1112.life_in_the_village.Npc.Visitor.VisitorState visitorState =
             new tterrag1112.life_in_the_village.Npc.Visitor.VisitorState();
 
+    /**
+     * Phase 6.3.2.a — unified Role axis. Backs Caravan / Apprenticeship /
+     * Adventurer-group / Greeter projections plus the promoted
+     * ProfessionRoleManager (FarmRole / WorkshopRole) storage.
+     */
+    private final tterrag1112.life_in_the_village.Npc.Roles.NpcRoleComponent roles =
+            new tterrag1112.life_in_the_village.Npc.Roles.NpcRoleComponent();
+
     // =========================================================================
     // IDENTITY — age, gender, life stage
     // =========================================================================
@@ -298,7 +306,6 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private boolean workingBlocked = false;
     private tterrag1112.life_in_the_village.Entities.ActivityState activityState =
             tterrag1112.life_in_the_village.Entities.ActivityState.IDLE;
-    private UUID currentExpeditionId = null;
 
     // =========================================================================
     // EVENTS — festival/event overrides
@@ -805,6 +812,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
     /** Track D3.2a — kingdom-tier nobility overlay accessor. */
     public NobilityComponent getNobility() { return nobility; }
+
+    /** Phase 6.3.2.a — unified Role axis component. */
+    public tterrag1112.life_in_the_village.Npc.Roles.NpcRoleComponent getRoles() { return roles; }
 
     public FamilyRole getFamilyRole()          { return family.getRole(); }
     public void setFamilyRole(FamilyRole role) {
@@ -1381,6 +1391,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                     .tick(this, level.getDayTime());
         }
         brain.tick(level, this);
+        // Phase 6.3.2.a — expire TIMED role assignments.
+        roles.tickRoles(level.getGameTime());
         super.customServerAiStep(level);
         tickAging(level);
         tickHouseCheck(level);
@@ -1855,9 +1867,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         getCaravanId().ifPresent(id -> output.store("caravanId", UUIDUtil.CODEC, id));
         if (companyId != null) output.putString("companyId", companyId.toString());
         if (combatRole != null) output.putString("combatRole", combatRole.name());
-        if (currentExpeditionId != null) {
-            output.putString("currentExpeditionId", currentExpeditionId.toString());
-        }
+        // currentExpeditionId removed in 6.3.2.a — caravan participation now lives
+        // in NpcRoleComponent (lit:caravan_*). Roster in CaravanSavedData is the
+        // sole source of truth; the role component is the local query surface.
 
         // ── Identity ─────────────────────────────────────────────────────────
         output.putString("npcName", appearance.getName());
@@ -1965,6 +1977,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Visitor metadata (Phase 4 task 29) ──────────────────────────────
         visitorState.save(output);
 
+        // ── Roles (Phase 6.3.2.a) ───────────────────────────────────────────
+        roles.save(output);
+
         // ── P0a-13: repaint job ─────────────────────────────────────────────
         if (repaintJob != null) {
             output.putString("repaint.buildingId",
@@ -2026,7 +2041,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             catch (IllegalArgumentException ignored) {}
         });
 
-        input.read("currentExpeditionID", UUIDUtil.CODEC).ifPresent(this::setCurrentExpeditionId);
+        // currentExpeditionId load dropped in 6.3.2.a — role-component migration
+        // is the canonical surface; legacy NBT silently ignored.
 
         // ── Identity ─────────────────────────────────────────────────────────
         input.read("npcName", Codec.STRING).ifPresent(s -> {
@@ -2161,6 +2177,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // saved (e.g. brand-new NPC pre-applyVillageCulture);
         // initializeFromProfession runs at spawn-time for fresh NPCs.
         skills.load(input);
+
+        // ── Roles (Phase 6.3.2.a) + one-shot migration of professionRole ────
+        roles.load(input);
+        tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager
+                .migrateLegacyNbt(this);
 
         // ── P0a-13: repaint job ─────────────────────────────────────────────
         var repaintBuilding = input.read("repaint.buildingId", Codec.STRING);
@@ -2348,12 +2369,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         mob -> mob.getUUID().equals(id))
                 .stream().findFirst();
     }
-    public UUID getCurrentExpeditionId() { return currentExpeditionId; }
-
-    public void setCurrentExpeditionId(UUID id) {
-        this.currentExpeditionId = id;
+    /**
+     * Phase 6.3.2.a — "away on caravan" check now flows through the
+     * unified role component. Returns true while the NPC holds any
+     * caravan participant role (principal / escort / carrier).
+     */
+    public boolean isAway() {
+        return tterrag1112.life_in_the_village.Npc.Roles.NpcRoles.isOnCaravan(this);
     }
-
-    public boolean isAway() { return currentExpeditionId != null; }
 
 }

@@ -4,6 +4,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes;
+import tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment;
+import tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole;
 import tterrag1112.life_in_the_village.Village.Building;
 
 import javax.annotation.Nullable;
@@ -13,149 +16,131 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Central manager for all profession role assignments.
+ * Phase 6.3.2.a — promoted onto {@code NpcRoleComponent}.
  *
- * <h3>Storage</h3>
- * Roles are stored in a single PersistentData key {@code "professionRole"}
- * as {@code "TYPE:VALUE"} — e.g. {@code "FarmRole:HARVESTER"} or
- * {@code "WorkshopRole:PRODUCER"}. This means any NPC has exactly one
- * role key regardless of how many role types exist.
+ * <p>External API unchanged ({@link #setRole}/{@link #getRole}/{@link #clearRole}
+ * and the convenience checks) so existing call sites (FarmRoleAssigner,
+ * WorkshopRoleAssigner, behavior consumers) continue to compile. Internal
+ * storage now lives on the unified Role axis as a single
+ * {@link NpcRoleTypes#PROFESSIONAL} role whose {@code "role"} parameter
+ * carries the legacy {@code "Prefix:NAME"} string.
  *
- * <h3>Registry</h3>
- * Each role enum registers a parser via {@link #register} from a
- * {@code static} block in the enum class. This is called automatically
- * when the enum's class is first loaded, which happens as soon as any
- * goal or manager references the enum.
- *
- * <h3>Worker finding</h3>
- * {@link #findWorkersForBuilding} is the canonical way to locate all
- * NPCs assigned to a given building within a search radius. Both
- * {@code FarmRoleAssigner} and {@code WorkshopRoleAssigner} use it.
+ * <h3>Legacy migration</h3>
+ * <p>The old PersistentData key {@code "professionRole"} is read once on
+ * entity load via {@link #migrateLegacyNbt}; on the first hit the value
+ * is translated into a role-component assignment and the legacy key is
+ * cleared.
  */
 public final class ProfessionRoleManager {
 
     private ProfessionRoleManager() {}
 
-    // ── NBT key ───────────────────────────────────────────────────────────────
-    private static final String NBT_KEY        = "professionRole";
+    private static final String LEGACY_NBT_KEY = "professionRole";
     private static final int    SEARCH_RADIUS  = 128;
 
-    // ── Parser registry ───────────────────────────────────────────────────────
-    // Maps type prefix (e.g. "FarmRole") → parser function (e.g. FarmRole::valueOf)
-    private static final Map<String, Function<String, tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole>> PARSERS =
-            new HashMap<>();
+    /** Parser registry: type prefix (e.g. "FarmRole") → enum-valueOf reference. */
+    private static final Map<String, Function<String, ProfessionRole>> PARSERS = new HashMap<>();
 
-    /**
-     * Registers a role enum's parser. Call from a {@code static} block
-     * in the role enum class.
-     *
-     * @param typePrefix  simple class name used as the storage prefix
-     * @param parser      {@code EnumType::valueOf} reference
-     */
-    public static void register(String typePrefix,
-                                Function<String, tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole> parser) {
+    public static void register(String typePrefix, Function<String, ProfessionRole> parser) {
         PARSERS.put(typePrefix, parser);
     }
 
     // =========================================================================
-    // Get / set
+    // Get / set (Role-component-backed)
     // =========================================================================
 
-    /**
-     * Stores a role in the NPC's PersistentData.
-     * Format: {@code "TypePrefix:ROLE_NAME"}
-     */
-    public static void setRole(TownspersonMob npc, tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role) {
-        String prefix = role.getClass().getSimpleName();
-        npc.getPersistentData().putString(NBT_KEY,
-                prefix + ":" + role.name());
+    public static void setRole(TownspersonMob npc, ProfessionRole role) {
+        String encoded = role.getClass().getSimpleName() + ":" + role.name();
+        npc.getRoles().assignRole(RoleAssignment.conditional(
+                NpcRoleTypes.PROFESSIONAL,
+                Map.of(NpcRoleTypes.P_ROLE_NAME, encoded)));
     }
 
-    /**
-     * Reads the NPC's current role regardless of type.
-     * Returns {@code null} if no role is set or the type is unrecognised.
-     */
     @Nullable
-    public static tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole getRole(TownspersonMob npc) {
-        String stored = npc.getPersistentData()
-                .getString(NBT_KEY).orElse("");
-        if (stored.isEmpty()) return null;
-
-        int sep = stored.indexOf(':');
-        if (sep < 0) return null;
-
-        String prefix = stored.substring(0, sep);
-        String value  = stored.substring(sep + 1);
-
-        Function<String, tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole> parser = PARSERS.get(prefix);
-        if (parser == null) return null;
-
-        try {
-            return parser.apply(value);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+    public static ProfessionRole getRole(TownspersonMob npc) {
+        String encoded = npc.getRoles().getRole(NpcRoleTypes.PROFESSIONAL)
+                .flatMap(a -> a.param(NpcRoleTypes.P_ROLE_NAME))
+                .orElse("");
+        return decode(encoded);
     }
 
-    /**
-     * Reads the NPC's role and casts it to the expected type.
-     * Returns {@code null} if the role is absent or belongs to a
-     * different role type (e.g. asking for WorkshopRole but they have FarmRole).
-     */
     @Nullable
-    public static <T extends tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole> T getRole(TownspersonMob npc,
-                                                                                                        Class<T> type) {
-        tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role = getRole(npc);
+    public static <T extends ProfessionRole> T getRole(TownspersonMob npc, Class<T> type) {
+        ProfessionRole role = getRole(npc);
         if (type.isInstance(role)) return type.cast(role);
         return null;
     }
 
-    /**
-     * Clears the role — NPC will be treated as a generalist by all goals
-     * until {@link #setRole} is called again.
-     */
     public static void clearRole(TownspersonMob npc) {
-        npc.getPersistentData().remove(NBT_KEY);
+        npc.getRoles().removeRole(NpcRoleTypes.PROFESSIONAL);
     }
 
     // =========================================================================
-    // Convenience checks — work on any ProfessionRole
+    // Convenience checks
     // =========================================================================
 
     public static boolean isGeneralist(TownspersonMob npc) {
-        tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role = getRole(npc);
+        ProfessionRole role = getRole(npc);
         return role == null || role.isGeneralist();
     }
 
     public static boolean isMarketSeller(TownspersonMob npc) {
-        tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role = getRole(npc);
+        ProfessionRole role = getRole(npc);
         return role != null && role.isMarketSeller();
     }
 
     public static boolean splitsTime(TownspersonMob npc) {
-        tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role = getRole(npc);
+        ProfessionRole role = getRole(npc);
         return role == null || role.splitsTime();
     }
 
-    /**
-     * Returns true if the NPC is in an apprentice role for any profession type.
-     * Works across {@code WorkshopRole}, {@code FarmRole}, and any future role
-     * enum that implements {@link tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole#isApprentice()}.
-     */
     public static boolean isApprentice(TownspersonMob npc) {
-        tterrag1112.life_in_the_village.Profession.Roles.ProfessionRole role = getRole(npc);
+        ProfessionRole role = getRole(npc);
         return role != null && role.isApprentice();
     }
 
     // =========================================================================
-    // Worker finding — shared by all role assigners
+    // Legacy migration
     // =========================================================================
 
     /**
-     * Returns all living TownspersonMob entities whose assigned building
-     * matches the given building ID, within {@value SEARCH_RADIUS} blocks
-     * of the building's origin.
+     * Phase 6.3.2.a — one-shot read of the legacy {@code "professionRole"}
+     * PersistentData entry, called from {@code TownspersonMob.load} after
+     * the role component has loaded its own data. If both exist the
+     * role-component value wins (already loaded); the legacy key is
+     * cleared regardless.
      */
+    public static void migrateLegacyNbt(TownspersonMob npc) {
+        String stored = npc.getPersistentData().getString(LEGACY_NBT_KEY).orElse("");
+        if (stored.isEmpty()) return;
+        if (!npc.getRoles().hasRole(NpcRoleTypes.PROFESSIONAL)) {
+            ProfessionRole role = decode(stored);
+            if (role != null) {
+                npc.getRoles().assignRole(RoleAssignment.conditional(
+                        NpcRoleTypes.PROFESSIONAL,
+                        Map.of(NpcRoleTypes.P_ROLE_NAME, stored)));
+            }
+        }
+        npc.getPersistentData().remove(LEGACY_NBT_KEY);
+    }
+
+    @Nullable
+    private static ProfessionRole decode(String encoded) {
+        if (encoded == null || encoded.isEmpty()) return null;
+        int sep = encoded.indexOf(':');
+        if (sep < 0) return null;
+        String prefix = encoded.substring(0, sep);
+        String value  = encoded.substring(sep + 1);
+        Function<String, ProfessionRole> parser = PARSERS.get(prefix);
+        if (parser == null) return null;
+        try { return parser.apply(value); }
+        catch (IllegalArgumentException e) { return null; }
+    }
+
+    // =========================================================================
+    // Worker finding — shared by all role assigners (unchanged)
+    // =========================================================================
+
     public static List<TownspersonMob> findWorkersForBuilding(
             ServerLevel level, Building building) {
         BlockPos origin = building.getShape().getOrigin();

@@ -74,6 +74,9 @@ public final class ApprenticeshipManager {
         apprentice.assignToBuilding(buildingId,
                 master.getAssignedVillageName().orElse(""));
 
+        // Phase 6.3.2.a — role projections on both sides.
+        assignApprenticeshipRoles(master, apprentice, contract);
+
         LOGGER.info("[Apprenticeship] {} → apprentice of {} ({}). contract={}",
                 apprentice.getNpcName(), master.getNpcName(),
                 master.getProfession().name(), contract.contractId());
@@ -266,6 +269,8 @@ public final class ApprenticeshipManager {
                     now, 95,
                     "Graduated under " + master.getNpcName() + " (" + rank.name() + ")"));
         }
+        // Phase 6.3.2.a — clear role projections on both sides.
+        clearApprenticeshipRoles(master, apprentice);
         LOGGER.info("[Apprenticeship] graduated: {} as {} (contract {})",
                 apprentice == null ? "?" : apprentice.getNpcName(),
                 rank.name(), c.contractId());
@@ -279,6 +284,8 @@ public final class ApprenticeshipManager {
     public static void apprenticeAbandons(ServerLevel level, ApprenticeshipContract c) {
         ApprenticeshipSavedData reg = ApprenticeshipSavedData.get(level);
         reg.update(c.withStatus(ContractStatus.ABANDONED));
+        // Phase 6.3.2.a — clear role projections (resolve UUIDs to entities if loaded).
+        clearApprenticeshipRolesByUuid(level, c.masterId(), c.apprenticeId());
         fileContractBreach(level, c);
     }
 
@@ -312,6 +319,8 @@ public final class ApprenticeshipManager {
             apprentice.getNpcRelationships().adjust(c.masterId(),
                     DISMISSAL_RELATIONSHIP_HIT, now, RelationshipOrigin.MET_IN_CONFLICT);
         }
+        // Phase 6.3.2.a — clear role projections.
+        clearApprenticeshipRolesByUuid(level, c.masterId(), c.apprenticeId());
     }
 
     /** Master died — spec line 203. */
@@ -319,7 +328,56 @@ public final class ApprenticeshipManager {
         ApprenticeshipSavedData reg = ApprenticeshipSavedData.get(level);
         for (ApprenticeshipContract c : reg.getActiveByMaster(masterId)) {
             reg.update(c.withStatus(ContractStatus.BROKEN));
+            // Phase 6.3.2.a — clear role projections (master entity already gone;
+            // only the apprentice side will be cleared if loaded).
+            clearApprenticeshipRolesByUuid(level, c.masterId(), c.apprenticeId());
         }
+    }
+
+    // =========================================================================
+    // Phase 6.3.2.a — role projection helpers
+    // =========================================================================
+
+    private static void assignApprenticeshipRoles(TownspersonMob master,
+                                                  TownspersonMob apprentice,
+                                                  ApprenticeshipContract contract) {
+        if (master != null) {
+            master.getRoles().assignRole(
+                    tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.conditional(
+                            tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.MASTER_OF,
+                            java.util.Map.of(
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_APPRENTICE_UUID,
+                                    apprentice.getUUID().toString(),
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_CONTRACT_ID,
+                                    contract.contractId().toString(),
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_PROFESSION,
+                                    master.getProfession().name())));
+        }
+        if (apprentice != null) {
+            apprentice.getRoles().assignRole(
+                    tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.conditional(
+                            tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.APPRENTICE_TO,
+                            java.util.Map.of(
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_MASTER_UUID,
+                                    master.getUUID().toString(),
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_CONTRACT_ID,
+                                    contract.contractId().toString(),
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_PROFESSION,
+                                    master.getProfession().name())));
+        }
+    }
+
+    private static void clearApprenticeshipRoles(TownspersonMob master, TownspersonMob apprentice) {
+        if (master != null) master.getRoles().removeRole(
+                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.MASTER_OF);
+        if (apprentice != null) apprentice.getRoles().removeRole(
+                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.APPRENTICE_TO);
+    }
+
+    private static void clearApprenticeshipRolesByUuid(ServerLevel level, UUID masterId, UUID apprenticeId) {
+        clearApprenticeshipRoles(
+                TownspersonMob.findByUUID(level, masterId).orElse(null),
+                TownspersonMob.findByUUID(level, apprenticeId).orElse(null));
     }
 
     // =========================================================================

@@ -301,6 +301,17 @@ public class AdventurerSavedData extends SavedData {
         // ── Group membership ──────────────────────────────────────────
         npc.setGroupId(group.getGroupId());
         npc.setIsGroupLeader(memberIndex == 0);
+        // Phase 6.3.2.a — role projection (parallel to entityData for the
+        // deferred Goal-side ADVENTURER cluster that still reads getGroupId/
+        // isGroupLeader directly).
+        npc.getRoles().assignRole(
+                tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.conditional(
+                        tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.PARTY_MEMBER,
+                        java.util.Map.of(
+                                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_GROUP_ID,
+                                group.getGroupId().toString(),
+                                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_IS_LEADER,
+                                Boolean.toString(memberIndex == 0))));
 
         // ── Profession ────────────────────────────────────────────────
         npc.setProfession(Profession.ADVENTURER);
@@ -697,6 +708,9 @@ public class AdventurerSavedData extends SavedData {
                                 : npc.getAdventurerTitle() + " ") + "(Retired)");
                 npc.setProfession(Profession.NONE);
                 npc.setGroupId(null);
+                // Phase 6.3.2.a — drop role projection on retirement.
+                npc.getRoles().removeRole(
+                        tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.PARTY_MEMBER);
                 npc.setCurrentActivity("Enjoying retirement");
             }
         }

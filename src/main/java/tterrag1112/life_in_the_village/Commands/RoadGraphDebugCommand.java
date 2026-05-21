@@ -1177,7 +1177,12 @@ public class RoadGraphDebugCommand {
         // can find its caravan when it next ticks (matches CaravanSavedData.dispatchNewCaravans).
         var mob = level.getEntity(principalId);
         if (mob instanceof TownspersonMob m) {
-            m.setCurrentExpeditionId(testCaravan.getCaravanId());
+            m.getRoles().assignRole(
+                    tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.conditional(
+                            tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL,
+                            java.util.Map.of(
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_CARAVAN_ID,
+                                    testCaravan.getCaravanId().toString())));
         }
 
         CaravanSavedData.get(level).addCaravan(testCaravan);

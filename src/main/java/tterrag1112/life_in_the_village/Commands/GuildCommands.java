@@ -1161,7 +1161,12 @@ public class GuildCommands {
                 level.getGameTime());
         var mob = level.getEntity(principalId);
         if (mob instanceof TownspersonMob m) {
-            m.setCurrentExpeditionId(caravan.getCaravanId());
+            m.getRoles().assignRole(
+                    tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.conditional(
+                            tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL,
+                            java.util.Map.of(
+                                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_CARAVAN_ID,
+                                    caravan.getCaravanId().toString())));
         }
 
         caravanData.addCaravan(caravan);

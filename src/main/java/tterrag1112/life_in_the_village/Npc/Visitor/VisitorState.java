@@ -128,6 +128,22 @@ public final class VisitorState {
         this.settledPermanently = true;
     }
 
+    /**
+     * Phase 6.3.2.a — inverse of {@link #settlePermanently()}. Flips the
+     * settled flag back off so the visitor resumes the normal despawn
+     * cadence (itinerary completion + 7-day ceiling). Useful when a
+     * "settled" decision is reversed by leadership policy or a debug
+     * command.
+     *
+     * <p>The visitor's original {@code arrivalTick} and itinerary are
+     * preserved; if the itinerary was already completed, the next
+     * despawn pass will pick the NPC up. Callers that want a fresh
+     * visit window should call {@link #beginVisit} instead.
+     */
+    public void unsettleVisitor() {
+        this.settledPermanently = false;
+    }
+
     /** Used by debug / settlement paths to re-seat a visitor's
      *  planned exit. */
     public void setExpectedDepartureTick(long tick) {

@@ -156,7 +156,8 @@ public class BoatCaravanSavedData extends SavedData {
         if (principalId == null) return;
         var ent = level.getEntity(principalId);
         if (ent instanceof TownspersonMob mob) {
-            mob.setCurrentExpeditionId(null);
+            mob.getRoles().removeRole(
+                    tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL);
         }
     }
 
@@ -236,7 +237,12 @@ public class BoatCaravanSavedData extends SavedData {
 
             var mob = level.getEntity(principalId);
             if (mob instanceof TownspersonMob m) {
-                m.setCurrentExpeditionId(caravan.getCaravanId());
+                m.getRoles().assignRole(
+                        tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.conditional(
+                                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL,
+                                java.util.Map.of(
+                                        tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_CARAVAN_ID,
+                                        caravan.getCaravanId().toString())));
             }
 
             System.out.println("BoatCaravanSavedData: dispatched boat caravan from "

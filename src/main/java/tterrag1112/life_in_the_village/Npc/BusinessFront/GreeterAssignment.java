@@ -87,7 +87,7 @@ public final class GreeterAssignment {
         List<TownspersonMob> eligible = workers.stream()
                 .filter(TownspersonMob::isWorkTime)
                 .filter(TownspersonMob::isAlive)
-                .filter(npc -> npc.getCurrentExpeditionId() == null)
+                .filter(npc -> !tterrag1112.life_in_the_village.Npc.Roles.NpcRoles.isOnCaravan(npc))
                 .toList();
         if (eligible.isEmpty()) return; // no greeter available — silent
 
@@ -112,6 +112,14 @@ public final class GreeterAssignment {
         // ATTEND_TIMEOUT_TICKS (600) plus reasonable approach time.
         greeter.getBrain().setMemoryWithExpiry(
                 NpcMemoryTypes.GREET_TARGET.get(), player, ASSIGNMENT_TTL_TICKS);
+        // Phase 6.3.2.a — role projection, TTL-bound, mirrors the memory.
+        greeter.getRoles().assignRole(
+                tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.timed(
+                        tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.GREETING,
+                        java.util.Map.of(
+                                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_PLAYER_UUID,
+                                player.getUUID().toString()),
+                        now + ASSIGNMENT_TTL_TICKS));
         BusinessFrontTracker.put(BusinessFrontTracker.getOrCreate(building.getId())
                 .withGreeter(greeter.getUUID(), player.getUUID(), now,
                         BusinessFrontStatus.GREETER_APPROACHING));
@@ -123,6 +131,9 @@ public final class GreeterAssignment {
         TownspersonMob greeter = TownspersonMob.findByUUID(level, greeterId).orElse(null);
         if (greeter == null) return;
         greeter.getBrain().eraseMemory(NpcMemoryTypes.GREET_TARGET.get());
+        // Phase 6.3.2.a — clear role projection.
+        greeter.getRoles().removeRole(
+                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.GREETING);
     }
 
     // ── Internals ──────────────────────────────────────────────────────────

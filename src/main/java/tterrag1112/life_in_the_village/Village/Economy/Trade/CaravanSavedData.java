@@ -110,7 +110,7 @@ public class CaravanSavedData extends SavedData {
                 if (principalId != null) {
                     var ent = level.getEntity(principalId);
                     if (ent instanceof TownspersonMob mob) {
-                        mob.setCurrentExpeditionId(null);
+                        clearCaravanRoles(mob);
                     }
                 }
                 if (caravan.isSpawned()) {
@@ -188,7 +188,8 @@ public class CaravanSavedData extends SavedData {
                 level.addFreshEntity(merchant);
             }
             merchant.setCaravanId(caravan.getCaravanId());
-            merchant.setCurrentExpeditionId(caravan.getCaravanId());
+            assignCaravanRole(merchant, caravan, tterrag1112.life_in_the_village
+                    .Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL);
         }
 
         // ── Guards: still spawned fresh in Phase 7c ────────────────────────
@@ -218,6 +219,8 @@ public class CaravanSavedData extends SavedData {
             guard.setNpcName(firstName + " " + surname);
             level.addFreshEntity(guard);
             guard.setCaravanId(caravan.getCaravanId());
+            assignCaravanRole(guard, caravan, tterrag1112.life_in_the_village
+                    .Npc.Roles.NpcRoleTypes.CARAVAN_ESCORT);
             roster.getSpawnedEscortIds().add(guard.getUUID());
         }
 
@@ -381,7 +384,8 @@ public class CaravanSavedData extends SavedData {
             // After Caravan.create:
             var mob = level.getEntity(principalId);
             if (mob instanceof TownspersonMob m) {
-                m.setCurrentExpeditionId(caravan.getCaravanId());
+                assignCaravanRole(m, caravan, tterrag1112.life_in_the_village
+                        .Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL);
             }
 
             caravans.put(caravan.getCaravanId(), caravan);
@@ -541,5 +545,29 @@ public class CaravanSavedData extends SavedData {
             total += edge.getBlockPath().size();
         }
         return total;
+    }
+
+    // =========================================================================
+    // Phase 6.3.2.a — role projection helpers
+    // =========================================================================
+
+    private static void assignCaravanRole(
+            TownspersonMob npc, Caravan caravan,
+            tterrag1112.life_in_the_village.Npc.Roles.RoleType type) {
+        npc.getRoles().assignRole(
+                tterrag1112.life_in_the_village.Npc.Roles.RoleAssignment.conditional(
+                        type,
+                        java.util.Map.of(
+                                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_CARAVAN_ID,
+                                caravan.getCaravanId().toString(),
+                                tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.P_CARAVAN_STATE,
+                                caravan.getState().name())));
+    }
+
+    private static void clearCaravanRoles(TownspersonMob npc) {
+        var r = npc.getRoles();
+        r.removeRole(tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL);
+        r.removeRole(tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.CARAVAN_ESCORT);
+        r.removeRole(tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.CARAVAN_CARRIER);
     }
 }
