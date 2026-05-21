@@ -167,6 +167,13 @@ public class BuildingRoster {
                 if (entity instanceof net.minecraft.world.entity.AgeableMob mob) {
                     if (z.isAdult()) mob.setAge(0); else mob.setAge(-24000);
                 }
+                // Phase 6.3.3.g.1 — flag as persistent so the entity
+                // survives chunk unload / reload cycles without
+                // despawning. Roster slot is the source of truth for
+                // population; entity death triggers slot removal.
+                if (entity instanceof net.minecraft.world.entity.Mob m) {
+                    m.setPersistenceRequired();
+                }
                 level.addFreshEntity(entity);
                 RosterSlot.Realized realized = new RosterSlot.Realized(
                         entity.getUUID(), z.isAdult(), z.birthTick());

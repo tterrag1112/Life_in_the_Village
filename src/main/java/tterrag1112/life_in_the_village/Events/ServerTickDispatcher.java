@@ -79,5 +79,28 @@ public class ServerTickDispatcher {
 
         // ── Delegate ─────────────────────────────────────────────────────────
         TickSubsystemRegistry.tickAll(ctx);
+
+        // ── Phase 6.3.3.g.1 — animal-husbandry roster driver ─────────────────
+        // Each BuildingRoster's internal tick advances growth + production
+        // + breeding regardless of realized/simulated state, so simply
+        // calling tick on every roster every 200 ticks suffices for v1.
+        // Future optimization: realize/derealize via chunk-load events.
+        if (tick % 200L == 0L) {
+            var rdata = tterrag1112.life_in_the_village.Village.Roster
+                    .RosterSavedData.get(overworld);
+            for (var perBuilding : rdata.getAllRosters().values()) {
+                for (var roster : perBuilding.values()) {
+                    try {
+                        roster.tick(overworld,
+                                tterrag1112.life_in_the_village.Village.Roster
+                                        .BuildingStorageSink.forBuilding(overworld,
+                                                roster.buildingId()));
+                    } catch (RuntimeException e) {
+                        LOGGER.warn("[Roster] tick failed for building {}: {}",
+                                roster.buildingId(), e.toString());
+                    }
+                }
+            }
+        }
     }
 }
