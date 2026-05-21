@@ -156,6 +156,10 @@ public class HealerBehavior extends Behavior<TownspersonMob> {
     @Override
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
+        resetState();
+    }
+
+    private void resetState() {
         // If we never delivered the queued remedy, return it to the stash.
         if (queuedRemedy != null && phase != Phase.TREATING) {
             entity.getHealerInventory().add(queuedRemedy);
@@ -171,7 +175,7 @@ public class HealerBehavior extends Behavior<TownspersonMob> {
     // ── Phase ticks ────────────────────────────────────────────────────────
 
     private void tickWalking(ServerLevel level) {
-        if (patient == null || !patient.isAlive()) { stop(); return; }
+        if (patient == null || !patient.isAlive()) { resetState(); return; }
         double d2 = entity.distanceToSqr(patient);
         if (d2 <= ARRIVAL_SQ) {
             phase = Phase.TREATING;
@@ -219,6 +223,7 @@ public class HealerBehavior extends Behavior<TownspersonMob> {
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private boolean isPlagueOverride() {
+        ServerLevel level = (ServerLevel) entity.level();
         Village v = entity.getAssignedVillageName()
                 .flatMap(n -> VillageSavedData.get(level).getVillageByName(n))
                 .orElse(null);

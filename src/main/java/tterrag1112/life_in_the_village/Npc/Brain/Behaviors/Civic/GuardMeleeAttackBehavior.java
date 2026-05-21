@@ -66,6 +66,6 @@ public class GuardMeleeAttackBehavior extends Behavior<TownspersonMob> {
         entity.doHurtTarget(level, target);
         brain.setMemoryWithExpiry(
                 MemoryModuleType.ATTACK_COOLING_DOWN,
-                net.minecraft.util.Unit.INSTANCE, COOLDOWN_TICKS);
+                Boolean.TRUE, COOLDOWN_TICKS);
     }
 }

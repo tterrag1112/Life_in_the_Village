@@ -145,10 +145,6 @@ public class BuilderBehavior extends Behavior<TownspersonMob> {
             case CONSTRUCTING -> construct(serverLevel);
         }
     }
-    @Override
-    public boolean requiresUpdateEveryTick() {
-        return true;
-    }
 
     // --- Phase handlers ---
 

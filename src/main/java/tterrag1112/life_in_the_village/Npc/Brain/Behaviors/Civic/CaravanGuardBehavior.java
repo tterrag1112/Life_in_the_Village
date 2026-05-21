@@ -186,6 +186,7 @@ public class CaravanGuardBehavior extends Behavior<TownspersonMob> {
 
         UUID caravanId = entity.getCaravanId().orElse(null);
         if (caravanId == null) return null;
+        ServerLevel level = (ServerLevel) entity.level();
 
         return CaravanSavedData.get(level)
                 .getCaravan(caravanId)
@@ -196,6 +197,7 @@ public class CaravanGuardBehavior extends Behavior<TownspersonMob> {
     }
 
     private LivingEntity findNearestThreat() {
+        ServerLevel level = (ServerLevel) entity.level();
 
         List<LivingEntity> nearby = level.getNearbyEntities(
                 LivingEntity.class,

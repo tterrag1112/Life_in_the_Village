@@ -51,12 +51,19 @@ public final class VisitorBehavior extends Behavior<TownspersonMob> {
 
     private enum Phase { WALKING_TO_LOCATION, AT_LOCATION, LEAVING }
 
-        private Phase phase = Phase.WALKING_TO_LOCATION;
+    private TownspersonMob entity;
+    private Phase phase = Phase.WALKING_TO_LOCATION;
     private BlockPos target;
     private int dwellTicks;
     private boolean paidAtCurrentStop;
 
-    
+    public VisitorBehavior() {
+        super(ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), Integer.MAX_VALUE);
+    }
+
+
 
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
@@ -70,7 +77,7 @@ public final class VisitorBehavior extends Behavior<TownspersonMob> {
         @Override
     protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
-        target = nextTarget();
+        target = nextTarget(level);
         phase = (target != null) ? Phase.WALKING_TO_LOCATION : Phase.LEAVING;
         dwellTicks = 0;
         paidAtCurrentStop = false;
@@ -123,7 +130,7 @@ public final class VisitorBehavior extends Behavior<TownspersonMob> {
         dwellTicks++;
         if (dwellTicks >= stop.expectedDurationTicks()) {
             state.advanceItinerary();
-            target = nextTarget();
+            target = nextTarget(level);
             if (target != null) {
                 phase = Phase.WALKING_TO_LOCATION;
                 paidAtCurrentStop = false;
@@ -192,7 +199,7 @@ public final class VisitorBehavior extends Behavior<TownspersonMob> {
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private BlockPos nextTarget() {
+    private BlockPos nextTarget(ServerLevel level) {
         VisitorState state = entity.getVisitorState();
         Optional<VisitorItinerary> stop = state.currentStop();
         if (stop.isEmpty()) return null;

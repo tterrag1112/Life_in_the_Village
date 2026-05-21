@@ -1405,7 +1405,6 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 MemoryModuleType.HURT_BY_ENTITY,
                 MemoryModuleType.ATTACK_TARGET,
                 MemoryModuleType.ATTACK_COOLING_DOWN,
-                MemoryModuleType.NEAREST_HOSTILE,
                 MemoryModuleType.LOOK_TARGET,
                 MemoryModuleType.WALK_TARGET,
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
@@ -1468,7 +1467,6 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 SensorType.NEAREST_PLAYERS,
                 SensorType.NEAREST_BED,
                 SensorType.HURT_BY,
-                SensorType.NEAREST_HOSTILES,
                 tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes
                         .MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Sensors.NpcSensorTypes

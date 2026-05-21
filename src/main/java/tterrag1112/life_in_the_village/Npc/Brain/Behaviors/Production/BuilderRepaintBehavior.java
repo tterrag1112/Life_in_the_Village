@@ -49,7 +49,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.Variants.TintPass;
  */
 public class BuilderRepaintBehavior extends Behavior<TownspersonMob> {
 
-    private static final Logger LOG = LoggerFactory.getLogger(BuilderRepaintGoal.class);
+    private static final Logger LOG = LoggerFactory.getLogger(BuilderRepaintBehavior.class);
 
     /** Doc 15: 1 visit per in-game day. */
     public static final long DAY_LENGTH_TICKS = 24000L;
@@ -136,6 +136,10 @@ public class BuilderRepaintBehavior extends Behavior<TownspersonMob> {
     @Override
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
+        resetState();
+    }
+
+    private void resetState() {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
@@ -145,7 +149,7 @@ public class BuilderRepaintBehavior extends Behavior<TownspersonMob> {
     // ── Phase: WALKING ───────────────────────────────────────────────────
 
     private void tickWalking(ServerLevel level) {
-        if (targetBuilding == null) { stop(); return; }
+        if (targetBuilding == null) { resetState(); return; }
         BlockPos dest = targetBuilding.getShape().getOrigin();
         double distSq = entity.distanceToSqr(
                 dest.getX(), dest.getY(), dest.getZ());

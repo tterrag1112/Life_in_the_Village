@@ -249,23 +249,10 @@ public final class MarketStallPlacer {
         return null;
     }
     public static void assignGoalIfNpc(ServerLevel level, MarketStall stall) {
-        if (stall.getOwnerType() != MarketStall.OwnerType.NPC) return;
-
-        level.getEntitiesOfClass(
-                        tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
-                        new net.minecraft.world.phys.AABB(stall.getStallOrigin()).inflate(128),
-                        mob -> mob.getUUID().equals(stall.getOwnerUUID()))
-                .stream().findFirst().ifPresent(npc -> {
-                    // Remove any existing StallKeeperGoal first
-                    npc.goalSelector.removeAllGoals(g ->
-                            g instanceof tterrag1112.life_in_the_village
-                                    .Entities.Goals.Profession.Merchant.StallKeeperGoal);
-                    npc.goalSelector.addGoal(
-                            tterrag1112.life_in_the_village.Entities.Goals
-                                    .Profession.ProfessionGoalFactory.P_WORK_PRIMARY,
-                            new tterrag1112.life_in_the_village.Entities.Goals
-                                    .Profession.Merchant.StallKeeperGoal(npc, stall));
-                });
+        // Phase 6.2.d.5: StallKeeperGoal was removed in the Goal→Brain migration.
+        // Stall ownership is now read directly off MarketStall state by
+        // MerchantBehavior (WORK @1 on MERCHANT brain); no per-stall goal wiring
+        // is required here. Kept as a stub so existing call sites compile.
     }
     /**
      * Returns the Rotation that makes a stall placed at {@code anchorPos}

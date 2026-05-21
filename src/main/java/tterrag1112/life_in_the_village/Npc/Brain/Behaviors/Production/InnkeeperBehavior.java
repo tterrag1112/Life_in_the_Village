@@ -143,7 +143,8 @@ public class InnkeeperBehavior extends Behavior<TownspersonMob> {
         double distSq = entity.distanceToSqr(target);
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(target, 1.0));
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
             return;
         }
 

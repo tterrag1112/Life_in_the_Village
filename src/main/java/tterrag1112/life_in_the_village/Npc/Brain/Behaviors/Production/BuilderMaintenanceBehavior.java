@@ -137,6 +137,10 @@ public class BuilderMaintenanceBehavior extends Behavior<TownspersonMob> {
     @Override
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
+        resetState();
+    }
+
+    private void resetState() {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
@@ -148,7 +152,7 @@ public class BuilderMaintenanceBehavior extends Behavior<TownspersonMob> {
     // -------------------------------------------------------------------------
 
     private void tickWalking(ServerLevel level) {
-        if (targetBuilding == null) { stop(); return; }
+        if (targetBuilding == null) { resetState(); return; }
 
         BlockPos dest = targetBuilding.getShape().getOrigin();
         double distSq = entity.distanceToSqr(

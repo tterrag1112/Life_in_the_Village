@@ -402,7 +402,7 @@ public class VillageLeaderBehavior extends Behavior<TownspersonMob> {
         ));
 
         // Add each building origin
-        VillageSavedData data = VillageSavedData.get(level);
+        VillageSavedData data = VillageSavedData.get((ServerLevel) entity.level());
 
         village.getBuildingIds().stream()
                 .map(data::getBuildingById)
