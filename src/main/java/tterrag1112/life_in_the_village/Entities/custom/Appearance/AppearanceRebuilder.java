@@ -5,8 +5,8 @@ import tterrag1112.life_in_the_village.Cultures.CultureResolver;
 import tterrag1112.life_in_the_village.Entities.custom.AppearanceComponent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeHolding;
@@ -58,9 +58,9 @@ public final class AppearanceRebuilder {
     }
 
     /**
-     * Walks every Village / Guild / Company / Kingdom on the world and
+     * Walks every Village / Guild / Business / Kingdom on the world and
      * returns every office id currently held by the given UUID across
-     * all orgs. Insertion order is village → guild → company → kingdom.
+     * all orgs. Insertion order is village → guild → business → kingdom.
      * Used both by the rebuilder and by debug commands.
      */
     public static List<String> collectOfficesHeldBy(ServerLevel level, UUID holderId) {
@@ -79,8 +79,8 @@ public final class AppearanceRebuilder {
             collectFromState(k.getOffices(), holderId, out);
         }
         try {
-            CompanySavedData cdata = CompanySavedData.get(level);
-            for (Company c : cdata.getAllCompanies()) {
+            BusinessSavedData cdata = BusinessSavedData.get(level);
+            for (Business c : cdata.getAllBusinesses()) {
                 collectFromState(c.getOffices(), holderId, out);
             }
         } catch (RuntimeException ignored) {

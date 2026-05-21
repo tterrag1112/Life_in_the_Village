@@ -21,7 +21,7 @@ import java.util.UUID;
  *
  * @param def              office definition being seated
  * @param orgType          which org-class owns the office (village /
- *                         kingdom / guild / company)
+ *                         kingdom / guild / business)
  * @param orgId            the org instance UUID
  * @param selectionMethod  the method that produced this candidate
  *                         (election / appointment / inheritance / debug)

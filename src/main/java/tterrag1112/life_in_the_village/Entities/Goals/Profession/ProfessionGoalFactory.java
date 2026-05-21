@@ -252,8 +252,8 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.GUILDWORKER, npc -> {});
         REGISTRARS.put(Profession.GUILDMASTER, npc -> {});
 
-        // ── Company ──────────────────────────────────────────────────────────
-        // Phase 6.2.d.5: COMPANY_WORKER migrated to CompanyWorkerBehavior.
+        // ── Business ──────────────────────────────────────────────────────────
+        // Phase 6.2.d.5: COMPANY_WORKER migrated to BusinessWorkerBehavior.
         REGISTRARS.put(Profession.COMPANY_WORKER, npc -> {});
 
         // ── Unemployed ───────────────────────────────────────────────────────

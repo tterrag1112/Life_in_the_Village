@@ -10,10 +10,10 @@ import net.minecraft.commands.arguments.UuidArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Ai.AiCompanyManager;
+import tterrag1112.life_in_the_village.Guilds.Companies.Ai.AiBusinessManager;
 import tterrag1112.life_in_the_village.Guilds.Companies.Ai.MerchantPromotion;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -25,66 +25,66 @@ import java.util.UUID;
  * Phase 4 doc 26 debug subcommands.
  *
  * <ul>
- *   <li>{@code /company list-npc <village>} — every NPC-owned company
+ *   <li>{@code /business list-npc <village>} — every NPC-owned business
  *       in the village.</li>
- *   <li>{@code /company promote <npc>} — force-promote an eligible
+ *   <li>{@code /business promote <npc>} — force-promote an eligible
  *       merchant; bypasses the 365-day tenure check via
  *       {@link MerchantPromotion#forcePromote}.</li>
- *   <li>{@code /company owner <companyId>} — show owner type + id +
+ *   <li>{@code /business owner <businessId>} — show owner type + id +
  *       succession state.</li>
- *   <li>{@code /company succeed <companyId>} — force the succession
+ *   <li>{@code /business succeed <businessId>} — force the succession
  *       routine to run as if the owner just died.</li>
- *   <li>{@code /company dispatch <companyId>} — invoke the trading-
- *       company caravan stub; deposits the placeholder profit.</li>
+ *   <li>{@code /business dispatch <businessId>} — invoke the trading-
+ *       business caravan stub; deposits the placeholder profit.</li>
  * </ul>
  *
- * <p>Plural literal {@code /company} chosen instead of extending
- * {@code /companies} to keep this surface distinct from any future
+ * <p>Plural literal {@code /business} chosen instead of extending
+ * {@code /businesses} to keep this surface distinct from any future
  * world-state commands.</p>
  */
-public final class CompanyDebugCommand {
+public final class BusinessAdminCommand {
 
-    private CompanyDebugCommand() {}
+    private BusinessAdminCommand() {}
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
-        dispatcher.register(Commands.literal("company")
+        dispatcher.register(Commands.literal("business")
                 .then(Commands.literal("list-npc")
                         .then(Commands.argument("village", StringArgumentType.greedyString())
-                                .executes(CompanyDebugCommand::handleListNpc)))
+                                .executes(BusinessAdminCommand::handleListNpc)))
                 .then(Commands.literal("promote")
                         .then(Commands.argument("npc", UuidArgument.uuid())
-                                .executes(CompanyDebugCommand::handlePromote)))
+                                .executes(BusinessAdminCommand::handlePromote)))
                 .then(Commands.literal("owner")
-                        .then(Commands.argument("companyId", UuidArgument.uuid())
-                                .executes(CompanyDebugCommand::handleOwner)))
+                        .then(Commands.argument("businessId", UuidArgument.uuid())
+                                .executes(BusinessAdminCommand::handleOwner)))
                 .then(Commands.literal("succeed")
-                        .then(Commands.argument("companyId", UuidArgument.uuid())
-                                .executes(CompanyDebugCommand::handleSucceed)))
+                        .then(Commands.argument("businessId", UuidArgument.uuid())
+                                .executes(BusinessAdminCommand::handleSucceed)))
                 .then(Commands.literal("dispatch")
-                        .then(Commands.argument("companyId", UuidArgument.uuid())
-                                .executes(CompanyDebugCommand::handleDispatch)))
+                        .then(Commands.argument("businessId", UuidArgument.uuid())
+                                .executes(BusinessAdminCommand::handleDispatch)))
         );
     }
 
-    // ── /company list-npc <village> ───────────────────────────────────────
+    // ── /business list-npc <village> ───────────────────────────────────────
 
     private static int handleListNpc(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
         Village village = villageOrFail(ctx, level, src);
         if (village == null) return 0;
-        StringBuilder sb = new StringBuilder("§e=== NPC-owned companies in ")
+        StringBuilder sb = new StringBuilder("§e=== NPC-owned businesses in ")
                 .append(village.getName()).append(" ===§r");
         int count = 0;
-        for (Company c : CompanySavedData.get(level).getAllCompanies()) {
+        for (Business c : BusinessSavedData.get(level).getAllBusinesses()) {
             if (!c.isNpcOwned()) continue;
             if (!village.getId().equals(c.getHomeVillageId())) continue;
             count++;
             sb.append(String.format(Locale.ROOT,
                     "%n  §a%-18s§r %s §7(type=%s, state=%s, treasury=%d br, workers=%d)",
                     truncate(c.getName(), 18),
-                    c.getCompanyId(),
-                    c.getCompanyType().name(),
+                    c.getBusinessId(),
+                    c.getBusinessType().name(),
                     c.getSuccessionState().name(),
                     c.getTreasuryBronze(),
                     c.getWorkers().size()));
@@ -98,7 +98,7 @@ public final class CompanyDebugCommand {
         return 1;
     }
 
-    // ── /company promote <npc> ────────────────────────────────────────────
+    // ── /business promote <npc> ────────────────────────────────────────────
 
     private static int handlePromote(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
@@ -110,7 +110,7 @@ public final class CompanyDebugCommand {
             return 0;
         }
         try {
-            Company c = MerchantPromotion.forcePromote(level, npc);
+            Business c = MerchantPromotion.forcePromote(level, npc);
             src.sendSuccess(() -> Component.literal(
                     "§aPromoted §f" + npc.getNpcName()
                             + "§r to TRADING_COMPANY §f" + c.getName()
@@ -122,19 +122,19 @@ public final class CompanyDebugCommand {
         }
     }
 
-    // ── /company owner <companyId> ────────────────────────────────────────
+    // ── /business owner <businessId> ────────────────────────────────────────
 
     private static int handleOwner(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
-        UUID id = UuidArgument.getUuid(ctx, "companyId");
-        Company c = CompanySavedData.get(level).getById(id).orElse(null);
+        UUID id = UuidArgument.getUuid(ctx, "businessId");
+        Business c = BusinessSavedData.get(level).getById(id).orElse(null);
         if (c == null) {
-            src.sendFailure(Component.literal("No company " + id));
+            src.sendFailure(Component.literal("No business " + id));
             return 0;
         }
         StringBuilder sb = new StringBuilder("§e=== ").append(c.getName()).append(" ===§r");
-        sb.append(String.format(Locale.ROOT, "%n  §7type:§f %s", c.getCompanyType()));
+        sb.append(String.format(Locale.ROOT, "%n  §7type:§f %s", c.getBusinessType()));
         sb.append(String.format(Locale.ROOT, "%n  §7ownerType:§f %s", c.getOwnerType()));
         sb.append(String.format(Locale.ROOT, "%n  §7ownerId:§f %s", c.getOwnerId()));
         sb.append(String.format(Locale.ROOT, "%n  §7successionState:§f %s",
@@ -152,38 +152,38 @@ public final class CompanyDebugCommand {
         return 1;
     }
 
-    // ── /company succeed <companyId> ──────────────────────────────────────
+    // ── /business succeed <businessId> ──────────────────────────────────────
 
     private static int handleSucceed(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
-        UUID id = UuidArgument.getUuid(ctx, "companyId");
-        Company c = CompanySavedData.get(level).getById(id).orElse(null);
+        UUID id = UuidArgument.getUuid(ctx, "businessId");
+        Business c = BusinessSavedData.get(level).getById(id).orElse(null);
         if (c == null) {
-            src.sendFailure(Component.literal("No company " + id));
+            src.sendFailure(Component.literal("No business " + id));
             return 0;
         }
-        AiCompanyManager.handleSuccession(level, c, level.getGameTime());
-        CompanySavedData.get(level).addCompany(c);
+        AiBusinessManager.handleSuccession(level, c, level.getGameTime());
+        BusinessSavedData.get(level).addBusiness(c);
         src.sendSuccess(() -> Component.literal(
                 "§aSuccession run§r — state now §f" + c.getSuccessionState()), false);
         return 1;
     }
 
-    // ── /company dispatch <companyId> ─────────────────────────────────────
+    // ── /business dispatch <businessId> ─────────────────────────────────────
 
     private static int handleDispatch(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
-        UUID id = UuidArgument.getUuid(ctx, "companyId");
-        Company c = CompanySavedData.get(level).getById(id).orElse(null);
-        if (c == null) { src.sendFailure(Component.literal("No company " + id)); return 0; }
-        if (!c.isTradingCompany()) {
-            src.sendFailure(Component.literal("Company is not a TRADING_COMPANY"));
+        UUID id = UuidArgument.getUuid(ctx, "businessId");
+        Business c = BusinessSavedData.get(level).getById(id).orElse(null);
+        if (c == null) { src.sendFailure(Component.literal("No business " + id)); return 0; }
+        if (!c.isTradingBusiness()) {
+            src.sendFailure(Component.literal("Business is not a TRADING_COMPANY"));
             return 0;
         }
-        long profit = AiCompanyManager.dispatchTradingCaravan(level, c);
-        CompanySavedData.get(level).addCompany(c);
+        long profit = AiBusinessManager.dispatchTradingCaravan(level, c);
+        BusinessSavedData.get(level).addBusiness(c);
         src.sendSuccess(() -> Component.literal("§aDispatched§r — placeholder profit §f"
                 + profit + " br§r → treasury=" + c.getTreasuryBronze()), false);
         return 1;

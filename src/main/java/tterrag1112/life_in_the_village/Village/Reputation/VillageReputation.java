@@ -111,7 +111,7 @@ public class VillageReputation {
         TRADE_WITH_MERCHANT   (  1, "Traded with a merchant"),
         OWN_PROPERTY          (  5, "Purchased property"),
         PROPERTY_TAX_PAID     (  1, "Paid weekly property tax"),
-        COMPANY_WAGES_PAID    (  3, "Paid company workers"),
+        COMPANY_WAGES_PAID    (  3, "Paid business workers"),
         CRAFTING_ORDER_FILLED (  3, "Fulfilled a crafting order"),
         DONATED_TO_VILLAGE    ( 10, "Donated to the village treasury"),
         VILLAGE_EVENT_HELPED  (  5, "Helped during a village event"),

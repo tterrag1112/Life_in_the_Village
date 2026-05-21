@@ -12,7 +12,7 @@ import java.util.Set;
  * Phase 4 doc 27 — high-level guild taxonomy. The existing
  * {@code GuildData} stays as the adventurer-specific record;
  * {@link AbstractGuild} extends across all six categories so the
- * rest of the redesign (request board, NPC companies, master-of-
+ * rest of the redesign (request board, NPC businesses, master-of-
  * apprentices) can talk to a uniform surface.
  *
  * <p>Profession membership tables: a profession contributes to the

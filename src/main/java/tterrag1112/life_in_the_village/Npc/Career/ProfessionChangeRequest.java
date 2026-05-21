@@ -28,7 +28,7 @@ public record ProfessionChangeRequest(TownspersonMob npc,
         APPRENTICESHIP_GRADUATION,
         /** NPC retires — usually to {@code NONE} or a reduced role. */
         RETIREMENT,
-        /** Promotion via business / merchant / company path. */
+        /** Promotion via business / merchant / business path. */
         BUSINESS_PROMOTION,
         /** Culture rite or ceremony grants a profession. */
         CULTURE_RITE,

@@ -104,7 +104,7 @@ public enum Profession {
             case KINGDOM_RULER    -> "Ruler";
             case VILLAGE_LEADER   -> "Village Leader";
             case STOCKPILE_KEEPER -> "Stockpile Keeper";
-            case COMPANY_WORKER   -> "Company Worker";
+            case COMPANY_WORKER   -> "Business Worker";
             default -> name().charAt(0) + name().substring(1).toLowerCase();
         };
     }

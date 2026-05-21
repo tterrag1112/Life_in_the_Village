@@ -12,11 +12,11 @@ import net.minecraft.world.SimpleContainer;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Gui.CompanyManagementScreen;
-import tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen;
+import tterrag1112.life_in_the_village.Gui.BusinessManagementScreen;
+import tterrag1112.life_in_the_village.Gui.BusinessWorkerScreen;
 import tterrag1112.life_in_the_village.Gui.VillageBookScreen;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -32,18 +32,18 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Server-bound packet for all player-initiated company actions.
+ * Server-bound packet for all player-initiated business actions.
  *
  * Param conventions per action:
- *   companyId  — always the company being acted on (UUID(0,0) for FOUND_COMPANY)
+ *   businessId  — always the business being acted on (UUID(0,0) for FOUND_COMPANY)
  *   targetId   — secondary UUID: npcId, buildingId, or villageId depending on action
- *   strParam   — string data: item registry key, new company name, etc.
+ *   strParam   — string data: item registry key, new business name, etc.
  *   longParam  — numeric data: wage, price, treasury deposit amount, work end-hour
  *   intParam   — integer data: role ordinal, producer type ordinal, work start-hour, task count
  */
-public record CompanyActionPacket(
+public record BusinessActionPacket(
         ActionType action,
-        UUID       companyId,
+        UUID       businessId,
         UUID       targetId,
         String     strParam,
         long       longParam,
@@ -55,11 +55,11 @@ public record CompanyActionPacket(
     // =========================================================================
 
     public enum ActionType {
-        // ---- Company lifecycle ----
+        // ---- Business lifecycle ----
         FOUND_COMPANY,          // targetId=villageId, strParam=name
         RENAME_COMPANY,         // strParam=newName
         DISSOLVE_COMPANY,
-        OPEN_MANAGEMENT,        // opens CompanyManagementScreen (no data change)
+        OPEN_MANAGEMENT,        // opens BusinessManagementScreen (no data change)
 
         // ---- Treasury ----
         DEPOSIT_TO_TREASURY,    // longParam=bronzeAmount
@@ -89,22 +89,22 @@ public record CompanyActionPacket(
     // PACKET PLUMBING
     // =========================================================================
 
-    public static final Type<CompanyActionPacket> TYPE = new Type<>(
+    public static final Type<BusinessActionPacket> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(
                     Life_in_the_village.MODID, "company_action")
     );
 
     public static final StreamCodec<RegistryFriendlyByteBuf,
-            CompanyActionPacket> CODEC = StreamCodec.of(
+            BusinessActionPacket> CODEC = StreamCodec.of(
             (buf, pkt) -> {
                 buf.writeUtf(pkt.action().name());
-                buf.writeUUID(pkt.companyId());
+                buf.writeUUID(pkt.businessId());
                 buf.writeUUID(pkt.targetId());
                 buf.writeUtf(pkt.strParam());
                 buf.writeVarLong(pkt.longParam());
                 buf.writeVarInt(pkt.intParam());
             },
-            buf -> new CompanyActionPacket(
+            buf -> new BusinessActionPacket(
                     ActionType.valueOf(buf.readUtf()),
                     buf.readUUID(),
                     buf.readUUID(),
@@ -120,12 +120,12 @@ public record CompanyActionPacket(
     // HANDLER
     // =========================================================================
 
-    public static void handle(CompanyActionPacket pkt, IPayloadContext ctx) {
+    public static void handle(BusinessActionPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
 
             ServerLevel      level  = (ServerLevel) player.level();
-            CompanySavedData cdata  = CompanySavedData.get(level);
+            BusinessSavedData cdata  = BusinessSavedData.get(level);
             VillageSavedData vdata  = VillageSavedData.get(level);
 
             switch (pkt.action()) {
@@ -146,7 +146,7 @@ public record CompanyActionPacket(
                             village.getBuildingIds().size());
 
                     if (tier.ordinal() < VillageSizeTier.TOWN.ordinal()) {
-                        fail(player, "You need a Town-tier village to found a company. "
+                        fail(player, "You need a Town-tier village to found a business. "
                                 + "This village is " + tier.displayName + " tier ("
                                 + village.getBuildingIds().size() + " buildings).");
                         return;
@@ -155,16 +155,16 @@ public record CompanyActionPacket(
                     boolean alreadyHas = cdata.getByOwner(player.getUUID()).stream()
                             .anyMatch(c -> c.getHomeVillageId().equals(villageId));
                     if (alreadyHas) {
-                        fail(player, "You already have a company based in this village.");
+                        fail(player, "You already have a business based in this village.");
                         return;
                     }
 
-                    String name = pkt.strParam().isBlank() ? "My Company" : pkt.strParam();
-                    Company company = Company.create(name, player.getUUID(), villageId);
-                    cdata.addCompany(company);
+                    String name = pkt.strParam().isBlank() ? "My Business" : pkt.strParam();
+                    Business business = Business.create(name, player.getUUID(), villageId);
+                    cdata.addBusiness(business);
 
                     player.displayClientMessage(
-                            Component.literal("Company \"" + company.getName()
+                            Component.literal("Business \"" + business.getName()
                                             + "\" founded successfully!")
                                     .withStyle(ChatFormatting.GOLD), false);
 
@@ -176,53 +176,53 @@ public record CompanyActionPacket(
                 // RENAME COMPANY
                 // =============================================================
                 case RENAME_COMPANY -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
                     String newName = pkt.strParam().isBlank() ? c.getName() : pkt.strParam();
                     c.setName(newName);
                     cdata.markDirty();
-                    refreshManagement(player, pkt.companyId(), level, cdata, vdata, "OVERVIEW");
+                    refreshManagement(player, pkt.businessId(), level, cdata, vdata, "OVERVIEW");
                 }
                 case OPEN_WORKER_SCREEN -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(), player.getUUID(), player);
+                    Business c = ownedCompany(cdata, pkt.businessId(), player.getUUID(), player);
                     if (c == null) return;
-                    refreshWorker(player, pkt.targetId(), pkt.companyId(), level, cdata, vdata);
+                    refreshWorker(player, pkt.targetId(), pkt.businessId(), level, cdata, vdata);
                 }
 
                 // =============================================================
                 // DISSOLVE COMPANY
                 // =============================================================
                 case DISSOLVE_COMPANY -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
                     // Fire all workers cleanly
                     c.getWorkers().forEach(w -> releaseWorker(level, w.npcId()));
 
-                    cdata.removeCompany(pkt.companyId());
+                    cdata.removeBusiness(pkt.businessId());
                     cdata.markDirty();
 
                     player.displayClientMessage(
-                            Component.literal("Company dissolved."), false);
+                            Component.literal("Business dissolved."), false);
                 }
 
                 // =============================================================
                 // OPEN MANAGEMENT (no data change — just sends the screen)
                 // =============================================================
                 case OPEN_MANAGEMENT -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
-                    refreshManagement(player, pkt.companyId(), level, cdata, vdata, "");
+                    refreshManagement(player, pkt.businessId(), level, cdata, vdata, "");
                 }
 
                 // =============================================================
                 // DEPOSIT TO TREASURY
                 // =============================================================
                 case DEPOSIT_TO_TREASURY -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
@@ -240,36 +240,36 @@ public record CompanyActionPacket(
                     c.depositBronze(amount);
                     cdata.markDirty();
 
-                    refreshManagement(player, pkt.companyId(), level, cdata, vdata, "OVERVIEW");
+                    refreshManagement(player, pkt.businessId(), level, cdata, vdata, "OVERVIEW");
                 }
 
                 // =============================================================
-                // HIRE NPC  (via CompanyActionPacket — e.g. from management screen)
+                // HIRE NPC  (via BusinessActionPacket — e.g. from management screen)
                 // Direct coin-hire from TownspersonMob.mobInteract uses the
                 // same server-side logic duplicated there for immediacy.
                 // =============================================================
                 case HIRE_NPC -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
                     UUID npcId = pkt.targetId();
                     var npc = findNpc(level, npcId);
-                    if (npc == null || npc.isCompanyWorker()) {
+                    if (npc == null || npc.isBusinessWorker()) {
                         fail(player, "NPC not found or already employed.");
                         return;
                     }
 
-                    Company.WorkerRole role = safeRole(pkt.intParam());
+                    Business.WorkerRole role = safeRole(pkt.intParam());
                     long wage = Math.max(c.getEffectiveMinWage(vdata), 8L);
 
-                    Company.CompanyWorker worker = new Company.CompanyWorker(
-                            npcId, role, Company.ProducerType.GENERIC,
-                            Company.NO_BUILDING, wage,
+                    Business.BusinessWorker worker = new Business.BusinessWorker(
+                            npcId, role, Business.ProducerType.GENERIC,
+                            Business.NO_BUILDING, wage,
                             level.getGameTime(), "", 8);
 
                     c.addWorker(worker);
-                    npc.setCompanyId(c.getCompanyId());
+                    npc.setBusinessId(c.getBusinessId());
                     // Phase 6.3.3.a — gated, PLAYER (player hires via UI packet).
                     tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
                             npc, Profession.COMPANY_WORKER,
@@ -281,14 +281,14 @@ public record CompanyActionPacket(
                             Component.literal("[" + npc.getNpcName()
                                     + "] I'll work for " + c.getName() + "!"), false);
 
-                    refreshManagement(player, pkt.companyId(), level, cdata, vdata, "WORKERS");
+                    refreshManagement(player, pkt.businessId(), level, cdata, vdata, "WORKERS");
                 }
 
                 // =============================================================
                 // FIRE NPC
                 // =============================================================
                 case FIRE_NPC -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
@@ -297,14 +297,14 @@ public record CompanyActionPacket(
                     releaseWorker(level, npcId);
                     cdata.markDirty();
 
-                    refreshManagement(player, pkt.companyId(), level, cdata, vdata, "WORKERS");
+                    refreshManagement(player, pkt.businessId(), level, cdata, vdata, "WORKERS");
                 }
 
                 // =============================================================
                 // SET WORKER WAGE
                 // =============================================================
                 case SET_WORKER_WAGE -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
@@ -315,7 +315,7 @@ public record CompanyActionPacket(
                             .ifPresent(w -> c.updateWorker(w.withWage(wage)));
                     cdata.markDirty();
 
-                    refreshWorker(player, pkt.targetId(), pkt.companyId(),
+                    refreshWorker(player, pkt.targetId(), pkt.businessId(),
                             level, cdata, vdata);
                 }
 
@@ -323,20 +323,20 @@ public record CompanyActionPacket(
                 // SET WORKER ROLE
                 // =============================================================
                 case SET_WORKER_ROLE -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
-                    Company.WorkerRole role = safeRole(pkt.intParam());
+                    Business.WorkerRole role = safeRole(pkt.intParam());
                     c.getWorker(pkt.targetId()).ifPresent(w ->
-                            c.updateWorker(new Company.CompanyWorker(
+                            c.updateWorker(new Business.BusinessWorker(
                                     w.npcId(), role, w.producerType(),
                                     w.assignedBuildingId(), w.wagePerDay(),
                                     w.lastPaidTick(), w.assignedItemId(),
                                     w.dailyTargetCount())));
                     cdata.markDirty();
 
-                    refreshWorker(player, pkt.targetId(), pkt.companyId(),
+                    refreshWorker(player, pkt.targetId(), pkt.businessId(),
                             level, cdata, vdata);
                 }
 
@@ -344,13 +344,13 @@ public record CompanyActionPacket(
                 // SET PRODUCER TYPE
                 // =============================================================
                 case SET_PRODUCER_TYPE -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
-                    Company.ProducerType type = safeProducerType(pkt.intParam());
+                    Business.ProducerType type = safeProducerType(pkt.intParam());
 
-                    // Validate the company owns the required building
+                    // Validate the business owns the required building
                     BuildingType required = type.requiredBuilding();
                     if (required != null) {
                         boolean hasBuilding = c.getBuildingIds().stream()
@@ -359,7 +359,7 @@ public record CompanyActionPacket(
                                 .map(Optional::get)
                                 .anyMatch(b -> b.getType() == required);
                         if (!hasBuilding) {
-                            fail(player, "Your company needs a "
+                            fail(player, "Your business needs a "
                                     + required.name().toLowerCase().replace('_', ' ')
                                     + " to use this producer type.");
                             return;
@@ -367,14 +367,14 @@ public record CompanyActionPacket(
                     }
 
                     c.getWorker(pkt.targetId()).ifPresent(w ->
-                            c.updateWorker(new Company.CompanyWorker(
+                            c.updateWorker(new Business.BusinessWorker(
                                     w.npcId(), w.role(), type,
                                     w.assignedBuildingId(), w.wagePerDay(),
                                     w.lastPaidTick(), w.assignedItemId(),
                                     w.dailyTargetCount())));
                     cdata.markDirty();
 
-                    refreshWorker(player, pkt.targetId(), pkt.companyId(),
+                    refreshWorker(player, pkt.targetId(), pkt.businessId(),
                             level, cdata, vdata);
                 }
 
@@ -382,7 +382,7 @@ public record CompanyActionPacket(
                 // ASSIGN WORKER TASK
                 // =============================================================
                 case ASSIGN_WORKER_TASK -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
@@ -393,7 +393,7 @@ public record CompanyActionPacket(
                             .ifPresent(w -> c.updateWorker(w.withTask(itemId, count)));
                     cdata.markDirty();
 
-                    refreshWorker(player, pkt.targetId(), pkt.companyId(),
+                    refreshWorker(player, pkt.targetId(), pkt.businessId(),
                             level, cdata, vdata);
                 }
 
@@ -401,7 +401,7 @@ public record CompanyActionPacket(
                 // SET WORK HOURS
                 // =============================================================
                 case SET_WORK_HOURS -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
@@ -409,17 +409,17 @@ public record CompanyActionPacket(
                     int endHour   = Math.max(1,  Math.min(24, (int) pkt.longParam()));
                     if (endHour <= startHour) endHour = startHour + 1;
 
-                    c.setWorkSchedule(new Company.WorkSchedule(startHour, endHour));
+                    c.setWorkSchedule(new Business.WorkSchedule(startHour, endHour));
                     cdata.markDirty();
 
-                    refreshManagement(player, pkt.companyId(), level, cdata, vdata, "SCHEDULE");
+                    refreshManagement(player, pkt.businessId(), level, cdata, vdata, "SCHEDULE");
                 }
 
                 // =============================================================
                 // SET ITEM PRICE
                 // =============================================================
                 case SET_ITEM_PRICE -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
@@ -427,21 +427,21 @@ public record CompanyActionPacket(
                     c.setPriceOverride(pkt.strParam(), price);
                     cdata.markDirty();
 
-                    refreshManagement(player, pkt.companyId(), level, cdata, vdata, "PRICES");
+                    refreshManagement(player, pkt.businessId(), level, cdata, vdata, "PRICES");
                 }
                 case REMOVE_ITEM_PRICE -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(), player.getUUID(), player);
+                    Business c = ownedCompany(cdata, pkt.businessId(), player.getUUID(), player);
                     if (c == null) return;
                     c.removePriceOverride(pkt.strParam());
                     cdata.markDirty();
-                    refreshWorker(player, pkt.targetId(), pkt.companyId(), level, cdata, vdata);
+                    refreshWorker(player, pkt.targetId(), pkt.businessId(), level, cdata, vdata);
                 }
 
                 // =============================================================
                 // BUY COMPANY BUILDING
                 // =============================================================
                 case BUY_COMPANY_BUILDING -> {
-                    Company c = ownedCompany(cdata, pkt.companyId(),
+                    Business c = ownedCompany(cdata, pkt.businessId(),
                             player.getUUID(), player);
                     if (c == null) return;
 
@@ -452,31 +452,31 @@ public record CompanyActionPacket(
                         return;
                     }
 
-                    // Buildings that cannot be purchased for a company
+                    // Buildings that cannot be purchased for a business
                     Set<BuildingType> nonPurchasable = Set.of(
                             BuildingType.HOUSE, BuildingType.TOWN_HALL,
                             BuildingType.GUARD_TOWER, BuildingType.GUILD_HALL,
                             BuildingType.WELL, BuildingType.BELL_TOWER,
                             BuildingType.PRISON);
                     if (nonPurchasable.contains(building.getType())) {
-                        fail(player, "This building cannot be purchased for a company.");
+                        fail(player, "This building cannot be purchased for a business.");
                         return;
                     }
 
-                    // Check not already owned by any company
-                    boolean takenByOther = cdata.getAllCompanies().stream()
-                            .filter(co -> !co.getCompanyId()
-                                    .equals(pkt.companyId()))
+                    // Check not already owned by any business
+                    boolean takenByOther = cdata.getAllBusinesses().stream()
+                            .filter(co -> !co.getBusinessId()
+                                    .equals(pkt.businessId()))
                             .anyMatch(co -> co.getBuildingIds()
                                     .contains(buildingId));
                     if (takenByOther) {
-                        fail(player, "This building already belongs to another company.");
+                        fail(player, "This building already belongs to another business.");
                         return;
                     }
 
-                    // Already in this company
+                    // Already in this business
                     if (c.getBuildingIds().contains(buildingId)) {
-                        fail(player, "This building is already part of your company.");
+                        fail(player, "This building is already part of your business.");
                         return;
                     }
 
@@ -514,7 +514,7 @@ public record CompanyActionPacket(
                                             + " added to " + c.getName() + "!")
                                     .withStyle(ChatFormatting.GOLD), false);
 
-                    // Refresh the village book so the company buildings
+                    // Refresh the village book so the business buildings
                     // page reflects the purchase immediately
                     VillageBookScreen.sendOpenPacket(
                             player, village.getId(), level, vdata);
@@ -527,44 +527,44 @@ public record CompanyActionPacket(
     // PRIVATE HELPERS
     // =========================================================================
 
-    /** Returns the company if the player owns it, otherwise sends a failure
+    /** Returns the business if the player owns it, otherwise sends a failure
      *  message and returns null. */
-    private static Company ownedCompany(CompanySavedData cdata,
-                                        UUID companyId, UUID playerId,
+    private static Business ownedCompany(BusinessSavedData cdata,
+                                        UUID businessId, UUID playerId,
                                         ServerPlayer player) {
-        Company c = cdata.getById(companyId)
+        Business c = cdata.getById(businessId)
                 .filter(co -> co.getOwnerPlayerId().equals(playerId))
                 .orElse(null);
         if (c == null)
-            fail(player, "You do not own this company.");
+            fail(player, "You do not own this business.");
         return c;
     }
 
-    /** Sends the CompanyManagementScreen to the player. */
+    /** Sends the BusinessManagementScreen to the player. */
     private static void refreshManagement(ServerPlayer player,
-                                          UUID companyId,
+                                          UUID businessId,
                                           ServerLevel level,
-                                          CompanySavedData cdata,
+                                          BusinessSavedData cdata,
                                           VillageSavedData vdata,
                                           String section) {
-        CompanyManagementScreen.sendOpenPacket(
-                player, companyId, level, cdata, vdata, section);
+        BusinessManagementScreen.sendOpenPacket(
+                player, businessId, level, cdata, vdata, section);
     }
 
-    /** Sends the CompanyWorkerScreen to the player. */
+    /** Sends the BusinessWorkerScreen to the player. */
     private static void refreshWorker(ServerPlayer player,
-                                      UUID npcId, UUID companyId,
+                                      UUID npcId, UUID businessId,
                                       ServerLevel level,
-                                      CompanySavedData cdata,
+                                      BusinessSavedData cdata,
                                       VillageSavedData vdata) {
-        CompanyWorkerScreen.sendOpenPacket(
-                player, npcId, companyId, level, cdata, vdata);
+        BusinessWorkerScreen.sendOpenPacket(
+                player, npcId, businessId, level, cdata, vdata);
     }
 
-    /** Clears the company link from an NPC and returns them to NONE. */
+    /** Clears the business link from an NPC and returns them to NONE. */
     private static void releaseWorker(ServerLevel level, UUID npcId) {
         TownspersonMob.findByUUID(level, npcId).ifPresent(npc -> {
-            npc.clearCompanyId();
+            npc.clearBusinessId();
             // Phase 6.3.3.a — gated, PLAYER (player-driven fire via UI packet).
             tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
                     npc, Profession.NONE,
@@ -602,14 +602,14 @@ public record CompanyActionPacket(
     }
 
     /** Converts an int to a WorkerRole safely. */
-    private static Company.WorkerRole safeRole(int ordinal) {
-        Company.WorkerRole[] values = Company.WorkerRole.values();
+    private static Business.WorkerRole safeRole(int ordinal) {
+        Business.WorkerRole[] values = Business.WorkerRole.values();
         return values[Math.max(0, Math.min(ordinal, values.length - 1))];
     }
 
     /** Converts an int to a ProducerType safely. */
-    private static Company.ProducerType safeProducerType(int ordinal) {
-        Company.ProducerType[] values = Company.ProducerType.values();
+    private static Business.ProducerType safeProducerType(int ordinal) {
+        Business.ProducerType[] values = Business.ProducerType.values();
         return values[Math.max(0, Math.min(ordinal, values.length - 1))];
     }
 

@@ -10,13 +10,13 @@ import net.minecraft.core.UUIDUtil;
 import java.util.UUID;
 
 /**
- * A recurring supply agreement between two player-owned companies.
+ * A recurring supply agreement between two player-owned businesses.
  *
  * <h3>Flow</h3>
  * <ol>
  *   <li>The <em>buyer</em> proposes the contract via the management screen.</li>
  *   <li>The <em>supplier</em> accepts (or declines) via their screen.</li>
- *   <li>Every payroll cycle ({@code CompanySavedData.tickPayroll}) the
+ *   <li>Every payroll cycle ({@code BusinessSavedData.tickPayroll}) the
  *       contract is checked: if the supplier has {@code weeklyQuantity} of
  *       {@code itemId} in storage, the goods are transferred and
  *       {@code bronzePricePerUnit × weeklyQuantity} is debited from the

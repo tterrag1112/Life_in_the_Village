@@ -16,8 +16,8 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -30,7 +30,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
+public class BusinessWorkerBehavior extends Behavior<TownspersonMob> {
 
     // -------------------------------------------------------------------------
     // Phases shared across all roles
@@ -62,7 +62,7 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
 
     private TownspersonMob entity;
 
-    public CompanyWorkerBehavior() {
+    public BusinessWorkerBehavior() {
         super(com.google.common.collect.ImmutableMap.of(
                 MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
         ), 24000);
@@ -73,9 +73,9 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
     private int   workTimer    = 0;
     private int   producedCount = 0;
 
-    // Resolved from company data each activation
-    private Company               company;
-    private Company.CompanyWorker worker;
+    // Resolved from business data each activation
+    private Business               business;
+    private Business.BusinessWorker worker;
     private Item                  targetItem;
     private Building              assignedBuilding;
 
@@ -92,21 +92,21 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
-        if (!entity.isCompanyWorker()) return false;
+        if (!entity.isBusinessWorker()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
 
-        // Respect company work schedule
-        CompanySavedData cdata = CompanySavedData.get(level);
-        company = cdata.getCompanyForWorker(entity.getUUID()).orElse(null);
-        if (company == null || !company.isActive()) return false;
-        if (!company.getWorkSchedule().isWorkTime(level.getGameTime())) return false;
+        // Respect business work schedule
+        BusinessSavedData cdata = BusinessSavedData.get(level);
+        business = cdata.getBusinessForWorker(entity.getUUID()).orElse(null);
+        if (business == null || !business.isActive()) return false;
+        if (!business.getWorkSchedule().isWorkTime(level.getGameTime())) return false;
 
-        worker = company.getWorker(entity.getUUID()).orElse(null);
+        worker = business.getWorker(entity.getUUID()).orElse(null);
         if (worker == null) return false;
 
         // Must have an assigned task to do meaningful work
         if (worker.assignedItemId().isEmpty()
-                && worker.role() == Company.WorkerRole.PRODUCER) return false;
+                && worker.role() == Business.WorkerRole.PRODUCER) return false;
 
         // Resolve target item
         targetItem = resolveItem(worker.assignedItemId());
@@ -129,7 +129,7 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
 
         entity.setCurrentActivity(activityLabel());
         entity.setItemInHand(InteractionHand.MAIN_HAND,
-                worker.role() == Company.WorkerRole.PRODUCER
+                worker.role() == Business.WorkerRole.PRODUCER
                         ? new ItemStack(Items.IRON_AXE)
                         : ItemStack.EMPTY);
     }
@@ -137,8 +137,8 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
     @Override
     protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
-        if (!entity.isCompanyWorker()) return false;
-        if (!company.getWorkSchedule().isWorkTime(level.getGameTime())) return false;
+        if (!entity.isBusinessWorker()) return false;
+        if (!business.getWorkSchedule().isWorkTime(level.getGameTime())) return false;
         return phase != Phase.IDLE;
     }
 
@@ -147,10 +147,10 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
         this.entity = entity;
 
         // Re-sync worker data in case owner changed the task
-        CompanySavedData cdata = CompanySavedData.get(level);
-        company = cdata.getCompanyForWorker(entity.getUUID()).orElse(null);
-        if (company == null) { goIdle(); return; }
-        worker = company.getWorker(entity.getUUID()).orElse(null);
+        BusinessSavedData cdata = BusinessSavedData.get(level);
+        business = cdata.getBusinessForWorker(entity.getUUID()).orElse(null);
+        if (business == null) { goIdle(); return; }
+        worker = business.getWorker(entity.getUUID()).orElse(null);
         if (worker == null) { goIdle(); return; }
 
         switch (phase) {
@@ -205,7 +205,7 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
      * is added to the NPC's personal inventory.
      * When carry limit is reached, transitions to DEPOSITING.
      */
-    private void work(ServerLevel level, CompanySavedData cdata) {
+    private void work(ServerLevel level, BusinessSavedData cdata) {
         if (targetItem == null || worker.assignedItemId().isEmpty()) {
             goIdle();
             return;
@@ -275,9 +275,9 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
 
     /**
      * SELLER — posts trade listings for items in the building storage
-     * using the company's price overrides, or market price as fallback.
+     * using the business's price overrides, or market price as fallback.
      */
-    private void sell(ServerLevel level, CompanySavedData cdata) {
+    private void sell(ServerLevel level, BusinessSavedData cdata) {
         VillageSavedData vdata = VillageSavedData.get(level);
 
         // Find market building in the same village
@@ -304,13 +304,13 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         // For each item in the assigned building, post a listing
-        // using company price override or 10% markup on market price
+        // using business price override or 10% markup on market price
         UUID villageId = vdata.getVillageByName(
                         entity.getAssignedVillageName().orElse(""))
                 .map(v -> v.getId()).orElse(null);
 
         if (villageId != null) {
-            for (var priceOverride : company.getAllPriceOverrides()) {
+            for (var priceOverride : business.getAllPriceOverrides()) {
                 Item item = resolveItem(priceOverride.itemId());
                 if (item == null) continue;
 
@@ -318,9 +318,9 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
                         level, assignedBuilding, item);
                 if (stock <= 0) continue;
 
-                // Post a trade listing with the company price
+                // Post a trade listing with the business price
                 VillageEconomy.postCompanyListing(
-                        level, villageId, entity, company,
+                        level, villageId, entity, business,
                         item, stock, level.getGameTime());
 
 
@@ -332,15 +332,15 @@ public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
 
     /**
      * COURIER — picks up items from the assigned building and
-     * delivers them to the next company building.
+     * delivers them to the next business building.
      */
     private void courier(ServerLevel level) {
         VillageSavedData vdata = VillageSavedData.get(level);
 
-        // Determine destination — the next building in the company list
+        // Determine destination — the next building in the business list
         // that isn't the assigned building
         if (courierDestination == null) {
-            courierDestination = company.getBuildingIds().stream()
+            courierDestination = business.getBuildingIds().stream()
                     .filter(id -> !id.equals(worker.assignedBuildingId()))
                     .map(vdata::getBuildingById)
                     .filter(Optional::isPresent)

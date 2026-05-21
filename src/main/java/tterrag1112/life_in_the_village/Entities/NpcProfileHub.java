@@ -4,8 +4,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.NpcProfileActionPacket;
 import tterrag1112.life_in_the_village.Networking.NpcProfileSnapshot;
 import tterrag1112.life_in_the_village.Networking.NpcProfileSyncPacket;
@@ -207,7 +207,7 @@ public final class NpcProfileHub {
      * <ol>
      *   <li>Office holder → office screen (VillageBookScreen for
      *       VILLAGE_LEADER, KingdomBookScreen for KINGDOM_RULER).</li>
-     *   <li>Owned company worker → CompanyWorkerScreen.</li>
+     *   <li>Owned business worker → BusinessWorkerScreen.</li>
      *   <li>Profession default → profession-specific screen if one exists.</li>
      * </ol>
      */
@@ -230,14 +230,14 @@ public final class NpcProfileHub {
             // Fall through to default.
         }
 
-        // 2. Owned company worker.
+        // 2. Owned business worker.
         if (prof == Profession.COMPANY_WORKER) {
-            Company company = CompanySavedData.get(level)
-                    .getCompanyForWorker(npc.getUUID()).orElse(null);
-            if (company != null && company.getOwnerPlayerId().equals(player.getUUID())) {
+            Business business = BusinessSavedData.get(level)
+                    .getBusinessForWorker(npc.getUUID()).orElse(null);
+            if (business != null && business.getOwnerPlayerId().equals(player.getUUID())) {
                 npc.unlockConversation(player.getUUID());
-                tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen
-                        .open(player, npc, company);
+                tterrag1112.life_in_the_village.Gui.BusinessWorkerScreen
+                        .open(player, npc, business);
                 return;
             }
         }
@@ -274,8 +274,8 @@ public final class NpcProfileHub {
         Profession prof = npc.getProfession();
         if (prof == Profession.VILLAGE_LEADER) return true;
         if (prof == Profession.COMPANY_WORKER) {
-            return CompanySavedData.get(level)
-                    .getCompanyForWorker(npc.getUUID())
+            return BusinessSavedData.get(level)
+                    .getBusinessForWorker(npc.getUUID())
                     .map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
                     .orElse(false);
         }

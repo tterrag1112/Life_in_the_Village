@@ -5,8 +5,8 @@ import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -27,12 +27,12 @@ import java.util.UUID;
  * <p>Also hosts the cross-entity walker
  * {@link #findOfficesHeldBy(UUID, ServerLevel)} that powers
  * {@code /npc offices}. The walker iterates every Village, GuildData,
- * Company, and Kingdom in the level — at v1 scale (low hundreds of orgs)
+ * Business, and Kingdom in the level — at v1 scale (low hundreds of orgs)
  * this is a sub-millisecond pass; document if it ever becomes hot.</p>
  *
  * <h3>Storage axis (Phase 6.3.2.d)</h3>
  * <p>Office holdings are <em>org-bound</em>: each {@link Village} /
- * {@link Kingdom} / {@link GuildData} / {@link Company} owns its own
+ * {@link Kingdom} / {@link GuildData} / {@link Business} owns its own
  * {@link OfficeState} carrying the per-office {@link OfficeHolding}s.
  * This is intentionally <strong>different</strong> from the other three
  * NPC taxonomy axes — Role lives in {@link
@@ -79,9 +79,9 @@ public final class OfficeRegistry {
     public static final String GUILD_REGISTRAR       = "guild_registrar";
     public static final String MASTER_OF_APPRENTICES = "master_of_apprentices";
 
-    public static final String COMPANY_OWNER      = "company_owner";
-    public static final String COMPANY_FOREMAN    = "company_foreman";
-    public static final String COMPANY_BOOKKEEPER = "company_bookkeeper";
+    public static final String BUSINESS_OWNER      = "business_owner";
+    public static final String BUSINESS_FOREMAN    = "business_foreman";
+    public static final String BUSINESS_BOOKKEEPER = "business_bookkeeper";
 
     public static final String KINGDOM_KING         = "kingdom_king";
     public static final String KINGDOM_CHANCELLOR   = "kingdom_chancellor";
@@ -103,6 +103,17 @@ public final class OfficeRegistry {
 
     public static OfficeDefinition get(String officeId) {
         ensureInit();
+        // Phase 6.3.3.b — legacy alias for office IDs renamed when
+        // Company → Business. Existing saves contain legacy strings in
+        // OfficeHolding.officeId; resolve them to the new registry entry.
+        if (officeId != null) {
+            switch (officeId) {
+                case "company_owner"      -> officeId = BUSINESS_OWNER;
+                case "company_foreman"    -> officeId = BUSINESS_FOREMAN;
+                case "company_bookkeeper" -> officeId = BUSINESS_BOOKKEEPER;
+                default -> { /* no-op */ }
+            }
+        }
         return DEFINITIONS.get(officeId);
     }
 
@@ -127,8 +138,8 @@ public final class OfficeRegistry {
     /**
      * Returns every office currently held by the given UUID across all
      * orgs persisted in this level. Walks villages, guilds (via
-     * {@link VillageSavedData}), kingdoms, and companies (via
-     * {@link CompanySavedData}). Temples are stubbed in v1 and produce
+     * {@link VillageSavedData}), kingdoms, and businesses (via
+     * {@link BusinessSavedData}). Temples are stubbed in v1 and produce
      * no matches.
      */
     public static List<Match> findOfficesHeldBy(UUID uuid, ServerLevel level) {
@@ -149,10 +160,10 @@ public final class OfficeRegistry {
                     kingdom.getId(), kingdom.getName(), out);
         }
 
-        CompanySavedData cdata = CompanySavedData.get(level);
-        for (Company company : cdata.getAllCompanies()) {
-            collectMatches(uuid, company.getOffices(), OrgType.COMPANY,
-                    company.getCompanyId(), company.getName(), out);
+        BusinessSavedData cdata = BusinessSavedData.get(level);
+        for (Business business : cdata.getAllBusinesses()) {
+            collectMatches(uuid, business.getOffices(), OrgType.BUSINESS,
+                    business.getBusinessId(), business.getName(), out);
         }
 
         return out;
@@ -308,7 +319,7 @@ public final class OfficeRegistry {
     }
 
     private static void registerCompanyOffices() {
-        register(OfficeDefinition.of(COMPANY_OWNER, OrgType.COMPANY, "Company Owner",
+        register(OfficeDefinition.of(BUSINESS_OWNER, OrgType.BUSINESS, "Business Owner",
                 List.of(),
                 Map.of(),
                 SelectionMethod.HEREDITARY,
@@ -318,7 +329,7 @@ public final class OfficeRegistry {
                         OfficePower.ACCESS_TREASURY),
                 new Competence(Skill.COMMERCE, 0, 50, 1.05f, 0.0f)));
 
-        register(OfficeDefinition.of(COMPANY_FOREMAN, OrgType.COMPANY, "Company Foreman",
+        register(OfficeDefinition.of(BUSINESS_FOREMAN, OrgType.BUSINESS, "Business Foreman",
                 List.of(),
                 Map.of(),
                 SelectionMethod.APPOINTED,
@@ -326,7 +337,7 @@ public final class OfficeRegistry {
                 List.of(OfficePower.COMMAND_CITIZENS),
                 new Competence(Skill.CRAFTING, 50, 85, 1.20f, -0.08f)));
 
-        register(OfficeDefinition.of(COMPANY_BOOKKEEPER, OrgType.COMPANY, "Company Bookkeeper",
+        register(OfficeDefinition.of(BUSINESS_BOOKKEEPER, OrgType.BUSINESS, "Business Bookkeeper",
                 List.of(Profession.MERCHANT),
                 Map.of(Skill.COMMERCE, 40, Skill.LITERACY, 40),
                 SelectionMethod.APPOINTED,

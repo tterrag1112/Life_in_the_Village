@@ -86,8 +86,8 @@ public final class HistorySummaryTemplates {
         // ── Economy and infrastructure ───────────────────────────────────
         m.put(HistoryEventType.BUILDING_CONSTRUCTED, "A new {building_type} was raised in {village_name}.");
         m.put(HistoryEventType.BUILDING_DESTROYED,   "The {building_type} of {village_name} was destroyed.");
-        m.put(HistoryEventType.COMPANY_FOUNDED,      "{npc_name} founded {company_name} at {village_name}.");
-        m.put(HistoryEventType.COMPANY_DISSOLVED,    "{company_name} was dissolved at {village_name}.");
+        m.put(HistoryEventType.BUSINESS_FOUNDED,      "{npc_name} founded {company_name} at {village_name}.");
+        m.put(HistoryEventType.BUSINESS_DISSOLVED,    "{company_name} was dissolved at {village_name}.");
         m.put(HistoryEventType.MASTERPIECE_CERTIFIED,
                 "{apprentice_name} certified their masterpiece — a {item_type} — under Master {master_name}.");
         m.put(HistoryEventType.BOOK_AUTHORED,        "Scholar {npc_name} finished '{book_title}'.");

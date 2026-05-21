@@ -1,8 +1,8 @@
 package tterrag1112.life_in_the_village.Npc.Office.Selection;
 
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeDefinition;
 import tterrag1112.life_in_the_village.Npc.Office.OrgType;
@@ -35,8 +35,8 @@ import java.util.stream.Collectors;
  *   <li>For VILLAGE offices, the NPC is currently assigned to the village
  *   (matching {@code getAssignedVillageName} against the village name).</li>
  *   <li>For GUILD/COMPANY/KINGDOM offices, scoping is by org membership
- *   (guild members live in the guild's village; company workers list lives
- *   on the company; kingdom rulers chosen from any village in the kingdom).</li>
+ *   (guild members live in the guild's village; business workers list lives
+ *   on the business; kingdom rulers chosen from any village in the kingdom).</li>
  * </ul>
  */
 public final class CandidatePool {
@@ -95,9 +95,9 @@ public final class CandidatePool {
         return switch (ctx.orgType()) {
             case VILLAGE, GUILD, TEMPLE -> Set.of();
             case COMPANY -> {
-                CompanySavedData cdata = CompanySavedData.get(ctx.level());
-                Company c = cdata.getAllCompanies().stream()
-                        .filter(x -> x.getCompanyId().equals(ctx.orgId()))
+                BusinessSavedData cdata = BusinessSavedData.get(ctx.level());
+                Business c = cdata.getAllBusinesses().stream()
+                        .filter(x -> x.getBusinessId().equals(ctx.orgId()))
                         .findFirst().orElse(null);
                 if (c == null) yield null;
                 Set<UUID> out = new java.util.HashSet<>();

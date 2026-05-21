@@ -7,9 +7,18 @@ public enum OrgType {
     KINGDOM,
     VILLAGE,
     GUILD,
-    COMPANY,
+    BUSINESS,
     TEMPLE;
 
     public static final Codec<OrgType> CODEC =
-            Codec.STRING.xmap(OrgType::valueOf, OrgType::name);
+            Codec.STRING.xmap(OrgType::legacyCompat, OrgType::name);
+
+    /**
+     * Phase 6.3.3.b — backward-compat decoder: legacy saves contain
+     * "COMPANY" as the OrgType enum name; map to {@link #BUSINESS}.
+     */
+    private static OrgType legacyCompat(String name) {
+        if ("COMPANY".equals(name)) return BUSINESS;
+        return OrgType.valueOf(name);
+    }
 }

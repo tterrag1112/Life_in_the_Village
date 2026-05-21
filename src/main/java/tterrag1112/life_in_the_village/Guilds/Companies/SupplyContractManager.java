@@ -19,11 +19,11 @@ import java.util.stream.Stream;
  * Processes supply contract deliveries each payroll cycle.
  *
  * <h3>Called from</h3>
- * {@code CompanySavedData.tickPayroll()} — once per payroll tick (every in-game day).
+ * {@code BusinessSavedData.tickPayroll()} — once per payroll tick (every in-game day).
  *
  * <h3>Delivery logic per contract</h3>
  * <ol>
- *   <li>Find the supplier company's primary storage building.</li>
+ *   <li>Find the supplier business's primary storage building.</li>
  *   <li>Check whether {@code weeklyQuantity} of {@code itemId} is available.</li>
  *   <li>If yes: deduct goods from supplier, deposit goods into buyer, transfer coins.</li>
  *   <li>If no: increment {@code missedDeliveries}. If ≥ 3, mark BREACHED and notify.</li>
@@ -37,18 +37,18 @@ public final class SupplyContractManager {
     private SupplyContractManager() {}
 
     // =========================================================================
-    // Main tick entry point — called from CompanySavedData.tickPayroll()
+    // Main tick entry point — called from BusinessSavedData.tickPayroll()
     // =========================================================================
 
     /**
      * Processes all active supply contracts stored in {@code cdata}.
      *
      * @param level   the server level (needed for building storage access)
-     * @param cdata   company saved data containing contracts
+     * @param cdata   business saved data containing contracts
      * @param vdata   village saved data for building lookups
      */
     public static void tickContracts(ServerLevel level,
-                                     CompanySavedData cdata,
+                                     BusinessSavedData cdata,
                                      VillageSavedData vdata) {
         List<SupplyContract> contracts = cdata.getAllContracts();
 
@@ -65,11 +65,11 @@ public final class SupplyContractManager {
 
     private static void processContract(SupplyContract contract,
                                         ServerLevel level,
-                                        CompanySavedData cdata,
+                                        BusinessSavedData cdata,
                                         VillageSavedData vdata) {
 
-        Company supplier = cdata.getById(contract.supplierCompanyId()).orElse(null);
-        Company buyer    = cdata.getById(contract.buyerCompanyId()).orElse(null);
+        Business supplier = cdata.getById(contract.supplierCompanyId()).orElse(null);
+        Business buyer    = cdata.getById(contract.buyerCompanyId()).orElse(null);
 
         if (supplier == null || buyer == null) {
             // One party no longer exists — cancel the contract
@@ -162,10 +162,10 @@ public final class SupplyContractManager {
     // =========================================================================
 
     private static void recordMiss(SupplyContract contract,
-                                   Company supplier,
-                                   Company buyer,
+                                   Business supplier,
+                                   Business buyer,
                                    ServerLevel level,
-                                   CompanySavedData cdata,
+                                   BusinessSavedData cdata,
                                    String reason) {
         int newMisses = contract.missedDeliveries() + 1;
 
@@ -181,7 +181,7 @@ public final class SupplyContractManager {
             notifyPlayer(level, buyer.getOwnerPlayerId(),
                     "[" + buyer.getName() + "] Supply contract with "
                             + supplier.getName() + " has been BREACHED. Reason: " + reason
-                            + " — Renegotiate in the company management screen.");
+                            + " — Renegotiate in the business management screen.");
         } else {
             cdata.updateContract(contract.withMissedDeliveries(newMisses));
             notifyPlayer(level, buyer.getOwnerPlayerId(),
@@ -205,7 +205,7 @@ public final class SupplyContractManager {
                                                  String itemId,
                                                  int weeklyQuantity,
                                                  long bronzePricePerUnit,
-                                                 CompanySavedData cdata,
+                                                 BusinessSavedData cdata,
                                                  ServerLevel level) {
         SupplyContract contract = SupplyContract.propose(
                 buyerCompanyId, supplierCompanyId,
@@ -217,7 +217,7 @@ public final class SupplyContractManager {
         cdata.getById(supplierCompanyId).ifPresent(supplier ->
                 notifyPlayer(level, supplier.getOwnerPlayerId(),
                         "[" + supplier.getName() + "] New supply contract proposed. "
-                                + "Open your company management screen to accept or decline.")
+                                + "Open your business management screen to accept or decline.")
         );
 
         return contract;
@@ -227,7 +227,7 @@ public final class SupplyContractManager {
      * Accepts a PENDING contract, making it ACTIVE.
      */
     public static void acceptContract(UUID contractId,
-                                      CompanySavedData cdata,
+                                      BusinessSavedData cdata,
                                       ServerLevel level) {
         cdata.getAllContracts().stream()
                 .filter(c -> c.contractId().equals(contractId)
@@ -250,7 +250,7 @@ public final class SupplyContractManager {
      * Cancels any contract (PENDING, ACTIVE, or BREACHED).
      */
     public static void cancelContract(UUID contractId,
-                                      CompanySavedData cdata) {
+                                      BusinessSavedData cdata) {
         cdata.getAllContracts().stream()
                 .filter(c -> c.contractId().equals(contractId))
                 .findFirst()
@@ -266,13 +266,13 @@ public final class SupplyContractManager {
     // =========================================================================
 
     /**
-     * Finds the best storage building for a company.
+     * Finds the best storage building for a business.
      * Prefers STOCKPILE, then falls back to the first building with any storage.
      */
-    private static Building findPrimaryStorage(Company company,
+    private static Building findPrimaryStorage(Business business,
                                                VillageSavedData vdata,
                                                ServerLevel level) {
-        List<Building> buildings = company.getBuildingIds().stream()
+        List<Building> buildings = business.getBuildingIds().stream()
                 .map(vdata::getBuildingById)
                 .filter(Optional::isPresent)
                 .map(Optional::get)

@@ -197,17 +197,17 @@ public class ModModEvents {
                 VillageActionPacket::handle);
 
         registrar.playToServer(
-                CompanyActionPacket.TYPE,
-                CompanyActionPacket.CODEC,
-                CompanyActionPacket::handle);
+                BusinessActionPacket.TYPE,
+                BusinessActionPacket.CODEC,
+                BusinessActionPacket::handle);
         registrar.playToClient(
-                OpenCompanyManagementPacket.TYPE,
-                OpenCompanyManagementPacket.CODEC,
-                OpenCompanyManagementPacket::handle);
+                OpenBusinessManagementPacket.TYPE,
+                OpenBusinessManagementPacket.CODEC,
+                OpenBusinessManagementPacket::handle);
         registrar.playToClient(
-                OpenCompanyWorkerPacket.TYPE,
-                OpenCompanyWorkerPacket.CODEC,
-                OpenCompanyWorkerPacket::handle);
+                OpenBusinessWorkerPacket.TYPE,
+                OpenBusinessWorkerPacket.CODEC,
+                OpenBusinessWorkerPacket::handle);
         registrar.playToClient(
                 OpenGuildScreenPacket.TYPE,
                 OpenGuildScreenPacket.CODEC,
@@ -360,7 +360,7 @@ public class ModModEvents {
         PlagueDebugCommand.register(event.getDispatcher());
         SimDebugCommand.register(event.getDispatcher());
         GuildAbstractDebugCommand.register(event.getDispatcher());
-        CompanyDebugCommand.register(event.getDispatcher());
+        BusinessAdminCommand.register(event.getDispatcher());
         ApprenticeDebugCommand.register(event.getDispatcher());
         RequestDebugCommand.register(event.getDispatcher());
         VisitorDebugCommand.register(event.getDispatcher());

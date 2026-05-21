@@ -7,7 +7,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 
@@ -70,7 +70,7 @@ public class ServerTickDispatcher {
             LOGGER.info("ServerTickDispatcher: subsystem registry initialized");
         }
 
-        CompanySavedData    cdata = CompanySavedData.get(overworld);
+        BusinessSavedData    cdata = BusinessSavedData.get(overworld);
         AdventurerSavedData ada   = AdventurerSavedData.get(overworld);
         CaravanSavedData    cara  = CaravanSavedData.get(overworld);
 

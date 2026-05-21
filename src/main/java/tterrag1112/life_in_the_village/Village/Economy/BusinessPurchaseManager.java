@@ -330,7 +330,7 @@ public class BusinessPurchaseManager {
     }
 
     // =========================================================================
-    // Player company formation
+    // Player business formation
     // =========================================================================
 
     /**

@@ -15,7 +15,7 @@ import java.util.UUID;
  * Phase 4 doc 28 — generalised job posting visible across guilds.
  * Compound record packed into two sub-records to stay under DFU's
  * 16-field {@code RecordCodecBuilder} cap (the doc 26 codec ran into
- * the same wall, see Company.OwnershipInfo).
+ * the same wall, see Business.OwnershipInfo).
  *
  * <p>Field bundles:</p>
  * <ul>

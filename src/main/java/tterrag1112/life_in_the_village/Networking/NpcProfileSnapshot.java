@@ -71,7 +71,7 @@ public record NpcProfileSnapshot(
         boolean canTrade,
         boolean canOpenGuild,
         boolean canAssignWork,
-        boolean canOpenCompanyWorker,
+        boolean canOpenBusinessWorker,
         boolean canShowVillageBook,
         boolean canShowCraftingOrders,
         boolean canRentStall,
@@ -103,7 +103,7 @@ public record NpcProfileSnapshot(
 
         // -------------------------------------------------------------
         // Track 5a.5 — dedicated nav-target hint. Replaces the proxy
-        // approach (canShowVillageBook / canOpenCompanyWorker as
+        // approach (canShowVillageBook / canOpenBusinessWorker as
         // visibility flags). Builder fills this per the Step-5 priority
         // rule with "hide when contextual route already serves"
         // tightening; SocialVerbsPanel renders the nav button iff
@@ -169,7 +169,7 @@ public record NpcProfileSnapshot(
                         buf.writeBoolean(s.canTrade);
                         buf.writeBoolean(s.canOpenGuild);
                         buf.writeBoolean(s.canAssignWork);
-                        buf.writeBoolean(s.canOpenCompanyWorker);
+                        buf.writeBoolean(s.canOpenBusinessWorker);
                         buf.writeBoolean(s.canShowVillageBook);
                         buf.writeBoolean(s.canShowCraftingOrders);
                         buf.writeBoolean(s.canRentStall);
@@ -232,7 +232,7 @@ public record NpcProfileSnapshot(
                         boolean canTrade              = buf.readBoolean();
                         boolean canOpenGuild          = buf.readBoolean();
                         boolean canAssignWork         = buf.readBoolean();
-                        boolean canOpenCompanyWorker  = buf.readBoolean();
+                        boolean canOpenBusinessWorker  = buf.readBoolean();
                         boolean canShowVillageBook    = buf.readBoolean();
                         boolean canShowCraftingOrders = buf.readBoolean();
                         boolean canRentStall          = buf.readBoolean();
@@ -274,7 +274,7 @@ public record NpcProfileSnapshot(
                                 villageId, repScore, tierName, personalDelta,
                                 dialogueLine,
                                 canTrade, canOpenGuild, canAssignWork,
-                                canOpenCompanyWorker, canShowVillageBook,
+                                canOpenBusinessWorker, canShowVillageBook,
                                 canShowCraftingOrders, canRentStall,
                                 goals,
                                 verbIds, verbLab,

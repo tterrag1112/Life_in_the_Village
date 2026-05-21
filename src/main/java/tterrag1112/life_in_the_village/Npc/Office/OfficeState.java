@@ -13,7 +13,7 @@ import java.util.UUID;
 
 /**
  * Per-organization office container. One {@code OfficeState} lives on
- * each {@code Village}, {@code GuildData}, {@code Company}, and
+ * each {@code Village}, {@code GuildData}, {@code Business}, and
  * {@code Kingdom}.
  *
  * <p>Single-seat-per-id in v1: the spec lists {@code kingdom_council_seat}

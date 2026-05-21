@@ -17,7 +17,7 @@ import java.util.function.Supplier;
  * marker prefix, and dim text for disabled rows.
  *
  * <p>An optional {@code footerRenderer} callback is invoked at the end of
- * {@link #render} so screens like CompanyManagementScreen can draw a
+ * {@link #render} so screens like BusinessManagementScreen can draw a
  * treasury/summary block at the bottom of the sidebar strip without
  * reaching inside Sidebar internals.
  *

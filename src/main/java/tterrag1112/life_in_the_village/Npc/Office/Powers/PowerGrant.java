@@ -2,8 +2,8 @@ package tterrag1112.life_in_the_village.Npc.Office.Powers;
 
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeDefinition;
@@ -61,7 +61,7 @@ public final class PowerGrant {
     public static boolean hasPower(UUID uuid, OfficePower power, GuildData g) {
         return g != null && hasPower(uuid, power, g.offices());
     }
-    public static boolean hasPower(UUID uuid, OfficePower power, Company c) {
+    public static boolean hasPower(UUID uuid, OfficePower power, Business c) {
         return c != null && hasPower(uuid, power, c.getOffices());
     }
 
@@ -90,7 +90,7 @@ public final class PowerGrant {
     public static Optional<UUID> holderOf(OfficePower power, GuildData g) {
         return g == null ? Optional.empty() : holderOf(power, g.offices());
     }
-    public static Optional<UUID> holderOf(OfficePower power, Company c) {
+    public static Optional<UUID> holderOf(OfficePower power, Business c) {
         return c == null ? Optional.empty() : holderOf(power, c.getOffices());
     }
 

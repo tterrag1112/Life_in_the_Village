@@ -4,8 +4,8 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -18,7 +18,7 @@ import java.util.UUID;
 
 /**
  * Phase 4 doc 26 lines 81-102 — promotes eligible MERCHANT NPCs to
- * trading-company owners.
+ * trading-business owners.
  *
  * <h3>Eligibility</h3>
  * <ul>
@@ -35,11 +35,11 @@ import java.util.UUID;
  * </ul>
  *
  * <h3>Promotion</h3>
- * Creates a TRADING_COMPANY {@link Company} owned by the NPC, transfers
- * 100 br from the NPC's wallet into the company treasury, makes the
+ * Creates a TRADING_COMPANY {@link Business} owned by the NPC, transfers
+ * 100 br from the NPC's wallet into the business treasury, makes the
  * NPC the owner-as-PRODUCER worker, and seeds the {@code company_owner}
- * office. The {@link tterrag1112.life_in_the_village.Guilds.Companies.Company.OwnerType}
- * flips to NPC and the per-company succession state stays ACTIVE.
+ * office. The {@link tterrag1112.life_in_the_village.Guilds.Companies.Business.OwnerType}
+ * flips to NPC and the per-business succession state stays ACTIVE.
  */
 public final class MerchantPromotion {
 
@@ -51,7 +51,7 @@ public final class MerchantPromotion {
             tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds.MERCHANT_PROMOTION;
     /** Spec line 87 — initial capital floor in NPC wallet. */
     public static final long STARTUP_CAPITAL = 500L;
-    /** Bronze transferred from NPC wallet to company treasury on promotion. */
+    /** Bronze transferred from NPC wallet to business treasury on promotion. */
     public static final long PROMOTION_TRANSFER = 100L;
     /** Spec line 88 — continuous-merchant tenure threshold. */
     public static final int TENURE_DAYS = 365;
@@ -61,7 +61,7 @@ public final class MerchantPromotion {
     private MerchantPromotion() {}
 
     /** Returns true when {@code npc} satisfies every eligibility
-     *  criterion. Used both by the daily scan and by /company
+     *  criterion. Used both by the daily scan and by /business
      *  promote &lt;npc&gt;. */
     public static boolean isEligible(TownspersonMob npc, ServerLevel level) {
         if (npc == null) return false;
@@ -79,11 +79,11 @@ public final class MerchantPromotion {
     }
 
     /**
-     * Promotes the NPC. Returns the new {@link Company} on success,
+     * Promotes the NPC. Returns the new {@link Business} on success,
      * empty when eligibility fails or required village context is
      * missing.
      */
-    public static Optional<Company> promote(ServerLevel level, TownspersonMob npc) {
+    public static Optional<Business> promote(ServerLevel level, TownspersonMob npc) {
         if (!isEligible(npc, level)) return Optional.empty();
         UUID villageId = npc.getAssignedVillageName()
                 .flatMap(name -> VillageSavedData.get(level).getVillageByName(name))
@@ -92,10 +92,10 @@ public final class MerchantPromotion {
         return Optional.of(promoteUnchecked(level, npc, villageId));
     }
 
-    /** Force-promote path used by /company promote when eligibility
+    /** Force-promote path used by /business promote when eligibility
      *  is intentionally bypassed for testing. Caller has verified the
      *  NPC is a merchant assigned to a market. */
-    public static Company forcePromote(ServerLevel level, TownspersonMob npc) {
+    public static Business forcePromote(ServerLevel level, TownspersonMob npc) {
         UUID villageId = npc.getAssignedVillageName()
                 .flatMap(name -> VillageSavedData.get(level).getVillageByName(name))
                 .map(Village::getId).orElse(null);
@@ -105,41 +105,41 @@ public final class MerchantPromotion {
         return promoteUnchecked(level, npc, villageId);
     }
 
-    private static Company promoteUnchecked(ServerLevel level, TownspersonMob npc,
+    private static Business promoteUnchecked(ServerLevel level, TownspersonMob npc,
                                             UUID villageId) {
         long now = level.getGameTime();
-        String companyName = npc.getNpcName() + "'s Trading House";
-        Company company = Company.create(companyName,
+        String businessName = npc.getNpcName() + "'s Trading House";
+        Business business = Business.create(businessName,
                 /* legacy player owner field — sentinel zero */
                 new UUID(0L, 0L),
                 villageId);
-        company.setCompanyType(Company.CompanyType.TRADING_COMPANY);
-        company.setNpcOwner(npc.getUUID());
-        company.setFoundedTick(now);
+        business.setBusinessType(Business.BusinessType.TRADING_COMPANY);
+        business.setNpcOwner(npc.getUUID());
+        business.setFoundedTick(now);
 
         // Owner as PRODUCER worker at their own market.
-        UUID buildingId = npc.getAssignedBuildingId().orElse(Company.NO_BUILDING);
-        company.addBuilding(buildingId);
-        company.addWorker(new Company.CompanyWorker(
+        UUID buildingId = npc.getAssignedBuildingId().orElse(Business.NO_BUILDING);
+        business.addBuilding(buildingId);
+        business.addWorker(new Business.BusinessWorker(
                 npc.getUUID(),
-                Company.WorkerRole.PRODUCER,
-                Company.ProducerType.GENERIC,
+                Business.WorkerRole.PRODUCER,
+                Business.ProducerType.GENERIC,
                 buildingId,
                 /* wagePerDay */ 0L, /* lastPaidTick */ now,
                 /* assignedItemId */ "", /* dailyTargetCount */ 8));
 
-        // Capital transfer: NPC wallet → company treasury via spend().
+        // Capital transfer: NPC wallet → business treasury via spend().
         long actualTransfer = Math.min(PROMOTION_TRANSFER, npc.getWallet().toBronze());
         if (actualTransfer > 0L
                 && npc.getEconomy().spend(
                         tterrag1112.life_in_the_village.Village.Economy.Currency
                                 .CurrencyValue.of(actualTransfer))) {
-            company.depositBronze(actualTransfer);
+            business.depositBronze(actualTransfer);
         }
 
-        CompanySavedData.get(level).addCompany(company);
+        BusinessSavedData.get(level).addBusiness(business);
         LOGGER.info("[MerchantPromotion] {} ({}) promoted to TRADING_COMPANY '{}' (treasury={})",
-                npc.getNpcName(), npc.getUUID(), companyName, company.getTreasuryBronze());
+                npc.getNpcName(), npc.getUUID(), businessName, business.getTreasuryBronze());
         // Phase 4 doc 30 archival hook.
         Village v = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level)
                 .getVillageById(villageId).orElse(null);
@@ -147,12 +147,12 @@ public final class MerchantPromotion {
             java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
             details.put("village_name", v.getName());
             details.put("npc_name", npc.getNpcName());
-            details.put("company_name", companyName);
+            details.put("company_name", businessName);
             tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
                     level, v,
-                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.COMPANY_FOUNDED,
+                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.BUSINESS_FOUNDED,
                     now, details, java.util.List.of(npc.getUUID()));
         }
-        return company;
+        return business;
     }
 }

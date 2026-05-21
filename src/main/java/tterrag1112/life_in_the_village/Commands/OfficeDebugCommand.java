@@ -10,8 +10,8 @@ import net.minecraft.commands.arguments.UuidArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Office.OfficeDefinition;
@@ -32,7 +32,7 @@ import java.util.UUID;
  * {@code /office} root debug command. Reads and writes
  * {@link OfficeState} on each org type. EntityRef syntax is
  * {@code <orgType>:<uuid>} where {@code orgType} ∈
- * {@code village, guild, company, kingdom}.
+ * {@code village, guild, business, kingdom}.
  */
 public final class OfficeDebugCommand {
 
@@ -120,7 +120,7 @@ public final class OfficeDebugCommand {
         return switch (type) {
             case "village" -> new EntityRef(OrgType.VILLAGE, uuid);
             case "guild"   -> new EntityRef(OrgType.GUILD,   uuid);
-            case "company" -> new EntityRef(OrgType.COMPANY, uuid);
+            case "business" -> new EntityRef(OrgType.BUSINESS, uuid);
             case "kingdom" -> new EntityRef(OrgType.KINGDOM, uuid);
             default        -> null;
         };
@@ -156,12 +156,12 @@ public final class OfficeDebugCommand {
                         k.getOffices(), vdata::markDirty);
             }
             case COMPANY -> {
-                CompanySavedData cdata = CompanySavedData.get(level);
-                Company c = cdata.getAllCompanies().stream()
-                        .filter(x -> x.getCompanyId().equals(ref.uuid))
+                BusinessSavedData cdata = BusinessSavedData.get(level);
+                Business c = cdata.getAllBusinesses().stream()
+                        .filter(x -> x.getBusinessId().equals(ref.uuid))
                         .findFirst().orElse(null);
                 if (c == null) return null;
-                return new EntityHandle(OrgType.COMPANY, ref.uuid, c.getName(),
+                return new EntityHandle(OrgType.BUSINESS, ref.uuid, c.getName(),
                         c.getOffices(), cdata::setDirty);
             }
             default -> { return null; }
@@ -172,7 +172,7 @@ public final class OfficeDebugCommand {
         EntityRef ref = parseRef(rawRef);
         if (ref == null) {
             src.sendFailure(Component.literal(
-                    "Bad entityRef '" + rawRef + "' — expected village:<uuid>, guild:<uuid>, company:<uuid>, or kingdom:<uuid>"));
+                    "Bad entityRef '" + rawRef + "' — expected village:<uuid>, guild:<uuid>, business:<uuid>, or kingdom:<uuid>"));
             return null;
         }
         EntityHandle h = resolve(src, ref);
@@ -405,7 +405,7 @@ public final class OfficeDebugCommand {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
         VillageSavedData vdata = VillageSavedData.get(level);
-        CompanySavedData cdata = CompanySavedData.get(level);
+        BusinessSavedData cdata = BusinessSavedData.get(level);
         long now = level.getGameTime();
 
         StringBuilder sb = new StringBuilder();
@@ -425,9 +425,9 @@ public final class OfficeDebugCommand {
             sb.append(formatHeader("kingdom", k.getId(), k.getName()));
             for (var e : k.getOffices().snapshot().entrySet()) sb.append(formatHolding(e.getValue(), now));
         }
-        appendSection(sb, "Companies", cdata.getAllCompanies().size());
-        for (Company c : cdata.getAllCompanies()) {
-            sb.append(formatHeader("company", c.getCompanyId(), c.getName()));
+        appendSection(sb, "Companies", cdata.getAllBusinesses().size());
+        for (Business c : cdata.getAllBusinesses()) {
+            sb.append(formatHeader("business", c.getBusinessId(), c.getName()));
             for (var e : c.getOffices().snapshot().entrySet()) sb.append(formatHolding(e.getValue(), now));
         }
 

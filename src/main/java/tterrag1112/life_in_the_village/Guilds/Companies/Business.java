@@ -7,7 +7,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 import java.util.*;
 
-public class Company {
+public class Business {
 
     // -------------------------------------------------------------------------
     // Worker roles
@@ -16,15 +16,15 @@ public class Company {
     public enum WorkerRole {
         PRODUCER,           // crafts or grows items
         SELLER,             // mans a market stall, sells goods
-        COURIER,            // moves items between company buildings
-        CARAVAN_ATTENDANT;  // travels with trading-company caravans (Phase 4 doc 26)
+        COURIER,            // moves items between business buildings
+        CARAVAN_ATTENDANT;  // travels with trading-business caravans (Phase 4 doc 26)
 
         public static final Codec<WorkerRole> CODEC =
                 Codec.STRING.xmap(WorkerRole::valueOf, WorkerRole::name);
     }
 
     /**
-     * Phase 4 doc 26 — distinguishes a player-owned company from an
+     * Phase 4 doc 26 — distinguishes a player-owned business from an
      * NPC-owned one. Existing player-only saves migrate to PLAYER at
      * load time via the codec's optionalFieldOf default.
      */
@@ -37,24 +37,24 @@ public class Company {
     }
 
     /**
-     * Phase 4 doc 26 — trading companies unlock long-haul caravans
+     * Phase 4 doc 26 — trading businesses unlock long-haul caravans
      * (3x village-merchant range), CARAVAN_ATTENDANT hires, and
      * inter-village request-board posts.
      */
-    public enum CompanyType {
+    public enum BusinessType {
         STANDARD,
         TRADING_COMPANY;
 
-        public static final Codec<CompanyType> CODEC =
-                Codec.STRING.xmap(CompanyType::valueOf, CompanyType::name);
+        public static final Codec<BusinessType> CODEC =
+                Codec.STRING.xmap(BusinessType::valueOf, BusinessType::name);
     }
 
     /**
-     * Phase 4 doc 26 — owner-succession state machine. Most companies
+     * Phase 4 doc 26 — owner-succession state machine. Most businesses
      * sit in {@link #ACTIVE}; on owner death without an heir or with
      * a profession-loss demotion, they transition to {@link #UNDECIDED}
      * for 30 days while family members can claim. Failure to resolve
-     * dissolves the company.
+     * dissolves the business.
      */
     public enum SuccessionState {
         ACTIVE,
@@ -67,7 +67,7 @@ public class Company {
 
     /**
      * Phase 4 doc 26 — packs the eight ownership / type / succession
-     * fields into a single sub-record so the main {@link Company}
+     * fields into a single sub-record so the main {@link Business}
      * codec stays under DFU's 16-field {@code RecordCodecBuilder} cap.
      * The previous flat layout pushed the codec to 19 fields and the
      * lambda type inference fell back to {@code Object}, breaking
@@ -75,7 +75,7 @@ public class Company {
      *
      * <p>Backward-compat: v1 saves without an {@code ownership} entry
      * read {@link #DEFAULT}; {@link #ownerId} stays {@code Optional.empty()}
-     * and the {@code Company.fromCodec} path falls back to
+     * and the {@code Business.fromCodec} path falls back to
      * {@code ownerPlayerId} so existing player owners keep their
      * identity.</p>
      */
@@ -83,7 +83,7 @@ public class Company {
             OwnerType ownerType,
             java.util.Optional<UUID> ownerId,
             List<UUID> heirs,
-            CompanyType companyType,
+            BusinessType businessType,
             SuccessionState successionState,
             long foundedTick,
             long dissolutionWarningTick,
@@ -94,13 +94,13 @@ public class Company {
             if (ownerId == null)   ownerId   = java.util.Optional.empty();
             if (heirs == null)     heirs     = List.of();
             else                   heirs     = List.copyOf(heirs);
-            if (companyType == null)     companyType     = CompanyType.STANDARD;
+            if (businessType == null)     businessType     = BusinessType.STANDARD;
             if (successionState == null) successionState = SuccessionState.ACTIVE;
         }
 
         public static final OwnershipInfo DEFAULT = new OwnershipInfo(
                 OwnerType.PLAYER, java.util.Optional.empty(), List.of(),
-                CompanyType.STANDARD, SuccessionState.ACTIVE, 0L, 0L, 0L);
+                BusinessType.STANDARD, SuccessionState.ACTIVE, 0L, 0L, 0L);
 
         public static final Codec<OwnershipInfo> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -110,8 +110,8 @@ public class Company {
                                 .forGetter(OwnershipInfo::ownerId),
                         UUIDUtil.CODEC.listOf().optionalFieldOf("heirs", List.of())
                                 .forGetter(OwnershipInfo::heirs),
-                        CompanyType.CODEC.optionalFieldOf("companyType", CompanyType.STANDARD)
-                                .forGetter(OwnershipInfo::companyType),
+                        BusinessType.CODEC.optionalFieldOf("businessType", BusinessType.STANDARD)
+                                .forGetter(OwnershipInfo::businessType),
                         SuccessionState.CODEC.optionalFieldOf("successionState", SuccessionState.ACTIVE)
                                 .forGetter(OwnershipInfo::successionState),
                         Codec.LONG.optionalFieldOf("foundedTick", 0L)
@@ -125,13 +125,13 @@ public class Company {
 
     public enum ProducerType {
         GENERIC,     // no specific role — hand-produces items
-        FARMER,      // requires company farmhouse — follows FarmerGoal pattern
-        MINER,       // requires company mine
-        BLACKSMITH,  // requires company blacksmith
-        CARPENTER,   // requires company carpentry
+        FARMER,      // requires business farmhouse — follows FarmerGoal pattern
+        MINER,       // requires business mine
+        BLACKSMITH,  // requires business blacksmith
+        CARPENTER,   // requires business carpentry
         LUMBERJACK;  // requires woodcutter
 
-        /** Which BuildingType must the company own for this type to be available */
+        /** Which BuildingType must the business own for this type to be available */
         public BuildingType requiredBuilding() {
             return switch (this) {
                 case FARMER     -> BuildingType.FARMHOUSE;
@@ -151,7 +151,7 @@ public class Company {
     // A single hired worker
     // -------------------------------------------------------------------------
 
-    public record CompanyWorker(
+    public record BusinessWorker(
             UUID npcId,
             WorkerRole role,
             ProducerType producerType,   // NEW
@@ -161,40 +161,40 @@ public class Company {
             String assignedItemId,
             int dailyTargetCount
     ) {
-        public static final Codec<CompanyWorker> CODEC =
+        public static final Codec<BusinessWorker> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
                         UUIDUtil.CODEC.fieldOf("npcId")
-                                .forGetter(CompanyWorker::npcId),
+                                .forGetter(BusinessWorker::npcId),
                         WorkerRole.CODEC.fieldOf("role")
-                                .forGetter(CompanyWorker::role),
+                                .forGetter(BusinessWorker::role),
                         ProducerType.CODEC.fieldOf("producerType")
-                                        .forGetter(CompanyWorker::producerType),
+                                        .forGetter(BusinessWorker::producerType),
                         UUIDUtil.CODEC.fieldOf("assignedBuildingId")
-                                .forGetter(CompanyWorker::assignedBuildingId),
+                                .forGetter(BusinessWorker::assignedBuildingId),
                         Codec.LONG.fieldOf("wagePerDay")
-                                .forGetter(CompanyWorker::wagePerDay),
+                                .forGetter(BusinessWorker::wagePerDay),
                         Codec.LONG.fieldOf("lastPaidTick")
-                                .forGetter(CompanyWorker::lastPaidTick),
+                                .forGetter(BusinessWorker::lastPaidTick),
                         Codec.STRING.optionalFieldOf("assignedItemId", "")
-                                .forGetter(CompanyWorker::assignedItemId),
+                                .forGetter(BusinessWorker::assignedItemId),
                         Codec.INT.optionalFieldOf("dailyTargetCount", 8)
-                                .forGetter(CompanyWorker::dailyTargetCount)
-                ).apply(i, CompanyWorker::new));
+                                .forGetter(BusinessWorker::dailyTargetCount)
+                ).apply(i, BusinessWorker::new));
 
-        public CompanyWorker withWage(long wage) {
-            return new CompanyWorker(npcId, role, producerType, assignedBuildingId,
+        public BusinessWorker withWage(long wage) {
+            return new BusinessWorker(npcId, role, producerType, assignedBuildingId,
                     wage, lastPaidTick, assignedItemId, dailyTargetCount);
         }
-        public CompanyWorker withTask(String itemId, int count) {
-            return new CompanyWorker(npcId, role, producerType, assignedBuildingId,
+        public BusinessWorker withTask(String itemId, int count) {
+            return new BusinessWorker(npcId, role, producerType, assignedBuildingId,
                     wagePerDay, lastPaidTick, itemId, count);
         }
-        public CompanyWorker withLastPaidTick(long tick) {
-            return new CompanyWorker(npcId, role, producerType, assignedBuildingId,
+        public BusinessWorker withLastPaidTick(long tick) {
+            return new BusinessWorker(npcId, role, producerType, assignedBuildingId,
                     wagePerDay, tick, assignedItemId, dailyTargetCount);
         }
-        public CompanyWorker withProducerType(ProducerType type) {
-            return new CompanyWorker(npcId, role, type, assignedBuildingId,
+        public BusinessWorker withProducerType(ProducerType type) {
+            return new BusinessWorker(npcId, role, type, assignedBuildingId,
                     wagePerDay, lastPaidTick, assignedItemId, dailyTargetCount);
         }
     }
@@ -245,31 +245,31 @@ public class Company {
     // Codec
     // -------------------------------------------------------------------------
 
-    public static final Codec<Company> CODEC =
+    public static final Codec<Business> CODEC =
             RecordCodecBuilder.create(i -> i.group(
-                    UUIDUtil.CODEC.fieldOf("companyId")
-                            .forGetter(Company::getCompanyId),
+                    UUIDUtil.CODEC.fieldOf("businessId")
+                            .forGetter(Business::getBusinessId),
                     Codec.STRING.fieldOf("name")
-                            .forGetter(Company::getName),
+                            .forGetter(Business::getName),
                     UUIDUtil.CODEC.fieldOf("ownerPlayerId")
-                            .forGetter(Company::getOwnerPlayerId),
+                            .forGetter(Business::getOwnerPlayerId),
                     UUIDUtil.CODEC.fieldOf("homeVillageId")
-                            .forGetter(Company::getHomeVillageId),
+                            .forGetter(Business::getHomeVillageId),
                     UUIDUtil.CODEC.listOf()
                             .optionalFieldOf("buildingIds", new ArrayList<>())
                             .forGetter(c -> new ArrayList<>(c.buildingIds)),
-                    CompanyWorker.CODEC.listOf()
+                    BusinessWorker.CODEC.listOf()
                             .optionalFieldOf("workers", new ArrayList<>())
                             .forGetter(c -> new ArrayList<>(c.workers.values())),
                     WorkSchedule.CODEC.fieldOf("workSchedule")
-                            .forGetter(Company::getWorkSchedule),
+                            .forGetter(Business::getWorkSchedule),
                     PriceOverride.CODEC.listOf()
                             .optionalFieldOf("priceOverrides", new ArrayList<>())
                             .forGetter(c -> new ArrayList<>(c.priceOverrides.values())),
                     Codec.LONG.optionalFieldOf("treasuryBronze", 0L)
-                            .forGetter(Company::getTreasuryBronze),
+                            .forGetter(Business::getTreasuryBronze),
                     Codec.BOOL.optionalFieldOf("isActive", true)
-                            .forGetter(Company::isActive),
+                            .forGetter(Business::isActive),
                     tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                             .optionalFieldOf("offices")
                             .forGetter(c -> java.util.Optional.ofNullable(c.offices)),
@@ -280,17 +280,17 @@ public class Company {
                     // and the fromCodec fallback resolves ownerId to
                     // ownerPlayerId for backward compat.
                     OwnershipInfo.CODEC.optionalFieldOf("ownership", OwnershipInfo.DEFAULT)
-                            .forGetter(Company::snapshotOwnership)
-            ).apply(i, Company::fromCodec));
+                            .forGetter(Business::snapshotOwnership)
+            ).apply(i, Business::fromCodec));
 
-    private static Company fromCodec(UUID companyId, String name,
+    private static Business fromCodec(UUID businessId, String name,
                                      UUID ownerPlayerId, UUID homeVillageId,
-                                     List<UUID> buildingIds, List<CompanyWorker> workers,
+                                     List<UUID> buildingIds, List<BusinessWorker> workers,
                                      WorkSchedule schedule, List<PriceOverride> prices,
                                      long treasury, boolean active,
                                      java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
                                      OwnershipInfo ownership) {
-        Company c = new Company(companyId, name, ownerPlayerId,
+        Business c = new Business(businessId, name, ownerPlayerId,
                 homeVillageId, schedule);
         c.buildingIds.addAll(buildingIds);
         workers.forEach(w -> c.workers.put(w.npcId(), w));
@@ -305,7 +305,7 @@ public class Company {
         c.ownerType       = info.ownerType();
         c.ownerId         = info.ownerId().orElse(ownerPlayerId);
         c.heirs.addAll(info.heirs());
-        c.companyType     = info.companyType();
+        c.businessType     = info.businessType();
         c.successionState = info.successionState();
         c.foundedTick            = info.foundedTick();
         c.dissolutionWarningTick = info.dissolutionWarningTick();
@@ -313,14 +313,14 @@ public class Company {
         return c;
     }
 
-    /** Builds an {@link OwnershipInfo} reflecting the current Company
+    /** Builds an {@link OwnershipInfo} reflecting the current Business
      *  state for the codec write path. */
     private OwnershipInfo snapshotOwnership() {
         return new OwnershipInfo(
                 ownerType,
                 java.util.Optional.ofNullable(ownerId),
                 List.copyOf(heirs),
-                companyType,
+                businessType,
                 successionState,
                 foundedTick,
                 dissolutionWarningTick,
@@ -331,12 +331,12 @@ public class Company {
     // Fields
     // -------------------------------------------------------------------------
 
-    private final UUID companyId;
+    private final UUID businessId;
     private String name;
     private final UUID ownerPlayerId;
     private final UUID homeVillageId;
     private final List<UUID> buildingIds         = new ArrayList<>();
-    private final Map<UUID, CompanyWorker> workers = new LinkedHashMap<>();
+    private final Map<UUID, BusinessWorker> workers = new LinkedHashMap<>();
     private WorkSchedule workSchedule;
     private final Map<String, PriceOverride> priceOverrides = new LinkedHashMap<>();
     private long treasuryBronze = 0L;
@@ -350,27 +350,27 @@ public class Company {
     private OwnerType ownerType = OwnerType.PLAYER;
     /**
      * UUID of the actual owner — player or NPC. Decoupled from
-     * {@link #ownerPlayerId} so NPC-owned companies can flag
+     * {@link #ownerPlayerId} so NPC-owned businesses can flag
      * the player getter as the sentinel zero-UUID without
      * dropping the legacy save key.
      */
     private UUID ownerId;
     /** Ordered succession chain. Defaults to oldest-adult-child of the
-     *  owner; spec line 132. Empty for player-owned companies. */
+     *  owner; spec line 132. Empty for player-owned businesses. */
     private final List<UUID> heirs = new ArrayList<>();
-    private CompanyType companyType = CompanyType.STANDARD;
+    private BusinessType businessType = BusinessType.STANDARD;
     private SuccessionState successionState = SuccessionState.ACTIVE;
-    /** When the company was founded — used for "founder of X" history
+    /** When the business was founded — used for "founder of X" history
      *  lines and to gate certain spec-line-256 edge cases. */
     private long foundedTick = 0L;
     /** Tick at which the bankruptcy warning first fired. 0 means no
      *  warning active. Spec "Open decisions" — 14 days below 50 br
      *  warns; 30 more days dissolves. */
     private long dissolutionWarningTick = 0L;
-    /** Tick at which the company entered UNDECIDED. 0 when ACTIVE. */
+    /** Tick at which the business entered UNDECIDED. 0 when ACTIVE. */
     private long undecidedSinceTick = 0L;
     /**
-     * Office state for this company. Phase 0 storage only — see
+     * Office state for this business. Phase 0 storage only — see
      * {@code docs/npc_redesign/06-office-framework.md}. Stays in sync with
      * {@link #ownerPlayerId} during the migration window; Phase 3 cuts over.
      */
@@ -382,9 +382,9 @@ public class Company {
     // Constructor
     // -------------------------------------------------------------------------
 
-    public Company(UUID companyId, String name, UUID ownerPlayerId,
+    public Business(UUID businessId, String name, UUID ownerPlayerId,
                    UUID homeVillageId, WorkSchedule schedule) {
-        this.companyId     = companyId;
+        this.businessId     = businessId;
         this.name          = name;
         this.ownerPlayerId = ownerPlayerId;
         // Default ownership is PLAYER with ownerId = ownerPlayerId.
@@ -393,28 +393,28 @@ public class Company {
         this.homeVillageId = homeVillageId;
         this.workSchedule  = schedule;
         this.offices       = tterrag1112.life_in_the_village.Npc.Office.OfficeState
-                .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.COMPANY, this.companyId);
-        // Seed company_owner with the player owner (companies are
+                .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.BUSINESS, this.businessId);
+        // Seed company_owner with the player owner (businesses are
         // owner-by-investment per spec).
         if (ownerPlayerId != null
                 && !ownerPlayerId.equals(UUID.fromString("00000000-0000-0000-0000-000000000000"))) {
             this.offices.set(
-                    tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
                     tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByPlayer(
-                            tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
-                            this.companyId, ownerPlayerId, 0L, 0L,
+                            tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
+                            this.businessId, ownerPlayerId, 0L, 0L,
                             tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
         }
     }
 
-    /** Office state for this company; never {@code null} after construction. */
+    /** Office state for this business; never {@code null} after construction. */
     public tterrag1112.life_in_the_village.Npc.Office.OfficeState getOffices() {
         return offices;
     }
 
-    public static Company create(String name, UUID ownerPlayerId,
+    public static Business create(String name, UUID ownerPlayerId,
                                  UUID homeVillageId) {
-        return new Company(UUID.randomUUID(), name, ownerPlayerId,
+        return new Business(UUID.randomUUID(), name, ownerPlayerId,
                 homeVillageId, WorkSchedule.DEFAULT);
     }
 
@@ -422,7 +422,7 @@ public class Company {
     // Workers
     // -------------------------------------------------------------------------
 
-    public void addWorker(CompanyWorker worker) {
+    public void addWorker(BusinessWorker worker) {
         workers.put(worker.npcId(), worker);
     }
 
@@ -430,15 +430,15 @@ public class Company {
         workers.remove(npcId);
     }
 
-    public Optional<CompanyWorker> getWorker(UUID npcId) {
+    public Optional<BusinessWorker> getWorker(UUID npcId) {
         return Optional.ofNullable(workers.get(npcId));
     }
 
-    public Collection<CompanyWorker> getWorkers() {
+    public Collection<BusinessWorker> getWorkers() {
         return Collections.unmodifiableCollection(workers.values());
     }
 
-    public void updateWorker(CompanyWorker updated) {
+    public void updateWorker(BusinessWorker updated) {
         workers.put(updated.npcId(), updated);
     }
 
@@ -473,7 +473,7 @@ public class Company {
         return Collections.unmodifiableList(buildingIds);
     }
 
-    public boolean hasAssignedBuilding(CompanyWorker worker) {
+    public boolean hasAssignedBuilding(BusinessWorker worker) {
         return !worker.assignedBuildingId().equals(NO_BUILDING);
     }
 
@@ -482,7 +482,7 @@ public class Company {
     // -------------------------------------------------------------------------
 
     /**
-     * Returns the effective minimum wage per day for this company,
+     * Returns the effective minimum wage per day for this business,
      * accounting for active kingdom laws.
      * MINIMUM_WAGE law enforces 8 bronze/day floor.
      */
@@ -502,8 +502,8 @@ public class Company {
     private static final long PAY_INTERVAL = 24000L; // once per in-game day
 
     /**
-     * Pays all workers from the company treasury.
-     * Called by CompanySavedData.tick().
+     * Pays all workers from the business treasury.
+     * Called by BusinessSavedData.tick().
      * Returns list of NPC IDs that could not be paid (insufficient funds).
      */
     public List<UUID> runPayroll(long currentTick,
@@ -511,7 +511,7 @@ public class Company {
         List<UUID> unpaid = new ArrayList<>();
         long minWage = getEffectiveMinWage(vdata);
 
-        for (CompanyWorker worker : new ArrayList<>(workers.values())) {
+        for (BusinessWorker worker : new ArrayList<>(workers.values())) {
             if (currentTick - worker.lastPaidTick() < PAY_INTERVAL) continue;
             long wage = Math.max(worker.wagePerDay(), minWage);
             if (treasuryBronze < wage) {
@@ -534,7 +534,7 @@ public class Company {
     // Getters / setters
     // -------------------------------------------------------------------------
 
-    public UUID getCompanyId()          { return companyId; }
+    public UUID getBusinessId()          { return businessId; }
     public String getName()             { return name; }
     public void setName(String n)       { this.name = n; }
     public UUID getOwnerPlayerId()      { return ownerPlayerId; }
@@ -554,12 +554,12 @@ public class Company {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 4 doc 26 — NPC ownership / company type / succession
+    // Phase 4 doc 26 — NPC ownership / business type / succession
     // -------------------------------------------------------------------------
 
     public OwnerType getOwnerType()              { return ownerType; }
     public UUID      getOwnerId()                { return ownerId; }
-    public CompanyType getCompanyType()          { return companyType; }
+    public BusinessType getBusinessType()          { return businessType; }
     public SuccessionState getSuccessionState()  { return successionState; }
     public long getFoundedTick()                 { return foundedTick; }
     public long getDissolutionWarningTick()      { return dissolutionWarningTick; }
@@ -568,9 +568,9 @@ public class Company {
 
     public boolean isNpcOwned()    { return ownerType == OwnerType.NPC; }
     public boolean isPlayerOwned() { return ownerType == OwnerType.PLAYER; }
-    public boolean isTradingCompany() { return companyType == CompanyType.TRADING_COMPANY; }
+    public boolean isTradingBusiness() { return businessType == BusinessType.TRADING_COMPANY; }
 
-    public void setCompanyType(CompanyType type) { if (type != null) this.companyType = type; }
+    public void setBusinessType(BusinessType type) { if (type != null) this.businessType = type; }
     public void setSuccessionState(SuccessionState state) {
         if (state != null) this.successionState = state;
     }
@@ -579,7 +579,7 @@ public class Company {
     public void setFoundedTick(long tick)            { this.foundedTick = tick; }
 
     /**
-     * Promotes the company to NPC ownership. Called by the
+     * Promotes the business to NPC ownership. Called by the
      * merchant-promotion path; overwrites {@link #ownerId} with the
      * NPC UUID and replaces the company_owner office entry. The
      * {@link #ownerPlayerId} legacy field stays at its prior value
@@ -593,10 +593,10 @@ public class Company {
         // Replace the company_owner office holding (legacy seed put a
         // player-held entry; npc-held wins).
         this.offices.set(
-                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
+                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
                 tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByNpc(
-                        tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.COMPANY_OWNER,
-                        this.companyId, npcId, 0L, 0L,
+                        tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
+                        this.businessId, npcId, 0L, 0L,
                         tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
     }
 

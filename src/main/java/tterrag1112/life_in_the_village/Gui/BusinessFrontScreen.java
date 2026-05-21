@@ -39,7 +39,7 @@ import java.util.List;
  * <p>Migrated to Gui.Framework on Phase 3 close. The previous version
  * called {@code super.render} BEFORE drawing the parchment background,
  * which painted the panel over the buttons and made them invisible.
- * The framework convention (see CompanyWorkerScreen) is dim fill →
+ * The framework convention (see BusinessWorkerScreen) is dim fill →
  * Chrome.draw → text → {@code super.render} so widgets render on top.</p>
  */
 public class BusinessFrontScreen extends Screen {

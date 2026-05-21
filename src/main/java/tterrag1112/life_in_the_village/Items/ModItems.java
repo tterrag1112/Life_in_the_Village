@@ -21,7 +21,7 @@ public class ModItems {
     public static final DeferredItem<Item> MONEYBIN = ITEMS.registerItem("moneybin", PurseItem::new, props -> new Item.Properties().stacksTo(1).component(DataComponents.BUNDLE_CONTENTS, BundleContents.EMPTY));
     public static final DeferredItem<Item> VILLAGE_MAP = ITEMS.registerItem("village_map", VillageMapItem::new, props -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<Item> KINGDOM_BOOK = ITEMS.registerItem("kingdom_book", KingdomBookItem::new, props -> new Item.Properties().stacksTo(1));
-    public static final DeferredItem<Item> COMPANY_LEDGER = ITEMS.registerItem("company_ledger", CompanyLedgerItem::new, props -> new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> COMPANY_LEDGER = ITEMS.registerItem("company_ledger", BusinessLedgerItem::new, props -> new Item.Properties().stacksTo(1));
     /** Track C3.1 — Road Engineer's Plans. Right-click to view road-proposal status. */
     public static final DeferredItem<Item> ROAD_ENGINEER_PLANS = ITEMS.registerItem("road_engineer_plans", RoadEngineerPlansItem::new, props -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<Item> WHEAT_FLOUR = ITEMS.registerSimpleItem("wheat_flour");

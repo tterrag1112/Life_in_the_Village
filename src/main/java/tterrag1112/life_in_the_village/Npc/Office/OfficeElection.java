@@ -5,8 +5,8 @@ import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildData;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
@@ -162,9 +162,9 @@ public final class OfficeElection {
         for (Kingdom k : vdata.getAllKingdoms()) {
             sweepState(k.getOffices(), OrgType.KINGDOM, k.getId(), level, now);
         }
-        CompanySavedData cdata = CompanySavedData.get(level);
-        for (Company c : cdata.getAllCompanies()) {
-            sweepState(c.getOffices(), OrgType.COMPANY, c.getCompanyId(), level, now);
+        BusinessSavedData cdata = BusinessSavedData.get(level);
+        for (Business c : cdata.getAllBusinesses()) {
+            sweepState(c.getOffices(), OrgType.BUSINESS, c.getBusinessId(), level, now);
         }
     }
 
@@ -314,9 +314,9 @@ public final class OfficeElection {
             case VILLAGE -> vdata.getVillageById(orgId).map(Village::getOffices).orElse(null);
             case GUILD   -> vdata.getGuildById(orgId).map(GuildData::offices).orElse(null);
             case KINGDOM -> vdata.getKingdomById(orgId).map(Kingdom::getOffices).orElse(null);
-            case COMPANY -> CompanySavedData.get(level).getAllCompanies().stream()
-                    .filter(c -> c.getCompanyId().equals(orgId))
-                    .findFirst().map(Company::getOffices).orElse(null);
+            case COMPANY -> BusinessSavedData.get(level).getAllBusinesses().stream()
+                    .filter(c -> c.getBusinessId().equals(orgId))
+                    .findFirst().map(Business::getOffices).orElse(null);
             case TEMPLE  -> null; // stubbed in v1
         };
     }
@@ -324,7 +324,7 @@ public final class OfficeElection {
     private static void markDirty(OrgType orgType, UUID orgId,
                                   ServerLevel level, VillageSavedData vdata) {
         switch (orgType) {
-            case COMPANY -> CompanySavedData.get(level).markDirty();
+            case COMPANY -> BusinessSavedData.get(level).markDirty();
             default -> vdata.markDirty();
         }
     }

@@ -26,7 +26,7 @@ import java.util.UUID;
  *       — call {@link #onJobPostingCompleted} when a job posting reward is paid</li>
  *   <li>{@link tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager}
  *       — call {@link #onPropertyPurchased} when the purchase finishes</li>
- *   <li>{@link tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData}
+ *   <li>{@link tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData}
  *       — call {@link #onCompanyWagesPaid} during payroll</li>
  *   <li>Crime / guard system — call {@link #}</li>
  * </ul>
@@ -81,7 +81,7 @@ public final class ReputationManager {
         modify(player, villageId, VillageReputation.ChangeReason.FAILED_TO_PAY_TAX, level);
     }
 
-    /** Player's company paid wages this tick cycle. */
+    /** Player's business paid wages this tick cycle. */
     public static void onCompanyWagesPaid(ServerPlayer player,
                                           UUID villageId,
                                           ServerLevel level) {

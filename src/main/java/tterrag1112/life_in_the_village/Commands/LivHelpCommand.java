@@ -131,7 +131,7 @@ public final class LivHelpCommand {
                     + "§f/plague§7 — plague spread\n"
                     + "§f/sim§7 — VillageSimEngine baseline\n"
                     + "§f/culture§7 — culture inspection\n"
-                    + "§f/company§7 — trading companies\n"
+                    + "§f/business§7 — trading businesses\n"
                     + "§f/building needs§7 — resource needs";
 
     private static final String WORLD =

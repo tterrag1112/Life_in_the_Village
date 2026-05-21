@@ -116,13 +116,13 @@ class BoatCaravanTickSystem implements TickSubsystem {
 }
 
 class CompanyTickSystem implements TickSubsystem {
-    @Override public String name()     { return "company"; }
+    @Override public String name()     { return "business"; }
     @Override public int    interval() { return 20; }
     @Override public int    priority() { return 100; }
 
     @Override
     public void tick(TickContext ctx) {
-        ctx.companyData().tick(ctx.level(), ctx.villageData(), ctx.tick());
+        ctx.businessData().tick(ctx.level(), ctx.villageData(), ctx.tick());
     }
 }
 
@@ -1329,10 +1329,10 @@ class PlagueRollTickSystem implements TickSubsystem {
 }
 
 /**
- * Phase 4 doc 26 — daily decision loop for NPC-owned companies.
+ * Phase 4 doc 26 — daily decision loop for NPC-owned businesses.
  * Runs the bankruptcy clock, succession on owner death, and the
  * eligibility scan that promotes long-tenured merchants to trading
- * companies. Priority 202 — after religion (199), health (200),
+ * businesses. Priority 202 — after religion (199), health (200),
  * plague (201) so per-day economic outcomes feed the decision.
  */
 class CompanyAiTickSystem implements TickSubsystem {
@@ -1342,7 +1342,7 @@ class CompanyAiTickSystem implements TickSubsystem {
 
     @Override
     public void tick(TickContext ctx) {
-        tterrag1112.life_in_the_village.Guilds.Companies.Ai.AiCompanyManager
+        tterrag1112.life_in_the_village.Guilds.Companies.Ai.AiBusinessManager
                 .dailyTick(ctx.level());
     }
 }
@@ -1351,7 +1351,7 @@ class CompanyAiTickSystem implements TickSubsystem {
  * Phase 4 doc 28 — daily request-board maintenance: completes ready
  * fulfilments, expires stale requests, escalates scope, runs the
  * acceptance pass, and prunes terminal records. Priority 203 —
- * after company AI so companies get a chance to post / accept on
+ * after business AI so businesses get a chance to post / accept on
  * their own first.
  */
 class RequestBoardTickSystem implements TickSubsystem {

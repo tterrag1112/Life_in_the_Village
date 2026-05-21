@@ -9,15 +9,15 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
-import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
-import tterrag1112.life_in_the_village.Networking.OpenCompanyWorkerPacket;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
+import tterrag1112.life_in_the_village.Networking.BusinessActionPacket;
+import tterrag1112.life_in_the_village.Networking.OpenBusinessWorkerPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.*;
 
-public class CompanyWorkerScreen extends Screen {
+public class BusinessWorkerScreen extends Screen {
 
     private static final int W = 300, H = 280;
     private static final int HEADER_H = 20, TAB_H = 18;
@@ -27,24 +27,24 @@ public class CompanyWorkerScreen extends Screen {
     private static final int FOOTER_H = 54;
     private static final Chrome.Dims DIMS = Chrome.Dims.of(W, H, 0, 0);
 
-    private final OpenCompanyWorkerPacket data;
+    private final OpenBusinessWorkerPacket data;
     private int panelX, panelY;
-    private Company.WorkerRole activeRole;
-    private Company.ProducerType activeProducerType;
+    private Business.WorkerRole activeRole;
+    private Business.ProducerType activeProducerType;
     private int selectedItemIndex = -1;
     private int targetCount;
     private long editWage;
     private String searchText = "";
     private boolean dropdownOpen = false;
     private int dropdownScroll = 0;
-    private List<OpenCompanyWorkerPacket.AvailableItem> filteredItems = List.of();
-    private TabBar<Company.WorkerRole> tabBar;
-    private ScrollList<OpenCompanyWorkerPacket.AvailableItem> itemList;
-    private ScrollList<OpenCompanyWorkerPacket.SellListing>   sellList;
+    private List<OpenBusinessWorkerPacket.AvailableItem> filteredItems = List.of();
+    private TabBar<Business.WorkerRole> tabBar;
+    private ScrollList<OpenBusinessWorkerPacket.AvailableItem> itemList;
+    private ScrollList<OpenBusinessWorkerPacket.SellListing>   sellList;
     private StyledEditBox searchBox;
     private final TooltipLayer tooltips = new TooltipLayer();
 
-    public CompanyWorkerScreen(OpenCompanyWorkerPacket data) {
+    public BusinessWorkerScreen(OpenBusinessWorkerPacket data) {
         super(Component.literal(data.npcName()));
         this.data               = data;
         this.activeRole         = parseRole(data.role());
@@ -59,39 +59,39 @@ public class CompanyWorkerScreen extends Screen {
     }
 
     public static void open(net.minecraft.server.level.ServerPlayer player,
-                            TownspersonMob npc, Company company) {
+                            TownspersonMob npc, Business business) {
         var level = (net.minecraft.server.level.ServerLevel) npc.level();
-        sendOpenPacket(player, npc.getUUID(), company.getCompanyId(),
-                level, CompanySavedData.get(level), VillageSavedData.get(level));
+        sendOpenPacket(player, npc.getUUID(), business.getBusinessId(),
+                level, BusinessSavedData.get(level), VillageSavedData.get(level));
     }
 
     public static void sendOpenPacket(net.minecraft.server.level.ServerPlayer player,
-                                      UUID npcId, UUID companyId,
+                                      UUID npcId, UUID businessId,
                                       net.minecraft.server.level.ServerLevel level,
-                                      CompanySavedData cdata, VillageSavedData vdata) {
-        Company company = cdata.getById(companyId).orElse(null);
-        if (company == null) return;
+                                      BusinessSavedData cdata, VillageSavedData vdata) {
+        Business business = cdata.getById(businessId).orElse(null);
+        if (business == null) return;
 
-        Company.CompanyWorker worker = company.getWorker(npcId).orElse(null);
+        Business.BusinessWorker worker = business.getWorker(npcId).orElse(null);
         String npcName = TownspersonMob.findByUUID(level, npcId)
                 .map(n -> n.getNpcName()).orElse("Worker");
 
-        Map<String, OpenCompanyWorkerPacket.AvailableItem> itemMap = new LinkedHashMap<>();
+        Map<String, OpenBusinessWorkerPacket.AvailableItem> itemMap = new LinkedHashMap<>();
         UUID NULL_BUILDING = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
         if (worker != null && !worker.assignedBuildingId().equals(NULL_BUILDING))
             vdata.getBuildingById(worker.assignedBuildingId()).ifPresent(b ->
-                    scanBuildingIntoMap(level, b, itemMap, company, vdata));
-        for (UUID bid : company.getBuildingIds()) {
+                    scanBuildingIntoMap(level, b, itemMap, business, vdata));
+        for (UUID bid : business.getBuildingIds()) {
             if (worker != null && bid.equals(worker.assignedBuildingId())) continue;
             vdata.getBuildingById(bid).ifPresent(b ->
-                    scanBuildingIntoMap(level, b, itemMap, company, vdata));
+                    scanBuildingIntoMap(level, b, itemMap, business, vdata));
         }
 
-        List<OpenCompanyWorkerPacket.CompanyBuildingEntry> companyBuildings = new ArrayList<>();
-        for (UUID bid : company.getBuildingIds())
+        List<OpenBusinessWorkerPacket.CompanyBuildingEntry> companyBuildings = new ArrayList<>();
+        for (UUID bid : business.getBuildingIds())
             vdata.getBuildingById(bid).ifPresent(b ->
-                    companyBuildings.add(new OpenCompanyWorkerPacket.CompanyBuildingEntry(
+                    companyBuildings.add(new OpenBusinessWorkerPacket.CompanyBuildingEntry(
                             bid, b.getName(), b.getType().name())));
 
         long currentMarketPrice = 0L;
@@ -101,15 +101,15 @@ public class CompanyWorkerScreen extends Screen {
                     .map(h -> h.value()).orElse(null);
             if (ai != null)
                 currentMarketPrice = tterrag1112.life_in_the_village.Village.Economy
-                        .VillageEconomy.getDynamicPrice(level, company.getHomeVillageId(), ai);
+                        .VillageEconomy.getDynamicPrice(level, business.getHomeVillageId(), ai);
         }
 
-        List<OpenCompanyWorkerPacket.SellListing> sellListings = new ArrayList<>();
-        if (worker != null && worker.role() == Company.WorkerRole.SELLER) {
-            for (var override : company.getAllPriceOverrides()) {
+        List<OpenBusinessWorkerPacket.SellListing> sellListings = new ArrayList<>();
+        if (worker != null && worker.role() == Business.WorkerRole.SELLER) {
+            for (var override : business.getAllPriceOverrides()) {
                 String itemId = override.itemId();
                 int totalStock = 0;
-                for (UUID bid : company.getBuildingIds()) {
+                for (UUID bid : business.getBuildingIds()) {
                     var b = vdata.getBuildingById(bid).orElse(null);
                     if (b == null) continue;
                     var item = net.minecraft.core.registries.BuiltInRegistries.ITEM
@@ -125,25 +125,25 @@ public class CompanyWorkerScreen extends Screen {
                         .map(h -> h.value()).orElse(null);
                 long marketP = item != null
                         ? tterrag1112.life_in_the_village.Village.Economy.VillageEconomy
-                        .getDynamicPrice(level, company.getHomeVillageId(), item) : 0L;
+                        .getDynamicPrice(level, business.getHomeVillageId(), item) : 0L;
                 String displayName = item != null
                         ? item.getDefaultInstance().getHoverName().getString() : itemId;
-                sellListings.add(new OpenCompanyWorkerPacket.SellListing(
+                sellListings.add(new OpenBusinessWorkerPacket.SellListing(
                         itemId, displayName, totalStock, override.pricePerUnit(), marketP));
             }
         }
 
-        long minWage    = company.getEffectiveMinWage(vdata);
+        long minWage    = business.getEffectiveMinWage(vdata);
         long wage       = worker != null ? worker.wagePerDay()       : minWage;
         String currentId  = worker != null ? worker.assignedItemId()   : "";
         int    currentQty = worker != null ? worker.dailyTargetCount() : 8;
         String role     = worker != null ? worker.role().name()
-                : Company.WorkerRole.PRODUCER.name();
+                : Business.WorkerRole.PRODUCER.name();
         String prodType = worker != null ? worker.producerType().name()
-                : Company.ProducerType.GENERIC.name();
+                : Business.ProducerType.GENERIC.name();
 
-        PacketDistributor.sendToPlayer(player, new OpenCompanyWorkerPacket(
-                npcId, companyId, npcName, wage, minWage, currentId, currentQty,
+        PacketDistributor.sendToPlayer(player, new OpenBusinessWorkerPacket(
+                npcId, businessId, npcName, wage, minWage, currentId, currentQty,
                 role, prodType, new ArrayList<>(itemMap.values()),
                 companyBuildings, currentMarketPrice, sellListings));
     }
@@ -151,8 +151,8 @@ public class CompanyWorkerScreen extends Screen {
     private static void scanBuildingIntoMap(
             net.minecraft.server.level.ServerLevel level,
             tterrag1112.life_in_the_village.Village.Building building,
-            Map<String, OpenCompanyWorkerPacket.AvailableItem> itemMap,
-            Company company, VillageSavedData vdata) {
+            Map<String, OpenBusinessWorkerPacket.AvailableItem> itemMap,
+            Business business, VillageSavedData vdata) {
         for (var container : tterrag1112.life_in_the_village.Village
                 .BuildingStorageAccess.findInventories(level, building)) {
             for (int i = 0; i < container.getContainerSize(); i++) {
@@ -162,13 +162,13 @@ public class CompanyWorkerScreen extends Screen {
                         .ITEM.getKey(stack.getItem()).toString();
                 long marketPrice = tterrag1112.life_in_the_village.Village.Economy
                         .VillageEconomy.getDynamicPrice(
-                                level, company.getHomeVillageId(), stack.getItem());
+                                level, business.getHomeVillageId(), stack.getItem());
                 if (itemMap.containsKey(key)) {
                     var ex = itemMap.get(key);
-                    itemMap.put(key, new OpenCompanyWorkerPacket.AvailableItem(
+                    itemMap.put(key, new OpenBusinessWorkerPacket.AvailableItem(
                             key, ex.displayName(), ex.stockCount() + stack.getCount(), marketPrice));
                 } else {
-                    itemMap.put(key, new OpenCompanyWorkerPacket.AvailableItem(
+                    itemMap.put(key, new OpenBusinessWorkerPacket.AvailableItem(
                             key, stack.getHoverName().getString(), stack.getCount(), marketPrice));
                 }
             }
@@ -179,8 +179,8 @@ public class CompanyWorkerScreen extends Screen {
     protected void init() {
         panelX = (width - W) / 2;
         panelY = (height - H) / 2;
-        List<TabBar.Entry<Company.WorkerRole>> tabs = new ArrayList<>();
-        for (Company.WorkerRole r : Company.WorkerRole.values())
+        List<TabBar.Entry<Business.WorkerRole>> tabs = new ArrayList<>();
+        for (Business.WorkerRole r : Business.WorkerRole.values())
             tabs.add(new TabBar.Entry<>(r, formatRole(r.name()), true));
         tabBar = new TabBar<>(panelX, panelY + HEADER_H, TAB_H, tabs,
                 () -> activeRole,
@@ -213,9 +213,9 @@ public class CompanyWorkerScreen extends Screen {
     private void buildProducerWidgets(int contentTop) {
         Set<String> ownedTypes = getOwnedProducerTypes();
         int ptX = panelX + 8, ptY = contentTop + 2;
-        for (Company.ProducerType pt : Company.ProducerType.values()) {
+        for (Business.ProducerType pt : Business.ProducerType.values()) {
             boolean available = ownedTypes.contains(pt.name());
-            final Company.ProducerType t = pt;
+            final Business.ProducerType t = pt;
             StyledButton btn = StyledButton.builder(Component.literal(formatRole(pt.name())),
                             b -> { if (!available) return; activeProducerType = t;
                                 selectedItemIndex = -1; sendProducerTypeChange(t); buildWidgets(); })
@@ -326,7 +326,7 @@ public class CompanyWorkerScreen extends Screen {
     private void drawProducerContent(GuiGraphics g, int contentTop, int mx, int my) {
         Set<String> ownedTypes = getOwnedProducerTypes();
         int ptX = panelX + 8, ptY = contentTop + 2;
-        for (Company.ProducerType pt : Company.ProducerType.values()) {
+        for (Business.ProducerType pt : Business.ProducerType.values()) {
             boolean available = ownedTypes.contains(pt.name());
             boolean isActive  = pt == activeProducerType;
             int bg = isActive   ? BookScreenColors.COL_ACTIVE
@@ -385,14 +385,14 @@ public class CompanyWorkerScreen extends Screen {
         g.fill(listX, listY, listX + listW, listY + LIST_H, 0xFFEEE8D0);
         g.renderOutline(listX, listY, listW, LIST_H, BookScreenColors.BORDER);
         if (data.availableItems().isEmpty())
-            g.drawCenteredString(font, "No items found in company buildings",
+            g.drawCenteredString(font, "No items found in business buildings",
                     listX + listW / 2, listY + LIST_H / 2 - 4, BookScreenColors.LIGHT);
         else if (itemList != null)
             itemList.render(g, mx, my);
     }
 
     private void drawItemRow(GuiGraphics g, int rx, int ry, int rw, int rh,
-                             OpenCompanyWorkerPacket.AvailableItem item, boolean hovered) {
+                             OpenBusinessWorkerPacket.AvailableItem item, boolean hovered) {
         int idx = data.availableItems().indexOf(item);
         boolean sel = idx == selectedItemIndex;
         int bg = sel     ? BookScreenColors.COL_SELECTED
@@ -417,7 +417,7 @@ public class CompanyWorkerScreen extends Screen {
                     rx + rw - coinW - 2, ry + 2);
     }
 
-    private boolean onItemClick(OpenCompanyWorkerPacket.AvailableItem item,
+    private boolean onItemClick(OpenBusinessWorkerPacket.AvailableItem item,
                                 int btn, double relX, double relY) {
         selectedItemIndex = data.availableItems().indexOf(item);
         return true;
@@ -469,7 +469,7 @@ public class CompanyWorkerScreen extends Screen {
     }
 
     private void drawSellRow(GuiGraphics g, int rx, int ry, int rw, int rh,
-                             OpenCompanyWorkerPacket.SellListing listing, boolean hovered) {
+                             OpenBusinessWorkerPacket.SellListing listing, boolean hovered) {
         int idx = data.currentSellListings().indexOf(listing);
         boolean hasOverride = listing.customPrice() > 0
                 && listing.customPrice() != listing.marketPrice();
@@ -500,7 +500,7 @@ public class CompanyWorkerScreen extends Screen {
         drawMini(g, rx + rw - 10, ry + 3, 10, 14, "×", false);
     }
 
-    private boolean onSellClick(OpenCompanyWorkerPacket.SellListing listing,
+    private boolean onSellClick(OpenBusinessWorkerPacket.SellListing listing,
                                 int btn, double relX, double relY) {
         int lw = W - 16;
         if (relX >= lw - 38 && relX < lw - 26) {
@@ -535,7 +535,7 @@ public class CompanyWorkerScreen extends Screen {
         int button = event.button();
         if (tabBar.mouseClicked(mx, my)) return true;
 
-        if (activeRole == Company.WorkerRole.SELLER) {
+        if (activeRole == Business.WorkerRole.SELLER) {
             int searchY = panelY + CONTENT_Y + 2, searchW = W - 20;
             if (mx >= panelX + 8 && mx < panelX + 8 + searchW
                     && my >= searchY && my < searchY + 14) {
@@ -546,7 +546,7 @@ public class CompanyWorkerScreen extends Screen {
             if (sellList != null && sellList.mouseClicked(mx, my, button)) return true;
         }
 
-        if (activeRole != Company.WorkerRole.SELLER && itemList != null
+        if (activeRole != Business.WorkerRole.SELLER && itemList != null
                 && itemList.mouseClicked(mx, my, button)) return true;
 
         return super.mouseClicked(event, consumed);
@@ -554,7 +554,7 @@ public class CompanyWorkerScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mx, double my, double dx, double dy) {
-        if (activeRole == Company.WorkerRole.SELLER) {
+        if (activeRole == Business.WorkerRole.SELLER) {
             if (sellList != null && sellList.mouseScrolled(mx, my, dy)) return true;
         } else {
             if (itemList != null && itemList.mouseScrolled(mx, my, dy)) return true;
@@ -565,30 +565,30 @@ public class CompanyWorkerScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) { return super.keyPressed(event); }
 
-    private void send(CompanyActionPacket.ActionType type, UUID target,
+    private void send(BusinessActionPacket.ActionType type, UUID target,
                       String str, long lp, int ip) {
-        ClientPacketDistributor.sendToServer(new CompanyActionPacket(
-                type, data.companyId(), target, str, lp, ip));
+        ClientPacketDistributor.sendToServer(new BusinessActionPacket(
+                type, data.businessId(), target, str, lp, ip));
     }
     private void sendTask(String itemId, int count) {
-        send(CompanyActionPacket.ActionType.SET_WORKER_ROLE, data.npcId(), "", 0L, activeRole.ordinal());
-        send(CompanyActionPacket.ActionType.ASSIGN_WORKER_TASK, data.npcId(), itemId, 0L, count);
+        send(BusinessActionPacket.ActionType.SET_WORKER_ROLE, data.npcId(), "", 0L, activeRole.ordinal());
+        send(BusinessActionPacket.ActionType.ASSIGN_WORKER_TASK, data.npcId(), itemId, 0L, count);
     }
     private void sendWageChange(long wage) {
-        send(CompanyActionPacket.ActionType.SET_WORKER_WAGE, data.npcId(), "", wage, 0);
+        send(BusinessActionPacket.ActionType.SET_WORKER_WAGE, data.npcId(), "", wage, 0);
     }
-    private void sendProducerTypeChange(Company.ProducerType type) {
-        send(CompanyActionPacket.ActionType.SET_PRODUCER_TYPE, data.npcId(), "", 0L, type.ordinal());
+    private void sendProducerTypeChange(Business.ProducerType type) {
+        send(BusinessActionPacket.ActionType.SET_PRODUCER_TYPE, data.npcId(), "", 0L, type.ordinal());
     }
     private void sendSellerAdd(String itemId, long marketPrice) {
-        send(CompanyActionPacket.ActionType.SET_ITEM_PRICE, new UUID(0, 0), itemId, marketPrice, 0);
-        send(CompanyActionPacket.ActionType.SET_WORKER_ROLE, data.npcId(), "", 0L, Company.WorkerRole.SELLER.ordinal());
+        send(BusinessActionPacket.ActionType.SET_ITEM_PRICE, new UUID(0, 0), itemId, marketPrice, 0);
+        send(BusinessActionPacket.ActionType.SET_WORKER_ROLE, data.npcId(), "", 0L, Business.WorkerRole.SELLER.ordinal());
     }
     private void sendPriceAdjust(String itemId, long newPrice) {
-        send(CompanyActionPacket.ActionType.SET_ITEM_PRICE, new UUID(0, 0), itemId, newPrice, 0);
+        send(BusinessActionPacket.ActionType.SET_ITEM_PRICE, new UUID(0, 0), itemId, newPrice, 0);
     }
     private void sendPriceRemove(String itemId) {
-        send(CompanyActionPacket.ActionType.REMOVE_ITEM_PRICE, new UUID(0, 0), itemId, 0L, 0);
+        send(BusinessActionPacket.ActionType.REMOVE_ITEM_PRICE, new UUID(0, 0), itemId, 0L, 0);
     }
 
     private void rebuildFilteredItems() {
@@ -606,7 +606,7 @@ public class CompanyWorkerScreen extends Screen {
         Set<String> owned = new HashSet<>();
         owned.add("GENERIC");
         for (var entry : data.companyBuildings()) {
-            for (Company.ProducerType pt : Company.ProducerType.values()) {
+            for (Business.ProducerType pt : Business.ProducerType.values()) {
                 if (pt.requiredBuilding() != null
                         && pt.requiredBuilding().name().equals(entry.buildingType()))
                     owned.add(pt.name());
@@ -615,14 +615,14 @@ public class CompanyWorkerScreen extends Screen {
         return owned;
     }
 
-    private static Company.WorkerRole parseRole(String s) {
-        try { return Company.WorkerRole.valueOf(s); }
-        catch (Exception e) { return Company.WorkerRole.PRODUCER; }
+    private static Business.WorkerRole parseRole(String s) {
+        try { return Business.WorkerRole.valueOf(s); }
+        catch (Exception e) { return Business.WorkerRole.PRODUCER; }
     }
 
-    private static Company.ProducerType parseProducerType(String s) {
-        try { return Company.ProducerType.valueOf(s); }
-        catch (Exception e) { return Company.ProducerType.GENERIC; }
+    private static Business.ProducerType parseProducerType(String s) {
+        try { return Business.ProducerType.valueOf(s); }
+        catch (Exception e) { return Business.ProducerType.GENERIC; }
     }
 
     private static net.minecraft.world.item.ItemStack resolveStack(String itemId, int count) {

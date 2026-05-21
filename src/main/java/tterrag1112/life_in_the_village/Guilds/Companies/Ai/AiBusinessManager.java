@@ -4,8 +4,8 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitAxis;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -15,18 +15,18 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Phase 4 doc 26 — daily decision loop for NPC-owned companies.
+ * Phase 4 doc 26 — daily decision loop for NPC-owned businesses.
  *
  * <h3>Per-tick responsibilities</h3>
  * <ol>
  *   <li>Check the owner: alive and still a MERCHANT? If dead or
  *   demoted, run {@link #handleSuccession}.</li>
  *   <li>Run the bankruptcy clock — 14 days below the warning floor
- *   triggers a warning; 30 more days dissolves the company.</li>
+ *   triggers a warning; 30 more days dissolves the business.</li>
  *   <li>Eligibility scan: any unpromoted MERCHANT in the village
  *   who meets {@link MerchantPromotion#isEligible} is promoted on
  *   their next workday.</li>
- *   <li>Trading-company caravan dispatch — stub for v1; the wire
+ *   <li>Trading-business caravan dispatch — stub for v1; the wire
  *   into {@code CaravanSavedData} lands when the caravan goods-
  *   selector exposes a public dispatch API.</li>
  * </ol>
@@ -39,7 +39,7 @@ import java.util.UUID;
  * {@link OwnerBias} so future logic can read them without re-
  * fetching the owner mob each tick.
  */
-public final class AiCompanyManager {
+public final class AiBusinessManager {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
@@ -52,77 +52,77 @@ public final class AiCompanyManager {
     public static final long WARNING_THRESHOLD_DAYS = 14L;
     /** Spec line 125 — UNDECIDED grace period after owner death. */
     public static final long UNDECIDED_GRACE_DAYS   = 30L;
-    /** Spec line 144 — trading-company route distance multiplier
+    /** Spec line 144 — trading-business route distance multiplier
      *  on top of the existing village-merchant cap (3000 blocks). */
     public static final double TRADING_RANGE_MULTIPLIER = 3.0;
 
     private static final long DAY = 24000L;
 
-    private AiCompanyManager() {}
+    private AiBusinessManager() {}
 
-    /** Daily entry point — iterates every NPC-owned company. */
+    /** Daily entry point — iterates every NPC-owned business. */
     public static void dailyTick(ServerLevel level) {
         long now = level.getGameTime();
-        CompanySavedData cdata = CompanySavedData.get(level);
-        for (Company company : new ArrayList<>(cdata.getAllCompanies())) {
-            if (!company.isNpcOwned()) continue;
-            tickCompany(level, company, now);
+        BusinessSavedData cdata = BusinessSavedData.get(level);
+        for (Business business : new ArrayList<>(cdata.getAllBusinesses())) {
+            if (!business.isNpcOwned()) continue;
+            tickBusiness(level, business, now);
         }
         // Run the merchant promotion scan on the same daily cadence.
         runPromotionScan(level, now);
     }
 
-    private static void tickCompany(ServerLevel level, Company company, long now) {
+    private static void tickBusiness(ServerLevel level, Business business, long now) {
         // Already dissolved — nothing to do.
-        if (company.getSuccessionState() == Company.SuccessionState.DISSOLVED) return;
+        if (business.getSuccessionState() == Business.SuccessionState.DISSOLVED) return;
 
         // Owner liveness / profession check.
-        UUID ownerId = company.getOwnerId();
+        UUID ownerId = business.getOwnerId();
         TownspersonMob owner = ownerId == null ? null
                 : TownspersonMob.findByUUID(level, ownerId).orElse(null);
         boolean ownerLost = owner == null || !owner.isAlive()
                 || owner.getProfession() == Profession.NONE;
-        if (ownerLost && company.getSuccessionState() == Company.SuccessionState.ACTIVE) {
-            handleSuccession(level, company, now);
-            CompanySavedData.get(level).addCompany(company);
+        if (ownerLost && business.getSuccessionState() == Business.SuccessionState.ACTIVE) {
+            handleSuccession(level, business, now);
+            BusinessSavedData.get(level).addBusiness(business);
             return;
         }
 
         // Run the bankruptcy clock.
-        long expenseFloor = estimateDailyExpenses(company);
-        long balance = company.getTreasuryBronze();
+        long expenseFloor = estimateDailyExpenses(business);
+        long balance = business.getTreasuryBronze();
         if (balance + BANKRUPTCY_FLOOR < expenseFloor) {
-            if (company.getDissolutionWarningTick() == 0L) {
-                company.setDissolutionWarningTick(now);
-                LOGGER.info("[AiCompanyManager] {} ({}) — bankruptcy warning",
-                        company.getName(), company.getCompanyId());
+            if (business.getDissolutionWarningTick() == 0L) {
+                business.setDissolutionWarningTick(now);
+                LOGGER.info("[AiBusinessManager] {} ({}) — bankruptcy warning",
+                        business.getName(), business.getBusinessId());
             } else {
-                long daysWarned = (now - company.getDissolutionWarningTick()) / DAY;
+                long daysWarned = (now - business.getDissolutionWarningTick()) / DAY;
                 if (daysWarned >= WARNING_THRESHOLD_DAYS + DISSOLUTION_GRACE_DAYS) {
-                    dissolve(level, company, now);
-                    CompanySavedData.get(level).addCompany(company);
+                    dissolve(level, business, now);
+                    BusinessSavedData.get(level).addBusiness(business);
                     return;
                 }
             }
         } else {
             // Recovery — reset the warning clock.
-            if (company.getDissolutionWarningTick() != 0L) {
-                company.setDissolutionWarningTick(0L);
+            if (business.getDissolutionWarningTick() != 0L) {
+                business.setDissolutionWarningTick(0L);
             }
         }
 
         // UNDECIDED grace window — dissolve if no resolution.
-        if (company.getSuccessionState() == Company.SuccessionState.UNDECIDED
-                && company.getUndecidedSinceTick() != 0L
-                && now - company.getUndecidedSinceTick() >= UNDECIDED_GRACE_DAYS * DAY) {
-            dissolve(level, company, now);
-            CompanySavedData.get(level).addCompany(company);
+        if (business.getSuccessionState() == Business.SuccessionState.UNDECIDED
+                && business.getUndecidedSinceTick() != 0L
+                && now - business.getUndecidedSinceTick() >= UNDECIDED_GRACE_DAYS * DAY) {
+            dissolve(level, business, now);
+            BusinessSavedData.get(level).addBusiness(business);
             return;
         }
 
         // Trait-biased reaffirm of the owner is fetched but the
         // hire/fire/wage decisions live on the existing payroll path
-        // (Company.runPayroll); the AI manager reads OwnerBias for the
+        // (Business.runPayroll); the AI manager reads OwnerBias for the
         // future caravan-dispatch extension.
         OwnerBias.of(owner);
     }
@@ -131,61 +131,61 @@ public final class AiCompanyManager {
 
     /**
      * Spec lines 121-129. Tries the heir chain; if no heir, transitions
-     * the company to {@link Company.SuccessionState#UNDECIDED} for 30
+     * the business to {@link Business.SuccessionState#UNDECIDED} for 30
      * days; failing that, calls {@link #dissolve}.
      */
-    public static void handleSuccession(ServerLevel level, Company company, long now) {
-        for (UUID heirId : company.getHeirs()) {
+    public static void handleSuccession(ServerLevel level, Business business, long now) {
+        for (UUID heirId : business.getHeirs()) {
             TownspersonMob heir = TownspersonMob.findByUUID(level, heirId).orElse(null);
             if (heir != null && heir.isAlive() && heir.isAdult()) {
-                company.setNpcOwner(heirId);
-                company.setSuccessionState(Company.SuccessionState.ACTIVE);
-                LOGGER.info("[AiCompanyManager] {} succeeded by heir {}",
-                        company.getName(), heirId);
+                business.setNpcOwner(heirId);
+                business.setSuccessionState(Business.SuccessionState.ACTIVE);
+                LOGGER.info("[AiBusinessManager] {} succeeded by heir {}",
+                        business.getName(), heirId);
                 return;
             }
         }
         // No heir on file — enter UNDECIDED for the grace period.
-        company.setSuccessionState(Company.SuccessionState.UNDECIDED);
-        company.setUndecidedSinceTick(now);
-        LOGGER.info("[AiCompanyManager] {} entered UNDECIDED (no heir)",
-                company.getName());
+        business.setSuccessionState(Business.SuccessionState.UNDECIDED);
+        business.setUndecidedSinceTick(now);
+        LOGGER.info("[AiBusinessManager] {} entered UNDECIDED (no heir)",
+                business.getName());
     }
 
     /**
      * Distributes the treasury as severance to remaining workers and
-     * marks the company DISSOLVED. The CompanySavedData entry stays
-     * (so historical lookups still resolve) but {@link Company#isActive()}
+     * marks the business DISSOLVED. The BusinessSavedData entry stays
+     * (so historical lookups still resolve) but {@link Business#isActive()}
      * goes false.
      */
-    public static void dissolve(ServerLevel level, Company company, long now) {
-        long treasury = company.getTreasuryBronze();
-        List<Company.CompanyWorker> workers = new ArrayList<>(company.getWorkers());
+    public static void dissolve(ServerLevel level, Business business, long now) {
+        long treasury = business.getTreasuryBronze();
+        List<Business.BusinessWorker> workers = new ArrayList<>(business.getWorkers());
         if (!workers.isEmpty() && treasury > 0L) {
             long share = Math.max(1L, treasury / workers.size());
-            for (Company.CompanyWorker w : workers) {
+            for (Business.BusinessWorker w : workers) {
                 TownspersonMob mob = TownspersonMob.findByUUID(level, w.npcId()).orElse(null);
                 if (mob != null) {
                     mob.getWallet().receive(share);
-                    company.withdrawBronze(share);
+                    business.withdrawBronze(share);
                 }
             }
         }
-        company.setSuccessionState(Company.SuccessionState.DISSOLVED);
-        company.setActive(false);
-        LOGGER.info("[AiCompanyManager] {} ({}) dissolved — {} br severance",
-                company.getName(), company.getCompanyId(), treasury);
+        business.setSuccessionState(Business.SuccessionState.DISSOLVED);
+        business.setActive(false);
+        LOGGER.info("[AiBusinessManager] {} ({}) dissolved — {} br severance",
+                business.getName(), business.getBusinessId(), treasury);
         // Phase 4 doc 30 archival hook.
         tterrag1112.life_in_the_village.Village.Village v =
                 tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level)
-                        .getVillageById(company.getHomeVillageId()).orElse(null);
+                        .getVillageById(business.getHomeVillageId()).orElse(null);
         if (v != null) {
             java.util.Map<String, String> details = new java.util.LinkedHashMap<>();
             details.put("village_name", v.getName());
-            details.put("company_name", company.getName());
+            details.put("company_name", business.getName());
             tterrag1112.life_in_the_village.Village.History.HistoryProducer.record(
                     level, v,
-                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.COMPANY_DISSOLVED,
+                    tterrag1112.life_in_the_village.Village.History.HistoryEventType.BUSINESS_DISSOLVED,
                     now, details, java.util.List.of());
         }
     }
@@ -206,10 +206,10 @@ public final class AiCompanyManager {
             for (TownspersonMob merchant : merchants) {
                 if (!MerchantPromotion.isEligible(merchant, level)) continue;
                 // Skip if the NPC already owns a TRADING_COMPANY.
-                boolean alreadyOwns = CompanySavedData.get(level).getAllCompanies().stream()
+                boolean alreadyOwns = BusinessSavedData.get(level).getAllBusinesses().stream()
                         .anyMatch(c -> c.isNpcOwned()
                                 && merchant.getUUID().equals(c.getOwnerId())
-                                && c.isTradingCompany()
+                                && c.isTradingBusiness()
                                 && c.isActive());
                 if (alreadyOwns) continue;
                 MerchantPromotion.promote(level, merchant);
@@ -221,9 +221,9 @@ public final class AiCompanyManager {
 
     /** Rough daily expenses: sum of worker wages. Phase 5 polish can
      *  add hall maintenance and request bounties. */
-    public static long estimateDailyExpenses(Company company) {
+    public static long estimateDailyExpenses(Business business) {
         long total = 0L;
-        for (Company.CompanyWorker w : company.getWorkers()) {
+        for (Business.BusinessWorker w : business.getWorkers()) {
             total += w.wagePerDay();
         }
         return total;
@@ -257,23 +257,23 @@ public final class AiCompanyManager {
     }
 
     /**
-     * Trading-company caravan dispatch. Spec line 144 — 3x village
+     * Trading-business caravan dispatch. Spec line 144 — 3x village
      * range. Real wiring depends on a public dispatch API on
      * {@code CaravanSavedData} (not yet exposed); v1 still skips the
      * physical caravan but accounts a worker-count-scaled profit so
-     * trading-company treasuries actually grow at a rate that reflects
+     * trading-business treasuries actually grow at a rate that reflects
      * payroll capacity. Phase 5 wires the actual caravan goods
      * selector + travel + per-goods revenue.
      */
-    public static long dispatchTradingCaravan(ServerLevel level, Company company) {
-        if (!company.isTradingCompany()) return 0L;
+    public static long dispatchTradingCaravan(ServerLevel level, Business business) {
+        if (!business.isTradingBusiness()) return 0L;
         // Minimum 30br even for a sole proprietor; +20br per additional
-        // worker; capped so a max company doesn't print money.
-        int workerCount = Math.max(1, company.getWorkers().size());
+        // worker; capped so a max business doesn't print money.
+        int workerCount = Math.max(1, business.getWorkers().size());
         long profit = Math.min(500L, 30L + (long) (workerCount - 1) * 20L);
-        company.depositBronze(profit);
-        LOGGER.info("[AiCompanyManager] {} dispatched trading caravan (+{} br, {} worker(s))",
-                company.getName(), profit, workerCount);
+        business.depositBronze(profit);
+        LOGGER.info("[AiBusinessManager] {} dispatched trading caravan (+{} br, {} worker(s))",
+                business.getName(), profit, workerCount);
         return profit;
     }
 }

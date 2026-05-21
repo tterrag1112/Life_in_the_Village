@@ -5,14 +5,14 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
-import tterrag1112.life_in_the_village.Gui.CompanyWorkerScreen;
+import tterrag1112.life_in_the_village.Gui.BusinessWorkerScreen;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 
 import java.util.*;
 
-public record OpenCompanyWorkerPacket(
+public record OpenBusinessWorkerPacket(
         UUID npcId,
-        UUID companyId,
+        UUID businessId,
         String npcName,
         long wage,
         long minWage,
@@ -31,7 +31,7 @@ public record OpenCompanyWorkerPacket(
     // Nested records
     // -------------------------------------------------------------------------
 
-    /** An item found across the company's buildings, with its merged stock
+    /** An item found across the business's buildings, with its merged stock
      *  count and the current village market price for comparison. */
     public record AvailableItem(
             String itemId,
@@ -52,7 +52,7 @@ public record OpenCompanyWorkerPacket(
         }
     }
 
-    /** A building the company owns — sent so the client can determine
+    /** A building the business owns — sent so the client can determine
      *  which ProducerTypes are available without a server round-trip. */
     public record CompanyBuildingEntry(
             UUID buildingId,
@@ -64,7 +64,7 @@ public record OpenCompanyWorkerPacket(
     // Packet identity
     // -------------------------------------------------------------------------
 
-    public static final Type<OpenCompanyWorkerPacket> TYPE = new Type<>(
+    public static final Type<OpenBusinessWorkerPacket> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(
                     Life_in_the_village.MODID, "open_company_worker")
     );
@@ -74,12 +74,12 @@ public record OpenCompanyWorkerPacket(
     // -------------------------------------------------------------------------
 
     public static final StreamCodec<RegistryFriendlyByteBuf,
-            OpenCompanyWorkerPacket> CODEC = StreamCodec.of(
+            OpenBusinessWorkerPacket> CODEC = StreamCodec.of(
 
             // ENCODER
             (buf, pkt) -> {
                 buf.writeUUID(pkt.npcId());
-                buf.writeUUID(pkt.companyId());
+                buf.writeUUID(pkt.businessId());
                 buf.writeUtf(pkt.npcName());
                 buf.writeVarLong(pkt.wage());
                 buf.writeVarLong(pkt.minWage());
@@ -97,7 +97,7 @@ public record OpenCompanyWorkerPacket(
                     buf.writeVarLong(item.marketPrice());
                 }
 
-                // Company buildings
+                // Business buildings
                 buf.writeVarInt(pkt.companyBuildings().size());
                 for (CompanyBuildingEntry b : pkt.companyBuildings()) {
                     buf.writeUUID(b.buildingId());
@@ -121,7 +121,7 @@ public record OpenCompanyWorkerPacket(
             // DECODER
             buf -> {
                 UUID   npcId         = buf.readUUID();
-                UUID   companyId     = buf.readUUID();
+                UUID   businessId     = buf.readUUID();
                 String npcName       = buf.readUtf();
                 long   wage          = buf.readVarLong();
                 long   minWage       = buf.readVarLong();
@@ -162,8 +162,8 @@ public record OpenCompanyWorkerPacket(
                             buf.readVarLong()));
                 }
 
-                return new OpenCompanyWorkerPacket(
-                        npcId, companyId, npcName,
+                return new OpenBusinessWorkerPacket(
+                        npcId, businessId, npcName,
                         wage, minWage,
                         currentItemId, currentTarget,
                         role, producerType,
@@ -180,10 +180,10 @@ public record OpenCompanyWorkerPacket(
     // Client-side handler
     // -------------------------------------------------------------------------
 
-    public static void handle(OpenCompanyWorkerPacket pkt,
+    public static void handle(OpenBusinessWorkerPacket pkt,
                               IPayloadContext ctx) {
         ctx.enqueueWork(() ->
                 net.minecraft.client.Minecraft.getInstance()
-                        .setScreen(new CompanyWorkerScreen(pkt)));
+                        .setScreen(new BusinessWorkerScreen(pkt)));
     }
 }

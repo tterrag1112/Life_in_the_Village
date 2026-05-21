@@ -5,7 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -96,18 +96,18 @@ public class VillageEconomy {
     }
 
     // =========================================================================
-    // POSTING LISTINGS — company / price-override overload
+    // POSTING LISTINGS — business / price-override overload
     // =========================================================================
 
     /**
-     * Posting path for company SELLER workers.
-     * Uses the company's price override if set, otherwise falls back to
+     * Posting path for business SELLER workers.
+     * Uses the business's price override if set, otherwise falls back to
      * the auto-computed price.
      */
     public static void postCompanyListing(ServerLevel level,
                                           UUID villageId,
                                           TownspersonMob seller,
-                                          Company company,
+                                          Business business,
                                           Item item,
                                           int quantity,
                                           long tick) {
@@ -120,10 +120,10 @@ public class VillageEconomy {
                 .orElse(null);
         if (building == null) return;
 
-        // Use company price override if available, else auto-compute
+        // Use business price override if available, else auto-compute
         String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
                 .getKey(item).toString();
-        long price = company.getPriceOverride(itemId)
+        long price = business.getPriceOverride(itemId)
                 .orElseGet(() -> {
                     long base = getBasePrice(item);
                     Village village = vdata.getVillageById(villageId).orElse(null);

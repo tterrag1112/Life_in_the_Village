@@ -161,8 +161,8 @@ public final class AppearanceLayerRegistry {
                 officeOverlay("guild_registrar_stripe"), 50, "Registrar Stripe"));
         registerOfficeMark(OfficeMark.overlayOnly(OfficeRegistry.MASTER_OF_APPRENTICES,
                 officeOverlay("master_of_apprentices_collar"), 55, "Collar"));
-        registerOfficeMark(OfficeMark.overlayOnly(OfficeRegistry.COMPANY_OWNER,
-                officeOverlay("company_owner_mantle"), 70, "Mantle"));
+        registerOfficeMark(OfficeMark.overlayOnly(OfficeRegistry.BUSINESS_OWNER,
+                officeOverlay("business_owner_mantle"), 70, "Mantle"));
         registerOfficeMark(OfficeMark.withAttachment(OfficeRegistry.KINGDOM_KING,
                 officeOverlay("kingdom_king_chain"),
                 attachmentOf("kingdom_king_crown"), 200, "Crown"));

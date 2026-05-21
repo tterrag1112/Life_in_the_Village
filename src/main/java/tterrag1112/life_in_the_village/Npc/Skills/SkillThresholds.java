@@ -25,7 +25,7 @@ public final class SkillThresholds {
     /** Minimum LITERACY for an NPC to read written content (letters /
      *  books) — gates confessions, letter comprehension. */
     public static final int READ_LITERACY_THRESHOLD    = 30;
-    /** COMMERCE skill required for company-merchant promotion. */
+    /** COMMERCE skill required for business-merchant promotion. */
     public static final int MERCHANT_PROMOTION         = 70;
 
     // ── Apprenticeship milestone ladder ──────────────────────────────────

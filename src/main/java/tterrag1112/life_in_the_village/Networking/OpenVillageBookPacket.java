@@ -27,13 +27,13 @@ public record OpenVillageBookPacket(
         String  kingdomName,
         String  activeEventName,
         int    tradeRouteCount,
-        // Company fields
+        // Business fields
         boolean hasCompanyHere,
-        UUID    companyId,
-        String  companyName,
+        UUID    businessId,
+        String  businessName,
         int     companyWorkerCount,
         List<String>                  companyBuildingNames,
-        // Per-building purchase entries for the Company Buildings page
+        // Per-building purchase entries for the Business Buildings page
         List<PurchasableBuildingEntry> purchasableBuildings,
         String seasonName,          // e.g. "Autumn" or "Winter"
         int    openOrderCount,      // number of unclaimed crafting orders
@@ -60,13 +60,13 @@ public record OpenVillageBookPacket(
     ) {}
 
     /**
-     * A non-house building in the village that a company can purchase.
+     * A non-house building in the village that a business can purchase.
      * Sent for every building that is not HOUSE, TOWN_HALL, or GUARD_TOWER
-     * and is therefore potentially usable by a player company.
+     * and is therefore potentially usable by a player business.
      *
      * price    — calculated server-side using the same footprint × rate
      *            formula as HousePurchaseManager so both pages are consistent.
-     * inCompany — true if this building is already in the player's company.
+     * inCompany — true if this building is already in the player's business.
      * buildingType — raw BuildingType enum name for ProducerType availability checks.
      */
     public record PurchasableBuildingEntry(
@@ -137,10 +137,10 @@ public record OpenVillageBookPacket(
                 buf.writeUtf(pkt.activeEventName());
                 buf.writeVarInt(pkt.tradeRouteCount());
 
-                // Company fields
+                // Business fields
                 buf.writeBoolean(pkt.hasCompanyHere());
-                buf.writeUUID(pkt.companyId());
-                buf.writeUtf(pkt.companyName());
+                buf.writeUUID(pkt.businessId());
+                buf.writeUtf(pkt.businessName());
                 buf.writeVarInt(pkt.companyWorkerCount());
                 buf.writeVarInt(pkt.companyBuildingNames().size());
                 pkt.companyBuildingNames().forEach(buf::writeUtf);
@@ -203,10 +203,10 @@ public record OpenVillageBookPacket(
                 String  event        = buf.readUtf();
                 int     routeCount   = buf.readVarInt();
 
-                // Company fields
+                // Business fields
                 boolean hasCompany   = buf.readBoolean();
-                UUID    companyId    = buf.readUUID();
-                String  companyName  = buf.readUtf();
+                UUID    businessId    = buf.readUUID();
+                String  businessName  = buf.readUtf();
                 int     workerCount  = buf.readVarInt();
 
                 int cbCount = buf.readVarInt();
@@ -240,7 +240,7 @@ public record OpenVillageBookPacket(
                         houses, needs, expansion, buildingTypes,
                         playerWealth, playerRep, hasWarn,
                         kingdom, event, routeCount,
-                        hasCompany, companyId, companyName,
+                        hasCompany, businessId, businessName,
                         workerCount, companyBuildings,
                         purchasable, seasonName, openOrderCount,
                         commissions, openSection);

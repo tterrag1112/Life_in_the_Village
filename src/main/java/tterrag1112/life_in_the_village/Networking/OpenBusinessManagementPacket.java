@@ -5,14 +5,14 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
-import tterrag1112.life_in_the_village.Gui.CompanyManagementScreen;
+import tterrag1112.life_in_the_village.Gui.BusinessManagementScreen;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 
 import java.util.*;
 
-public record OpenCompanyManagementPacket(
-        UUID companyId,
-        String companyName,
+public record OpenBusinessManagementPacket(
+        UUID businessId,
+        String businessName,
         long treasuryBronze,
         long playerWealthBronze,
         int workStartHour,
@@ -36,16 +36,16 @@ public record OpenCompanyManagementPacket(
     public record BuildingEntry(UUID buildingId, String buildingName,
                                 String buildingType) {}
 
-    public static final Type<OpenCompanyManagementPacket> TYPE = new Type<>(
+    public static final Type<OpenBusinessManagementPacket> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(
                     Life_in_the_village.MODID, "open_company_management")
     );
 
     public static final StreamCodec<RegistryFriendlyByteBuf,
-            OpenCompanyManagementPacket> CODEC = StreamCodec.of(
+            OpenBusinessManagementPacket> CODEC = StreamCodec.of(
             (buf, pkt) -> {
-                buf.writeUUID(pkt.companyId());
-                buf.writeUtf(pkt.companyName());
+                buf.writeUUID(pkt.businessId());
+                buf.writeUtf(pkt.businessName());
                 buf.writeVarLong(pkt.treasuryBronze());
                 buf.writeVarLong(pkt.playerWealthBronze());
                 buf.writeVarInt(pkt.workStartHour());
@@ -106,7 +106,7 @@ public record OpenCompanyManagementPacket(
                             buf.readUtf(), buf.readUtf()));
                 String activeSection = buf.readUtf();
 
-                return new OpenCompanyManagementPacket(id, name, treasury,
+                return new OpenBusinessManagementPacket(id, name, treasury,
                         wealth, startH, endH, minWage, workers, prices, buildings, activeSection);
             }
     );
@@ -114,14 +114,14 @@ public record OpenCompanyManagementPacket(
     @Override
     public Type<?> type() { return TYPE; }
 
-    public static void handle(OpenCompanyManagementPacket pkt, IPayloadContext ctx) {
+    public static void handle(OpenBusinessManagementPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             var mc = net.minecraft.client.Minecraft.getInstance();
-            CompanyManagementScreen screen = new CompanyManagementScreen(pkt);
+            BusinessManagementScreen screen = new BusinessManagementScreen(pkt);
             // Restore section if specified
             if (!pkt.activeSection().isEmpty()) {
                 try {
-                    screen.currentSection = CompanyManagementScreen.Section.valueOf(pkt.activeSection());
+                    screen.currentSection = BusinessManagementScreen.Section.valueOf(pkt.activeSection());
                 } catch (IllegalArgumentException ignored) {}
             }
             mc.setScreen(screen);

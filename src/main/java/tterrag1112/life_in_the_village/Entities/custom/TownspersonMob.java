@@ -211,7 +211,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private boolean cultureApplied;
     /** Game tick at which the NPC's CURRENT profession was assigned.
      *  Reset on every profession change; used by Phase 4 doc 26 to
-     *  gate the merchant → trading-company promotion (365 days
+     *  gate the merchant → trading-business promotion (365 days
      *  continuously merchant). 0 means never assigned a real
      *  profession. */
     private long professionStartedTick;
@@ -314,7 +314,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     @Nullable private String assignedVillageName = null;
     @Nullable private BlockPos assignedPost = null;
     @Nullable private UUID assignedPlotId = null;
-    @Nullable private UUID companyId = null;
+    @Nullable private UUID businessId = null;
     private boolean workingBlocked = false;
     private tterrag1112.life_in_the_village.Entities.ActivityState activityState =
             tterrag1112.life_in_the_village.Entities.ActivityState.IDLE;
@@ -447,7 +447,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
             updateDisplayName();
         }
         // Reset the profession tenure clock on every change so
-        // promotions like merchant → trading company that gate on
+        // promotions like merchant → trading business that gate on
         // continuous-employment days can read a clean baseline.
         if (previous != profession
                 && level() instanceof net.minecraft.server.level.ServerLevel sl) {
@@ -1086,10 +1086,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     // COMPANY
     // =========================================================================
 
-    public Optional<UUID> getCompanyId()   { return Optional.ofNullable(companyId); }
-    public void setCompanyId(UUID id)      { this.companyId = id; }
-    public void clearCompanyId()           { this.companyId = null; }
-    public boolean isCompanyWorker()       { return companyId != null; }
+    public Optional<UUID> getBusinessId()   { return Optional.ofNullable(businessId); }
+    public void setBusinessId(UUID id)      { this.businessId = id; }
+    public void clearBusinessId()           { this.businessId = null; }
+    public boolean isBusinessWorker()       { return businessId != null; }
 
     // =========================================================================
     // ADVENTURER GROUP / CARAVAN
@@ -1915,7 +1915,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         getGroupId().ifPresent(id -> output.store("groupId", UUIDUtil.CODEC, id));
         output.store("isGroupLeader", Codec.BOOL, entityData.get(IS_GROUP_LEADER));
         getCaravanId().ifPresent(id -> output.store("caravanId", UUIDUtil.CODEC, id));
-        if (companyId != null) output.putString("companyId", companyId.toString());
+        if (businessId != null) output.putString("businessId", businessId.toString());
         // combatRole save dropped in 6.3.2.c — saved via NpcSpecializationComponent
         // below alongside other components.
         // currentExpeditionId removed in 6.3.2.a — caravan participation now lives
@@ -2088,8 +2088,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         input.read("isGroupLeader", Codec.BOOL)
                 .ifPresent(v -> entityData.set(IS_GROUP_LEADER, v));
         input.read("caravanId", UUIDUtil.CODEC).ifPresent(this::setCaravanId);
-        input.read("companyId", Codec.STRING)
-                .ifPresent(s -> companyId = UUID.fromString(s));
+        input.read("businessId", Codec.STRING)
+                .ifPresent(s -> businessId = UUID.fromString(s));
         input.read("combatRole", Codec.STRING).ifPresent(s -> {
             try { setCombatRoleSilent(CombatRole.valueOf(s)); }
             catch (IllegalArgumentException ignored) {}

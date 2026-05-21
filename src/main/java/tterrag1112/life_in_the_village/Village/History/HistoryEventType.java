@@ -43,8 +43,8 @@ public enum HistoryEventType {
     // ── Economy and infrastructure ────────────────────────────────────────
     BUILDING_CONSTRUCTED     (HistoryImportance.MINOR),
     BUILDING_DESTROYED       (HistoryImportance.NOTABLE),
-    COMPANY_FOUNDED          (HistoryImportance.NOTABLE),
-    COMPANY_DISSOLVED        (HistoryImportance.NOTABLE),
+    BUSINESS_FOUNDED          (HistoryImportance.NOTABLE),
+    BUSINESS_DISSOLVED        (HistoryImportance.NOTABLE),
     MASTERPIECE_CERTIFIED    (HistoryImportance.MAJOR),
     BOOK_AUTHORED            (HistoryImportance.NOTABLE),
 

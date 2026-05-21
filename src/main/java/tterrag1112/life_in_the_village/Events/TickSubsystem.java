@@ -2,7 +2,7 @@ package tterrag1112.life_in_the_village.Events;
 
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 
@@ -65,7 +65,7 @@ public interface TickSubsystem {
             ServerLevel level,
             long tick,
             VillageSavedData villageData,
-            CompanySavedData companyData,
+            BusinessSavedData businessData,
             AdventurerSavedData adventurerData,
             CaravanSavedData caravanData
     ) {}

@@ -20,7 +20,7 @@ import java.util.UUID;
 /**
  * Phase 4 doc 30 — bridges {@link NpcLifeEvent} fan-out into the
  * village history archive. Producers for non-lifecycle events
- * (plague start, law enacted, company founded, trial verdict) call
+ * (plague start, law enacted, business founded, trial verdict) call
  * {@link HistoryProducer#record} directly from their own paths;
  * this dispatcher handles the four lifecycle hooks the
  * {@code NpcLifeEventBus} already routes.

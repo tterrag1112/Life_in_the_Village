@@ -46,8 +46,8 @@ public final class AppointedSelection implements OfficeSelectionEngine {
         m.put(OfficeRegistry.VILLAGE_SCRIBE,    OfficeRegistry.VILLAGE_LEADER);
         m.put(OfficeRegistry.GUILD_TREASURER,   OfficeRegistry.GUILD_MASTER);
         m.put(OfficeRegistry.GUILD_REGISTRAR,   OfficeRegistry.GUILD_MASTER);
-        m.put(OfficeRegistry.COMPANY_FOREMAN,   OfficeRegistry.COMPANY_OWNER);
-        m.put(OfficeRegistry.COMPANY_BOOKKEEPER,OfficeRegistry.COMPANY_OWNER);
+        m.put(OfficeRegistry.BUSINESS_FOREMAN,   OfficeRegistry.BUSINESS_OWNER);
+        m.put(OfficeRegistry.BUSINESS_BOOKKEEPER,OfficeRegistry.BUSINESS_OWNER);
         m.put(OfficeRegistry.KINGDOM_CHANCELLOR,OfficeRegistry.KINGDOM_KING);
         m.put(OfficeRegistry.KINGDOM_TREASURER, OfficeRegistry.KINGDOM_KING);
         APPOINTER_OF = Map.copyOf(m);

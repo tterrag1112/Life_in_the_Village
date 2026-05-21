@@ -31,7 +31,7 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScribeWork
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.StonemasonProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.WeaverProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.CaravanMerchantBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.CompanyWorkerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.BusinessWorkerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.GuildWorkerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.MerchantBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.StockpileKeeperBehavior;
@@ -170,7 +170,7 @@ public final class ProfessionBrainFactory {
                     ImmutableList.of(new GuardMeleeAttackBehavior()));
         });
 
-        // Phase 6.2.d.5 — trade + guild + company.
+        // Phase 6.2.d.5 — trade + guild + business.
         // MERCHANT: same priority + self-gate arrangement as GUARD.
         // CaravanMerchantBehavior wins WORK @0 when on caravan duty;
         // MerchantBehavior at WORK @1 otherwise.
@@ -191,7 +191,7 @@ public final class ProfessionBrainFactory {
                         ImmutableList.of(new GuildWorkerBehavior())));
         REGISTRARS.put(Profession.COMPANY_WORKER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new CompanyWorkerBehavior())));
+                        ImmutableList.of(new BusinessWorkerBehavior())));
     }
 
     /**

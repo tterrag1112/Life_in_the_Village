@@ -7,7 +7,7 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import tterrag1112.life_in_the_village.Gui.Commissions.CommissionBoardPanel;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
-import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
+import tterrag1112.life_in_the_village.Networking.BusinessActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket;
 import tterrag1112.life_in_the_village.Networking.VillageActionPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -166,10 +166,10 @@ public class VillageBookScreen extends Screen {
 
         if (data.hasCompanyHere()) {
             addRenderableWidget(StyledButton.builder(
-                            Component.literal("Manage Company"),
-                            b -> ClientPacketDistributor.sendToServer(new CompanyActionPacket(
-                                    CompanyActionPacket.ActionType.OPEN_MANAGEMENT,
-                                    data.companyId(), new UUID(0, 0), "", 0L, 0)))
+                            Component.literal("Manage Business"),
+                            b -> ClientPacketDistributor.sendToServer(new BusinessActionPacket(
+                                    BusinessActionPacket.ActionType.OPEN_MANAGEMENT,
+                                    data.businessId(), new UUID(0, 0), "", 0L, 0)))
                     .pos(px, btnY).size(pw / 2 - 2, 16).build());
             addRenderableWidget(StyledButton.builder(
                             Component.literal("Buy Building"),
@@ -177,10 +177,10 @@ public class VillageBookScreen extends Screen {
                     .pos(px + pw / 2 + 2, btnY).size(pw / 2 - 2, 16).build());
         } else {
             addRenderableWidget(StyledButton.builder(
-                            Component.literal("Found a Company"),
-                            b -> ClientPacketDistributor.sendToServer(new CompanyActionPacket(
-                                    CompanyActionPacket.ActionType.FOUND_COMPANY,
-                                    UUID.randomUUID(), data.villageId(), "My Company", 0L, 0)))
+                            Component.literal("Found a Business"),
+                            b -> ClientPacketDistributor.sendToServer(new BusinessActionPacket(
+                                    BusinessActionPacket.ActionType.FOUND_COMPANY,
+                                    UUID.randomUUID(), data.villageId(), "My Business", 0L, 0)))
                     .pos(px, btnY).size(pw, 16).build());
         }
     }
@@ -210,9 +210,9 @@ public class VillageBookScreen extends Screen {
                             VillageActionPacket.ActionType.BUY_HOUSE,
                             data.villageId(), buildingId, "", 0));
             case BUY_COMPANY_BUILDING ->
-                    ClientPacketDistributor.sendToServer(new CompanyActionPacket(
-                            CompanyActionPacket.ActionType.BUY_COMPANY_BUILDING,
-                            data.companyId(), buildingId, "", 0L, 0));
+                    ClientPacketDistributor.sendToServer(new BusinessActionPacket(
+                            BusinessActionPacket.ActionType.BUY_COMPANY_BUILDING,
+                            data.businessId(), buildingId, "", 0L, 0));
         }
     }
 
@@ -339,7 +339,7 @@ public class VillageBookScreen extends Screen {
                 px, py - 14, BookScreenColors.LIGHT, false);
         if (!data.companyBuildingNames().isEmpty()) {
             int y = py;
-            g.drawString(font, data.companyName() + " owns:",
+            g.drawString(font, data.businessName() + " owns:",
                     px, y, BookScreenColors.MID, false);
             y += 10;
             for (String bname : data.companyBuildingNames()) {
@@ -391,7 +391,7 @@ public class VillageBookScreen extends Screen {
             String sl = switch (row.status()) {
                 case OWNED_BY_PLAYER -> "Yours";
                 case OWNED_BY_OTHER  -> "Owned";
-                case IN_COMPANY      -> "Company";
+                case IN_COMPANY      -> "Business";
                 case OCCUPIED_BY_NPC -> "Occupied";
                 default              -> "";
             };
@@ -580,14 +580,14 @@ public class VillageBookScreen extends Screen {
 
         g.fill(px, y, px + pw, y + 1, BookScreenColors.BORDER);
         y += 8;
-        g.drawString(font, "Company", px, y, BookScreenColors.MID, false);
+        g.drawString(font, "Business", px, y, BookScreenColors.MID, false);
         g.fill(px, y + 10, px + pw, y + 11, BookScreenColors.BORDER);
         y += 15;
 
         if (data.hasCompanyHere()) {
             g.fill(px, y, px + pw, y + 12, BookScreenColors.GREEN_BG);
             g.renderOutline(px, y, pw, 12, BookScreenColors.BORDER);
-            g.drawString(font, "⌂ " + data.companyName(),
+            g.drawString(font, "⌂ " + data.businessName(),
                     px + 3, y + 2, BookScreenColors.GREEN_TXT, false);
             String wc = data.companyWorkerCount() + " workers";
             g.drawString(font, wc, px + pw - font.width(wc) - 4, y + 2, BookScreenColors.MID, false);
@@ -598,7 +598,7 @@ public class VillageBookScreen extends Screen {
                 y += 9;
             }
         } else {
-            g.drawString(font, "No company here. Found one to start hiring.",
+            g.drawString(font, "No business here. Found one to start hiring.",
                     px, y, BookScreenColors.LIGHT, false);
         }
     }
@@ -847,17 +847,17 @@ public class VillageBookScreen extends Screen {
                         .TradeRoute.RouteStatus.ACTIVE)
                 .count();
 
-        tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData companyData =
-                tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData.get(level);
+        tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData businessData =
+                tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData.get(level);
 
-        tterrag1112.life_in_the_village.Guilds.Companies.Company playerCompany =
-                companyData.getByOwner(player.getUUID()).stream()
+        tterrag1112.life_in_the_village.Guilds.Companies.Business playerCompany =
+                businessData.getByOwner(player.getUUID()).stream()
                         .filter(c -> c.getHomeVillageId().equals(villageId))
                         .findFirst().orElse(null);
 
         boolean hasCompanyHere     = playerCompany != null;
-        UUID    companyId          = hasCompanyHere ? playerCompany.getCompanyId() : new UUID(0, 0);
-        String  companyName        = hasCompanyHere ? playerCompany.getName() : "";
+        UUID    businessId          = hasCompanyHere ? playerCompany.getBusinessId() : new UUID(0, 0);
+        String  businessName        = hasCompanyHere ? playerCompany.getName() : "";
         int     companyWorkerCount = hasCompanyHere ? playerCompany.getWorkers().size() : 0;
 
         java.util.List<String> companyBuildingNames = new java.util.ArrayList<>();
@@ -874,7 +874,7 @@ public class VillageBookScreen extends Screen {
 
         java.util.Set<UUID> allCompanyBuildingIds  = new java.util.HashSet<>();
         java.util.Set<UUID> playerCompanyBuildingIds = new java.util.HashSet<>();
-        companyData.getAllCompanies().forEach(c -> {
+        businessData.getAllBusinesses().forEach(c -> {
             c.getBuildingIds().forEach(allCompanyBuildingIds::add);
             if (c.getOwnerPlayerId().equals(player.getUUID()))
                 c.getBuildingIds().forEach(playerCompanyBuildingIds::add);
@@ -915,7 +915,7 @@ public class VillageBookScreen extends Screen {
                         houses, needs, expansion, btypes,
                         playerWealth, playerRep, hasWarn,
                         kingdomName, activeEvent, routeCount,
-                        hasCompanyHere, companyId, companyName,
+                        hasCompanyHere, businessId, businessName,
                         companyWorkerCount, companyBuildingNames,
                         purchasable, seasonName, openOrderCount,
                         commissions, openSection));

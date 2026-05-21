@@ -10,16 +10,16 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
-import tterrag1112.life_in_the_village.Gui.CompanyManagementScreen;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Gui.BusinessManagementScreen;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 
 import java.util.List;
 
-public class CompanyLedgerItem extends Item {
+public class BusinessLedgerItem extends Item {
 
-    public CompanyLedgerItem(Properties properties) {
+    public BusinessLedgerItem(Properties properties) {
         super(properties);
     }
 
@@ -30,32 +30,32 @@ public class CompanyLedgerItem extends Item {
         ServerLevel serverLevel = (ServerLevel) level;
         ServerPlayer serverPlayer = (ServerPlayer) player;
 
-        CompanySavedData companyData = CompanySavedData.get(serverLevel);
+        BusinessSavedData businessData = BusinessSavedData.get(serverLevel);
         VillageSavedData villageData = VillageSavedData.get(serverLevel);
 
-        List<Company> owned =
-                companyData.getByOwner(player.getUUID());
+        List<Business> owned =
+                businessData.getByOwner(player.getUUID());
 
         if (owned.isEmpty()) {
             player.displayClientMessage(
                     Component.literal(
-                            "You do not own any companies. "
+                            "You do not own any businesses. "
                                     + "Visit a Town-tier village leader "
                                     + "to found one."),
                     false);
             return InteractionResult.FAIL;
         }
 
-        // If the player owns exactly one company, open it directly.
+        // If the player owns exactly one business, open it directly.
         // If they own multiple, open the first one for now —
-        // a company selection screen can be added later.
-        var company = owned.get(0);
+        // a business selection screen can be added later.
+        var business = owned.get(0);
 
-        CompanyManagementScreen.sendOpenPacket(
+        BusinessManagementScreen.sendOpenPacket(
                 serverPlayer,
-                company.getCompanyId(),
+                business.getBusinessId(),
                 serverLevel,
-                companyData,
+                businessData,
                 villageData);
 
         return InteractionResult.SUCCESS;

@@ -5,8 +5,8 @@ import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.MerchantBehavior;
 import tterrag1112.life_in_the_village.Entities.custom.AppearanceComponent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.NpcProfileSnapshot;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -99,10 +99,10 @@ public final class NpcProfileSnapshotBuilder {
                  STOCKPILE_KEEPER -> true;
             default -> false;
         };
-        CompanySavedData compData = CompanySavedData.get(level);
-        Optional<Company> companyOpt = compData.getCompanyForWorker(npc.getUUID());
-        boolean canOpenCompanyWorker = prof == Profession.COMPANY_WORKER
-                && companyOpt.map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
+        BusinessSavedData compData = BusinessSavedData.get(level);
+        Optional<Business> businessOpt = compData.getBusinessForWorker(npc.getUUID());
+        boolean canOpenBusinessWorker = prof == Profession.COMPANY_WORKER
+                && businessOpt.map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
                 .orElse(false);
         boolean canShowVillageBook = prof == Profession.VILLAGE_LEADER
                 && villageOpt.isPresent();
@@ -184,7 +184,7 @@ public final class NpcProfileSnapshotBuilder {
                 canTrade,
                 canOpenGuild,
                 canAssignWork,
-                canOpenCompanyWorker,
+                canOpenBusinessWorker,
                 canShowVillageBook,
                 canShowCraftingOrders,
                 canRentStall,
@@ -199,7 +199,7 @@ public final class NpcProfileSnapshotBuilder {
 
     /**
      * Step-5 nav-target selection (with "hide when contextual route
-     * already serves" tightening). Order: office → company-worker →
+     * already serves" tightening). Order: office → business-worker →
      * adventurer-party → profession-default → NONE.
      */
     private static NpcProfileSnapshot.NavTargetKind resolveNavKind(
@@ -214,12 +214,12 @@ public final class NpcProfileSnapshotBuilder {
             return NpcProfileSnapshot.NavTargetKind.OFFICE_SCREEN;
         }
 
-        // Owned company worker — hide if a contextual route reaches
-        // CompanyWorkerScreen here too (today: no contextual route,
+        // Owned business worker — hide if a contextual route reaches
+        // BusinessWorkerScreen here too (today: no contextual route,
         // so always offer the nav).
         if (prof == Profession.COMPANY_WORKER) {
-            boolean owned = CompanySavedData.get(level)
-                    .getCompanyForWorker(npc.getUUID())
+            boolean owned = BusinessSavedData.get(level)
+                    .getBusinessForWorker(npc.getUUID())
                     .map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
                     .orElse(false);
             if (owned) return NpcProfileSnapshot.NavTargetKind.COMPANY_WORKER;

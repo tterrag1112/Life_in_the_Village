@@ -11,74 +11,74 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.network.PacketDistributor;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
-import tterrag1112.life_in_the_village.Guilds.Companies.Company;
-import tterrag1112.life_in_the_village.Guilds.Companies.CompanySavedData;
-import tterrag1112.life_in_the_village.Networking.CompanyActionPacket;
-import tterrag1112.life_in_the_village.Networking.OpenCompanyManagementPacket;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
+import tterrag1112.life_in_the_village.Networking.BusinessActionPacket;
+import tterrag1112.life_in_the_village.Networking.OpenBusinessManagementPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
 import java.util.*;
 
-public class CompanyManagementScreen extends Screen {
+public class BusinessManagementScreen extends Screen {
 
     private static final int BOOK_W=420, BOOK_H=300, SIDEBAR_W=130, PAGE_PAD=14, ROW_H=24;
     private static final int PW = BOOK_W - SIDEBAR_W - PAGE_PAD * 2; // 262
 
     public enum Section { OVERVIEW, WORKERS, PRICES, SCHEDULE }
 
-    private final OpenCompanyManagementPacket data;
+    private final OpenBusinessManagementPacket data;
     private int bookX, bookY;
     public Section currentSection = Section.OVERVIEW;
 
     private final TooltipLayer tooltips = new TooltipLayer();
     private Sidebar<Section> sidebar;
-    private ScrollList<OpenCompanyManagementPacket.WorkerEntry> workerList;
-    private ScrollList<OpenCompanyManagementPacket.PriceEntry>  priceList;
+    private ScrollList<OpenBusinessManagementPacket.WorkerEntry> workerList;
+    private ScrollList<OpenBusinessManagementPacket.PriceEntry>  priceList;
     private StyledEditBox depositBox, renameBox;
 
-    public CompanyManagementScreen(OpenCompanyManagementPacket data) {
-        super(Component.literal(data.companyName()));
+    public BusinessManagementScreen(OpenBusinessManagementPacket data) {
+        super(Component.literal(data.businessName()));
         this.data = data;
     }
 
-    public static void sendOpenPacket(ServerPlayer player, UUID companyId,
-                                      ServerLevel level, CompanySavedData cdata,
+    public static void sendOpenPacket(ServerPlayer player, UUID businessId,
+                                      ServerLevel level, BusinessSavedData cdata,
                                       VillageSavedData vdata) {
-        sendOpenPacket(player, companyId, level, cdata, vdata, "");
+        sendOpenPacket(player, businessId, level, cdata, vdata, "");
     }
 
-    public static void sendOpenPacket(ServerPlayer player, UUID companyId,
-                                      ServerLevel level, CompanySavedData cdata,
+    public static void sendOpenPacket(ServerPlayer player, UUID businessId,
+                                      ServerLevel level, BusinessSavedData cdata,
                                       VillageSavedData vdata, String restoreSection) {
-        Company company = cdata.getById(companyId).orElse(null);
-        if (company == null) return;
+        Business business = cdata.getById(businessId).orElse(null);
+        if (business == null) return;
 
-        List<OpenCompanyManagementPacket.WorkerEntry> workers = new ArrayList<>();
-        for (Company.CompanyWorker w : company.getWorkers()) {
+        List<OpenBusinessManagementPacket.WorkerEntry> workers = new ArrayList<>();
+        for (Business.BusinessWorker w : business.getWorkers()) {
             String name = TownspersonMob.findByUUID(level, w.npcId()).map(n -> n.getNpcName()).orElse("Unknown NPC");
-            workers.add(new OpenCompanyManagementPacket.WorkerEntry(w.npcId(), name, w.role().name(), w.wagePerDay(), w.assignedItemId(), w.dailyTargetCount()));
+            workers.add(new OpenBusinessManagementPacket.WorkerEntry(w.npcId(), name, w.role().name(), w.wagePerDay(), w.assignedItemId(), w.dailyTargetCount()));
         }
 
-        List<OpenCompanyManagementPacket.PriceEntry> prices = new ArrayList<>();
-        for (Company.PriceOverride p : company.getAllPriceOverrides()) {
+        List<OpenBusinessManagementPacket.PriceEntry> prices = new ArrayList<>();
+        for (Business.PriceOverride p : business.getAllPriceOverrides()) {
             var item = net.minecraft.core.registries.BuiltInRegistries.ITEM.get(net.minecraft.resources.Identifier.parse(p.itemId())).map(h -> h.value()).orElse(null);
             String display = item != null ? item.getDefaultInstance().getHoverName().getString() : p.itemId();
-            prices.add(new OpenCompanyManagementPacket.PriceEntry(p.itemId(), display, p.pricePerUnit()));
+            prices.add(new OpenBusinessManagementPacket.PriceEntry(p.itemId(), display, p.pricePerUnit()));
         }
 
-        List<OpenCompanyManagementPacket.BuildingEntry> buildings = new ArrayList<>();
-        for (UUID bid : company.getBuildingIds())
-            vdata.getBuildingById(bid).ifPresent(b -> buildings.add(new OpenCompanyManagementPacket.BuildingEntry(bid, b.getName(), b.getType().name())));
+        List<OpenBusinessManagementPacket.BuildingEntry> buildings = new ArrayList<>();
+        for (UUID bid : business.getBuildingIds())
+            vdata.getBuildingById(bid).ifPresent(b -> buildings.add(new OpenBusinessManagementPacket.BuildingEntry(bid, b.getName(), b.getType().name())));
 
         var wallet = new net.minecraft.world.SimpleContainer(player.getInventory().getContainerSize());
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) wallet.setItem(i, player.getInventory().getItem(i).copy());
         long wealth = tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper.getWealth(wallet).toBronze();
 
-        PacketDistributor.sendToPlayer(player, new OpenCompanyManagementPacket(
-                companyId, company.getName(), company.getTreasuryBronze(), wealth,
-                company.getWorkSchedule().startHour(), company.getWorkSchedule().endHour(),
-                company.getEffectiveMinWage(vdata), workers, prices, buildings, restoreSection));
+        PacketDistributor.sendToPlayer(player, new OpenBusinessManagementPacket(
+                businessId, business.getName(), business.getTreasuryBronze(), wealth,
+                business.getWorkSchedule().startHour(), business.getWorkSchedule().endHour(),
+                business.getEffectiveMinWage(vdata), workers, prices, buildings, restoreSection));
     }
 
     @Override
@@ -128,21 +128,21 @@ public class CompanyManagementScreen extends Screen {
         addRenderableWidget(StyledButton.builder(Component.literal("Deposit"), b -> {
             try {
                 long amount = Long.parseLong(depositBox.getValue());
-                if (amount > 0) sendAction(CompanyActionPacket.ActionType.DEPOSIT_TO_TREASURY, amount);
+                if (amount > 0) sendAction(BusinessActionPacket.ActionType.DEPOSIT_TO_TREASURY, amount);
             } catch (NumberFormatException ignored) {}
         }).pos(px + PW - 56, py + 50).size(54, 16).build());
 
         renameBox = new StyledEditBox(font, px, py + 100, PW - 60, 16, Component.literal("New name"));
         renameBox.setMaxLength(32);
-        renameBox.setValue(data.companyName());
+        renameBox.setValue(data.businessName());
         addRenderableWidget(renameBox);
         addRenderableWidget(StyledButton.builder(Component.literal("Rename"), b -> {
             String n = renameBox.getValue().trim();
-            if (!n.isEmpty()) sendAction(CompanyActionPacket.ActionType.RENAME_COMPANY, n, 0, 0);
+            if (!n.isEmpty()) sendAction(BusinessActionPacket.ActionType.RENAME_COMPANY, n, 0, 0);
         }).pos(px + PW - 56, py + 100).size(54, 16).build());
 
-        addRenderableWidget(StyledButton.builder(Component.literal("Dissolve Company"),
-                b -> sendAction(CompanyActionPacket.ActionType.DISSOLVE_COMPANY, "", 0, 0))
+        addRenderableWidget(StyledButton.builder(Component.literal("Dissolve Business"),
+                b -> sendAction(BusinessActionPacket.ActionType.DISSOLVE_COMPANY, "", 0, 0))
                 .pos(px, py + 140).size(PW, 16).build());
     }
 
@@ -176,7 +176,7 @@ public class CompanyManagementScreen extends Screen {
     }
 
     private void drawSidebarHeader(GuiGraphics g) {
-        g.drawString(font, "⌂ " + data.companyName(), bookX + 6, bookY + 8, BookScreenColors.DARK, false);
+        g.drawString(font, "⌂ " + data.businessName(), bookX + 6, bookY + 8, BookScreenColors.DARK, false);
         g.fill(bookX + 4, bookY + 20, bookX + SIDEBAR_W - 4, bookY + 21, BookScreenColors.BORDER);
     }
 
@@ -224,7 +224,7 @@ public class CompanyManagementScreen extends Screen {
         g.drawString(font, "1g=" + CurrencyValue.GOLD_VALUE + "b  1s=" + CurrencyValue.SILVER_VALUE + "b",
                 px, py + 70, BookScreenColors.LIGHT, false);
         g.fill(px, py + 80, px + PW, py + 81, BookScreenColors.BORDER);
-        g.drawString(font, "Rename company:", px, py + 89, BookScreenColors.DARK, false);
+        g.drawString(font, "Rename business:", px, py + 89, BookScreenColors.DARK, false);
         g.fill(px, py + 130, px + PW, py + 131, BookScreenColors.BORDER);
         if (py + 138 < maxY)
             g.drawString(font, "Min. wage: " + CoinRenderer.format(data.effectiveMinWage()) + "/day",
@@ -246,7 +246,7 @@ public class CompanyManagementScreen extends Screen {
     }
 
     private void drawWorkerRow(GuiGraphics g, int rx, int ry, int rw, int rh,
-                               OpenCompanyManagementPacket.WorkerEntry w, boolean hovered) {
+                               OpenBusinessManagementPacket.WorkerEntry w, boolean hovered) {
         boolean active = !w.assignedItemId().isEmpty();
         g.fill(rx, ry, rx + rw, ry + ROW_H, active ? BookScreenColors.GREEN_BG : BookScreenColors.PARCHMENT);
         g.renderOutline(rx, ry, rw, ROW_H, BookScreenColors.BORDER);
@@ -289,7 +289,7 @@ public class CompanyManagementScreen extends Screen {
     }
 
     private void drawPriceRow(GuiGraphics g, int rx, int ry, int rw, int rh,
-                              OpenCompanyManagementPacket.PriceEntry p, boolean hovered) {
+                              OpenBusinessManagementPacket.PriceEntry p, boolean hovered) {
         g.fill(rx, ry, rx + rw, ry + 14, BookScreenColors.PARCHMENT);
         g.renderOutline(rx, ry, rw, 14, BookScreenColors.BORDER);
         g.drawString(font, p.itemName(),                          rx + 3,      ry + 3, BookScreenColors.DARK, false);
@@ -298,7 +298,7 @@ public class CompanyManagementScreen extends Screen {
         drawMini(g, rx + rw - 18, ry, 16, 14, "+",      false);
     }
 
-    private boolean onPriceClick(OpenCompanyManagementPacket.PriceEntry p, int btn, double relX, double relY) {
+    private boolean onPriceClick(OpenBusinessManagementPacket.PriceEntry p, int btn, double relX, double relY) {
         if (relX >= PW - 36 && relX < PW - 20) { sendPriceChange(p.itemId(), Math.max(1, p.pricePerUnit() - 1)); return true; }
         if (relX >= PW - 18 && relX < PW - 2)  { sendPriceChange(p.itemId(), p.pricePerUnit() + 1);              return true; }
         return false;
@@ -352,10 +352,10 @@ public class CompanyManagementScreen extends Screen {
                 if (rowIdx >= 0 && rowIdx < data.workers().size()) {
                     var w   = data.workers().get(rowIdx);
                     double rx = mx - (bookX + SIDEBAR_W + PAGE_PAD);
-                    if (rx >= PW - 110 && rx < PW - 96) { sendActionLong(CompanyActionPacket.ActionType.SET_WORKER_WAGE, w.npcId(), Math.max(data.effectiveMinWage(), w.wagePerDay() - 1)); return true; }
-                    if (rx >= PW -  94 && rx < PW - 80) { sendActionLong(CompanyActionPacket.ActionType.SET_WORKER_WAGE, w.npcId(), w.wagePerDay() + 1); return true; }
-                    if (rx >= PW -  78 && rx < PW - 46) { ClientPacketDistributor.sendToServer(new CompanyActionPacket(CompanyActionPacket.ActionType.OPEN_WORKER_SCREEN, data.companyId(), w.npcId(), "", 0L, 0)); return true; }
-                    if (rx >= PW -  44 && rx < PW - 14) { sendAction(CompanyActionPacket.ActionType.FIRE_NPC, w.npcId()); return true; }
+                    if (rx >= PW - 110 && rx < PW - 96) { sendActionLong(BusinessActionPacket.ActionType.SET_WORKER_WAGE, w.npcId(), Math.max(data.effectiveMinWage(), w.wagePerDay() - 1)); return true; }
+                    if (rx >= PW -  94 && rx < PW - 80) { sendActionLong(BusinessActionPacket.ActionType.SET_WORKER_WAGE, w.npcId(), w.wagePerDay() + 1); return true; }
+                    if (rx >= PW -  78 && rx < PW - 46) { ClientPacketDistributor.sendToServer(new BusinessActionPacket(BusinessActionPacket.ActionType.OPEN_WORKER_SCREEN, data.businessId(), w.npcId(), "", 0L, 0)); return true; }
+                    if (rx >= PW -  44 && rx < PW - 14) { sendAction(BusinessActionPacket.ActionType.FIRE_NPC, w.npcId()); return true; }
                 }
             }
         }
@@ -376,23 +376,23 @@ public class CompanyManagementScreen extends Screen {
         return super.keyPressed(event);
     }
 
-    private void sendAction(CompanyActionPacket.ActionType type, long longParam) {
-        ClientPacketDistributor.sendToServer(new CompanyActionPacket(type, data.companyId(), new UUID(0,0), "", longParam, 0));
+    private void sendAction(BusinessActionPacket.ActionType type, long longParam) {
+        ClientPacketDistributor.sendToServer(new BusinessActionPacket(type, data.businessId(), new UUID(0,0), "", longParam, 0));
     }
-    private void sendAction(CompanyActionPacket.ActionType type, String str, long lp, int ip) {
-        ClientPacketDistributor.sendToServer(new CompanyActionPacket(type, data.companyId(), new UUID(0,0), str, lp, ip));
+    private void sendAction(BusinessActionPacket.ActionType type, String str, long lp, int ip) {
+        ClientPacketDistributor.sendToServer(new BusinessActionPacket(type, data.businessId(), new UUID(0,0), str, lp, ip));
     }
-    private void sendAction(CompanyActionPacket.ActionType type, UUID targetId) {
-        ClientPacketDistributor.sendToServer(new CompanyActionPacket(type, data.companyId(), targetId, "", 0, 0));
+    private void sendAction(BusinessActionPacket.ActionType type, UUID targetId) {
+        ClientPacketDistributor.sendToServer(new BusinessActionPacket(type, data.businessId(), targetId, "", 0, 0));
     }
-    private void sendActionLong(CompanyActionPacket.ActionType type, UUID targetId, long lp) {
-        ClientPacketDistributor.sendToServer(new CompanyActionPacket(type, data.companyId(), targetId, "", lp, 0));
+    private void sendActionLong(BusinessActionPacket.ActionType type, UUID targetId, long lp) {
+        ClientPacketDistributor.sendToServer(new BusinessActionPacket(type, data.businessId(), targetId, "", lp, 0));
     }
     private void sendPriceChange(String itemId, long price) {
-        ClientPacketDistributor.sendToServer(new CompanyActionPacket(CompanyActionPacket.ActionType.SET_ITEM_PRICE, data.companyId(), new UUID(0,0), itemId, price, 0));
+        ClientPacketDistributor.sendToServer(new BusinessActionPacket(BusinessActionPacket.ActionType.SET_ITEM_PRICE, data.businessId(), new UUID(0,0), itemId, price, 0));
     }
     private void sendScheduleChange(int startH, int endH) {
-        ClientPacketDistributor.sendToServer(new CompanyActionPacket(CompanyActionPacket.ActionType.SET_WORK_HOURS, data.companyId(), new UUID(0,0), "", endH, startH));
+        ClientPacketDistributor.sendToServer(new BusinessActionPacket(BusinessActionPacket.ActionType.SET_WORK_HOURS, data.businessId(), new UUID(0,0), "", endH, startH));
     }
 
     private String sectionLabel(Section s) {
