@@ -329,7 +329,12 @@ public class Business {
                             .forGetter(Business::snapshotOwnership),
                     // Phase 6.3.3.c.2 — manager slot.
                     UUIDUtil.CODEC.optionalFieldOf("managerId")
-                            .forGetter(c -> java.util.Optional.ofNullable(c.managerId))
+                            .forGetter(c -> java.util.Optional.ofNullable(c.managerId)),
+                    // Phase 6.3.3.c.3 — business-internal role assignments.
+                    tterrag1112.life_in_the_village.Guilds.Companies.Roles
+                            .BusinessRoleAssignment.CODEC.listOf()
+                            .optionalFieldOf("roleAssignments", new ArrayList<>())
+                            .forGetter(c -> new ArrayList<>(c.roleAssignments))
             ).apply(i, Business::fromCodec));
 
     private static Business fromCodec(UUID businessId, String name,
@@ -339,7 +344,8 @@ public class Business {
                                      long treasury, boolean active,
                                      java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
                                      OwnershipInfo ownership,
-                                     java.util.Optional<UUID> managerIdOpt) {
+                                     java.util.Optional<UUID> managerIdOpt,
+                                     List<tterrag1112.life_in_the_village.Guilds.Companies.Roles.BusinessRoleAssignment> roleList) {
         Business c = new Business(businessId, name, ownerPlayerId,
                 homeVillageId, schedule);
         c.buildingIds.addAll(buildingIds);
@@ -382,6 +388,36 @@ public class Business {
         // payroll / scheduling iterations don't double-count the owner.
         if (c.owner != null) {
             c.workers.remove(c.owner.getPrimaryUuid());
+        }
+        // Phase 6.3.3.c.3 — load existing role assignments + migrate
+        // any legacy BUSINESS_FOREMAN / BUSINESS_BOOKKEEPER office
+        // holdings into the new BusinessRole layer.
+        if (roleList != null) c.roleAssignments.addAll(roleList);
+        if (c.offices != null) {
+            for (String legacyId : new String[]{
+                    "business_foreman", "company_foreman",
+                    "business_bookkeeper", "company_bookkeeper"}) {
+                c.offices.get(legacyId).ifPresent(holding -> {
+                    if (holding.holderIsNpc()) {
+                        holding.holderNpcId().ifPresent(holderUuid -> {
+                            tterrag1112.life_in_the_village.Guilds.Companies.Roles
+                                    .BusinessRoleRegistry.fromLegacyOfficeId(legacyId)
+                                    .ifPresent(roleId -> {
+                                        boolean already = c.roleAssignments.stream()
+                                                .anyMatch(a -> a.roleId().equals(roleId));
+                                        if (!already) {
+                                            c.roleAssignments.add(new tterrag1112.life_in_the_village
+                                                    .Guilds.Companies.Roles.BusinessRoleAssignment(
+                                                            roleId, holderUuid,
+                                                            holding.termStartTick(),
+                                                            new UUID(0L, 0L)));
+                                        }
+                                    });
+                        });
+                    }
+                });
+                c.offices.remove(legacyId);
+            }
         }
         return c;
     }
@@ -430,6 +466,15 @@ public class Business {
      * empty (the OWNER-as-default-MANAGER pattern is the v1 reality).
      */
     private UUID managerId;
+
+    /**
+     * Phase 6.3.3.c.3 — business-internal role assignments. Absorbs the
+     * old {@code BUSINESS_FOREMAN} / {@code BUSINESS_BOOKKEEPER} office
+     * holdings; new roles register via {@link
+     * tterrag1112.life_in_the_village.Guilds.Companies.Roles.BusinessRoleRegistry}.
+     */
+    private final List<tterrag1112.life_in_the_village.Guilds.Companies.Roles.BusinessRoleAssignment>
+            roleAssignments = new ArrayList<>();
     /** Ordered succession chain. Defaults to oldest-adult-child of the
      *  owner; spec line 132. Empty for player-owned businesses. */
     private final List<UUID> heirs = new ArrayList<>();
@@ -745,10 +790,20 @@ public class Business {
      */
     public boolean holderHasPower(UUID uuid,
             tterrag1112.life_in_the_village.Npc.Office.OfficePower power) {
-        if (uuid == null || owner == null || power == null) return false;
+        if (uuid == null || power == null) return false;
+        // Phase 6.3.3.c.3 — business-internal role check first. A role
+        // assignment grants its def's powers to the holder.
+        for (tterrag1112.life_in_the_village.Guilds.Companies.Roles.BusinessRoleAssignment a
+                : roleAssignments) {
+            if (!uuid.equals(a.holderUuid())) continue;
+            var def = tterrag1112.life_in_the_village.Guilds.Companies.Roles
+                    .BusinessRoleRegistry.byId(a.roleId()).orElse(null);
+            if (def != null && def.powers().contains(power)) return true;
+        }
+        if (owner == null) return false;
         // Manager power-set: OWNER_POWERS minus SET_BUDGET (manager runs
         // the business but doesn't control budget allocation). Checked
-        // first so managers see a tighter set than owners.
+        // before owner so managers see a tighter set than owners.
         if (managerId != null && uuid.equals(managerId)) {
             return MANAGER_POWERS.contains(power);
         }
@@ -761,6 +816,35 @@ public class Business {
             case BusinessOwner.KingdomOwner k -> false;
             case BusinessOwner.GuildOwner   g -> false;
         };
+    }
+
+    // ── Phase 6.3.3.c.3 — BusinessRole API ────────────────────────────
+
+    public List<tterrag1112.life_in_the_village.Guilds.Companies.Roles.BusinessRoleAssignment>
+            getRoleAssignments() {
+        return Collections.unmodifiableList(roleAssignments);
+    }
+
+    /**
+     * Assigns (or replaces) the role holder. Replaces the entry for
+     * {@code roleId} if already assigned.
+     */
+    public void assignRole(net.minecraft.resources.Identifier roleId,
+                           UUID holderUuid, long appointedTick, UUID appointedBy) {
+        roleAssignments.removeIf(a -> a.roleId().equals(roleId));
+        roleAssignments.add(new tterrag1112.life_in_the_village.Guilds.Companies.Roles
+                .BusinessRoleAssignment(roleId, holderUuid, appointedTick, appointedBy));
+    }
+
+    public void clearRole(net.minecraft.resources.Identifier roleId) {
+        roleAssignments.removeIf(a -> a.roleId().equals(roleId));
+    }
+
+    public java.util.Optional<UUID> getRoleHolder(net.minecraft.resources.Identifier roleId) {
+        for (var a : roleAssignments) {
+            if (a.roleId().equals(roleId)) return java.util.Optional.of(a.holderUuid());
+        }
+        return java.util.Optional.empty();
     }
 
     /**

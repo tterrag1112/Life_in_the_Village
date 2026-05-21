@@ -46,8 +46,11 @@ public final class AppointedSelection implements OfficeSelectionEngine {
         m.put(OfficeRegistry.VILLAGE_SCRIBE,    OfficeRegistry.VILLAGE_LEADER);
         m.put(OfficeRegistry.GUILD_TREASURER,   OfficeRegistry.GUILD_MASTER);
         m.put(OfficeRegistry.GUILD_REGISTRAR,   OfficeRegistry.GUILD_MASTER);
-        m.put(OfficeRegistry.BUSINESS_FOREMAN,   OfficeRegistry.BUSINESS_OWNER);
-        m.put(OfficeRegistry.BUSINESS_BOOKKEEPER,OfficeRegistry.BUSINESS_OWNER);
+        // Phase 6.3.3.c.3 — BUSINESS_FOREMAN / BUSINESS_BOOKKEEPER are
+        // no longer offices. Appointment for the new BusinessRole layer
+        // lives on Business.assignRole and is invoked by content paths
+        // (UI / verb / future predicate-driven auto-appoint), not by
+        // OfficeElection.runElection.
         m.put(OfficeRegistry.KINGDOM_CHANCELLOR,OfficeRegistry.KINGDOM_KING);
         m.put(OfficeRegistry.KINGDOM_TREASURER, OfficeRegistry.KINGDOM_KING);
         APPOINTER_OF = Map.copyOf(m);

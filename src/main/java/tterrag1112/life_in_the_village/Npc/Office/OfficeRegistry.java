@@ -329,21 +329,13 @@ public final class OfficeRegistry {
         // legacy save data continues to load cleanly (the alias resolves
         // to no definition; callers should already be migrated to the
         // owner-direct check).
-        register(OfficeDefinition.of(BUSINESS_FOREMAN, OrgType.BUSINESS, "Business Foreman",
-                List.of(),
-                Map.of(),
-                SelectionMethod.APPOINTED,
-                0,
-                List.of(OfficePower.COMMAND_CITIZENS),
-                new Competence(Skill.CRAFTING, 50, 85, 1.20f, -0.08f)));
-
-        register(OfficeDefinition.of(BUSINESS_BOOKKEEPER, OrgType.BUSINESS, "Business Bookkeeper",
-                List.of(Profession.MERCHANT),
-                Map.of(Skill.COMMERCE, 40, Skill.LITERACY, 40),
-                SelectionMethod.APPOINTED,
-                0,
-                List.of(OfficePower.VIEW_BUDGET, OfficePower.ACCESS_TREASURY),
-                new Competence(Skill.COMMERCE, 40, 80, 1.15f, -0.05f)));
+        // Phase 6.3.3.c.3 — BUSINESS_FOREMAN and BUSINESS_BOOKKEEPER are
+        // no longer office definitions; absorbed into BusinessRoleRegistry
+        // (lit:business/foreman, lit:business/bookkeeper). String
+        // constants kept above for the legacy office-id alias path; any
+        // OfficeRegistry.get on these returns null post-removal and the
+        // load-time migration in Business.fromCodec translates legacy
+        // OfficeHolding entries to BusinessRoleAssignments.
     }
 
     private static void registerKingdomOffices() {
