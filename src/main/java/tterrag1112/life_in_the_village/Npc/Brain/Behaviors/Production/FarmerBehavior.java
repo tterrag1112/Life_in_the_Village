@@ -125,7 +125,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         TENDING_ANIMALS,
         /** Phase 6.3.3.h.3 — FERTILIZER role with manure in farmhouse
          *  storage walks to a low-soilQuality plot and composts it. */
-        COMPOSTING
+        COMPOSTING,
+        /** Phase 6.3.3.h.5 — farmer has no hoe; walk to market and
+         *  purchase one (treasury debit, market stock add). */
+        ACQUIRING_TOOL
     }
 
     
@@ -172,6 +175,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             case AWAITING_SELL      -> { /* SellToMarketBehavior owns the loop */ }
             case TENDING_ANIMALS    -> tendAnimals(level);
             case COMPOSTING         -> compost(level);
+            case ACQUIRING_TOOL     -> acquireTool(level);
         }
     }
 
@@ -280,8 +284,21 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         // Decide next phase
         if (!toHarvest.isEmpty() && canHarvest(role)) {
+            // Phase 6.3.3.h.5 — durable tool model. If the farmer has
+            // no hoe in personal inventory, try farmhouse storage; if
+            // also empty, route to ACQUIRING_TOOL (non-APPRENTICE) or
+            // goIdle (APPRENTICE — master provides tools).
+            if (!ToolUseSupport.hasUsableTool(entity, FarmerBehavior::isHoe)) {
+                if (!tryAcquireHoeFromFarmhouse(level)) {
+                    if (!isApprentice) {
+                        phase = Phase.ACQUIRING_TOOL;
+                        return;
+                    }
+                    goIdle();
+                    return;
+                }
+            }
             phase = Phase.HARVESTING;
-            entity.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_HOE));
             return;
         }
 
@@ -438,6 +455,11 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         }
 
         level.setBlock(cropPos, Blocks.AIR.defaultBlockState(), 3);
+        // Phase 6.3.3.h.5 — equip + damage the durable hoe. If it
+        // breaks mid-cycle, the next analyze() pass picks up the
+        // missing-tool branch and routes to ACQUIRING_TOOL.
+        ToolUseSupport.useToolFromInventory(entity, FarmerBehavior::isHoe,
+                level, InteractionHand.MAIN_HAND);
         entity.swing(InteractionHand.MAIN_HAND);
         level.playSound(null, cropPos, SoundEvents.CROP_BREAK,
                 SoundSource.BLOCKS, 1.0f, 1.0f);
@@ -487,7 +509,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack s = inv.getItem(i);
             if (s.isEmpty()) continue;
-            if (s.is(Items.IRON_HOE) || s.is(Items.DIAMOND_HOE)) continue;
+            if (isHoe(s)) continue;
             return s;
         }
         return ItemStack.EMPTY;
@@ -507,8 +529,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             ItemStack stack = inv.getItem(i);
             if (stack.isEmpty()) continue;
 
-            // Don't deposit tools
-            if (stack.is(Items.IRON_HOE) || stack.is(Items.DIAMOND_HOE)) continue;
+            // Don't deposit tools (h.5: keep the durable hoe with farmer).
+            if (isHoe(stack)) continue;
 
             BuildingStorageAccess.storeItem(level, farmhouse, stack);
             inv.setItem(i, ItemStack.EMPTY);
@@ -908,6 +930,77 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         return entity.getSkills().getLevel(
                 tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING)
                 >= ROTATION_SKILL_THRESHOLD;
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 6.3.3.h.5 — hoe durability + acquisition
+    // -------------------------------------------------------------------------
+
+    private static final long HOE_PRICE_BRONZE = 30L;
+
+    /** Predicate identifying farming hoes (wood/stone/iron/diamond/netherite). */
+    static boolean isHoe(ItemStack s) {
+        return s.is(Items.WOODEN_HOE) || s.is(Items.STONE_HOE)
+                || s.is(Items.IRON_HOE) || s.is(Items.GOLDEN_HOE)
+                || s.is(Items.DIAMOND_HOE) || s.is(Items.NETHERITE_HOE);
+    }
+
+    /** Transfers one hoe from farmhouse storage to personal inventory.
+     *  Returns true on success. */
+    private boolean tryAcquireHoeFromFarmhouse(ServerLevel level) {
+        if (farmhouse == null) return false;
+        for (var container : BuildingStorageAccess.findInventories(level, farmhouse)) {
+            for (int i = 0; i < container.getContainerSize(); i++) {
+                ItemStack s = container.getItem(i);
+                if (s.isEmpty() || !isHoe(s)) continue;
+                ItemStack one = s.copy();
+                one.setCount(1);
+                s.shrink(1);
+                entity.getPersonalInventory().addItem(one);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Phase 6.3.3.h.5 — walk to market, debit farmhouse treasury, add
+     * one IRON_HOE to personal inventory. Reuses the BUYING_SEEDS
+     * shape (market lookup + treasury withdraw + dirty mark) without
+     * the per-plot loop. APPRENTICEs never enter this phase.
+     */
+    private void acquireTool(ServerLevel level) {
+        entity.setCurrentActivity("Buying tools");
+        if (farmhouse == null) { goIdle(); return; }
+        Building market = ProductionHelpers.findMarketInVillage(entity, level).orElse(null);
+        if (market == null) { goIdle(); return; }
+
+        BlockPos target = market.getShape().getOrigin();
+        double distSq = entity.distanceToSqr(
+                target.getX(), target.getY(), target.getZ());
+        if (distSq > INTERACT_RANGE_SQ) {
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
+            return;
+        }
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+
+        UUID buildingId = entity.getAssignedBuildingId().orElse(null);
+        if (buildingId == null) { goIdle(); return; }
+        VillageSavedData data = VillageSavedData.get(level);
+        BuildingEconomy economy = data.getOrCreateBuildingEconomy(buildingId);
+        if (!economy.canAfford(HOE_PRICE_BRONZE)) { goIdle(); return; }
+
+        economy.withdraw(HOE_PRICE_BRONZE);
+        entity.getPersonalInventory().addItem(new ItemStack(Items.IRON_HOE));
+        data.setDirty();
+
+        // Small COMMERCE bump for the buy interaction.
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.COMMERCE,
+                1, level.getGameTime());
+
+        phase = Phase.ANALYZING;
     }
 
     /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
