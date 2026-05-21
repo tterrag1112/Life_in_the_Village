@@ -189,21 +189,38 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         }
 
         // Gather crop plots assigned to this farmhouse
-        assignedPlots = data.getFarmPlotsForFarmhouse(farmhouse.getId()).stream()
+        List<FarmPlot> allPlots = data.getFarmPlotsForFarmhouse(farmhouse.getId()).stream()
                 .filter(p -> p.getSubtype() == FarmPlot.PlotSubtype.CROP_FIELD)
                 .collect(Collectors.toList());
 
-        if (assignedPlots.isEmpty()) { goIdle(); return; }
+        if (allPlots.isEmpty()) { goIdle(); return; }
 
         // Role-based task filtering
         FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
+
+        // Phase 6.3.3.f.1 — tier-aware constraints. APPRENTICE workers
+        // operate on their assigned plot only (single-plot mode, matches
+        // pre-consolidation FarmhandBehavior semantics), skip BUYING_SEEDS
+        // (they don't manage finances), and skip MARKET_SELLER bias
+        // (they don't sell). JOURNEYMAN / MASTER use the full work loop.
+        boolean isApprentice = isApprenticeTier();
+        if (isApprentice) {
+            java.util.UUID assignedPlotId = entity.getAssignedPlotId().orElse(null);
+            if (assignedPlotId == null) { goIdle(); return; }
+            assignedPlots = allPlots.stream()
+                    .filter(p -> p.getId().equals(assignedPlotId))
+                    .collect(Collectors.toList());
+            if (assignedPlots.isEmpty()) { goIdle(); return; }
+        } else {
+            assignedPlots = allPlots;
+        }
 
         // Phase 6.3.3.e.3 — sell pipeline: if farmhouse storage exceeds
         // stockQuotas for any crop AND a market exists, hand off to
         // SellToMarketBehavior. MARKET_SELLER role biases strongly toward
         // this path (checked first); other roles try sell only when no
-        // farming work is available.
-        if (role == FarmRole.MARKET_SELLER) {
+        // farming work is available. APPRENTICE workers don't sell.
+        if (!isApprentice && role == FarmRole.MARKET_SELLER) {
             if (tryHandOffToSell(level)) return;
         }
 
@@ -232,16 +249,43 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             return;
         }
 
-        if (needsSeeds(level) && canPlant(role)) {
-            phase = Phase.BUYING_SEEDS;
-            return;
+        // Phase 6.3.3.f.1 — APPRENTICE workers skip BUYING_SEEDS (no
+        // financial responsibility) and the sell fall-through (they
+        // don't sell). Their loop ends here with goIdle when there's
+        // nothing harvestable / replantable on their plot.
+        if (!isApprentice) {
+            if (needsSeeds(level) && canPlant(role)) {
+                phase = Phase.BUYING_SEEDS;
+                return;
+            }
+            // Phase 6.3.3.e.3 — non-MARKET_SELLER fall-through: still try
+            // sell if surplus exists and no farming work is available.
+            if (tryHandOffToSell(level)) return;
         }
 
-        // Phase 6.3.3.e.3 — non-MARKET_SELLER fall-through: still try
-        // sell if surplus exists and no farming work is available.
-        if (tryHandOffToSell(level)) return;
-
         goIdle();
+    }
+
+    /**
+     * Phase 6.3.3.f.1 — true if this NPC is an APPRENTICE-tier worker
+     * at the farm Business hosted on the farmhouse. Looks up the
+     * Business via BusinessSavedData, finds the worker entry by NPC
+     * UUID, reads the tier. Returns false when no Business / no entry
+     * (default tier = JOURNEYMAN-equivalent for non-business farmers,
+     * which gets full work loop).
+     */
+    private boolean isApprenticeTier() {
+        if (farmhouse == null) return false;
+        var bdata = tterrag1112.life_in_the_village.Guilds.Companies
+                .BusinessSavedData.get((ServerLevel) entity.level());
+        for (var business : bdata.getAllBusinesses()) {
+            if (!business.getBuildingIds().contains(farmhouse.getId())) continue;
+            return business.getWorkerTier(entity.getUUID())
+                    .map(t -> t == tterrag1112.life_in_the_village.Guilds.Companies
+                            .EmploymentTier.APPRENTICE)
+                    .orElse(false);
+        }
+        return false;
     }
 
     private void scanPlotForTasks(ServerLevel level, FarmPlot plot) {

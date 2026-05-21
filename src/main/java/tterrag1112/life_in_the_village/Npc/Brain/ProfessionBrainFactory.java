@@ -20,7 +20,6 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderRep
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CandlemakerProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CarpenterProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmhandBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
@@ -118,9 +117,13 @@ public final class ProfessionBrainFactory {
         REGISTRARS.put(Profession.FARMER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new FarmerBehavior())));
+        // Phase 6.3.3.f — FARMHAND consolidated into FARMER as the
+        // APPRENTICE tier; the dedicated FarmhandBehavior was deleted.
+        // Profession.FARMHAND remains as a @Deprecated load-time alias
+        // (save migration rewrites FARMHAND-tagged NPCs to FARMER).
         REGISTRARS.put(Profession.FARMHAND, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new FarmhandBehavior())));
+                        ImmutableList.of(new FarmerBehavior())));
 
         // MINER: single behavior with inlined ChannelRouter procurement
         // (BuyFromNpc fold) and CARGO_DESTINATION-based sell handoff.
