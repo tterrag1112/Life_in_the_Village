@@ -30,62 +30,71 @@ public enum AdjunctPlotType implements StringRepresentable {
     // ── Industry (subsystem 07) ──────────────────────────────────────────
 
     /** Blacksmith's outdoor work area: anvil, forge, log piles. */
-    FORGE_YARD          (5, 5, 2),
+    FORGE_YARD          (5, 5, 2, ActivityTag.METALWORK),
     /** Weaver / fishery drying racks. */
-    DRYING_RACK_YARD    (5, 4, 1),
+    DRYING_RACK_YARD    (5, 4, 1, ActivityTag.TANNING),
     /** Stonemason / candlemaker kiln yard. */
-    KILN_YARD           (5, 5, 2),
+    KILN_YARD           (5, 5, 2, ActivityTag.POTTERY),
     /** Carpentry / woodcutter / miller log staging area. */
-    LOG_YARD            (4, 6, 2),
+    LOG_YARD            (4, 6, 2, ActivityTag.LUMBER),
     /** Stable's outdoor enclosure. Larger footprint, looser slope. */
-    PADDOCK             (8, 8, 4),
+    PADDOCK             (8, 8, 4, ActivityTag.LIVESTOCK),
     /** Bakery's external oven shed. */
-    OVEN_SHED           (4, 4, 1),
+    OVEN_SHED           (4, 4, 1, ActivityTag.COOKING),
 
     // ── Gardens (subsystem 08) ───────────────────────────────────────────
 
     /** Apothecary herb garden — small, ordered rows. */
-    HERB_GARDEN         (4, 4, 1),
+    HERB_GARDEN         (4, 4, 1, ActivityTag.CROP),
     /** Inn kitchen garden — vegetables for the kitchen. */
-    KITCHEN_GARDEN      (4, 5, 1),
+    KITCHEN_GARDEN      (4, 5, 1, ActivityTag.CROP),
     /** Temple meditation garden — quiet, contemplative. */
-    MEDITATION_GARDEN   (5, 5, 1),
+    MEDITATION_GARDEN   (5, 5, 1, ActivityTag.LEISURE),
     /** Noble manor formal garden — wider, hedgerow-bordered. */
-    FORMAL_GARDEN       (7, 7, 2),
+    FORMAL_GARDEN       (7, 7, 2, ActivityTag.LEISURE),
 
     // ── Homesteads (subsystem 11) ────────────────────────────────────────
 
     /** Chicken coop attached to a house. */
-    HOMESTEAD_COOP      (3, 3, 1),
+    HOMESTEAD_COOP      (3, 3, 1, ActivityTag.POULTRY),
     /** Vegetable garden attached to a house. */
-    HOMESTEAD_GARDEN    (4, 4, 1),
+    HOMESTEAD_GARDEN    (4, 4, 1, ActivityTag.CROP),
     /** Pig / sheep pen attached to a house. */
-    HOMESTEAD_PEN       (5, 5, 2),
+    HOMESTEAD_PEN       (5, 5, 2, ActivityTag.LIVESTOCK),
     /** Beehives attached to a house. */
-    HOMESTEAD_BEES      (3, 3, 1),
+    HOMESTEAD_BEES      (3, 3, 1, ActivityTag.BEES),
     /** B2.6 — small workshop annex (workbench + storage; tinkerer's
      *  shed). Spouse runs idle craft animations here during WORK
      *  phases. */
-    HOMESTEAD_WORKSHOP  (4, 4, 2),
+    HOMESTEAD_WORKSHOP  (4, 4, 2, ActivityTag.WORKSHOP),
     /** B2.6 — household orchard: a few fruit trees, plot-scale. */
-    HOMESTEAD_ORCHARD   (5, 5, 2),
+    HOMESTEAD_ORCHARD   (5, 5, 2, ActivityTag.ORCHARD),
     /** B2.6 — log-and-plank stockpile attached to a house. */
-    HOMESTEAD_WOODSHED  (4, 4, 1);
+    HOMESTEAD_WOODSHED  (4, 4, 1, ActivityTag.LUMBER);
 
     private final int defaultHalfWidthX;
     private final int defaultHalfLengthZ;
     private final int slopeTolerance;
+    private final ActivityTag activityTag;
 
     AdjunctPlotType(int defaultHalfWidthX, int defaultHalfLengthZ,
-                    int slopeTolerance) {
+                    int slopeTolerance, ActivityTag activityTag) {
         this.defaultHalfWidthX  = defaultHalfWidthX;
         this.defaultHalfLengthZ = defaultHalfLengthZ;
         this.slopeTolerance     = slopeTolerance;
+        this.activityTag        = activityTag;
     }
 
     public int defaultHalfWidthX()       { return defaultHalfWidthX; }
     public int defaultHalfLengthZ()      { return defaultHalfLengthZ; }
     public int slopeTolerance()          { return slopeTolerance; }
+
+    /**
+     * Phase 6.3.3.d — semantic activity tag. See {@link ActivityTag}.
+     * Single-tag-per-type in v1; promote to {@code Set<ActivityTag>}
+     * if multi-tag semantics emerge later (no API breakage required).
+     */
+    public ActivityTag activityTag()     { return activityTag; }
 
     public static final Codec<AdjunctPlotType> CODEC =
             StringRepresentable.fromEnum(AdjunctPlotType::values);

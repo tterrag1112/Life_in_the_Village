@@ -699,6 +699,21 @@ public class VillageSavedData extends SavedData implements
             .Decoration.Adjunct.AdjunctPlot> adjunctPlots = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> adjunctPlotsByBuilding = new HashMap<>();
 
+    /**
+     * Phase 6.3.3.d — building rosters keyed first by building UUID then
+     * by roster-definition Identifier. A single building can host
+     * multiple rosters (e.g. a FARMHOUSE with both a chicken-coop and a
+     * pig-pen adjunct hosts two rosters).
+     *
+     * <p>In-memory only in 6.3.3.d — codec persistence is left for
+     * 6.3.3.g when the animal-husbandry content pass adds the first
+     * consumer. Until then this map starts empty on every load; no
+     * behavioral impact since nothing populates it.
+     */
+    private final Map<UUID, Map<net.minecraft.resources.Identifier,
+            tterrag1112.life_in_the_village.Village.Roster.BuildingRoster>> rosters =
+            new java.util.HashMap<>();
+
     // Subbuildings (Phase 0d — doc 03). Authoritative store keyed by
     // subBuildingId; the per-parent denormalisation map is rebuilt
     // from this on load.
@@ -981,6 +996,87 @@ public class VillageSavedData extends SavedData implements
             if (plot != null) out.add(plot);
         }
         return Collections.unmodifiableList(out);
+    }
+
+    /**
+     * Phase 6.3.3.d — returns adjunct plots attached to {@code buildingId}
+     * whose type carries the given {@link
+     * tterrag1112.life_in_the_village.Village.Decoration.Adjunct.ActivityTag
+     * ActivityTag}. Filtering happens via the type's
+     * {@code activityTag()} accessor; cost is O(adjuncts per building)
+     * matching {@link #getAdjunctPlotsForBuilding}.
+     *
+     * <p>This is the recommended query for activity-availability
+     * questions ("does this household have a chicken coop / vegetable
+     * garden / pig pen"). Raw type filtering via
+     * {@link #getAdjunctPlotsForBuilding} stays for callers that need
+     * the exact plot variant.
+     */
+    public List<tterrag1112.life_in_the_village.Village.Decoration
+            .Adjunct.AdjunctPlot> getAdjunctPlotsByTag(UUID buildingId,
+                    tterrag1112.life_in_the_village.Village.Decoration.Adjunct.ActivityTag tag) {
+        if (buildingId == null || tag == null) return List.of();
+        List<UUID> ids = adjunctPlotsByBuilding.get(buildingId);
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<tterrag1112.life_in_the_village.Village.Decoration
+                .Adjunct.AdjunctPlot> out = new ArrayList<>();
+        for (UUID id : ids) {
+            var plot = adjunctPlots.get(id);
+            if (plot != null && plot.type().activityTag() == tag) out.add(plot);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    /**
+     * Phase 6.3.3.d — short-circuiting predicate. True if the building
+     * has at least one adjunct plot whose type's activity tag matches.
+     */
+    public boolean hasFacilityForTag(UUID buildingId,
+            tterrag1112.life_in_the_village.Village.Decoration.Adjunct.ActivityTag tag) {
+        if (buildingId == null || tag == null) return false;
+        List<UUID> ids = adjunctPlotsByBuilding.get(buildingId);
+        if (ids == null || ids.isEmpty()) return false;
+        for (UUID id : ids) {
+            var plot = adjunctPlots.get(id);
+            if (plot != null && plot.type().activityTag() == tag) return true;
+        }
+        return false;
+    }
+
+    // ── Phase 6.3.3.d — building rosters (in-memory) ─────────────────
+
+    /**
+     * Returns the roster of {@code definitionId} for {@code buildingId}
+     * if one exists. {@link #putRoster} creates one.
+     */
+    public java.util.Optional<tterrag1112.life_in_the_village.Village.Roster.BuildingRoster>
+            getRoster(UUID buildingId, net.minecraft.resources.Identifier definitionId) {
+        var perBuilding = rosters.get(buildingId);
+        if (perBuilding == null) return java.util.Optional.empty();
+        return java.util.Optional.ofNullable(perBuilding.get(definitionId));
+    }
+
+    /** Registers / replaces the roster on the building. */
+    public void putRoster(tterrag1112.life_in_the_village.Village.Roster.BuildingRoster roster) {
+        if (roster == null) return;
+        rosters.computeIfAbsent(roster.buildingId(), k -> new java.util.HashMap<>())
+                .put(roster.rosterDefinitionId(), roster);
+        setDirty();
+    }
+
+    public void removeRoster(UUID buildingId, net.minecraft.resources.Identifier definitionId) {
+        var perBuilding = rosters.get(buildingId);
+        if (perBuilding == null) return;
+        if (perBuilding.remove(definitionId) != null) setDirty();
+        if (perBuilding.isEmpty()) rosters.remove(buildingId);
+    }
+
+    /** All rosters hosted by {@code buildingId} (empty list if none). */
+    public java.util.Collection<tterrag1112.life_in_the_village.Village.Roster.BuildingRoster>
+            getRostersForBuilding(UUID buildingId) {
+        var perBuilding = rosters.get(buildingId);
+        return perBuilding == null ? List.of()
+                : java.util.Collections.unmodifiableCollection(perBuilding.values());
     }
 
     public Collection<tterrag1112.life_in_the_village.Village.Decoration
