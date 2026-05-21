@@ -2068,8 +2068,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Profession & assignment ──────────────────────────────────────────
         input.read("profession", Codec.STRING).ifPresent(s -> {
-            try { setProfession(Profession.valueOf(s)); }
-            catch (IllegalArgumentException ignored) {}
+            try {
+                // Phase 6.3.3.f.6 — FARMHAND folded into FARMER+APPRENTICE.
+                // Legacy persisted "FARMHAND" rewrites to "FARMER" on first
+                // load; the workers map on the host farm Business gets
+                // updated separately by the post-load sweep (see
+                // FarmhandConsolidationMigration). Idempotent on subsequent
+                // loads since the string never round-trips back to FARMHAND.
+                Profession p = Profession.valueOf(s);
+                if (p == Profession.FARMHAND) p = Profession.FARMER;
+                setProfession(p);
+            } catch (IllegalArgumentException ignored) {}
         });
         input.read("assignedBuildingId", Codec.STRING)
                 .ifPresent(s -> assignedBuildingId = UUID.fromString(s));

@@ -114,6 +114,12 @@ public class Life_in_the_village {
     public void onServerStarting(ServerStartingEvent event) {
         // Do something when the server starts
         LOGGER.info("HELLO from server starting");
+        // Phase 6.3.3.f.6 — FARMHAND → FARMER+APPRENTICE one-shot migration.
+        // Idempotent: runs every start; second-and-later runs find no work
+        // since the per-NPC profession rewrite happens at NBT-load via
+        // TownspersonMob.readAdditionalSaveData.
+        tterrag1112.life_in_the_village.Guilds.Companies.Ai
+                .FarmhandConsolidationMigration.migrateAll(event.getServer());
     }
 
 
