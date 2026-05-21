@@ -108,4 +108,48 @@ public final class BusinessHeirs {
             return m == null ? -1 : m.getAge();
         }).reversed());
     }
+
+    /**
+     * Phase 6.3.3.c.5 — refresh heirs for every business whose owner's
+     * family includes the given NPC. Called on family events
+     * (child born / death / lifestage advance) so the heir chain
+     * stays current.
+     *
+     * <p>Currently walks all businesses (O(N businesses) per call).
+     * For v1 scale (low hundreds), acceptable; if it becomes hot, add
+     * a Family-Component → owning-business denormalized index in
+     * BusinessSavedData.
+     */
+    public static void refreshHeirsForFamilyOf(ServerLevel level, UUID familyMemberUuid) {
+        if (familyMemberUuid == null) return;
+        var bdata = tterrag1112.life_in_the_village.Guilds.Companies
+                .BusinessSavedData.get(level);
+        for (var business : bdata.getAllBusinesses()) {
+            var owner = business.getOwner();
+            if (owner == null) continue;
+            boolean affects = switch (owner) {
+                case BusinessOwner.NpcOwner n -> {
+                    // refresh if the family member is the owner, an
+                    // owner's child, or a household co-resident
+                    if (familyMemberUuid.equals(n.npcUuid())) yield true;
+                    TownspersonMob ownerNpc = TownspersonMob.findByUUID(
+                            level, n.npcUuid()).orElse(null);
+                    if (ownerNpc != null
+                            && ownerNpc.getFamily().getChildrenIds().contains(familyMemberUuid)) {
+                        yield true;
+                    }
+                    yield VillageSavedData.get(level)
+                            .getHouseholdForNpc(n.npcUuid())
+                            .map(h -> h.hasMember(familyMemberUuid))
+                            .orElse(false);
+                }
+                case BusinessOwner.FamilyOwner f -> VillageSavedData.get(level)
+                        .getAllHouseholds().stream()
+                        .anyMatch(h -> h.getHouseholdId().equals(f.householdId())
+                                && h.hasMember(familyMemberUuid));
+                default -> false;
+            };
+            if (affects) populateForOwner(level, business);
+        }
+    }
 }

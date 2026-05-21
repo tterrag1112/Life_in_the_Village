@@ -137,6 +137,9 @@ public final class MerchantPromotion {
         }
 
         BusinessSavedData.get(level).addBusiness(business);
+        // Phase 6.3.3.c.5 — populate heir chain from NPC's family. Single
+        // call site; the helper picks the right ordering per owner variant.
+        BusinessHeirs.populateForOwner(level, business);
         LOGGER.info("[MerchantPromotion] {} ({}) promoted to TRADING_COMPANY '{}' (treasury={})",
                 npc.getNpcName(), npc.getUUID(), businessName, business.getTreasuryBronze());
         // Phase 4 doc 30 archival hook.
