@@ -1,8 +1,13 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
@@ -12,11 +17,10 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.GraphTradeRouteEsta
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RouteSegment;
 
-import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 
-public class CaravanMerchantGoal extends Goal {
+public class CaravanMerchantBehavior extends Behavior<TownspersonMob> {
 
     // How close the merchant needs to get to a waypoint
     // before moving to the next one
@@ -25,28 +29,35 @@ public class CaravanMerchantGoal extends Goal {
     // How far ahead on the road to look for next waypoint
     private static final int    LOOKAHEAD_BLOCKS  = 16;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public CaravanMerchantBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private int currentRoadIndex = -1;
     private BlockPos currentWaypoint = null;
     private boolean hasLoggedPath = false;
 
-    public CaravanMerchantGoal(TownspersonMob entity) {
+    
+
+    @Override
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
-
-    @Override
-    public boolean canUse() {
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         return entity.isCaravanMember();
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return entity.isCaravanMember();
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         currentRoadIndex = -1;
         currentWaypoint  = null;
         hasLoggedPath    = false;
@@ -54,17 +65,17 @@ public class CaravanMerchantGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.clearCurrentActivity();
         currentWaypoint  = null;
         currentRoadIndex = -1;
     }
 
     @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level))
-            return;
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
 
         UUID caravanId = entity.getCaravanId().orElse(null);
         if (caravanId == null) return;
@@ -77,7 +88,7 @@ public class CaravanMerchantGoal extends Goal {
 
         if (caravan.getState()
                 == Caravan.CaravanState.DELIVERING) {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             entity.setCurrentActivity("Delivering goods...");
             return;
         }
@@ -127,11 +138,11 @@ public class CaravanMerchantGoal extends Goal {
 
             // Always issue moveTo — even if already navigating
             // this overrides the current path with the new target
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     currentWaypoint.getX() + 0.5,
                     currentWaypoint.getY(),
                     currentWaypoint.getZ() + 0.5,
-                    MOVE_SPEED);
+                    MOVE_SPEED));
         }
 
         // If navigation stalled for any reason, reissue it
@@ -139,11 +150,11 @@ public class CaravanMerchantGoal extends Goal {
                 && currentWaypoint != null
                 && !entity.blockPosition().closerThan(
                 currentWaypoint, WAYPOINT_REACH)) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     currentWaypoint.getX() + 0.5,
                     currentWaypoint.getY(),
                     currentWaypoint.getZ() + 0.5,
-                    MOVE_SPEED);
+                    MOVE_SPEED));
         }
 
         // Sync caravan progress to entity position
@@ -190,11 +201,11 @@ public class CaravanMerchantGoal extends Goal {
 
         double moveSpeed = MOVE_SPEED;
 
-        entity.getNavigation().moveTo(
+        entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                 currentWaypoint.getX() + 0.5,
                 currentWaypoint.getY(),
                 currentWaypoint.getZ() + 0.5,
-                moveSpeed);
+                moveSpeed));
     }
 
     /**
@@ -235,4 +246,11 @@ public class CaravanMerchantGoal extends Goal {
                 .map(v -> v.getName())
                 .orElse("destination");
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

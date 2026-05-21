@@ -1,12 +1,17 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Guild;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade;
 
 import net.minecraft.core.Holder;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.Filterable;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.biome.Biome;
@@ -20,33 +25,35 @@ import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
 import java.util.*;
 
-public class GuildWorkerGoal extends Goal {
+public class GuildWorkerBehavior extends Behavior<TownspersonMob> {
 
     private static final int CHECK_INTERVAL = 1200;
     private static final long QUEST_REFRESH_INTERVAL = 24000L * 2;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public GuildWorkerBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private int timer = 0;
 
-    public GuildWorkerGoal(TownspersonMob entity) {
+    
+
+    @Override
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) { this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
+        return true; }
+    @Override
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
+        return true; }
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
-        setFlags(EnumSet.noneOf(Flag.class));
-    }
-
-    @Override
-    public boolean canUse() { return true; }
-    @Override
-    public boolean canContinueToUse() { return true; }
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
         timer++;
         if (timer < CHECK_INTERVAL) return;
         timer = 0;
-
-        if (!(entity.level() instanceof ServerLevel level)) return;
 
         VillageSavedData data = VillageSavedData.get(level);
         PlayerGuildData guildData = PlayerGuildData.get(level);
@@ -258,5 +265,12 @@ public class GuildWorkerGoal extends Goal {
 
     }
 
+
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
 
 }

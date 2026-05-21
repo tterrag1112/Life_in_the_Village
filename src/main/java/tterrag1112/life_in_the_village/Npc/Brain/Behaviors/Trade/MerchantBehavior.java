@@ -1,8 +1,13 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -16,7 +21,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 
-public class MerchantGoal extends Goal {
+public class MerchantBehavior extends Behavior<TownspersonMob> {
 
     private enum Phase {
         IDLE, STOCKING, OPEN_FOR_TRADE
@@ -26,7 +31,13 @@ public class MerchantGoal extends Goal {
     private static final int TRADE_DURATION = 6000;
     private static final int INTERACT_RANGE_SQ = 9;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public MerchantBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private int idleCooldown = 0;
     private int tradeTimer = 0;
@@ -35,13 +46,12 @@ public class MerchantGoal extends Goal {
     private List<Building> productionBuildings = new ArrayList<>();
     private int currentBuildingIndex = 0;
 
-    public MerchantGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
         return phase == Phase.IDLE
@@ -49,7 +59,8 @@ public class MerchantGoal extends Goal {
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         // Go directly to stocking/opening
         market = entity.getAssignedBuildingId()
                 .flatMap(VillageSavedData.get(
@@ -63,17 +74,15 @@ public class MerchantGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
         return phase != Phase.IDLE;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         switch (phase) {
             case STOCKING          -> stockMarket(level);
             case OPEN_FOR_TRADE    -> openForTrade(level);
@@ -93,13 +102,13 @@ public class MerchantGoal extends Goal {
                 targetPos.getX(), targetPos.getY(), targetPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     targetPos.getX(), targetPos.getY(),
-                    targetPos.getZ(), 1.0);
+                    targetPos.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         VillageSavedData data = VillageSavedData.get(level);
         Optional<Village> village = entity.getAssignedVillageName()
                 .flatMap(name -> data.getVillageByName(name));
@@ -174,13 +183,13 @@ public class MerchantGoal extends Goal {
                 marketPos.getX(), marketPos.getY(), marketPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     marketPos.getX(), marketPos.getY(),
-                    marketPos.getZ(), 1.0);
+                    marketPos.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         // Deposit personal inventory into market
         var inv = entity.getPersonalInventory();
@@ -253,7 +262,7 @@ public class MerchantGoal extends Goal {
     private void goIdle() {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(
                 net.minecraft.world.InteractionHand.MAIN_HAND,
                 ItemStack.EMPTY
@@ -263,9 +272,17 @@ public class MerchantGoal extends Goal {
     }
 
     @Override
-    public void stop() { goIdle(); }
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
+        goIdle(); }
 
     public boolean isOpenForTrade() {
         return phase == Phase.OPEN_FOR_TRADE;
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

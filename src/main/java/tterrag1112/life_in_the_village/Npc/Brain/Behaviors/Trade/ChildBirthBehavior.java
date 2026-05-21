@@ -1,9 +1,13 @@
-// src/main/java/tterrag1112/life_in_the_village/Entities/Goals/Social/ChildBirthGoal.java
-package tterrag1112.life_in_the_village.Entities.Goals.Social;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.world.entity.EntitySpawnReason;
-import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.*;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
@@ -13,7 +17,6 @@ import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
 import tterrag1112.life_in_the_village.Village.Needs.NeedLevel;
 import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.EnumSet;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -39,7 +42,7 @@ import java.util.UUID;
  * added to the parent's {@code childrenIds} list. The birth is recorded
  * in the kingdom history if the village belongs to a kingdom.
  */
-public class ChildBirthGoal extends Goal {
+public class ChildBirthBehavior extends Behavior<TownspersonMob> {
 
     // ── Configuration ─────────────────────────────────────────────────────────
     /** Ticks between birth eligibility checks (~3 in-game days). */
@@ -51,20 +54,25 @@ public class ChildBirthGoal extends Goal {
     /** Minimum age (days) before a couple can have children. */
     private static final int  MIN_PARENT_AGE = 20;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public ChildBirthBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private int checkTimer = 0;
 
-    public ChildBirthGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.noneOf(Flag.class));
-    }
+    
 
     // =========================================================================
     // Goal lifecycle
     // =========================================================================
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         // Only HEAD adults with a spouse and a home can trigger birth
         if (entity.getFamilyRole() != FamilyRole.HEAD) return false;
         if (!entity.hasSpouse()) return false;
@@ -79,8 +87,6 @@ public class ChildBirthGoal extends Goal {
         // Random chance — not every eligible tick produces a child
         if (entity.getRandom().nextInt(BIRTH_CHANCE) != 0) return false;
 
-        if (!(entity.level() instanceof ServerLevel level)) return false;
-
         // Check conditions
         return childrenBelowMax(level)
                 && foodIsSufficient(level)
@@ -88,11 +94,12 @@ public class ChildBirthGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() { return false; } // one-shot
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
+        return false; } // one-shot
 
     @Override
-    public void start() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         spawnChild(level);
     }
 
@@ -250,4 +257,11 @@ public class ChildBirthGoal extends Goal {
                 + " born to " + entity.getNpcName()
                 + " in " + entity.getAssignedVillageName().orElse("unknown"));
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

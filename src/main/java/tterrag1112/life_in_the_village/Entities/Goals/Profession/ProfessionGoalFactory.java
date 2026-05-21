@@ -3,13 +3,7 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.player.Player;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.*;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guild.GuildWorkerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.CaravanMerchantGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.WanderingTraderGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper.StockpileKeeperGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopStallDecisionGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
@@ -112,17 +106,15 @@ public final class ProfessionGoalFactory {
         // Phase 6.2.b: GreetPlayerGoal migrated to GreetPlayerBehavior
         //   (universal IDLE @0 + SOCIAL @0); GreeterAssignment now writes
         //   the GREET_TARGET memory instead of calling goal.assign().
-        npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
+        // Phase 6.2.d.5: ChildBirthGoal migrated to ChildBirthBehavior
+        // (universal SOCIAL @2 in TownspersonMob.makeBrain).
+        // Phase 6.2.d.5: VisitorGoal migrated to VisitorBehavior
+        // (universal SOCIAL @3 in TownspersonMob.makeBrain).
         // Phase 6.2.d.4: ConstableInvestigationGoal migrated to
         // ConstableInvestigationBehavior (universal WORK @1). The
         // INVESTIGATE_CRIME power short-circuit still applies — the
         // behavior's checkExtraStartConditions calls the same
         // PowerGrant.hasPower check the goal did.
-        // Phase 4 task 29: ephemeral visitors. canUse short-circuits
-        // when the NPC isn't flagged as a visitor, so residents pay
-        // only the Goal-list overhead.
-        npc.goalSelector.addGoal(P_SOCIAL_HIGH,
-                new tterrag1112.life_in_the_village.Entities.Goals.Visitor.VisitorGoal(npc));
         npc.goalSelector.addGoal(P_IDLE,      new WanderInBuildingGoal(npc));
         npc.goalSelector.addGoal(P_AMBIENT,   new LookAtPlayerGoal(npc, Player.class, 8.0f));
         npc.goalSelector.addGoal(P_AMBIENT,   new RandomLookAroundGoal(npc));
@@ -216,24 +208,18 @@ public final class ProfessionGoalFactory {
         //   BUYING phase. SellToMarket + PostListing routed via CARGO_DESTINATION.
         REGISTRARS.put(Profession.MINER, npc -> {});
 
-        // ── Service professions ──────────────────────────────────────────────
-        REGISTRARS.put(Profession.MERCHANT, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new MerchantGoal(npc));
-            npc.goalSelector.addGoal(P_SURVIVAL, new CaravanMerchantGoal(npc));
-        });
-        REGISTRARS.put(Profession.WANDERING_TRADER, npc -> {
-            // WanderingTraderGoal owns the entire lifecycle — no other work goals.
-            // Universal goals (float, open door, look at player) still apply,
-            // but social/sleep goals are suppressed because this NPC despawns.
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new WanderingTraderGoal(npc));
-
-        });
+        // Phase 6.2.d.5 — trade cluster migrated:
+        //   MERCHANT → MerchantBehavior + CaravanMerchantBehavior
+        //   WANDERING_TRADER → WanderingTraderBehavior
+        //   STOCKPILE_KEEPER → StockpileKeeperBehavior
+        // All via ProfessionBrainFactory at WORK @0/@1.
+        REGISTRARS.put(Profession.MERCHANT, npc -> {});
+        REGISTRARS.put(Profession.WANDERING_TRADER, npc -> {});
 
         // Phase 6.2.d.3 — INNKEEPER migrated to InnkeeperBehavior (WORK @0).
         REGISTRARS.put(Profession.INNKEEPER, npc -> {});
 
-        REGISTRARS.put(Profession.STOCKPILE_KEEPER, npc ->
-                npc.goalSelector.addGoal(P_WORK_PRIMARY, new StockpileKeeperGoal(npc)));
+        REGISTRARS.put(Profession.STOCKPILE_KEEPER, npc -> {});
 
         // Phase 6.2.d.2 — BUILDER cluster migrated to BuilderBehavior +
         //   BuilderMaintenanceBehavior + BuilderRepaintBehavior, wired via
@@ -251,8 +237,10 @@ public final class ProfessionGoalFactory {
         // via ProfessionBrainFactory.GUARD (WORK @0). CaravanGuardGoal
         // defers to 6.2.d.5. Combat goals stay Goal-side — vanilla-shaped
         // targetSelector + MeleeAttackGoal handlers are out of WORK scope.
+        // Phase 6.2.d.5: CaravanGuardGoal migrated to CaravanGuardBehavior
+        // (ProfessionBrainFactory.GUARD, WORK @0 with self-gate).
+        // Combat goals stay Goal-side (vanilla-shaped) — 6.2.e scope.
         REGISTRARS.put(Profession.GUARD, npc -> {
-            npc.goalSelector.addGoal(P_SURVIVAL,  new CaravanGuardGoal(npc));
             npc.goalSelector.addGoal(P_COMBAT,    new GuardEquipmentGoal(npc));
             npc.goalSelector.addGoal(P_COMBAT,    new MeleeAttackGoal(npc, 1.2, true));
             npc.targetSelector.addGoal(P_SURVIVAL, new GuardAttackGoal(npc));
@@ -261,15 +249,16 @@ public final class ProfessionGoalFactory {
         });
 
         // ── Guild ────────────────────────────────────────────────────────────
-        REGISTRARS.put(Profession.GUILDWORKER, npc ->
-                npc.goalSelector.addGoal(P_WORK_PRIMARY, new GuildWorkerGoal(npc)));
-
-        REGISTRARS.put(Profession.GUILDMASTER, npc ->
-                npc.goalSelector.addGoal(P_WORK_PRIMARY, new WanderInBuildingGoal(npc)));
+        // Phase 6.2.d.5: GUILDWORKER migrated to GuildWorkerBehavior.
+        // GUILDMASTER has no profession-specific work goal — content gap
+        // (Wander placeholder was the original registration). Empty
+        // registrar; universal goals (idle/ambient) still apply.
+        REGISTRARS.put(Profession.GUILDWORKER, npc -> {});
+        REGISTRARS.put(Profession.GUILDMASTER, npc -> {});
 
         // ── Company ──────────────────────────────────────────────────────────
-        REGISTRARS.put(Profession.COMPANY_WORKER, npc ->
-                npc.goalSelector.addGoal(P_WORK_PRIMARY, new CompanyWorkerGoal(npc)));
+        // Phase 6.2.d.5: COMPANY_WORKER migrated to CompanyWorkerBehavior.
+        REGISTRARS.put(Profession.COMPANY_WORKER, npc -> {});
 
         // ── Unemployed ───────────────────────────────────────────────────────
         REGISTRARS.put(Profession.NONE, npc ->

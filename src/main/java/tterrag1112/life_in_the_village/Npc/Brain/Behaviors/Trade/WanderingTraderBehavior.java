@@ -1,9 +1,14 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -17,7 +22,6 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.ExoticItemPool.Wand
 import tterrag1112.life_in_the_village.Village.Economy.Currency.TradeOffer;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 
 /**
@@ -46,7 +50,7 @@ import java.util.List;
  * Call {@link #executeBuyTrade(ServerPlayer, Item, int)} when the client sends
  * a {@code TradeActionPacket} and the merchant is a wandering trader.
  */
-public class WanderingTraderGoal extends Goal {
+public class WanderingTraderBehavior extends Behavior<TownspersonMob> {
 
     // ── Constants ─────────────────────────────────────────────────────────────
     /** How long the trader stays before departing (2 in-game days). */
@@ -61,7 +65,13 @@ public class WanderingTraderGoal extends Goal {
     // ── State ──────────────────────────────────────────────────────────────────
     private enum Phase { SETUP, WANDERING, CAMPED, DEPARTING }
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public WanderingTraderBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.SETUP;
     private long spawnTick = 0L;
     private BlockPos campsite = null;
@@ -70,32 +80,29 @@ public class WanderingTraderGoal extends Goal {
     /** Per-trade remaining stock (parallel to trades list). */
     private int[] stock;
 
-    public WanderingTraderGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     // =========================================================================
     // Goal lifecycle
     // =========================================================================
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         // Always active — this goal owns the entire NPC lifecycle
         return true;
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return true;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
 
         switch (phase) {
             case SETUP    -> tickSetup(level);
@@ -140,7 +147,7 @@ public class WanderingTraderGoal extends Goal {
         }
 
         if (entity.blockPosition().closerThan(campsite, CAMP_REACH)) {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             entity.setCurrentActivity("Selling exotic wares!");
             phase = Phase.CAMPED;
             return;
@@ -148,11 +155,11 @@ public class WanderingTraderGoal extends Goal {
 
         // Reissue nav if stuck
         if (entity.getNavigation().isDone()) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     campsite.getX() + 0.5,
                     campsite.getY(),
                     campsite.getZ() + 0.5,
-                    MOVE_SPEED);
+                    MOVE_SPEED));
         }
     }
 
@@ -168,13 +175,13 @@ public class WanderingTraderGoal extends Goal {
 
         // Stay near campsite — re-anchor if nudged away
         if (!entity.blockPosition().closerThan(campsite, CAMP_REACH * 2)) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     campsite.getX() + 0.5,
                     campsite.getY(),
                     campsite.getZ() + 0.5,
-                    MOVE_SPEED);
+                    MOVE_SPEED));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         }
     }
 
@@ -187,11 +194,11 @@ public class WanderingTraderGoal extends Goal {
                     (int)((entity.blockPosition().getZ() - spawnPos.getZ()) * 2));
 
             if (!entity.getNavigation().isDone()) return;
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     awayPos.getX() + 0.5,
                     awayPos.getY(),
                     awayPos.getZ() + 0.5,
-                    0.7);
+                    0.7));
         }
 
         // Discard after a short walk (nav will finish when far enough)
@@ -342,4 +349,11 @@ public class WanderingTraderGoal extends Goal {
         }
         return c;
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

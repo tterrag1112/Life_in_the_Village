@@ -10,7 +10,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Components.ModDataComponents;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.WanderingTraderGoal;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.WanderingTraderBehavior;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Items.JobContractTerms;
 import tterrag1112.life_in_the_village.Items.ModItems;
@@ -140,8 +140,8 @@ public final class NpcInteractionHandler {
 
         // 9. Wandering trader trades immediately.
         if (npc.getProfession() == Profession.WANDERING_TRADER) {
-            WanderingTraderGoal g = npc.getGoal(WanderingTraderGoal.class);
-            if (g != null) g.openTradeScreen(sp);
+            WanderingTraderBehavior b = npc.getBehavior(WanderingTraderBehavior.class);
+            if (b != null) b.openTradeScreen(sp);
             return InteractionResult.SUCCESS;
         }
 

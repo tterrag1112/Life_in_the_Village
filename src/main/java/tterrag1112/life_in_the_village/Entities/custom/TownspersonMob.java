@@ -1167,6 +1167,20 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 .orElse(null);
     }
 
+    /** Phase 6.2.d.5 — Brain-side counterpart to {@link #getGoal}. Iterates
+     *  the brain's currently-running behaviors and returns the first one
+     *  matching {@code behaviorClass}, or null if none is running. Used by
+     *  external callers (UI gating, right-click handlers) that previously
+     *  resolved Goals at runtime. */
+    @SuppressWarnings("unchecked")
+    public <T extends net.minecraft.world.entity.ai.behavior.Behavior<?>> T getBehavior(
+            Class<T> behaviorClass) {
+        for (var bc : getBrain().getRunningBehaviors()) {
+            if (behaviorClass.isInstance(bc)) return (T) bc;
+        }
+        return null;
+    }
+
     // =========================================================================
     // WORK HELPERS — used by goals (package-accessible)
     // =========================================================================
@@ -1526,16 +1540,23 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // SOCIAL — Phase 6.2.c ordering (SeekHouse @ 2, Mentor before Greeting):
-        // 0=GreetPlayer, 1=Shelter, 2=SeekHouse, 3=EatMeal, 4=Engage,
-        // 5=Initiate, 6=Hobby, 7=BuyGoods, 8=Courting, 9=Mentor,
-        // 10=Greeting, 11=Sit, 12=Escort, 13=PersonalSpace.
+        // SOCIAL — Phase 6.2.d.5 ordering (Visitor universal, ChildBirth
+        // universal urgent placement):
+        // 0=GreetPlayer, 1=Shelter, 2=ChildBirth, 3=Visitor, 4=SeekHouse,
+        // 5=EatMeal, 6=Engage, 7=Initiate, 8=Hobby, 9=BuyGoods, 10=Courting,
+        // 11=Mentor, 12=Greeting, 13=Sit, 14=Escort, 15=PersonalSpace.
+        // ChildBirth + Visitor are universal (self-gate on state flag) and
+        // dormant for any NPC not in that state.
         ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetPlayerBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Trade.ChildBirthBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Trade.VisitorBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekHouseBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors

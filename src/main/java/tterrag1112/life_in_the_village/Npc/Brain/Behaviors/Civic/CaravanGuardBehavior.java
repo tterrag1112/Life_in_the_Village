@@ -1,9 +1,14 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.targeting.TargetingConditions;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
@@ -12,11 +17,10 @@ import tterrag1112.life_in_the_village.Village.Economy.Trade.Caravan;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.CaravanSavedData;
 import tterrag1112.life_in_the_village.Village.Travel.Roster;
 
-import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 
-public class CaravanGuardGoal extends Goal {
+public class CaravanGuardBehavior extends Behavior<TownspersonMob> {
 
     private static final double FOLLOW_DISTANCE  = 5.0;
     private static final double ATTACK_RANGE     = 2.5;
@@ -25,41 +29,44 @@ public class CaravanGuardGoal extends Goal {
     private static final double THREAT_RANGE     = 20.0;
     private static final int    THREAT_RECHECK   = 20;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public CaravanGuardBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private LivingEntity threat  = null;
     private int threatTimer      = 0;
     // Offset so guards spread around merchant naturally
     private final double offsetAngle;
 
-    public CaravanGuardGoal(TownspersonMob entity) {
+    
+
+    @Override
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
-        // Stable offset based on entity UUID
-        this.offsetAngle = (Math.abs(entity.getUUID()
-                .getMostSignificantBits()) % 8)
-                * (Math.PI / 4);
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK,
-                Flag.TARGET));
-    }
-
-    @Override
-    public boolean canUse() {
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         return entity.isCaravanMember();
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return entity.isCaravanMember();
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         entity.setCurrentActivity("Guarding caravan...");
     }
 
     @Override
-    public void stop() {
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         entity.setTarget(null);
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.clearCurrentActivity();
         hasRecordedAttack = false;
         threat    = null;
@@ -67,7 +74,8 @@ public class CaravanGuardGoal extends Goal {
     }
 
     @Override
-    public void tick() {
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         // Check for threats periodically
         threatTimer++;
         if (threatTimer >= THREAT_RECHECK) {
@@ -134,13 +142,13 @@ public class CaravanGuardGoal extends Goal {
 
         double dist = entity.distanceTo(threat);
         if (dist <= ATTACK_RANGE) {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             entity.doHurtTarget(
                     (ServerLevel) entity.level(), threat);
         } else {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     threat.getX(), threat.getY(),
-                    threat.getZ(), ATTACK_SPEED);
+                    threat.getZ(), ATTACK_SPEED));
         }
         entity.setCurrentActivity("Defending caravan!");
     }
@@ -161,9 +169,9 @@ public class CaravanGuardGoal extends Goal {
 
         // Only move if too far from target position
         if (distToTarget > FOLLOW_DISTANCE + 2) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     targetX, targetY, targetZ,
-                    FOLLOW_SPEED);
+                    FOLLOW_SPEED));
         } else if (entity.getNavigation().isDone()) {
             // Arrived — face the merchant
             entity.getLookControl().setLookAt(
@@ -175,8 +183,6 @@ public class CaravanGuardGoal extends Goal {
     }
 
     private net.minecraft.world.entity.Entity getMerchant() {
-        if (!(entity.level() instanceof ServerLevel level))
-            return null;
 
         UUID caravanId = entity.getCaravanId().orElse(null);
         if (caravanId == null) return null;
@@ -190,8 +196,6 @@ public class CaravanGuardGoal extends Goal {
     }
 
     private LivingEntity findNearestThreat() {
-        if (!(entity.level() instanceof ServerLevel level))
-            return null;
 
         List<LivingEntity> nearby = level.getNearbyEntities(
                 LivingEntity.class,
@@ -214,4 +218,11 @@ public class CaravanGuardGoal extends Goal {
                         .comparingDouble(entity::distanceTo))
                 .orElse(null);
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

@@ -2,7 +2,7 @@ package tterrag1112.life_in_the_village.Entities;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.MerchantBehavior;
 import tterrag1112.life_in_the_village.Entities.custom.AppearanceComponent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Companies.Company;
@@ -90,8 +90,8 @@ public final class NpcProfileSnapshotBuilder {
         // ── Action bar gating ────────────────────────────────────────────────
         Profession prof = npc.getProfession();
         boolean canTrade = prof == Profession.MERCHANT
-                && Optional.ofNullable(npc.getGoal(MerchantGoal.class))
-                .map(MerchantGoal::isOpenForTrade).orElse(false);
+                && Optional.ofNullable(npc.getBehavior(MerchantBehavior.class))
+                .map(MerchantBehavior::isOpenForTrade).orElse(false);
         boolean canOpenGuild = prof == Profession.GUILDWORKER
                 && villageOpt.flatMap(v -> data.getGuildForVillage(v.getId())).isPresent();
         boolean canAssignWork = switch (prof) {

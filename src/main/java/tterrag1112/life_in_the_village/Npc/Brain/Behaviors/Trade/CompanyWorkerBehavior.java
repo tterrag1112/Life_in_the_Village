@@ -1,12 +1,17 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.SimpleContainer;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -21,12 +26,11 @@ import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeListing;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public class CompanyWorkerGoal extends Goal {
+public class CompanyWorkerBehavior extends Behavior<TownspersonMob> {
 
     // -------------------------------------------------------------------------
     // Phases shared across all roles
@@ -56,7 +60,13 @@ public class CompanyWorkerGoal extends Goal {
     // State
     // -------------------------------------------------------------------------
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public CompanyWorkerBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
 
     private Phase phase        = Phase.IDLE;
     private int   idleCooldown = 0;
@@ -72,20 +82,18 @@ public class CompanyWorkerGoal extends Goal {
     // COURIER second destination
     private Building courierDestination;
 
-    public CompanyWorkerGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    
 
     // -------------------------------------------------------------------------
     // Goal lifecycle
     // -------------------------------------------------------------------------
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isCompanyWorker()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         // Respect company work schedule
         CompanySavedData cdata = CompanySavedData.get(level);
@@ -113,7 +121,8 @@ public class CompanyWorkerGoal extends Goal {
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         workTimer    = 0;
         producedCount = 0;
         phase = Phase.WALKING_TO_BUILDING;
@@ -126,19 +135,16 @@ public class CompanyWorkerGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isCompanyWorker()) return false;
-        if (!(entity.level() instanceof ServerLevel level)) return false;
         if (!company.getWorkSchedule().isWorkTime(level.getGameTime())) return false;
         return phase != Phase.IDLE;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
 
         // Re-sync worker data in case owner changed the task
         CompanySavedData cdata = CompanySavedData.get(level);
@@ -159,8 +165,9 @@ public class CompanyWorkerGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
         phase = Phase.IDLE;
@@ -178,10 +185,10 @@ public class CompanyWorkerGoal extends Goal {
                 target.getX(), entity.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             phase = switch (worker.role()) {
                 case PRODUCER -> Phase.WORKING;
                 case SELLER   -> Phase.SELLING;
@@ -245,12 +252,12 @@ public class CompanyWorkerGoal extends Goal {
                 target.getX(), entity.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         SimpleContainer inv = entity.getPersonalInventory();
 
         for (int i = 0; i < inv.getContainerSize(); i++) {
@@ -289,12 +296,12 @@ public class CompanyWorkerGoal extends Goal {
                 marketPos.getX(), entity.getY(), marketPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    marketPos.getX(), marketPos.getY(), marketPos.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    marketPos.getX(), marketPos.getY(), marketPos.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         // For each item in the assigned building, post a listing
         // using company price override or 10% markup on market price
@@ -356,13 +363,13 @@ public class CompanyWorkerGoal extends Goal {
             double distSq = entity.distanceToSqr(src.getX(), entity.getY(), src.getZ());
 
             if (distSq > INTERACT_RANGE_SQ) {
-                entity.getNavigation().moveTo(
-                        src.getX(), src.getY(), src.getZ(), 1.0);
+                entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                        src.getX(), src.getY(), src.getZ(), 1.0));
                 return;
             }
 
             // Grab up to MAX_CARRY of whatever is in source
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             for (int slot = 0; slot < MAX_CARRY; slot++) {
                 // Try to take one item of each type stored
                 for (BuildingStorageAccess.StoredItemInfo stored :
@@ -386,12 +393,12 @@ public class CompanyWorkerGoal extends Goal {
             double distSq = entity.distanceToSqr(dest.getX(), entity.getY(), dest.getZ());
 
             if (distSq > INTERACT_RANGE_SQ) {
-                entity.getNavigation().moveTo(
-                        dest.getX(), dest.getY(), dest.getZ(), 1.0);
+                entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                        dest.getX(), dest.getY(), dest.getZ(), 1.0));
                 return;
             }
 
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
             for (int i = 0; i < inv.getContainerSize(); i++) {
                 ItemStack stack = inv.getItem(i);
@@ -417,7 +424,7 @@ public class CompanyWorkerGoal extends Goal {
         workTimer    = 0;
         producedCount = 0;
         entity.clearCurrentActivity();
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
     }
 
     private int ticksPerItem() {
@@ -480,4 +487,11 @@ public class CompanyWorkerGoal extends Goal {
             case CARAVAN_ATTENDANT -> null;
         };
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

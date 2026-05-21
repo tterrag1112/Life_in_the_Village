@@ -5,6 +5,7 @@ import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.entity.ai.behavior.BehaviorControl;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.CaravanGuardBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.GuardPatrolBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.KingdomRulerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.VillageLeaderBehavior;
@@ -27,6 +28,12 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScholarBeh
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScribeWorkBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.StonemasonProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.WeaverProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.CaravanMerchantBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.CompanyWorkerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.GuildWorkerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.MerchantBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.StockpileKeeperBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.WanderingTraderBehavior;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.EnumMap;
@@ -145,13 +152,40 @@ public final class ProfessionBrainFactory {
         REGISTRARS.put(Profession.KINGDOM_RULER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new KingdomRulerBehavior())));
-        // GUARD: ports the patrol loop. MeleeAttack / Guard combat goals
-        // stay Goal-side — they're vanilla-shaped combat handlers driven
-        // by targetSelector, out of WORK-activity scope. Only the patrol
-        // loop migrates here.
-        REGISTRARS.put(Profession.GUARD, (npc, brain) ->
+        // GUARD: ports the patrol loop + caravan escort. CaravanGuardBehavior
+        // wins WORK @0 via internal self-gate (entity is assigned to a
+        // caravan); GuardPatrolBehavior at WORK @1 fires when not on
+        // caravan duty. MeleeAttack + targetSelector handlers stay Goal-
+        // side (vanilla combat — out of WORK scope).
+        REGISTRARS.put(Profession.GUARD, (npc, brain) -> {
+            brain.addActivity(NpcActivities.WORK.get(), 0,
+                    ImmutableList.of(new CaravanGuardBehavior()));
+            brain.addActivity(NpcActivities.WORK.get(), 1,
+                    ImmutableList.of(new GuardPatrolBehavior()));
+        });
+
+        // Phase 6.2.d.5 — trade + guild + company.
+        // MERCHANT: same priority + self-gate arrangement as GUARD.
+        // CaravanMerchantBehavior wins WORK @0 when on caravan duty;
+        // MerchantBehavior at WORK @1 otherwise.
+        REGISTRARS.put(Profession.MERCHANT, (npc, brain) -> {
+            brain.addActivity(NpcActivities.WORK.get(), 0,
+                    ImmutableList.of(new CaravanMerchantBehavior()));
+            brain.addActivity(NpcActivities.WORK.get(), 1,
+                    ImmutableList.of(new MerchantBehavior()));
+        });
+        REGISTRARS.put(Profession.WANDERING_TRADER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new GuardPatrolBehavior())));
+                        ImmutableList.of(new WanderingTraderBehavior())));
+        REGISTRARS.put(Profession.STOCKPILE_KEEPER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new StockpileKeeperBehavior())));
+        REGISTRARS.put(Profession.GUILDWORKER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new GuildWorkerBehavior())));
+        REGISTRARS.put(Profession.COMPANY_WORKER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new CompanyWorkerBehavior())));
     }
 
     /**
