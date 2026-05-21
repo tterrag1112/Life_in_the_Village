@@ -83,6 +83,12 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     private Phase phase;
     private int   actionTimer;
     private int   idleCooldown;
+    /** Phase 6.3.3.e.3 — tick of the most recent FarmRoleAssigner run.
+     *  The assigner was orphan (no caller) pre-6.3.3.e; this gates a
+     *  daily reassignment cadence so role distribution stays current
+     *  as workers come and go. */
+    private long  lastRoleAssignTick = Long.MIN_VALUE;
+    private static final long ROLE_ASSIGN_INTERVAL = 24000L;
 
     private Building            farmhouse;
     private List<FarmPlot>      assignedPlots;
@@ -171,6 +177,16 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 .orElse(null);
 
         if (farmhouse == null) { goIdle(); return; }
+
+        // Phase 6.3.3.e.3 — periodic FarmRoleAssigner run (every in-game
+        // day). The assigner was orphan pre-6.3.3.e; this is the single
+        // call site that brings role distribution to life.
+        long now = level.getGameTime();
+        if (now - lastRoleAssignTick >= ROLE_ASSIGN_INTERVAL) {
+            tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer
+                    .FarmRoleAssigner.assignRoles(level, farmhouse);
+            lastRoleAssignTick = now;
+        }
 
         // Gather crop plots assigned to this farmhouse
         assignedPlots = data.getFarmPlotsForFarmhouse(farmhouse.getId()).stream()

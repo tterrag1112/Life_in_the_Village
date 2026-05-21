@@ -86,11 +86,17 @@ public class FarmhandBehavior extends Behavior<TownspersonMob> {
         // Check role - only crop workers should use this goal
         FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
 
+        // Phase 6.3.3.e.3 — Farmhands are single-plot crop workers; they
+        // don't drive sell trips. MARKET_SELLER stays in the rejection
+        // list here because the head FarmerBehavior owns the sell
+        // pipeline (it's plotless and has the market-finder + surplus
+        // logic). Animal roles + FERTILIZER stay rejected until 6.3.3.g
+        // adds animal-husbandry behaviors that consume them.
         if (role == FarmRole.ANIMAL_SPECIALIST ||
                 role == FarmRole.ANIMAL_TENDER ||
                 role == FarmRole.MARKET_SELLER ||
                 role == FarmRole.FERTILIZER) {
-            return false; // These roles use different goals
+            return false;
         }
 
         // Must be assigned to a crop plot
