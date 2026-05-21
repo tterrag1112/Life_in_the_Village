@@ -30,6 +30,7 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.WorkPhase;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -76,6 +77,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     // ── Timing constants ─────────────────────────────────────────────────────
     protected static final int    IDLE_COOLDOWN_TICKS  = 600;
     protected static final double INTERACT_RANGE_SQ    = 9.0;
+    /** XP awarded when an NPC completes one full production cycle.
+     *  Replaces the deleted {@code NpcProfessionXp.XP_PER_PRODUCTION_CYCLE}. */
+    protected static final int    XP_PER_PRODUCTION_CYCLE = 3;
     protected static final int    WORK_PULSE_INTERVAL  = 20;
     private   static final long   MIN_SELL_INTERVAL    = 20000L;
     private   static final long   ROLE_CHECK_INTERVAL  = 24000L;
@@ -130,7 +134,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 (int)(recipe.ticks() * batchSize
                         * productionSpeedMultiplier()
                         * roleSpeedMultiplier()
-                        / NpcProf.getSpeedMultiplier(entity)));
+                        / craftingSpeedMultiplier(entity)));
         Map<Item, Integer> consumes = new LinkedHashMap<>();
         recipe.inputs().forEach((item, count) -> consumes.put(item, count * batchSize));
         fuelPerBatch(recipe).forEach((item, count) ->
@@ -185,6 +189,30 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
 
     protected final <T extends ProfessionSpecialization> T getSpecialization(Class<T> type) {
         return SpecializationManager.getSpecialization(entity, type);
+    }
+
+    // =========================================================================
+    // Crafting-skill multipliers (replaces deleted NpcProfessionXp helpers).
+    // Mapped from the SkillComponent 4-tier scheme (Amateur/Journeyman/Expert/
+    // Master at 0/30/60/85). Curves chosen to land close to the previous
+    // Novice/Journeyman/Expert/Master/Grandmaster numbers.
+    // =========================================================================
+
+    /** Production-step ticks are divided by this — higher = faster. */
+    protected static float craftingSpeedMultiplier(TownspersonMob npc) {
+        int level = npc.getSkills().getLevel(Skill.CRAFTING);
+        if (level >= 85) return 1.55f;
+        if (level >= 60) return 1.35f;
+        if (level >= 30) return 1.15f;
+        return 1.0f;
+    }
+
+    /** Probability (0-1) of producing one bonus output item per cycle. */
+    protected static float craftingQualityChance(TownspersonMob npc) {
+        int level = npc.getSkills().getLevel(Skill.CRAFTING);
+        if (level >= 85) return 0.25f;
+        if (level >= 60) return 0.10f;
+        return 0.0f;
     }
 
     // =========================================================================
@@ -357,8 +385,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 for (ItemStack byproduct : currentRecipe.byproducts()) {
                     entity.getPersonalInventory().addItem(byproduct.copy());
                 }
-                NpcProfessionXP.add(entity, NpcProfessionXp.XP_PER_PRODUCTION_CYCLE);
-                float qualityChance = NpcProfessionXp.getQualityChance(entity);
+                entity.getSkills().addXp(Skill.CRAFTING,
+                        XP_PER_PRODUCTION_CYCLE, level.getGameTime());
+                float qualityChance = craftingQualityChance(entity);
                 if (qualityChance > 0 && entity.getRandom().nextFloat() < qualityChance) {
                     entity.getPersonalInventory().addItem(
                             new ItemStack(currentRecipe.output(), currentBatchSize));
