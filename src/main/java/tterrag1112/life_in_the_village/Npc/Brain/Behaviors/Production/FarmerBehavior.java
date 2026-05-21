@@ -315,6 +315,11 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         entity.swing(InteractionHand.MAIN_HAND);
         level.playSound(null, cropPos, SoundEvents.CROP_BREAK,
                 SoundSource.BLOCKS, 1.0f, 1.0f);
+        // Phase 6.3.3.e.2 — FARMING XP for a successful harvest. The
+        // mentee mentorship multiplier (6.3.2.b) flows through SkillXp.
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
+                1, level.getGameTime());
 
         toHarvest.remove(0);
 
@@ -384,6 +389,11 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         }
 
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
+        // Phase 6.3.3.e.2 — production-cycle XP bonus on deposit completion
+        // (the "you actually closed the loop" reward).
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
+                2, level.getGameTime());
         phase = toHarvest.isEmpty() ? Phase.ANALYZING : Phase.HARVESTING;
     }
 
@@ -435,6 +445,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             entity.swing(InteractionHand.MAIN_HAND);
             level.playSound(null, targetPos, SoundEvents.CROP_PLANTED,
                     SoundSource.BLOCKS, 1.0f, 1.0f);
+            // Phase 6.3.3.e.2 — FARMING XP for a successful replant.
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                    entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
+                    1, level.getGameTime());
         }
 
         toReplant.remove(0);
@@ -528,6 +542,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             BuildingStorageAccess.storeItem(level, farmhouse,
                     new ItemStack(seedItem, needed));
             data.setDirty();
+            // Phase 6.3.3.e.2 — small COMMERCE bonus for the buy interaction.
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                    entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.COMMERCE,
+                    1, level.getGameTime());
         }
 
         phase = Phase.ANALYZING;
