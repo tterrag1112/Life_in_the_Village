@@ -79,9 +79,14 @@ public class Business {
      * {@code ownerPlayerId} so existing player owners keep their
      * identity.</p>
      */
+    /**
+     * Phase 6.3.3.b.2 — refactored: the (ownerType, ownerId) pair is now
+     * a single sealed {@link BusinessOwner}. Codec accepts BOTH layouts:
+     * new saves write only {@code "owner"}; legacy saves provide
+     * {@code "ownerType" + "ownerId"} which are reconstructed on load.
+     */
     public record OwnershipInfo(
-            OwnerType ownerType,
-            java.util.Optional<UUID> ownerId,
+            java.util.Optional<BusinessOwner> owner,
             List<UUID> heirs,
             BusinessType businessType,
             SuccessionState successionState,
@@ -90,24 +95,33 @@ public class Business {
             long undecidedSinceTick
     ) {
         public OwnershipInfo {
-            if (ownerType == null) ownerType = OwnerType.PLAYER;
-            if (ownerId == null)   ownerId   = java.util.Optional.empty();
-            if (heirs == null)     heirs     = List.of();
-            else                   heirs     = List.copyOf(heirs);
+            if (owner == null)            owner            = java.util.Optional.empty();
+            if (heirs == null)            heirs            = List.of();
+            else                          heirs            = List.copyOf(heirs);
             if (businessType == null)     businessType     = BusinessType.STANDARD;
             if (successionState == null) successionState = SuccessionState.ACTIVE;
         }
 
         public static final OwnershipInfo DEFAULT = new OwnershipInfo(
-                OwnerType.PLAYER, java.util.Optional.empty(), List.of(),
+                java.util.Optional.empty(), List.of(),
                 BusinessType.STANDARD, SuccessionState.ACTIVE, 0L, 0L, 0L);
 
+        /**
+         * Codec with backward-compat reading of the legacy
+         * {@code ownerType} + {@code ownerId} pair. On write, only the
+         * new {@code owner} field is emitted (legacy keys absent →
+         * future loads won't see them).
+         */
         public static final Codec<OwnershipInfo> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
+                        BusinessOwner.CODEC.optionalFieldOf("owner")
+                                .forGetter(OwnershipInfo::owner),
+                        // Legacy fields: read-only fallback. Getter returns
+                        // sentinel so optionalFieldOf drops them on write.
                         OwnerType.CODEC.optionalFieldOf("ownerType", OwnerType.PLAYER)
-                                .forGetter(OwnershipInfo::ownerType),
+                                .forGetter(o -> OwnerType.PLAYER),
                         UUIDUtil.CODEC.optionalFieldOf("ownerId")
-                                .forGetter(OwnershipInfo::ownerId),
+                                .forGetter(o -> java.util.Optional.empty()),
                         UUIDUtil.CODEC.listOf().optionalFieldOf("heirs", List.of())
                                 .forGetter(OwnershipInfo::heirs),
                         BusinessType.CODEC.optionalFieldOf("businessType", BusinessType.STANDARD)
@@ -120,7 +134,21 @@ public class Business {
                                 .forGetter(OwnershipInfo::dissolutionWarningTick),
                         Codec.LONG.optionalFieldOf("undecidedSinceTick", 0L)
                                 .forGetter(OwnershipInfo::undecidedSinceTick)
-                ).apply(i, OwnershipInfo::new));
+                ).apply(i, (ownerOpt, legacyType, legacyId, heirs,
+                            bizType, succ, founded, warn, undec) -> {
+                    java.util.Optional<BusinessOwner> resolved = ownerOpt;
+                    if (resolved.isEmpty() && legacyId.isPresent()) {
+                        // Legacy layout: rebuild a sealed owner from
+                        // (ownerType, ownerId).
+                        UUID legacyUuid = legacyId.get();
+                        resolved = java.util.Optional.of(
+                                legacyType == OwnerType.NPC
+                                        ? new BusinessOwner.NpcOwner(legacyUuid)
+                                        : new BusinessOwner.PlayerOwner(legacyUuid));
+                    }
+                    return new OwnershipInfo(resolved, heirs, bizType, succ,
+                            founded, warn, undec);
+                }));
     }
 
     public enum ProducerType {
@@ -302,8 +330,14 @@ public class Business {
         // falls back to the legacy ownerPlayerId when absent so v1
         // player-only saves keep their owner identity intact.
         OwnershipInfo info = ownership != null ? ownership : OwnershipInfo.DEFAULT;
-        c.ownerType       = info.ownerType();
-        c.ownerId         = info.ownerId().orElse(ownerPlayerId);
+        // Phase 6.3.3.b.2 — owner is canonical; if absent, fall back to
+        // the legacy ownerPlayerId for backward compat.
+        if (info.owner().isPresent()) {
+            c.owner = info.owner().get();
+        } else if (ownerPlayerId != null
+                && !ownerPlayerId.equals(new UUID(0L, 0L))) {
+            c.owner = new BusinessOwner.PlayerOwner(ownerPlayerId);
+        }
         c.heirs.addAll(info.heirs());
         c.businessType     = info.businessType();
         c.successionState = info.successionState();
@@ -317,8 +351,7 @@ public class Business {
      *  state for the codec write path. */
     private OwnershipInfo snapshotOwnership() {
         return new OwnershipInfo(
-                ownerType,
-                java.util.Optional.ofNullable(ownerId),
+                java.util.Optional.ofNullable(owner),
                 List.copyOf(heirs),
                 businessType,
                 successionState,
@@ -342,19 +375,14 @@ public class Business {
     private long treasuryBronze = 0L;
     private boolean isActive = true;
 
-    // ── Phase 4 doc 26 — ownership extension ─────────────────────────────
+    // ── Phase 6.3.3.b.2 — sealed ownership ─────────────────────────────
     /**
-     * Whether the {@link #ownerId} field refers to a player or an NPC.
-     * Existing saves migrate to PLAYER on load (codec default).
+     * Canonical ownership. Replaces the legacy {@code (ownerType, ownerId)}
+     * pair. Initialized in the constructor from {@code ownerPlayerId}
+     * (legacy player default); the NPC promotion path overwrites via
+     * {@link #setOwnership} / {@link #setNpcOwner}.
      */
-    private OwnerType ownerType = OwnerType.PLAYER;
-    /**
-     * UUID of the actual owner — player or NPC. Decoupled from
-     * {@link #ownerPlayerId} so NPC-owned businesses can flag
-     * the player getter as the sentinel zero-UUID without
-     * dropping the legacy save key.
-     */
-    private UUID ownerId;
+    private BusinessOwner owner;
     /** Ordered succession chain. Defaults to oldest-adult-child of the
      *  owner; spec line 132. Empty for player-owned businesses. */
     private final List<UUID> heirs = new ArrayList<>();
@@ -387,9 +415,13 @@ public class Business {
         this.businessId     = businessId;
         this.name          = name;
         this.ownerPlayerId = ownerPlayerId;
-        // Default ownership is PLAYER with ownerId = ownerPlayerId.
-        // The NPC promotion path overwrites both via setNpcOwner().
-        this.ownerId       = ownerPlayerId;
+        // Phase 6.3.3.b.2 — initial owner is the player from the legacy
+        // ownerPlayerId. NPC promotion overwrites via setOwnership /
+        // setNpcOwner. Zero-UUID is the sentinel "no owner yet".
+        if (ownerPlayerId != null
+                && !ownerPlayerId.equals(new UUID(0L, 0L))) {
+            this.owner = new BusinessOwner.PlayerOwner(ownerPlayerId);
+        }
         this.homeVillageId = homeVillageId;
         this.workSchedule  = schedule;
         this.offices       = tterrag1112.life_in_the_village.Npc.Office.OfficeState
@@ -557,8 +589,17 @@ public class Business {
     // Phase 4 doc 26 — NPC ownership / business type / succession
     // -------------------------------------------------------------------------
 
-    public OwnerType getOwnerType()              { return ownerType; }
-    public UUID      getOwnerId()                { return ownerId; }
+    // Phase 6.3.3.b.2 — owner queries derive from the sealed
+    // BusinessOwner. Legacy getters (getOwnerType / getOwnerId) keep
+    // working for backward compat.
+    public BusinessOwner getOwner()              { return owner; }
+    public OwnerType getOwnerType() {
+        if (owner instanceof BusinessOwner.NpcOwner) return OwnerType.NPC;
+        return OwnerType.PLAYER;
+    }
+    public UUID getOwnerId() {
+        return owner != null ? owner.getPrimaryUuid() : null;
+    }
     public BusinessType getBusinessType()          { return businessType; }
     public SuccessionState getSuccessionState()  { return successionState; }
     public long getFoundedTick()                 { return foundedTick; }
@@ -566,8 +607,14 @@ public class Business {
     public long getUndecidedSinceTick()          { return undecidedSinceTick; }
     public List<UUID> getHeirs() { return Collections.unmodifiableList(heirs); }
 
-    public boolean isNpcOwned()    { return ownerType == OwnerType.NPC; }
-    public boolean isPlayerOwned() { return ownerType == OwnerType.PLAYER; }
+    public boolean isNpcOwned()    { return owner instanceof BusinessOwner.NpcOwner; }
+    public boolean isPlayerOwned() { return owner instanceof BusinessOwner.PlayerOwner; }
+    public boolean isFamilyOwned() { return owner instanceof BusinessOwner.FamilyOwner; }
+    /** True when {@code uuid} matches the canonical owner UUID (irrespective
+     *  of owner variant). For FamilyOwner, matches the household id. */
+    public boolean isOwner(UUID uuid) {
+        return uuid != null && owner != null && uuid.equals(owner.getPrimaryUuid());
+    }
     public boolean isTradingBusiness() { return businessType == BusinessType.TRADING_COMPANY; }
 
     public void setBusinessType(BusinessType type) { if (type != null) this.businessType = type; }
@@ -588,16 +635,43 @@ public class Business {
      */
     public void setNpcOwner(UUID npcId) {
         if (npcId == null) return;
-        this.ownerType = OwnerType.NPC;
-        this.ownerId   = npcId;
-        // Replace the company_owner office holding (legacy seed put a
-        // player-held entry; npc-held wins).
+        setOwnership(new BusinessOwner.NpcOwner(npcId));
+    }
+
+    /** Phase 6.3.3.b.2 — convenience wrapper for player ownership. */
+    public void setPlayerOwner(UUID playerId) {
+        if (playerId == null) return;
+        setOwnership(new BusinessOwner.PlayerOwner(playerId));
+    }
+
+    /**
+     * Phase 6.3.3.b.2 — canonical ownership mutator. Replaces the legacy
+     * {@link #setNpcOwner} surface; the legacy method is now a wrapper.
+     *
+     * <p>Also updates the {@code BUSINESS_OWNER} office holding so any
+     * pre-6.3.3.b.3 reader still sees consistent state. 6.3.3.b.3 will
+     * decouple ownership queries from office state; 6.3.3.b.4 removes
+     * this office entirely. Until then we keep both in sync.
+     */
+    public void setOwnership(BusinessOwner newOwner) {
+        if (newOwner == null) return;
+        this.owner = newOwner;
+        // Sync office holding so any pre-decoupling reader sees the
+        // matching entry. Will be removed in 6.3.3.b.3/.4.
+        UUID holderId = newOwner.getPrimaryUuid();
+        tterrag1112.life_in_the_village.Npc.Office.OfficeHolding holding =
+                newOwner.isPlayer()
+                        ? tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByPlayer(
+                                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
+                                this.businessId, holderId, 0L, 0L,
+                                tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY)
+                        : tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByNpc(
+                                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
+                                this.businessId, holderId, 0L, 0L,
+                                tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY);
         this.offices.set(
                 tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
-                tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByNpc(
-                        tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
-                        this.businessId, npcId, 0L, 0L,
-                        tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
+                holding);
     }
 
     public void addHeir(UUID heirId) {

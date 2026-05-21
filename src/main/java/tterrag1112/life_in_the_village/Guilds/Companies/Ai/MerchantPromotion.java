@@ -114,7 +114,9 @@ public final class MerchantPromotion {
                 new UUID(0L, 0L),
                 villageId);
         business.setBusinessType(Business.BusinessType.TRADING_COMPANY);
-        business.setNpcOwner(npc.getUUID());
+        // Phase 6.3.3.b.2 — sealed ownership.
+        business.setOwnership(new tterrag1112.life_in_the_village.Guilds.Companies.BusinessOwner.NpcOwner(
+                npc.getUUID()));
         business.setFoundedTick(now);
 
         // Owner as PRODUCER worker at their own market.
