@@ -161,8 +161,11 @@ public final class AppearanceLayerRegistry {
                 officeOverlay("guild_registrar_stripe"), 50, "Registrar Stripe"));
         registerOfficeMark(OfficeMark.overlayOnly(OfficeRegistry.MASTER_OF_APPRENTICES,
                 officeOverlay("master_of_apprentices_collar"), 55, "Collar"));
-        registerOfficeMark(OfficeMark.overlayOnly(OfficeRegistry.BUSINESS_OWNER,
-                officeOverlay("business_owner_mantle"), 70, "Mantle"));
+        // Phase 6.3.3.b.4 — BUSINESS_OWNER office removed. The mantle
+        // overlay is dropped; future content can re-register it via a
+        // business-owner-aware AppearanceLayer that consults
+        // Business.isOwner(uuid) directly (the OfficeMark machinery is
+        // office-bound and doesn't fit the owner-direct check shape).
         registerOfficeMark(OfficeMark.withAttachment(OfficeRegistry.KINGDOM_KING,
                 officeOverlay("kingdom_king_chain"),
                 attachmentOf("kingdom_king_crown"), 200, "Crown"));

@@ -319,16 +319,16 @@ public final class OfficeRegistry {
     }
 
     private static void registerCompanyOffices() {
-        register(OfficeDefinition.of(BUSINESS_OWNER, OrgType.BUSINESS, "Business Owner",
-                List.of(),
-                Map.of(),
-                SelectionMethod.HEREDITARY,
-                0,
-                List.of(OfficePower.VIEW_BUDGET, OfficePower.SET_BUDGET,
-                        OfficePower.APPOINT_SUBORDINATE, OfficePower.DISPATCH_CARAVAN,
-                        OfficePower.ACCESS_TREASURY),
-                new Competence(Skill.COMMERCE, 0, 50, 1.05f, 0.0f)));
-
+        // Phase 6.3.3.b.4 — BUSINESS_OWNER office removed. Ownership is
+        // a property of Business.owner, not a held office. The 5 powers
+        // that previously came with the office (VIEW_BUDGET, SET_BUDGET,
+        // APPOINT_SUBORDINATE, DISPATCH_CARAVAN, ACCESS_TREASURY) are
+        // now granted directly via Business.ownerHasPower /
+        // Business.holderHasPower. The BUSINESS_OWNER string constant
+        // and the legacy "company_owner" id-alias in get() are kept so
+        // legacy save data continues to load cleanly (the alias resolves
+        // to no definition; callers should already be migrated to the
+        // owner-direct check).
         register(OfficeDefinition.of(BUSINESS_FOREMAN, OrgType.BUSINESS, "Business Foreman",
                 List.of(),
                 Map.of(),

@@ -616,6 +616,59 @@ public class Business {
     public boolean isOwner(UUID uuid) {
         return uuid != null && owner != null && uuid.equals(owner.getPrimaryUuid());
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 6.3.3.b.4 — owner-direct power grant (replaces BUSINESS_OWNER
+    // office). The 5 powers previously bundled with the office now live
+    // here as a Business-level capability check.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Powers granted by holding ownership of a Business. Equivalent to
+     * the legacy BUSINESS_OWNER office's powers list.
+     */
+    public static final java.util.Set<tterrag1112.life_in_the_village.Npc.Office.OfficePower>
+            OWNER_POWERS = java.util.Set.of(
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.VIEW_BUDGET,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.SET_BUDGET,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.APPOINT_SUBORDINATE,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.DISPATCH_CARAVAN,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.ACCESS_TREASURY);
+
+    /**
+     * True if {@code power} is in the {@link #OWNER_POWERS} set —
+     * i.e. ownership of this Business grants it.
+     */
+    public static boolean ownerHasPower(
+            tterrag1112.life_in_the_village.Npc.Office.OfficePower power) {
+        return OWNER_POWERS.contains(power);
+    }
+
+    /**
+     * True if {@code uuid} holds ownership of this Business AND
+     * {@code power} is in {@link #OWNER_POWERS}.
+     *
+     * <p>For FamilyOwner: returns true if {@code uuid} matches the
+     * household id. (v1 — refine to "adult member of household" once
+     * the household roster is queryable here.)
+     *
+     * <p>For VillageOwner / KingdomOwner / GuildOwner: returns false
+     * pending content-pass wiring; those collectives delegate to
+     * their own governing subsystems.
+     */
+    public boolean holderHasPower(UUID uuid,
+            tterrag1112.life_in_the_village.Npc.Office.OfficePower power) {
+        if (uuid == null || owner == null || power == null) return false;
+        if (!OWNER_POWERS.contains(power)) return false;
+        return switch (owner) {
+            case BusinessOwner.NpcOwner n     -> uuid.equals(n.npcUuid());
+            case BusinessOwner.PlayerOwner p  -> uuid.equals(p.playerUuid());
+            case BusinessOwner.FamilyOwner f  -> uuid.equals(f.householdId());
+            case BusinessOwner.VillageOwner v -> false;
+            case BusinessOwner.KingdomOwner k -> false;
+            case BusinessOwner.GuildOwner   g -> false;
+        };
+    }
     public boolean isTradingBusiness() { return businessType == BusinessType.TRADING_COMPANY; }
 
     public void setBusinessType(BusinessType type) { if (type != null) this.businessType = type; }
