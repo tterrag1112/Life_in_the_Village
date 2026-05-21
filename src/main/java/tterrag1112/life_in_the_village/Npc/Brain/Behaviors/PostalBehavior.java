@@ -117,7 +117,7 @@ public class PostalBehavior extends Behavior<TownspersonMob> {
                             deliveryTarget.getZ(), stack);
                     level.addFreshEntity(drop);
                 }
-                entity.getSkills().addXp(Skill.SOCIAL, XP_PER_DELIVERY, level.getGameTime());
+                tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.SOCIAL, XP_PER_DELIVERY, level.getGameTime());
             }
         }
         deliveryTarget = null;

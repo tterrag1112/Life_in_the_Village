@@ -28,7 +28,8 @@ import tterrag1112.life_in_the_village.Npc.Skills.Skill;
  */
 public final class LetterDelivery {
 
-    public static final int READ_LITERACY_THRESHOLD = 30;
+    public static final int READ_LITERACY_THRESHOLD =
+            tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds.READ_LITERACY_THRESHOLD;
 
     private LetterDelivery() {}
 

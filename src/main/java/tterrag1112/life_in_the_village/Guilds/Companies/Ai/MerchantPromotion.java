@@ -45,8 +45,10 @@ public final class MerchantPromotion {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    /** Spec line 86 — Grandmaster commerce floor. */
-    public static final int COMMERCE_THRESHOLD = 70;
+    /** Spec line 86 — Grandmaster commerce floor.
+     *  Phase 6.3.2.b — sourced from {@link tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds}. */
+    public static final int COMMERCE_THRESHOLD =
+            tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds.MERCHANT_PROMOTION;
     /** Spec line 87 — initial capital floor in NPC wallet. */
     public static final long STARTUP_CAPITAL = 500L;
     /** Bronze transferred from NPC wallet to company treasury on promotion. */

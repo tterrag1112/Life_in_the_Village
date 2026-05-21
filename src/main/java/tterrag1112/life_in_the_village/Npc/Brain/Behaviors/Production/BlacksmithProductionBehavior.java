@@ -259,6 +259,20 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         return toBuy;
     }
 
+    /**
+     * Phase 6.3.2.b — dispatch CRAFTING-cycle XP onto the appropriate
+     * blacksmithing sub-skill via {@link BlacksmithSpecialization#categorize}.
+     * The cascade in {@code SkillComponent.addXp} carries the propagation
+     * up to BLACKSMITHING and CRAFTING at 25% each tier.
+     */
+    @Override
+    protected void awardProductionXp(ServerLevel level, Item output, int amount) {
+        tterrag1112.life_in_the_village.Npc.Skills.Skill target =
+                BlacksmithSpecialization.categorize(output);
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, target, amount, level.getGameTime());
+    }
+
     @Override
     protected void onProductionComplete(ServerLevel level,
                                         ProductionRecipe recipe, int batchSize) {

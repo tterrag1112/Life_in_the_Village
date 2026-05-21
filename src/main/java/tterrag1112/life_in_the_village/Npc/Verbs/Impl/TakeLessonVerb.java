@@ -42,13 +42,13 @@ public final class TakeLessonVerb implements PlayerVerb {
         // Award the player no XP (no player-skill ledger yet); the NPC
         // logs the session and bumps their teaching SOCIAL skill, and
         // any nearby children get a small LITERACY tick. Spec line 305.
-        ctx.npc().getSkills().addXp(Skill.SOCIAL, 1, ctx.tick());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(ctx.npc(), Skill.SOCIAL, 1, ctx.tick());
         var nearbyChildren = ctx.level().getEntitiesOfClass(
                 tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
                 ctx.npc().getBoundingBox().inflate(8),
                 m -> m != ctx.npc() && m.isChild());
         for (var child : nearbyChildren) {
-            child.getSkills().addXp(Skill.LITERACY, LESSON_LITERACY_XP, ctx.tick());
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(child, Skill.LITERACY, LESSON_LITERACY_XP, ctx.tick());
         }
         return VerbResult.success("lesson.taken");
     }

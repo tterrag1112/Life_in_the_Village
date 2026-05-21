@@ -79,26 +79,51 @@ public enum BlacksmithSpecialization implements ProfessionSpecialization {
         }
 
         return switch (this) {
-            case TOOLSMITH -> stack.is(ItemTags.PICKAXES)
-                    || stack.is(ItemTags.AXES)
-                    || stack.is(ItemTags.SHOVELS)
-                    || stack.is(ItemTags.HOES)
-                    || item == Items.SHEARS
-                    || item == Items.FLINT_AND_STEEL
-                    || item == Items.FISHING_ROD;
-
-            case ARMORER -> stack.is(ItemTags.HEAD_ARMOR)
-                    || stack.is(ItemTags.CHEST_ARMOR)
-                    || stack.is(ItemTags.LEG_ARMOR)
-                    || stack.is(ItemTags.FOOT_ARMOR)
-                    || item == Items.SHIELD;
-
-            case WEAPONSMITH -> stack.is(ItemTags.SWORDS)
-                    || item == Items.BOW
-                    || item == Items.CROSSBOW
-                    || item == Items.TRIDENT;
-
+            case TOOLSMITH -> isToolOutput(stack, item);
+            case ARMORER -> isArmorOutput(stack, item);
+            case WEAPONSMITH -> isWeaponOutput(stack, item);
             default -> true;
         };
+    }
+
+    private static boolean isToolOutput(net.minecraft.world.item.ItemStack stack, Item item) {
+        return stack.is(ItemTags.PICKAXES)
+                || stack.is(ItemTags.AXES)
+                || stack.is(ItemTags.SHOVELS)
+                || stack.is(ItemTags.HOES)
+                || item == Items.SHEARS
+                || item == Items.FLINT_AND_STEEL
+                || item == Items.FISHING_ROD;
+    }
+
+    private static boolean isArmorOutput(net.minecraft.world.item.ItemStack stack, Item item) {
+        return stack.is(ItemTags.HEAD_ARMOR)
+                || stack.is(ItemTags.CHEST_ARMOR)
+                || stack.is(ItemTags.LEG_ARMOR)
+                || stack.is(ItemTags.FOOT_ARMOR)
+                || item == Items.SHIELD;
+    }
+
+    private static boolean isWeaponOutput(net.minecraft.world.item.ItemStack stack, Item item) {
+        return stack.is(ItemTags.SWORDS)
+                || item == Items.BOW
+                || item == Items.CROSSBOW
+                || item == Items.TRIDENT;
+    }
+
+    /**
+     * Phase 6.3.2.b — recipe-output categorization for XP routing. Same
+     * predicates as {@link #allowsOutput} but returns the appropriate
+     * sub-skill so {@code BlacksmithProductionBehavior} can dispatch
+     * to TOOLSMITHING / WEAPONSMITHING / ARMORSMITHING. Returns
+     * {@code BLACKSMITHING} for ingots and uncategorized output (the
+     * cascade still propagates to CRAFTING from there).
+     */
+    public static tterrag1112.life_in_the_village.Npc.Skills.Skill categorize(Item item) {
+        net.minecraft.world.item.ItemStack stack = item.getDefaultInstance();
+        if (isToolOutput(stack, item))   return tterrag1112.life_in_the_village.Npc.Skills.Skill.TOOLSMITHING;
+        if (isWeaponOutput(stack, item)) return tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAPONSMITHING;
+        if (isArmorOutput(stack, item))  return tterrag1112.life_in_the_village.Npc.Skills.Skill.ARMORSMITHING;
+        return tterrag1112.life_in_the_village.Npc.Skills.Skill.BLACKSMITHING;
     }
 }

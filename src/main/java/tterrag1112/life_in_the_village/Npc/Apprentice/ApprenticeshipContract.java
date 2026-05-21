@@ -44,8 +44,10 @@ public record ApprenticeshipContract(
     public static final int MAX_MASTERPIECE_ATTEMPTS = 2;
     /** Master max apprentices (spec line 114). */
     public static final int MAX_APPRENTICES_PER_MASTER = 2;
-    /** Skill threshold to qualify as a master (spec line 96). */
-    public static final int MASTER_SKILL_THRESHOLD = 70;
+    /** Skill threshold to qualify as a master (spec line 96).
+     *  Phase 6.3.2.b — sourced from {@link tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds}. */
+    public static final int MASTER_SKILL_THRESHOLD =
+            tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds.MASTER_SKILL_THRESHOLD;
     /** Pass threshold for the masterpiece (spec line 169). */
     public static final int MASTERPIECE_PASS_SKILL = 75;
 

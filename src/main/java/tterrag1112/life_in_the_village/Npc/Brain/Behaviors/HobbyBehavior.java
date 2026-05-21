@@ -206,7 +206,7 @@ public class HobbyBehavior extends Behavior<TownspersonMob> {
         if (activeDefinition != null && phase != Phase.WALKING_TO_LOCATION) {
             if (activeDefinition.skillGain().isPresent()
                     && activeDefinition.skillXpPerSession() > 0) {
-                entity.getSkills().addXp(activeDefinition.skillGain().get(),
+                tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, activeDefinition.skillGain().get(),
                         activeDefinition.skillXpPerSession(), gameTime);
             }
             entity.getHobbyPreference().noteUsed(activeDefinition.id(), gameTime);

@@ -70,7 +70,7 @@ public final class BookEffects {
 
         // 2) LITERACY XP — full grant in both modes (reading trains
         // reading; spec line 302).
-        reader.getSkills().addXp(Skill.LITERACY, LITERACY_XP_PER_READ, now);
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(reader, Skill.LITERACY, LITERACY_XP_PER_READ, now);
         int xpGranted = LITERACY_XP_PER_READ;
 
         // 3) Skill buff payload — partial readers get half XP and no
@@ -79,7 +79,7 @@ public final class BookEffects {
         if (content.skillBuff().isPresent()) {
             SkillBuff buff = content.skillBuff().get();
             int xp = partial ? buff.xpOnRead() / 2 : buff.xpOnRead();
-            if (xp > 0) reader.getSkills().addXp(buff.skill(), xp, now);
+            if (xp > 0) tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(reader, buff.skill(), xp, now);
             xpGranted += xp;
             if (!partial && buff.hasOngoingMultiplier()) {
                 long expires = now + (long) buff.studyMultiplierDays() * 24000L;

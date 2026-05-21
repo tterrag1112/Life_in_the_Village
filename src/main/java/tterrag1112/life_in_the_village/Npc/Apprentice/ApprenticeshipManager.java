@@ -29,8 +29,10 @@ public final class ApprenticeshipManager {
 
     /** Spec line 131: TAUGHT_BY memory cadence. */
     public static final long TEACHING_MEMORY_INTERVAL_TICKS = 30L * 24000L;
-    /** Skill thresholds for milestones 1..4. Spec line 141. */
-    public static final int[] MILESTONE_SKILL_THRESHOLDS = {20, 40, 55, 70};
+    /** Skill thresholds for milestones 1..4. Spec line 141.
+     *  Phase 6.3.2.b — sourced from {@link tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds}. */
+    public static final int[] MILESTONE_SKILL_THRESHOLDS =
+            tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds.APPRENTICE_MILESTONES;
     /** Spec line 119: relationship seeded when a contract starts. */
     public static final int CONTRACT_RELATIONSHIP_SEED = 30;
     /** Spec line 191: relationship bump on graduation. */
@@ -136,7 +138,7 @@ public final class ApprenticeshipManager {
                     List.of(c.masterId()),
                     now, 50,
                     "Lessons from " + master.getNpcName()));
-            master.getSkills().addXp(Skill.SOCIAL,
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(master, Skill.SOCIAL,
                     MASTER_TEACHING_XP_PER_SESSION, now);
         }
 

@@ -65,7 +65,7 @@ public final class LetterEffects {
         }
 
         // 4) LITERACY trickle for the reading act.
-        recipient.getSkills().addXp(Skill.LITERACY, LITERACY_XP_PER_READ, now);
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(recipient, Skill.LITERACY, LITERACY_XP_PER_READ, now);
 
         // 5) Knowledge from scholar-tagged letters — Phase 5 expands.
         // For now, the only knowledge that can be attached is via the

@@ -101,7 +101,7 @@ public final class RiteExecutor {
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
         if (priest.getProfession() == Profession.PRIEST) {
             // Priest gains a small SOCIAL XP boost from officiating.
-            priest.getSkills().addXp(tterrag1112.life_in_the_village.Npc.Skills.Skill.SOCIAL,
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(priest, tterrag1112.life_in_the_village.Npc.Skills.Skill.SOCIAL,
                     5f, now);
         }
         return outcome;

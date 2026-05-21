@@ -199,7 +199,11 @@ public class HealerBehavior extends Behavior<TownspersonMob> {
         patient.getHealthComponent().markTreated(targetCondition, healerId, now);
         patient.getMood().applyWithRawMagnitude(MoodTrigger.HEALED,
                 MoodTrigger.HEALED.defaultMagnitude(), now);
-        entity.getSkills().addXp(Skill.MEDICINE, XP_PER_TREATMENT, now);
+        // Phase 6.3.2.b — split MEDICINE on caravan-context. Healers on
+        // caravan duty earn COMBAT_MEDICINE; village-side healers earn
+        // VILLAGE_MEDICINE. The cascade carries 25% upward to MEDICINE.
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, medicineSubskillFor(entity), XP_PER_TREATMENT, now);
         // Remedy is consumed (queuedRemedy was already removed from
         // inventory in canUse()). Clear so stop() doesn't re-stash it.
         queuedRemedy = null;
@@ -216,7 +220,8 @@ public class HealerBehavior extends Behavior<TownspersonMob> {
         int potency = potencyForSkill(entity.getSkills().getLevel(Skill.MEDICINE));
         Remedy r = Remedy.create(next, potency, level.getGameTime());
         entity.getHealerInventory().add(r);
-        entity.getSkills().addXp(Skill.MEDICINE, XP_PER_REMEDY, level.getGameTime());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, medicineSubskillFor(entity), XP_PER_REMEDY, level.getGameTime());
         timer = 0;
     }
 
@@ -299,4 +304,17 @@ public class HealerBehavior extends Behavior<TownspersonMob> {
         return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
     }
 
+    /**
+     * Phase 6.3.2.b — pick the MEDICINE sub-skill for XP routing.
+     * Caravan-duty healer → COMBAT_MEDICINE (battlefield context).
+     * Everyone else → VILLAGE_MEDICINE. The cascade pushes 25% up to
+     * the parent MEDICINE so legacy reads of MEDICINE level still grow.
+     */
+    private static tterrag1112.life_in_the_village.Npc.Skills.Skill medicineSubskillFor(
+            TownspersonMob healer) {
+        boolean onCaravan = tterrag1112.life_in_the_village.Npc.Roles.NpcRoles.isOnCaravan(healer);
+        return onCaravan
+                ? tterrag1112.life_in_the_village.Npc.Skills.Skill.COMBAT_MEDICINE
+                : tterrag1112.life_in_the_village.Npc.Skills.Skill.VILLAGE_MEDICINE;
+    }
 }

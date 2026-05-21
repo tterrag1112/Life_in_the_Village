@@ -385,8 +385,8 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 for (ItemStack byproduct : currentRecipe.byproducts()) {
                     entity.getPersonalInventory().addItem(byproduct.copy());
                 }
-                entity.getSkills().addXp(Skill.CRAFTING,
-                        XP_PER_PRODUCTION_CYCLE, level.getGameTime());
+                awardProductionXp(level, currentRecipe.output(),
+                        XP_PER_PRODUCTION_CYCLE);
                 float qualityChance = craftingQualityChance(entity);
                 if (qualityChance > 0 && entity.getRandom().nextFloat() < qualityChance) {
                     entity.getPersonalInventory().addItem(
@@ -683,6 +683,19 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             if (!s.isEmpty()) return s;
         }
         return ItemStack.EMPTY;
+    }
+
+    /**
+     * Phase 6.3.2.b — overrideable XP-award hook. Default awards
+     * {@code CRAFTING}. Subclasses with a more-specific subskill
+     * (e.g. blacksmith → toolsmithing / weaponsmithing / armorsmithing)
+     * override and route to the appropriate child skill; the
+     * {@link tterrag1112.life_in_the_village.Npc.Skills.SkillComponent}
+     * cascade then propagates 25% upward.
+     */
+    protected void awardProductionXp(ServerLevel level, Item output, int amount) {
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, Skill.CRAFTING, amount, level.getGameTime());
     }
 
     protected Optional<BlockPos> findBlock(ServerLevel level, Building building,

@@ -189,8 +189,8 @@ public final class ScribeCounter {
     private static void awardScribeXp(TownspersonMob scribe, ServerLevel level) {
         // Mirror Track 2.1 commission XP path; LITERACY is the scribe's
         // primary, CRAFTING gets the per-commission bump.
-        scribe.getSkills().addXp(Skill.LITERACY, XP_PER_COMMISSION, level.getGameTime());
-        scribe.getSkills().addXp(Skill.CRAFTING, XP_PER_COMMISSION, level.getGameTime());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(scribe, Skill.LITERACY, XP_PER_COMMISSION, level.getGameTime());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(scribe, Skill.CRAFTING, XP_PER_COMMISSION, level.getGameTime());
     }
 
     private static Profession parseProfession(String name) {

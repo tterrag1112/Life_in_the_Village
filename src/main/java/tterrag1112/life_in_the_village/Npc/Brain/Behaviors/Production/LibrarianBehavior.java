@@ -119,7 +119,7 @@ public class LibrarianBehavior extends Behavior<TownspersonMob> {
             // upgrade this to send a "return your book" letter via the
             // local scribe before forcing the return.
             cat.returnBook(l.bookId(), l.borrowerId());
-            entity.getSkills().addXp(Skill.LITERACY, XP_PER_RECOVERED_LOAN, level.getGameTime());
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.LITERACY, XP_PER_RECOVERED_LOAN, level.getGameTime());
         }
         VillageSavedData.get(level).setDirty();
     }
@@ -132,10 +132,10 @@ public class LibrarianBehavior extends Behavior<TownspersonMob> {
                 entity.getBoundingBox().inflate(12),
                 m -> m != entity && m.isChild());
         for (TownspersonMob child : children) {
-            child.getSkills().addXp(Skill.LITERACY, XP_PER_SCHOOLING_TICK, level.getGameTime());
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(child, Skill.LITERACY, XP_PER_SCHOOLING_TICK, level.getGameTime());
         }
         if (!children.isEmpty()) {
-            entity.getSkills().addXp(Skill.SOCIAL, 1, level.getGameTime());
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.SOCIAL, 1, level.getGameTime());
         }
     }
 

@@ -26,8 +26,10 @@ import java.util.UUID;
  */
 public final class RetirementHandler implements EventDispatcher {
 
-    /** Skill at or above which an elderly NPC qualifies as a mentor. */
-    public static final int MENTOR_SKILL_THRESHOLD = 60;
+    /** Skill at or above which an elderly NPC qualifies as a mentor.
+     *  Phase 6.3.2.b — sourced from {@link tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds}. */
+    public static final int MENTOR_SKILL_THRESHOLD =
+            tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds.MENTOR_SKILL_THRESHOLD;
     /** Base probability of having unfinished business at ELDERLY entry. */
     public static final float BASE_UNFINISHED_PROB = 0.35f;
     /** Ambition contribution to that probability (per +1 trait). */

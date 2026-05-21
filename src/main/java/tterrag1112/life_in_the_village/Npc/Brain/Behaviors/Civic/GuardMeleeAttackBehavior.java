@@ -29,6 +29,10 @@ public class GuardMeleeAttackBehavior extends Behavior<TownspersonMob> {
     private static final double REACH_SQ = 4.0; // 2-block reach squared
     private static final long COOLDOWN_TICKS = 20L;
     private static final int MAX_RUN = Integer.MAX_VALUE;
+    /** Phase 6.3.2.b — MELEE XP per landed swing (cascades 25% → COMBAT). */
+    private static final int MELEE_XP_PER_HIT = 1;
+    /** Bonus MELEE XP when the swing kills the target. */
+    private static final int MELEE_XP_ON_KILL = 3;
 
     public GuardMeleeAttackBehavior() {
         super(ImmutableMap.of(
@@ -64,6 +68,14 @@ public class GuardMeleeAttackBehavior extends Behavior<TownspersonMob> {
         brain.eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.swing(InteractionHand.MAIN_HAND);
         entity.doHurtTarget(level, target);
+        // Phase 6.3.2.b — MELEE XP per hit, bonus on kill. Cascade
+        // propagates 25% to COMBAT, so legacy COMBAT reads still grow.
+        long now = gameTime;
+        int xp = MELEE_XP_PER_HIT + (target.isAlive() ? 0 : MELEE_XP_ON_KILL);
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity,
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.MELEE,
+                xp, now);
         brain.setMemoryWithExpiry(
                 MemoryModuleType.ATTACK_COOLING_DOWN,
                 Boolean.TRUE, COOLDOWN_TICKS);

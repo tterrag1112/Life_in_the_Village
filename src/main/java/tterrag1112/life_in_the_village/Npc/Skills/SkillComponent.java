@@ -148,7 +148,16 @@ public final class SkillComponent {
     public void addXp(Skill skill, float amount, long currentTick) {
         if (amount == 0f) return;
         float multiplier = pruneAndComputeMultiplier(skill, currentTick);
-        setXp(skill, xp[skill.ordinal()] + amount * multiplier, currentTick);
+        float effective = amount * multiplier;
+        setXp(skill, xp[skill.ordinal()] + effective, currentTick);
+        // Phase 6.3.2.b — propagate upward at the child's propRate. Bounded
+        // depth (3 tiers); the post-buff amount cascades so per-skill buffs
+        // flow through naturally without re-application at each level.
+        Skill parent = skill.parent();
+        if (parent != null) {
+            float propagated = effective * (float) skill.propRate();
+            if (propagated > 0f) addXp(parent, propagated, currentTick);
+        }
     }
 
     /** Stacks an additional buff. Returns the buff actually stored. */

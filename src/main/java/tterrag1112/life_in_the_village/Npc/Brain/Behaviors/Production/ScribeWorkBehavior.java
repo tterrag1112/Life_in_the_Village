@@ -138,7 +138,7 @@ public class ScribeWorkBehavior extends Behavior<TownspersonMob> {
             entity.setCurrentActivity("Delivering " + active.product().name().toLowerCase());
 
             // Award LITERACY XP and bump the commission to READY.
-            entity.getSkills().addXp(Skill.LITERACY, XP_PER_COMMISSION, level.getGameTime());
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.LITERACY, XP_PER_COMMISSION, level.getGameTime());
             CommissionQueue queue = VillageSavedData.get(level)
                     .getOrCreateCommissionQueue(workshop.getId());
             queue.update(active = active.withStatus(CommissionStatus.READY));

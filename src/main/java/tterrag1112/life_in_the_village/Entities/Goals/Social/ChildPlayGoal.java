@@ -147,8 +147,8 @@ public class ChildPlayGoal extends Goal {
         long now = level.getGameTime();
         for (var s : selfSkills) {
             if (otherState.hasInterestIn(s.skill())) {
-                entity.getSkills().addXp(s.skill(), 1f, now);
-                other.getSkills().addXp(s.skill(), 1f, now);
+                tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, s.skill(), 1f, now);
+                tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(other, s.skill(), 1f, now);
             }
         }
     }

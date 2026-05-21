@@ -109,8 +109,8 @@ public class ScholarBehavior extends Behavior<TownspersonMob> {
                 ? "Studies of " + entity.getNpcName()
                 : prog.currentTopic();
         prog.addResearch(RESEARCH_POINTS_PER_TICK, topic);
-        entity.getSkills().addXp(Skill.LITERACY, LITERACY_XP_PER_RESEARCH, level.getGameTime());
-        entity.getSkills().addXp(Skill.MEDICINE, MEDICINE_XP_PER_RESEARCH, level.getGameTime());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.LITERACY, LITERACY_XP_PER_RESEARCH, level.getGameTime());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.MEDICINE, MEDICINE_XP_PER_RESEARCH, level.getGameTime());
 
         // Knowledge bump: scholar's research populates ledger at higher
         // fidelity. Spec line 253.
@@ -159,7 +159,7 @@ public class ScholarBehavior extends Behavior<TownspersonMob> {
         prog.onPublished(level.getGameTime());
 
         // Bump skills for the milestone.
-        entity.getSkills().addXp(Skill.LITERACY, 30, level.getGameTime());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.LITERACY, 30, level.getGameTime());
         data.setDirty();
     }
 

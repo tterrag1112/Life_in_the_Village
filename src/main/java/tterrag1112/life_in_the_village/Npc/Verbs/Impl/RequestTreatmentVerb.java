@@ -70,7 +70,7 @@ public final class RequestTreatmentVerb implements PlayerVerb {
         hdata.getOrCreatePlayerStash(ctx.player().getUUID()).add(taken.get());
         hdata.markDirty();
         ctx.npc().getRelationships().adjust(ctx.player().getUUID(), 5);
-        ctx.npc().getSkills().addXp(
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(ctx.npc(), 
                 tterrag1112.life_in_the_village.Npc.Skills.Skill.MEDICINE, 2,
                 ctx.level().getGameTime());
         // Suppress unused-import warnings on ActiveCondition.

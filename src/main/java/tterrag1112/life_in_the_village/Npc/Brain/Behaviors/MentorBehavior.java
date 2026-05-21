@@ -36,7 +36,8 @@ import java.util.UUID;
  */
 public class MentorBehavior extends Behavior<TownspersonMob> {
 
-    public static final int MENTOR_SKILL_THRESHOLD = 60;
+    public static final int MENTOR_SKILL_THRESHOLD =
+            tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds.MENTOR_SKILL_THRESHOLD;
     public static final int SOCIAL_XP_PER_SESSION = 1;
     public static final int SESSION_XP_INTERVAL = 12000;
     public static final double WORKPLACE_RADIUS = 24.0;
@@ -103,7 +104,7 @@ public class MentorBehavior extends Behavior<TownspersonMob> {
         }
         if (sessionTimer >= SESSION_XP_INTERVAL) {
             sessionTimer = 0;
-            entity.getSkills().addXp(Skill.SOCIAL, SOCIAL_XP_PER_SESSION, gameTime);
+            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.SOCIAL, SOCIAL_XP_PER_SESSION, gameTime);
         }
     }
 
