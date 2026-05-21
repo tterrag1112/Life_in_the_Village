@@ -9,6 +9,7 @@ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
@@ -78,6 +79,14 @@ public class SellToMarketBehavior extends Behavior<TownspersonMob> {
             entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
                     new WalkTarget(marketPos, WALK_SPEED, CLOSE_ENOUGH));
         }
+        // Carry-pose: show a representative cargo item from the workshop's
+        // surplus while walking to market. Personal inventory is empty after
+        // deposit, so we sample from the workshop instead.
+        ItemStack display = pickRepresentativeCargo(level, entity);
+        if (!display.isEmpty()) {
+            entity.getBrain().setMemory(
+                    NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get(), display);
+        }
     }
 
     @Override
@@ -107,6 +116,7 @@ public class SellToMarketBehavior extends Behavior<TownspersonMob> {
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARGO_DESTINATION.get());
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.getBrain().setMemory(NpcMemoryTypes.WORK_PHASE.get(), WorkPhase.IDLE);
         entity.getBrain().setMemoryWithExpiry(
                 NpcMemoryTypes.LAST_SELL_TICK.get(), gameTime, COOLDOWN_TICKS);
@@ -130,6 +140,21 @@ public class SellToMarketBehavior extends Behavior<TownspersonMob> {
         Map<Item, Integer> toSell = computeSurplus(level, entity, workBuilding);
         AbstractProductionBehavior.executeSellForWorkshop(
                 level, entity, workBuilding, market, toSell);
+    }
+
+    private static ItemStack pickRepresentativeCargo(ServerLevel level, TownspersonMob entity) {
+        Building work = entity.getAssignedBuildingId()
+                .flatMap(VillageSavedData.get(level)::getBuildingById)
+                .orElse(null);
+        if (work == null) return ItemStack.EMPTY;
+        for (var container : tterrag1112.life_in_the_village.Village
+                .BuildingStorageAccess.findInventories(level, work)) {
+            for (int i = 0; i < container.getContainerSize(); i++) {
+                ItemStack s = container.getItem(i);
+                if (!s.isEmpty()) return s.copyWithCount(1);
+            }
+        }
+        return ItemStack.EMPTY;
     }
 
     private static Building findBuildingAt(VillageSavedData data, BlockPos pos) {

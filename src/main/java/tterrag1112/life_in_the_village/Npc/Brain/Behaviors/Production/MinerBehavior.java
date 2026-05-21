@@ -7,6 +7,7 @@ import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import com.google.common.collect.ImmutableMap;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
+import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -196,6 +197,13 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
     private void deposit(ServerLevel level) {
         if (mine == null) { goIdle(); return; }
 
+        // Carry-pose while hauling the ore back to the mine container.
+        var hauling = firstOreStack();
+        if (!hauling.isEmpty()) {
+            entity.getBrain().setMemory(
+                    NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get(), hauling.copy());
+        }
+
         BlockPos target = mine.getShape().getOrigin();
         double distSq = entity.distanceToSqr(
                 target.getX(), target.getY(), target.getZ());
@@ -217,6 +225,8 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
             if (stored) inv.setItem(i, ItemStack.EMPTY);
         }
 
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
+
         // Reset timer and schedule next yield fresh
         miningTimer = 0;
         MiningYieldData data = MiningYieldRegistry.INSTANCE.getDefault();
@@ -232,6 +242,7 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         goIdle();
     }
@@ -241,7 +252,17 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
         idleCooldown = IDLE_COOLDOWN;
         miningTimer = 0;
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+    }
+
+    private ItemStack firstOreStack() {
+        var inv = entity.getPersonalInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (!s.isEmpty()) return s;
+        }
+        return ItemStack.EMPTY;
     }
 
     private Building findMine(ServerLevel level) {

@@ -404,6 +404,16 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         entity.setCurrentActivity("Depositing goods");
         Building dest = outputBuilding(level);
         if (dest == null) { goIdle(); return; }
+
+        // Show arms-forward carry pose while the NPC is en route to / at the
+        // deposit container — repeat-write each tick is cheap and keeps the
+        // display synced even if a CORE behavior briefly clears it.
+        ItemStack carried = firstNonEmptyStack(entity.getPersonalInventory());
+        if (!carried.isEmpty()) {
+            entity.getBrain().setMemory(
+                    NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get(), carried.copy());
+        }
+
         if (!moveToOrArrived(dest.getShape().getOrigin())) return;
 
         SimpleContainer inv = entity.getPersonalInventory();
@@ -415,6 +425,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             }
         }
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
 
         if (market != null && isSellTime(level.getGameTime())
                 && !computeSurplusToSell(level).isEmpty()) {
@@ -656,6 +667,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     protected void goIdle() {
         entity.clearCurrentActivity();
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         phase = Phase.IDLE;
         workTimer = 0;
@@ -663,6 +675,14 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         currentSteps = List.of();
         currentStepIndex = 0;
         market = null;
+    }
+
+    private static ItemStack firstNonEmptyStack(SimpleContainer inv) {
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (!s.isEmpty()) return s;
+        }
+        return ItemStack.EMPTY;
     }
 
     protected Optional<BlockPos> findBlock(ServerLevel level, Building building,

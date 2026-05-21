@@ -8,6 +8,7 @@ import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import com.google.common.collect.ImmutableMap;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
+import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -281,6 +282,13 @@ public class FarmhandBehavior extends Behavior<TownspersonMob> {
             return;
         }
 
+        // Carry-pose while walking the harvest to the farmhouse.
+        ItemStack carried = firstHarvestStack();
+        if (!carried.isEmpty()) {
+            entity.getBrain().setMemory(
+                    NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get(), carried.copy());
+        }
+
         BlockPos target = farmhouse.getShape().getOrigin();
         double distSq = entity.distanceToSqr(
                 target.getX(), target.getY(), target.getZ());
@@ -305,6 +313,8 @@ public class FarmhandBehavior extends Behavior<TownspersonMob> {
             BuildingStorageAccess.storeItem(level, farmhouse, stack);
             inv.setItem(i, ItemStack.EMPTY);
         }
+
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
 
         // Continue with next task
         if (!toHarvest.isEmpty()) {
@@ -389,12 +399,24 @@ public class FarmhandBehavior extends Behavior<TownspersonMob> {
         return emptySlots < 3;
     }
 
+    private ItemStack firstHarvestStack() {
+        SimpleContainer inv = entity.getPersonalInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.isEmpty()) continue;
+            if (s.is(Items.IRON_HOE) || s.is(Items.DIAMOND_HOE)) continue;
+            return s;
+        }
+        return ItemStack.EMPTY;
+    }
+
     private void goIdle() {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
         toHarvest.clear();
         toReplant.clear();
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
     }

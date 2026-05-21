@@ -82,6 +82,10 @@ public class PostalBehavior extends Behavior<TownspersonMob> {
             entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
                     new WalkTarget(deliveryTarget.blockPosition(), WALK_SPEED, CLOSE_ENOUGH));
         }
+        if (carriedLetter != null) {
+            entity.getBrain().setMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get(),
+                    carriedLetter.getItem().copy());
+        }
     }
 
     @Override
@@ -123,6 +127,7 @@ public class PostalBehavior extends Behavior<TownspersonMob> {
     @Override
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.clearCurrentActivity();
         entity.getBrain().setMemoryWithExpiry(
                 NpcMemoryTypes.POSTAL_RUN_COOLDOWN.get(), gameTime, COOLDOWN_TICKS);

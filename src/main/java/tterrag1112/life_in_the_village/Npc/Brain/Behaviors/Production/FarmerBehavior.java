@@ -22,6 +22,7 @@ import tterrag1112.life_in_the_village.Client.FarmingVisualEffects;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -309,6 +310,14 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     private void walkToFarmhouse() {
         if (farmhouse == null) { goIdle(); return; }
 
+        // Carry-pose: arms-forward holding the freshest crop while
+        // ferrying the harvest back to the farmhouse.
+        ItemStack carried = firstHarvestStack();
+        if (!carried.isEmpty()) {
+            entity.getBrain().setMemory(
+                    NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get(), carried.copy());
+        }
+
         BlockPos target = farmhouse.getShape().getOrigin();
         double distSq = entity.distanceToSqr(
                 target.getX(), target.getY(), target.getZ());
@@ -320,6 +329,17 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             phase = Phase.DEPOSITING;
         }
+    }
+
+    private ItemStack firstHarvestStack() {
+        SimpleContainer inv = entity.getPersonalInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.isEmpty()) continue;
+            if (s.is(Items.IRON_HOE) || s.is(Items.DIAMOND_HOE)) continue;
+            return s;
+        }
+        return ItemStack.EMPTY;
     }
 
     // =========================================================================
@@ -343,6 +363,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             inv.setItem(i, ItemStack.EMPTY);
         }
 
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         phase = toHarvest.isEmpty() ? Phase.ANALYZING : Phase.HARVESTING;
     }
 
@@ -551,6 +572,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         toHarvest.clear();
         toReplant.clear();
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
     }
