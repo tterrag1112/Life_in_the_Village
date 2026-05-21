@@ -1573,15 +1573,21 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .REST.get(), 0, restBehaviors);
 
-        // WORK — Phase 6.2.d.1: SellToMarketBehavior (universal, memory-gated)
-        // consumes CARGO_DESTINATION from workshop ProductionBehaviors that
-        // are layered in via ProfessionBrainFactory. Non-workshop NPCs leave
-        // CARGO_DESTINATION absent, so this behavior is dormant for them
-        // (their SellToMarketGoal still drives Goal-side selling).
+        // WORK — universal entries (per-profession behaviors are layered in
+        // via ProfessionBrainFactory after this).
+        //  - SellToMarketBehavior @1: memory-gated by CARGO_DESTINATION.
+        //    Dormant for any NPC whose work doesn't write the memory.
+        //  - ConstableInvestigationBehavior @1: self-gated on the
+        //    INVESTIGATE_CRIME office power (Magistrate / King). Dormant
+        //    for any NPC without that power, regardless of profession.
+        //    (Universal placement preserves the goal-side registerUniversal
+        //    pattern from Phase 3 task 19.)
         ImmutableList<BehaviorControl<? super TownspersonMob>> workBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .Production.SellToMarketBehavior()
+                                .Production.SellToMarketBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Civic.ConstableInvestigationBehavior()
                 );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 1, workBehaviors);

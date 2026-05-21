@@ -5,6 +5,9 @@ import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.entity.ai.behavior.BehaviorControl;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.GuardPatrolBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.KingdomRulerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.VillageLeaderBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.PostalBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BakerProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BlacksmithProductionBehavior;
@@ -134,6 +137,21 @@ public final class ProfessionBrainFactory {
         REGISTRARS.put(Profession.INNKEEPER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new InnkeeperBehavior())));
+
+        // Phase 6.2.d.4 — civic + guard cluster.
+        REGISTRARS.put(Profession.VILLAGE_LEADER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new VillageLeaderBehavior())));
+        REGISTRARS.put(Profession.KINGDOM_RULER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new KingdomRulerBehavior())));
+        // GUARD: ports the patrol loop. MeleeAttack / Guard combat goals
+        // stay Goal-side — they're vanilla-shaped combat handlers driven
+        // by targetSelector, out of WORK-activity scope. Only the patrol
+        // loop migrates here.
+        REGISTRARS.put(Profession.GUARD, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new GuardPatrolBehavior())));
     }
 
     /**

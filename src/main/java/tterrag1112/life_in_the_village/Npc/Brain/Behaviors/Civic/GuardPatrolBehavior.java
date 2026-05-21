@@ -1,15 +1,18 @@
-// src/main/java/tterrag1112/life_in_the_village/Entities/Goals/GuardPatrolGoal.java
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,7 +32,7 @@ import java.util.Optional;
  *       centroid, avoiding building interiors.</li>
  * </ol>
  */
-public class GuardPatrolGoal extends Goal {
+public class GuardPatrolBehavior extends Behavior<TownspersonMob> {
 
     // ── Configuration ─────────────────────────────────────────────────────────
     /** How often (ticks) to attempt a post reassignment. */
@@ -44,23 +47,28 @@ public class GuardPatrolGoal extends Goal {
     private static final double ALERT_SPEED     = 1.2;
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public GuardPatrolBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private int  reassignTimer    = 0;
     private int  waypointIndex    = -1; // current waypoint in circuit
     private int  stuckTimer       = 0;  // ticks at same position
     private BlockPos lastPos      = null;
 
-    public GuardPatrolGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    
 
     // =========================================================================
     // Goal lifecycle
     // =========================================================================
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         // Don't start if already navigating
         if (entity.getNavigation().isInProgress()) return false;
@@ -69,20 +77,23 @@ public class GuardPatrolGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
         return entity.getNavigation().isInProgress() || stuckTimer < 60;
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         stuckTimer = 0;
         lastPos    = entity.blockPosition();
         navigate();
     }
 
     @Override
-    public void tick() {
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!(entity.level() instanceof ServerLevel serverLevel)) return;
 
         // ── Reassignment check ────────────────────────────────────────────────
@@ -116,16 +127,14 @@ public class GuardPatrolGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         stuckTimer    = 0;
         lastPos       = null;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    // =========================================================================
+        // =========================================================================
     // Navigation
     // =========================================================================
 
@@ -169,14 +178,14 @@ public class GuardPatrolGoal extends Goal {
                 // Don't wander into a position too far above/below the post
                 if (Math.abs(ty - livePost.getY()) > 4) continue;
 
-                entity.getNavigation().moveTo(tx, ty + 1, tz, PATROL_SPEED);
+                entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(tx, ty + 1, tz, PATROL_SPEED));
                 return;
             }
 
             // Fallback — return directly to post
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     livePost.getX(), livePost.getY(), livePost.getZ(),
-                    PATROL_SPEED);
+                    PATROL_SPEED));
         }
     }
 
@@ -200,9 +209,9 @@ public class GuardPatrolGoal extends Goal {
         }
 
         BlockPos target = waypoints.get(waypointIndex);
-        entity.getNavigation().moveTo(
+        entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                 target.getX(), target.getY(), target.getZ(),
-                PATROL_SPEED);
+                PATROL_SPEED));
     }
 
     private void checkWaypointArrival(ServerLevel level) {
@@ -225,9 +234,9 @@ public class GuardPatrolGoal extends Goal {
         waypointIndex = (waypointIndex + 1) % waypoints.size();
 
         BlockPos next = waypoints.get(waypointIndex);
-        entity.getNavigation().moveTo(
+        entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                 next.getX(), next.getY(), next.getZ(),
-                PATROL_SPEED);
+                PATROL_SPEED));
     }
 
     /**
@@ -261,7 +270,7 @@ public class GuardPatrolGoal extends Goal {
             if (data.getBuildingAt(candidate).isPresent()) continue;
             if (data.getBuildingAt(candidate.below()).isPresent()) continue;
 
-            entity.getNavigation().moveTo(x, y + 1, z, PATROL_SPEED);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(x, y + 1, z, PATROL_SPEED));
             return;
         }
     }
@@ -324,4 +333,11 @@ public class GuardPatrolGoal extends Goal {
         }
         return best;
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

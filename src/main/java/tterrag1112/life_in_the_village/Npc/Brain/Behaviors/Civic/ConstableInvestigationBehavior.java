@@ -1,8 +1,13 @@
-package tterrag1112.life_in_the_village.Npc.Crime;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Memory.MemoryType;
@@ -11,7 +16,6 @@ import tterrag1112.life_in_the_village.Npc.Office.Powers.PowerGrant;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -31,50 +35,57 @@ import java.util.UUID;
  * constable's main daytime task. Yields to combat / survival
  * naturally because they're at lower numeric priority.</p>
  */
-public class ConstableInvestigationGoal extends Goal {
+public class ConstableInvestigationBehavior extends Behavior<TownspersonMob> {
 
     private static final int INTERACT_RANGE_SQ = 16;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public ConstableInvestigationBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private CrimeReport target;
     private boolean arrived;
 
-    public ConstableInvestigationGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
-        if (!(entity.level() instanceof ServerLevel level)) return false;
         if (!hasInvestigationPower(level)) return false;
         target = pickReport(level);
         return target != null;
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return target != null && entity.isAlive();
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         arrived = false;
         entity.setCurrentActivity("Investigating crime scene");
     }
 
     @Override
-    public void tick() {
-        if (target == null || !(entity.level() instanceof ServerLevel level)) return;
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        if (target == null) return;
         BlockPos scene = target.location();
         if (!arrived) {
             double distSq = entity.distanceToSqr(scene.getX(), scene.getY(), scene.getZ());
             if (distSq <= INTERACT_RANGE_SQ) {
                 arrived = true;
-                entity.getNavigation().stop();
+                entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             } else {
-                entity.getNavigation().moveTo(scene.getX(), scene.getY(), scene.getZ(), 1.0);
+                entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(scene.getX(), scene.getY(), scene.getZ(), 1.0));
                 return;
             }
         }
@@ -83,8 +94,9 @@ public class ConstableInvestigationGoal extends Goal {
         target = null;
     }
 
-    @Override public void stop() {
-        entity.getNavigation().stop();
+    @Override protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         target = null;
     }
 
@@ -194,4 +206,11 @@ public class ConstableInvestigationGoal extends Goal {
         if (credibility <= 0.3f) return 0.2f;
         return 0.5f;
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

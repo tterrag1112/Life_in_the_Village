@@ -1,10 +1,15 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
@@ -19,7 +24,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 
-public class VillageLeaderGoal extends Goal {
+public class VillageLeaderBehavior extends Behavior<TownspersonMob> {
 
     private enum Phase {
         IDLE,
@@ -35,7 +40,13 @@ public class VillageLeaderGoal extends Goal {
     private static final int INTERACT_RANGE_SQ = 9;
     private static final int CHECK_INTERVAL = 200;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public VillageLeaderBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private int idleCooldown = 0;
     private int phaseTimer = 0;
@@ -46,16 +57,14 @@ public class VillageLeaderGoal extends Goal {
     private List<BlockPos> inspectPoints = new ArrayList<>();
     private int inspectIndex = 0;
 
-    public VillageLeaderGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         VillageSavedData data = VillageSavedData.get(level);
         village = findVillage(level, data);
@@ -66,7 +75,8 @@ public class VillageLeaderGoal extends Goal {
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phaseTimer = 0;
         // Alternate between inspecting and managing
         if (entity.getRandom().nextBoolean()) {
@@ -78,17 +88,15 @@ public class VillageLeaderGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
         return phase != Phase.IDLE;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phaseTimer++;
         checkTimer++;
 
@@ -125,7 +133,7 @@ public class VillageLeaderGoal extends Goal {
 
         if (distSq <= INTERACT_RANGE_SQ) {
             // Arrived at inspection point — look around
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             if (phaseTimer % 40 == 0) {
                 entity.getLookControl().setLookAt(
                         target.getX() + entity.getRandom().nextInt(6) - 3,
@@ -138,13 +146,13 @@ public class VillageLeaderGoal extends Goal {
                 inspectIndex++;
                 if (inspectIndex < inspectPoints.size()) {
                     BlockPos next = inspectPoints.get(inspectIndex);
-                    entity.getNavigation().moveTo(
-                            next.getX(), next.getY(), next.getZ(), 0.8);
+                    entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                            next.getX(), next.getY(), next.getZ(), 0.8));
                 }
             }
         } else if (!entity.getNavigation().isInProgress()) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 0.8);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 0.8));
         }
     }
 
@@ -164,10 +172,10 @@ public class VillageLeaderGoal extends Goal {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             // Hold a book to show managing
             if (phaseTimer == 1) {
                 entity.setItemInHand(
@@ -193,12 +201,12 @@ public class VillageLeaderGoal extends Goal {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         // Collect coins from town hall chest into treasury
         long collected = 0;
@@ -326,7 +334,7 @@ public class VillageLeaderGoal extends Goal {
             // leader's assignment loop runs steady-state; per-tick
             // log spam was confused for re-assignment churn during
             // testing.
-            org.slf4j.LoggerFactory.getLogger(VillageLeaderGoal.class).debug(
+            org.slf4j.LoggerFactory.getLogger(VillageLeaderBehavior.class).debug(
                     "Village leader assigned {} as {} to {}",
                     npc.getNpcName(), prof, building.getName());
         }
@@ -394,7 +402,6 @@ public class VillageLeaderGoal extends Goal {
         ));
 
         // Add each building origin
-        if (!(entity.level() instanceof ServerLevel level)) return;
         VillageSavedData data = VillageSavedData.get(level);
 
         village.getBuildingIds().stream()
@@ -429,12 +436,20 @@ public class VillageLeaderGoal extends Goal {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
         phaseTimer = 0;
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(
                 net.minecraft.world.InteractionHand.MAIN_HAND,
                 ItemStack.EMPTY);
     }
 
     @Override
-    public void stop() { goIdle(); }
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
+        goIdle(); }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

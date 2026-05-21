@@ -1,11 +1,16 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -18,7 +23,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 
-public class KingdomRulerGoal extends Goal {
+public class KingdomRulerBehavior extends Behavior<TownspersonMob> {
 
     private enum Phase {
         IDLE,
@@ -32,7 +37,13 @@ public class KingdomRulerGoal extends Goal {
     private static final int CHECK_INTERVAL = 600;
     private static final int INTERACT_RANGE_SQ = 9;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public KingdomRulerBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private int idleCooldown = 0;
     private int phaseTimer = 0;
@@ -41,16 +52,14 @@ public class KingdomRulerGoal extends Goal {
     private Kingdom kingdom = null;
     private Building throneRoom = null; // CASTLE or largest TOWN_HALL
 
-    public KingdomRulerGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         VillageSavedData data = VillageSavedData.get(level);
         kingdom = findKingdom(level, data);
@@ -61,7 +70,8 @@ public class KingdomRulerGoal extends Goal {
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phaseTimer = 0;
         phase = Phase.HOLDING_COURT;
         entity.setItemInHand(InteractionHand.MAIN_HAND,
@@ -69,17 +79,15 @@ public class KingdomRulerGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
         return phase != Phase.IDLE;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phaseTimer++;
         checkTimer++;
 
@@ -113,10 +121,10 @@ public class KingdomRulerGoal extends Goal {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
             // Look at visiting NPCs
             if (phaseTimer % 80 == 0) {
@@ -149,7 +157,7 @@ public class KingdomRulerGoal extends Goal {
             phaseTimer = 0;
         }
         // Stand still, look thoughtful
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
     }
 
     private void sendGuards(ServerLevel level) {
@@ -268,10 +276,18 @@ public class KingdomRulerGoal extends Goal {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
         phaseTimer = 0;
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
     }
 
     @Override
-    public void stop() { goIdle(); }
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
+        goIdle(); }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

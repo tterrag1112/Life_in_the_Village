@@ -6,8 +6,6 @@ import net.minecraft.world.entity.player.Player;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.*;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guild.GuildWorkerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.KingdomRulerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.VillageLeaderGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.CaravanMerchantGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.WanderingTraderGoal;
@@ -115,12 +113,11 @@ public final class ProfessionGoalFactory {
         //   (universal IDLE @0 + SOCIAL @0); GreeterAssignment now writes
         //   the GREET_TARGET memory instead of calling goal.assign().
         npc.goalSelector.addGoal(P_SOCIAL_LOW,  new ChildBirthGoal(npc));
-        // Phase 3 task 19: village_constable's investigation pass.
-        // canUse short-circuits when the NPC doesn't currently hold
-        // INVESTIGATE_CRIME, so non-constables pay only the Goal-list
-        // overhead.
-        npc.goalSelector.addGoal(P_WORK_PRIMARY,
-                new tterrag1112.life_in_the_village.Npc.Crime.ConstableInvestigationGoal(npc));
+        // Phase 6.2.d.4: ConstableInvestigationGoal migrated to
+        // ConstableInvestigationBehavior (universal WORK @1). The
+        // INVESTIGATE_CRIME power short-circuit still applies — the
+        // behavior's checkExtraStartConditions calls the same
+        // PowerGrant.hasPower check the goal did.
         // Phase 4 task 29: ephemeral visitors. canUse short-circuits
         // when the NPC isn't flagged as a visitor, so residents pay
         // only the Goal-list overhead.
@@ -243,24 +240,24 @@ public final class ProfessionGoalFactory {
         //   ProfessionBrainFactory.BUILDER (WORK @0 + @1+@1).
         REGISTRARS.put(Profession.BUILDER, npc -> {});
 
-        // ── Leadership ───────────────────────────────────────────────────────
-        REGISTRARS.put(Profession.VILLAGE_LEADER, npc ->
-                npc.goalSelector.addGoal(P_PATHFIND, new VillageLeaderGoal(npc)));
-
-        REGISTRARS.put(Profession.KINGDOM_RULER, npc ->
-                npc.goalSelector.addGoal(P_PATHFIND, new KingdomRulerGoal(npc)));
+        // Phase 6.2.d.4: VillageLeaderGoal + KingdomRulerGoal migrated to
+        // VillageLeaderBehavior + KingdomRulerBehavior via
+        // ProfessionBrainFactory at WORK @0. Empty registrars here.
+        REGISTRARS.put(Profession.VILLAGE_LEADER, npc -> {});
+        REGISTRARS.put(Profession.KINGDOM_RULER, npc -> {});
 
         // ── Military ─────────────────────────────────────────────────────────
+        // Phase 6.2.d.4: GuardPatrolGoal migrated to GuardPatrolBehavior
+        // via ProfessionBrainFactory.GUARD (WORK @0). CaravanGuardGoal
+        // defers to 6.2.d.5. Combat goals stay Goal-side — vanilla-shaped
+        // targetSelector + MeleeAttackGoal handlers are out of WORK scope.
         REGISTRARS.put(Profession.GUARD, npc -> {
             npc.goalSelector.addGoal(P_SURVIVAL,  new CaravanGuardGoal(npc));
             npc.goalSelector.addGoal(P_COMBAT,    new GuardEquipmentGoal(npc));
             npc.goalSelector.addGoal(P_COMBAT,    new MeleeAttackGoal(npc, 1.2, true));
-            npc.goalSelector.addGoal(P_PATHFIND,  new GuardPatrolGoal(npc));
             npc.targetSelector.addGoal(P_SURVIVAL, new GuardAttackGoal(npc));
             npc.targetSelector.addGoal(P_COMBAT,   new HurtByTargetGoal(npc));
             npc.targetSelector.addGoal(P_COMBAT, new GuardAwarenessGoal(npc));
-
-
         });
 
         // ── Guild ────────────────────────────────────────────────────────────
