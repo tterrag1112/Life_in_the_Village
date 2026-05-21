@@ -36,6 +36,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpe
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
+import tterrag1112.life_in_the_village.World.WeatherContext;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -290,8 +291,19 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         }
 
         if (!toReplant.isEmpty() && canPlant(role)) {
-            phase = Phase.REPLANTING;
-            return;
+            // Phase 6.3.3.h.4 — weather-aware pause: skilled non-
+            // APPRENTICE farmers wait out heavy rain before planting.
+            // APPRENTICEs keep working regardless (they follow the
+            // master's prior assignment without reading the sky).
+            boolean pause = !isApprentice
+                    && entity.getSkills().getLevel(
+                            tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING)
+                            >= ROTATION_SKILL_THRESHOLD
+                    && WeatherContext.shouldPauseFarming(level);
+            if (!pause) {
+                phase = Phase.REPLANTING;
+                return;
+            }
         }
 
         // Phase 6.3.3.f.1 — APPRENTICE workers skip BUYING_SEEDS (no
@@ -406,7 +418,11 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // existing seasonMult formula. soilQuality ranges 0.1–1.5.
         FarmPlot harvestedPlot = findPlotContaining(level, cropPos);
         float soilMult = harvestedPlot != null ? harvestedPlot.getSoilQuality() : 1.0f;
-        float yieldMult = seasonMult * soilMult;
+        // Phase 6.3.3.h.4 — weather contribution (rain bonus, thunder
+        // penalty). Drought / frost mechanics are deferred (no persistent
+        // weather tracker in the mod yet).
+        float weatherMult = WeatherContext.yieldMultiplier(level);
+        float yieldMult = seasonMult * soilMult * weatherMult;
 
         for (ItemStack drop : drops) {
             int scaledCount = 0;
