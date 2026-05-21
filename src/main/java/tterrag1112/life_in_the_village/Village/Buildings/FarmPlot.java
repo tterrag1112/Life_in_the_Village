@@ -223,10 +223,16 @@ public class FarmPlot {
                     Codec.LONG.optionalFieldOf("fallowSinceTick", 0L)
                             .forGetter(FarmPlot::getFallowSinceTick),
                     Codec.LONG.optionalFieldOf("lastCompostedTick", 0L)
-                            .forGetter(FarmPlot::getLastCompostedTick)
+                            .forGetter(FarmPlot::getLastCompostedTick),
+                    // Phase 6.3.3.h.6 — ANIMAL_PEN grazing tracking.
+                    // Optional with default 0 (never grazed); ignored
+                    // for CROP_FIELD plots.
+                    Codec.LONG.optionalFieldOf("lastGrazedTick", 0L)
+                            .forGetter(FarmPlot::getLastGrazedTick)
             ).apply(instance, (id, name, origin, radius, cropType, farmhouseId,
                               subtype, sectorId, polygonVertices,
-                              soilQuality, cropHistory, fallowSinceTick, lastCompostedTick) -> {
+                              soilQuality, cropHistory, fallowSinceTick, lastCompostedTick,
+                              lastGrazedTick) -> {
                 FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
                 sectorId.ifPresent(plot::setSectorId);
@@ -239,6 +245,7 @@ public class FarmPlot {
                 }
                 plot.fallowSinceTick = fallowSinceTick;
                 plot.lastCompostedTick = lastCompostedTick;
+                plot.lastGrazedTick = lastGrazedTick;
                 return plot;
             })
     );
@@ -273,6 +280,10 @@ public class FarmPlot {
     private long fallowSinceTick;
     /** Game tick of the most recent composting. 0 means never. */
     private long lastCompostedTick;
+    /** Phase 6.3.3.h.6 — ANIMAL_PEN: tick the pen was last grazed.
+     *  Rotation picks the pen with the smallest (oldest) value so
+     *  livestock spend time on the freshest pen. 0 = never grazed. */
+    private long lastGrazedTick;
 
     public static final int   MAX_HISTORY            = 4;
     public static final float SOIL_FLOOR             = 0.1f;
@@ -418,7 +429,27 @@ public class FarmPlot {
     }
     public long  getFallowSinceTick()         { return fallowSinceTick; }
     public long  getLastCompostedTick()       { return lastCompostedTick; }
+    public long  getLastGrazedTick()          { return lastGrazedTick; }
     public boolean isFallow()                 { return fallowSinceTick > 0L; }
+
+    /** Phase 6.3.3.h.6 — mark this pen as actively grazed at {@code now};
+     *  applies a small soilQuality (grass) penalty per call. */
+    public void onGrazed(long now) {
+        lastGrazedTick = now;
+        setSoilQuality(soilQuality - SOIL_DEC_PLANT);
+    }
+
+    /** Phase 6.3.3.h.6 — passive grass regrowth for ANIMAL_PEN plots
+     *  that haven't been grazed recently. Same daily curve as fallow
+     *  CROP_FIELDs but keyed off lastGrazedTick instead of
+     *  fallowSinceTick (pens never enter fallow state). */
+    public void tickPenRecovery(long now) {
+        if (lastGrazedTick == 0L) return;
+        long daysSince = (now - lastGrazedTick) / DAY_TICKS;
+        if (daysSince <= 0L) return;
+        setSoilQuality(soilQuality + SOIL_RECOVER_PER_DAY * (float) daysSince);
+        lastGrazedTick = now;
+    }
 
     public void setSoilQuality(float v) {
         this.soilQuality = Math.max(SOIL_FLOOR, Math.min(SOIL_CEILING, v));

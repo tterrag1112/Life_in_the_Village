@@ -831,7 +831,25 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         entity.setCurrentActivity("Tending animals");
 
+        // Phase 6.3.3.h.6 — anchor selection:
+        //   - Storm in progress → retreat to farmhouse anchor (livestock pen).
+        //   - Skilled non-APPRENTICE with ANIMAL_PEN plots → walk to the
+        //     active rotation pen (PastureRotation picks the freshest).
+        //   - Else → default farmhouse anchor (single-pen / unskilled).
         BlockPos anchor = farmhouse.getShape().getOrigin();
+        boolean storm = WeatherContext.isStorm(level);
+        boolean canRotate = !isApprenticeTier()
+                && entity.getSkills().getLevel(
+                        tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY)
+                        >= ROTATION_SKILL_THRESHOLD;
+        FarmPlot activePen = null;
+        if (!storm && canRotate) {
+            activePen = tterrag1112.life_in_the_village.Village.Roster
+                    .PastureRotation.chooseActivePen(level, farmhouse.getId())
+                    .orElse(null);
+            if (activePen != null) anchor = activePen.getOrigin();
+        }
+
         double distSq = entity.distanceToSqr(
                 anchor.getX(), anchor.getY(), anchor.getZ());
         if (distSq > INTERACT_RANGE_SQ * 4.0) {
@@ -844,6 +862,15 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         actionTimer++;
         if (actionTimer < TICKS_PER_ACTION) return;
         actionTimer = 0;
+
+        // Mark grazing pressure on the active pen (drops grass quality
+        // a tick; PastureRotation.chooseActivePen will pick a different
+        // pen next cycle once this one falls behind). Skip when at the
+        // farmhouse anchor (no pen actually grazed) or during storm.
+        if (activePen != null) {
+            activePen.onGrazed(level.getGameTime());
+            VillageSavedData.get(level).setDirty();
+        }
 
         tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
                 entity,
