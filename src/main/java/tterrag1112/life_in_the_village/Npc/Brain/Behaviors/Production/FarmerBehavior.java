@@ -109,7 +109,12 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         BUYING_SEEDS,
         /** Phase 6.3.3.e.1 — writes CARGO_DESTINATION + WORK_PHASE=SELL and
          *  hands off to the universal SellToMarketBehavior. */
-        AWAITING_SELL
+        AWAITING_SELL,
+        /** Phase 6.3.3.g — animal-tending mode for ANIMAL_SPECIALIST /
+         *  ANIMAL_TENDER / FERTILIZER roles. Roster cycle-tick handles
+         *  production output; this phase keeps the NPC at the animal
+         *  facility and awards ANIMAL_HUSBANDRY XP periodically. */
+        TENDING_ANIMALS
     }
 
     
@@ -154,6 +159,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             case REPLANTING         -> replant(level);
             case BUYING_SEEDS       -> buySeeds(level);
             case AWAITING_SELL      -> { /* SellToMarketBehavior owns the loop */ }
+            case TENDING_ANIMALS    -> tendAnimals(level);
         }
     }
 
@@ -197,6 +203,18 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         // Role-based task filtering
         FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
+
+        // Phase 6.3.3.g.3 — animal-role workers bypass crop work entirely.
+        // The roster cycle-tick handles production output passively; this
+        // branch keeps the NPC at the animal facility for animation +
+        // periodic XP awards.
+        if (role == FarmRole.ANIMAL_SPECIALIST
+                || role == FarmRole.ANIMAL_TENDER
+                || role == FarmRole.FERTILIZER) {
+            phase = Phase.TENDING_ANIMALS;
+            entity.setCurrentActivity("Tending animals");
+            return;
+        }
 
         // Phase 6.3.3.f.1 — tier-aware constraints. APPRENTICE workers
         // operate on their assigned plot only (single-plot mode, matches
@@ -607,6 +625,57 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                     entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.COMMERCE,
                     1, level.getGameTime());
         }
+
+        phase = Phase.ANALYZING;
+    }
+
+    // =========================================================================
+    // Phase: TENDING ANIMALS
+    // =========================================================================
+
+    /**
+     * Phase 6.3.3.g.3 — animal-tending scaffold for ANIMAL_SPECIALIST /
+     * ANIMAL_TENDER / FERTILIZER roles. The actual production output is
+     * driven passively by the {@link tterrag1112.life_in_the_village.Village.Roster.BuildingRoster}
+     * cycle tick; this method just:
+     * <ul>
+     *   <li>Keeps the worker near the farmhouse anchor (animation /
+     *       grounding — animal facilities resolve via adjunct plots in
+     *       later content phases)</li>
+     *   <li>Awards {@link tterrag1112.life_in_the_village.Npc.Skills.Skill#ANIMAL_HUSBANDRY}
+     *       XP on a {@link #TICKS_PER_ACTION} cadence (cascades 25% →
+     *       FARMING via the hierarchical Skill tree)</li>
+     *   <li>Returns to ANALYZING once the loop expires so role / phase
+     *       routing can re-evaluate</li>
+     * </ul>
+     *
+     * <p>BEEKEEPING-specific XP routing and per-facility navigation are
+     * deferred — they need adjunct-plot ActivityTag queries that land in
+     * later phases of this content pass.
+     */
+    private void tendAnimals(ServerLevel level) {
+        if (farmhouse == null) { goIdle(); return; }
+
+        entity.setCurrentActivity("Tending animals");
+
+        BlockPos anchor = farmhouse.getShape().getOrigin();
+        double distSq = entity.distanceToSqr(
+                anchor.getX(), anchor.getY(), anchor.getZ());
+        if (distSq > INTERACT_RANGE_SQ * 4.0) {
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    anchor.getX(), anchor.getY(), anchor.getZ(), 1.0));
+        } else {
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        }
+
+        actionTimer++;
+        if (actionTimer < TICKS_PER_ACTION) return;
+        actionTimer = 0;
+
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity,
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY,
+                1, level.getGameTime());
 
         phase = Phase.ANALYZING;
     }
