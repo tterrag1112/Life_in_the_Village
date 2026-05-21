@@ -1,6 +1,12 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.core.Vec3i;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
@@ -8,7 +14,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.SimpleContainer;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -35,7 +40,7 @@ import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class BuilderGoal extends Goal {
+public class BuilderBehavior extends Behavior<TownspersonMob> {
 
     private enum Phase {
         IDLE, ANALYZING, WALKING_TO_WORKSHOP,
@@ -73,7 +78,13 @@ public class BuilderGoal extends Goal {
     }
 
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public BuilderBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private int idleTimer = 0;
     private int constructionTimer = 0;
@@ -86,16 +97,15 @@ public class BuilderGoal extends Goal {
     private static final int IDLE_INTERVAL = 400; // check every 20 seconds
     private static final int TICKS_PER_BLOCK = 2; // construction time scaling
 
-    public BuilderGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    
 
     private int idleCooldown = 0;
     private static final int IDLE_COOLDOWN = 400;
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
 
         if (idleCooldown > 0) { idleCooldown--; return false; }
@@ -104,12 +114,14 @@ public class BuilderGoal extends Goal {
         return phase == Phase.IDLE && entity.getRandom().nextInt(20) == 0;
     }
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phase = Phase.ANALYZING;
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
 
         idleCooldown = IDLE_COOLDOWN;
@@ -118,7 +130,8 @@ public class BuilderGoal extends Goal {
     }
 
     @Override
-    public void tick() {
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         //System.out.println("BuilderGoal tick - phase: " + phase);
         if (!(entity.level() instanceof ServerLevel serverLevel)) return;
 
@@ -225,13 +238,13 @@ public class BuilderGoal extends Goal {
         );
 
         if (dist > 4) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     workshopCenter.getX(), workshopCenter.getY(),
                     workshopCenter.getZ(), 1.0
-            );
+            ));
         } else {
             // Arrived at workshop
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             phase = Phase.GATHERING;
         }
     }
@@ -338,11 +351,11 @@ public class BuilderGoal extends Goal {
 
 
         if (dist > 4) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     target.getX(), target.getY(), target.getZ(), 1.0
-            );
+            ));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
             var size = targetBuilding.getShape();
             int volume = size.getWidth() * size.getHeight() * size.getLength();
@@ -563,12 +576,12 @@ public class BuilderGoal extends Goal {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > 9) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         BuildingType type = currentExpansion.getBuildingType();
 
@@ -747,8 +760,9 @@ public class BuilderGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         if (entity.level() instanceof ServerLevel serverLevel) {
             returnItemsToStockpile(serverLevel);
@@ -777,5 +791,12 @@ public class BuilderGoal extends Goal {
                                  + newBuilding.getType() + " — "
                                  + newBuilding.getName());
       }
+
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
 
 }

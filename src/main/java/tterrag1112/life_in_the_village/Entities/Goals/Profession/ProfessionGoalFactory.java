@@ -3,12 +3,7 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.player.Player;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderMaintenanceGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder.BuilderRepaintGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmhandGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.*;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guild.GuildWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Innkeeper.InnkeeperGoal;
@@ -17,7 +12,6 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.VillageL
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.CaravanMerchantGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.MerchantGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.WanderingTraderGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Miner.MinerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.StockpileKeeper.StockpileKeeperGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopStallDecisionGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
@@ -186,22 +180,17 @@ public final class ProfessionGoalFactory {
 
     static {
         // ── Production professions ───────────────────────────────────────────
+        // Phase 6.2.d.2 — FARMER migrated to FarmerBehavior (WORK @0).
+        //   PostJobGoal inlined as a tick-side-effect in FarmerBehavior.
+        //   SellToMarketGoal + PostListingGoal handled via CARGO_DESTINATION
+        //   → universal SellToMarketBehavior.
         REGISTRARS.put(Profession.FARMER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new FarmerGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new PostJobGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new SellToMarketGoal(npc, npc.getSellableItems(Profession.FARMER)));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new PostListingGoal(npc, npc.getSellableItems(Profession.FARMER)));
-            npc.goalSelector.addGoal(P_SOCIAL_LOW,        // ← new
+            npc.goalSelector.addGoal(P_SOCIAL_LOW,
                     new WorkshopStallDecisionGoal(npc));
         });
 
-        REGISTRARS.put(Profession.FARMHAND, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new FarmhandGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new SellToMarketGoal(npc, npc.getSellableItems(Profession.FARMHAND)));
-        });
+        // Phase 6.2.d.2 — FARMHAND migrated to FarmhandBehavior (WORK @0).
+        REGISTRARS.put(Profession.FARMHAND, npc -> {});
 
         // Phase 6.2.d.1 — 7 workshop production goals migrated to per-profession
         // ProductionBehaviors wired via ProfessionBrainFactory (WORK @ 0).
@@ -226,18 +215,10 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.WEAVER, npc -> {});
         REGISTRARS.put(Profession.CANDLEMAKER, npc -> {});
 
-        REGISTRARS.put(Profession.MINER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new MinerGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new SellToMarketGoal(npc, npc.getSellableItems(Profession.MINER)));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new PostListingGoal(npc, npc.getSellableItems(Profession.MINER)));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY,
-                    new BuyFromNpcGoal(npc,
-                            npc::needsPickaxe,
-                            () -> net.minecraft.world.item.Items.IRON_PICKAXE,
-                            () -> 1, 400));
-        });
+        // Phase 6.2.d.2 — MINER migrated to MinerBehavior (WORK @0).
+        //   BuyFromNpcGoal (pickaxe procurement) folded into MinerBehavior
+        //   BUYING phase. SellToMarket + PostListing routed via CARGO_DESTINATION.
+        REGISTRARS.put(Profession.MINER, npc -> {});
 
         // ── Service professions ──────────────────────────────────────────────
         REGISTRARS.put(Profession.MERCHANT, npc -> {
@@ -258,14 +239,10 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.STOCKPILE_KEEPER, npc ->
                 npc.goalSelector.addGoal(P_WORK_PRIMARY, new StockpileKeeperGoal(npc)));
 
-        REGISTRARS.put(Profession.BUILDER, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY, new BuilderGoal(npc));
-            npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderMaintenanceGoal(npc));
-            // P0a-13: player-requested repaints — runs alongside the
-            // primary build queue and the maintenance pass; canUse()
-            // gates on whether a job is attached to the NPC.
-            npc.goalSelector.addGoal(P_WORK_SECONDARY, new BuilderRepaintGoal(npc));
-        });
+        // Phase 6.2.d.2 — BUILDER cluster migrated to BuilderBehavior +
+        //   BuilderMaintenanceBehavior + BuilderRepaintBehavior, wired via
+        //   ProfessionBrainFactory.BUILDER (WORK @0 + @1+@1).
+        REGISTRARS.put(Profession.BUILDER, npc -> {});
 
         // ── Leadership ───────────────────────────────────────────────────────
         REGISTRARS.put(Profession.VILLAGE_LEADER, npc ->

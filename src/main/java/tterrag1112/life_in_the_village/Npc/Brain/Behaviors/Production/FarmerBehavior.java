@@ -1,14 +1,18 @@
-// src/main/java/tterrag1112/life_in_the_village/Entities/Goals/Profession/Farmer/FarmerGoal.java
 
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.SimpleContainer;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -53,7 +57,7 @@ import java.util.stream.Collectors;
  * owns that flow. It uses dynamic pricing, pays the merchant correctly,
  * and hooks {@code WorkplaceAssignmentManager.onWorkplaceSale()}.
  */
-public class FarmerGoal extends Goal {
+public class FarmerBehavior extends Behavior<TownspersonMob> {
 
     // =========================================================================
     // Constants
@@ -67,7 +71,13 @@ public class FarmerGoal extends Goal {
     // State
     // =========================================================================
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public FarmerBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
 
     private Phase phase;
     private int   actionTimer;
@@ -89,22 +99,16 @@ public class FarmerGoal extends Goal {
         BUYING_SEEDS
     }
 
-    public FarmerGoal(TownspersonMob entity) {
-        this.entity             = entity;
-        this.phase              = Phase.IDLE;
-        this.toHarvest          = new ArrayList<>();
-        this.toReplant          = new ArrayList<>();
-        this.harvestedThisCycle = new HashMap<>();
-        this.assignedPlots      = new ArrayList<>();
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     // =========================================================================
     // Goal lifecycle
     // =========================================================================
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!(entity.level() instanceof ServerLevel)) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
         if (!entity.isWorkTime()) return false;
@@ -112,19 +116,21 @@ public class FarmerGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return phase != Phase.IDLE;
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phase = Phase.ANALYZING;
         actionTimer = 0;
     }
 
     @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
 
         switch (phase) {
             case IDLE               -> { /* no-op */ }
@@ -138,7 +144,8 @@ public class FarmerGoal extends Goal {
     }
 
     @Override
-    public void stop() { goIdle(); }
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
+        goIdle(); }
 
     // =========================================================================
     // Phase: ANALYZING
@@ -247,12 +254,12 @@ public class FarmerGoal extends Goal {
                 cropPos.getX(), cropPos.getY(), cropPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    cropPos.getX(), cropPos.getY(), cropPos.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    cropPos.getX(), cropPos.getY(), cropPos.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         BlockState state = level.getBlockState(cropPos);
         if (!(state.getBlock() instanceof CropBlock crop)) {
@@ -307,10 +314,10 @@ public class FarmerGoal extends Goal {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             phase = Phase.DEPOSITING;
         }
     }
@@ -360,12 +367,12 @@ public class FarmerGoal extends Goal {
                 targetPos.getX(), targetPos.getY(), targetPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    targetPos.getX(), targetPos.getY(), targetPos.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    targetPos.getX(), targetPos.getY(), targetPos.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         if (!(level.getBlockState(targetPos.below()).getBlock() instanceof FarmBlock)) {
             toReplant.remove(0);
@@ -408,12 +415,12 @@ public class FarmerGoal extends Goal {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         VillageSavedData data = VillageSavedData.get(level);
         UUID villageId = entity.getAssignedVillageName()
@@ -543,8 +550,15 @@ public class FarmerGoal extends Goal {
         idleCooldown = IDLE_COOLDOWN;
         toHarvest.clear();
         toReplant.clear();
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

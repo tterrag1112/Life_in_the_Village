@@ -8,9 +8,15 @@ import tterrag1112.life_in_the_village.Entities.LifeStage;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.PostalBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BakerProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BlacksmithProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderMaintenanceBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderRepaintBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CandlemakerProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CarpenterProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmhandBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MillerProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MinerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.StonemasonProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.WeaverProductionBehavior;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -74,6 +80,34 @@ public final class ProfessionBrainFactory {
         REGISTRARS.put(Profession.WEAVER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new WeaverProductionBehavior())));
+
+        // Phase 6.2.d.2 — outdoor work cluster.
+        // BUILDER: 3 behaviors. Primary build-queue at WORK @ 0;
+        // Maintenance + Repaint share WORK @ 1 (parity with the
+        // original P_WORK_SECONDARY pairing).
+        REGISTRARS.put(Profession.BUILDER, (npc, brain) -> {
+            brain.addActivity(NpcActivities.WORK.get(), 0,
+                    ImmutableList.of(new BuilderBehavior()));
+            brain.addActivity(NpcActivities.WORK.get(), 1,
+                    ImmutableList.of(
+                            new BuilderMaintenanceBehavior(),
+                            new BuilderRepaintBehavior()));
+        });
+
+        // FARMER + FARMHAND: separate behaviors per separate Goal classes.
+        // FarmerBehavior includes the inlined PostJob periodic side-effect.
+        REGISTRARS.put(Profession.FARMER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new FarmerBehavior())));
+        REGISTRARS.put(Profession.FARMHAND, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new FarmhandBehavior())));
+
+        // MINER: single behavior with inlined ChannelRouter procurement
+        // (BuyFromNpc fold) and CARGO_DESTINATION-based sell handoff.
+        REGISTRARS.put(Profession.MINER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new MinerBehavior())));
     }
 
     /**

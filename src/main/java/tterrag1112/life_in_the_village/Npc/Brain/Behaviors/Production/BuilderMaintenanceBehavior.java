@@ -1,13 +1,17 @@
-// src/main/java/tterrag1112/life_in_the_village/Entities/Goals/Profession/Builder/BuilderMaintenanceGoal.java
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Builder;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
@@ -43,7 +47,7 @@ import java.util.*;
  * is added to Building, this goal uses a local in-memory map keyed by
  * building UUID so it still compiles and functions immediately.
  */
-public class BuilderMaintenanceGoal extends Goal {
+public class BuilderMaintenanceBehavior extends Behavior<TownspersonMob> {
 
     // -------------------------------------------------------------------------
     // Constants
@@ -62,7 +66,13 @@ public class BuilderMaintenanceGoal extends Goal {
 
     private enum Phase { IDLE, WALKING, REPAIRING }
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public BuilderMaintenanceBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase  phase        = Phase.IDLE;
     private int    idleTimer    = 0;
     private int    repairTimer  = 0;
@@ -74,29 +84,27 @@ public class BuilderMaintenanceGoal extends Goal {
     // Constructor
     // -------------------------------------------------------------------------
 
-    public BuilderMaintenanceGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    
 
     // -------------------------------------------------------------------------
     // Goal lifecycle
     // -------------------------------------------------------------------------
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         idleTimer++;
         if (idleTimer < SCAN_INTERVAL) return false;
         idleTimer = 0;
-
-        if (!(entity.level() instanceof ServerLevel level)) return false;
         targetBuilding = findRepairTarget(level);
         return targetBuilding != null;
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phase       = Phase.WALKING;
         repairTimer = 0;
         entity.setCurrentActivity("Heading to maintain " + targetBuilding.getName());
@@ -104,22 +112,20 @@ public class BuilderMaintenanceGoal extends Goal {
                 new ItemStack(Items.IRON_AXE));
 
         BlockPos dest = targetBuilding.getShape().getOrigin();
-        entity.getNavigation().moveTo(
-                dest.getX() + 0.5, dest.getY(), dest.getZ() + 0.5, 1.0);
+        entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                dest.getX() + 0.5, dest.getY(), dest.getZ() + 0.5, 1.0));
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
         return phase != Phase.IDLE && targetBuilding != null;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
 
         switch (phase) {
             case WALKING  -> tickWalking(level);
@@ -129,8 +135,9 @@ public class BuilderMaintenanceGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
         phase = Phase.IDLE;
@@ -148,12 +155,12 @@ public class BuilderMaintenanceGoal extends Goal {
                 dest.getX(), dest.getY(), dest.getZ());
 
         if (distSq <= INTERACT_RANGE_SQ) {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             phase = Phase.REPAIRING;
             entity.setCurrentActivity("Maintaining " + targetBuilding.getName());
         } else if (!entity.getNavigation().isInProgress()) {
-            entity.getNavigation().moveTo(
-                    dest.getX() + 0.5, dest.getY(), dest.getZ() + 0.5, 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    dest.getX() + 0.5, dest.getY(), dest.getZ() + 0.5, 1.0));
         }
     }
 
@@ -251,4 +258,11 @@ public class BuilderMaintenanceGoal extends Goal {
             case MAINTAINED  -> 0;
         };
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

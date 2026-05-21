@@ -1,11 +1,16 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Miner;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -16,9 +21,8 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.MiningYieldData;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.MiningYieldRegistry;
 
-import java.util.EnumSet;
 
-public class MinerGoal extends Goal {
+public class MinerBehavior extends Behavior<TownspersonMob> {
 
     private enum Phase {
         IDLE, WALKING_TO_MINE, MINING, DEPOSITING
@@ -28,7 +32,13 @@ public class MinerGoal extends Goal {
     private static final int INTERACT_RANGE_SQ = 9;
     private static final int DEPOSIT_THRESHOLD = 16; // deposit when carrying this many items
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public MinerBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private int idleCooldown = 0;
     private int miningTimer = 0;
@@ -37,17 +47,15 @@ public class MinerGoal extends Goal {
     private Building mine = null;
     private BlockPos minePos = null;
 
-    public MinerGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         if (entity.isWorkingBlocked()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         mine = findMine(level);
         if (mine == null) return false;
@@ -61,7 +69,8 @@ public class MinerGoal extends Goal {
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phase = Phase.WALKING_TO_MINE;
         miningTimer = 0;
         nextYieldTick = 100; // short initial delay before first yield
@@ -70,17 +79,15 @@ public class MinerGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
         return phase != Phase.IDLE;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
 
         switch (phase) {
             case WALKING_TO_MINE -> walkToMine();
@@ -97,11 +104,11 @@ public class MinerGoal extends Goal {
                 minePos.getX(), minePos.getY(), minePos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     minePos.getX(), minePos.getY(),
-                    minePos.getZ(), 1.0);
+                    minePos.getZ(), 1.0));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             miningTimer = 0;
 
             // Schedule first yield
@@ -194,12 +201,12 @@ public class MinerGoal extends Goal {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
-                    target.getX(), target.getY(), target.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         var inv = entity.getPersonalInventory();
 
         for (int i = 0; i < inv.getContainerSize(); i++) {
@@ -222,8 +229,9 @@ public class MinerGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         goIdle();
     }
@@ -232,7 +240,7 @@ public class MinerGoal extends Goal {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
         miningTimer = 0;
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
     }
 
@@ -251,4 +259,11 @@ public class MinerGoal extends Goal {
         }
         return total >= DEPOSIT_THRESHOLD; // DEPOSIT_THRESHOLD = 16 items total
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }
