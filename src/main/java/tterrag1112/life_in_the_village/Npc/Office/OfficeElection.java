@@ -82,6 +82,14 @@ public final class OfficeElection {
                 orgType, orgId, state, def, level.getGameTime());
 
         Optional<OfficeHolding> chosen = engine.select(ctx);
+        // Phase 6.3.2.d — eligibility predicate consultation. If the
+        // engine chose an NPC candidate, ask the registered predicate
+        // whether the culture/content rules permit the seating. Failure
+        // is treated the same as engine-declined: office stays in its
+        // current state for this cycle.
+        if (chosen.isPresent()) {
+            chosen = applyPredicate(chosen, orgType, orgId, def, method, level, vdata);
+        }
         if (chosen.isEmpty()) {
             // Engine declined — leave the office in its current state
             // (vacant if it was vacant). Persist the actualSelection so
@@ -186,6 +194,11 @@ public final class OfficeElection {
      * Replaces the office's current holder with {@code playerId}, used by
      * the appointment verb. Fires {@link NpcLifeEvent.Promoted} if the
      * incoming holder is an NPC (player promotions don't fire NPC events).
+     *
+     * <p>Phase 6.3.2.d — player seating bypasses the eligibility
+     * predicate. Player-driven appointment is the sovereign action; if
+     * a culture rule wants to block a player appointment it must do so
+     * at the verb / dialogue layer.
      */
     public static void seatPlayer(OrgType orgType, UUID orgId, String officeId,
                                   UUID playerId, ServerLevel level) {
@@ -204,15 +217,52 @@ public final class OfficeElection {
         emitChangeEvents(level, orgType, orgId, def, previous, holding);
     }
 
-    /** Same shape as {@link #seatPlayer} but for an NPC successor. */
-    public static void seatNpc(OrgType orgType, UUID orgId, String officeId,
-                               UUID npcId, SelectionMethod recordedAs,
-                               ServerLevel level) {
+    /**
+     * Gated NPC seating path — consults the
+     * {@link tterrag1112.life_in_the_village.Npc.Office.OfficeEligibilityPredicate
+     * eligibility predicate} registered for {@code (culture, officeId)}.
+     * Returns true if the seating took effect, false when the predicate
+     * rejected the candidate (office unchanged).
+     *
+     * @see #seatNpcForced for the admin/debug bypass.
+     */
+    public static boolean seatNpc(OrgType orgType, UUID orgId, String officeId,
+                                  UUID npcId, SelectionMethod recordedAs,
+                                  ServerLevel level) {
+        return seatNpcInternal(orgType, orgId, officeId, npcId, recordedAs, level, false);
+    }
+
+    /**
+     * Forced NPC seating — skips the eligibility predicate. Reserved
+     * for debug commands, save migration, and other administrative
+     * paths that must succeed.
+     */
+    public static void seatNpcForced(OrgType orgType, UUID orgId, String officeId,
+                                     UUID npcId, SelectionMethod recordedAs,
+                                     ServerLevel level) {
+        seatNpcInternal(orgType, orgId, officeId, npcId, recordedAs, level, true);
+    }
+
+    private static boolean seatNpcInternal(OrgType orgType, UUID orgId, String officeId,
+                                           UUID npcId, SelectionMethod recordedAs,
+                                           ServerLevel level, boolean force) {
         OfficeDefinition def = OfficeRegistry.get(officeId);
-        if (def == null) return;
+        if (def == null) return false;
         VillageSavedData vdata = VillageSavedData.get(level);
         OfficeState state = stateOf(orgType, orgId, level, vdata);
-        if (state == null) return;
+        if (state == null) return false;
+        if (!force) {
+            TownspersonMob candidate = TownspersonMob.findByUUID(level, npcId).orElse(null);
+            if (candidate != null) {
+                OfficeEligibilityPredicate predicate = OfficeEligibilityRegistry.resolve(
+                        cultureOf(orgType, orgId, level, vdata), officeId);
+                if (!predicate.qualifies(candidate, new OfficeContext(
+                        def, orgType, orgId, recordedAs,
+                        cultureOf(orgType, orgId, level, vdata), level, vdata))) {
+                    return false;
+                }
+            }
+        }
         long now = level.getGameTime();
         long termEnd = def.isIndefiniteTerm() ? 0L : now + (long) def.termDays() * 24000L;
         OfficeHolding previous = state.get(officeId).orElse(null);
@@ -221,6 +271,7 @@ public final class OfficeElection {
         state.set(officeId, holding);
         markDirty(orgType, orgId, level, vdata);
         emitChangeEvents(level, orgType, orgId, def, previous, holding);
+        return true;
         // Track D3.3b — kingdom-tier office grants ennoblement to
         // commoner appointees. No-op for non-kingdom seats and for
         // already-ranked NPCs.
@@ -299,6 +350,34 @@ public final class OfficeElection {
             case VILLAGE -> vdata.getKingdomForVillage(orgId).map(Kingdom::getCulture).orElse(null);
             default -> null;
         };
+    }
+
+    /**
+     * Phase 6.3.2.d — checks the registered
+     * {@link OfficeEligibilityPredicate} against the engine's chosen
+     * candidate. Player-held offices and vacant holdings pass through
+     * unchanged (predicates only gate NPC seating). Returns
+     * {@link Optional#empty()} when the predicate rejects, so the
+     * caller can treat it as engine-declined.
+     */
+    private static Optional<OfficeHolding> applyPredicate(Optional<OfficeHolding> chosen,
+                                                          OrgType orgType, UUID orgId,
+                                                          OfficeDefinition def,
+                                                          SelectionMethod method,
+                                                          ServerLevel level,
+                                                          VillageSavedData vdata) {
+        if (chosen.isEmpty()) return chosen;
+        OfficeHolding holding = chosen.get();
+        if (!holding.holderIsNpc()) return chosen; // vacant or player-held — predicates only gate NPC seating
+        UUID npcId = holding.holderNpcId().orElse(null);
+        if (npcId == null) return chosen;
+        TownspersonMob candidate = TownspersonMob.findByUUID(level, npcId).orElse(null);
+        if (candidate == null) return chosen; // candidate offline; allow seating, predicate will re-check next cycle
+        String cultureId = cultureOf(orgType, orgId, level, vdata);
+        OfficeEligibilityPredicate predicate =
+                OfficeEligibilityRegistry.resolve(cultureId, def.id());
+        OfficeContext ctx = new OfficeContext(def, orgType, orgId, method, cultureId, level, vdata);
+        return predicate.qualifies(candidate, ctx) ? chosen : Optional.empty();
     }
 
     // ── Event emission ─────────────────────────────────────────────────────

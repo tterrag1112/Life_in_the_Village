@@ -307,7 +307,8 @@ public final class OfficeDebugCommand {
         if (isOnlinePlayer) {
             OfficeElection.seatPlayer(h.orgType, h.uuid, officeId, holderUuid, src.getLevel());
         } else {
-            OfficeElection.seatNpc(h.orgType, h.uuid, officeId, holderUuid,
+            // Phase 6.3.2.d — debug command bypasses the eligibility predicate.
+            OfficeElection.seatNpcForced(h.orgType, h.uuid, officeId, holderUuid,
                     SelectionMethod.APPOINTED, src.getLevel());
         }
         h.persist.run();

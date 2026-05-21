@@ -88,6 +88,26 @@ public final class CultureBundles {
             return Optional.ofNullable(preferredSelection.get(officeId));
         }
 
+        /**
+         * Phase 6.3.2.d — convenience entry into the
+         * {@link tterrag1112.life_in_the_village.Npc.Office.OfficeEligibilityRegistry
+         * OfficeEligibilityRegistry}. Returns the effective predicate
+         * for {@code (cultureId, officeId)}, or
+         * {@link tterrag1112.life_in_the_village.Npc.Office.OfficeEligibilityPredicate#ALWAYS}
+         * when no predicate is registered.
+         *
+         * <p>The predicate is intentionally NOT part of the
+         * {@link CultureOfficeRules} record fields — predicates are
+         * behavior (not codec'able data), so the canonical storage is
+         * the runtime registry. Culture content packs register their
+         * predicates at mod init; this static reads them.
+         */
+        public static tterrag1112.life_in_the_village.Npc.Office.OfficeEligibilityPredicate
+                resolveEligibility(String cultureId, String officeId) {
+            return tterrag1112.life_in_the_village.Npc.Office.OfficeEligibilityRegistry
+                    .resolve(cultureId, officeId);
+        }
+
         public static final Codec<CultureOfficeRules> CODEC = RecordCodecBuilder.create(i -> i.group(
                 Codec.unboundedMap(Codec.STRING,
                                 Codec.STRING.xmap(s -> SelectionMethod.valueOf(s.toUpperCase(Locale.ROOT)),

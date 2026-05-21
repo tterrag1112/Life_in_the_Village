@@ -29,6 +29,31 @@ import java.util.UUID;
  * {@code /npc offices}. The walker iterates every Village, GuildData,
  * Company, and Kingdom in the level — at v1 scale (low hundreds of orgs)
  * this is a sub-millisecond pass; document if it ever becomes hot.</p>
+ *
+ * <h3>Storage axis (Phase 6.3.2.d)</h3>
+ * <p>Office holdings are <em>org-bound</em>: each {@link Village} /
+ * {@link Kingdom} / {@link GuildData} / {@link Company} owns its own
+ * {@link OfficeState} carrying the per-office {@link OfficeHolding}s.
+ * This is intentionally <strong>different</strong> from the other three
+ * NPC taxonomy axes — Role lives in {@link
+ * tterrag1112.life_in_the_village.Npc.Roles.NpcRoleComponent
+ * NpcRoleComponent} and Specialization lives in {@link
+ * tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationComponent
+ * NpcSpecializationComponent} on the entity itself, because Role and
+ * Specialization are NPC attributes. Office is a property of the
+ * <em>scope</em> the NPC happens to serve in; the NPC could die and
+ * the office vacates at the org level.
+ *
+ * <p>The inverse query — "what offices does NPC X hold across the
+ * world?" — is provided by {@link #findOfficesHeldBy} and by
+ * {@link tterrag1112.life_in_the_village.Npc.Office.Powers.PowerGrant#allOffices}.
+ *
+ * <h3>Eligibility extensibility (Phase 6.3.2.d)</h3>
+ * <p>Per-(culture, office) eligibility predicates plug in via
+ * {@link OfficeEligibilityRegistry}. {@link OfficeElection#runElection},
+ * {@link OfficeElection#seatNpc}, and the appointment verb consult the
+ * resolved predicate before committing the seating; force-variants
+ * skip the check for admin / debug.
  */
 public final class OfficeRegistry {
 
