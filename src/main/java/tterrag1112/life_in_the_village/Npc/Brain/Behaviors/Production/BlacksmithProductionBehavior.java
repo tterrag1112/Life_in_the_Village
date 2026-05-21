@@ -54,9 +54,13 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
      * Prioritises smelt (build ingot stock) over craft.
      * Uses productionTarget() to pick the specific item.
      *
-     * <p>Honors the NPC's {@link BlacksmithSpecialization} — a TOOLSMITH
-     * will skip armor and weapon recipes even if they would otherwise match.
-     * A null or GENERALIST specialization accepts everything.</p>
+     * <p>Phase 6.3.2.c — <em>bias not gate</em>: all blacksmiths can
+     * craft all categories. Specialization adjusts selection priority
+     * in the opportunistic branch via {@link #specialtyWeight}; a
+     * lone TOOLSMITH in a village will still pick up an armor order
+     * if no tool order is pending (weight 1.0 &gt; 0). Target-driven
+     * commissions skip the bias check entirely — a commission is a
+     * commission.
      */
     @Override
     protected Optional<ProductionRecipe> chooseRecipe(ServerLevel level,
@@ -64,16 +68,12 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
         Optional<Item> target = productionTarget(level, building);
 
-        // Read this NPC's specialization (may be null → treat as generalist)
-        BlacksmithSpecialization spec = getSpecialization(BlacksmithSpecialization.class);
-
-        // ── Try to fill the priority target ──────────────────────────────────
+        // ── Try to fill the priority target (commission overrides bias) ─────
         if (target.isPresent()) {
             Item t = target.get();
 
             for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
                 if (r.output() != t) continue;
-                if (spec != null && !spec.allowsOutput(r.output())) continue;
                 if (countFromOreSource(level, r.input()) > 0) {
                     isSmeltRecipe = true;
                     return Optional.of(ProductionRecipe.of(
@@ -83,7 +83,6 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
 
             for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
                 if (r.output() != t) continue;
-                if (spec != null && !spec.allowsOutput(r.output())) continue;
                 int avail = BuildingStorageAccess.countItem(level, building, r.input());
                 if (avail >= r.inputCount()) {
                     isSmeltRecipe = false;
@@ -93,9 +92,8 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
             }
         }
 
-        // ── Opportunistic: smelt any available ore ────────────────────────────
-        // Smelting is allowed for every specialization — ingots are inputs
-        // to the spec's real recipes, not finished goods.
+        // ── Opportunistic: smelt any available ore (no spec bias — ingots
+        //     are intermediate goods, no specialty has preference) ──────────
         for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
             int oreAvail  = countFromOreSource(level, r.input());
             int ingotStock = BuildingStorageAccess.countItem(level, building, r.output());
@@ -107,20 +105,21 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
             }
         }
 
-        // ── Opportunistic: craft with available ingots ─────────────────────────
+        // ── Opportunistic: craft with available ingots, biased by spec ─────
+        // Sort by (specialty weight × under-quota urgency). Highest score wins;
+        // ties broken by enum iteration order. All categories remain available.
         BlacksmithRecipeData.CraftingRecipe best = null;
-        double lowestRatio = Double.MAX_VALUE;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        BlacksmithSpecialization spec = getSpecialization(BlacksmithSpecialization.class);
         for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
-            // Filter by specialization — toolsmith skips armor, etc.
-            if (spec != null && !spec.allowsOutput(r.output())) continue;
-
             int avail = BuildingStorageAccess.countItem(level, building, r.input());
             if (avail < r.inputCount()) continue;
             int stock = BuildingStorageAccess.countItem(level, building, r.output());
             int quota = stockQuotas().getOrDefault(r.output(), 0);
             if (stock >= quota) continue;
-            double ratio = quota == 0 ? 0.0 : (double) stock / quota;
-            if (ratio < lowestRatio) { lowestRatio = ratio; best = r; }
+            double urgency = quota == 0 ? 0.0 : 1.0 - ((double) stock / quota);
+            double score = specialtyWeight(spec, r.output()) * (0.1 + urgency);
+            if (score > bestScore) { bestScore = score; best = r; }
         }
         if (best != null) {
             isSmeltRecipe = false;
@@ -129,6 +128,24 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         }
 
         return Optional.empty();
+    }
+
+    /**
+     * Phase 6.3.2.c — preference weight for {@code output} given the
+     * NPC's blacksmith specialization. Matches the spec table:
+     * specialty-match = 4.0, neutral (GENERALIST or category-mismatch
+     * intermediate) = 2.0, opposite specialty = 1.0.
+     */
+    private static double specialtyWeight(BlacksmithSpecialization spec, Item output) {
+        if (spec == null || spec == BlacksmithSpecialization.GENERALIST) return 2.0;
+        tterrag1112.life_in_the_village.Npc.Skills.Skill category =
+                BlacksmithSpecialization.categorize(output);
+        return switch (spec) {
+            case TOOLSMITH   -> category == tterrag1112.life_in_the_village.Npc.Skills.Skill.TOOLSMITHING ? 4.0 : 1.0;
+            case ARMORER     -> category == tterrag1112.life_in_the_village.Npc.Skills.Skill.ARMORSMITHING ? 4.0 : 1.0;
+            case WEAPONSMITH -> category == tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAPONSMITHING ? 4.0 : 1.0;
+            default          -> 2.0;
+        };
     }
 
     @Override
@@ -260,17 +277,36 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
     }
 
     /**
-     * Phase 6.3.2.b — dispatch CRAFTING-cycle XP onto the appropriate
+     * Phase 6.3.2.b/c — dispatch CRAFTING-cycle XP onto the appropriate
      * blacksmithing sub-skill via {@link BlacksmithSpecialization#categorize}.
-     * The cascade in {@code SkillComponent.addXp} carries the propagation
-     * up to BLACKSMITHING and CRAFTING at 25% each tier.
+     * The cascade in {@code SkillComponent.addXp} carries propagation up
+     * to BLACKSMITHING and CRAFTING at 25% each tier.
+     *
+     * <p>Phase 6.3.2.c — specialty bonus: a +50% XP scalar applies when
+     * the output category matches the NPC's specialization. Off-specialty
+     * crafting still earns base XP into the appropriate sub-skill.
      */
     @Override
     protected void awardProductionXp(ServerLevel level, Item output, int amount) {
         tterrag1112.life_in_the_village.Npc.Skills.Skill target =
                 BlacksmithSpecialization.categorize(output);
+        BlacksmithSpecialization spec = getSpecialization(BlacksmithSpecialization.class);
+        float scaled = amount;
+        if (matchesSpecialty(spec, target)) scaled *= 1.5f;
         tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
-                entity, target, amount, level.getGameTime());
+                entity, target, scaled, level.getGameTime());
+    }
+
+    private static boolean matchesSpecialty(
+            BlacksmithSpecialization spec,
+            tterrag1112.life_in_the_village.Npc.Skills.Skill category) {
+        if (spec == null) return false;
+        return switch (spec) {
+            case TOOLSMITH   -> category == tterrag1112.life_in_the_village.Npc.Skills.Skill.TOOLSMITHING;
+            case ARMORER     -> category == tterrag1112.life_in_the_village.Npc.Skills.Skill.ARMORSMITHING;
+            case WEAPONSMITH -> category == tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAPONSMITHING;
+            default -> false;
+        };
     }
 
     @Override

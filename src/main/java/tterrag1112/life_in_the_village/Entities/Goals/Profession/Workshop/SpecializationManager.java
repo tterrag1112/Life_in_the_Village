@@ -1,7 +1,8 @@
 package tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop;
 
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.ProfessionSpecialization;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationTypes;
+import tterrag1112.life_in_the_village.Npc.Specialization.SpecializationDef;
 
 import javax.annotation.Nullable;
 import java.util.HashMap;
@@ -9,91 +10,71 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Central manager for profession specialization assignments.
+ * Phase 6.3.2.c — promoted onto {@link
+ * tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationComponent}.
  *
- * <p>Runs in parallel to {@link ProfessionRoleManager} but uses a separate
- * NBT key so an NPC can have a role <em>and</em> a specialization at the
- * same time. Structure and conventions mirror {@code ProfessionRoleManager}
- * exactly.</p>
- *
- * <h3>Storage</h3>
- * Specializations are stored in PersistentData under {@code "professionSpec"}
- * as {@code "TYPE:VALUE"} — e.g. {@code "BlacksmithSpecialization:TOOLSMITH"}.
- *
- * <h3>Registry</h3>
- * Each specialization enum registers a parser via {@link #register} from a
- * {@code static} block in the enum class, the same way
- * {@link ProfessionRoleManager} handles roles.
+ * <p>External API ({@link #setSpecialization}/{@link #getSpecialization}/
+ * {@link #clearSpecialization}/{@link #hasSpecialization} + the parser
+ * registry) is preserved so {@code AbstractProductionBehavior},
+ * {@code BlacksmithProductionBehavior}, and other existing callers
+ * compile unmodified. Internal storage now lives in the unified
+ * Specialization component; the {@code "professionSpec"} legacy NBT
+ * key is migrated once via {@link #migrateLegacyNbt}.
  */
 public final class SpecializationManager {
 
     private SpecializationManager() {}
 
-    // ── NBT key ───────────────────────────────────────────────────────────────
-    private static final String NBT_KEY = "professionSpec";
+    private static final String LEGACY_NBT_KEY = "professionSpec";
 
-    // ── Parser registry ───────────────────────────────────────────────────────
-    private static final Map<String, Function<String, ProfessionSpecialization>> PARSERS =
-            new HashMap<>();
+    /** Parser registry kept for the legacy enum API; new code routes
+     *  via NpcSpecializationTypes by ResourceLocation. */
+    private static final Map<String, Function<String, ProfessionSpecialization>> PARSERS = new HashMap<>();
 
-    /**
-     * Registers a specialization enum's parser. Call from a {@code static}
-     * block in the enum class.
-     *
-     * @param typePrefix simple class name used as the storage prefix
-     * @param parser     {@code EnumType::valueOf} reference
-     */
     public static void register(String typePrefix,
                                 Function<String, ProfessionSpecialization> parser) {
         PARSERS.put(typePrefix, parser);
     }
 
     // =========================================================================
-    // Get / set
+    // Get / set — bridge to component
     // =========================================================================
 
-    /**
-     * Stores a specialization in the NPC's PersistentData.
-     * Format: {@code "TypePrefix:SPEC_NAME"}.
-     */
     public static void setSpecialization(TownspersonMob npc,
                                          ProfessionSpecialization spec) {
-        String prefix = spec.getClass().getSimpleName();
-        npc.getPersistentData().putString(NBT_KEY,
-                prefix + ":" + spec.name());
-    }
-
-    /**
-     * Reads the NPC's current specialization regardless of type.
-     * Returns {@code null} if none is set or the type is unknown.
-     */
-    @Nullable
-    public static ProfessionSpecialization getSpecialization(TownspersonMob npc) {
-        String stored = npc.getPersistentData().getString(NBT_KEY).orElse("");
-        if (stored.isEmpty()) return null;
-
-        int sep = stored.indexOf(':');
-        if (sep < 0) return null;
-
-        String prefix = stored.substring(0, sep);
-        String value  = stored.substring(sep + 1);
-
-        Function<String, ProfessionSpecialization> parser = PARSERS.get(prefix);
-        if (parser == null) return null;
-
-        try {
-            return parser.apply(value);
-        } catch (IllegalArgumentException e) {
-            return null;
+        SpecializationDef def = SpecializationDefBridge.toDef(spec);
+        if (def != null) {
+            // Explicit grant — force=true bypasses the skill gate. This
+            // matches the legacy semantics of the old NBT setter.
+            npc.getSpecializationComponent().assign(def, npc, true);
+        } else {
+            npc.getSpecializationComponent().clear();
         }
     }
 
     /**
-     * Reads the NPC's specialization and casts it to the expected type.
-     * Returns {@code null} if the NPC has no specialization, or one of
-     * a different type (e.g. asking for BlacksmithSpecialization when
-     * they have WeaverSpecialization).
+     * Phase 6.3.2.c — gated assignment path. Consults
+     * {@link tterrag1112.life_in_the_village.Npc.Skills.SpecializationGate#qualifies}
+     * before writing. Returns true on success, false when the NPC
+     * doesn't meet the spec's skill requirements. Used by
+     * non-administrative assignment paths (auto-promotion candidates,
+     * future content gates); admin / debug paths continue using the
+     * un-gated {@link #setSpecialization} above.
      */
+    public static boolean trySetSpecialization(TownspersonMob npc,
+                                               ProfessionSpecialization spec) {
+        SpecializationDef def = SpecializationDefBridge.toDef(spec);
+        if (def == null) { npc.getSpecializationComponent().clear(); return true; }
+        return npc.getSpecializationComponent().assign(def, npc, false);
+    }
+
+    @Nullable
+    public static ProfessionSpecialization getSpecialization(TownspersonMob npc) {
+        return npc.getSpecializationComponent().get()
+                .map(SpecializationDefBridge::toEnum)
+                .orElse(null);
+    }
+
     @Nullable
     public static <T extends ProfessionSpecialization> T getSpecialization(
             TownspersonMob npc, Class<T> type) {
@@ -102,13 +83,46 @@ public final class SpecializationManager {
         return null;
     }
 
-    /** Clears the NPC's specialization — treated as generalist thereafter. */
     public static void clearSpecialization(TownspersonMob npc) {
-        npc.getPersistentData().remove(NBT_KEY);
+        npc.getSpecializationComponent().clear();
     }
 
-    /** True if the NPC has any specialization assigned. */
     public static boolean hasSpecialization(TownspersonMob npc) {
-        return getSpecialization(npc) != null;
+        return npc.getSpecializationComponent().get().isPresent();
+    }
+
+    // =========================================================================
+    // Legacy migration
+    // =========================================================================
+
+    /**
+     * Phase 6.3.2.c — one-shot translation of the legacy {@code
+     * "professionSpec"} PersistentData entry into the unified
+     * Specialization component. Called from {@code TownspersonMob.load}
+     * after the component has loaded its own data; if the component
+     * already holds a spec the legacy value is ignored (cleared
+     * regardless to retire the key).
+     */
+    public static void migrateLegacyNbt(TownspersonMob npc) {
+        String stored = npc.getPersistentData().getString(LEGACY_NBT_KEY).orElse("");
+        if (stored.isEmpty()) return;
+        if (npc.getSpecializationComponent().get().isEmpty()) {
+            int sep = stored.indexOf(':');
+            if (sep > 0) {
+                String prefix = stored.substring(0, sep);
+                String value  = stored.substring(sep + 1);
+                Function<String, ProfessionSpecialization> parser = PARSERS.get(prefix);
+                if (parser != null) {
+                    try {
+                        ProfessionSpecialization spec = parser.apply(value);
+                        SpecializationDef def = SpecializationDefBridge.toDef(spec);
+                        if (def != null) {
+                            npc.getSpecializationComponent().assign(def, npc, true);
+                        }
+                    } catch (IllegalArgumentException ignored) {}
+                }
+            }
+        }
+        npc.getPersistentData().remove(LEGACY_NBT_KEY);
     }
 }

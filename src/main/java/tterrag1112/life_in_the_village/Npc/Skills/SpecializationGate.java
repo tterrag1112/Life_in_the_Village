@@ -29,4 +29,23 @@ public final class SpecializationGate {
     }
 
     public List<SkillRequirement> requirements() { return requirements; }
+
+    /**
+     * Phase 6.3.2.c — static convenience wrapper. Builds an ad-hoc gate
+     * from the spec's requirements and evaluates against the NPC's
+     * skill component.
+     *
+     * <p>Generalist specs always qualify regardless of skill state (the
+     * "no real spec" default for new NPCs). Other specs check every
+     * listed {@link SkillRequirement}; a missing requirement entry
+     * means "no skill gate" (also always qualifies).
+     */
+    public static boolean qualifies(
+            tterrag1112.life_in_the_village.Npc.Specialization.SpecializationDef spec,
+            tterrag1112.life_in_the_village.Entities.custom.TownspersonMob npc) {
+        if (spec == null || npc == null) return false;
+        if (spec.isGeneralist()) return true;
+        if (spec.requirements().isEmpty()) return true;
+        return new SpecializationGate(spec.requirements()).check(npc.getSkills());
+    }
 }

@@ -48,6 +48,7 @@ import tterrag1112.life_in_the_village.Entities.*;
 
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionGoalFactory;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRoleBridge;
 
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleData;
 import tterrag1112.life_in_the_village.Kingdom.KingdomTitleRegistry;
@@ -278,6 +279,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     private final tterrag1112.life_in_the_village.Npc.Roles.NpcRoleComponent roles =
             new tterrag1112.life_in_the_village.Npc.Roles.NpcRoleComponent();
 
+    /**
+     * Phase 6.3.2.c — unified Specialization axis. Backs the migrated
+     * Blacksmith spec + CombatRole storage; queried via {@link
+     * tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationTypes}.
+     */
+    private final tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationComponent specialization =
+            new tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationComponent();
+
     // =========================================================================
     // IDENTITY — age, gender, life stage
     // =========================================================================
@@ -292,7 +301,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     // COMBAT — adventurer/guard role
     // =========================================================================
 
-    @Nullable private CombatRole combatRole = null;
+    // combatRole field removed in Phase 6.3.2.c — combat role now lives in
+    // NpcSpecializationComponent; getCombatRole / setCombatRole bridge
+    // (below) translate to/from the legacy CombatRole enum for the
+    // deferred adventurer Goal cluster.
 
     // =========================================================================
     // WORK ASSIGNMENT — links NPC to village, building, plot
@@ -816,6 +828,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     /** Phase 6.3.2.a — unified Role axis component. */
     public tterrag1112.life_in_the_village.Npc.Roles.NpcRoleComponent getRoles() { return roles; }
 
+    /** Phase 6.3.2.c — unified Specialization axis component. */
+    public tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationComponent
+            getSpecializationComponent() { return specialization; }
+
     public FamilyRole getFamilyRole()          { return family.getRole(); }
     public void setFamilyRole(FamilyRole role) {
         family.setRole(role);
@@ -903,22 +919,34 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     // COMBAT ROLE — adventurer/party
     // =========================================================================
 
-    public @Nullable CombatRole getCombatRole() { return combatRole; }
+    /**
+     * Phase 6.3.2.c — bridge to the unified Specialization axis. Reads
+     * the current spec and, if it's an adventurer combat role, returns
+     * the matching legacy {@link CombatRole} enum value. Returns null
+     * for non-adventurer specs and for the rookie default.
+     */
+    public @Nullable CombatRole getCombatRole() {
+        var spec = specialization.get().orElse(null);
+        if (spec == null) return null;
+        return CombatRoleBridge.toEnum(spec.name());
+    }
 
     public void setCombatRole(@Nullable CombatRole role) {
-        this.combatRole = role;
+        setCombatRoleSilent(role);
         if (getProfession() == Profession.ADVENTURER) {
             ProfessionGoalFactory.register(this);
         }
     }
 
     public void setCombatRoleSilent(@Nullable CombatRole role) {
-        this.combatRole = role;
+        var spec = CombatRoleBridge.toSpec(role);
+        if (spec == null) specialization.clear();
+        else specialization.assign(spec, this, true); // legacy callers force
     }
 
     @Override
     public void performRangedAttack(LivingEntity target, float distanceFactor) {
-        if (combatRole != CombatRole.ARCHER) return;
+        if (getCombatRole() != CombatRole.ARCHER) return;
 
         Arrow arrow = new Arrow(level(), this, new ItemStack(Items.ARROW), null);
         double dx = target.getX() - getX();
@@ -1333,9 +1361,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         + (role != null && role.isApprentice() ? " [apprentice]" : "")), false);
 
         // ── Combat role (guards / adventurers only) ───────────────────────────
-        if (combatRole != null) {
+        CombatRole _cr = getCombatRole();
+        if (_cr != null) {
             player.displayClientMessage(Component.literal(
-                    "Combat Role: " + combatRole.name()), false);
+                    "Combat Role: " + _cr.name()), false);
         }
     }
 
@@ -1866,7 +1895,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         output.store("isGroupLeader", Codec.BOOL, entityData.get(IS_GROUP_LEADER));
         getCaravanId().ifPresent(id -> output.store("caravanId", UUIDUtil.CODEC, id));
         if (companyId != null) output.putString("companyId", companyId.toString());
-        if (combatRole != null) output.putString("combatRole", combatRole.name());
+        // combatRole save dropped in 6.3.2.c — saved via NpcSpecializationComponent
+        // below alongside other components.
         // currentExpeditionId removed in 6.3.2.a — caravan participation now lives
         // in NpcRoleComponent (lit:caravan_*). Roster in CaravanSavedData is the
         // sole source of truth; the role component is the local query surface.
@@ -1979,6 +2009,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
 
         // ── Roles (Phase 6.3.2.a) ───────────────────────────────────────────
         roles.save(output);
+
+        // ── Specialization (Phase 6.3.2.c) ──────────────────────────────────
+        specialization.save(output);
 
         // ── P0a-13: repaint job ─────────────────────────────────────────────
         if (repaintJob != null) {
@@ -2182,6 +2215,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         roles.load(input);
         tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager
                 .migrateLegacyNbt(this);
+
+        // ── Specialization (Phase 6.3.2.c) + legacy NBT migration ───────────
+        // Component carries the new storage; the legacy "professionSpec" string
+        // and "combatRole" string are read once (above for combatRole) and
+        // routed through the bridge / SpecializationManager migrate helper.
+        specialization.load(input);
+        tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop
+                .SpecializationManager.migrateLegacyNbt(this);
 
         // ── P0a-13: repaint job ─────────────────────────────────────────────
         var repaintBuilding = input.read("repaint.buildingId", Codec.STRING);
