@@ -187,8 +187,13 @@ public class Business {
             long wagePerDay,
             long lastPaidTick,
             String assignedItemId,
-            int dailyTargetCount
+            int dailyTargetCount,
+            EmploymentTier tier           // Phase 6.3.3.c.1
     ) {
+        public BusinessWorker {
+            if (tier == null) tier = EmploymentTier.JOURNEYMAN;
+        }
+
         public static final Codec<BusinessWorker> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
                         UUIDUtil.CODEC.fieldOf("npcId")
@@ -206,24 +211,37 @@ public class Business {
                         Codec.STRING.optionalFieldOf("assignedItemId", "")
                                 .forGetter(BusinessWorker::assignedItemId),
                         Codec.INT.optionalFieldOf("dailyTargetCount", 8)
-                                .forGetter(BusinessWorker::dailyTargetCount)
+                                .forGetter(BusinessWorker::dailyTargetCount),
+                        // Phase 6.3.3.c.1 — defaults to JOURNEYMAN on legacy
+                        // load. Content-pass or promotion API adjusts.
+                        EmploymentTier.CODEC.optionalFieldOf("tier", EmploymentTier.JOURNEYMAN)
+                                .forGetter(BusinessWorker::tier)
                 ).apply(i, BusinessWorker::new));
 
         public BusinessWorker withWage(long wage) {
             return new BusinessWorker(npcId, role, producerType, assignedBuildingId,
-                    wage, lastPaidTick, assignedItemId, dailyTargetCount);
+                    wage, lastPaidTick, assignedItemId, dailyTargetCount, tier);
         }
         public BusinessWorker withTask(String itemId, int count) {
             return new BusinessWorker(npcId, role, producerType, assignedBuildingId,
-                    wagePerDay, lastPaidTick, itemId, count);
+                    wagePerDay, lastPaidTick, itemId, count, tier);
         }
         public BusinessWorker withLastPaidTick(long tick) {
             return new BusinessWorker(npcId, role, producerType, assignedBuildingId,
-                    wagePerDay, tick, assignedItemId, dailyTargetCount);
+                    wagePerDay, tick, assignedItemId, dailyTargetCount, tier);
         }
         public BusinessWorker withProducerType(ProducerType type) {
             return new BusinessWorker(npcId, role, type, assignedBuildingId,
-                    wagePerDay, lastPaidTick, assignedItemId, dailyTargetCount);
+                    wagePerDay, lastPaidTick, assignedItemId, dailyTargetCount, tier);
+        }
+        public BusinessWorker withTier(EmploymentTier newTier) {
+            return new BusinessWorker(npcId, role, producerType, assignedBuildingId,
+                    wagePerDay, lastPaidTick, assignedItemId, dailyTargetCount, newTier);
+        }
+
+        /** Phase 6.3.3.c.1 — tier-adjusted wage. */
+        public long effectiveWagePerDay() {
+            return Math.max(1L, (long) (wagePerDay * tier.wageMultiplier()));
         }
     }
 
@@ -463,6 +481,52 @@ public class Business {
         workers.remove(npcId);
     }
 
+    // ── Phase 6.3.3.c.1 — employment tier API ─────────────────────────
+
+    /** Returns the worker's current tier, or empty if no such worker. */
+    public java.util.Optional<EmploymentTier> getWorkerTier(UUID npcId) {
+        BusinessWorker w = workers.get(npcId);
+        return w == null ? java.util.Optional.empty() : java.util.Optional.of(w.tier());
+    }
+
+    /** Tier-adjusted wage for {@code npcId}, or 0 if no such worker. */
+    public long getEffectiveWage(UUID npcId) {
+        BusinessWorker w = workers.get(npcId);
+        return w == null ? 0L : w.effectiveWagePerDay();
+    }
+
+    /**
+     * Advances the worker's tier one step (APPRENTICE → JOURNEYMAN →
+     * MASTER). No-op if already MASTER. No eligibility check here —
+     * content packs gate via skill thresholds (consult
+     * {@link tterrag1112.life_in_the_village.Npc.Skills.SkillThresholds})
+     * before calling. Returns the new tier (or current if no-op).
+     */
+    public EmploymentTier promoteWorker(UUID npcId) {
+        BusinessWorker w = workers.get(npcId);
+        if (w == null) return null;
+        EmploymentTier next = switch (w.tier()) {
+            case APPRENTICE -> EmploymentTier.JOURNEYMAN;
+            case JOURNEYMAN -> EmploymentTier.MASTER;
+            case MASTER     -> EmploymentTier.MASTER;
+        };
+        workers.put(npcId, w.withTier(next));
+        return next;
+    }
+
+    /** Reverse of {@link #promoteWorker}. Admin / debug use. */
+    public EmploymentTier demoteWorker(UUID npcId) {
+        BusinessWorker w = workers.get(npcId);
+        if (w == null) return null;
+        EmploymentTier prev = switch (w.tier()) {
+            case MASTER     -> EmploymentTier.JOURNEYMAN;
+            case JOURNEYMAN -> EmploymentTier.APPRENTICE;
+            case APPRENTICE -> EmploymentTier.APPRENTICE;
+        };
+        workers.put(npcId, w.withTier(prev));
+        return prev;
+    }
+
     public Optional<BusinessWorker> getWorker(UUID npcId) {
         return Optional.ofNullable(workers.get(npcId));
     }
@@ -546,7 +610,9 @@ public class Business {
 
         for (BusinessWorker worker : new ArrayList<>(workers.values())) {
             if (currentTick - worker.lastPaidTick() < PAY_INTERVAL) continue;
-            long wage = Math.max(worker.wagePerDay(), minWage);
+            // Phase 6.3.3.c.1 — tier-adjusted wage (APPRENTICE 0.5×,
+            // JOURNEYMAN 1.0×, MASTER 1.5×).
+            long wage = Math.max(worker.effectiveWagePerDay(), minWage);
             if (treasuryBronze < wage) {
                 unpaid.add(worker.npcId());
             } else {
