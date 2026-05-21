@@ -326,7 +326,10 @@ public class Business {
                     // and the fromCodec fallback resolves ownerId to
                     // ownerPlayerId for backward compat.
                     OwnershipInfo.CODEC.optionalFieldOf("ownership", OwnershipInfo.DEFAULT)
-                            .forGetter(Business::snapshotOwnership)
+                            .forGetter(Business::snapshotOwnership),
+                    // Phase 6.3.3.c.2 — manager slot.
+                    UUIDUtil.CODEC.optionalFieldOf("managerId")
+                            .forGetter(c -> java.util.Optional.ofNullable(c.managerId))
             ).apply(i, Business::fromCodec));
 
     private static Business fromCodec(UUID businessId, String name,
@@ -335,7 +338,8 @@ public class Business {
                                      WorkSchedule schedule, List<PriceOverride> prices,
                                      long treasury, boolean active,
                                      java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
-                                     OwnershipInfo ownership) {
+                                     OwnershipInfo ownership,
+                                     java.util.Optional<UUID> managerIdOpt) {
         Business c = new Business(businessId, name, ownerPlayerId,
                 homeVillageId, schedule);
         c.buildingIds.addAll(buildingIds);
@@ -370,6 +374,15 @@ public class Business {
         c.foundedTick            = info.foundedTick();
         c.dissolutionWarningTick = info.dissolutionWarningTick();
         c.undecidedSinceTick     = info.undecidedSinceTick();
+        // Phase 6.3.3.c.2 — manager slot.
+        managerIdOpt.ifPresent(id -> c.managerId = id);
+        // Phase 6.3.3.c.2 — one-shot prune: legacy MerchantPromotion
+        // pattern hired the owner NPC as a zero-wage PRODUCER. The
+        // owner now lives in c.owner; remove the workaround entry so
+        // payroll / scheduling iterations don't double-count the owner.
+        if (c.owner != null) {
+            c.workers.remove(c.owner.getPrimaryUuid());
+        }
         return c;
     }
 
@@ -409,6 +422,14 @@ public class Business {
      * {@link #setOwnership} / {@link #setNpcOwner}.
      */
     private BusinessOwner owner;
+
+    /**
+     * Phase 6.3.3.c.2 — manager slot. Distinct from owner: the manager
+     * runs day-to-day operations, the owner holds the asset. Empty by
+     * default; falls back to the owner UUID for power checks when
+     * empty (the OWNER-as-default-MANAGER pattern is the v1 reality).
+     */
+    private UUID managerId;
     /** Ordered succession chain. Defaults to oldest-adult-child of the
      *  owner; spec line 132. Empty for player-owned businesses. */
     private final List<UUID> heirs = new ArrayList<>();
@@ -725,6 +746,12 @@ public class Business {
     public boolean holderHasPower(UUID uuid,
             tterrag1112.life_in_the_village.Npc.Office.OfficePower power) {
         if (uuid == null || owner == null || power == null) return false;
+        // Manager power-set: OWNER_POWERS minus SET_BUDGET (manager runs
+        // the business but doesn't control budget allocation). Checked
+        // first so managers see a tighter set than owners.
+        if (managerId != null && uuid.equals(managerId)) {
+            return MANAGER_POWERS.contains(power);
+        }
         if (!OWNER_POWERS.contains(power)) return false;
         return switch (owner) {
             case BusinessOwner.NpcOwner n     -> uuid.equals(n.npcUuid());
@@ -734,6 +761,55 @@ public class Business {
             case BusinessOwner.KingdomOwner k -> false;
             case BusinessOwner.GuildOwner   g -> false;
         };
+    }
+
+    /**
+     * Phase 6.3.3.c.2 — manager power-set. Manager runs the business
+     * but doesn't allocate budget. Subset of {@link #OWNER_POWERS}
+     * minus {@code SET_BUDGET}.
+     */
+    public static final java.util.Set<tterrag1112.life_in_the_village.Npc.Office.OfficePower>
+            MANAGER_POWERS = java.util.Set.of(
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.VIEW_BUDGET,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.APPOINT_SUBORDINATE,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.DISPATCH_CARAVAN,
+                    tterrag1112.life_in_the_village.Npc.Office.OfficePower.ACCESS_TREASURY);
+
+    // ── Phase 6.3.3.c.2 — manager API ─────────────────────────────────
+
+    public java.util.Optional<UUID> getManagerId() {
+        return java.util.Optional.ofNullable(managerId);
+    }
+
+    public void setManager(UUID npcId)  { this.managerId = npcId; }
+    public void clearManager()          { this.managerId = null; }
+
+    /**
+     * Phase 6.3.3.c.2 — every NPC actively operating this business:
+     * owner UUID (when NpcOwner / FamilyOwner head; player-owned and
+     * collective stubs emit nothing here), manager UUID (when set and
+     * distinct from owner), all worker UUIDs.
+     *
+     * <p>Used by payroll / scheduling / UI iterations that need
+     * "everyone working at this business" — distinct from the
+     * historical {@code workers.values()} which used to also contain
+     * the owner via the zero-wage-PRODUCER workaround.
+     */
+    public java.util.stream.Stream<UUID> getActiveOperators() {
+        java.util.stream.Stream.Builder<UUID> b = java.util.stream.Stream.builder();
+        UUID ownerUuid = null;
+        if (owner instanceof BusinessOwner.NpcOwner n) {
+            ownerUuid = n.npcUuid();
+            b.add(ownerUuid);
+        }
+        if (managerId != null && !managerId.equals(ownerUuid)) {
+            b.add(managerId);
+        }
+        for (UUID workerId : workers.keySet()) {
+            if (workerId.equals(ownerUuid) || workerId.equals(managerId)) continue;
+            b.add(workerId);
+        }
+        return b.build();
     }
     public boolean isTradingBusiness() { return businessType == BusinessType.TRADING_COMPANY; }
 

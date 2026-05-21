@@ -119,16 +119,13 @@ public final class MerchantPromotion {
                 npc.getUUID()));
         business.setFoundedTick(now);
 
-        // Owner as PRODUCER worker at their own market.
+        // Phase 6.3.3.c.2 — owner no longer in the workers map. The
+        // legacy pattern hired the owner as a zero-wage PRODUCER; ownership
+        // lives in business.owner now and Business.getActiveOperators
+        // yields the owner UUID alongside workers when callers need to
+        // iterate "everyone at this business".
         UUID buildingId = npc.getAssignedBuildingId().orElse(Business.NO_BUILDING);
         business.addBuilding(buildingId);
-        business.addWorker(new Business.BusinessWorker(
-                npc.getUUID(),
-                Business.WorkerRole.PRODUCER,
-                Business.ProducerType.GENERIC,
-                buildingId,
-                /* wagePerDay */ 0L, /* lastPaidTick */ now,
-                /* assignedItemId */ "", /* dailyTargetCount */ 8));
 
         // Capital transfer: NPC wallet → business treasury via spend().
         long actualTransfer = Math.min(PROMOTION_TRANSFER, npc.getWallet().toBronze());
