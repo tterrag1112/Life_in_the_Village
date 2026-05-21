@@ -43,7 +43,19 @@ public enum Skill {
     // ── Tier 2 (Phase 6.3.2.b additions) ───────────────────────────────────
     TOOLSMITHING(BLACKSMITHING, 0.25),
     WEAPONSMITHING(BLACKSMITHING, 0.25),
-    ARMORSMITHING(BLACKSMITHING, 0.25);
+    ARMORSMITHING(BLACKSMITHING, 0.25),
+
+    // ── Tier 1 (Phase 6.3.3.g additions — animal husbandry) ────────────────
+    /** Animal-husbandry parent. Cascades 25% → FARMING. Used by the
+     *  ANIMAL_SPECIALIST / ANIMAL_TENDER FarmRoles for tending livestock. */
+    ANIMAL_HUSBANDRY(FARMING, 0.25),
+
+    // ── Tier 2 (Phase 6.3.3.g additions — beekeeping) ──────────────────────
+    /** Beekeeping sub-skill. Cascades 25% → ANIMAL_HUSBANDRY (which then
+     *  cascades 25% → FARMING). Used by hive-tending behaviors. The
+     *  highest-BEEKEEPING NPC in a village becomes the de facto apiarist;
+     *  no formal Specialization needed. */
+    BEEKEEPING(ANIMAL_HUSBANDRY, 0.25);
 
     @Nullable private final Skill parent;
     private final double propRate;

@@ -120,6 +120,11 @@ public class Life_in_the_village {
         // TownspersonMob.readAdditionalSaveData.
         tterrag1112.life_in_the_village.Guilds.Companies.Ai
                 .FarmhandConsolidationMigration.migrateAll(event.getServer());
+        // Phase 6.3.3.g.2 — register animal roster definitions. Idempotent;
+        // RosterRegistry.register overwrites by id, so re-registration on
+        // each server start is harmless.
+        tterrag1112.life_in_the_village.Village.Roster
+                .AnimalRosterDefinitions.registerAll();
     }
 
 
