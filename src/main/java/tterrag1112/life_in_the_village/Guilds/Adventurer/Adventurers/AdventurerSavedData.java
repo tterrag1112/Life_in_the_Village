@@ -314,7 +314,11 @@ public class AdventurerSavedData extends SavedData {
                                 Boolean.toString(memberIndex == 0))));
 
         // ── Profession ────────────────────────────────────────────────
-        npc.setProfession(Profession.ADVENTURER);
+        // Phase 6.3.3.a — gated, OTHER/SYSTEM (party member entity construction).
+        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                npc, Profession.ADVENTURER,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
 
         // ── Combat role — assigned to ALL adventurers ─────────────────
         // Roles are distributed across the group so a 3-person group
@@ -706,7 +710,11 @@ public class AdventurerSavedData extends SavedData {
                 npc.setAdventurerTitle(
                         (npc.getAdventurerTitle().isEmpty() ? ""
                                 : npc.getAdventurerTitle() + " ") + "(Retired)");
-                npc.setProfession(Profession.NONE);
+                // Phase 6.3.3.a — gated, RETIREMENT.
+                tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                        npc, Profession.NONE,
+                        tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.RETIREMENT,
+                        tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
                 npc.setGroupId(null);
                 // Phase 6.3.2.a — drop role projection on retirement.
                 npc.getRoles().removeRole(

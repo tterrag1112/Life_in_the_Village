@@ -411,11 +411,18 @@ public class BuildingCommand {
                                     mob.assignToBuilding(building.get().getId(), villageName);
                                     // Set profession based on building type
                                     Profession profession = getProfessionForType(building.get().getType());
+                                    // Phase 6.3.3.a — debug command path; forced (skip listeners).
                                     if (profession != null) {
-                                        mob.setProfession(profession);
+                                        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfessionForced(
+                                                mob, profession,
+                                                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.DEBUG,
+                                                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.DEBUG);
                                     } else {
                                         // Default to merchant if no profession mapped
-                                        mob.setProfession(profession != null ? profession : Profession.NONE);
+                                        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfessionForced(
+                                                mob, Profession.NONE,
+                                                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.DEBUG,
+                                                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.DEBUG);
                                     }
 
 

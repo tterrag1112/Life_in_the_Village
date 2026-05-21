@@ -199,7 +199,11 @@ public class EventEffects {
                 .create(level, net.minecraft.world.entity.EntitySpawnReason.NATURAL);
         if (trader == null) return;
 
-        trader.setProfession(Profession.WANDERING_TRADER);
+        // Phase 6.3.3.a — gated, OTHER/SYSTEM (event-triggered trader spawn).
+        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                trader, Profession.WANDERING_TRADER,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
 
         // Name the trader
         var rng = level.getRandom();

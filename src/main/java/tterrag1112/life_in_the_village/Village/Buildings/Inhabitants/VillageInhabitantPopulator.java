@@ -222,7 +222,11 @@ public final class VillageInhabitantPopulator {
                     level.getCurrentDifficultyAt(spawnPos),
                     EntitySpawnReason.MOB_SUMMONED, null);
 
-            npc.setProfession(profession);
+            // Phase 6.3.3.a — gated, OTHER/SYSTEM (worldgen NPC population).
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                    npc, profession,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
             npc.setFamilyRole(familyRole);
             npc.assignToBuilding(building.getId(), village.getName());
 

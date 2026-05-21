@@ -169,7 +169,11 @@ public class CaravanSavedData extends SavedData {
             merchant = ModEntities.TOWNSPERSON.get()
                     .create(level, EntitySpawnReason.NATURAL);
             if (merchant != null) {
-                merchant.setProfession(Profession.MERCHANT);
+                // Phase 6.3.3.a — gated, OTHER/SYSTEM (caravan merchant spawn).
+                tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                        merchant, Profession.MERCHANT,
+                        tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                        tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
                 merchant.setAssignedVillageName(
                         villageData.getVillageById(caravan.getOriginVillageId())
                                 .map(Village::getName)
@@ -200,7 +204,11 @@ public class CaravanSavedData extends SavedData {
                     .create(level, EntitySpawnReason.NATURAL);
             if (guard == null) continue;
 
-            guard.setProfession(Profession.GUARD);
+            // Phase 6.3.3.a — gated, OTHER/SYSTEM (caravan guard spawn).
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                    guard, Profession.GUARD,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
             guard.setAssignedVillageName(
                     villageData.getVillageById(caravan.getOriginVillageId())
                             .map(Village::getName)

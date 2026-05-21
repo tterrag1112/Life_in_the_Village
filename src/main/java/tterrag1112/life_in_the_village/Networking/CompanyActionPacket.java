@@ -270,7 +270,11 @@ public record CompanyActionPacket(
 
                     c.addWorker(worker);
                     npc.setCompanyId(c.getCompanyId());
-                    npc.setProfession(Profession.COMPANY_WORKER);
+                    // Phase 6.3.3.a — gated, PLAYER (player hires via UI packet).
+                    tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                            npc, Profession.COMPANY_WORKER,
+                            tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.BUSINESS_PROMOTION,
+                            tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.PLAYER);
                     cdata.markDirty();
 
                     player.displayClientMessage(
@@ -561,7 +565,11 @@ public record CompanyActionPacket(
     private static void releaseWorker(ServerLevel level, UUID npcId) {
         TownspersonMob.findByUUID(level, npcId).ifPresent(npc -> {
             npc.clearCompanyId();
-            npc.setProfession(Profession.NONE);
+            // Phase 6.3.3.a — gated, PLAYER (player-driven fire via UI packet).
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                    npc, Profession.NONE,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.BUSINESS_PROMOTION,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.PLAYER);
         });
     }
 

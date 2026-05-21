@@ -161,7 +161,11 @@ public final class VisitorFluxEngine {
         npc.finalizeSpawn(level,
                 level.getCurrentDifficultyAt(edge),
                 EntitySpawnReason.MOB_SUMMONED, null);
-        npc.setProfession(type.underlyingProfession());
+        // Phase 6.3.3.a — gated, OTHER/SYSTEM (visitor entity construction).
+        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                npc, type.underlyingProfession(),
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
         // Assign the visitor to the village so the per-village scans
         // (gossip, sim, despawn) treat it as a transient resident.
         // The building id stays null — visitors don't own a workplace.

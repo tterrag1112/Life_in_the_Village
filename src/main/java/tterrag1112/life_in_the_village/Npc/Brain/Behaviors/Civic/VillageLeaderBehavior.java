@@ -326,7 +326,11 @@ public class VillageLeaderBehavior extends Behavior<TownspersonMob> {
                     getProfessionForBuilding(building.getType());
             if (prof == Profession.NONE) continue;
 
-            npc.setProfession(prof);
+            // Phase 6.3.3.a — gated, CONTENT (leader-driven hire).
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                    npc, prof,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.CONTENT,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
             npc.setAssignedBuildingId(building.getId());
             npc.setAssignedVillageName(village.getName());
 

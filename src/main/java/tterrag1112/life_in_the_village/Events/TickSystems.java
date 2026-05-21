@@ -532,8 +532,12 @@ class WanderingTraderTickSystem implements TickSubsystem {
                 .create(level, net.minecraft.world.entity.EntitySpawnReason.NATURAL);
         if (trader == null) return;
 
-        trader.setProfession(
-                tterrag1112.life_in_the_village.Profession.Profession.WANDERING_TRADER);
+        // Phase 6.3.3.a — gated, OTHER/SYSTEM (wandering trader spawn).
+        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                trader,
+                tterrag1112.life_in_the_village.Profession.Profession.WANDERING_TRADER,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
 
         // Give the trader a random name (not tied to any village)
         var rng = level.getRandom();

@@ -79,7 +79,10 @@ public final class ComingOfAgeHandler implements EventDispatcher {
             // Spec line 150: default to FARMHAND/LABORER. v1 uses
             // FARMHAND; the apprenticeship goal stays open via the
             // standard LifeGoalSelector retry on next adult re-eval.
-            npc.setProfession(Profession.FARMHAND);
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                    npc, Profession.FARMHAND,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.COMING_OF_AGE,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
             return;
         }
         // Matcher already runs on its own LifeStageAdvanced(ADULT)
@@ -90,7 +93,10 @@ public final class ComingOfAgeHandler implements EventDispatcher {
         if (master.isEmpty()) {
             // No master available now — fall back to a basic profession
             // and let the LifeGoalSelector goal stay open for retry.
-            npc.setProfession(Profession.FARMHAND);
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                    npc, Profession.FARMHAND,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.COMING_OF_AGE,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
         }
         // If a master IS available, ApprenticeshipDispatcher handles
         // the contract creation itself; we don't duplicate that work.

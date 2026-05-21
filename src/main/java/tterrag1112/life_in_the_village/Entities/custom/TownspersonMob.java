@@ -424,6 +424,21 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      *  doc 26 reads this for the merchant tenure check. */
     public long getProfessionStartedTick() { return professionStartedTick; }
 
+    /**
+     * Leaf-level profession setter. Writes entityData, re-registers
+     * Profession goals via {@code ProfessionGoalFactory.register}, resets
+     * the tenure clock, pays the starter pouch on first non-NONE
+     * assignment, runs the implicit-guild bootstrap, and triggers the
+     * appearance rebuild.
+     *
+     * <p>Phase 6.3.3.a — for the <em>gated</em> entry that consults
+     * career-transition listeners (and routes through ComingOfAge /
+     * Apprenticeship / Retirement state machines indirectly), call
+     * {@link tterrag1112.life_in_the_village.Npc.Career.CareerTransitions#changeProfession
+     * CareerTransitions.changeProfession} instead. This leaf is for
+     * worldgen / construction / save migration / debug — paths where
+     * the profession is part of identity rather than a career step.
+     */
     public void setProfession(Profession profession) {
         Profession previous = getProfession();
         entityData.set(PROFESSION, profession.name());
@@ -1797,6 +1812,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
                 new tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent.LifeStageAdvanced(
                         this, from.name(), to.name()));
+        // Phase 6.3.3.a — additive career-transition broadcast. Existing
+        // bus listeners continue to receive LifeStageAdvanced; this
+        // notifies CareerListenerRegistry observers specifically
+        // registered for lifestage transitions.
+        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions
+                .fireLifeStageTransition(this, from, to);
 
         switch (to) {
             case TEEN -> {

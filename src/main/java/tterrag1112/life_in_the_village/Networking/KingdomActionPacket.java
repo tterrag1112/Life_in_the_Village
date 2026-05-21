@@ -261,8 +261,11 @@ public record KingdomActionPacket(
                                                 .orElse(false))
                                         .orElse(false)
                         ).stream().findFirst().ifPresent(npc -> {
-                            npc.setProfession(
-                                    Profession.VILLAGE_LEADER);
+                            // Phase 6.3.3.a — gated, PLAYER (kingdom UI packet).
+                            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                                    npc, Profession.VILLAGE_LEADER,
+                                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.BUSINESS_PROMOTION,
+                                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.PLAYER);
                         });
                         data.setDirty();
                     } catch (Exception ignored) {}

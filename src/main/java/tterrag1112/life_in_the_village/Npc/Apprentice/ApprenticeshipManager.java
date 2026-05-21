@@ -72,7 +72,11 @@ public final class ApprenticeshipManager {
                 CONTRACT_RELATIONSHIP_SEED, now, RelationshipOrigin.WORKPLACE_COLLEAGUE);
 
         // Apprentice inherits master's profession + workplace assignment.
-        apprentice.setProfession(master.getProfession());
+        // Phase 6.3.3.a — gated path; reason APPRENTICESHIP (contract start).
+        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                apprentice, master.getProfession(),
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.APPRENTICESHIP,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
         apprentice.assignToBuilding(buildingId,
                 master.getAssignedVillageName().orElse(""));
 
@@ -276,6 +280,13 @@ public final class ApprenticeshipManager {
         LOGGER.info("[Apprenticeship] graduated: {} as {} (contract {})",
                 apprentice == null ? "?" : apprentice.getNpcName(),
                 rank.name(), c.contractId());
+        // Phase 6.3.3.a — pure-observation broadcast. Listeners cannot
+        // veto a graduation that has already completed; this is just
+        // notification for downstream content (mood, history, etc.).
+        if (apprentice != null) {
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions
+                    .fireApprenticeshipGraduation(c, apprentice, java.util.Optional.ofNullable(master));
+        }
     }
 
     // =========================================================================

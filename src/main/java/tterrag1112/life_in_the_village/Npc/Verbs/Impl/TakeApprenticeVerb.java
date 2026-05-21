@@ -78,7 +78,11 @@ public final class TakeApprenticeVerb implements PlayerVerb {
         // Apprentice inherits the master's profession + workplace
         // assignment so the existing NPC work-goal + wage halving
         // takes effect.
-        npc.setProfession(npcProf);
+        // Phase 6.3.3.a — gated, PLAYER source (player verb).
+        tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                npc, npcProf,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.APPRENTICESHIP,
+                tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.PLAYER);
         npc.assignToBuilding(ownedEntry.getValue().buildingId(),
                 npc.getAssignedVillageName().orElse(""));
 

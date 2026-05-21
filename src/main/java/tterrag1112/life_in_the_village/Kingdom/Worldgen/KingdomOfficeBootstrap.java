@@ -203,7 +203,11 @@ public final class KingdomOfficeBootstrap {
             mob.finalizeSpawn(level,
                     level.getCurrentDifficultyAt(spawnPos),
                     EntitySpawnReason.MOB_SUMMONED, null);
-            mob.setProfession(profession);
+            // Phase 6.3.3.a — gated, OTHER/SYSTEM (worldgen office bootstrap).
+            tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
+                    mob, profession,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.OTHER,
+                    tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
             level.addFreshEntity(mob);
             return mob;
         } catch (Throwable t) {
