@@ -1415,6 +1415,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .MENTOR_SESSION_COOLDOWN.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .WORK_PHASE.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .CARGO_DESTINATION.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .LAST_SELL_TICK.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_GESTURE_COOLDOWN.get(),
@@ -1564,10 +1570,18 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .REST.get(), 0, restBehaviors);
 
-        // WORK remains empty in 6.2.c — Goals still drive WORK.
-        ImmutableList<BehaviorControl<? super TownspersonMob>> empty = ImmutableList.of();
+        // WORK — Phase 6.2.d.1: SellToMarketBehavior (universal, memory-gated)
+        // consumes CARGO_DESTINATION from workshop ProductionBehaviors that
+        // are layered in via ProfessionBrainFactory. Non-workshop NPCs leave
+        // CARGO_DESTINATION absent, so this behavior is dormant for them
+        // (their SellToMarketGoal still drives Goal-side selling).
+        ImmutableList<BehaviorControl<? super TownspersonMob>> workBehaviors =
+                ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Production.SellToMarketBehavior()
+                );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
-                .WORK.get(), 0, empty);
+                .WORK.get(), 1, workBehaviors);
 
         brain.setCoreActivities(java.util.Set.of(Activity.CORE));
         brain.setDefaultActivity(Activity.IDLE);

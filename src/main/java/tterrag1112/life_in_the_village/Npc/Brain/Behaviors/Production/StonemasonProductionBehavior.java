@@ -1,4 +1,4 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Stonemason;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -7,8 +7,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.StonecutterBlock;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.AbstractWorkstationProductionGoal;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -24,13 +22,13 @@ import java.util.*;
  * Finished products (bricks, slabs, stairs, walls) go to the stonemason
  * building and are sold at market.
  */
-public class StonemasonGoal extends AbstractWorkstationProductionGoal {
+public class StonemasonProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
     private static final List<MasonRecipe> RECIPES = buildRecipes();
 
-    public StonemasonGoal(TownspersonMob entity) { super(entity); }
+    
 
     @Override protected BuildingType requiredBuildingType() { return BuildingType.STONEMASON; }
 

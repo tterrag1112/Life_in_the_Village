@@ -1,4 +1,4 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Weaver;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -7,8 +7,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.LoomBlock;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.AbstractWorkstationProductionGoal;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -28,7 +26,7 @@ import java.util.*;
  * recipes when that system is ready. Add new {@link WeaverRecipe} entries and
  * new {@link #stockQuotas()} entries without touching the abstract class.
  */
-public class WeaverGoal extends AbstractWorkstationProductionGoal {
+public class WeaverProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
@@ -47,7 +45,7 @@ public class WeaverGoal extends AbstractWorkstationProductionGoal {
             Items.BROWN_WOOL, Items.GREEN_WOOL, Items.RED_WOOL,
             Items.BLACK_WOOL);
 
-    public WeaverGoal(TownspersonMob entity) { super(entity); }
+    
 
     @Override protected BuildingType requiredBuildingType() { return BuildingType.WEAVER; }
 

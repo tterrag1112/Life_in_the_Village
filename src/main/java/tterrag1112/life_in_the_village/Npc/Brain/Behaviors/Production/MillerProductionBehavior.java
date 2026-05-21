@@ -1,4 +1,4 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Miller;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -7,8 +7,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.GrindstoneBlock;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.AbstractWorkstationProductionGoal;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -28,7 +26,7 @@ import java.util.*;
  * 2 wheat → 3 flour at the miller vs. 3 wheat → 1 bread directly.
  * With a mill, the same stockpile of wheat produces significantly more bread.
  */
-public class MillerGoal extends AbstractWorkstationProductionGoal {
+public class MillerProductionBehavior extends AbstractProductionBehavior {
 
     // 2 wheat → 3 flour; 80 ticks per batch unit
     private static final ProductionRecipe GRIND_WHEAT =
@@ -36,7 +34,7 @@ public class MillerGoal extends AbstractWorkstationProductionGoal {
 
     private static final int MAX_BATCH = 8;
 
-    public MillerGoal(TownspersonMob entity) { super(entity); }
+    
 
     @Override protected BuildingType requiredBuildingType() { return BuildingType.MILLER; }
 

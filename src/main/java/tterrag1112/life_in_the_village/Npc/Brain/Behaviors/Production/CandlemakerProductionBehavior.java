@@ -1,12 +1,10 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Candlemaker;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.AbstractWorkstationProductionGoal;
-import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -23,7 +21,7 @@ import java.util.*;
  * Candles require both honeycomb and string, making this the first goal to
  * exercise the multi-input path in AbstractWorkstationProductionGoal.
  */
-public class CandlemakerGoal extends AbstractWorkstationProductionGoal {
+public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
 
     // 1 honeycomb + 1 string → 1 candle (vanilla recipe, 60 ticks)
     private static final ProductionRecipe MAKE_CANDLE = ProductionRecipe.of(
@@ -37,7 +35,7 @@ public class CandlemakerGoal extends AbstractWorkstationProductionGoal {
 
     private static final int MAX_BATCH = 8;
 
-    public CandlemakerGoal(TownspersonMob entity) { super(entity); }
+    
 
     @Override protected BuildingType requiredBuildingType() { return BuildingType.CANDLEMAKER; }
 
