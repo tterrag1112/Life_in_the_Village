@@ -57,38 +57,42 @@ public final class AnimalRosterDefinitions {
                         new ItemStack(Items.FEATHER, 1)),
                 /* growthPeriodTicks */ 6000L));
 
-        // PIG — no passive production; carrot breeding; slaughter for meat.
+        // PIG — passive manure output on a 1.5-day cycle (pigs have no
+        // milk/wool/egg analog; the manure drop is what closes the
+        // husbandry → composting → soil loop in 6.3.3.h.3). Slaughter
+        // still yields porkchop; carrot breeding.
         RosterRegistry.register(new RosterDefinition(
                 PIG, EntityType.PIG,
                 2, 8,
-                /* productionPeriodTicks */ Long.MAX_VALUE / 2L, // never
-                List.of(),
+                /* productionPeriodTicks */ 36000L,
+                List.of(new ItemStack(Items.BONE_MEAL, 1)),
                 Optional.of(new BreedingRule(
                         List.of(new ItemStack(Items.CARROT, 1)), 2, 48000L)),
                 List.of(new ItemStack(Items.PORKCHOP, 2)),
                 24000L));
 
-        // COW — daily milk; wheat breeding. Milk-bucket production is
-        // simplified: the cycle drops MILK_BUCKET into storage without
-        // consuming an empty bucket (v1 simplification; future tuning can
-        // gate on building bucket inventory).
+        // COW — daily milk + manure; wheat breeding. Phase 6.3.3.h.3
+        // adds a BONE_MEAL drop alongside the milk so the cycle closes
+        // the husbandry → composting → soil loop.
         RosterRegistry.register(new RosterDefinition(
                 COW, EntityType.COW,
                 2, 8,
                 /* productionPeriodTicks */ 24000L,
-                List.of(new ItemStack(Items.MILK_BUCKET, 1)),
+                List.of(new ItemStack(Items.MILK_BUCKET, 1),
+                        new ItemStack(Items.BONE_MEAL, 1)),
                 Optional.of(new BreedingRule(
                         List.of(new ItemStack(Items.WHEAT, 1)), 2, 48000L)),
                 List.of(new ItemStack(Items.BEEF, 2),
                         new ItemStack(Items.LEATHER, 1)),
                 36000L));
 
-        // SHEEP — wool every 1.5 days; wheat breeding.
+        // SHEEP — wool + manure every 1.5 days; wheat breeding.
         RosterRegistry.register(new RosterDefinition(
                 SHEEP, EntityType.SHEEP,
                 3, 12,
                 /* productionPeriodTicks */ 36000L,
-                List.of(new ItemStack(Items.WHITE_WOOL, 1)),
+                List.of(new ItemStack(Items.WHITE_WOOL, 1),
+                        new ItemStack(Items.BONE_MEAL, 1)),
                 Optional.of(new BreedingRule(
                         List.of(new ItemStack(Items.WHEAT, 1)), 2, 48000L)),
                 List.of(new ItemStack(Items.MUTTON, 2),

@@ -121,7 +121,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
          *  ANIMAL_TENDER / FERTILIZER roles. Roster cycle-tick handles
          *  production output; this phase keeps the NPC at the animal
          *  facility and awards ANIMAL_HUSBANDRY XP periodically. */
-        TENDING_ANIMALS
+        TENDING_ANIMALS,
+        /** Phase 6.3.3.h.3 — FERTILIZER role with manure in farmhouse
+         *  storage walks to a low-soilQuality plot and composts it. */
+        COMPOSTING
     }
 
     
@@ -167,6 +170,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             case BUYING_SEEDS       -> buySeeds(level);
             case AWAITING_SELL      -> { /* SellToMarketBehavior owns the loop */ }
             case TENDING_ANIMALS    -> tendAnimals(level);
+            case COMPOSTING         -> compost(level);
         }
     }
 
@@ -221,9 +225,19 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // The roster cycle-tick handles production output passively; this
         // branch keeps the NPC at the animal facility for animation +
         // periodic XP awards.
+        //
+        // Phase 6.3.3.h.3 — FERTILIZER additionally checks for compost
+        // work: when farmhouse has manure (BONE_MEAL) AND any assigned
+        // crop plot is below SOIL_FALLOW_EXIT (and past its compost
+        // cooldown), the worker routes to COMPOSTING instead. APPRENTICE
+        // workers don't compost (no financial / planning authority).
         if (role == FarmRole.ANIMAL_SPECIALIST
                 || role == FarmRole.ANIMAL_TENDER
                 || role == FarmRole.FERTILIZER) {
+            if (role == FarmRole.FERTILIZER && !isApprenticeTier()
+                    && tryRouteToCompost(level)) {
+                return;
+            }
             phase = Phase.TENDING_ANIMALS;
             entity.setCurrentActivity("Tending animals");
             return;
@@ -667,6 +681,90 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     }
 
     // =========================================================================
+    // Phase: COMPOSTING (Phase 6.3.3.h.3)
+    // =========================================================================
+
+    /** Target plot for the active compost run. Set by tryRouteToCompost. */
+    private FarmPlot compostTarget;
+    /** Cooldown between compost applications on the same plot. */
+    private static final long COMPOST_PLOT_COOLDOWN = 3L * FarmPlot.DAY_TICKS;
+
+    /**
+     * Phase 6.3.3.h.3 — FERTILIZER routing check. Returns true and
+     * transitions to COMPOSTING when:
+     * <ul>
+     *   <li>Farmhouse storage contains at least 1 BONE_MEAL (manure)</li>
+     *   <li>At least one assigned crop plot has soilQuality below
+     *       SOIL_FALLOW_EXIT (0.7) AND past the per-plot cooldown</li>
+     * </ul>
+     * Picks the lowest-quality eligible plot as {@link #compostTarget}.
+     */
+    private boolean tryRouteToCompost(ServerLevel level) {
+        if (farmhouse == null) return false;
+        int manure = tterrag1112.life_in_the_village.Village.BuildingStorageAccess
+                .countItem(level, farmhouse, Items.BONE_MEAL);
+        if (manure <= 0) return false;
+
+        long now = level.getGameTime();
+        VillageSavedData data = VillageSavedData.get(level);
+        FarmPlot best = null;
+        for (FarmPlot plot : data.getFarmPlotsForFarmhouse(farmhouse.getId())) {
+            if (plot.getSubtype() != FarmPlot.PlotSubtype.CROP_FIELD) continue;
+            if (plot.getSoilQuality() >= FarmPlot.SOIL_FALLOW_EXIT) continue;
+            if (now - plot.getLastCompostedTick() < COMPOST_PLOT_COOLDOWN) continue;
+            if (best == null || plot.getSoilQuality() < best.getSoilQuality()) {
+                best = plot;
+            }
+        }
+        if (best == null) return false;
+
+        compostTarget = best;
+        phase = Phase.COMPOSTING;
+        entity.setCurrentActivity("Composting");
+        return true;
+    }
+
+    private void compost(ServerLevel level) {
+        if (farmhouse == null || compostTarget == null) { goIdle(); return; }
+
+        // Walk to the target plot's origin before applying.
+        BlockPos target = compostTarget.getOrigin();
+        double distSq = entity.distanceToSqr(
+                target.getX(), target.getY(), target.getZ());
+        if (distSq > INTERACT_RANGE_SQ * 4.0) {
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    target.getX(), target.getY(), target.getZ(), 1.0));
+            return;
+        }
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+
+        actionTimer++;
+        if (actionTimer < TICKS_PER_ACTION) return;
+        actionTimer = 0;
+
+        // Pull 1 manure from farmhouse; abort if the stock vanished.
+        boolean taken = BuildingStorageAccess.takeItem(
+                level, farmhouse, Items.BONE_MEAL, 1);
+        if (!taken) { compostTarget = null; phase = Phase.ANALYZING; return; }
+
+        compostTarget.onComposted(level.getGameTime());
+        VillageSavedData.get(level).setDirty();
+
+        // FARMING + ANIMAL_HUSBANDRY XP (the FERTILIZER straddles the two
+        // domains; one application earns both).
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
+                2, level.getGameTime());
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity,
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY,
+                1, level.getGameTime());
+
+        compostTarget = null;
+        phase = Phase.ANALYZING;
+    }
+
+    // =========================================================================
     // Phase: TENDING ANIMALS
     // =========================================================================
 
@@ -776,6 +874,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         toHarvest.clear();
         toReplant.clear();
         rotatedThisCycle.clear();
+        compostTarget = null;
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
