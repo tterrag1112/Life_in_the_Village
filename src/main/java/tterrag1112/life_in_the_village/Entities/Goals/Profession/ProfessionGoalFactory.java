@@ -1,9 +1,7 @@
 package tterrag1112.life_in_the_village.Entities.Goals.Profession;
 
 import net.minecraft.world.entity.ai.goal.*;
-import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.player.Player;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.*;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopStallDecisionGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
@@ -237,16 +235,14 @@ public final class ProfessionGoalFactory {
         // via ProfessionBrainFactory.GUARD (WORK @0). CaravanGuardGoal
         // defers to 6.2.d.5. Combat goals stay Goal-side — vanilla-shaped
         // targetSelector + MeleeAttackGoal handlers are out of WORK scope.
-        // Phase 6.2.d.5: CaravanGuardGoal migrated to CaravanGuardBehavior
-        // (ProfessionBrainFactory.GUARD, WORK @0 with self-gate).
-        // Combat goals stay Goal-side (vanilla-shaped) — 6.2.e scope.
-        REGISTRARS.put(Profession.GUARD, npc -> {
-            npc.goalSelector.addGoal(P_COMBAT,    new GuardEquipmentGoal(npc));
-            npc.goalSelector.addGoal(P_COMBAT,    new MeleeAttackGoal(npc, 1.2, true));
-            npc.targetSelector.addGoal(P_SURVIVAL, new GuardAttackGoal(npc));
-            npc.targetSelector.addGoal(P_COMBAT,   new HurtByTargetGoal(npc));
-            npc.targetSelector.addGoal(P_COMBAT, new GuardAwarenessGoal(npc));
-        });
+        // Phase 6.2.e: GUARD combat migrated to Brain.
+        // - GuardAttackGoal + HurtByTargetGoal port → GuardScanForHostiles
+        //   Behavior (CORE @1) writes ATTACK_TARGET.
+        // - MeleeAttackGoal port → GuardMeleeAttackBehavior (FIGHT @0).
+        // - GuardEquipmentGoal + GuardAwarenessGoal: deferred to content
+        //   pass. Files preserved as dead code (no live references).
+        // GUARD's combat behaviors layered via ProfessionBrainFactory.
+        REGISTRARS.put(Profession.GUARD, npc -> {});
 
         // ── Guild ────────────────────────────────────────────────────────────
         // Phase 6.2.d.5: GUILDWORKER migrated to GuildWorkerBehavior.

@@ -6,7 +6,9 @@ import net.minecraft.world.entity.ai.behavior.BehaviorControl;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.CaravanGuardBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.GuardMeleeAttackBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.GuardPatrolBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.GuardScanForHostilesBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.KingdomRulerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.VillageLeaderBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.PostalBehavior;
@@ -152,16 +154,20 @@ public final class ProfessionBrainFactory {
         REGISTRARS.put(Profession.KINGDOM_RULER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new KingdomRulerBehavior())));
-        // GUARD: ports the patrol loop + caravan escort. CaravanGuardBehavior
-        // wins WORK @0 via internal self-gate (entity is assigned to a
-        // caravan); GuardPatrolBehavior at WORK @1 fires when not on
-        // caravan duty. MeleeAttack + targetSelector handlers stay Goal-
-        // side (vanilla combat — out of WORK scope).
+        // GUARD: patrol + caravan escort (6.2.d.4/d.5) plus combat (6.2.e).
+        // GuardScanForHostilesBehavior runs in CORE (always-on threat scan +
+        // hurt-by retaliation + stale-target cleanup). When it writes
+        // ATTACK_TARGET, customServerAiStep pushes the FIGHT activity, which
+        // runs GuardMeleeAttackBehavior to chase and strike.
         REGISTRARS.put(Profession.GUARD, (npc, brain) -> {
             brain.addActivity(NpcActivities.WORK.get(), 0,
                     ImmutableList.of(new CaravanGuardBehavior()));
             brain.addActivity(NpcActivities.WORK.get(), 1,
                     ImmutableList.of(new GuardPatrolBehavior()));
+            brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 1,
+                    ImmutableList.of(new GuardScanForHostilesBehavior()));
+            brain.addActivity(NpcActivities.FIGHT.get(), 0,
+                    ImmutableList.of(new GuardMeleeAttackBehavior()));
         });
 
         // Phase 6.2.d.5 — trade + guild + company.
