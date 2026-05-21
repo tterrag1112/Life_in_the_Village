@@ -11,7 +11,8 @@ public enum FarmRole implements tterrag1112.life_in_the_village.Profession.Roles
     MARKET_SELLER,
     ANIMAL_TENDER,
     FERTILIZER,
-    /** Learner hired via a FARMHAND job posting with APPRENTICE type. Works at 60% speed. */
+    /** Learner hired via an APPRENTICE job posting (FARMHAND profession was
+     *  folded into FARMER+APPRENTICE tier in 6.3.3.f). Works at 60% speed. */
     APPRENTICE;
 
     // ── Self-register ─────────────────────────────────────────────────────────

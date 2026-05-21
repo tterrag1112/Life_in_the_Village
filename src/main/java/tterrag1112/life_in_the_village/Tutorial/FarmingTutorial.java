@@ -24,7 +24,7 @@ public class FarmingTutorial {
         FIRST_SALE,
         BUSINESS_LEVEL_UP,
         PURCHASE_FARM,
-        HIRE_FARMHAND,
+        HIRE_APPRENTICE,
         MARKET_STALL,
         QUALITY_CROPS
     }
@@ -82,7 +82,7 @@ public class FarmingTutorial {
             case PURCHASE_FARM ->
                     "You can now own this farm! At Farmer level 3, you can purchase farms or inherit them from retiring farmers.";
 
-            case HIRE_FARMHAND ->
+            case HIRE_APPRENTICE ->
                     "As a farm owner, you can hire NPC farmhands to help with work. More hands mean faster production!";
 
             case MARKET_STALL ->

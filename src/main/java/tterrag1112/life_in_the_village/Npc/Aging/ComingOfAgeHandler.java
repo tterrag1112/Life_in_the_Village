@@ -77,10 +77,12 @@ public final class ComingOfAgeHandler implements EventDispatcher {
         }
         if (preferred == Profession.NONE || preferred == Profession.CITIZEN) {
             // Spec line 150: default to FARMHAND/LABORER. v1 uses
-            // FARMHAND; the apprenticeship goal stays open via the
+            // FARMER (post-6.3.3.f consolidation; the FARMHAND profession
+            // is folded into FARMER+APPRENTICE tier). The apprenticeship goal
+            // stays open via the
             // standard LifeGoalSelector retry on next adult re-eval.
             tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
-                    npc, Profession.FARMHAND,
+                    npc, Profession.FARMER,
                     tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.COMING_OF_AGE,
                     tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
             return;
@@ -94,7 +96,7 @@ public final class ComingOfAgeHandler implements EventDispatcher {
             // No master available now — fall back to a basic profession
             // and let the LifeGoalSelector goal stay open for retry.
             tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
-                    npc, Profession.FARMHAND,
+                    npc, Profession.FARMER,
                     tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.COMING_OF_AGE,
                     tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.SYSTEM);
         }
