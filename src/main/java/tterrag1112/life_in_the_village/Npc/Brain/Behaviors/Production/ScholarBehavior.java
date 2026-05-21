@@ -1,8 +1,13 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeCategory;
@@ -17,7 +22,6 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -32,7 +36,7 @@ import java.util.UUID;
  * ledger consulted by ask_about; teaching slots in once schooling
  * (doc 15) lands.</p>
  */
-public class ScholarWorkGoal extends Goal {
+public class ScholarBehavior extends Behavior<TownspersonMob> {
 
     /** Time between research-progress ticks. */
     public static final int RESEARCH_INTERVAL = 1200;
@@ -43,20 +47,24 @@ public class ScholarWorkGoal extends Goal {
     /** Bonus MEDICINE XP — scholar's secondary skill. */
     public static final int MEDICINE_XP_PER_RESEARCH = 1;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public ScholarBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Building workspace;
     private BlockPos studyPos;
     private int researchTimer;
 
-    public ScholarWorkGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         // Prefer the assigned SCHOLARS_RETREAT; spec line 244 allows
         // a scholar to fall back to the LIBRARY if no retreat exists.
@@ -71,26 +79,25 @@ public class ScholarWorkGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return workspace != null && entity.isWorkTime();
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void start() {
+        @Override
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         researchTimer = 0;
         entity.setCurrentActivity("Studying at the desk");
         if (studyPos != null) {
-            entity.getNavigation().moveTo(
-                    studyPos.getX() + 0.5, studyPos.getY(), studyPos.getZ() + 0.5, 0.8);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    studyPos.getX() + 0.5, studyPos.getY(), studyPos.getZ() + 0.5, 0.8));
         }
     }
 
     @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         researchTimer++;
         if (researchTimer < RESEARCH_INTERVAL) return;
         researchTimer = 0;
@@ -178,10 +185,18 @@ public class ScholarWorkGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.clearCurrentActivity();
         workspace = null;
         studyPos = null;
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

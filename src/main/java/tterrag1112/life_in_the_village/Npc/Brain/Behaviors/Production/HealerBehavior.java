@@ -1,8 +1,13 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Healer;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -20,7 +25,6 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -39,7 +43,7 @@ import java.util.UUID;
  * (spec line 158) is a Phase 5 polish — v1 always picks the highest-
  * severity condition and a remedy that targets it.</p>
  */
-public class HealerWorkGoal extends Goal {
+public class HealerBehavior extends Behavior<TownspersonMob> {
 
     public static final int  TREATMENT_TICKS         = 400;
     public static final int  PLAGUE_TREATMENT_TICKS  = 200;
@@ -51,7 +55,13 @@ public class HealerWorkGoal extends Goal {
 
     private enum Phase { IDLE, WALKING, TREATING, PRODUCING }
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public HealerBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private Building hut;
     private TownspersonMob patient;
@@ -59,17 +69,15 @@ public class HealerWorkGoal extends Goal {
     private Remedy queuedRemedy;
     private int timer;
 
-    public HealerWorkGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (entity.getProfession() != Profession.HEALER) return false;
         if (!entity.isWorkTime() && !isPlagueOverride()) return false;
         if (!entity.getHealthComponent().canWork()) return false;
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         hut = entity.getAssignedBuildingId()
                 .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
@@ -93,8 +101,8 @@ public class HealerWorkGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
-        if (!(entity.level() instanceof ServerLevel level)) return false;
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return switch (phase) {
             case IDLE -> false;
             case WALKING, TREATING -> patient != null && patient.isAlive()
@@ -104,11 +112,9 @@ public class HealerWorkGoal extends Goal {
         };
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void start() {
+        @Override
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (patient != null) {
             // Take the remedy now (canUse only checked availability).
             queuedRemedy = entity.getHealerInventory()
@@ -122,23 +128,23 @@ public class HealerWorkGoal extends Goal {
             }
             phase = Phase.WALKING;
             entity.setCurrentActivity("Tending to " + patient.getNpcName());
-            entity.getNavigation().moveTo(
-                    patient.getX(), patient.getY(), patient.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    patient.getX(), patient.getY(), patient.getZ(), 1.0));
         } else {
             phase = Phase.PRODUCING;
             entity.setCurrentActivity("Brewing remedies");
             BlockPos origin = hut.getShape().getOrigin();
             if (origin != null) {
-                entity.getNavigation().moveTo(
-                        origin.getX() + 0.5, origin.getY(), origin.getZ() + 0.5, 1.0);
+                entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                        origin.getX() + 0.5, origin.getY(), origin.getZ() + 0.5, 1.0));
             }
         }
         timer = 0;
     }
 
     @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         switch (phase) {
             case WALKING    -> tickWalking(level);
             case TREATING   -> tickTreating(level);
@@ -148,7 +154,8 @@ public class HealerWorkGoal extends Goal {
     }
 
     @Override
-    public void stop() {
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         // If we never delivered the queued remedy, return it to the stash.
         if (queuedRemedy != null && phase != Phase.TREATING) {
             entity.getHealerInventory().add(queuedRemedy);
@@ -158,7 +165,7 @@ public class HealerWorkGoal extends Goal {
         targetCondition = null;
         queuedRemedy = null;
         timer = 0;
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
     }
 
     // ── Phase ticks ────────────────────────────────────────────────────────
@@ -168,13 +175,13 @@ public class HealerWorkGoal extends Goal {
         double d2 = entity.distanceToSqr(patient);
         if (d2 <= ARRIVAL_SQ) {
             phase = Phase.TREATING;
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             timer = 0;
             entity.setCurrentActivity("Treating " + patient.getNpcName());
         } else {
             // Re-target the navigation (patient moves).
-            entity.getNavigation().moveTo(
-                    patient.getX(), patient.getY(), patient.getZ(), 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    patient.getX(), patient.getY(), patient.getZ(), 1.0));
         }
     }
 
@@ -212,7 +219,6 @@ public class HealerWorkGoal extends Goal {
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private boolean isPlagueOverride() {
-        if (!(entity.level() instanceof ServerLevel level)) return false;
         Village v = entity.getAssignedVillageName()
                 .flatMap(n -> VillageSavedData.get(level).getVillageByName(n))
                 .orElse(null);
@@ -281,4 +287,11 @@ public class HealerWorkGoal extends Goal {
     /** Suppresses unused-import warning on Optional. */
     @SuppressWarnings("unused")
     private static final Optional<HealerInventory> DOC_HOOK = Optional.empty();
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

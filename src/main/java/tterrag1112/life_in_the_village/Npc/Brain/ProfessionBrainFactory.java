@@ -15,8 +15,13 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.Candlemake
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CarpenterProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmhandBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MillerProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MinerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScholarBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScribeWorkBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.StonemasonProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.WeaverProductionBehavior;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -48,11 +53,13 @@ public final class ProfessionBrainFactory {
             new EnumMap<>(Profession.class);
 
     static {
-        // Phase 6.2.b — SCRIBE: postal delivery during SOCIAL activity.
+        // SCRIBE: postal delivery during SOCIAL (Phase 6.2.b) + work-phase
+        // commission processing during WORK (Phase 6.2.d.3).
         REGISTRARS.put(Profession.SCRIBE, (npc, brain) -> {
-            ImmutableList<BehaviorControl<? super TownspersonMob>> scribeSocial =
-                    ImmutableList.of(new PostalBehavior());
-            brain.addActivity(NpcActivities.SOCIAL.get(), 7, scribeSocial);
+            brain.addActivity(NpcActivities.SOCIAL.get(), 7,
+                    ImmutableList.of(new PostalBehavior()));
+            brain.addActivity(NpcActivities.WORK.get(), 0,
+                    ImmutableList.of(new ScribeWorkBehavior()));
         });
 
         // Phase 6.2.d.1 — workshop family: each profession adds its
@@ -108,6 +115,25 @@ public final class ProfessionBrainFactory {
         REGISTRARS.put(Profession.MINER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new MinerBehavior())));
+
+        // Phase 6.2.d.3 — service-profession cluster.
+        // Stationary "wait at counter, serve clients" pattern. Each
+        // behavior ports its work-phase Goal; Track 4 verb hooks
+        // (treatment, scribal commission, lending, lessons, rest) are
+        // preserved by black-boxing the existing service-delivery code.
+        // SCRIBE: layered on top of the SOCIAL @7 PostalBehavior entry.
+        REGISTRARS.put(Profession.HEALER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new HealerBehavior())));
+        REGISTRARS.put(Profession.LIBRARIAN, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new LibrarianBehavior())));
+        REGISTRARS.put(Profession.SCHOLAR, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new ScholarBehavior())));
+        REGISTRARS.put(Profession.INNKEEPER, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(new InnkeeperBehavior())));
     }
 
     /**

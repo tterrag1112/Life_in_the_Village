@@ -1,10 +1,15 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -18,7 +23,6 @@ import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
-import java.util.EnumSet;
 import java.util.UUID;
 
 /**
@@ -28,7 +32,7 @@ import java.util.UUID;
  * via {@link ScribalItems}, drops it for client pickup, and awards
  * LITERACY XP.
  */
-public class ScribeWorkGoal extends Goal {
+public class ScribeWorkBehavior extends Behavior<TownspersonMob> {
 
     /** Time spent at the desk per commission. */
     public static final int WRITE_TICKS = 600;
@@ -39,22 +43,26 @@ public class ScribeWorkGoal extends Goal {
 
     private enum Phase { IDLE, WALKING, WRITING, DELIVERING }
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public ScribeWorkBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private Building workshop;
     private BlockPos deskPos;
     private ScribeCommission active;
     private int writeTimer;
 
-    public ScribeWorkGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         workshop = entity.getAssignedBuildingId()
                 .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
@@ -72,27 +80,26 @@ public class ScribeWorkGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return phase != Phase.IDLE
                 && entity.isWorkTime()
                 && active != null;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void start() {
+        @Override
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phase = Phase.WALKING;
         writeTimer = 0;
         entity.setCurrentActivity("Heading to writing desk");
-        entity.getNavigation().moveTo(
-                deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5, 1.0);
+        entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5, 1.0));
     }
 
     @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
 
         switch (phase) {
             case WALKING    -> tickWalking();
@@ -106,7 +113,7 @@ public class ScribeWorkGoal extends Goal {
         double d2 = entity.distanceToSqr(
                 deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5);
         if (d2 <= DESK_ARRIVAL_SQ) {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             phase = Phase.WRITING;
             entity.setCurrentActivity("Writing " + active.product().name().toLowerCase());
             entity.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.FEATHER));
@@ -180,7 +187,8 @@ public class ScribeWorkGoal extends Goal {
     }
 
     @Override
-    public void stop() {
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.getMainHandItem().isEmpty()) {
             entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         }
@@ -210,4 +218,11 @@ public class ScribeWorkGoal extends Goal {
             case DECREE     -> ScribalItems.decree("Decree", c.content());
         };
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

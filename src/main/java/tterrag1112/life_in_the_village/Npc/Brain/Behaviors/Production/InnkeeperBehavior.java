@@ -1,8 +1,13 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Innkeeper;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
@@ -12,10 +17,9 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
 
-import java.util.EnumSet;
 import java.util.List;
 
-public class InnkeeperGoal extends Goal {
+public class InnkeeperBehavior extends Behavior<TownspersonMob> {
 
     private enum Phase {
         IDLE, TENDING_BAR, SERVING_FOOD
@@ -27,7 +31,13 @@ public class InnkeeperGoal extends Goal {
     private static final int INTERACT_RANGE_SQ = 9;
     private static final int SERVE_RANGE = 12;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public InnkeeperBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Phase phase = Phase.IDLE;
     private int idleCooldown = 0;
     private int tendTimer = 0;
@@ -35,16 +45,14 @@ public class InnkeeperGoal extends Goal {
     private Building inn = null;
     private BlockPos barPos = null; // where innkeeper stands
 
-    public InnkeeperGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
-        if (!(entity.level() instanceof ServerLevel level)) return false;
 
         inn = entity.getAssignedBuildingId()
                 .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
@@ -58,29 +66,28 @@ public class InnkeeperGoal extends Goal {
     }
 
     @Override
-    public void start() {
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         phase = Phase.TENDING_BAR;
         tendTimer = 0;
         serveTimer = 0;
         if (barPos != null) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     barPos.getX() + 0.5, barPos.getY(),
-                    barPos.getZ() + 0.5, 1.0);
+                    barPos.getZ() + 0.5, 1.0));
         }
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         if (!entity.isWorkTime()) return false;
         return phase != Phase.IDLE && tendTimer < TEND_DURATION;
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+        @Override
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         tendTimer++;
         serveTimer++;
 
@@ -109,11 +116,11 @@ public class InnkeeperGoal extends Goal {
                 barPos.getX(), barPos.getY(), barPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     barPos.getX() + 0.5, barPos.getY(),
-                    barPos.getZ() + 0.5, 1.0);
+                    barPos.getZ() + 0.5, 1.0));
         } else {
-            entity.getNavigation().stop();
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             // Look around slowly — idle tending behavior
             if (tendTimer % 60 == 0) {
                 entity.getLookControl().setLookAt(
@@ -136,11 +143,11 @@ public class InnkeeperGoal extends Goal {
         double distSq = entity.distanceToSqr(target);
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getNavigation().moveTo(target, 1.0);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(target, 1.0));
             return;
         }
 
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getLookControl().setLookAt(
                 target.getX(), target.getY() + target.getEyeHeight(),
                 target.getZ());
@@ -169,12 +176,13 @@ public class InnkeeperGoal extends Goal {
     }
 
     @Override
-    public void stop() { goIdle(); }
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
+        goIdle(); }
 
     private void goIdle() {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
-        entity.getNavigation().stop();
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         tendTimer = 0;
         serveTimer = 0;
     }
@@ -231,4 +239,11 @@ public class InnkeeperGoal extends Goal {
         }
         return ItemStack.EMPTY;
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

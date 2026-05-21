@@ -1,8 +1,13 @@
-package tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal;
+package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
+import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.ai.goal.Goal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue;
@@ -11,7 +16,6 @@ import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
-import java.util.EnumSet;
 import java.util.List;
 
 /**
@@ -21,7 +25,7 @@ import java.util.List;
  * stubbed — the dependent child-arc system lives in doc 15 and lands
  * in a later session.
  */
-public class LibrarianWorkGoal extends Goal {
+public class LibrarianBehavior extends Behavior<TownspersonMob> {
 
     /** Tick interval between overdue-loan sweeps. */
     public static final int OVERDUE_SWEEP_INTERVAL = 1200;
@@ -32,21 +36,25 @@ public class LibrarianWorkGoal extends Goal {
     public static final int STUDENT_XP_INTERVAL = 24000;
     public static final double WALK_RADIUS_SQ = 36.0;
 
-    private final TownspersonMob entity;
+    private TownspersonMob entity;
+
+    public LibrarianBehavior() {
+        super(com.google.common.collect.ImmutableMap.of(
+                MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
+        ), 24000);
+    }
     private Building library;
     private BlockPos deskPos;
     private int sweepTimer;
     private int schoolingTimer;
 
-    public LibrarianWorkGoal(TownspersonMob entity) {
-        this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-    }
+    
 
     @Override
-    public boolean canUse() {
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        this.entity = entity;
+        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
-        if (!(entity.level() instanceof ServerLevel level)) return false;
         library = entity.getAssignedBuildingId()
                 .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
                 .filter(b -> b.getType() == BuildingType.LIBRARY)
@@ -57,27 +65,26 @@ public class LibrarianWorkGoal extends Goal {
     }
 
     @Override
-    public boolean canContinueToUse() {
+    protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         return library != null && entity.isWorkTime();
     }
 
-    @Override
-    public boolean requiresUpdateEveryTick() { return true; }
-
-    @Override
-    public void start() {
+        @Override
+    protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         sweepTimer = 0;
         schoolingTimer = 0;
         entity.setCurrentActivity("Curating the library");
         if (deskPos != null) {
-            entity.getNavigation().moveTo(
-                    deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5, 0.8);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5, 0.8));
         }
     }
 
     @Override
-    public void tick() {
-        if (!(entity.level() instanceof ServerLevel level)) return;
+    protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
         sweepTimer++;
         schoolingTimer++;
 
@@ -97,8 +104,8 @@ public class LibrarianWorkGoal extends Goal {
         if (deskPos != null && entity.distanceToSqr(
                 deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5) > WALK_RADIUS_SQ
                 && !entity.getNavigation().isInProgress()) {
-            entity.getNavigation().moveTo(
-                    deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5, 0.8);
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                    deskPos.getX() + 0.5, deskPos.getY(), deskPos.getZ() + 0.5, 0.8));
         }
     }
 
@@ -133,10 +140,18 @@ public class LibrarianWorkGoal extends Goal {
     }
 
     @Override
-    public void stop() {
-        entity.getNavigation().stop();
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.clearCurrentActivity();
         library = null;
         deskPos = null;
     }
+
+    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
+     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
+    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
+        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
+    }
+
 }

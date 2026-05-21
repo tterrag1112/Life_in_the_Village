@@ -6,7 +6,6 @@ import net.minecraft.world.entity.player.Player;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.CompanyWorker.CompanyWorkerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guard.*;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Guild.GuildWorkerGoal;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Innkeeper.InnkeeperGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.KingdomRulerGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Leader.VillageLeaderGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Merchant.CaravanMerchantGoal;
@@ -233,8 +232,8 @@ public final class ProfessionGoalFactory {
 
         });
 
-        REGISTRARS.put(Profession.INNKEEPER, npc ->
-                npc.goalSelector.addGoal(P_WORK_PRIMARY, new InnkeeperGoal(npc)));
+        // Phase 6.2.d.3 — INNKEEPER migrated to InnkeeperBehavior (WORK @0).
+        REGISTRARS.put(Profession.INNKEEPER, npc -> {});
 
         REGISTRARS.put(Profession.STOCKPILE_KEEPER, npc ->
                 npc.goalSelector.addGoal(P_WORK_PRIMARY, new StockpileKeeperGoal(npc)));
@@ -279,19 +278,14 @@ public final class ProfessionGoalFactory {
         REGISTRARS.put(Profession.NONE, npc ->
                 npc.goalSelector.addGoal(P_WORK_PRIMARY, new SeekJobGoal(npc)));
 
-        // ── Scribal (Phase 2 task 17) ────────────────────────────────────────
-        REGISTRARS.put(Profession.SCRIBE, npc -> {
-            npc.goalSelector.addGoal(P_WORK_PRIMARY,
-                    new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScribeWorkGoal(npc));
-            // Phase 6.2.b: PostalGoal migrated to PostalBehavior — wired
-            // via ProfessionBrainFactory.SCRIBE registrar (SOCIAL @7).
-        });
-        REGISTRARS.put(Profession.LIBRARIAN, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
-                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.LibrarianWorkGoal(npc)));
-        REGISTRARS.put(Profession.SCHOLAR, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
-                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Scribal.ScholarWorkGoal(npc)));
-        REGISTRARS.put(Profession.HEALER, npc -> npc.goalSelector.addGoal(P_WORK_PRIMARY,
-                new tterrag1112.life_in_the_village.Entities.Goals.Profession.Healer.HealerWorkGoal(npc)));
+        // Phase 6.2.d.3 — scribal + healer service cluster all migrated
+        // to per-profession behaviors via ProfessionBrainFactory at WORK @0.
+        // SCRIBE keeps its 6.2.b postal SOCIAL @7 entry; the work-phase
+        // ScribeWorkBehavior layers in at WORK @0.
+        REGISTRARS.put(Profession.SCRIBE, npc -> {});
+        REGISTRARS.put(Profession.LIBRARIAN, npc -> {});
+        REGISTRARS.put(Profession.SCHOLAR, npc -> {});
+        REGISTRARS.put(Profession.HEALER, npc -> {});
     }
 
     /**
