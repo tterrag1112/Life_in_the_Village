@@ -1257,7 +1257,7 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     public Map<Item, Integer> getSellableItems(Profession prof) {
         Map<Item, Integer> items = new LinkedHashMap<>();
         switch (prof) {
-            case FARMER, FARMHAND -> {
+            case FARMER -> {
                 items.put(Items.WHEAT, 8);
                 items.put(Items.CARROT, 8);
                 items.put(Items.POTATO, 8);

@@ -4,7 +4,19 @@ package tterrag1112.life_in_the_village.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
 public enum Profession {
-    NONE, CITIZEN, MERCHANT, WANDERING_TRADER, FARMER, FARMHAND, BLACKSMITH, BUILDER,
+    NONE, CITIZEN, MERCHANT, WANDERING_TRADER, FARMER,
+    /**
+     * Phase 6.3.3.f — FARMHAND has been folded into FARMER as the
+     * APPRENTICE employment tier (see {@code EmploymentTier}). The enum
+     * value is retained as a {@code @Deprecated} load-time alias so
+     * {@code Profession.valueOf("FARMHAND")} still resolves for legacy
+     * saves; {@code TownspersonMob.readAdditionalSaveData} rewrites
+     * the persisted value to {@code FARMER} on first load (one-shot
+     * migration; idempotent on subsequent loads). No new code should
+     * reference this value.
+     */
+    @Deprecated FARMHAND,
+    BLACKSMITH, BUILDER,
     GUARD, STOCKPILE_KEEPER, INNKEEPER, MINER,
     VILLAGE_LEADER, KINGDOM_RULER, CARPENTER,
     MILLER,          // MILLER building — grinds wheat to flour

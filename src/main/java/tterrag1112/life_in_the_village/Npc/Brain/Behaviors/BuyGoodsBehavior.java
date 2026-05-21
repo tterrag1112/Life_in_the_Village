@@ -250,7 +250,7 @@ public class BuyGoodsBehavior extends Behavior<TownspersonMob> {
 
     private static Item toolForProfession(Profession prof) {
         return switch (prof) {
-            case FARMER, FARMHAND -> Items.IRON_HOE;
+            case FARMER -> Items.IRON_HOE;
             case MINER            -> Items.IRON_PICKAXE;
             case CARPENTER        -> Items.IRON_AXE;
             case GUARD            -> Items.IRON_SWORD;

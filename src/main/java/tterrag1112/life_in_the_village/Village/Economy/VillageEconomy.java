@@ -395,7 +395,7 @@ public class VillageEconomy {
         int miners = countProfession(level, village, data, Profession.MINER);
         int guards = countProfession(level, village, data, Profession.GUARD);
         int farmers = countProfession(level, village, data, Profession.FARMER)
-                + countProfession(level, village, data, Profession.FARMHAND);
+                /* Phase 6.3.3.f — FARMHAND folded into FARMER tier APPRENTICE */;
 
         if (miners > 0)
             targets.put(net.minecraft.world.item.Items.IRON_PICKAXE, miners + 1);

@@ -82,7 +82,7 @@ public final class RetirementHandler implements EventDispatcher {
         }
         // Physically demanding roles — full retire baseline.
         boolean physical = p == Profession.MINER || p == Profession.GUARD
-                || p == Profession.FARMER || p == Profession.FARMHAND
+                || p == Profession.FARMER
                 || p == Profession.BUILDER || p == Profession.CARPENTER
                 || p == Profession.STONEMASON;
         if (physical && industry < 0.5f) return true;

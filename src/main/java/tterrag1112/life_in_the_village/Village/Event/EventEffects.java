@@ -106,9 +106,9 @@ public class EventEffects {
 
         // Give farmers speed and strength boost
         getVillageNpcs(level, village, data).forEach(mob -> {
-            if (mob.getProfession() == Profession.FARMER
-                    || mob.getProfession() ==
-                    Profession.FARMHAND) {
+            // Phase 6.3.3.f — FARMHAND consolidated into FARMER; this
+            // branch used to include both, now FARMER covers both.
+            if (mob.getProfession() == Profession.FARMER) {
                 mob.addEffect(new MobEffectInstance(
                         MobEffects.SPEED,
                         (int) event.getType().getDurationTicks(),

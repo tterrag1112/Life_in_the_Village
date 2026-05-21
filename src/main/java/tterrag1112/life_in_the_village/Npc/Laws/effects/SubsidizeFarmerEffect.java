@@ -21,7 +21,7 @@ import tterrag1112.life_in_the_village.Village.Village;
 public final class SubsidizeFarmerEffect implements LawEffect {
     @Override public VillageLaw law() { return VillageLaw.SUBSIDIZE_FARMER; }
     @Override public long subsidyForProfession(Village v, Profession p, LawParams params) {
-        if (p != Profession.FARMER && p != Profession.FARMHAND) return 0L;
+        if (p != Profession.FARMER) return 0L;
         return Math.max(0L, Math.round(params.numeric(VillageLaw.SUBSIDIZE_FARMER, "subsidy_per_day")));
     }
 }

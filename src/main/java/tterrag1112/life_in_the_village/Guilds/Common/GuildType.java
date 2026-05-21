@@ -33,7 +33,7 @@ public enum GuildType {
             EnumSet.of(Profession.MERCHANT, Profession.WANDERING_TRADER,
                     Profession.INNKEEPER, Profession.STOCKPILE_KEEPER)),
     AGRICULTURAL(null,
-            EnumSet.of(Profession.FARMER, Profession.FARMHAND, Profession.BAKER, Profession.MILLER)),
+            EnumSet.of(Profession.FARMER, Profession.BAKER, Profession.MILLER)),
     RELIGIOUS(null,
             EnumSet.of(Profession.PRIEST)),
     SCHOLARLY(null,

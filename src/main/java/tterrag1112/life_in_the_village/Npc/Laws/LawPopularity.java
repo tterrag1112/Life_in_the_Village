@@ -95,7 +95,7 @@ public final class LawPopularity {
             case FOREIGN_TRADER_BAN      -> p == Profession.MERCHANT || p == Profession.WANDERING_TRADER;
             case GUILD_MEMBERSHIP_REQUIRED -> isWorkshopProfession(p);
             case PRICE_FLOOR_FOOD        -> false;
-            case PRICE_CEILING_FOOD      -> p == Profession.FARMER || p == Profession.FARMHAND;
+            case PRICE_CEILING_FOOD      -> p == Profession.FARMER;
             default -> false;
         };
     }
@@ -104,7 +104,7 @@ public final class LawPopularity {
     static boolean benefitsTo(VillageLaw law, Profession p) {
         return switch (law) {
             case MARKET_TAX_REDUCED      -> p == Profession.MERCHANT;
-            case SUBSIDIZE_FARMER        -> p == Profession.FARMER || p == Profession.FARMHAND;
+            case SUBSIDIZE_FARMER        -> p == Profession.FARMER;
             case SUBSIDIZE_BLACKSMITH    -> p == Profession.BLACKSMITH;
             case SUBSIDIZE_SCHOLAR       -> p == Profession.SCHOLAR || p == Profession.SCRIBE || p == Profession.LIBRARIAN;
             case SUBSIDIZE_HEALER        -> false; // HEALER profession lands in doc 21
@@ -112,7 +112,7 @@ public final class LawPopularity {
             case PARDON_FIRST_OFFENSE    -> false;
             case PILGRIM_WELCOME_BONUS   -> p == Profession.PRIEST;
             case PRICE_CEILING_FOOD      -> true; // every villager appreciates cheap food
-            case PRICE_FLOOR_FOOD        -> p == Profession.FARMER || p == Profession.FARMHAND;
+            case PRICE_FLOOR_FOOD        -> p == Profession.FARMER;
             default -> false;
         };
     }

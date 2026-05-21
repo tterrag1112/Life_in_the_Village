@@ -130,7 +130,7 @@ public final class WeeklyScheduleLibrary {
 
     private static DailySchedule dailyFor(Profession p) {
         return switch (p) {
-            case FARMER, FARMHAND, BUILDER, CARPENTER, MILLER, BAKER -> EARLY_RISER;
+            case FARMER, BUILDER, CARPENTER, MILLER, BAKER -> EARLY_RISER;
             case BLACKSMITH, MINER -> LATE_STARTER;
             case MERCHANT, WANDERING_TRADER -> MERCHANT_DAY;
             case GUARD, ADVENTURER -> GUARD_DAY;
