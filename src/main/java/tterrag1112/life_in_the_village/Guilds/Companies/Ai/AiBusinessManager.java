@@ -130,26 +130,59 @@ public final class AiBusinessManager {
     // ── Succession ────────────────────────────────────────────────────────
 
     /**
-     * Spec lines 121-129. Tries the heir chain; if no heir, transitions
-     * the business to {@link Business.SuccessionState#UNDECIDED} for 30
-     * days; failing that, calls {@link #dissolve}.
+     * Phase 6.3.3.c.6 — succession via {@link SuccessionRegistry}
+     * predicate stack. The legacy linear heir iteration is now
+     * predicate #1 (DESIGNATED_HEIR); additional predicates
+     * (FAMILY_SUCCESSOR, APPRENTICE_HEIR) cover cases the empty
+     * heir list misses. Result is sealed:
+     * <ul>
+     *   <li>HeirFound → seat the new owner, exit UNDECIDED</li>
+     *   <li>TransferredToPool → mark UNDECIDED but no dissolve clock
+     *       (future content reassigns from the pool; here we just
+     *       set the state)</li>
+     *   <li>NoEligibleSuccessor → legacy UNDECIDED + 30-day clock,
+     *       eventually dissolve</li>
+     * </ul>
      */
     public static void handleSuccession(ServerLevel level, Business business, long now) {
-        for (UUID heirId : business.getHeirs()) {
-            TownspersonMob heir = TownspersonMob.findByUUID(level, heirId).orElse(null);
-            if (heir != null && heir.isAlive() && heir.isAdult()) {
-                business.setNpcOwner(heirId);
+        String cultureId = resolveCulture(level, business);
+        SuccessionResult result = SuccessionRegistry.resolve(cultureId, business, level);
+        switch (result) {
+            case SuccessionResult.HeirFound found -> {
+                business.setOwnership(new tterrag1112.life_in_the_village
+                        .Guilds.Companies.BusinessOwner.NpcOwner(found.uuid()));
                 business.setSuccessionState(Business.SuccessionState.ACTIVE);
-                LOGGER.info("[AiBusinessManager] {} succeeded by heir {}",
-                        business.getName(), heirId);
-                return;
+                business.setUndecidedSinceTick(0L);
+                // Refresh heirs on the new owner's family tree.
+                BusinessHeirs.populateForOwner(level, business);
+                LOGGER.info("[AiBusinessManager] {} succeeded by {} (predicate-stack)",
+                        business.getName(), found.uuid());
+            }
+            case SuccessionResult.TransferredToPool ignored -> {
+                business.setSuccessionState(Business.SuccessionState.UNDECIDED);
+                // Park without starting the dissolve clock — content
+                // pack will reassign from village pool.
+                business.setUndecidedSinceTick(0L);
+                LOGGER.info("[AiBusinessManager] {} transferred to village allocation pool",
+                        business.getName());
+            }
+            case SuccessionResult.NoEligibleSuccessor ignored -> {
+                business.setSuccessionState(Business.SuccessionState.UNDECIDED);
+                business.setUndecidedSinceTick(now);
+                LOGGER.info("[AiBusinessManager] {} entered UNDECIDED (no eligible successor)",
+                        business.getName());
             }
         }
-        // No heir on file — enter UNDECIDED for the grace period.
-        business.setSuccessionState(Business.SuccessionState.UNDECIDED);
-        business.setUndecidedSinceTick(now);
-        LOGGER.info("[AiBusinessManager] {} entered UNDECIDED (no heir)",
-                business.getName());
+    }
+
+    /** Resolves the culture id from the business's home village. */
+    private static String resolveCulture(ServerLevel level, Business business) {
+        var vdata = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+        return vdata.getVillageById(business.getHomeVillageId())
+                .map(v -> vdata.getKingdomForVillage(v.getId())
+                        .map(tterrag1112.life_in_the_village.Kingdom.Kingdom::getCulture)
+                        .orElse(null))
+                .orElse(null);
     }
 
     /**
