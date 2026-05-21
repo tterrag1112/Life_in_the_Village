@@ -86,9 +86,12 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
     private Building            farmhouse;
     private List<FarmPlot>      assignedPlots;
-    private final List<BlockPos> toHarvest;
-    private final List<BlockPos> toReplant;
-    private final Map<Item, Integer> harvestedThisCycle;
+    // Phase 6.3.3.e.0 — pre-flight fix: these were declared final but
+    // never initialized in the no-arg constructor (compile blocker
+    // surfaced by the 6.3.3.0.A inspection). Initialize inline.
+    private final List<BlockPos> toHarvest = new java.util.ArrayList<>();
+    private final List<BlockPos> toReplant = new java.util.ArrayList<>();
+    private final Map<Item, Integer> harvestedThisCycle = new java.util.LinkedHashMap<>();
 
     private enum Phase {
         IDLE,
@@ -97,7 +100,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         WALKING_TO_FARMHOUSE,
         DEPOSITING,
         REPLANTING,
-        BUYING_SEEDS
+        BUYING_SEEDS,
+        /** Phase 6.3.3.e.1 — writes CARGO_DESTINATION + WORK_PHASE=SELL and
+         *  hands off to the universal SellToMarketBehavior. */
+        AWAITING_SELL
     }
 
     
@@ -141,6 +147,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             case DEPOSITING         -> deposit(level);
             case REPLANTING         -> replant(level);
             case BUYING_SEEDS       -> buySeeds(level);
+            case AWAITING_SELL      -> { /* SellToMarketBehavior owns the loop */ }
         }
     }
 
@@ -175,6 +182,15 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // Role-based task filtering
         FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
 
+        // Phase 6.3.3.e.3 — sell pipeline: if farmhouse storage exceeds
+        // stockQuotas for any crop AND a market exists, hand off to
+        // SellToMarketBehavior. MARKET_SELLER role biases strongly toward
+        // this path (checked first); other roles try sell only when no
+        // farming work is available.
+        if (role == FarmRole.MARKET_SELLER) {
+            if (tryHandOffToSell(level)) return;
+        }
+
         toHarvest.clear();
         toReplant.clear();
         harvestedThisCycle.clear();
@@ -204,6 +220,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             phase = Phase.BUYING_SEEDS;
             return;
         }
+
+        // Phase 6.3.3.e.3 — non-MARKET_SELLER fall-through: still try
+        // sell if surplus exists and no farming work is available.
+        if (tryHandOffToSell(level)) return;
 
         goIdle();
     }
@@ -583,4 +603,66 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
     }
 
+    // -------------------------------------------------------------------------
+    // Phase 6.3.3.e — sell pipeline integration
+    // -------------------------------------------------------------------------
+
+    /**
+     * Phase 6.3.3.e.3 — per-output stockpile quotas for the farmhouse.
+     * When stock exceeds quota for an item, the excess is sellable.
+     * Mirrors {@code AbstractProductionBehavior.stockQuotas} pattern;
+     * FARMER doesn't inherit AbstractProductionBehavior but the
+     * SellToMarketBehavior pipeline reads this through composition.
+     */
+    private Map<Item, Integer> stockQuotas() {
+        return Map.of(
+                Items.WHEAT,    32,   // staple — high quota
+                Items.CARROT,   16,
+                Items.POTATO,   16,
+                Items.BEETROOT, 16);
+    }
+
+    /** Phase 6.3.3.e.3 — items the FARMER may sell. Mirrors workshop
+     *  {@code sellableOutputs} surface. */
+    private List<Item> sellableOutputs() {
+        return java.util.List.of(Items.WHEAT, Items.CARROT, Items.POTATO,
+                Items.BEETROOT, Items.WHEAT_SEEDS, Items.BEETROOT_SEEDS);
+    }
+
+    /** Phase 6.3.3.e.3 — surplus for sale: stock at farmhouse minus
+     *  per-item quota. Empty map = nothing to sell. */
+    private Map<Item, Integer> computeSurplusToSell(ServerLevel level) {
+        if (farmhouse == null) return Map.of();
+        Map<Item, Integer> quotas = stockQuotas();
+        Map<Item, Integer> result = new java.util.LinkedHashMap<>();
+        for (Item item : sellableOutputs()) {
+            int stock = tterrag1112.life_in_the_village.Village.BuildingStorageAccess
+                    .countItem(level, farmhouse, item);
+            int keep = quotas.getOrDefault(item, 8);
+            if (stock > keep) result.put(item, stock - keep);
+        }
+        return result;
+    }
+
+    /**
+     * Phase 6.3.3.e.3 — if a market exists and farmhouse storage has
+     * sellable surplus, write CARGO_DESTINATION + WORK_PHASE=SELL and
+     * transition to AWAITING_SELL. The universal SellToMarketBehavior
+     * takes over from there (walk to market, execute sell, clear
+     * memory, return). Returns true if the hand-off fired.
+     */
+    private boolean tryHandOffToSell(ServerLevel level) {
+        if (farmhouse == null) return false;
+        Building market = tterrag1112.life_in_the_village.Village.Economy.Resources
+                .ProductionHelpers.findMarketInVillage(entity, level).orElse(null);
+        if (market == null) return false;
+        if (computeSurplusToSell(level).isEmpty()) return false;
+        BlockPos marketOrigin = market.getShape().getOrigin();
+        entity.getBrain().setMemory(NpcMemoryTypes.CARGO_DESTINATION.get(),
+                net.minecraft.core.GlobalPos.of(level.dimension(), marketOrigin));
+        entity.getBrain().setMemory(NpcMemoryTypes.WORK_PHASE.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.WorkPhase.SELL);
+        phase = Phase.AWAITING_SELL;
+        return true;
+    }
 }

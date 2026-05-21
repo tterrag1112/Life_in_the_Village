@@ -58,9 +58,11 @@ public class FarmhandBehavior extends Behavior<TownspersonMob> {
     private FarmPlot assignedPlot;
     private Building farmhouse;
 
-    private List<BlockPos> toHarvest;
-    private List<BlockPos> toReplant;
-    private Map<Item, Integer> harvestedThisCycle;
+    // Phase 6.3.3.e.0 — pre-flight fix: never initialized anywhere;
+    // any access would NPE. Same companion issue as FarmerBehavior.
+    private final List<BlockPos> toHarvest = new java.util.ArrayList<>();
+    private final List<BlockPos> toReplant = new java.util.ArrayList<>();
+    private final Map<Item, Integer> harvestedThisCycle = new java.util.LinkedHashMap<>();
 
     private enum Phase {
         IDLE,
