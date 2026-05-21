@@ -476,5 +476,44 @@ public class FarmPlot {
                 case PASTURE                      -> PASTURE_GRASS;
             };
         }
+
+        /**
+         * Phase 6.3.3.h.2 — picks a {@link CropType} from a family
+         * different from the most-recent {@code history} entries.
+         * Falls back to {@code current} when no rotation candidate
+         * fits (e.g. ORCHARD / PASTURE plots that aren't part of the
+         * GRAINS↔ROOTS swap loop).
+         *
+         * <p>Looks at the last 2 entries of {@code history}; the
+         * suggested type's family must differ from both. Picks from a
+         * fixed family→candidates table to avoid drift across enum
+         * additions.
+         */
+        public static CropType suggestRotation(CropType current,
+                                               java.util.List<String> history,
+                                               java.util.Random random) {
+            CropFamily currentFamily = of(current);
+            // Rotation only meaningful between GRAINS and ROOTS. Other
+            // families (ORCHARD, PASTURE_GRASS) stay put.
+            if (currentFamily != GRAINS && currentFamily != ROOTS) return current;
+            java.util.Set<CropFamily> recent = new java.util.HashSet<>();
+            int n = Math.min(2, history.size());
+            for (int i = history.size() - n; i < history.size(); i++) {
+                try { recent.add(of(CropType.valueOf(history.get(i)))); }
+                catch (IllegalArgumentException ignore) { /* dropped enum value */ }
+            }
+            CropType[] grainOptions = { CropType.WHEAT, CropType.GRAIN };
+            CropType[] rootOptions  = { CropType.CARROTS, CropType.POTATOES,
+                                         CropType.BEETROOT, CropType.VEGETABLE };
+            CropType[] candidates = (currentFamily == GRAINS) ? rootOptions : grainOptions;
+            CropFamily targetFamily = (currentFamily == GRAINS) ? ROOTS : GRAINS;
+            if (recent.contains(targetFamily)) {
+                // Rotating away from the same family we'd land in would
+                // be a wash — fall through to current and accept the
+                // same-family soil hit (player still needs to fertilize).
+                return current;
+            }
+            return candidates[random.nextInt(candidates.length)];
+        }
     }
 }

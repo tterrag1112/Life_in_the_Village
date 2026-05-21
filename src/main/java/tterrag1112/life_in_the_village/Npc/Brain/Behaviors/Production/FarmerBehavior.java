@@ -98,6 +98,13 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     private final List<BlockPos> toHarvest = new java.util.ArrayList<>();
     private final List<BlockPos> toReplant = new java.util.ArrayList<>();
     private final Map<Item, Integer> harvestedThisCycle = new java.util.LinkedHashMap<>();
+    /** Phase 6.3.3.h.2 — per-cycle dedup so a plot's cropType is only
+     *  rotated once even though replant() runs per BlockPos. */
+    private final java.util.Set<UUID> rotatedThisCycle = new java.util.HashSet<>();
+    /** Phase 6.3.3.h.2 — CROP_FARMING skill threshold at which a
+     *  non-APPRENTICE farmer starts proactively rotating. Matches the
+     *  "intermediate apprentice" milestone (level 40). */
+    private static final int ROTATION_SKILL_THRESHOLD = 40;
 
     private enum Phase {
         IDLE,
@@ -522,6 +529,19 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         FarmPlot plot = findPlotContaining(level, targetPos);
         if (plot == null) { toReplant.remove(0); return; }
 
+        // Phase 6.3.3.h.2 — rotation decision: once per plot per
+        // analyze-cycle. Non-APPRENTICE workers with FARMING ≥
+        // ROTATION_SKILL_THRESHOLD pick a different family from
+        // recent history; APPRENTICEs plant what the master assigned.
+        if (rotatedThisCycle.add(plot.getId()) && shouldRotateCrops()) {
+            FarmPlot.CropType rotated = FarmPlot.CropFamily.suggestRotation(
+                    plot.getCropType(), plot.getCropHistory(), entity.getRandom());
+            if (rotated != plot.getCropType()) {
+                plot.setCropType(rotated);
+                VillageSavedData.get(level).setDirty();
+            }
+        }
+
         Block cropBlock = plot.getCropType().resolveCropBlock();
         Item  seedItem  = plot.getCropType().resolveSeedItem();
         if (cropBlock == null) { toReplant.remove(0); return; }
@@ -755,10 +775,24 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         idleCooldown = IDLE_COOLDOWN;
         toHarvest.clear();
         toReplant.clear();
+        rotatedThisCycle.clear();
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.clearCurrentActivity();
+    }
+
+    /**
+     * Phase 6.3.3.h.2 — true when this farmer is allowed and skilled
+     * enough to actively rotate crops. APPRENTICEs follow the master's
+     * cropType assignment; JOURNEYMAN/MASTER with FARMING ≥
+     * {@link #ROTATION_SKILL_THRESHOLD} rotate proactively.
+     */
+    private boolean shouldRotateCrops() {
+        if (isApprenticeTier()) return false;
+        return entity.getSkills().getLevel(
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING)
+                >= ROTATION_SKILL_THRESHOLD;
     }
 
     /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
