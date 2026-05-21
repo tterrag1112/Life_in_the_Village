@@ -121,8 +121,8 @@ public final class ProfessionGoalFactory {
     private static void registerUniversal(TownspersonMob npc) {
         npc.goalSelector.addGoal(P_SURVIVAL,  new FloatGoal(npc));
         npc.goalSelector.addGoal(P_SURVIVAL,  new OpenDoorGoal(npc, true));
-        npc.goalSelector.addGoal(P_COMBAT,    new ReturnHomeGoal(npc));
-        npc.goalSelector.addGoal(P_PATHFIND,  new SeekHouseGoal(npc));
+        // Phase 6.2.c: ReturnHomeGoal migrated to ReturnHomeBehavior (REST @1).
+        // Phase 6.2.c: SeekHouseGoal migrated to SeekHouseBehavior (IDLE @1 + SOCIAL @2).
         // Phase 6.2.a: EatMealGoal migrated to EatMealBehavior (SOCIAL @1).
         // Phase 6.2.a: HobbyGoal migrated to HobbyBehavior (SOCIAL @4).
         // Phase 6.2.b: GreetPlayerGoal migrated to GreetPlayerBehavior
@@ -164,12 +164,11 @@ public final class ProfessionGoalFactory {
                 //   wiring needed).
             }
             case ELDERLY -> {
-                npc.goalSelector.addGoal(P_SOCIAL_MID, new ElderlyRelaxGoal(npc));
+                // Phase 6.2.c: ElderlyRelaxGoal migrated to ElderlyRelaxBehavior
+                //   (universal IDLE — self-gates on isElderly()).
+                // Phase 6.2.c: MentorGoal migrated to MentorBehavior
+                //   (universal SOCIAL — self-gates on ELDERLY + skill threshold).
                 npc.goalSelector.addGoal(P_SOCIAL_LOW, new GreetingGoal(npc));
-                // Phase 2 task 15 — elderly with master-tier skill mentor a
-                // younger colleague at the same workplace.
-                npc.goalSelector.addGoal(P_SOCIAL_MID,
-                        new tterrag1112.life_in_the_village.Entities.Goals.Social.MentorGoal(npc));
             }
         }
     }

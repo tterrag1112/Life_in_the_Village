@@ -104,6 +104,20 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<LivingEntity>>
             GREET_TARGET = registerNoCodec("greet_target");
 
+    // ── Phase 6.2.c — fallback / ambient cluster ────────────────────────────
+
+    /** TTL cool-down for SeekHouseBehavior — gates the village/house scan. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            SEEK_HOUSE_COOLDOWN = register("seek_house_cooldown", Codec.LONG);
+
+    /** TTL cool-down for ElderlyRelaxBehavior — gates the sit/wander cycle. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            ELDERLY_RELAX_COOLDOWN = register("elderly_relax_cooldown", Codec.LONG);
+
+    /** TTL cool-down for MentorBehavior — gates back-to-back mentor sessions. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            MENTOR_SESSION_COOLDOWN = register("mentor_session_cooldown", Codec.LONG);
+
     // ── Phase 6.1+ — forward-declared ───────────────────────────────────────
 
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<BlockPos>>

@@ -1409,6 +1409,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .GREET_TARGET.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .SEEK_HOUSE_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .ELDERLY_RELAX_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .MENTOR_SESSION_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .CURRENT_MOOD_SNAPSHOT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_GESTURE_COOLDOWN.get(),
@@ -1479,14 +1485,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.CORE, 0, coreBehaviors);
 
-        // IDLE — Phase 6.2.b ordering (GreetPlayer added at top — assigned
-        // greeter duty preempts everything else).
-        // 0=GreetPlayer, 1=Shelter, 2=IdleGesture, 3=MoodReact,
-        // 4=Greeting, 5=Sit, 6=InternalWander, 7=Escort, 8=PersonalSpace.
+        // IDLE — Phase 6.2.c ordering (SeekHouse high — homelessness urgent;
+        // ElderlyRelax late — ambient flavor only).
+        // 0=GreetPlayer, 1=SeekHouse, 2=Shelter, 3=IdleGesture, 4=MoodReact,
+        // 5=Greeting, 6=Sit, 7=InternalWander, 8=Escort, 9=ElderlyRelax,
+        // 10=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> idleBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetPlayerBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SeekHouseBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1502,20 +1511,24 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .FollowEscortLeaderBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .ElderlyRelaxBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior()
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // SOCIAL — Phase 6.2.b ordering (GreetPlayer high, Courting after BuyGoods):
-        // 0=GreetPlayer, 1=Shelter, 2=EatMeal, 3=Engage, 4=Initiate,
-        // 5=Hobby, 6=BuyGoods, 7=Courting, 8=Greeting, 9=Sit, 10=Escort,
-        // 11=PersonalSpace.
+        // SOCIAL — Phase 6.2.c ordering (SeekHouse @ 2, Mentor before Greeting):
+        // 0=GreetPlayer, 1=Shelter, 2=SeekHouse, 3=EatMeal, 4=Engage,
+        // 5=Initiate, 6=Hobby, 7=BuyGoods, 8=Courting, 9=Mentor,
+        // 10=Greeting, 11=Sit, 12=Escort, 13=PersonalSpace.
         ImmutableList<BehaviorControl<? super TownspersonMob>> socialBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetPlayerBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SeekHouseBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .EatMealBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1529,6 +1542,8 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .CourtingBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .MentorBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetingAcknowledgmentBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SitAtFurnitureBehavior(),
@@ -1540,13 +1555,19 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .SOCIAL.get(), 0, socialBehaviors);
 
-        // Forward activities for future phases — register empty so the
-        // schedule can switch into them without NPEs. Phase 6.1.b+ fills them.
+        // REST — Phase 6.2.c populated. 0=ReturnHome (find bed, sleep).
+        ImmutableList<BehaviorControl<? super TownspersonMob>> restBehaviors =
+                ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .ReturnHomeBehavior()
+                );
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .REST.get(), 0, restBehaviors);
+
+        // WORK remains empty in 6.2.c — Goals still drive WORK.
         ImmutableList<BehaviorControl<? super TownspersonMob>> empty = ImmutableList.of();
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 0, empty);
-        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
-                .REST.get(), 0, empty);
 
         brain.setCoreActivities(java.util.Set.of(Activity.CORE));
         brain.setDefaultActivity(Activity.IDLE);
