@@ -326,6 +326,14 @@ public class Business {
         c.treasuryBronze = treasury;
         c.isActive = active;
         offices.ifPresent(s -> c.offices = s);
+        // Phase 6.3.3.b.3 — one-shot migration: legacy saves persisted a
+        // BUSINESS_OWNER (formerly company_owner) OfficeHolding that
+        // mirrored Business.ownerId. The office state is now derived
+        // from this.owner; drop any persisted entry so it can't drift.
+        if (c.offices != null) {
+            c.offices.remove(
+                    tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER);
+        }
         // Phase 4 doc 26 — apply the ownership sub-record. ownerId
         // falls back to the legacy ownerPlayerId when absent so v1
         // player-only saves keep their owner identity intact.
@@ -426,17 +434,10 @@ public class Business {
         this.workSchedule  = schedule;
         this.offices       = tterrag1112.life_in_the_village.Npc.Office.OfficeState
                 .emptyFor(tterrag1112.life_in_the_village.Npc.Office.OrgType.BUSINESS, this.businessId);
-        // Seed company_owner with the player owner (businesses are
-        // owner-by-investment per spec).
-        if (ownerPlayerId != null
-                && !ownerPlayerId.equals(UUID.fromString("00000000-0000-0000-0000-000000000000"))) {
-            this.offices.set(
-                    tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
-                    tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByPlayer(
-                            tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
-                            this.businessId, ownerPlayerId, 0L, 0L,
-                            tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY));
-        }
+        // Phase 6.3.3.b.3 — office-seed dropped. BUSINESS_OWNER is no
+        // longer a persisted office holding; ownership lives canonically
+        // in this.owner. Queries that previously walked OfficeState
+        // route through Business.isOwner / getOwner instead.
     }
 
     /** Office state for this business; never {@code null} after construction. */
@@ -648,30 +649,14 @@ public class Business {
      * Phase 6.3.3.b.2 — canonical ownership mutator. Replaces the legacy
      * {@link #setNpcOwner} surface; the legacy method is now a wrapper.
      *
-     * <p>Also updates the {@code BUSINESS_OWNER} office holding so any
-     * pre-6.3.3.b.3 reader still sees consistent state. 6.3.3.b.3 will
-     * decouple ownership queries from office state; 6.3.3.b.4 removes
-     * this office entirely. Until then we keep both in sync.
+     * <p>Phase 6.3.3.b.3 — office-sync removed. BUSINESS_OWNER is no
+     * longer a persisted office holding; the office definition is
+     * removed entirely in 6.3.3.b.4. Ownership queries route through
+     * {@link #getOwner} / {@link #isOwner}.
      */
     public void setOwnership(BusinessOwner newOwner) {
         if (newOwner == null) return;
         this.owner = newOwner;
-        // Sync office holding so any pre-decoupling reader sees the
-        // matching entry. Will be removed in 6.3.3.b.3/.4.
-        UUID holderId = newOwner.getPrimaryUuid();
-        tterrag1112.life_in_the_village.Npc.Office.OfficeHolding holding =
-                newOwner.isPlayer()
-                        ? tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByPlayer(
-                                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
-                                this.businessId, holderId, 0L, 0L,
-                                tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY)
-                        : tterrag1112.life_in_the_village.Npc.Office.OfficeHolding.heldByNpc(
-                                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
-                                this.businessId, holderId, 0L, 0L,
-                                tterrag1112.life_in_the_village.Npc.Office.SelectionMethod.HEREDITARY);
-        this.offices.set(
-                tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry.BUSINESS_OWNER,
-                holding);
     }
 
     public void addHeir(UUID heirId) {

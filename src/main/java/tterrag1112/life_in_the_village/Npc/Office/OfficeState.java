@@ -105,6 +105,18 @@ public final class OfficeState {
     }
 
     /**
+     * Phase 6.3.3.b.3 — drops the holding entry entirely (vs.
+     * {@link #vacate} which preserves the entry with no holder).
+     * Used by the Business ownership migration: legacy saves have a
+     * BUSINESS_OWNER holding that mirrors {@code Business.owner};
+     * dropping the holding makes the ownership query unambiguously
+     * derive from the canonical field.
+     */
+    public void remove(String officeId) {
+        holdings.remove(officeId);
+    }
+
+    /**
      * Spec method {@code vacate(officeId)}: replaces the holding with a
      * vacant version. Selection method is preserved so Phase 3 selection
      * logic can re-fill using the right algorithm.
