@@ -55,7 +55,20 @@ public enum Skill {
      *  cascades 25% → FARMING). Used by hive-tending behaviors. The
      *  highest-BEEKEEPING NPC in a village becomes the de facto apiarist;
      *  no formal Specialization needed. */
-    BEEKEEPING(ANIMAL_HUSBANDRY, 0.25);
+    BEEKEEPING(ANIMAL_HUSBANDRY, 0.25),
+
+    // ── Tier 1 (Phase 6.3.3.i additions — crop specialization) ─────────────
+    /** Crop-farming sub-skill. Cascades 25% → FARMING. Earned from
+     *  harvest / replant on non-ORCHARD crop plots. The crop_focus
+     *  farmer specialization reads this for its 20-level promotion gate. */
+    CROP_FARMING(FARMING, 0.25),
+
+    // ── Tier 2 (Phase 6.3.3.i additions — orcharding) ──────────────────────
+    /** Orcharding sub-skill. Cascades 25% → CROP_FARMING (then 25% →
+     *  FARMING). Used for ORCHARD-type crop plots. Future content
+     *  surfaces VINTNER / ORCHARDIST emergent specialties off the
+     *  highest-ORCHARDING NPC in a village (no formal spec needed). */
+    ORCHARDING(CROP_FARMING, 0.25);
 
     @Nullable private final Skill parent;
     private final double propRate;
