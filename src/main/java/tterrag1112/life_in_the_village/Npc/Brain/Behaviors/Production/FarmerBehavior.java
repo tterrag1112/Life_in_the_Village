@@ -463,11 +463,11 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         entity.swing(InteractionHand.MAIN_HAND);
         level.playSound(null, cropPos, SoundEvents.CROP_BREAK,
                 SoundSource.BLOCKS, 1.0f, 1.0f);
-        // Phase 6.3.3.e.2 — FARMING XP for a successful harvest. The
-        // mentee mentorship multiplier (6.3.2.b) flows through SkillXp.
-        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
-                entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
-                1, level.getGameTime());
+        // Phase 6.3.3.i.2 — XP routed to the sub-skill matching the
+        // plot context: ORCHARD plots feed ORCHARDING; other crop
+        // plots feed CROP_FARMING. Parent cascade (25%) fills FARMING.
+        // The 6.3.3.i.4 specialty bonus is applied via awardWithBias.
+        awardCropXp(level, harvestedPlot, 1);
 
         toHarvest.remove(0);
 
@@ -606,10 +606,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             entity.swing(InteractionHand.MAIN_HAND);
             level.playSound(null, targetPos, SoundEvents.CROP_PLANTED,
                     SoundSource.BLOCKS, 1.0f, 1.0f);
-            // Phase 6.3.3.e.2 — FARMING XP for a successful replant.
-            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
-                    entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
-                    1, level.getGameTime());
+            // Phase 6.3.3.i.2 — XP routed by crop context (ORCHARDING
+            // for orchards, else CROP_FARMING). Parent cascade fills
+            // FARMING at 25% via SkillComponent#addXp.
+            awardCropXp(level, plot, 1);
             // Phase 6.3.3.h.1 — record the planting; soilQuality
             // decrements (with same-family penalty per CropFamily.of),
             // cropHistory trims to MAX_HISTORY, plot may auto-enter
@@ -788,15 +788,14 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         compostTarget.onComposted(level.getGameTime());
         VillageSavedData.get(level).setDirty();
 
-        // FARMING + ANIMAL_HUSBANDRY XP (the FERTILIZER straddles the two
-        // domains; one application earns both).
+        // Compost bridges both domains. FARMING parent stays direct
+        // (the closer doesn't pick a side per spec i.2.C); the animal
+        // half routes through awardAnimalXp so the specialty bonus
+        // applies for animal_focus farmers.
         tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
                 entity, tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING,
                 2, level.getGameTime());
-        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
-                entity,
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY,
-                1, level.getGameTime());
+        awardAnimalXp(level, 1);
 
         compostTarget = null;
         phase = Phase.ANALYZING;
@@ -872,10 +871,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             VillageSavedData.get(level).setDirty();
         }
 
-        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
-                entity,
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY,
-                1, level.getGameTime());
+        awardAnimalXp(level, 1);
 
         phase = Phase.ANALYZING;
     }
@@ -957,6 +953,51 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         return entity.getSkills().getLevel(
                 tterrag1112.life_in_the_village.Npc.Skills.Skill.FARMING)
                 >= ROTATION_SKILL_THRESHOLD;
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 6.3.3.i.2 — XP routing helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Routes crop-work XP to the right sub-skill based on plot
+     * context. ORCHARD plots feed ORCHARDING; all other crop types
+     * feed CROP_FARMING. Parent cascade (25%) fills FARMING via
+     * SkillComponent#addXp. The 6.3.3.i.4 specialty bonus is folded
+     * in by {@link #specialtyMultiplier}.
+     */
+    private void awardCropXp(ServerLevel level, FarmPlot plot, float amount) {
+        tterrag1112.life_in_the_village.Npc.Skills.Skill target =
+                (plot != null && plot.getCropType() == FarmPlot.CropType.ORCHARD)
+                        ? tterrag1112.life_in_the_village.Npc.Skills.Skill.ORCHARDING
+                        : tterrag1112.life_in_the_village.Npc.Skills.Skill.CROP_FARMING;
+        float boosted = amount * specialtyMultiplier(target);
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, target, boosted, level.getGameTime());
+    }
+
+    /**
+     * Routes animal-work XP. Today this always lands in
+     * ANIMAL_HUSBANDRY; future hive-specific behaviors will use
+     * Skill.BEEKEEPING directly. Specialty bonus applies.
+     */
+    private void awardAnimalXp(ServerLevel level, float amount) {
+        float boosted = amount * specialtyMultiplier(
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY);
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity,
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY,
+                boosted, level.getGameTime());
+    }
+
+    /**
+     * Phase 6.3.3.i.4 placeholder — returns 1.0 today. Will be
+     * overridden in i.4 to return 1.5 for specialty match per the
+     * BlacksmithSpecialization +50% XP-on-match pattern.
+     */
+    private float specialtyMultiplier(
+            tterrag1112.life_in_the_village.Npc.Skills.Skill target) {
+        return 1.0f;
     }
 
     // -------------------------------------------------------------------------
