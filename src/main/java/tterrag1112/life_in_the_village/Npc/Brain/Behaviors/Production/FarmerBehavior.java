@@ -236,9 +236,22 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // crop plot is below SOIL_FALLOW_EXIT (and past its compost
         // cooldown), the worker routes to COMPOSTING instead. APPRENTICE
         // workers don't compost (no financial / planning authority).
+        // Phase 6.3.3.i.4 — bias-not-gate: a GENERALIST-role FARMER with
+        // animal_focus spec is treated as if their role were
+        // ANIMAL_TENDER, so spec biases the routing without a gate. A
+        // GENERALIST crop_focus FARMER stays on the crop path (already
+        // the default). Specific animal roles always go to animal work
+        // regardless of spec — spec is a tiebreaker, not an override.
+        boolean specBiasAnimal = role == FarmRole.GENERALIST
+                && entity.getSpecializationComponent().currentId()
+                        .map(id -> id.equals(
+                                tterrag1112.life_in_the_village.Npc.Specialization
+                                        .NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name()))
+                        .orElse(false);
         if (role == FarmRole.ANIMAL_SPECIALIST
                 || role == FarmRole.ANIMAL_TENDER
-                || role == FarmRole.FERTILIZER) {
+                || role == FarmRole.FERTILIZER
+                || specBiasAnimal) {
             if (role == FarmRole.FERTILIZER && !isApprenticeTier()
                     && tryRouteToCompost(level)) {
                 return;
@@ -991,12 +1004,33 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     }
 
     /**
-     * Phase 6.3.3.i.4 placeholder — returns 1.0 today. Will be
-     * overridden in i.4 to return 1.5 for specialty match per the
-     * BlacksmithSpecialization +50% XP-on-match pattern.
+     * Phase 6.3.3.i.4 — XP multiplier for spec-matched activity.
+     * Mirrors the BlacksmithSpecialization +50% XP-on-match pattern:
+     * crop_focus + crop activity → 1.5, animal_focus + animal activity
+     * → 1.5, mixed / unset / mismatch → 1.0. Bonus is applied before
+     * SkillXp.award so the mentee multiplier (6.3.2.b) composes on
+     * top correctly.
      */
     private float specialtyMultiplier(
             tterrag1112.life_in_the_village.Npc.Skills.Skill target) {
+        var specId = entity.getSpecializationComponent().currentId().orElse(null);
+        if (specId == null) return 1.0f;
+        boolean isCropTarget = target == tterrag1112.life_in_the_village
+                .Npc.Skills.Skill.CROP_FARMING
+                || target == tterrag1112.life_in_the_village
+                .Npc.Skills.Skill.ORCHARDING;
+        boolean isAnimalTarget = target == tterrag1112.life_in_the_village
+                .Npc.Skills.Skill.ANIMAL_HUSBANDRY
+                || target == tterrag1112.life_in_the_village
+                .Npc.Skills.Skill.BEEKEEPING;
+        if (isCropTarget && specId.equals(tterrag1112.life_in_the_village.Npc
+                .Specialization.NpcSpecializationTypes.FARMER_CROP_FOCUS.name())) {
+            return 1.5f;
+        }
+        if (isAnimalTarget && specId.equals(tterrag1112.life_in_the_village.Npc
+                .Specialization.NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name())) {
+            return 1.5f;
+        }
         return 1.0f;
     }
 

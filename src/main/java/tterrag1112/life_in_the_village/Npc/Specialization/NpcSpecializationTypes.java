@@ -137,6 +137,28 @@ public final class NpcSpecializationTypes {
                     net.minecraft.world.item.Items.STONE_AXE, 3, 1.3f, 0.8f,
                     "Fast and perceptive. Detects threats early.", "◈")));
 
+    // ── Farmer family (Phase 6.3.3.i.3) ──────────────────────────────────
+    // Bias-not-gate. mixed is the generalist (default for new farmers);
+    // crop_focus and animal_focus gate on CROP_FARMING / ANIMAL_HUSBANDRY
+    // ≥ FOUNDATION (20). ORCHARDIST / VINTNER / APIARIST emerge from
+    // skill levels (no formal spec) per the Option A design discussion.
+    public static final SpecializationDef FARMER_MIXED = register(new SpecializationDef(
+            id("farmer/mixed"), Profession.FARMER,
+            Component.literal("Mixed Farmer"),
+            List.of(), true, SpecializationData.None.INSTANCE));
+
+    public static final SpecializationDef FARMER_CROP_FOCUS = register(new SpecializationDef(
+            id("farmer/crop_focus"), Profession.FARMER,
+            Component.literal("Crop Farmer"),
+            List.of(new SkillRequirement(Skill.CROP_FARMING, FOUNDATION)),
+            false, SpecializationData.None.INSTANCE));
+
+    public static final SpecializationDef FARMER_ANIMAL_FOCUS = register(new SpecializationDef(
+            id("farmer/animal_focus"), Profession.FARMER,
+            Component.literal("Animal Husbandry Farmer"),
+            List.of(new SkillRequirement(Skill.ANIMAL_HUSBANDRY, FOUNDATION)),
+            false, SpecializationData.None.INSTANCE));
+
     // ── Lookup ───────────────────────────────────────────────────────────
 
     public static Optional<SpecializationDef> byId(Identifier id) {
