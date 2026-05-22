@@ -39,7 +39,7 @@ public class CaravanGuardBehavior extends Behavior<TownspersonMob> {
     private LivingEntity threat  = null;
     private int threatTimer      = 0;
     // Offset so guards spread around merchant naturally
-    private final double offsetAngle;
+    private final double offsetAngle = 20;
 
     
 
