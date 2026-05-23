@@ -68,6 +68,7 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
         while (true) {
             int gy = resolveGroundY(level, x0, z0);
             if (gy > 0 && gy < MAX_BUILD_Y && !isOnPath(level, x0, gy, z0)) {
+                clearHeadSpace(level, x0, gy, z0);
                 renderColumn(level, x0, z0, gy, outwardNormal, step, rng);
             }
             if (x0 == x1 && z0 == z1) break;
@@ -77,6 +78,49 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
             step++;
             if (step > 4096) break; // sanity belt
         }
+    }
+
+    /** Clear non-air blocks from {@code groundY+1} up to
+     *  {@code groundY+HEAD_CLEARANCE} so the border isn't capped
+     *  by overhanging tree leaves / branches / saplings. Matches
+     *  RoadPainter's ROAD_HEAD_CLEARANCE pattern.
+     *
+     *  <p>Stops at the first solid non-replaceable block above
+     *  the clearance ceiling — won't smash through stone or
+     *  through an adjacent building's roof. */
+    private static final int HEAD_CLEARANCE = 3;
+
+    private static void clearHeadSpace(ServerLevel level, int x, int groundY, int z) {
+        for (int dy = 1; dy <= HEAD_CLEARANCE; dy++) {
+            BlockPos p = new BlockPos(x, groundY + dy, z);
+            BlockState cur = level.getBlockState(p);
+            if (cur.isAir()) continue;
+            // Stop at first solid block we shouldn't replace; matches
+            // the path renderer's selective-clear policy so we don't
+            // tear up building walls.
+            if (!cur.canBeReplaced() && !isVegetation(cur)) continue;
+            level.setBlock(p, Blocks.AIR.defaultBlockState(), 3);
+        }
+    }
+
+    private static boolean isVegetation(BlockState s) {
+        return s.is(Blocks.OAK_LEAVES)
+                || s.is(Blocks.BIRCH_LEAVES)
+                || s.is(Blocks.SPRUCE_LEAVES)
+                || s.is(Blocks.JUNGLE_LEAVES)
+                || s.is(Blocks.DARK_OAK_LEAVES)
+                || s.is(Blocks.ACACIA_LEAVES)
+                || s.is(Blocks.OAK_LOG)
+                || s.is(Blocks.BIRCH_LOG)
+                || s.is(Blocks.SPRUCE_LOG)
+                || s.is(Blocks.JUNGLE_LOG)
+                || s.is(Blocks.DARK_OAK_LOG)
+                || s.is(Blocks.ACACIA_LOG)
+                || s.is(Blocks.OAK_SAPLING)
+                || s.is(Blocks.SHORT_GRASS)
+                || s.is(Blocks.TALL_GRASS)
+                || s.is(Blocks.FERN)
+                || s.is(Blocks.LARGE_FERN);
     }
 
     /** Resolve the ground block Y at {@code (x, z)}. WORLD_SURFACE

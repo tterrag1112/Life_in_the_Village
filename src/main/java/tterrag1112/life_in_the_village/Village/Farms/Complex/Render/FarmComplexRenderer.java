@@ -225,18 +225,25 @@ public final class FarmComplexRenderer {
     // Gates
     // =========================================================================
 
-    /** For each per-plot path branch, walk from spine attach to
-     *  entry; when we encounter a border-like block at y+1, swap
-     *  it with an oak fence-gate so paths cleanly cross the fence
-     *  line. Branches typically cross the border once (one gate
-     *  per plot). */
+    /** Standalone gate placement at each branch's plot-side
+     *  endpoint. The gate stands as a threshold marker — no
+     *  border-finding required (previous walk-and-probe strategy
+     *  consistently returned NO_BORDER_FOUND because the border
+     *  path-skip is wider than the probe range).
+     *
+     *  <p>Orient the gate perpendicular to the branch direction
+     *  (the gate "swings" across the branch line). Place at
+     *  groundY+1; clear that slot first. */
     private static Stats renderGates(FarmComplex complex, ServerLevel level,
                                        boolean verbose) {
         int placed = 0, skipped = 0;
         for (PlotEntry pe : complex.plotEntries()) {
-            boolean ok = placeGateAlong(pe.spineAttach(), pe.entry(),
-                    pe.plotId(), level, verbose);
-            if (ok) placed++; else skipped++;
+            if (placeGateAt(pe.spineAttach(), pe.entry(),
+                    pe.plotId(), level, verbose)) {
+                placed++;
+            } else {
+                skipped++;
+            }
         }
         if (verbose) {
             org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
@@ -245,108 +252,98 @@ public final class FarmComplexRenderer {
         return new Stats(placed, skipped);
     }
 
-    /** Place a fence gate where the branch line crosses the plot's
-     *  border. With the new path-aware border skip the border has
-     *  a 1-block gap at the crossing; the gate FILLS that gap.
-     *
-     *  <p>Walk the branch from spineAttach toward entry. For each
-     *  cell on the path, probe its 4 perpendicular neighbors at
-     *  y+1 for border blocks. The first cell with a perpendicular
-     *  border neighbor is the gap — place an OPEN oak fence gate
-     *  there facing along the branch direction. */
-    private static boolean placeGateAlong(BlockPos start, BlockPos end,
-                                            UUID plotId,
-                                            ServerLevel level,
-                                            boolean verbose) {
-        int x0 = start.getX(), z0 = start.getZ();
-        int x1 = end.getX(),   z1 = end.getZ();
-        int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
-        int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1;
-        int err = dx - dz;
-        // Branch-facing direction (cardinal). The fence-gate's
-        // HORIZONTAL_FACING is perpendicular to the gate's panel —
-        // i.e. it points along the direction you walk THROUGH the
-        // gate. So branch direction is the right value.
-        Direction branchDir = Math.abs(x1 - x0) >= Math.abs(z1 - z0)
-                ? (x1 >= x0 ? Direction.EAST : Direction.WEST)
-                : (z1 >= z0 ? Direction.SOUTH : Direction.NORTH);
-        // Perpendicular probe offsets — pick the axis perpendicular
-        // to branchDir; we want to look "sideways" off the path
-        // for the border line.
-        int[] probeDx, probeDz;
-        if (branchDir.getStepX() != 0) { probeDx = new int[]{0, 0}; probeDz = new int[]{-1, +1}; }
-        else                            { probeDx = new int[]{-1, +1}; probeDz = new int[]{0, 0}; }
-        int safety = 0;
-        boolean placed = false;
-        BlockPos gatePos = null;
-        while (!placed && safety++ < 256) {
-            int gy = level.getHeight(net.minecraft.world.level.levelgen
-                    .Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x0, z0) - 1;
-            for (int k = 0; k < 2; k++) {
-                int nx = x0 + probeDx[k];
-                int nz = z0 + probeDz[k];
-                int ny = level.getHeight(net.minecraft.world.level.levelgen
-                        .Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, nx, nz) - 1;
-                BlockState side = level.getBlockState(new BlockPos(nx, ny + 1, nz));
-                if (!isBorderBlock(side)) continue;
-                BlockPos here = new BlockPos(x0, gy + 1, z0);
-                BlockState here1 = level.getBlockState(here);
-                // Don't try to place if the cell is something we
-                // wouldn't normally over-write (e.g. an existing
-                // border block from a perpendicular fence). Air /
-                // replaceable plants ⇒ free for the gate.
-                if (!here1.isAir() && !here1.canBeReplaced()) continue;
-                BlockState gate = Blocks.OAK_FENCE_GATE.defaultBlockState();
-                if (gate.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
-                    gate = gate.setValue(
-                            BlockStateProperties.HORIZONTAL_FACING, branchDir);
-                }
-                if (gate.hasProperty(BlockStateProperties.OPEN)) {
-                    gate = gate.setValue(BlockStateProperties.OPEN, true);
-                }
-                level.setBlock(here, gate, 3);
-                // Clear anything in the head-clearance slot.
-                BlockPos above = here.above();
-                BlockState a = level.getBlockState(above);
-                if (!a.isAir() && a.canBeReplaced()) {
-                    level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
-                }
-                placed = true;
-                gatePos = here;
-                break;
-            }
-            if (placed) break;
-            if (x0 == x1 && z0 == z1) break;
-            int e2 = 2 * err;
-            if (e2 > -dz) { err -= dz; x0 += sx; }
-            if (e2 <  dx) { err += dx; z0 += sz; }
+    private static boolean placeGateAt(BlockPos spineAttach, BlockPos entry,
+                                         UUID plotId,
+                                         ServerLevel level,
+                                         boolean verbose) {
+        int ex = entry.getX(), ez = entry.getZ();
+        int ax = spineAttach.getX(), az = spineAttach.getZ();
+        // Branch direction (cardinal). Fence-gate's
+        // HORIZONTAL_FACING points along the direction you walk
+        // through it; we want that to match the branch's walk
+        // direction so the gate's panel sits perpendicular to
+        // the branch (i.e. blocks/opens across it).
+        Direction branchDir;
+        if (Math.abs(ex - ax) >= Math.abs(ez - az)) {
+            branchDir = ex >= ax ? Direction.EAST : Direction.WEST;
+        } else {
+            branchDir = ez >= az ? Direction.SOUTH : Direction.NORTH;
         }
+
+        int gy = level.getHeight(net.minecraft.world.level.levelgen
+                .Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, ex, ez) - 1;
+        if (gy <= 0) {
+            if (verbose) {
+                org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
+                        "gate plot={} entry=({},{}) SKIPPED reason=NO_GROUND",
+                        shortId(plotId), ex, ez);
+            }
+            return false;
+        }
+        BlockPos here = new BlockPos(ex, gy + 1, ez);
+        BlockState floor = level.getBlockState(new BlockPos(ex, gy, ez));
+        // The branch endpoint is the plot centroid, which the
+        // PathRenderer might have stamped if the branch routed
+        // through (rare with axis-aligned branches but possible).
+        // Don't double-place on a path cell; the path already
+        // creates the visual opening.
+        String skipReason = null;
+        if (floor.is(Blocks.DIRT_PATH)
+                || floor.is(Blocks.GRAVEL)
+                || floor.is(Blocks.COARSE_DIRT)
+                || floor.is(Blocks.SMOOTH_STONE)
+                || floor.is(Blocks.STONE_BRICKS)) {
+            // Path surface here means the gate would sit ON the
+            // spine/branch surface, not at the plot threshold.
+            // That's still a valid threshold marker — log it but
+            // proceed with placement.
+            // (Allow placement; skipReason stays null.)
+        }
+        if (floor.is(Blocks.FARMLAND)) {
+            skipReason = "FARMLAND_AT_FLOOR";
+        }
+        if (skipReason != null) {
+            if (verbose) {
+                org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
+                        "gate plot={} entry=({},{}) SKIPPED reason={}",
+                        shortId(plotId), ex, ez, skipReason);
+            }
+            return false;
+        }
+
+        // Single-block head clearance — gate is 1 tall.
+        BlockState atGate = level.getBlockState(here);
+        if (!atGate.isAir() && !atGate.canBeReplaced()) {
+            // Refuse to overwrite a building wall / existing
+            // border. Just log and skip; renderer is robust to
+            // missing gates.
+            if (verbose) {
+                org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
+                        "gate plot={} entry=({},{}) SKIPPED reason=OCCUPIED ({})",
+                        shortId(plotId), ex, ez, atGate.getBlock());
+            }
+            return false;
+        }
+        // Place the gate.
+        BlockState gate = Blocks.OAK_FENCE_GATE.defaultBlockState();
+        if (gate.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
+            gate = gate.setValue(BlockStateProperties.HORIZONTAL_FACING, branchDir);
+        }
+        if (gate.hasProperty(BlockStateProperties.OPEN)) {
+            gate = gate.setValue(BlockStateProperties.OPEN, true);
+        }
+        level.setBlock(here, gate, 3);
         if (verbose) {
             org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
-                    "gate plot={} branch=({},{}..{},{}) result={} pos={}",
-                    plotId == null ? "?" : plotId.toString().substring(0, 8),
-                    start.getX(), start.getZ(), end.getX(), end.getZ(),
-                    placed ? "PLACED" : "NO_BORDER_FOUND",
-                    gatePos == null ? "—"
-                            : "(" + gatePos.getX() + ","
-                                  + gatePos.getY() + ","
-                                  + gatePos.getZ() + ")");
+                    "gate plot={} entry=({},{},{}) facing={} PLACED",
+                    shortId(plotId), here.getX(), here.getY(), here.getZ(),
+                    branchDir);
         }
-        return placed;
+        return true;
     }
 
-    private static boolean isBorderBlock(BlockState s) {
-        return s.is(Blocks.OAK_FENCE)
-                || s.is(Blocks.OAK_LOG)
-                || s.is(Blocks.OAK_LEAVES)
-                || s.is(Blocks.JUNGLE_LEAVES)
-                || s.is(Blocks.COBBLESTONE)
-                || s.is(Blocks.MOSSY_COBBLESTONE)
-                || s.is(Blocks.COBBLESTONE_WALL)
-                || s.is(Blocks.COBBLESTONE_SLAB)
-                || s.is(Blocks.STONE)
-                || s.is(Blocks.ANDESITE)
-                || s.is(Blocks.GRAVEL);
+    private static String shortId(UUID id) {
+        return id == null ? "?" : id.toString().substring(0, 8);
     }
 
     // =========================================================================
