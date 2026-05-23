@@ -54,7 +54,24 @@ public final class FloodFillRegionClaim {
             int slopeLimit,
             double scoreThreshold,
             V2FeatureMap fmap,
-            BiomeBlockedPredicate biomeBlocked) {}
+            BiomeBlockedPredicate biomeBlocked,
+            /** Detour A — Prompt B Stage A. Polygons whose interior
+             *  is forbidden territory (parks, other reserved areas).
+             *  Null or empty ⇒ no exclusion. Cells whose centre falls
+             *  inside any of these are rejected during BFS, same as
+             *  arable / biome failures. */
+            java.util.List<Polygon> excludedPolygons) {
+
+        /** Backward-compat for callers that don't yet pass an
+         *  exclusion list (test command, future call sites that
+         *  don't track reservations). */
+        public Input(BlockPos seed, int maxRadiusBlocks, int blockBudget,
+                     int slopeLimit, double scoreThreshold,
+                     V2FeatureMap fmap, BiomeBlockedPredicate biomeBlocked) {
+            this(seed, maxRadiusBlocks, blockBudget, slopeLimit,
+                    scoreThreshold, fmap, biomeBlocked, java.util.List.of());
+        }
+    }
 
     /** Result of the claim. {@link #failure} non-null iff the claim
      *  failed; {@link #region} non-null iff success. {@link #tight}
@@ -97,6 +114,11 @@ public final class FloodFillRegionClaim {
                 && in.biomeBlocked().test(seed.getX(), seed.getZ())) {
             return fail(in, FailReason.BIOME_BLOCKED_AT_SEED,
                     "Seed biome is in spec's blocked set.");
+        }
+        if (insideAnyExcluded(seed.getX(), seed.getZ(), in)) {
+            return fail(in, FailReason.SEED_NOT_ADMISSIBLE,
+                    "Seed lies inside a reserved exclusion polygon "
+                            + "(park, garden, or other prior reservation).");
         }
 
         // Seed cell admissibility — if the seed itself isn't arable,
@@ -146,6 +168,9 @@ public final class FloodFillRegionClaim {
                         && in.biomeBlocked().test(worldPos.getX(), worldPos.getZ())) {
                     continue;
                 }
+                if (insideAnyExcluded(worldPos.getX(), worldPos.getZ(), in)) {
+                    continue;
+                }
                 Cell c = fmap.cellAt(worldPos.getX(), worldPos.getZ());
                 if (!admissible(c, in)) continue;
                 admitted.add(packed);
@@ -174,6 +199,21 @@ public final class FloodFillRegionClaim {
     }
 
     // ── helpers ────────────────────────────────────────────────────────
+
+    /** True iff {@code (x, z)} lies within any of the input's
+     *  excluded polygons. Null / empty list ⇒ always false (cheap
+     *  short-circuit). Called once per BFS-visited cell + once per
+     *  seed check; for the typical case of zero-or-few exclusions
+     *  the loop is fine. */
+    private static boolean insideAnyExcluded(int x, int z, Input in) {
+        var ex = in.excludedPolygons();
+        if (ex == null || ex.isEmpty()) return false;
+        for (Polygon p : ex) {
+            if (p == null) continue;
+            if (Polygon.contains(p, x, z)) return true;
+        }
+        return false;
+    }
 
     private static boolean admissible(Cell c, Input in) {
         if (c == null) return false;

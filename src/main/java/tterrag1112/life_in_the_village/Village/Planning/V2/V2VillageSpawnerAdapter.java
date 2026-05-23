@@ -451,11 +451,13 @@ public final class V2VillageSpawnerAdapter {
         }
 
         // Detour A — one FarmComplex per placed farmhouse. Runs
-        // post-loop so each farmhouse's Building UUID exists. No
-        // park-overlap exclusion at this layer; the flood-fill
-        // admits arable cells only, and parks occupy non-arable
-        // PARK category. If smoke-testing exposes overlap, add
-        // an exclude-polygons pass in the orchestrator.
+        // post-loop so each farmhouse's Building UUID exists.
+        // Prompt B Stage A: park-polygon exclusion. The parks
+        // reserved by ParkCandidateFinder earlier in this spawn
+        // get converted to Polygons here and fed to every per-
+        // farmhouse FarmComplexPlanner call.
+        java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
+                parkExclusionPolygons = collectParkExclusions(data, village.getId());
         for (PlacedFarmhouse fh : placedFarmhouses) {
             try {
                 Direction extendsToward =
@@ -477,7 +479,8 @@ public final class V2VillageSpawnerAdapter {
                         BuildingType.FARMHOUSE,
                         fmap,
                         /* biomeCheck */ null,
-                        perFhSeed);
+                        perFhSeed,
+                        parkExclusionPolygons);
                 var result = tterrag1112.life_in_the_village.Village.Farms
                         .Complex.FarmComplexPlanner.planAndPersist(planInput, data);
                 if (!result.success()) {
@@ -807,6 +810,35 @@ public final class V2VillageSpawnerAdapter {
      *  FarmComplexPlanner: the Building for ids, the PlacedBuilding
      *  for geometry. */
     private record PlacedFarmhouse(Building building, PlacedBuilding placed) {}
+
+    /** Detour A — Prompt B Stage A. Collect every reserved park in
+     *  this village as a polygon for FarmComplexPlanner's exclusion
+     *  set. GardenPlot persists rectangular Bounds; the conversion
+     *  is a 4-vertex rectangular Polygon. Y is fixed at the bounds'
+     *  approximate ground level (the polygon CONTAINS test is XZ-
+     *  only, so Y is decorative). */
+    private static java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
+            collectParkExclusions(VillageSavedData data, java.util.UUID villageId) {
+        var parks = data.getGardenPlotsForVillage(villageId);
+        if (parks == null || parks.isEmpty()) return java.util.List.of();
+        java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon> out =
+                new ArrayList<>(parks.size());
+        for (var park : parks) {
+            var b = park.bounds();
+            // Inflate by 1 block per side so a complex doesn't
+            // claim cells flush against the park boundary — small
+            // breathing room reads better visually.
+            int minX = b.minX() - 1, maxX = b.maxX() + 1;
+            int minZ = b.minZ() - 1, maxZ = b.maxZ() + 1;
+            var verts = java.util.List.of(
+                    new BlockPos(minX, 0, minZ),
+                    new BlockPos(maxX, 0, minZ),
+                    new BlockPos(maxX, 0, maxZ),
+                    new BlockPos(minX, 0, maxZ));
+            out.add(new tterrag1112.life_in_the_village.Utilities.Geometry.Polygon(verts));
+        }
+        return out;
+    }
 
     /** Snap a {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.FrontageStrip}'s
      *  outward unit vector to a cardinal {@link Direction}. The

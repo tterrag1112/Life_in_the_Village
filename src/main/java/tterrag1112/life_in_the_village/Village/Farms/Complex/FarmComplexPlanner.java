@@ -86,7 +86,28 @@ public final class FarmComplexPlanner {
             /** Nullable — null means "allow everything", used by the
              *  test command's synthetic-village path. */
             FloodFillRegionClaim.BiomeBlockedPredicate biomeCheck,
-            long seed) {}
+            long seed,
+            /** Detour A — Prompt B Stage A. Polygons whose interior
+             *  must be excluded from the flood-fill claim — parks,
+             *  reserved gardens, future reservations of this kind.
+             *  Null or empty ⇒ no exclusion. */
+            java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
+                    excludedPolygons) {
+
+        /** Backward-compat ctor for callers that don't yet pass an
+         *  exclusion list. */
+        public Input(BlockPos farmhouseOrigin, Direction complexExtendsToward,
+                     int footprintHalfX, int footprintHalfZ,
+                     UUID villageId, UUID farmhouseId, String culture,
+                     BuildingType buildingType, V2FeatureMap fmap,
+                     FloodFillRegionClaim.BiomeBlockedPredicate biomeCheck,
+                     long seed) {
+            this(farmhouseOrigin, complexExtendsToward,
+                    footprintHalfX, footprintHalfZ,
+                    villageId, farmhouseId, culture, buildingType,
+                    fmap, biomeCheck, seed, java.util.List.of());
+        }
+    }
 
     public enum Status {
         SUCCESS,
@@ -151,7 +172,8 @@ public final class FarmComplexPlanner {
                         spec.floodFillSlopeLimit(),
                         ArableScoring.DEFAULT_THRESHOLD,
                         in.fmap(),
-                        in.biomeCheck()));
+                        in.biomeCheck(),
+                        in.excludedPolygons()));
         if (fill.failure() != null) {
             return switch (fill.failure()) {
                 case INSUFFICIENT_AREA -> PlanResult.fail(
