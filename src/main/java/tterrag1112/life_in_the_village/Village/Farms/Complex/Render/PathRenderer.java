@@ -37,24 +37,54 @@ public final class PathRenderer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PathRenderer.class);
 
-    /** Air clearance above the path surface — matches
-     *  RoadPainter.ROAD_HEAD_CLEARANCE so farm paths and village
-     *  roads have identical above-path semantics. */
-    private static final int HEAD_CLEARANCE = 3;
+    /** Default air clearance — matches V2 RoadPainter so farm
+     *  paths and village roads have identical above-path
+     *  semantics. Callers that build their own PathPalette
+     *  control this; the single-arg render overload uses it. */
+    public static final int DEFAULT_HEAD_CLEARANCE = 3;
 
     private PathRenderer() {}
 
     /** Render every segment using {@code material} as the path
-     *  surface block. Idempotent — re-running re-stamps paths but
-     *  doesn't accumulate or shift them. */
+     *  surface block. Convenience wrapper that builds a single-
+     *  entry palette internally — preserves the pre-palette
+     *  call shape for any caller that doesn't yet have a
+     *  PathPalette in hand. Idempotent — re-running re-stamps
+     *  paths but doesn't accumulate or shift them. */
     public static void render(List<PathSegment> segments,
                                BlockState material,
                                ServerLevel level) {
-        if (segments == null || segments.isEmpty()) return;
         BlockState mat = material == null
                 ? Blocks.DIRT_PATH.defaultBlockState() : material;
+        render(segments,
+                PathPalette.single(mat, DEFAULT_HEAD_CLEARANCE),
+                level);
+    }
+
+    /** Render every segment via a {@link PathPalette}. The per-
+     *  cell {@link PathPalette#selectBlock} call samples the
+     *  weighted block mix; with a single-entry palette every
+     *  cell receives the same block (identical to the pre-
+     *  palette renderer). */
+    public static void render(List<PathSegment> segments,
+                               PathPalette palette,
+                               ServerLevel level) {
+        if (segments == null || segments.isEmpty()) return;
+        if (palette == null) {
+            palette = PathPalette.single(
+                    Blocks.DIRT_PATH.defaultBlockState(),
+                    DEFAULT_HEAD_CLEARANCE);
+        }
+        // Per-segment RNG seeded from segment endpoints — same
+        // segment always produces the same per-cell block
+        // selection (deterministic even with multi-entry
+        // palettes).
         for (PathSegment seg : segments) {
-            renderSegment(seg, mat, level);
+            long segSeed = ((long) seg.start().getX() << 32)
+                    ^ seg.start().getZ()
+                    ^ ((long) seg.end().getX() << 16)
+                    ^ seg.end().getZ();
+            renderSegment(seg, palette, level, new java.util.Random(segSeed));
         }
     }
 
@@ -82,8 +112,9 @@ public final class PathRenderer {
         }
     }
 
-    private static void renderSegment(PathSegment seg, BlockState material,
-                                       ServerLevel level) {
+    private static void renderSegment(PathSegment seg, PathPalette palette,
+                                       ServerLevel level,
+                                       java.util.Random rng) {
         int x0 = seg.start().getX(), z0 = seg.start().getZ();
         int x1 = seg.end().getX(),   z1 = seg.end().getZ();
         int width = Math.max(1, seg.width());
@@ -101,7 +132,7 @@ public final class PathRenderer {
         int cx = x0, cz = z0;
         int safety = 0;
         while (safety++ < 8192) {
-            paintStrip(level, cx, cz, half, pxu, pzu, material);
+            paintStrip(level, cx, cz, half, pxu, pzu, palette, rng);
             if (cx == x1 && cz == z1) break;
             int e2 = 2 * err;
             if (e2 > -az) { err -= az; cx += sx; }
@@ -113,25 +144,29 @@ public final class PathRenderer {
      *  direction at world XZ ({@code cx}, {@code cz}). */
     private static void paintStrip(ServerLevel level, int cx, int cz,
                                     int half, double pxu, double pzu,
-                                    BlockState material) {
+                                    PathPalette palette,
+                                    java.util.Random rng) {
         for (int off = -half; off <= half; off++) {
             int wx = cx + (int) Math.round(pxu * off);
             int wz = cz + (int) Math.round(pzu * off);
-            paintColumn(level, wx, wz, material);
+            paintColumn(level, wx, wz, palette, rng);
         }
     }
 
-    /** Convert the top surface block at (x, z) to the path
-     *  material when safe; clear HEAD_CLEARANCE blocks above. */
+    /** Convert the top surface block at (x, z) to a palette-
+     *  sampled path block when safe; clear the palette's
+     *  headClearance blocks above. */
     private static void paintColumn(ServerLevel level, int wx, int wz,
-                                     BlockState material) {
+                                     PathPalette palette,
+                                     java.util.Random rng) {
         int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, wx, wz) - 1;
         if (y <= 0) return;
         BlockPos surf = new BlockPos(wx, y, wz);
         BlockState s = level.getBlockState(surf);
         if (!isPathable(s)) return;
-        level.setBlock(surf, material, 3);
-        for (int dy = 1; dy <= HEAD_CLEARANCE; dy++) {
+        BlockState pathBlock = palette.selectBlock(rng);
+        level.setBlock(surf, pathBlock, 3);
+        for (int dy = 1; dy <= palette.headClearance(); dy++) {
             BlockPos above = new BlockPos(wx, y + dy, wz);
             BlockState a = level.getBlockState(above);
             if (a.isAir() || a.is(Blocks.WATER)) continue;

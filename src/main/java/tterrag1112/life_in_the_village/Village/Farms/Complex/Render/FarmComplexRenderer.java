@@ -84,7 +84,14 @@ public final class FarmComplexRenderer {
                 .CultureRegistry.getOrDefault(culture);
         var roadMaterial = PathRenderer.resolveRoadMaterial(
                 cultureObj.planningBias().roadMaterial());
-        PathRenderer.render(complex.pathSegments(), roadMaterial, level);
+        // Build a PathPalette from the culture's single road
+        // material. Track E follow-up: when palette mixing lands
+        // (multiple materials per culture), this construction
+        // becomes a registry lookup; PathRenderer itself stays
+        // unchanged.
+        var pathPalette = PathPalette.single(roadMaterial,
+                PathRenderer.DEFAULT_HEAD_CLEARANCE);
+        PathRenderer.render(complex.pathSegments(), pathPalette, level);
 
         // 2. Borders — dedup shared edges across adjacent plots.
         //    The per-column placement in AbstractBorderGenerator
