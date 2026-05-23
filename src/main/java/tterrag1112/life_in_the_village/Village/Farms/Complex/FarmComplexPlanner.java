@@ -92,10 +92,17 @@ public final class FarmComplexPlanner {
              *  reserved gardens, future reservations of this kind.
              *  Null or empty ⇒ no exclusion. */
             java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
-                    excludedPolygons) {
+                    excludedPolygons,
+            /** When true, the flood-fill emits one-line diagnostic
+             *  output on the seed-admissibility failure path naming
+             *  the category, slope, water/forest distances, computed
+             *  arable score, and the threshold + which gate rejected.
+             *  Off in production spawn (no log spam on every spawn);
+             *  on for the {@code /liv farms test_spawn} harness. */
+            boolean verbose) {
 
         /** Backward-compat ctor for callers that don't yet pass an
-         *  exclusion list. */
+         *  exclusion list or verbosity flag. */
         public Input(BlockPos farmhouseOrigin, Direction complexExtendsToward,
                      int footprintHalfX, int footprintHalfZ,
                      UUID villageId, UUID farmhouseId, String culture,
@@ -105,7 +112,24 @@ public final class FarmComplexPlanner {
             this(farmhouseOrigin, complexExtendsToward,
                     footprintHalfX, footprintHalfZ,
                     villageId, farmhouseId, culture, buildingType,
-                    fmap, biomeCheck, seed, java.util.List.of());
+                    fmap, biomeCheck, seed, java.util.List.of(), false);
+        }
+
+        /** Backward-compat ctor for callers passing exclusion but no
+         *  verbosity. The V2 spawn adapter uses this overload —
+         *  production spawn stays quiet. */
+        public Input(BlockPos farmhouseOrigin, Direction complexExtendsToward,
+                     int footprintHalfX, int footprintHalfZ,
+                     UUID villageId, UUID farmhouseId, String culture,
+                     BuildingType buildingType, V2FeatureMap fmap,
+                     FloodFillRegionClaim.BiomeBlockedPredicate biomeCheck,
+                     long seed,
+                     java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
+                             excludedPolygons) {
+            this(farmhouseOrigin, complexExtendsToward,
+                    footprintHalfX, footprintHalfZ,
+                    villageId, farmhouseId, culture, buildingType,
+                    fmap, biomeCheck, seed, excludedPolygons, false);
         }
     }
 
@@ -173,7 +197,8 @@ public final class FarmComplexPlanner {
                         ArableScoring.DEFAULT_THRESHOLD,
                         in.fmap(),
                         in.biomeCheck(),
-                        in.excludedPolygons()));
+                        in.excludedPolygons(),
+                        in.verbose()));
         if (fill.failure() != null) {
             return switch (fill.failure()) {
                 case INSUFFICIENT_AREA -> PlanResult.fail(

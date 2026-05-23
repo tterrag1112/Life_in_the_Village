@@ -60,7 +60,13 @@ public final class FloodFillRegionClaim {
              *  Null or empty ⇒ no exclusion. Cells whose centre falls
              *  inside any of these are rejected during BFS, same as
              *  arable / biome failures. */
-            java.util.List<Polygon> excludedPolygons) {
+            java.util.List<Polygon> excludedPolygons,
+            /** Prompt B follow-up — when true, the seed-admissibility
+             *  failure path emits a single diagnostic line naming
+             *  the cell category, slope, water/forest distances,
+             *  computed arable score, and which gate rejected.
+             *  Off in production; on for the test_spawn harness. */
+            boolean verbose) {
 
         /** Backward-compat for callers that don't yet pass an
          *  exclusion list (test command, future call sites that
@@ -69,7 +75,19 @@ public final class FloodFillRegionClaim {
                      int slopeLimit, double scoreThreshold,
                      V2FeatureMap fmap, BiomeBlockedPredicate biomeBlocked) {
             this(seed, maxRadiusBlocks, blockBudget, slopeLimit,
-                    scoreThreshold, fmap, biomeBlocked, java.util.List.of());
+                    scoreThreshold, fmap, biomeBlocked,
+                    java.util.List.of(), false);
+        }
+
+        /** Backward-compat for callers that pass exclusion polygons
+         *  but no verbosity flag (V2 spawn adapter — quiet). */
+        public Input(BlockPos seed, int maxRadiusBlocks, int blockBudget,
+                     int slopeLimit, double scoreThreshold,
+                     V2FeatureMap fmap, BiomeBlockedPredicate biomeBlocked,
+                     java.util.List<Polygon> excludedPolygons) {
+            this(seed, maxRadiusBlocks, blockBudget, slopeLimit,
+                    scoreThreshold, fmap, biomeBlocked,
+                    excludedPolygons, false);
         }
     }
 
@@ -125,8 +143,15 @@ public final class FloodFillRegionClaim {
         // there's no point flooding from it.
         Cell seedCell = fmap.cellAt(seed.getX(), seed.getZ());
         if (!admissible(seedCell, in)) {
+            String diag = diagnoseSeed(seedCell, in);
+            if (in.verbose()) {
+                org.slf4j.LoggerFactory.getLogger(FloodFillRegionClaim.class)
+                        .info("FloodFillRegionClaim seed reject @ ({}, {}, {}): {}",
+                                seed.getX(), seed.getY(), seed.getZ(), diag);
+            }
             return fail(in, FailReason.SEED_NOT_ADMISSIBLE,
-                    "Seed cell category/slope/score does not pass admissibility.");
+                    "Seed cell category/slope/score does not pass admissibility. "
+                            + diag);
         }
 
         // Translate seed world coords → grid (i, j). V2FeatureMap
@@ -213,6 +238,50 @@ public final class FloodFillRegionClaim {
             if (Polygon.contains(p, x, z)) return true;
         }
         return false;
+    }
+
+    /** Compose a one-line diagnostic explaining why the seed cell
+     *  failed admissibility. Names the rejecting gate so the caller
+     *  doesn't have to cross-reference the rule order. Pure
+     *  read-only; cheap to compute even when verbose is off (used
+     *  in the fail() detail string regardless, so test-command
+     *  users see it in the chat error). */
+    private static String diagnoseSeed(Cell c, Input in) {
+        if (c == null) {
+            return "category=null score=0.00 threshold=" + fmt(in.scoreThreshold())
+                    + " gate=NULL_CELL";
+        }
+        String cat   = String.valueOf(c.category());
+        int slope    = c.localSlope();
+        int distW    = c.distToWater()  == Integer.MAX_VALUE ? -1 : c.distToWater();
+        int distF    = c.distToForest() == Integer.MAX_VALUE ? -1 : c.distToForest();
+        double score = ArableScoring.score(c, in.fmap().cellSize());
+        String gate;
+        if (c.category() != tterrag1112.life_in_the_village.Village.Planning.V2
+                .Layer1.BlockCategory.OPEN
+                && c.category() != tterrag1112.life_in_the_village.Village.Planning.V2
+                        .Layer1.BlockCategory.SHORE) {
+            gate = "CATEGORY (need OPEN|SHORE)";
+        } else if (slope > ArableScoring.MAX_INTERIOR_SLOPE) {
+            gate = "SLOPE_INNER (need ≤" + ArableScoring.MAX_INTERIOR_SLOPE + ")";
+        } else if (slope > in.slopeLimit()) {
+            gate = "SLOPE_OUTER (need ≤" + in.slopeLimit() + ")";
+        } else if (score < in.scoreThreshold()) {
+            gate = "SCORE";
+        } else {
+            gate = "UNKNOWN";
+        }
+        return "category=" + cat
+                + " slope=" + slope
+                + " distWater=" + distW
+                + " distForest=" + distF
+                + " score=" + fmt(score)
+                + " threshold=" + fmt(in.scoreThreshold())
+                + " gate=" + gate;
+    }
+
+    private static String fmt(double d) {
+        return String.format(java.util.Locale.ROOT, "%.2f", d);
     }
 
     private static boolean admissible(Cell c, Input in) {

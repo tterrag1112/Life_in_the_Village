@@ -225,14 +225,25 @@ public final class FarmDebugCommand {
         Building farmhouse = placedOpt.get();
         village.addBuilding(farmhouse);
 
+        // BuildingPlacer with Rotation.NONE treats `pos` as the
+        // building's NW corner — its actual centre is offset by
+        // (width/2, _, length/2). Read the placed shape so the
+        // planner gets the same "centre of footprint" value the
+        // spawn adapter passes via PlacedBuilding.centre().
+        var shape = farmhouse.getShape();
+        BlockPos farmhouseCentre = new BlockPos(
+                shape.getOrigin().getX() + shape.getWidth()  / 2,
+                pos.getY(),
+                shape.getOrigin().getZ() + shape.getLength() / 2);
+
         // V2FeatureMap centered on the farmhouse. 100-block radius
         // mirrors the spawn-adapter default (FEATURE_MAP_RADIUS).
-        V2FeatureMap fmap = V2FeatureMap.scan(level, pos, 100);
+        V2FeatureMap fmap = V2FeatureMap.scan(level, farmhouseCentre, 100);
 
         // Half-extents from the placed Building's footprint —
         // honest dims rather than fixed defaults.
-        int halfX = Math.max(1, farmhouse.getShape().getWidth() / 2);
-        int halfZ = Math.max(1, farmhouse.getShape().getLength() / 2);
+        int halfX = Math.max(1, shape.getWidth()  / 2);
+        int halfZ = Math.max(1, shape.getLength() / 2);
 
         // Seed = (gameTime ^ position hash). Different positions get
         // different seeds; same (pos, gameTime) reproduces. Long
@@ -241,7 +252,7 @@ public final class FarmDebugCommand {
         long seed = level.getGameTime() ^ ((long) pos.hashCode() << 16);
 
         FarmComplexPlanner.Input input = new FarmComplexPlanner.Input(
-                pos,
+                farmhouseCentre,
                 /* complexExtendsToward */ Direction.SOUTH,
                 halfX,
                 halfZ,
@@ -251,7 +262,9 @@ public final class FarmDebugCommand {
                 BuildingType.FARMHOUSE,
                 fmap,
                 /* biomeCheck */ null,
-                seed);
+                seed,
+                /* excludedPolygons */ java.util.List.of(),
+                /* verbose */ true);
         FarmComplexPlanner.PlanResult result =
                 FarmComplexPlanner.planAndPersist(input, data);
 
