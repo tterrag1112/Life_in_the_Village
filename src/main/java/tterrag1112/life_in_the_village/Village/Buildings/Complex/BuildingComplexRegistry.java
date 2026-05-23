@@ -107,7 +107,7 @@ public final class BuildingComplexRegistry {
 
         BuildingComplexSpec farmhouse = new BuildingComplexSpec(
                 /* radiusMultiplier   */ 3.0f,
-                /* blockBudget        */ 500,
+                /* blockBudget        */ 600,
                 /* minPlotSize        */ 16,
                 /* targetPlotCount    */ 4,
                 /* plotTypeMix        */ mix,

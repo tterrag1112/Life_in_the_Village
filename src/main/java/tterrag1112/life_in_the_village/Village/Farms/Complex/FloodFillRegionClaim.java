@@ -166,19 +166,24 @@ public final class FloodFillRegionClaim {
                     "Seed grid index out of bounds after translation.");
         }
 
-        // BFS with deterministic neighbour order N, E, S, W.
+        // BFS with deterministic neighbour order — 8-connected
+        // (N, NE, E, SE, S, SW, W, NW). Pre-tuning the BFS was
+        // 4-connected, which combined with the square scan grid
+        // produced visibly diamond-shaped complexes. Diagonals
+        // are admitted under the same arable / biome / exclusion
+        // checks as orthogonals; budget cost is the same.
         Set<Long> admitted = new HashSet<>();
         Deque<int[]> queue = new ArrayDeque<>();
         long seedPacked = CellPolygonizer.packCell(seedI, seedJ);
         admitted.add(seedPacked);
         queue.addLast(new int[]{seedI, seedJ});
-        final int[] dx = {0, +1, 0, -1};
-        final int[] dz = {-1, 0, +1, 0};
+        final int[] dx = { 0, +1, +1, +1,  0, -1, -1, -1};
+        final int[] dz = {-1, -1,  0, +1, +1, +1,  0, -1};
         double r2 = (double) in.maxRadiusBlocks() * in.maxRadiusBlocks();
         int budget = in.blockBudget();
         while (!queue.isEmpty() && admitted.size() < budget) {
             int[] cur = queue.pollFirst();
-            for (int d = 0; d < 4; d++) {
+            for (int d = 0; d < 8; d++) {
                 int ni = cur[0] + dx[d];
                 int nj = cur[1] + dz[d];
                 if (ni < 0 || nj < 0
@@ -204,6 +209,14 @@ public final class FloodFillRegionClaim {
             }
         }
 
+        // Boundary roughening — drop ~18% of cells that have at
+        // least one non-admitted neighbour. Single pass: iterating
+        // fragments the region (drops expose new boundary cells
+        // for the next pass, cascading inward). Uses a seed
+        // derived from the original seed so the same farmhouse +
+        // game-time produces the same rough edge each run.
+        roughenBoundary(admitted, seedI, seedJ, in);
+
         if (admitted.size() < MIN_VIABLE_CELLS) {
             return fail(in, FailReason.INSUFFICIENT_AREA,
                     "Insufficient arable land at this location ("
@@ -221,6 +234,49 @@ public final class FloodFillRegionClaim {
         boolean tight = admitted.size() < TIGHT_FRACTION * budget;
         return new Result(polygon, admitted, admitted.size(), budget,
                 tight, null, null);
+    }
+
+    /** Fraction of boundary cells dropped during roughening.
+     *  Tuned so the perimeter reads as organic / ragged without
+     *  fragmenting the region or punching obvious notches. */
+    private static final double BOUNDARY_DROP_RATE = 0.18;
+
+    /** Identify boundary cells (cells with at least one missing
+     *  neighbour out of the 8 directions), then remove a
+     *  {@link #BOUNDARY_DROP_RATE} fraction of them. Single pass —
+     *  iterating would cascade inward as the drops expose new
+     *  boundary cells.
+     *
+     *  <p>The seed cell itself is NEVER dropped, even if it lands
+     *  on the boundary after BFS (small claims can leave the seed
+     *  with all-non-admitted diagonals). */
+    private static void roughenBoundary(Set<Long> admitted,
+                                         int seedI, int seedJ,
+                                         Input in) {
+        java.util.Random rng = new java.util.Random(
+                ((long) seedI << 32) ^ seedJ ^ in.maxRadiusBlocks());
+        long seedCell = CellPolygonizer.packCell(seedI, seedJ);
+        final int[] dxRough = { 0, +1, +1, +1,  0, -1, -1, -1};
+        final int[] dzRough = {-1, -1,  0, +1, +1, +1,  0, -1};
+        java.util.List<Long> boundary = new java.util.ArrayList<>();
+        for (Long cell : admitted) {
+            if (cell == seedCell) continue;
+            int ci = (int) (cell >> 32);
+            int cj = (int) (long) cell;
+            for (int d = 0; d < 8; d++) {
+                long neighbour = CellPolygonizer.packCell(
+                        ci + dxRough[d], cj + dzRough[d]);
+                if (!admitted.contains(neighbour)) {
+                    boundary.add(cell);
+                    break;
+                }
+            }
+        }
+        // Deterministic order for the drop selection.
+        java.util.Collections.sort(boundary);
+        for (Long b : boundary) {
+            if (rng.nextDouble() < BOUNDARY_DROP_RATE) admitted.remove(b);
+        }
     }
 
     // ── helpers ────────────────────────────────────────────────────────
