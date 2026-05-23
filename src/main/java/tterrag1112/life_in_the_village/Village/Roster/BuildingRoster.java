@@ -36,6 +36,30 @@ import java.util.UUID;
  *       — concrete RosterDefinition consumers override for breed-state
  *       sync, name preservation, etc.</li>
  * </ul>
+ *
+ * <h3>Phase 6.3.3.j / k extensions (full state model)</h3>
+ * <ul>
+ *   <li>{@code boundPlotId} (j.3) — optional FarmPlot or AdjunctPlot
+ *       UUID; {@link #resolveRealizationAnchor} uses it to spawn
+ *       livestock at the bound pen during good weather and at the
+ *       building center during storms ({@link WeatherContext#isStorm}).</li>
+ *   <li>{@code hazardCounter} (k.5) — predator-pressure counter (0–10)
+ *       bumped by {@code PredatorScanBehavior} and consumed by the
+ *       simulated-mode attrition roll in {@link #tick}. Decays one
+ *       point per cycle so a single wolf sighting fades naturally.
+ *       Realized animal deaths are handled out-of-band by
+ *       {@code RosterChunkLoadHandler}'s entity-death bridge (k.4).</li>
+ *   <li>{@code diseaseLevel} (k.6) — herd disease severity (0–10).
+ *       Risk factors compose daily (overcrowding, hazard pressure,
+ *       biome-temperature discomfort); production scales by
+ *       (1 - 0.1 × level); slot mortality fires at level ≥ 7. HEALER
+ *       and FARMER tending paths both reduce the level.</li>
+ * </ul>
+ *
+ * <p>{@link #onProductionCycle} now scales item counts by health
+ * (1 - diseaseLevel × DISEASE_OUTPUT_PENALTY_PER_LEVEL); subclasses
+ * overriding the hook should respect that semantics or apply their
+ * own health-aware scaling.</p>
  */
 public class BuildingRoster {
 

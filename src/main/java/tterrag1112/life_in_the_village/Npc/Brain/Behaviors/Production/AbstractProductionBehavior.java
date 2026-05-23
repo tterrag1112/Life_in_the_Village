@@ -156,7 +156,26 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     protected Building fuelSource(ServerLevel level, Building workBuilding) { return resolveInputSource(level, workBuilding); }
     protected Building outputBuilding(ServerLevel level) { return workBuilding; }
     protected Map<Item, Integer> stockQuotas() { return Map.of(); }
-    protected int sellSurplusThreshold() { return 8; }
+
+    /**
+     * Per-item count to retain locally before selling surplus. The
+     * default of {@link #DEFAULT_SURPLUS_THRESHOLD} (8) covers most
+     * workshops; overrides like {@code MillerProductionBehavior}
+     * (32) bump it when household consumption naturally absorbs more
+     * stock before sale becomes appropriate. FARMER does not extend
+     * this — the {@link #stockQuotas} map covers per-crop floors
+     * for the FARMER's mixed output path.
+     */
+    protected int sellSurplusThreshold() { return DEFAULT_SURPLUS_THRESHOLD; }
+
+    /** Phase 6.3.3.l.3 — default surplus floor lifted to a named
+     *  constant so the magic number "8" carries its meaning. Per the
+     *  6.3.3.e regression note: subclasses may override
+     *  {@link #sellSurplusThreshold} for higher floors; lower floors
+     *  aren't currently meaningful (selling output the workshop
+     *  itself can't restock breaks the production loop). */
+    public static final int DEFAULT_SURPLUS_THRESHOLD = 8;
+
     protected List<Item> sellableOutputs() { return List.of(); }
     protected int sellWindowDayTick() { return 10000; }
     protected Map<Item, Integer> resourcesToBuy(ServerLevel level, Building building) { return Map.of(); }
