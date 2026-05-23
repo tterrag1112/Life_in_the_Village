@@ -407,6 +407,17 @@ public final class ApprenticeshipManager {
             case BAKER         -> "minecraft:cake";
             case MILLER        -> "life_in_the_village:wheat_flour";
             case SCHOLAR, SCRIBE, LIBRARIAN -> "minecraft:written_book";
+            // Phase 6.3.3.l.2 — FARMER masterpiece. Descriptor only;
+            // the pass condition is skill-based (CROP_FARMING /
+            // ANIMAL_HUSBANDRY at MASTERPIECE_PASS_SKILL), which the
+            // skill cascade from 6.3.2.b raises naturally once the
+            // apprentice has worked a composite seasonal cycle on at
+            // least two crop families (the underlying "real" criterion
+            // — uncheckable via the String-only API, hence the flavor
+            // item-id descriptor). Golden carrot signifies premium
+            // produce + access to commerce, on-theme for skilled
+            // farming graduation.
+            case FARMER, FARMHAND -> "minecraft:golden_carrot";
             default            -> "minecraft:emerald";
         };
     }
