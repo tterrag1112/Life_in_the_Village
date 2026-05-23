@@ -2864,3 +2864,165 @@ lost.
    the inner record `VillageFarmData` to `VillageFarms` while
    you're at it. Document the rename in Stage 5's report so
    anyone with mid-Detour-A test worlds knows to discard.
+
+
+## Detour A — Stage 6 complete (2026-05-23) — Detour A SHIPS
+
+Final stage. Test harness command + synthetic-village mode +
+debug dump format wired. Static review only — neoform-runtime
+maven proxy returns 403, so no local Gradle build was executable.
+In-world smoke testing is the user's next step.
+
+### What shipped in Stage 6
+
+- `/liv farms test_spawn [name]` subcommand on
+  `Commands/FarmDebugCommand`. At the caller's position:
+  1. Creates a synthetic Village (name `harness_<base>_<hex
+     gameTime>`, type `"synthetic"`, inclination AGRICULTURAL,
+     village-centre = caller position).
+  2. Places the default-culture FARMHOUSE NBT at the caller's
+     position via `BuildingPlacer.placeAndRegister` so the user
+     sees the building in-world. NONE rotation, default variant,
+     no tint.
+  3. Builds a 100-block-radius `V2FeatureMap` centered on the
+     farmhouse — same radius as the spawn adapter.
+  4. Reads honest footprint half-dims from
+     `Building.getShape().getWidth()/getLength()`.
+  5. Calls `FarmComplexPlanner.planAndPersist` with
+     `complexExtendsToward = Direction.SOUTH`, `biomeCheck = null`,
+     seed `= gameTime ^ (pos.hashCode() << 16)` (same pos +
+     gameTime ⇒ same complex; different pos ⇒ different seed).
+  6. On `PlanResult.success`: prints the dump and returns 1.
+     On failure: `sendFailure` with `result.status()` +
+     `result.detail()` so the user sees exactly what tripped
+     (NO_SPEC_REGISTERED / SEED_NOT_ADMISSIBLE /
+     INSUFFICIENT_AREA / BIOME_BLOCKED_AT_SEED /
+     DEGENERATE_REGION / NO_VIABLE_PLOTS).
+
+- Synthetic-village shape — the minimum field set Prompt B
+  needs to know is already populated by `test_spawn`:
+  - `id`: random UUID
+  - `name`: `harness_<base>_<hex>`
+  - `villageCentre`: caller position
+  - `villageType`: `"synthetic"`
+  - `inclination`: AGRICULTURAL
+  - `buildings`: just the farmhouse
+  - everything else: defaults / empty (households, kingdoms,
+    paths, guards, reputations, gardens, road graph). The size
+    tier auto-derives from building count, which lands at
+    HAMLET for the harness village's single farmhouse.
+
+- Human-readable dump format (per Stage 6 brief). Example shape:
+  ```
+  Complex 12345678 @ (X, Y, Z) villageId=87654321 farmhouse=abcdef01
+    region: 42 vertices, 384 cells (area≈1536 blocks²)
+    plots: 4 (WHEAT, MIXED, PASTURE, ORCHARD)
+      plot 0: 96 cells, polygon vertex count 8, crop=WHEAT
+      plot 1: 84 cells, polygon vertex count 6, crop=MIXED
+      ...
+    paths: 2 spine + 4 branches, total 67 blocks
+    toolShed: (X, Y, Z)         | none (positioning probe found …)
+    borders: HEDGE×2, STONE_WALL×1, POST_AND_RAIL×0, DRYSTONE×1
+    gates: 0 (populated by renderer at spawn time; expect 0 until Prompt B ships)
+    farmhouse footprint half-dims: halfX=7, halfZ=5
+  ```
+  Cells are approximated from polygon area / cellSize² (cellSize=2 ⇒ /4).
+
+- `/liv farms <village>` (Stage 5 rewrite) untouched — already
+  surfaces every FarmComplex correctly.
+
+### Smoke test plan (user-executable)
+
+Listed for the user to run; cannot be executed from the
+sandbox due to maven 403.
+
+1. **Plains, mid-terrain.** Walk into open plains, run
+   `/liv farms test_spawn plains`. Expect `success`, 4 plots,
+   region polygon with reasonable vertex count (8–24), paths
+   present, tool shed positioned. Verify
+   `/liv farms harness_plains_<hex>` reproduces the same layout.
+2. **Re-run nearby.** Move ~50 blocks then `test_spawn plains2`.
+   Different seed (different pos.hashCode), should produce a
+   different complex with no overlap with the first complex's
+   region polygon (verify by walking to the centroid of each).
+3. **Cramped terrain.** Walk near a cliff or shore and
+   `test_spawn cramped`. Expect graceful failure with one of:
+   - `INSUFFICIENT_AREA` — flood-fill claimed <100 cells.
+   - `SEED_NOT_ADMISSIBLE` — seed cell failed
+     OPEN/SHORE/slope filter (seed landed in water / on stone).
+   - `DEGENERATE_REGION` — polygon construction collapsed.
+   Detail string should name the specific cause.
+4. **Listing.** `/liv farms harness_plains_<hex>` shows the
+   complex with N=4 plots, region area, path/border/gate counts.
+
+### Known limitations carried into Prompt B
+
+1. **No block-level rendering at spawn or test_spawn.**
+   Complexes plan + persist + surface in `/liv farms` but
+   draw zero farm blocks. Path lines, plot borders, farmland
+   stamps, tool sheds are all Prompt B's renderer scope.
+2. **FarmerGoal idles for farms spawned post-Stage-5.** Plot
+   polygons are correct; the goal queries them correctly; but
+   no farmland blocks exist under them. Harvest cycle finds
+   nothing. Resumes working once Prompt B ships the renderer.
+3. **No park-overlap exclusion in flood-fill.** Today's
+   `FloodFillRegionClaim` admits cells by arable score alone;
+   if a park's `GardenPlot` polygon sits inside the flood-fill
+   radius, both reservations can claim the same ground. Plains
+   smoke-test won't surface this (parks are rare); near-park
+   spawns will. Mitigation: add an "exclude polygons" pass in
+   the orchestrator before polygonizing — single-stage fix in
+   Prompt B's wiring window.
+4. **`Direction.getNearest(double, double, double)` and
+   `Culture.id()` returning String** — both grep-confirmed
+   in existing code; if NeoForge has renamed either in a
+   point release, single-line fix at the spawner adapter
+   call sites.
+5. **Build wasn't verified.** neoform-runtime maven 403 (same
+   block as the documented E1F entry above). First local
+   build by user is the real compile check.
+
+### Prompt B prerequisites (what Prompt B will receive)
+
+- `FarmComplex` record populated and persisted with all
+  Stage-3 fields filled. `gatePositions` is empty — Prompt B
+  populates this as it geometrically resolves where each
+  branch crosses a plot's border polygon.
+- `FarmPlot` records minted by `FarmComplexPlanner` with:
+  - `complexId` pointing at the owning complex.
+  - `farmhouseId` pointing at the farmhouse.
+  - `polygon` set to the BSP-output polygon (after region +
+    footprint clipping).
+  - `cropType` from the spec's weighted-random pick.
+  - `subtype` = `ANIMAL_PEN` when crop is PASTURE,
+    `CROP_FIELD` otherwise.
+  - `origin` = polygon centroid; `radius` = bbox half-dim
+    (legacy circle fallback; polygon takes precedence in
+    `FarmPlot.contains`).
+- `VillageSavedData` accessors: `getFarmComplex(UUID)`,
+  `getFarmComplexForFarmhouse(UUID)`,
+  `getFarmComplexesForVillage(UUID)`,
+  `getAllFarmComplexes()`, plus removal counterparts.
+- `BuildingComplexRegistry` keyed by `(cultureId, BuildingType)`
+  with default × FARMHOUSE entry registered at static-init.
+  Spec carries radiusMultiplier 3.0, blockBudget 500,
+  minPlotSize 16, targetPlotCount 4, crop mix 40/20/20/10/10
+  (W/M/P/O/V), border pool of 4 styles, slope cap 6, biome
+  vetoes (OCEAN/DESERT/MUSHROOM/NETHER/END/UNINHABITABLE).
+- Algorithm layer (`FloodFillRegionClaim`, `BspSubdivider`,
+  `PathTopologyPlanner`, `BorderStyleAssigner`, plus
+  `CellPolygonizer`, `BiomeTagging`) all pure functions —
+  Prompt B can reuse any for renderer-side geometry queries.
+
+### Cumulative Detour A stats
+
+- 7 stages shipped, all on `claude/headless-layout-harness-AOPQG`.
+- Net: +21 new files / -3 deleted / 8 edits to existing.
+- ~2200 LOC added, ~1100 removed, net ~+1100.
+- Spans: planning envelopes, algorithm composition, persistence,
+  spawn-adapter wiring, sector-pipeline retirement, debug
+  harness. No Track B regressions found in sweep.
+- 3 follow-up items logged in earlier sub-section
+  ("Detour A — persistence-layer follow-ups"): FarmPlot polygon
+  storage format, 16-field codec ceiling, JSON key rename
+  (last item has now been done in Stage 5).
