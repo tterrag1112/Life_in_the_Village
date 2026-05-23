@@ -210,7 +210,8 @@ public final class FarmDebugCommand {
         // variant, NONE rotation, default tint plan.
         String variantId = BuildingVariant.defaultVariantId(BuildingType.FARMHOUSE);
         Identifier structureId = CultureResolver.resolve(
-                culture.id(), Style.RURAL, BuildingType.FARMHOUSE, variantId);
+                culture.id(), Style.RURAL, BuildingType.FARMHOUSE, variantId,
+                /* level */ 1, level);
         String farmhouseName = villageName + "_farmhouse";
         Optional<Building> placedOpt = BuildingPlacer.placeAndRegister(
                 level, pos, structureId, farmhouseName,

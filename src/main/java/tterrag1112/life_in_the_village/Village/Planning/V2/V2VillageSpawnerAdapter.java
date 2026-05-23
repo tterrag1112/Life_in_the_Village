@@ -860,7 +860,12 @@ public final class V2VillageSpawnerAdapter {
             tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.FrontageStrip f) {
         if (f == null) return Direction.SOUTH;
         var v = f.frontDirection();
-        return Direction.getNearest(v.x, 0.0, v.z);
+        // 1.21 dropped the (double,double,double) overload; use the
+        // int-coord variant with an explicit fallback. The frontage
+        // direction is already cardinal-snapped so casts are lossless.
+        return Direction.getNearest(
+                (int) Math.signum(v.x), 0, (int) Math.signum(v.z),
+                Direction.SOUTH);
     }
 
     private static void guard(String label, Runnable r) {

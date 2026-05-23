@@ -50,7 +50,10 @@ public final class BiomeTagging {
         if (biome.is(BiomeTags.IS_BADLANDS)) {
             tags.add(BiomeTag.DESERT);
         }
-        if (biome.is(BiomeTags.IS_MUSHROOM)) {
+        // No BiomeTag for mushroom fields in 1.21 — direct biome
+        // key check. Only one vanilla biome qualifies, so the
+        // exact-equality test is sufficient.
+        if (biome.is(net.minecraft.world.level.biome.Biomes.MUSHROOM_FIELDS)) {
             tags.add(BiomeTag.MUSHROOM);
         }
         if (biome.is(BiomeTags.IS_NETHER)) {

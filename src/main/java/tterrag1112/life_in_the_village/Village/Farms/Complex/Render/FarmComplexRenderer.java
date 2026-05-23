@@ -189,7 +189,7 @@ public final class FarmComplexRenderer {
         int dx = b.getX() - a.getX();
         int dz = b.getZ() - a.getZ();
         if (dx == 0 && dz == 0) return Direction.SOUTH;
-        return Direction.getNearest(dz, 0.0, -dx);
+        return Direction.getNearest(dz, 0, -dx, Direction.SOUTH);
     }
 
     // =========================================================================
@@ -286,6 +286,6 @@ public final class FarmComplexRenderer {
         if (firstSpine == null) return Direction.SOUTH;
         int dx = firstSpine.start().getX() - shed.getX();
         int dz = firstSpine.start().getZ() - shed.getZ();
-        return Direction.getNearest(dx, 0.0, dz);
+        return Direction.getNearest(dx, 0, dz, Direction.SOUTH);
     }
 }
