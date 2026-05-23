@@ -51,23 +51,42 @@ public final class FarmComplexRenderer {
 
     private FarmComplexRenderer() {}
 
-    public static void render(FarmComplex complex, List<FarmPlot> plots,
-                               String culture, ServerLevel level) {
-        if (complex == null || plots == null || level == null) return;
-        if (complex.region() == null) return;
+    /** Render result. Carries counts useful to the test command's
+     *  dump (and to any future production telemetry). */
+    public record Stats(int gatesPlaced, int gatesSkipped) {}
+
+    public static Stats render(FarmComplex complex, List<FarmPlot> plots,
+                                String culture, ServerLevel level) {
+        return render(complex, plots, culture, level, false);
+    }
+
+    public static Stats render(FarmComplex complex, List<FarmPlot> plots,
+                                String culture, ServerLevel level,
+                                boolean verbose) {
+        if (complex == null || plots == null || level == null) {
+            return new Stats(0, 0);
+        }
+        if (complex.region() == null) return new Stats(0, 0);
 
         long seed = complex.id().getMostSignificantBits()
                 ^ complex.id().getLeastSignificantBits();
         Random rng = new Random(seed);
 
-        // 1. Borders — dedup shared edges across adjacent plots.
-        renderBorders(complex, plots, culture, level, rng);
-
-        // 2. Paths.
+        // 1. Paths FIRST. Path corridors get stamped before any
+        //    fences are placed; borders then skip cells whose
+        //    surface is dirt-path. Eliminates the "fence sitting
+        //    on a path strip" visual bug.
         PathRenderer.render(complex.pathSegments(), level);
 
-        // 3. Gates — branches crossing border lines get fence-gate cuts.
-        renderGates(complex, level);
+        // 2. Borders — dedup shared edges across adjacent plots.
+        //    The per-column placement in AbstractBorderGenerator
+        //    skips cells where ground = dirt-path, leaving natural
+        //    gaps where the path crosses a fence line.
+        renderBorders(complex, plots, culture, level, rng);
+
+        // 3. Gates — branches crossing border lines get fence-gate
+        //    cuts. Runs after borders so there's something to swap.
+        Stats gateStats = renderGates(complex, level, verbose);
 
         // 4. Plot interiors.
         for (FarmPlot plot : plots) {
@@ -88,6 +107,8 @@ public final class FarmComplexRenderer {
             if (p != null && p.getPolygon() != null) plotPolys.add(p.getPolygon());
         }
         PropsScatterRenderer.render(complex.region(), plotPolys, level, rng);
+
+        return gateStats;
     }
 
     // =========================================================================
@@ -201,13 +222,25 @@ public final class FarmComplexRenderer {
      *  it with an oak fence-gate so paths cleanly cross the fence
      *  line. Branches typically cross the border once (one gate
      *  per plot). */
-    private static void renderGates(FarmComplex complex, ServerLevel level) {
+    private static Stats renderGates(FarmComplex complex, ServerLevel level,
+                                       boolean verbose) {
+        int placed = 0, skipped = 0;
         for (PlotEntry pe : complex.plotEntries()) {
-            placeGateAlong(pe.spineAttach(), pe.entry(), level);
+            boolean ok = placeGateAlong(pe.spineAttach(), pe.entry(),
+                    pe.plotId(), level, verbose);
+            if (ok) placed++; else skipped++;
         }
+        if (verbose) {
+            org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
+                    "renderGates summary: placed={} skipped={}", placed, skipped);
+        }
+        return new Stats(placed, skipped);
     }
 
-    private static void placeGateAlong(BlockPos start, BlockPos end, ServerLevel level) {
+    private static boolean placeGateAlong(BlockPos start, BlockPos end,
+                                            UUID plotId,
+                                            ServerLevel level,
+                                            boolean verbose) {
         int x0 = start.getX(), z0 = start.getZ();
         int x1 = end.getX(),   z1 = end.getZ();
         int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
@@ -215,6 +248,7 @@ public final class FarmComplexRenderer {
         int err = dx - dz;
         int safety = 0;
         boolean placed = false;
+        BlockPos gatePos = null;
         while (!placed && safety++ < 256) {
             // Probe y+1 .. y+2 for fence/leaves/wall/log.
             int gy = level.getHeight(net.minecraft.world.level.levelgen
@@ -223,9 +257,6 @@ public final class FarmComplexRenderer {
                 BlockPos p = new BlockPos(x0, gy + dy, z0);
                 BlockState s = level.getBlockState(p);
                 if (isBorderBlock(s)) {
-                    // Swap with fence gate (open) facing along the
-                    // path. Two-block clearance: also clear the
-                    // block directly above.
                     Direction facing = Math.abs(x1 - x0) >= Math.abs(z1 - z0)
                             ? (x1 >= x0 ? Direction.EAST : Direction.WEST)
                             : (z1 >= z0 ? Direction.SOUTH : Direction.NORTH);
@@ -244,6 +275,7 @@ public final class FarmComplexRenderer {
                         level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
                     }
                     placed = true;
+                    gatePos = p;
                     break;
                 }
             }
@@ -252,6 +284,18 @@ public final class FarmComplexRenderer {
             if (e2 > -dz) { err -= dz; x0 += sx; }
             if (e2 <  dx) { err += dx; z0 += sz; }
         }
+        if (verbose) {
+            org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
+                    "gate plot={} branch=({},{}..{},{}) result={} pos={}",
+                    plotId == null ? "?" : plotId.toString().substring(0, 8),
+                    start.getX(), start.getZ(), end.getX(), end.getZ(),
+                    placed ? "PLACED" : "NO_BORDER_FOUND",
+                    gatePos == null ? "—"
+                            : "(" + gatePos.getX() + ","
+                                  + gatePos.getY() + ","
+                                  + gatePos.getZ() + ")");
+        }
+        return placed;
     }
 
     private static boolean isBorderBlock(BlockState s) {

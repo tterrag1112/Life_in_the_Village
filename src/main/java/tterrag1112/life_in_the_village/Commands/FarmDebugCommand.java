@@ -282,15 +282,20 @@ public final class FarmDebugCommand {
         // Failures here don't fail the command; the dump still
         // reports the planned state for debugging.
         String renderNote = "";
+        tterrag1112.life_in_the_village.Village.Farms.Complex.Render
+                .FarmComplexRenderer.Stats stats =
+                new tterrag1112.life_in_the_village.Village.Farms.Complex.Render
+                        .FarmComplexRenderer.Stats(0, 0);
         try {
             List<FarmPlot> plots = data.getFarmPlotsForFarmhouse(farmhouse.getId());
-            tterrag1112.life_in_the_village.Village.Farms.Complex.Render
+            stats = tterrag1112.life_in_the_village.Village.Farms.Complex.Render
                     .FarmComplexRenderer.render(result.complex(), plots,
-                            culture.id(), level);
+                            culture.id(), level, /* verbose */ true);
         } catch (Exception e) {
             renderNote = "\n  (render warning: " + e.getClass().getSimpleName()
                     + ": " + e.getMessage() + ")";
         }
+        int npcCount = 0;
         boolean populatorCalled = false;
         try {
             java.util.Map<BuildingType, java.util.List<Building>> roster =
@@ -300,15 +305,22 @@ public final class FarmDebugCommand {
                     .VillageInhabitantPopulator.populate(
                             level, village, data, roster, new java.util.Random(seed));
             populatorCalled = true;
+            npcCount = data.getHouseholdForBuilding(farmhouse.getId())
+                    .map(tterrag1112.life_in_the_village.Entities
+                            .HouseholdData::size)
+                    .orElse(0);
         } catch (Throwable t) {
             renderNote += "\n  (populator warning: " + t.getClass().getSimpleName()
                     + ": " + t.getMessage() + ")";
         }
 
-        String dump = dumpComplex(result.complex(), data, pos, halfX, halfZ);
-        String tail = "\n  populator: " + (populatorCalled
-                ? "invoked (NPC count in server log)"
-                : "skipped (see warning above)")
+        String dump = dumpComplex(result.complex(), data, pos, halfX, halfZ,
+                stats.gatesPlaced());
+        String tail = "\n  gates rendered: placed=" + stats.gatesPlaced()
+                + " skipped=" + stats.gatesSkipped()
+                + "\n  populator: " + (populatorCalled
+                        ? "invoked, NPCs in household=" + npcCount
+                        : "skipped (see warning above)")
                 + renderNote;
         String finalText = dump + tail;
         ctx.getSource().sendSuccess(() -> Component.literal(finalText), false);
@@ -334,7 +346,8 @@ public final class FarmDebugCommand {
      *  of Manhattan-ish segment lengths in blocks. */
     private static String dumpComplex(FarmComplex c, VillageSavedData data,
                                        BlockPos farmhousePos,
-                                       int halfX, int halfZ) {
+                                       int halfX, int halfZ,
+                                       int gatesActuallyPlaced) {
         StringBuilder sb = new StringBuilder();
         sb.append("Complex ").append(shortId(c.id()))
                 .append(" @ (").append(farmhousePos.getX()).append(", ")
@@ -420,9 +433,8 @@ public final class FarmDebugCommand {
         sb.append("\n");
 
         // Gates.
-        sb.append("  gates: ").append(c.gatePositions().size())
-                .append(" (populated by renderer at spawn time; "
-                        + "expect 0 until Prompt B ships)\n");
+        sb.append("  gates: ").append(gatesActuallyPlaced)
+                .append(" placed (renderer)\n");
 
         // Footprint context (so the user can sanity-check the
         // farmhouse vs region scale).

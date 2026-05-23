@@ -77,7 +77,18 @@ public final class BspSubdivider {
         double targetPlotArea = (regionArea / in.targetPlotCount()) * 1.5;
         double stopArea = Math.max(targetPlotArea,
                 in.minPlotSize() * (double) in.cellSize() * 2);
-        int minSideBlocks = in.minPlotSize() * in.cellSize();
+        // minSideBlocks: minimum width a CHILD rect must have to be
+        // a viable plot. Computed as the side-length of a square
+        // plot containing exactly minPlotSize cells.
+        //   minPlotSize = 16 cells → √16 = 4 cells per side
+        //   × cellSize (2 blocks) = 8 blocks per side
+        // Cut eligibility requires the PARENT rect to be ≥ 2× this
+        // (so each child clears the threshold). Pre-fix formula
+        // (minPlotSize × cellSize = 32) required 64-wide rects and
+        // gated BSP from cutting on typical 500-cell regions; smoke
+        // test produced only 2 plots when target was 4.
+        int minSideBlocks = (int) Math.ceil(Math.sqrt(in.minPlotSize()))
+                * in.cellSize();
 
         if (in.verbose()) {
             org.slf4j.LoggerFactory.getLogger(BspSubdivider.class).info(
@@ -118,8 +129,20 @@ public final class BspSubdivider {
         for (int[] rect : leaves) {
             java.util.Set<Long> cells = new java.util.HashSet<>();
             int wMinX = rect[0], wMinZ = rect[1], wMaxX = rect[2], wMaxZ = rect[3];
-            for (int wx = wMinX; wx <= wMaxX; wx += cellSize) {
-                for (int wz = wMinZ; wz <= wMaxZ; wz += cellSize) {
+            // Exclusive on the high end so adjacent BSP rects don't
+            // both claim the shared-boundary cell. Pre-fix the loop
+            // used `<=`, which caused plot A's east cell + plot B's
+            // west cell to overlap at a shared rect boundary. The
+            // resulting polygons traced edges 1 cell INSIDE each
+            // rect (so adjacent plot fences ran 2 blocks apart with
+            // a strip of doubled farmland between them — the
+            // "doubled border" bug). With `<` the boundary cell
+            // belongs only to the rect to its right; polygon edges
+            // land exactly on the BSP boundary, identical between
+            // adjacent plots, and the renderer's edgeKey dedup
+            // catches them.
+            for (int wx = wMinX; wx <  wMaxX; wx += cellSize) {
+                for (int wz = wMinZ; wz <  wMaxZ; wz += cellSize) {
                     if (!Polygon.contains(in.region(), wx, wz)) continue;
                     if (in.buildingBounds() != null
                             && Polygon.contains(in.buildingBounds(), wx, wz)) continue;

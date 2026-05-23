@@ -67,7 +67,7 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
         int step = 0;
         while (true) {
             int gy = resolveGroundY(level, x0, z0);
-            if (gy > 0 && gy < MAX_BUILD_Y) {
+            if (gy > 0 && gy < MAX_BUILD_Y && !isOnPath(level, x0, gy, z0)) {
                 renderColumn(level, x0, z0, gy, outwardNormal, step, rng);
             }
             if (x0 == x1 && z0 == z1) break;
@@ -96,6 +96,14 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
                     Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
         }
         return y;
+    }
+
+    /** True iff the ground block at (x, y, z) is the path surface
+     *  the path renderer just stamped. Borders skip these columns
+     *  so paths cross fence lines cleanly. The PathRenderer runs
+     *  before borders in the orchestrator's render order. */
+    protected static boolean isOnPath(ServerLevel level, int x, int y, int z) {
+        return level.getBlockState(new BlockPos(x, y, z)).is(Blocks.DIRT_PATH);
     }
 
     /** Safe replacement: only set the block if the current state

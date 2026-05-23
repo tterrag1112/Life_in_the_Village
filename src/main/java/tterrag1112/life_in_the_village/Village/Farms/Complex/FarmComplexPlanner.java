@@ -188,6 +188,16 @@ public final class FarmComplexPlanner {
         int maxRadius = Math.round(longestHalf * 2 * spec.radiusMultiplier());
 
         // ── 3. Flood-fill ───────────────────────────────────────────────
+        // The approach apron joins caller-supplied exclusions so the
+        // flood-fill carves a notch around the path's exit point in
+        // front of the farmhouse. Without this the spine origin
+        // would otherwise be admitted and plots could be placed
+        // flush against the building wall.
+        Polygon apronPoly = buildApronPolygon(in);
+        java.util.List<Polygon> floodExclusions =
+                new ArrayList<>(in.excludedPolygons() == null
+                        ? java.util.List.of() : in.excludedPolygons());
+        floodExclusions.add(apronPoly);
         FloodFillRegionClaim.Result fill = FloodFillRegionClaim.run(
                 new FloodFillRegionClaim.Input(
                         seed,
@@ -197,7 +207,7 @@ public final class FarmComplexPlanner {
                         ArableScoring.DEFAULT_THRESHOLD,
                         in.fmap(),
                         in.biomeCheck(),
-                        in.excludedPolygons(),
+                        floodExclusions,
                         in.verbose()));
         if (fill.failure() != null) {
             return switch (fill.failure()) {
@@ -214,8 +224,14 @@ public final class FarmComplexPlanner {
                     "Flood-fill region is null or has fewer than 3 vertices.");
         }
 
-        // ── 4. Footprint polygon (for BSP exclusion) ────────────────────
-        Polygon footprintPoly = buildFootprintPolygon(in);
+        // ── 4. Footprint+apron polygon (for BSP exclusion) ─────────────
+        // BSP takes a single exclusion polygon. Union the footprint
+        // and the apron into one axis-aligned bounding rectangle so
+        // plot subdivision skips both regions; the small over-include
+        // along the building's side strips is harmless (those cells
+        // are BUILT-category anyway, so they'd never be admitted).
+        Polygon footprintPoly = unionFootprintWithApron(
+                buildFootprintPolygon(in), apronPoly);
 
         // ── 5. BSP subdivision ──────────────────────────────────────────
         int targetPlotCount = spec.targetPlotCount();
@@ -357,6 +373,76 @@ public final class FarmComplexPlanner {
                 new BlockPos(o.getX() + hx, y, o.getZ() + hz),
                 new BlockPos(o.getX() - hx, y, o.getZ() + hz));
         return new Polygon(verts);
+    }
+
+    /** Prompt B follow-up — "approach apron" polygon. A small strip
+     *  in the {@code complexExtendsToward} direction just past the
+     *  farmhouse footprint, reserved as open ground so plot
+     *  subdivision + flood-fill leave a clear corridor between the
+     *  building's complex-facing edge and the path spine.
+     *
+     *  <p>Geometry: full farmhouse width on the perpendicular axis,
+     *  {@link #APRON_DEPTH} blocks deep along {@code extendsToward},
+     *  abutting the farmhouse footprint with no gap. */
+    private static final int APRON_DEPTH = 4;
+
+    private static Polygon buildApronPolygon(Input in) {
+        BlockPos o = in.farmhouseOrigin();
+        int hx = in.footprintHalfX();
+        int hz = in.footprintHalfZ();
+        int y = o.getY();
+        var d = in.complexExtendsToward();
+        // Apron starts at the footprint's far edge (in extendsToward
+        // direction) and extends APRON_DEPTH further. The
+        // perpendicular extent matches footprint half-dim plus 1
+        // block of margin so the corner cells of the path corridor
+        // also stay clear.
+        int margin = 1;
+        if (d.getStepX() != 0) {
+            int sx = d.getStepX();
+            int nearX = o.getX() + sx * hx;
+            int farX  = o.getX() + sx * (hx + APRON_DEPTH);
+            int minX = Math.min(nearX, farX);
+            int maxX = Math.max(nearX, farX);
+            int minZ = o.getZ() - hz - margin;
+            int maxZ = o.getZ() + hz + margin;
+            return new Polygon(List.of(
+                    new BlockPos(minX, y, minZ),
+                    new BlockPos(maxX, y, minZ),
+                    new BlockPos(maxX, y, maxZ),
+                    new BlockPos(minX, y, maxZ)));
+        } else {
+            int sz = d.getStepZ();
+            int nearZ = o.getZ() + sz * hz;
+            int farZ  = o.getZ() + sz * (hz + APRON_DEPTH);
+            int minZ = Math.min(nearZ, farZ);
+            int maxZ = Math.max(nearZ, farZ);
+            int minX = o.getX() - hx - margin;
+            int maxX = o.getX() + hx + margin;
+            return new Polygon(List.of(
+                    new BlockPos(minX, y, minZ),
+                    new BlockPos(maxX, y, minZ),
+                    new BlockPos(maxX, y, maxZ),
+                    new BlockPos(minX, y, maxZ)));
+        }
+    }
+
+    /** Combine two axis-aligned polygons into a single bounding
+     *  rectangle covering both. Used to feed footprint+apron into
+     *  BSP's single buildingBounds slot. */
+    private static Polygon unionFootprintWithApron(Polygon footprint, Polygon apron) {
+        var fb = Polygon.boundingBox(footprint);
+        var ab = Polygon.boundingBox(apron);
+        int minX = Math.min(fb.minX(), ab.minX());
+        int minZ = Math.min(fb.minZ(), ab.minZ());
+        int maxX = Math.max(fb.maxX(), ab.maxX());
+        int maxZ = Math.max(fb.maxZ(), ab.maxZ());
+        int y = footprint.vertices().get(0).getY();
+        return new Polygon(List.of(
+                new BlockPos(minX, y, minZ),
+                new BlockPos(maxX, y, minZ),
+                new BlockPos(maxX, y, maxZ),
+                new BlockPos(minX, y, maxZ)));
     }
 
     /** Conservative bbox half-dim → radius mapping. Stored solely
