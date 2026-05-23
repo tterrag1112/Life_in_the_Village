@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Rotation;
@@ -325,6 +326,12 @@ public final class V2VillageSpawnerAdapter {
         Map<BuildingType, List<Building>> placedBuildingsAll = new LinkedHashMap<>();
         EnumMap<BuildingType, Integer> typeCounters = new EnumMap<>(BuildingType.class);
         BuildingFootprint footprint = new BuildingFootprint();
+        // Detour A — pair each placed farmhouse with its
+        // PlacedBuilding so the post-loop FarmComplexPlanner can
+        // read footprint dims + frontage direction. Captured inline
+        // because the post-loop iteration over Building alone
+        // doesn't retain planning-layer data.
+        List<PlacedFarmhouse> placedFarmhouses = new ArrayList<>();
         // A3 — neighbour-soft-exclude colour planning. Mirrors V1
         // VillageSpawner's per-village NeighborColorIndex usage.
         NeighborColorIndex neighborIndex = new NeighborColorIndex();
@@ -380,6 +387,9 @@ public final class V2VillageSpawnerAdapter {
                 placedBuildings.putIfAbsent(b.type(), placedBuilding);
                 placedBuildingsAll.computeIfAbsent(b.type(),
                         k -> new ArrayList<>()).add(placedBuilding);
+                if (b.type() == BuildingType.FARMHOUSE) {
+                    placedFarmhouses.add(new PlacedFarmhouse(placedBuilding, b));
+                }
                 footprint.occupyBuilding(placedBuilding,
                         BuildingFootprint.DEFAULT_BUFFER);
                 neighborIndex.add(b.centre(), placedBuilding.getPrimaryColor());
@@ -440,30 +450,59 @@ public final class V2VillageSpawnerAdapter {
             LOGGER.warn("V2: RoadPainter failed: {}", e.getMessage());
         }
 
-        // B2.5 — plan a farm sector (zero or one per village). Runs
-        // AFTER the building loop because FarmSector needs concrete
-        // Building UUIDs for farmhouseIds, and AFTER parks because
-        // the planner masks against reserved GardenPlots so farms
-        // don't trample on park footprints.
-        try {
-            java.util.List<Building> villageBuildings = new java.util.ArrayList<>();
-            for (java.util.UUID bid : village.getBuildingIds()) {
-                data.getBuildingById(bid).ifPresent(villageBuildings::add);
+        // Detour A — one FarmComplex per placed farmhouse. Runs
+        // post-loop so each farmhouse's Building UUID exists.
+        // Prompt B Stage A: park-polygon exclusion. The parks
+        // reserved by ParkCandidateFinder earlier in this spawn
+        // get converted to Polygons here and fed to every per-
+        // farmhouse FarmComplexPlanner call.
+        java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
+                parkExclusionPolygons = collectParkExclusions(data, village.getId());
+        for (PlacedFarmhouse fh : placedFarmhouses) {
+            try {
+                Direction extendsToward =
+                        toDirection(fh.placed().frontage()).getOpposite();
+                int halfX = Math.max(1, fh.placed().footprint().width() / 2);
+                int halfZ = Math.max(1, fh.placed().footprint().length() / 2);
+                long perFhSeed = seed
+                        + fh.building().getId().getMostSignificantBits()
+                        ^ fh.building().getId().getLeastSignificantBits();
+                var planInput = new tterrag1112.life_in_the_village.Village.Farms
+                        .Complex.FarmComplexPlanner.Input(
+                        fh.placed().centre(),
+                        extendsToward,
+                        halfX,
+                        halfZ,
+                        village.getId(),
+                        fh.building().getId(),
+                        culture.id(),
+                        BuildingType.FARMHOUSE,
+                        fmap,
+                        /* biomeCheck */ null,
+                        perFhSeed,
+                        parkExclusionPolygons);
+                var result = tterrag1112.life_in_the_village.Village.Farms
+                        .Complex.FarmComplexPlanner.planAndPersist(planInput, data);
+                if (!result.success()) {
+                    LOGGER.info("V2: farm complex skipped for {} ({}): {}",
+                            fh.building().getName(), result.status(), result.detail());
+                    continue;
+                }
+                // Prompt B Stage G — render the just-planned complex.
+                // Plots are returned in result.newPlots(); we also
+                // query the persisted store for safety (handles a
+                // future case where addFarmPlot might enrich the
+                // record). render() is fully defensive against null
+                // / partial data.
+                var rendered = result.complex();
+                var plots = data.getFarmPlotsForFarmhouse(fh.building().getId());
+                tterrag1112.life_in_the_village.Village.Farms.Complex.Render
+                        .FarmComplexRenderer.render(rendered, plots,
+                                culture.id(), level);
+            } catch (Exception e) {
+                LOGGER.warn("V2: FarmComplex plan/render failed for {}: {}",
+                        fh.building().getName(), e.getMessage());
             }
-            tterrag1112.life_in_the_village.Village.Farms.FarmSectorPlanner.plan(
-                    fmap,
-                    villageBuildings,
-                    data.getGardenPlotsForVillage(village.getId()),
-                    culture,
-                    siteCtx.inclination(),
-                    village.getSizeTier(),
-                    village.getId(),
-                    seed,
-                    level.getGameTime(),
-                    data);
-        } catch (Exception e) {
-            LOGGER.warn("V2: FarmSectorPlanner failed for {}: {}",
-                    village.getName(), e.getMessage());
         }
 
         // ── V1 downstream, each section guarded ─────────────────────────
@@ -697,14 +736,11 @@ public final class V2VillageSpawnerAdapter {
                                       BuildingFootprint footprint,
                                       Map<BuildingType, List<Building>> placedBuildingsAll,
                                       Random rng) {
-        // B2.5 — FarmSectorRenderer replaces the legacy
-        // FarmPlotPlacer in the V2 spawn path. The legacy placer
-        // remains in tree as parked code (no callers from V2);
-        // re-enabling it is a one-line revert if the new renderer
-        // proves insufficient.
-        guard("FarmSectorRenderer", () ->
-                tterrag1112.life_in_the_village.Village.Farms
-                        .FarmSectorRenderer.run(level, village, data));
+        // Detour A — block-level rendering of FarmComplex (paths,
+        // borders, farmland stamps, tool shed) is Prompt B's
+        // concern. Between Stage 5 and Prompt B's ship there is no
+        // block-level rendering pass; planned complexes persist to
+        // SavedData and surface via /litv farms but don't draw.
         guard("VillageInhabitantPopulator", () ->
                 tterrag1112.life_in_the_village.Village.Buildings.Inhabitants
                         .VillageInhabitantPopulator.populate(level, village, data,
@@ -778,6 +814,53 @@ public final class V2VillageSpawnerAdapter {
                 }
             }
         });
+    }
+
+    /** Detour A — pairs a placed farmhouse Building (UUID-bearing,
+     *  persisted) with its planning-layer PlacedBuilding (footprint
+     *  dims + frontage). Both are needed downstream by
+     *  FarmComplexPlanner: the Building for ids, the PlacedBuilding
+     *  for geometry. */
+    private record PlacedFarmhouse(Building building, PlacedBuilding placed) {}
+
+    /** Detour A — Prompt B Stage A. Collect every reserved park in
+     *  this village as a polygon for FarmComplexPlanner's exclusion
+     *  set. GardenPlot persists rectangular Bounds; the conversion
+     *  is a 4-vertex rectangular Polygon. Y is fixed at the bounds'
+     *  approximate ground level (the polygon CONTAINS test is XZ-
+     *  only, so Y is decorative). */
+    private static java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
+            collectParkExclusions(VillageSavedData data, java.util.UUID villageId) {
+        var parks = data.getGardenPlotsForVillage(villageId);
+        if (parks == null || parks.isEmpty()) return java.util.List.of();
+        java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon> out =
+                new ArrayList<>(parks.size());
+        for (var park : parks) {
+            var b = park.bounds();
+            // Inflate by 1 block per side so a complex doesn't
+            // claim cells flush against the park boundary — small
+            // breathing room reads better visually.
+            int minX = b.minX() - 1, maxX = b.maxX() + 1;
+            int minZ = b.minZ() - 1, maxZ = b.maxZ() + 1;
+            var verts = java.util.List.of(
+                    new BlockPos(minX, 0, minZ),
+                    new BlockPos(maxX, 0, minZ),
+                    new BlockPos(maxX, 0, maxZ),
+                    new BlockPos(minX, 0, maxZ));
+            out.add(new tterrag1112.life_in_the_village.Utilities.Geometry.Polygon(verts));
+        }
+        return out;
+    }
+
+    /** Snap a {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.FrontageStrip}'s
+     *  outward unit vector to a cardinal {@link Direction}. The
+     *  frontage's {@code frontDirection} is already cardinal-aligned
+     *  per the record's contract; this is just the type conversion. */
+    private static Direction toDirection(
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.FrontageStrip f) {
+        if (f == null) return Direction.SOUTH;
+        var v = f.frontDirection();
+        return Direction.getNearest(v.x, 0.0, v.z);
     }
 
     private static void guard(String label, Runnable r) {

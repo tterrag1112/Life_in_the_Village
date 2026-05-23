@@ -243,10 +243,6 @@ public class FarmPlot {
                     Codec.STRING.xmap(PlotSubtype::valueOf, PlotSubtype::name)
                             .optionalFieldOf("subtype", PlotSubtype.CROP_FIELD)
                             .forGetter(FarmPlot::getSubtype),
-                    // B2.5 — sector membership; legacy plots load with no sector.
-                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
-                            .optionalFieldOf("sectorId")
-                            .forGetter(p -> Optional.ofNullable(p.sectorId)),
                     // B2.5 — polygon bounds; legacy plots fall back to a
                     // rectangular polygon derived from origin+radius.
                     BlockPos.CODEC.listOf()
@@ -274,16 +270,26 @@ public class FarmPlot {
                     // onset for auto-fallow and yield-penalty math.
                     Codec.LONG.optionalFieldOf("blightSinceTick", 0L)
                             .forGetter(FarmPlot::getBlightSinceTick)
+                                    : p.polygon.vertices()),
+                    // Detour A — owning complex. Optional; pre-Detour-A
+                    // plots load with no complex. (B2.5's sectorId has
+                    // been retired; the old field is silently ignored
+                    // on load — pre-Stage-5 saves were flagged as
+                    // discardable.)
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                            .optionalFieldOf("complexId")
+                            .forGetter(p -> Optional.ofNullable(p.complexId))
             ).apply(instance, (id, name, origin, radius, cropType, farmhouseId,
+                              subtype, polygonVertices, complexId) -> {
                               subtype, sectorId, polygonVertices,
                               soilQuality, cropHistory, fallowSinceTick, lastCompostedTick,
                               lastGrazedTick, blightSinceTick) -> {
                 FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
-                sectorId.ifPresent(plot::setSectorId);
                 if (polygonVertices != null && polygonVertices.size() >= 3) {
                     plot.setPolygon(new Polygon(polygonVertices));
                 }
+                complexId.ifPresent(plot::setComplexId);
                 plot.soilQuality = soilQuality;
                 if (cropHistory != null && !cropHistory.isEmpty()) {
                     plot.cropHistory.addAll(cropHistory);
@@ -307,12 +313,12 @@ public class FarmPlot {
     private       CropType  cropType;
     private       UUID      farmhouseId; // nullable until assigned
     private PlotSubtype subtype;
-    /** B2.5 — owning sector. Null for legacy plots placed before the
-     *  sector planner shipped. */
-    private       UUID      sectorId;
     /** B2.5 — terrain-following polygon. Null falls back to the
      *  legacy circle-via-origin/radius used by {@link #contains}. */
     private       Polygon   polygon;
+    /** Detour A — owning complex. Null for pre-Detour-A plots or
+     *  for plots not yet associated with a complex. */
+    private       UUID      complexId;
 
     // ── Phase 6.3.3.h.1 — soil quality + fallow state ─────────────────
     /** 0.1 floor → 1.5 ceiling. Default 1.0 (pristine). Drives the
@@ -489,11 +495,11 @@ public class FarmPlot {
     public PlotSubtype getSubtype() { return subtype; }
     public void setSubtype(PlotSubtype subtype) { this.subtype = subtype; }
 
-    public UUID getSectorId() { return sectorId; }
-    public void setSectorId(UUID sectorId) { this.sectorId = sectorId; }
-
     public Polygon getPolygon() { return polygon; }
     public void setPolygon(Polygon polygon) { this.polygon = polygon; }
+
+    public UUID getComplexId() { return complexId; }
+    public void setComplexId(UUID complexId) { this.complexId = complexId; }
 
     // ── Phase 6.3.3.h.1 — soil / rotation / fallow API ────────────────
 

@@ -338,16 +338,25 @@ public class VillageSavedData extends SavedData implements
      * B2.5 — durable farm sectors keyed by sectorId. Mirrors the
      * garden / adjunct pattern.
      */
-    public record VillageFarmData(
-            List<tterrag1112.life_in_the_village.Village.Farms.FarmSector> sectors
+    /**
+     * Detour A — farm-complex records, one per farmhouse. Replaces
+     * the pre-Stage-5 {@code VillageFarmData} which also carried
+     * {@code FarmSector} entries; the sector system was retired
+     * together with this record's rename. The JSON key was
+     * {@code "farmSectorData"} pre-Stage-5; now {@code "farmData"}.
+     * Pre-Stage-5 saves are not migrated — flagged for discard
+     * at retirement time.
+     */
+    public record VillageFarms(
+            List<tterrag1112.life_in_the_village.Village.Farms.Complex.FarmComplex> complexes
     ) {
-        public static final Codec<VillageFarmData> CODEC =
+        public static final Codec<VillageFarms> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
-                        tterrag1112.life_in_the_village.Village.Farms
-                                .FarmSector.CODEC.listOf()
-                                .optionalFieldOf("sectors", List.of())
-                                .forGetter(VillageFarmData::sectors)
-                ).apply(i, VillageFarmData::new));
+                        tterrag1112.life_in_the_village.Village.Farms.Complex
+                                .FarmComplex.CODEC.listOf()
+                                .optionalFieldOf("complexes", List.of())
+                                .forGetter(VillageFarms::complexes)
+                ).apply(i, VillageFarms::new));
     }
 
     // ── 8. Decoration ─────────────────────────────────────────────────────────
@@ -543,6 +552,39 @@ public class VillageSavedData extends SavedData implements
                             new VillageMigrationFlags(
                                     d.kingdomMembershipMigrated,
                                     d.kingdomCapitalMigrated))
+                    VillageDecorationData.CODEC
+                            .optionalFieldOf("decorationData",
+                                    new VillageDecorationData(List.of()))
+                            .forGetter(d -> new VillageDecorationData(
+                                    List.copyOf(d.decorationPlacements))),
+                    VillageAdjunctData.CODEC
+                            .optionalFieldOf("adjunctData",
+                                    new VillageAdjunctData(List.of()))
+                            .forGetter(d -> new VillageAdjunctData(
+                                    List.copyOf(d.adjunctPlots.values()))),
+                    VillageSubBuildingData.CODEC
+                            .optionalFieldOf("subBuildingData",
+                                    new VillageSubBuildingData(List.of()))
+                            .forGetter(d -> new VillageSubBuildingData(
+                                    List.copyOf(d.subBuildings.values()))),
+                    VillageGardenData.CODEC
+                            .optionalFieldOf("gardenData",
+                                    new VillageGardenData(List.of()))
+                            .forGetter(d -> new VillageGardenData(
+                                    List.copyOf(d.gardenPlots.values()))),
+                    VillageFarms.CODEC
+                            .optionalFieldOf("farmData",
+                                    new VillageFarms(List.of()))
+                            .forGetter(d -> new VillageFarms(
+                                    List.copyOf(d.farmComplexes.values()))),
+                    // Track D1 — KingdomMembershipMigration idempotency flag.
+                    // Pre-D1 saves load false; the migration runs once and
+                    // flips it true. Fresh worlds default true.
+                    Codec.BOOL.optionalFieldOf("kingdomMembershipMigrated", false)
+                            .forGetter(d -> d.kingdomMembershipMigrated),
+                    // Track D3.1 — capital-back-fill idempotency flag.
+                    Codec.BOOL.optionalFieldOf("kingdomCapitalMigrated", false)
+                            .forGetter(d -> d.kingdomCapitalMigrated)
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -561,6 +603,13 @@ public class VillageSavedData extends SavedData implements
             VillageScribalData    scribalData,
             VillageContentData    contentData,
             VillageMigrationFlags migrationFlags) {
+            VillageDecorationData decorationData,
+            VillageAdjunctData    adjunctData,
+            VillageSubBuildingData subBuildingData,
+            VillageGardenData     gardenData,
+            VillageFarms          farmData,
+            boolean               kingdomMembershipMigrated,
+            boolean               kingdomCapitalMigrated) {
 
         VillageSavedData data = new VillageSavedData();
         data.kingdomMembershipMigrated = migrationFlags.kingdomMembershipMigrated();
@@ -666,15 +715,20 @@ public class VillageSavedData extends SavedData implements
             }
         }
 
-        // Farm sectors (B2.5). Authoritative store + per-village
-        // denormalisation rebuilt from it.
-        if (farmSectorData != null) {
-            for (var sector : farmSectorData.sectors()) {
-                data.farmSectors.put(sector.sectorId(), sector);
-                data.farmSectorsByVillage
-                        .computeIfAbsent(sector.villageId(),
+        // Farm complexes (Detour A). Authoritative store + per-
+        // village + 1:1 per-farmhouse denormalisations rebuilt
+        // from the codec list.
+        if (farmData != null) {
+            for (var complex : farmData.complexes()) {
+                data.farmComplexes.put(complex.id(), complex);
+                data.farmComplexesByVillage
+                        .computeIfAbsent(complex.villageId(),
                                 k -> new ArrayList<>())
-                        .add(sector.sectorId());
+                        .add(complex.id());
+                if (complex.farmhouseId() != null) {
+                    data.farmComplexByFarmhouse.put(
+                            complex.farmhouseId(), complex.id());
+                }
             }
         }
 
@@ -814,11 +868,14 @@ public class VillageSavedData extends SavedData implements
             .Decoration.Parks.GardenPlot> gardenPlots = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> gardenPlotsByVillage = new HashMap<>();
 
-    // Farm sectors (B2.5). Authoritative store keyed by sectorId;
-    // per-village denormalisation rebuilt on load.
+    // Farm complexes (Detour A — replaces B2.5's FarmSector). One
+    // complex per farmhouse. Authoritative store keyed by complex
+    // id; per-village + 1:1 per-farmhouse denormalisations
+    // rebuilt on load.
     private final Map<UUID, tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> farmSectors = new LinkedHashMap<>();
-    private final Map<UUID, List<UUID>> farmSectorsByVillage = new HashMap<>();
+            .Farms.Complex.FarmComplex> farmComplexes = new LinkedHashMap<>();
+    private final Map<UUID, List<UUID>> farmComplexesByVillage = new HashMap<>();
+    private final Map<UUID, UUID> farmComplexByFarmhouse = new HashMap<>();
 
     // Phase 6.3.3.k.1 — per-village climate snapshot. Stores
     // lastRainTick used by WeatherContext.isDrought; updated by the
@@ -1305,49 +1362,87 @@ public class VillageSavedData extends SavedData implements
         markDirty();
     }
 
-    // ── Farm sectors (B2.5 — doc 10) ─────────────────────────────────────
+    // ── Farm complexes (Detour A — replaces FarmSector) ────────────────
 
-    public void addFarmSector(tterrag1112.life_in_the_village.Village
-                                      .Farms.FarmSector sector) {
-        if (sector == null) return;
-        farmSectors.put(sector.sectorId(), sector);
-        farmSectorsByVillage
-                .computeIfAbsent(sector.villageId(),
+    public void addFarmComplex(tterrag1112.life_in_the_village.Village
+                                .Farms.Complex.FarmComplex complex) {
+        if (complex == null) return;
+        farmComplexes.put(complex.id(), complex);
+        farmComplexesByVillage
+                .computeIfAbsent(complex.villageId(),
                         k -> new ArrayList<>())
-                .add(sector.sectorId());
+                .add(complex.id());
+        if (complex.farmhouseId() != null) {
+            farmComplexByFarmhouse.put(complex.farmhouseId(), complex.id());
+        }
         markDirty();
     }
 
     public Optional<tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> getFarmSector(UUID sectorId) {
-        if (sectorId == null) return Optional.empty();
-        return Optional.ofNullable(farmSectors.get(sectorId));
+            .Farms.Complex.FarmComplex> getFarmComplex(UUID complexId) {
+        if (complexId == null) return Optional.empty();
+        return Optional.ofNullable(farmComplexes.get(complexId));
+    }
+
+    public Optional<tterrag1112.life_in_the_village.Village
+            .Farms.Complex.FarmComplex> getFarmComplexForFarmhouse(UUID farmhouseId) {
+        if (farmhouseId == null) return Optional.empty();
+        UUID complexId = farmComplexByFarmhouse.get(farmhouseId);
+        if (complexId == null) return Optional.empty();
+        return Optional.ofNullable(farmComplexes.get(complexId));
     }
 
     public List<tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> getFarmSectorsForVillage(UUID villageId) {
+            .Farms.Complex.FarmComplex> getFarmComplexesForVillage(UUID villageId) {
         if (villageId == null) return List.of();
-        List<UUID> ids = farmSectorsByVillage.get(villageId);
+        List<UUID> ids = farmComplexesByVillage.get(villageId);
         if (ids == null || ids.isEmpty()) return List.of();
         List<tterrag1112.life_in_the_village.Village
-                .Farms.FarmSector> out = new ArrayList<>(ids.size());
+                .Farms.Complex.FarmComplex> out = new ArrayList<>(ids.size());
         for (UUID id : ids) {
-            var s = farmSectors.get(id);
-            if (s != null) out.add(s);
+            var c = farmComplexes.get(id);
+            if (c != null) out.add(c);
         }
         return Collections.unmodifiableList(out);
     }
 
     public Collection<tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> getAllFarmSectors() {
-        return Collections.unmodifiableCollection(farmSectors.values());
+            .Farms.Complex.FarmComplex> getAllFarmComplexes() {
+        return Collections.unmodifiableCollection(farmComplexes.values());
     }
 
-    public void removeFarmSectorsForVillage(UUID villageId) {
+    public boolean removeFarmComplex(UUID complexId) {
+        if (complexId == null) return false;
+        var removed = farmComplexes.remove(complexId);
+        if (removed == null) return false;
+        List<UUID> villageIds = farmComplexesByVillage.get(removed.villageId());
+        if (villageIds != null) {
+            villageIds.remove(complexId);
+            if (villageIds.isEmpty()) farmComplexesByVillage.remove(removed.villageId());
+        }
+        if (removed.farmhouseId() != null) {
+            UUID mapped = farmComplexByFarmhouse.get(removed.farmhouseId());
+            if (complexId.equals(mapped)) {
+                farmComplexByFarmhouse.remove(removed.farmhouseId());
+            }
+        }
+        markDirty();
+        return true;
+    }
+
+    public void removeFarmComplexesForVillage(UUID villageId) {
         if (villageId == null) return;
-        List<UUID> ids = farmSectorsByVillage.remove(villageId);
+        List<UUID> ids = farmComplexesByVillage.remove(villageId);
         if (ids == null || ids.isEmpty()) return;
-        for (UUID id : ids) farmSectors.remove(id);
+        for (UUID id : ids) {
+            var removed = farmComplexes.remove(id);
+            if (removed != null && removed.farmhouseId() != null) {
+                UUID mapped = farmComplexByFarmhouse.get(removed.farmhouseId());
+                if (id.equals(mapped)) {
+                    farmComplexByFarmhouse.remove(removed.farmhouseId());
+                }
+            }
+        }
         markDirty();
     }
 

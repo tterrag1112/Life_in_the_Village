@@ -210,7 +210,7 @@ public final class PhasedPlanner {
         //   4 — resource core  (MINE, WOODCUTTER and their workshops)
         //   5 — HOUSE distribution (the bulk; reads all prior nuclei)
         //   6 — decorative / small (STOCKPILE, WELL, etc.)
-        //   7 — farm plots (deferred; FarmSectorPlanner in Layer 5)
+        //   7 — farm plots (deferred; FarmComplexPlanner in Layer 5)
         //
         // Batches 1 + 2 are flagged as "foundation" for cell-scoring
         // purposes so they can land off-road if a strong nucleus pull
@@ -218,27 +218,8 @@ public final class PhasedPlanner {
         // PhasedPlanner concern.
         int[] perBatchCounts = new int[8];
         for (int batch = 1; batch <= 6; batch++) {
-            // Track E1 Cascade 2 v2 — within each batch, attempt all
-            // non-HOUSE instances in their original topo order, then
-            // all HOUSE instances last. HOUSE is the sole pathological
-            // cohort (3-10× larger than every other type); deferring
-            // it stops the bulk from draining the admissible pool
-            // before small cohorts (STABLE/MILLER) get a chance.
-            // Every non-HOUSE type sees exactly its baseline_v2
-            // relative order, so no other cohort can regress through
-            // reorder pressure (the v1 count-sort's defect — it
-            // demoted large-footprint FARMHOUSE behind the count-1
-            // swarm in TOWN/CIVIC; that doesn't happen here).
-            // Determinism preserved (stable partition).
-            List<BuildingType> batchOrder = new ArrayList<>();
-            List<BuildingType> houseTail = new ArrayList<>();
             for (BuildingType type : sortedSelection) {
                 if (getBatch(state.ctx, type) != batch) continue;
-                if (type == BuildingType.HOUSE) houseTail.add(type);
-                else batchOrder.add(type);
-            }
-            batchOrder.addAll(houseTail);
-            for (BuildingType type : batchOrder) {
                 boolean foundation = (batch == 1 || batch == 2)
                         || foundationTypes.contains(type);
                 if (placeOne(state, type, foundation)) perBatchCounts[batch]++;
