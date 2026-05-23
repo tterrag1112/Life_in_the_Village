@@ -16,8 +16,14 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
+import tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
+import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Phase 6.2.c — migrated from {@code ElderlyRelaxGoal}. Universal IDLE
@@ -46,6 +52,13 @@ public class ElderlyRelaxBehavior extends Behavior<TownspersonMob> {
     private static final float WANDER_SPEED = 0.4f;
     private static final int CLOSE_ENOUGH = 1;
     private static final int MAX_RUN = SIT_DURATION + 600;
+    /** Phase 6.3.3.j.4.A — advise gesture cadence while the elder is
+     *  sitting. Resolves {@code RetirementState.mentorTargetId} and,
+     *  if the apprentice is in range, grants them XP in the elder's
+     *  profession primary skill. */
+    private static final int ADVISE_INTERVAL = 120;
+    private static final double ADVISE_SCAN_RADIUS = 16.0;
+    private static final int APPRENTICE_XP_PER_ADVISE = 1;
 
     private Mode mode = Mode.WANDERING;
     private int sitTimer;
@@ -120,6 +133,14 @@ public class ElderlyRelaxBehavior extends Behavior<TownspersonMob> {
                 entity.getLookControl().setLookAt(watch, 30f, 30f);
             }
         }
+        // Phase 6.3.3.j.4.A — advise gesture. If this elder has set
+        // a mentorTargetId via a prior MentorBehavior session and the
+        // apprentice is in range, fire a visible look-at + chirp +
+        // grant the apprentice XP in the elder's profession primary
+        // skill. Mentee multiplier composes inside SkillXp.award.
+        if (sitTimer % ADVISE_INTERVAL == 0) {
+            tryAdviseApprentice(level, entity);
+        }
         // Occasional ambient vocalization.
         if (sitTimer % 200 == 0 && entity.getRandom().nextInt(3) == 0) {
             level.playSound(null, entity.blockPosition(),
@@ -130,6 +151,40 @@ public class ElderlyRelaxBehavior extends Behavior<TownspersonMob> {
             mode = Mode.WANDERING;
             pickWanderTarget(level, entity);
         }
+    }
+
+    /**
+     * Phase 6.3.3.j.4.A — resolve the elder's mentor target via
+     * RetirementState, locate the apprentice within ADVISE_SCAN_RADIUS,
+     * and grant a small XP bump. Routes through SkillXp.award so the
+     * mentee multiplier (which itself is 1.5× when this elder is the
+     * matched mentor) composes — the apprentice gets a real on-spec
+     * boost while the elder is in the same room.
+     */
+    private void tryAdviseApprentice(ServerLevel level, TownspersonMob entity) {
+        Optional<UUID> targetId = entity.getRetirementState().mentorTargetId();
+        if (targetId.isEmpty()) return;
+        UUID id = targetId.get();
+        Skill skill = elderProfessionSkill(entity).orElse(null);
+        if (skill == null) return;
+        List<TownspersonMob> nearby = level.getEntitiesOfClass(
+                TownspersonMob.class,
+                entity.getBoundingBox().inflate(ADVISE_SCAN_RADIUS),
+                mob -> mob != entity && id.equals(mob.getUUID()));
+        if (nearby.isEmpty()) return;
+        TownspersonMob apprentice = nearby.get(0);
+        entity.getLookControl().setLookAt(apprentice, 30f, 30f);
+        level.playSound(null, entity.blockPosition(),
+                SoundEvents.VILLAGER_YES, SoundSource.NEUTRAL, 0.35f,
+                0.7f + entity.getRandom().nextFloat() * 0.2f);
+        SkillXp.award(apprentice, skill,
+                APPRENTICE_XP_PER_ADVISE, level.getGameTime());
+    }
+
+    private static Optional<Skill> elderProfessionSkill(TownspersonMob entity) {
+        Profession p = entity.getProfession();
+        if (p == null || p == Profession.NONE) return Optional.empty();
+        return ProfessionSkills.of(p).map(ProfessionSkills::primary);
     }
 
     private void tickWander(ServerLevel level, TownspersonMob entity) {

@@ -2,6 +2,8 @@ package tterrag1112.life_in_the_village.Npc.Brain.Behaviors;
 
 import com.google.common.collect.ImmutableMap;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.ai.behavior.Behavior;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
@@ -13,6 +15,7 @@ import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.List;
@@ -41,6 +44,12 @@ public class MentorBehavior extends Behavior<TownspersonMob> {
     public static final int SOCIAL_XP_PER_SESSION = 1;
     public static final int SESSION_XP_INTERVAL = 12000;
     public static final double WORKPLACE_RADIUS = 24.0;
+    /** Phase 6.3.3.j.4.B — advise gesture cadence within a session.
+     *  Fires every ~30s of in-game time while the mentor is in
+     *  follow range, so the apprentice visibly sees the mentor
+     *  teaching rather than just standing nearby. */
+    public static final int ADVISE_INTERVAL = 600;
+    public static final int APPRENTICE_XP_PER_ADVISE = 1;
 
     private static final long COOLDOWN_TICKS = 1200L;
     private static final double FOLLOW_DIST_SQ = 5.0 * 5.0;
@@ -102,9 +111,27 @@ public class MentorBehavior extends Behavior<TownspersonMob> {
         } else {
             entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         }
+        // Phase 6.3.3.j.4.B — advise gesture. When the mentor is in
+        // close follow range of the mentee, periodically fire a
+        // visible chirp + grant the mentee XP in their profession
+        // primary skill. SkillXp.award composes the mentee multiplier
+        // automatically — the mentee gets a real on-spec boost while
+        // the elder is actively engaged, not just standing nearby.
+        if (sessionTimer % ADVISE_INTERVAL == 0
+                && entity.distanceToSqr(target) <= FOLLOW_DIST_SQ) {
+            Skill menteePrimary = ProfessionSkills.of(target.getProfession())
+                    .map(ProfessionSkills::primary).orElse(null);
+            if (menteePrimary != null) {
+                SkillXp.award(target, menteePrimary,
+                        APPRENTICE_XP_PER_ADVISE, gameTime);
+            }
+            level.playSound(null, entity.blockPosition(),
+                    SoundEvents.VILLAGER_YES, SoundSource.NEUTRAL, 0.35f,
+                    0.8f + entity.getRandom().nextFloat() * 0.2f);
+        }
         if (sessionTimer >= SESSION_XP_INTERVAL) {
             sessionTimer = 0;
-            tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(entity, Skill.SOCIAL, SOCIAL_XP_PER_SESSION, gameTime);
+            SkillXp.award(entity, Skill.SOCIAL, SOCIAL_XP_PER_SESSION, gameTime);
         }
     }
 
