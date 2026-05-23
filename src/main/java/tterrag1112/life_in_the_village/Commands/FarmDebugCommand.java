@@ -263,8 +263,41 @@ public final class FarmDebugCommand {
             return 0;
         }
 
+        // Prompt B Stage G — render the complex, then populate the
+        // farmhouse so the user has a working scene to inspect.
+        // Failures here don't fail the command; the dump still
+        // reports the planned state for debugging.
+        String renderNote = "";
+        try {
+            List<FarmPlot> plots = data.getFarmPlotsForFarmhouse(farmhouse.getId());
+            tterrag1112.life_in_the_village.Village.Farms.Complex.Render
+                    .FarmComplexRenderer.render(result.complex(), plots,
+                            culture.id(), level);
+        } catch (Exception e) {
+            renderNote = "\n  (render warning: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage() + ")";
+        }
+        boolean populatorCalled = false;
+        try {
+            java.util.Map<BuildingType, java.util.List<Building>> roster =
+                    java.util.Map.of(BuildingType.FARMHOUSE,
+                            java.util.List.of(farmhouse));
+            tterrag1112.life_in_the_village.Village.Buildings.Inhabitants
+                    .VillageInhabitantPopulator.populate(
+                            level, village, data, roster, new java.util.Random(seed));
+            populatorCalled = true;
+        } catch (Throwable t) {
+            renderNote += "\n  (populator warning: " + t.getClass().getSimpleName()
+                    + ": " + t.getMessage() + ")";
+        }
+
         String dump = dumpComplex(result.complex(), data, pos, halfX, halfZ);
-        ctx.getSource().sendSuccess(() -> Component.literal(dump), false);
+        String tail = "\n  populator: " + (populatorCalled
+                ? "invoked (NPC count in server log)"
+                : "skipped (see warning above)")
+                + renderNote;
+        String finalText = dump + tail;
+        ctx.getSource().sendSuccess(() -> Component.literal(finalText), false);
         return 1;
     }
 

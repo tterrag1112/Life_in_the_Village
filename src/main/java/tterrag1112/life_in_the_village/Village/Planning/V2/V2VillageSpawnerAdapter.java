@@ -486,9 +486,21 @@ public final class V2VillageSpawnerAdapter {
                 if (!result.success()) {
                     LOGGER.info("V2: farm complex skipped for {} ({}): {}",
                             fh.building().getName(), result.status(), result.detail());
+                    continue;
                 }
+                // Prompt B Stage G — render the just-planned complex.
+                // Plots are returned in result.newPlots(); we also
+                // query the persisted store for safety (handles a
+                // future case where addFarmPlot might enrich the
+                // record). render() is fully defensive against null
+                // / partial data.
+                var rendered = result.complex();
+                var plots = data.getFarmPlotsForFarmhouse(fh.building().getId());
+                tterrag1112.life_in_the_village.Village.Farms.Complex.Render
+                        .FarmComplexRenderer.render(rendered, plots,
+                                culture.id(), level);
             } catch (Exception e) {
-                LOGGER.warn("V2: FarmComplexPlanner failed for {}: {}",
+                LOGGER.warn("V2: FarmComplex plan/render failed for {}: {}",
                         fh.building().getName(), e.getMessage());
             }
         }
