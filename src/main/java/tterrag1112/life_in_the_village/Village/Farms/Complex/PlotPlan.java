@@ -30,9 +30,16 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot.CropType;
  * @param centroid  cached centroid for path-topology branching.
  * @param crop      assigned crop type from the spec's
  *                  {@code plotTypeMix} weighted draw.
+ * @param cellCount number of arable cells inside the polygon — the
+ *                  true plot area in BSP cells, separate from polygon
+ *                  area (region-polygon clipping can leave a leaf
+ *                  with fewer cells than the bbox suggests). Used by
+ *                  crop-by-size matching in
+ *                  {@link tterrag1112.life_in_the_village.Village.Farms.Complex.CropSizePreferences}.
  */
 public record PlotPlan(int plotIndex,
                        Polygon polygon,
                        BlockPos centroid,
-                       CropType crop) {
+                       CropType crop,
+                       int cellCount) {
 }

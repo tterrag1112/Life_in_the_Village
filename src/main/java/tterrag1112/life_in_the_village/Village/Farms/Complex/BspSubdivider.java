@@ -176,7 +176,8 @@ public final class BspSubdivider {
                 continue;
             }
             BlockPos centroid = Polygon.centroid(plotPoly);
-            plots.add(new PlotPlan(plotIndex++, plotPoly, centroid, null));
+            plots.add(new PlotPlan(plotIndex++, plotPoly, centroid,
+                    null, cells.size()));
         }
 
         // Assign crop types: weighted random with greedy alternation
@@ -245,51 +246,77 @@ public final class BspSubdivider {
         }
     }
 
-    // ── Crop assignment ────────────────────────────────────────────────
+    // ── Crop assignment (size-aware) ──────────────────────────────────
 
+    /** Weighted assignment using
+     *  {@link CropSizePreferences#fitScore} × spec.plotTypeMix[crop].
+     *  Plots are processed in a randomly-shuffled order so the
+     *  highest-scoring plot doesn't always claim its best fit
+     *  first — gives the size-matching a chance to spread crops
+     *  organically across the complex.
+     *
+     *  <p>Tiebreak: highest plotTypeMix weight, then crop enum
+     *  ordinal (deterministic). Each plot picks the crop with
+     *  highest combined score for its cell count. */
     private static List<PlotPlan> assignCrops(List<PlotPlan> plots,
                                                Map<CropType, Float> mix,
                                                Random rng) {
         if (plots.isEmpty()) return plots;
-        if (mix == null || mix.isEmpty()) {
-            // No mix → leave nulls; caller treats as undefined.
-            return plots;
-        }
-        EnumMap<CropType, Float> normMix = new EnumMap<>(CropType.class);
-        float total = 0f;
-        for (Map.Entry<CropType, Float> e : mix.entrySet()) {
-            if (e.getValue() > 0) {
-                normMix.put(e.getKey(), e.getValue());
-                total += e.getValue();
-            }
-        }
-        if (total <= 0f) return plots;
+        if (mix == null || mix.isEmpty()) return plots;
 
-        List<PlotPlan> out = new ArrayList<>(plots.size());
-        CropType prev = null;
-        for (PlotPlan p : plots) {
-            CropType chosen = pickWeighted(normMix, total, rng);
-            // Greedy alternation — re-roll once if same as prev.
-            if (chosen == prev && normMix.size() > 1) {
-                chosen = pickWeighted(normMix, total, rng);
-            }
-            out.add(new PlotPlan(p.plotIndex(), p.polygon(), p.centroid(), chosen));
-            prev = chosen;
+        EnumMap<CropType, Float> normMix = new EnumMap<>(CropType.class);
+        for (Map.Entry<CropType, Float> e : mix.entrySet()) {
+            if (e.getValue() > 0) normMix.put(e.getKey(), e.getValue());
         }
-        return out;
+        if (normMix.isEmpty()) return plots;
+
+        // Process plots in shuffled order so leaf 0 doesn't
+        // always claim its best fit first.
+        Integer[] order = new Integer[plots.size()];
+        for (int i = 0; i < order.length; i++) order[i] = i;
+        // Fisher-Yates via the seeded RNG (Collections.shuffle
+        // would also work but this keeps the dependency surface
+        // smaller).
+        for (int i = order.length - 1; i > 0; i--) {
+            int j = rng.nextInt(i + 1);
+            Integer tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+        }
+
+        PlotPlan[] typed = new PlotPlan[plots.size()];
+        for (int idx : order) {
+            PlotPlan plot = plots.get(idx);
+            CropType chosen = pickByFit(normMix, plot.cellCount());
+            typed[idx] = new PlotPlan(plot.plotIndex(), plot.polygon(),
+                    plot.centroid(), chosen, plot.cellCount());
+        }
+        return java.util.Arrays.asList(typed);
     }
 
-    private static CropType pickWeighted(EnumMap<CropType, Float> mix,
-                                          float total, Random rng) {
-        float pick = rng.nextFloat() * total;
-        float cum = 0f;
-        CropType last = null;
-        for (Map.Entry<CropType, Float> e : mix.entrySet()) {
-            last = e.getKey();
-            cum += e.getValue();
-            if (pick < cum) return last;
+    /** Pick the crop with the highest combined score
+     *  (mixWeight × fitScore). Tiebreak on raw mix weight then
+     *  enum ordinal. */
+    private static CropType pickByFit(EnumMap<CropType, Float> normMix,
+                                       int cellCount) {
+        CropType best = null;
+        double bestScore = -1;
+        for (Map.Entry<CropType, Float> e : normMix.entrySet()) {
+            CropType crop = e.getKey();
+            double fit = CropSizePreferences.fitScore(crop, cellCount,
+                    CropSizePreferences.DEFAULT_FLOOR);
+            double score = e.getValue() * fit;
+            if (score > bestScore
+                    || (score == bestScore
+                        && (best == null
+                            || (normMix.getOrDefault(crop, 0f)
+                                    > normMix.getOrDefault(best, 0f))
+                            || (normMix.getOrDefault(crop, 0f).equals(
+                                    normMix.getOrDefault(best, 0f))
+                                && crop.ordinal() < best.ordinal())))) {
+                best = crop;
+                bestScore = score;
+            }
         }
-        return last;
+        return best;
     }
 
     private static int pickVertexY(Polygon region) {
