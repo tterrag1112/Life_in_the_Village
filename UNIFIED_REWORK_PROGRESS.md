@@ -2827,3 +2827,40 @@ worlds (different seeds) and confirm:
    seated within ~1 second; `/litv kingdom debug list` shows
    king=seated.
 4. Pre-D3.1 saves load and back-fill `capitalVillageId` cleanly.
+
+
+## Detour A — persistence-layer follow-ups noted during Stage 3 (2026-05-23)
+
+Found while wiring `FarmComplex` codec + `VillageSavedData`
+integration. None blocks Detour A; record here so they don't get
+lost.
+
+1. **FarmPlot polygon storage uses pre-`Polygon.CODEC` shape.**
+   `FarmPlot.CODEC` serializes the polygon as a flat
+   `polygonVertices: [BlockPos]` field and reconstructs
+   `new Polygon(verts)` on decode. Predates the standalone
+   `Polygon.CODEC` (now at `Utilities/Geometry/Polygon.java:36`).
+   New code uses the codec directly, so JSON shape diverges
+   between FarmPlot (`polygonVertices: [...]`) and FarmComplex
+   (`region: {vertices: [...]}`). Migrate when convenient — not
+   on the Detour A critical path. Migration must include a save
+   reader fall-back so existing worlds still load.
+
+2. **`VillageSavedData.CODEC` is at the 16-field DFU group cap.**
+   Adding a 17th top-level sub-record is impossible without
+   restructuring. Detour A worked around this by bundling
+   `FarmComplex` under the existing `VillageFarmData` record
+   alongside `FarmSector` (same farm domain — OK fit). The
+   ceiling will hit again on the next persistence addition. The
+   long-term fix is a codec dispatcher pattern: nested groups
+   (mirror what `KingdomGovernanceData` already does internally),
+   or a `MapCodec<Map<String, ?>>` with type tags. Track E /
+   persistence architecture follow-up.
+
+3. **JSON key `"farmSectorData"` becomes misleading after Stage 5.**
+   When Stage 5 retires `FarmSector`, the key still reads
+   `farmSectorData` but only carries complexes. Rename to
+   `"farmData"` during the Stage 5 breaking-codec window; rename
+   the inner record `VillageFarmData` to `VillageFarms` while
+   you're at it. Document the rename in Stage 5's report so
+   anyone with mid-Detour-A test worlds knows to discard.
