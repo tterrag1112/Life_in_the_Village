@@ -122,6 +122,27 @@ public class BuildingRoster {
         slots.set(index, newSlot);
     }
 
+    /**
+     * Phase 6.3.3.k.4 — removes the realized slot whose entity UUID
+     * matches {@code uuid}. Returns true when a removal happened.
+     * Used by the entity-death bridge so a wolf-killed animal stops
+     * being counted in production / breeding cycles instead of
+     * leaving the roster holding a ghost slot pointing at a dead
+     * entity. No-op when the slot has already been derealized — see
+     * the spec note on event ordering.
+     */
+    public boolean removeRealizedByUuid(UUID uuid) {
+        if (uuid == null) return false;
+        for (int i = 0; i < slots.size(); i++) {
+            if (slots.get(i) instanceof RosterSlot.Realized r
+                    && uuid.equals(r.entityUuid())) {
+                slots.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ── Tick ──────────────────────────────────────────────────────────
 
     /**

@@ -99,6 +99,14 @@ public class RosterSavedData extends SavedData {
         setDirty();
     }
 
+    /** Phase 6.3.3.k.4 — exposes {@link #setDirty} to external systems
+     *  (matches the {@code VillageSavedData.markDirty} idiom). The
+     *  chunk-load + entity-death event handlers in
+     *  {@code RosterChunkLoadHandler} need to flag persistence after
+     *  realize / derealize / slot-removal mutations they apply to
+     *  rosters held in this store. */
+    public void markDirty() { setDirty(); }
+
     public void removeRoster(UUID buildingId, Identifier definitionId) {
         var perBuilding = rosters.get(buildingId);
         if (perBuilding == null) return;
