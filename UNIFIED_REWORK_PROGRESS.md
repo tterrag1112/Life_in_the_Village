@@ -3026,3 +3026,235 @@ sandbox due to maven 403.
   ("Detour A — persistence-layer follow-ups"): FarmPlot polygon
   storage format, 16-field codec ceiling, JSON key rename
   (last item has now been done in Stage 5).
+
+
+## Detour A — Prompt B complete (2026-05-23) — Detour A FULL SHIPS
+
+Block-level rendering layer. Static review only — neoform-runtime
+maven proxy returns 403 throughout the session, same block as
+documented for earlier E1F entries.
+
+### What shipped (8 stages, 7 commits)
+
+**Stage A — `ad359b5`. Park-overlap exclusion in flood-fill.**
+- `FloodFillRegionClaim.Input`: new `List<Polygon>
+  excludedPolygons` field with backward-compat ctor.
+- BFS rejects any cell whose centre lies inside any excluded
+  polygon; seed-gate same check.
+- `FarmComplexPlanner.Input`: pass-through field; backward-compat
+  ctor preserves the test command's 11-arg call.
+- `V2VillageSpawnerAdapter`: new `collectParkExclusions()` helper
+  reads `getGardenPlotsForVillage(villageId)`, converts each
+  GardenPlot AABB to a 4-vertex Polygon (inflated 1 block per
+  side for breathing room), feeds the list to every per-farmhouse
+  plan call.
+
+**Stage B — `7921469`. Border generators (4 styles + registry).**
+- `BorderGenerator` interface + `AbstractBorderGenerator` base
+  with Bresenham edge walk, ground-Y via WORLD_SURFACE → MOTION_
+  BLOCKING_NO_LEAVES fallback, `placeIfSoft` replacement gate.
+- 4 styles: `HedgeBorder` (2-tall leaves + jungle pops + oak-log
+  stakes every ~6 col); `StoneWallBorder` (cobblestone + mossy
+  variation + 70% slab cap); `PostAndRailBorder` (oak fence with
+  log posts every ~5 col, lanterns every ~15); `DrystoneBorder`
+  (jittered 1-2 height, weighted cobblestone/mossy/stone/andesite/
+  gravel mix).
+- `BorderGeneratorRegistry`: culture × BorderStyleId → generator
+  with default-culture fallback (mirrors BuildingComplexRegistry
+  shape). Defaults: all 4 styles under DEFAULT_CULTURE; per-
+  culture overrides deferred.
+
+**Stage C — `fb2453f`. PathRenderer.**
+- Bresenham over each PathSegment; per-cell perpendicular strip
+  of dirt-path at segment.width(). isPathable surface set =
+  grass/dirt-family + idempotent re-stamp of dirt-path.
+- Tall grass / flowers above the path get cleared; existing
+  fences / structure blocks block the swap (path doesn't eat
+  borders or buildings).
+
+**Stage D — `d64aae1`. PlotInteriorRenderer (crop dispatch).**
+- Per-cell walk of plot polygon AABB; XZ point-in-poly admit;
+  skip dirt-path (path-wins rule); skip solid air-above blocks
+  (an adjacent border fence at this XZ).
+- Cultivated (WHEAT/CARROTS/POTATOES/BEETROOT/MIXED/GRAIN/
+  VEGETABLE) → farmland + crop at weighted growth (70% mid, 20%
+  ripe, 10% sparse). MIXED stripes by longest-axis index mod 3.
+  VEGETABLE picks random per cell. BEETROOT uses AGE_3.
+- PASTURE: leave grass (convert dirt → grass for consistency);
+  hay-bale stack (1-3) near centroid; 2-block composter trough;
+  sparse short-grass scatter.
+- ORCHARD: sparse-grid 4-cell-step mini-trees (3-4-block oak
+  trunk + 3×3 leaf canopy + 1-block top cap); short-grass between.
+
+**Stage E — `1e45988` (with Stage F). ToolShedRenderer.**
+- 4×4 oak-planks shed at toolShedPosition. Lower-median ground
+  Y from corner heightmaps so it sits flat on mild slopes.
+- 3-tall plank walls; flat dark-oak-slab roof; oak door on the
+  configurable doorFacing side; lantern above door.
+- Chest + crafting table in interior corners opposite the door.
+- Placeholder per Prompt B scope; hardcoded generator.
+
+**Stage F — `1e45988` (with Stage E). PropsScatterRenderer.**
+- 5-10 props per complex; up to 16 probe attempts per prop.
+  Inside region polygon, outside every plot polygon, on grass/
+  dirt surface.
+- Palette: hayBale(30) / woodpile(25) / compostHeap(15) /
+  hitchingPost(12) / stackedCrates(10) / seedBagChest(8).
+
+**Stage G — `e81ccaf`. FarmComplexRenderer + integration.**
+- Single render(complex, plots, culture, level) entry point.
+- Composition order: borders → paths → gates → plot interiors
+  → shed → props.
+- Edge dedup: order-independent long-key over (start, end);
+  shared edges paint once. Region outer perimeter uses first
+  plot's primary style as fallback.
+- Gates: per-PlotEntry, Bresenham along (spineAttach → entry);
+  first border-like block encountered swaps to oak fence-gate
+  facing the path direction. One gate per plot (matches
+  PathTopologyPlanner's one-branch-per-plot shape).
+- Style fallback: registry returns Optional, .orElse(new
+  HedgeBorder()) keeps render resilient on registry gaps.
+- V2VillageSpawnerAdapter: after planAndPersist on a successful
+  result, queries the persisted plot list and calls render().
+  Inside the existing try/catch so renderer exceptions don't
+  kill the spawn.
+- FarmDebugCommand test_spawn: renders post-plan, then invokes
+  VillageInhabitantPopulator with a single-building roster
+  (FARMHOUSE → List.of(farmhouse)). Populator/renderer failures
+  append warning notes to the dump rather than failing the
+  command.
+
+**Stage H — this entry. UNIFIED_REWORK_PROGRESS update.**
+
+### Cumulative Detour A stats (Prompt A + Prompt B)
+
+| Phase | Commits | Net LOC |
+|-------|---------|---------|
+| Prompt A Stages 1-6 | 8629f82, 74a177d, 955a1d3, 1a92ae2, d5e891f, e078bf6 | ~+1700 / -1100 |
+| Prompt B Stage A | ad359b5 | +103 / -9 |
+| Prompt B Stage B | 7921469 | +445 |
+| Prompt B Stage C | fb2453f | +116 |
+| Prompt B Stage D | d64aae1 | +287 |
+| Prompt B Stages E+F | 1e45988 | +329 |
+| Prompt B Stage G | e81ccaf | +338 / -2 |
+| **Total Detour A** | 13 commits | **~+3300 / -1100** |
+
+Surface area: ~25 new files in Village/Farms/Complex/ (records,
+algorithms, planner, renderers) + Village/Buildings/Complex/
+(spec + registry + small enums) + Village/Planning/V2/Layer3/
+(envelope + phase enum) + Village/Farms/ (ArableScoring). 3
+deleted (FarmSector family). 10 edits to existing files.
+
+### Smoke test plan (user-executable)
+
+Build infra is gated locally; the user must run these in-world.
+Recommended sequence:
+
+1. **Build verification.** `./gradlew build` (from a network-
+   capable environment). Expect either a clean pass or a small
+   compile error easily diagnosed by the user. Common possible
+   fails: `Direction.getNearest(double, double, double)` if MC
+   renamed; `BlockStateProperties.AGE_7 / AGE_3` if renamed;
+   `Heightmap.Types.MOTION_BLOCKING_NO_LEAVES` if renamed.
+   All grep-confirmed in existing code so unlikely.
+
+2. **`/liv farms test_spawn solo1`** in open plains. Expect:
+   farmhouse placed visibly; dirt-path leading south from the
+   front; 2-4 fenced plots flanking the path; farmland + crops
+   inside the cultivated plots at varied growth stages; hay
+   bales + trough in pasture plot; mini-trees in orchard plot;
+   tool shed 4×4 with door on the spine side; 5-10 props
+   scattered around the perimeter; farmer NPC spawned (see
+   server log line from VillageInhabitantPopulator).
+
+3. **`/liv farms test_spawn solo2`** 50+ blocks away. Different
+   pos.hashCode → different seed → distinct visual layout
+   (different border style mix, different plot sizes, different
+   crop assignments). Region polygons of the two complexes
+   should not overlap.
+
+4. **Spawn a regular village** on plains terrain. Each farmhouse
+   in the village should get a complex rendered. Confirm:
+   complexes don't overlap reserved parks (Stage A
+   verification — walk to any park, observe nothing of the
+   farm complex extends into it).
+
+5. **Save / exit / reload.** The rendered blocks persist via
+   the world chunk save; the FarmComplex records persist via
+   VillageSavedData. After reload, blocks are still there and
+   `/liv farms <village>` lists the complexes correctly.
+
+6. **`/liv farms harness_solo1_<hex>`.** The Stage 6 listing
+   format from Prompt A still works post-render. Confirm
+   tool-shed, plot counts, border distribution, etc.
+
+### Known limitations carried forward
+
+Items the user should know about; not blocking but worth
+flagging:
+
+1. **Per-culture variant authoring deferred.** Only
+   DEFAULT_CULTURE has registered generators / specs. Adding
+   per-culture variants is now structural-only — no `"default"`
+   literals in dispatch paths.
+
+2. **NBT-authored tool shed not shipped.** ToolShedRenderer is
+   the placeholder generator per Prompt B scope. When an NBT
+   is authored, replace the body of `ToolShedRenderer.render`
+   with a `BuildingPlacer`-style NBT stamp; the call shape
+   stays the same.
+
+3. **Animal entities in pastures deferred.** Pasture renders
+   the visual hint (hay bales + trough); spawning sheep / cow
+   entities is deferred (per Prompt B scope).
+
+4. **Tree placement is code-generated.** Orchard mini-trees use
+   a hardcoded 3-4-tall pattern rather than ConfiguredFeature.
+   Looks acceptable for v1; can swap to a feature later for
+   biome-flavoured trees.
+
+5. **Gate detection heuristic.** Gate placement walks the
+   branch segment from spineAttach toward entry and replaces
+   the first encountered border block. This works for the
+   typical case (branch crosses border once). If a branch
+   shape crosses the same plot's border twice (e.g. due to
+   path-planner irregularity), only the first crossing gets a
+   gate — interior segment of the branch then sits under a
+   fence.
+
+6. **Pre-Prompt-B test worlds.** Any villages spawned during
+   the Prompt-A-only window (Stage 5 onwards) wrote complex
+   data without rendering. Those complexes stay visually
+   invisible — there's no retroactive render pass; easier to
+   discard those worlds.
+
+### Track E queue (post-Detour-A follow-ups)
+
+Logged here so a future pass can pick them up:
+
+1. Per-culture variant authoring (Cultures.* registry entries
+   for border styles, crop palettes, prop palettes, complex
+   spec overrides).
+2. NBT-authored tool shed — author the NBT, replace
+   ToolShedRenderer body with NBT stamp.
+3. Pasture animal entity spawning (sheep / cow / pig per
+   crop subtype).
+4. Prop NBT authoring (replace code-generated woodpile etc.
+   with authored NBTs).
+5. Per-culture crop palette (regional crops beyond the
+   existing CropType set; e.g. RYE, MILLET for Norse cultures).
+6. FarmPlot polygon storage format migration (logged at Stage
+   3 — `polygonVertices: [BlockPos]` flat vs FarmComplex's
+   nested `region: {vertices: [...]}`).
+7. Top-level codec ceiling refactor (16-field DFU cap; future
+   persistence additions need a dispatcher pattern).
+8. Smoke-test if Direction.getNearest signature has changed.
+9. Investigate gate detection failures if smoke testing shows
+   stray "fence-on-path" segments inside complexes.
+
+### Detour A ship status
+
+**Detour A COMPLETE.** Prompt A (planning + persistence + sector
+retirement) + Prompt B (rendering + integration + harness). 13
+commits on `claude/headless-layout-harness-AOPQG`. Ready for
+in-world smoke test + per-culture authoring as time permits.
