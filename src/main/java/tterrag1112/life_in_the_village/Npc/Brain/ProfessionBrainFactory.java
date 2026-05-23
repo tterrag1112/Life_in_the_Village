@@ -21,6 +21,7 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.Candlemake
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CarpenterProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerLivestockVisitBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MillerProductionBehavior;
@@ -154,9 +155,16 @@ public final class ProfessionBrainFactory {
         // (treatment, scribal commission, lending, lessons, rest) are
         // preserved by black-boxing the existing service-delivery code.
         // SCRIBE: layered on top of the SOCIAL @7 PostalBehavior entry.
-        REGISTRARS.put(Profession.HEALER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new HealerBehavior())));
+        // Phase 6.3.3.k.6 — HEALER also visits livestock buildings
+        // with elevated diseaseLevel at lower priority than NPC
+        // patient treatment. WORK @ priority 1 means NPCs take
+        // precedence when both kinds of work are available.
+        REGISTRARS.put(Profession.HEALER, (npc, brain) -> {
+            brain.addActivity(NpcActivities.WORK.get(), 0,
+                    ImmutableList.of(new HealerBehavior()));
+            brain.addActivity(NpcActivities.WORK.get(), 1,
+                    ImmutableList.of(new HealerLivestockVisitBehavior()));
+        });
         REGISTRARS.put(Profession.LIBRARIAN, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new LibrarianBehavior())));

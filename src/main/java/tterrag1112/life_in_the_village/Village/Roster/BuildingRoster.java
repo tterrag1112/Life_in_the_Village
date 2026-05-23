@@ -67,6 +67,28 @@ public class BuildingRoster {
      *  but not instantly catastrophic on a 200t cadence. */
     public static final float HAZARD_ATTRITION_PER_POINT = 0.05f;
 
+    /** Phase 6.3.3.k.6 — animal disease severity (0 = healthy,
+     *  10 = epidemic). Drives production scaling and the mortality
+     *  roll above {@link #DISEASE_MORTALITY_THRESHOLD}. */
+    private int diseaseLevel;
+    public static final int DISEASE_LEVEL_MAX = 10;
+    /** Production output scales by (1 - diseaseLevel / DISEASE_LEVEL_MAX). */
+    public static final float DISEASE_OUTPUT_PENALTY_PER_LEVEL = 0.1f;
+    /** Disease level at and above which the per-cycle mortality roll fires. */
+    public static final int DISEASE_MORTALITY_THRESHOLD = 7;
+    /** Per-cycle chance of one animal death when diseaseLevel ≥ threshold. */
+    public static final float DISEASE_MORTALITY_CHANCE = 0.10f;
+    /** Population fraction at-and-above which overcrowding raises disease risk. */
+    public static final float OVERCROWDING_FRACTION = 0.80f;
+    /** Daily disease-risk increments per factor. */
+    public static final float DISEASE_BASE_DAILY_RISK   = 0.005f;
+    public static final float DISEASE_OVERCROWD_ADD     = 0.010f;
+    public static final float DISEASE_HAZARD_ADD_PER_PT = 0.002f;
+    public static final float DISEASE_TEMP_DISCOMFORT_ADD = 0.010f;
+    /** Biome temp range outside which animals are uncomfortable. */
+    public static final float TEMP_COMFORT_MIN = 0.10f;
+    public static final float TEMP_COMFORT_MAX = 1.20f;
+
     public BuildingRoster(UUID buildingId, Identifier rosterDefinitionId) {
         this.buildingId = buildingId;
         this.rosterDefinitionId = rosterDefinitionId;
@@ -76,13 +98,14 @@ public class BuildingRoster {
                            List<RosterSlot> initial,
                            long lastProductionTick, long lastBreedTick,
                            Optional<UUID> boundPlotId,
-                           int hazardCounter) {
+                           int hazardCounter, int diseaseLevel) {
         this(buildingId, rosterDefinitionId);
         if (initial != null) this.slots.addAll(initial);
         this.lastProductionTick = lastProductionTick;
         this.lastBreedTick      = lastBreedTick;
         this.boundPlotId        = boundPlotId.orElse(null);
         this.hazardCounter      = Math.max(0, Math.min(HAZARD_COUNTER_MAX, hazardCounter));
+        this.diseaseLevel       = Math.max(0, Math.min(DISEASE_LEVEL_MAX, diseaseLevel));
     }
 
     public UUID buildingId()                 { return buildingId; }
@@ -92,6 +115,7 @@ public class BuildingRoster {
     public long lastBreedTick()              { return lastBreedTick; }
     public Optional<UUID> boundPlotId()      { return Optional.ofNullable(boundPlotId); }
     public int hazardCounter()               { return hazardCounter; }
+    public int diseaseLevel()                { return diseaseLevel; }
 
     /** Phase 6.3.3.j.3 — bind the roster to a specific plot. Set by
      *  {@code PastureRotation.chooseAndBindActivePen} on rotation;
@@ -104,6 +128,12 @@ public class BuildingRoster {
      *  range of the building. */
     public void recordHazard() {
         if (hazardCounter < HAZARD_COUNTER_MAX) hazardCounter++;
+    }
+
+    /** Phase 6.3.3.k.6 — explicit disease change (HEALER visit /
+     *  FARMER passive recovery). Clamps to [0, DISEASE_LEVEL_MAX]. */
+    public void adjustDiseaseLevel(int delta) {
+        diseaseLevel = Math.max(0, Math.min(DISEASE_LEVEL_MAX, diseaseLevel + delta));
     }
 
     /** Resolves the definition from {@link RosterRegistry}. */
@@ -238,6 +268,63 @@ public class BuildingRoster {
             }
             hazardCounter--;
         }
+
+        // Phase 6.3.3.k.6 — disease risk + mortality.
+        // Risk-roll is daily-paced even though tick() fires every
+        // 200t — gate the roll behind a tick boundary so the per-cycle
+        // probability matches the spec's "daily" calibration.
+        if (now % 24000L < 200L) {
+            tickDiseaseRisk(def, level, now);
+        }
+        if (diseaseLevel >= DISEASE_MORTALITY_THRESHOLD && !slots.isEmpty()) {
+            var rng = new java.util.Random(now ^ (buildingId.getLeastSignificantBits() << 1));
+            if (rng.nextFloat() < DISEASE_MORTALITY_CHANCE) {
+                int targetIdx = -1;
+                for (int i = 0; i < slots.size(); i++) {
+                    if (slots.get(i) instanceof RosterSlot.Simulated) {
+                        targetIdx = i;
+                        break;
+                    }
+                }
+                if (targetIdx >= 0) removeAt(targetIdx);
+            }
+        }
+    }
+
+    /**
+     * Phase 6.3.3.k.6 — daily disease onset / progression roll.
+     * Risk factors:
+     * <ul>
+     *   <li>Base 0.5%/day baseline</li>
+     *   <li>+1.0% when population ≥ 80% of maxPopulation (overcrowding)</li>
+     *   <li>+0.2% per hazard point (predator stress)</li>
+     *   <li>+1.0% when biome temperature at the building is outside
+     *       the comfort range</li>
+     * </ul>
+     * A successful roll increments diseaseLevel by 1.
+     */
+    private void tickDiseaseRisk(RosterDefinition def, ServerLevel level, long now) {
+        if (diseaseLevel >= DISEASE_LEVEL_MAX) return;
+        float risk = DISEASE_BASE_DAILY_RISK;
+        if (def.maxPopulation() > 0
+                && slots.size() >= OVERCROWDING_FRACTION * def.maxPopulation()) {
+            risk += DISEASE_OVERCROWD_ADD;
+        }
+        if (hazardCounter > 0) {
+            risk += DISEASE_HAZARD_ADD_PER_PT * hazardCounter;
+        }
+        var anchorPos = VillageSavedData.get(level)
+                .getBuildingById(buildingId)
+                .map(b -> b.getShape().getOrigin())
+                .orElse(null);
+        if (anchorPos != null) {
+            float temp = level.getBiome(anchorPos).value().getBaseTemperature();
+            if (temp < TEMP_COMFORT_MIN || temp > TEMP_COMFORT_MAX) {
+                risk += DISEASE_TEMP_DISCOMFORT_ADD;
+            }
+        }
+        var rng = new java.util.Random(now ^ buildingId.getMostSignificantBits() ^ 0xD15EA5EL);
+        if (rng.nextFloat() < risk) diseaseLevel++;
     }
 
     /**
@@ -327,10 +414,23 @@ public class BuildingRoster {
 
     // ── Hooks (overrideable) ──────────────────────────────────────────
 
-    /** Default: drop the definition's productionOutputs into the sink. */
+    /** Default: drop the definition's productionOutputs into the sink.
+     *  Phase 6.3.3.k.6: scales counts by health (1 - diseaseLevel/MAX);
+     *  a fully diseased herd produces nothing, a level-5 herd produces
+     *  half. Items with count 1 may drop to 0; that's the intended
+     *  feel of sick animals not laying / shedding. */
     protected void onProductionCycle(RosterDefinition def, ProductionOutputSink sink) {
         if (sink == null) return;
-        for (var stack : def.productionOutputs()) sink.accept(stack.copy());
+        float healthMult = 1.0f
+                - DISEASE_OUTPUT_PENALTY_PER_LEVEL * diseaseLevel;
+        if (healthMult <= 0f) return;
+        for (var stack : def.productionOutputs()) {
+            var copy = stack.copy();
+            int scaled = Math.round(copy.getCount() * healthMult);
+            if (scaled <= 0) continue;
+            copy.setCount(scaled);
+            sink.accept(copy);
+        }
     }
 
     protected void onBreed(RosterSlot addedSlot) { /* override */ }
@@ -369,6 +469,12 @@ public class BuildingRoster {
             // rosters load as 0; the predator scan re-populates as
             // wolves / foxes are observed.
             Codec.INT.optionalFieldOf("hazardCounter", 0)
-                    .forGetter(BuildingRoster::hazardCounter)
+                    .forGetter(BuildingRoster::hazardCounter),
+            // Phase 6.3.3.k.6 — animal disease severity. Pre-k
+            // rosters load as 0 (healthy); risk roll re-populates
+            // over time when overcrowding / hazard / temperature
+            // factors apply.
+            Codec.INT.optionalFieldOf("diseaseLevel", 0)
+                    .forGetter(BuildingRoster::diseaseLevel)
     ).apply(i, BuildingRoster::new));
 }

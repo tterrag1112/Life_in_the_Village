@@ -924,6 +924,27 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // via the hierarchy). Otherwise stays in ANIMAL_HUSBANDRY.
         awardAnimalXp(level, 1, pickAnimalXpTarget(level));
 
+        // Phase 6.3.3.k.6 — passive disease recovery. A skilled
+        // farmer (ANIMAL_HUSBANDRY ≥ INTERMEDIATE = 40) tending
+        // animals at this farmhouse reduces every roster's
+        // diseaseLevel by 1 per tend cycle. Slow effect — HEALER
+        // visits remain the big lever for moving severe outbreaks.
+        if (entity.getSkills().getLevel(
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY)
+                        >= tterrag1112.life_in_the_village.Npc.Skills
+                                .SkillThresholds.APPRENTICE_MILESTONE_INTERMEDIATE) {
+            var rdata = tterrag1112.life_in_the_village.Village.Roster
+                    .RosterSavedData.get(level);
+            boolean changed = false;
+            for (var roster : rdata.getRostersForBuilding(farmhouse.getId())) {
+                if (roster.diseaseLevel() > 0) {
+                    roster.adjustDiseaseLevel(-1);
+                    changed = true;
+                }
+            }
+            if (changed) rdata.markDirty();
+        }
+
         phase = Phase.ANALYZING;
     }
 
