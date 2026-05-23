@@ -2,6 +2,7 @@
 package tterrag1112.life_in_the_village.Networking;
 
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -391,8 +392,90 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillageClimateData::new));
     }
 
+    // ── 10. World-gen content cluster (Phase 6.3.3.l) ────────────────────────
+
+    /**
+     * Phase 6.3.3.l — wraps the six per-village "content placed by
+     * world-gen / runtime content passes" sub-records into a single
+     * top-level codec slot. Wire format is unchanged: the inner
+     * {@link MapCodec} inlines its constituent fields ({@code
+     * decorationData}, {@code adjunctData}, {@code subBuildingData},
+     * {@code gardenData}, {@code farmSectorData}, {@code climateData})
+     * at the parent JSON level via Mojang's {@code forGetter(MapCodec)}
+     * flattening — saved data round-trips identically to the pre-l
+     * representation.
+     *
+     * <p>Exists purely to keep the {@link #CODEC} top-level group
+     * arity manageable; the unified Java record is also a slightly
+     * more accurate model (all six are versions of "content layered
+     * on top of the structural village skeleton").</p>
+     */
+    public record VillageContentData(
+            VillageDecorationData decoration,
+            VillageAdjunctData adjunct,
+            VillageSubBuildingData subBuilding,
+            VillageGardenData garden,
+            VillageFarmData farm,
+            VillageClimateData climate
+    ) {
+        public static final MapCodec<VillageContentData> MAP_CODEC =
+                RecordCodecBuilder.mapCodec(i -> i.group(
+                        VillageDecorationData.CODEC
+                                .optionalFieldOf("decorationData",
+                                        new VillageDecorationData(List.of()))
+                                .forGetter(VillageContentData::decoration),
+                        VillageAdjunctData.CODEC
+                                .optionalFieldOf("adjunctData",
+                                        new VillageAdjunctData(List.of()))
+                                .forGetter(VillageContentData::adjunct),
+                        VillageSubBuildingData.CODEC
+                                .optionalFieldOf("subBuildingData",
+                                        new VillageSubBuildingData(List.of()))
+                                .forGetter(VillageContentData::subBuilding),
+                        VillageGardenData.CODEC
+                                .optionalFieldOf("gardenData",
+                                        new VillageGardenData(List.of()))
+                                .forGetter(VillageContentData::garden),
+                        VillageFarmData.CODEC
+                                .optionalFieldOf("farmSectorData",
+                                        new VillageFarmData(List.of()))
+                                .forGetter(VillageContentData::farm),
+                        VillageClimateData.CODEC
+                                .optionalFieldOf("climateData",
+                                        new VillageClimateData(List.of()))
+                                .forGetter(VillageContentData::climate)
+                ).apply(i, VillageContentData::new));
+    }
+
+    // ── 11. Migration flags cluster (Phase 6.3.3.l) ──────────────────────────
+
+    /**
+     * Phase 6.3.3.l — wraps the per-track idempotency flags into a
+     * single codec slot. Wire format unchanged ({@code
+     * kingdomMembershipMigrated} and {@code kingdomCapitalMigrated}
+     * appear at the parent level via {@link MapCodec} inlining).
+     */
+    public record VillageMigrationFlags(
+            boolean kingdomMembershipMigrated,
+            boolean kingdomCapitalMigrated
+    ) {
+        public static final MapCodec<VillageMigrationFlags> MAP_CODEC =
+                RecordCodecBuilder.mapCodec(i -> i.group(
+                        Codec.BOOL.optionalFieldOf("kingdomMembershipMigrated", false)
+                                .forGetter(VillageMigrationFlags::kingdomMembershipMigrated),
+                        Codec.BOOL.optionalFieldOf("kingdomCapitalMigrated", false)
+                                .forGetter(VillageMigrationFlags::kingdomCapitalMigrated)
+                ).apply(i, VillageMigrationFlags::new));
+    }
+
     // =========================================================================
-    // Top-level codec — 10 sub-records (added VillageClimateData)
+    // Top-level codec — 9 sub-records + 1 migration-flags wrapper (Phase 6.3.3.l)
+    //
+    // The world-gen content cluster (decoration + adjunct + subBuilding +
+    // garden + farm + climate) is consolidated under VillageContentData;
+    // the two idempotency flags are consolidated under VillageMigrationFlags.
+    // Wire format is byte-identical to the flat-17-field representation
+    // because MapCodec.forGetter inlines child fields at the parent level.
     // =========================================================================
 
     public static final Codec<VillageSavedData> CODEC =
@@ -443,46 +526,23 @@ public class VillageSavedData extends SavedData implements
                             .forGetter(d -> new VillageScribalData(
                                     new LinkedHashMap<>(d.commissionQueues),
                                     new LinkedHashMap<>(d.libraryCatalogues))),
-                    VillageDecorationData.CODEC
-                            .optionalFieldOf("decorationData",
-                                    new VillageDecorationData(List.of()))
-                            .forGetter(d -> new VillageDecorationData(
-                                    List.copyOf(d.decorationPlacements))),
-                    VillageAdjunctData.CODEC
-                            .optionalFieldOf("adjunctData",
-                                    new VillageAdjunctData(List.of()))
-                            .forGetter(d -> new VillageAdjunctData(
-                                    List.copyOf(d.adjunctPlots.values()))),
-                    VillageSubBuildingData.CODEC
-                            .optionalFieldOf("subBuildingData",
-                                    new VillageSubBuildingData(List.of()))
-                            .forGetter(d -> new VillageSubBuildingData(
-                                    List.copyOf(d.subBuildings.values()))),
-                    VillageGardenData.CODEC
-                            .optionalFieldOf("gardenData",
-                                    new VillageGardenData(List.of()))
-                            .forGetter(d -> new VillageGardenData(
-                                    List.copyOf(d.gardenPlots.values()))),
-                    VillageFarmData.CODEC
-                            .optionalFieldOf("farmSectorData",
-                                    new VillageFarmData(List.of()))
-                            .forGetter(d -> new VillageFarmData(
-                                    List.copyOf(d.farmSectors.values()))),
-                    // Phase 6.3.3.k.1 — per-village climate snapshots.
-                    // Empty on pre-k saves; round-trips empty otherwise.
-                    VillageClimateData.CODEC
-                            .optionalFieldOf("climateData",
-                                    new VillageClimateData(List.of()))
-                            .forGetter(d -> new VillageClimateData(
-                                    List.copyOf(d.villageClimates.values()))),
-                    // Track D1 — KingdomMembershipMigration idempotency flag.
-                    // Pre-D1 saves load false; the migration runs once and
-                    // flips it true. Fresh worlds default true.
-                    Codec.BOOL.optionalFieldOf("kingdomMembershipMigrated", false)
-                            .forGetter(d -> d.kingdomMembershipMigrated),
-                    // Track D3.1 — capital-back-fill idempotency flag.
-                    Codec.BOOL.optionalFieldOf("kingdomCapitalMigrated", false)
-                            .forGetter(d -> d.kingdomCapitalMigrated)
+                    // Phase 6.3.3.l — six content sub-records consolidated
+                    // under VillageContentData; six field names continue
+                    // to appear flat at the JSON top level.
+                    VillageContentData.MAP_CODEC.forGetter(d -> new VillageContentData(
+                            new VillageDecorationData(List.copyOf(d.decorationPlacements)),
+                            new VillageAdjunctData(List.copyOf(d.adjunctPlots.values())),
+                            new VillageSubBuildingData(List.copyOf(d.subBuildings.values())),
+                            new VillageGardenData(List.copyOf(d.gardenPlots.values())),
+                            new VillageFarmData(List.copyOf(d.farmSectors.values())),
+                            new VillageClimateData(List.copyOf(d.villageClimates.values())))),
+                    // Track D1 / D3.1 — KingdomMembership + capital
+                    // idempotency flags, consolidated in 6.3.3.l. Both
+                    // continue to serialize as top-level boolean fields.
+                    VillageMigrationFlags.MAP_CODEC.forGetter(d ->
+                            new VillageMigrationFlags(
+                                    d.kingdomMembershipMigrated,
+                                    d.kingdomCapitalMigrated))
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -499,18 +559,20 @@ public class VillageSavedData extends SavedData implements
             VillagePropertyData   propertyData,
             VillageGossipData     gossipData,
             VillageScribalData    scribalData,
-            VillageDecorationData decorationData,
-            VillageAdjunctData    adjunctData,
-            VillageSubBuildingData subBuildingData,
-            VillageGardenData     gardenData,
-            VillageFarmData       farmSectorData,
-            VillageClimateData    climateData,
-            boolean               kingdomMembershipMigrated,
-            boolean               kingdomCapitalMigrated) {
+            VillageContentData    contentData,
+            VillageMigrationFlags migrationFlags) {
 
         VillageSavedData data = new VillageSavedData();
-        data.kingdomMembershipMigrated = kingdomMembershipMigrated;
-        data.kingdomCapitalMigrated    = kingdomCapitalMigrated;
+        data.kingdomMembershipMigrated = migrationFlags.kingdomMembershipMigrated();
+        data.kingdomCapitalMigrated    = migrationFlags.kingdomCapitalMigrated();
+
+        // Unpack the world-gen content cluster.
+        VillageDecorationData decorationData = contentData.decoration();
+        VillageAdjunctData    adjunctData    = contentData.adjunct();
+        VillageSubBuildingData subBuildingData = contentData.subBuilding();
+        VillageGardenData     gardenData     = contentData.garden();
+        VillageFarmData       farmSectorData = contentData.farm();
+        VillageClimateData    climateData    = contentData.climate();
 
         // Structure
         data.buildings.addAll(structureData.buildings());

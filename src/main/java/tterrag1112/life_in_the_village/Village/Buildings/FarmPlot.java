@@ -690,7 +690,7 @@ public class FarmPlot {
          */
         public static CropType suggestRotation(CropType current,
                                                java.util.List<String> history,
-                                               java.util.Random random) {
+                                               net.minecraft.util.RandomSource random) {
             CropFamily currentFamily = of(current);
             // Rotation only meaningful between GRAINS and ROOTS. Other
             // families (ORCHARD, PASTURE_GRASS) stay put.

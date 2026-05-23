@@ -266,7 +266,9 @@ public record BusinessActionPacket(
                     Business.BusinessWorker worker = new Business.BusinessWorker(
                             npcId, role, Business.ProducerType.GENERIC,
                             Business.NO_BUILDING, wage,
-                            level.getGameTime(), "", 8);
+                            level.getGameTime(), "", 8,
+                            tterrag1112.life_in_the_village.Guilds.Companies
+                                    .EmploymentTier.APPRENTICE);
 
                     c.addWorker(worker);
                     npc.setBusinessId(c.getBusinessId());
@@ -333,7 +335,7 @@ public record BusinessActionPacket(
                                     w.npcId(), role, w.producerType(),
                                     w.assignedBuildingId(), w.wagePerDay(),
                                     w.lastPaidTick(), w.assignedItemId(),
-                                    w.dailyTargetCount())));
+                                    w.dailyTargetCount(), w.tier())));
                     cdata.markDirty();
 
                     refreshWorker(player, pkt.targetId(), pkt.businessId(),
@@ -371,7 +373,7 @@ public record BusinessActionPacket(
                                     w.npcId(), w.role(), type,
                                     w.assignedBuildingId(), w.wagePerDay(),
                                     w.lastPaidTick(), w.assignedItemId(),
-                                    w.dailyTargetCount())));
+                                    w.dailyTargetCount(), w.tier())));
                     cdata.markDirty();
 
                     refreshWorker(player, pkt.targetId(), pkt.businessId(),
