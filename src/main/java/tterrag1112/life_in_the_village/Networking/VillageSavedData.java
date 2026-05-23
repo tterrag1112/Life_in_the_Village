@@ -371,8 +371,28 @@ public class VillageSavedData extends SavedData implements
                 ).apply(i, VillageDecorationData::new));
     }
 
+    // ── 9. Climate (Phase 6.3.3.k.1) ─────────────────────────────────────────
+
+    /**
+     * Phase 6.3.3.k.1 — per-village climate snapshots. Holds the
+     * {@code lastRainTick} the drought clock derives from. Empty on
+     * pre-k saves; villages without a state read as "no rain
+     * recorded yet" and accumulate drought naturally from there.
+     */
+    public record VillageClimateData(
+            List<tterrag1112.life_in_the_village.World.VillageClimateState> states
+    ) {
+        public static final Codec<VillageClimateData> CODEC =
+                RecordCodecBuilder.create(i -> i.group(
+                        tterrag1112.life_in_the_village.World
+                                .VillageClimateState.CODEC.listOf()
+                                .optionalFieldOf("states", List.of())
+                                .forGetter(VillageClimateData::states)
+                ).apply(i, VillageClimateData::new));
+    }
+
     // =========================================================================
-    // Top-level codec — 9 sub-records (added VillageDecorationData)
+    // Top-level codec — 10 sub-records (added VillageClimateData)
     // =========================================================================
 
     public static final Codec<VillageSavedData> CODEC =
@@ -448,6 +468,13 @@ public class VillageSavedData extends SavedData implements
                                     new VillageFarmData(List.of()))
                             .forGetter(d -> new VillageFarmData(
                                     List.copyOf(d.farmSectors.values()))),
+                    // Phase 6.3.3.k.1 — per-village climate snapshots.
+                    // Empty on pre-k saves; round-trips empty otherwise.
+                    VillageClimateData.CODEC
+                            .optionalFieldOf("climateData",
+                                    new VillageClimateData(List.of()))
+                            .forGetter(d -> new VillageClimateData(
+                                    List.copyOf(d.villageClimates.values()))),
                     // Track D1 — KingdomMembershipMigration idempotency flag.
                     // Pre-D1 saves load false; the migration runs once and
                     // flips it true. Fresh worlds default true.
@@ -477,6 +504,7 @@ public class VillageSavedData extends SavedData implements
             VillageSubBuildingData subBuildingData,
             VillageGardenData     gardenData,
             VillageFarmData       farmSectorData,
+            VillageClimateData    climateData,
             boolean               kingdomMembershipMigrated,
             boolean               kingdomCapitalMigrated) {
 
@@ -585,6 +613,14 @@ public class VillageSavedData extends SavedData implements
                         .computeIfAbsent(sector.villageId(),
                                 k -> new ArrayList<>())
                         .add(sector.sectorId());
+            }
+        }
+
+        // Climate (Phase 6.3.3.k.1). Authoritative store keyed by
+        // villageId; absent on pre-k saves which load as an empty map.
+        if (climateData != null) {
+            for (var state : climateData.states()) {
+                data.villageClimates.put(state.villageId(), state);
             }
         }
 
@@ -721,6 +757,12 @@ public class VillageSavedData extends SavedData implements
     private final Map<UUID, tterrag1112.life_in_the_village.Village
             .Farms.FarmSector> farmSectors = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> farmSectorsByVillage = new HashMap<>();
+
+    // Phase 6.3.3.k.1 — per-village climate snapshot. Stores
+    // lastRainTick used by WeatherContext.isDrought; updated by the
+    // climate ticker in ServerTickDispatcher.
+    private final Map<UUID, tterrag1112.life_in_the_village.World
+            .VillageClimateState> villageClimates = new LinkedHashMap<>();
 
     // Warnings (runtime only — not persisted; rebuilt from player events)
     private final Map<UUID, Map<UUID, Long>> playerWarnings = new HashMap<>();
@@ -971,6 +1013,29 @@ public class VillageSavedData extends SavedData implements
             .Adjunct.AdjunctPlot> getAdjunctPlot(UUID plotId) {
         if (plotId == null) return Optional.empty();
         return Optional.ofNullable(adjunctPlots.get(plotId));
+    }
+
+    // =========================================================================
+    // Phase 6.3.3.k.1 — climate accessors
+    // =========================================================================
+
+    /** Returns the per-village climate snapshot if one has been
+     *  recorded. Absent for villages that have not yet had a rain
+     *  observation. */
+    public Optional<tterrag1112.life_in_the_village.World.VillageClimateState>
+            getClimateState(UUID villageId) {
+        if (villageId == null) return Optional.empty();
+        return Optional.ofNullable(villageClimates.get(villageId));
+    }
+
+    /** Marks the village as having received rain at {@code tick}.
+     *  Replaces any prior state for that village. */
+    public void recordRain(UUID villageId, long tick) {
+        if (villageId == null) return;
+        villageClimates.put(villageId,
+                new tterrag1112.life_in_the_village.World.VillageClimateState(
+                        villageId, tick));
+        markDirty();
     }
 
     public List<tterrag1112.life_in_the_village.Village.Decoration

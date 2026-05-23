@@ -102,5 +102,22 @@ public class ServerTickDispatcher {
                 }
             }
         }
+
+        // ── Phase 6.3.3.k.1 — per-village climate ticker ─────────────────────
+        // Every 200 ticks (matches the roster cadence), walk villages
+        // and record rain whenever the sky is raining AT the village
+        // centre. Cold biomes get snow, which counts the same as rain
+        // for drought-clock purposes (the ground is wet either way).
+        // Desert / dry biomes never see rain so their drought clock
+        // accumulates from world-start, which is what we want.
+        if (tick % 200L == 0L && overworld.isRaining()) {
+            for (var village : vdata.getAllVillages()) {
+                var centre = village.getVillageCentre();
+                if (centre == null) continue;
+                if (overworld.isRainingAt(centre)) {
+                    vdata.recordRain(village.getId(), tick);
+                }
+            }
+        }
     }
 }
