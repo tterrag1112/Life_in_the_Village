@@ -885,7 +885,11 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             VillageSavedData.get(level).setDirty();
         }
 
-        awardAnimalXp(level, 1);
+        // Phase 6.3.3.j.5 — plot-tag-aware target. When the farmhouse
+        // has a BEES adjunct plot, some cycles award BEEKEEPING
+        // directly (which propagates to ANIMAL_HUSBANDRY and FARMING
+        // via the hierarchy). Otherwise stays in ANIMAL_HUSBANDRY.
+        awardAnimalXp(level, 1, pickAnimalXpTarget(level));
 
         phase = Phase.ANALYZING;
     }
@@ -991,17 +995,50 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     }
 
     /**
-     * Routes animal-work XP. Today this always lands in
-     * ANIMAL_HUSBANDRY; future hive-specific behaviors will use
-     * Skill.BEEKEEPING directly. Specialty bonus applies.
+     * Routes animal-work XP. Default target is ANIMAL_HUSBANDRY;
+     * Phase 6.3.3.j.5 added the overload that takes an explicit
+     * {@link tterrag1112.life_in_the_village.Npc.Skills.Skill} target
+     * so tendAnimals can route to BEEKEEPING when the farmhouse has a
+     * BEES-tagged adjunct plot. Specialty bonus applies in both forms.
      */
     private void awardAnimalXp(ServerLevel level, float amount) {
-        float boosted = amount * specialtyMultiplier(
+        awardAnimalXp(level, amount,
                 tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY);
+    }
+
+    private void awardAnimalXp(ServerLevel level, float amount,
+            tterrag1112.life_in_the_village.Npc.Skills.Skill target) {
+        float boosted = amount * specialtyMultiplier(target);
         tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
-                entity,
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY,
-                boosted, level.getGameTime());
+                entity, target, boosted, level.getGameTime());
+    }
+
+    /**
+     * Phase 6.3.3.j.5 — pick the animal-work XP target for the
+     * current tendAnimals cycle. When the farmhouse building has a
+     * BEES-tagged adjunct plot, 1-in-3 cycles route to BEEKEEPING so
+     * the sub-skill surfaces in practice; the remaining cycles route
+     * to ANIMAL_HUSBANDRY (the broader pen/coop work the farmer is
+     * doing the rest of the time). No bees → always ANIMAL_HUSBANDRY.
+     */
+    private tterrag1112.life_in_the_village.Npc.Skills.Skill
+            pickAnimalXpTarget(ServerLevel level) {
+        if (farmhouse == null) {
+            return tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY;
+        }
+        boolean hasBees = false;
+        for (var plot : tterrag1112.life_in_the_village.Networking.VillageSavedData
+                .get(level).getAdjunctPlotsForBuilding(farmhouse.getId())) {
+            if (plot.type().activityTag() == tterrag1112.life_in_the_village
+                    .Village.Decoration.Adjunct.ActivityTag.BEES) {
+                hasBees = true;
+                break;
+            }
+        }
+        if (hasBees && entity.getRandom().nextInt(3) == 0) {
+            return tterrag1112.life_in_the_village.Npc.Skills.Skill.BEEKEEPING;
+        }
+        return tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY;
     }
 
     /**
