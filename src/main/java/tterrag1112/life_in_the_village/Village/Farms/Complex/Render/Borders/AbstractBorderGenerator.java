@@ -98,12 +98,24 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
         return y;
     }
 
-    /** True iff the ground block at (x, y, z) is the path surface
-     *  the path renderer just stamped. Borders skip these columns
-     *  so paths cross fence lines cleanly. The PathRenderer runs
-     *  before borders in the orchestrator's render order. */
+    /** True iff the ground block at (x, y, z) is a path-surface
+     *  material the {@link tterrag1112.life_in_the_village.Village.Farms.Complex.Render.PathRenderer}
+     *  might have stamped. Borders skip these columns so paths
+     *  cross fence lines cleanly. PathRenderer runs before borders
+     *  in the orchestrator's render order.
+     *
+     *  <p>Accepts any of the road materials cultures commonly
+     *  configure via {@code planningBias.roadMaterial} so the
+     *  check stays correct under per-culture material variation.
+     *  Default DIRT_PATH is the common case; the others cover
+     *  cultures with stone-paved or gravel roads. */
     protected static boolean isOnPath(ServerLevel level, int x, int y, int z) {
-        return level.getBlockState(new BlockPos(x, y, z)).is(Blocks.DIRT_PATH);
+        BlockState s = level.getBlockState(new BlockPos(x, y, z));
+        return s.is(Blocks.DIRT_PATH)
+                || s.is(Blocks.GRAVEL)
+                || s.is(Blocks.COARSE_DIRT)
+                || s.is(Blocks.SMOOTH_STONE)
+                || s.is(Blocks.STONE_BRICKS);
     }
 
     /** Safe replacement: only set the block if the current state

@@ -37,6 +37,10 @@ import java.util.List;
 public final class PathTopologyPlanner {
 
     public static final int DEFAULT_PATH_WIDTH = 3;
+    /** Branches are narrower than the spine — reads as "side
+     *  alley off the main path". Matches the Prompt-B follow-up
+     *  width hierarchy: spine 3, branch 2. */
+    public static final int DEFAULT_BRANCH_WIDTH = 2;
     public static final int SPINE_STUB_LENGTH = 5;
 
     private PathTopologyPlanner() {}
@@ -103,7 +107,7 @@ public final class PathTopologyPlanner {
             if (c == null) continue;
             BlockPos attach = projectOntoSegment(c, origin, farthest, vertexY);
             BlockPos entry = new BlockPos(c.getX(), vertexY, c.getZ());
-            segments.add(new Segment(attach, entry, DEFAULT_PATH_WIDTH, false));
+            segments.add(new Segment(attach, entry, DEFAULT_BRANCH_WIDTH, false));
             entries.add(new PlotEntry(p.plotIndex(), entry, attach));
         }
         return new Result(segments, entries, DEFAULT_PATH_WIDTH);

@@ -325,7 +325,9 @@ public final class FarmComplexPlanner {
 
         // ── 9. Tool shed positioning ────────────────────────────────────
         BlockPos toolShed = pickToolShedPosition(fill.region(), paths,
-                newPlots);
+                newPlots, apronPoly,
+                new java.util.Random(in.seed() ^ 0xCAFE_BABE_L),
+                in.verbose());
         // null is allowed — caller renders without a shed if positioning failed.
 
         // ── 10. Assemble ────────────────────────────────────────────────
@@ -455,56 +457,93 @@ public final class FarmComplexPlanner {
         return Math.max(4, Math.min(hw, hh));
     }
 
-    /** Pick a point near the spine's farmhouse-side end, offset
-     *  perpendicular to the spine direction, inside the region and
-     *  outside every plot polygon. Falls back to null if no such
-     *  point passes within {@link #TOOL_SHED_PROBE_ATTEMPTS}. */
-    private static final int TOOL_SHED_PROBE_ATTEMPTS = 8;
-    private static final int TOOL_SHED_OFFSET = 4;
+    /** Pick a point near the spine, offset perpendicular, inside
+     *  the region and outside every plot polygon. Two phases:
+     *  <ol>
+     *    <li>{@link #TOOL_SHED_PROBE_ATTEMPTS} spine-perpendicular
+     *        probes with randomised offset 3-6 along varied along-
+     *        spine positions, alternating sides.</li>
+     *    <li>Apron fallback — if no spine probe lands, the apron
+     *        polygon's centroid is tried; the apron is always
+     *        cleared open ground so the shed lands here in the
+     *        worst case (close to the farmhouse but at least
+     *        rendered).</li>
+     *  </ol>
+     *  Returns null only if both phases fail; an INFO log line
+     *  fires on final exhaustion. */
+    private static final int TOOL_SHED_PROBE_ATTEMPTS = 16;
+    private static final int TOOL_SHED_OFFSET_MIN = 3;
+    private static final int TOOL_SHED_OFFSET_MAX = 6;
 
     private static BlockPos pickToolShedPosition(Polygon region,
                                                   PathTopologyPlanner.Result paths,
-                                                  List<FarmPlot> plots) {
-        if (paths.segments().isEmpty()) return null;
-        // First spine segment runs from the stub outside the region
-        // to the road-facing origin; use the second spine segment
-        // (origin → farthest) as the anchor.
+                                                  List<FarmPlot> plots,
+                                                  Polygon apron,
+                                                  java.util.Random rng,
+                                                  boolean verbose) {
+        // Phase 1: spine-perpendicular probes.
         PathTopologyPlanner.Segment anchorSeg = null;
         for (PathTopologyPlanner.Segment s : paths.segments()) {
             if (s.isSpine()) { anchorSeg = s; }
         }
-        if (anchorSeg == null) return null;
-
-        BlockPos a = anchorSeg.start();
-        BlockPos b = anchorSeg.end();
-        double dx = b.getX() - a.getX();
-        double dz = b.getZ() - a.getZ();
-        double len = Math.sqrt(dx * dx + dz * dz);
-        if (len < 1e-9) return null;
-        // Perpendicular unit vector (rotate 90° CW).
-        double pxu =  dz / len;
-        double pzu = -dx / len;
-        int y = a.getY();
-
-        for (int attempt = 0; attempt < TOOL_SHED_PROBE_ATTEMPTS; attempt++) {
-            // Alternate sides; step further along the spine each iteration.
-            int side = (attempt % 2 == 0) ? +1 : -1;
-            double t = 0.1 + 0.1 * (attempt / 2.0);
-            double cx = a.getX() + dx * t + side * pxu * TOOL_SHED_OFFSET;
-            double cz = a.getZ() + dz * t + side * pzu * TOOL_SHED_OFFSET;
-            BlockPos candidate = new BlockPos((int) cx, y, (int) cz);
-            if (!Polygon.contains(region, candidate)) continue;
-            boolean insidePlot = false;
-            for (FarmPlot plot : plots) {
-                if (plot.getPolygon() != null
-                        && Polygon.contains(plot.getPolygon(), candidate)) {
-                    insidePlot = true;
-                    break;
+        if (anchorSeg != null) {
+            BlockPos a = anchorSeg.start();
+            BlockPos b = anchorSeg.end();
+            double dx = b.getX() - a.getX();
+            double dz = b.getZ() - a.getZ();
+            double len = Math.sqrt(dx * dx + dz * dz);
+            if (len >= 1e-9) {
+                double pxu =  dz / len;
+                double pzu = -dx / len;
+                int y = a.getY();
+                for (int attempt = 0; attempt < TOOL_SHED_PROBE_ATTEMPTS; attempt++) {
+                    int side = (attempt % 2 == 0) ? +1 : -1;
+                    // Spread along-spine positions across the
+                    // first 80% of the spine; the random offset
+                    // makes each attempt distinct even at the
+                    // same t.
+                    double t = 0.1 + 0.05 * (attempt / 2);
+                    int offset = TOOL_SHED_OFFSET_MIN
+                            + rng.nextInt(TOOL_SHED_OFFSET_MAX
+                                    - TOOL_SHED_OFFSET_MIN + 1);
+                    double cx = a.getX() + dx * t + side * pxu * offset;
+                    double cz = a.getZ() + dz * t + side * pzu * offset;
+                    BlockPos candidate = new BlockPos((int) cx, y, (int) cz);
+                    if (!Polygon.contains(region, candidate)) continue;
+                    if (insideAnyPlot(plots, candidate)) continue;
+                    return candidate;
                 }
             }
-            if (insidePlot) continue;
-            return candidate;
+        }
+        // Phase 2: apron fallback.
+        if (apron != null && !apron.vertices().isEmpty()) {
+            BlockPos apronCentre = Polygon.centroid(apron);
+            if (apronCentre != null) {
+                if (verbose) {
+                    org.slf4j.LoggerFactory.getLogger(FarmComplexPlanner.class)
+                            .info("tool shed: spine probes exhausted; using "
+                                    + "apron centroid @ ({}, {}, {})",
+                                    apronCentre.getX(), apronCentre.getY(),
+                                    apronCentre.getZ());
+                }
+                return apronCentre;
+            }
+        }
+        if (verbose) {
+            org.slf4j.LoggerFactory.getLogger(FarmComplexPlanner.class)
+                    .info("tool shed probe exhausted — no viable position "
+                            + "in spine corridors or apron fallback");
         }
         return null;
+    }
+
+    private static boolean insideAnyPlot(List<FarmPlot> plots, BlockPos pos) {
+        for (FarmPlot plot : plots) {
+            if (plot.getPolygon() != null
+                    && Polygon.contains(plot.getPolygon(), pos)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

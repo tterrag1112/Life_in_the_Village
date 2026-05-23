@@ -76,7 +76,15 @@ public final class FarmComplexRenderer {
         //    fences are placed; borders then skip cells whose
         //    surface is dirt-path. Eliminates the "fence sitting
         //    on a path strip" visual bug.
-        PathRenderer.render(complex.pathSegments(), level);
+        //
+        //    Path material resolved from the culture's planningBias
+        //    — same lookup the V2 RoadPainter uses, so farm paths
+        //    match village roads at the boundary.
+        var cultureObj = tterrag1112.life_in_the_village.Cultures
+                .CultureRegistry.getOrDefault(culture);
+        var roadMaterial = PathRenderer.resolveRoadMaterial(
+                cultureObj.planningBias().roadMaterial());
+        PathRenderer.render(complex.pathSegments(), roadMaterial, level);
 
         // 2. Borders — dedup shared edges across adjacent plots.
         //    The per-column placement in AbstractBorderGenerator
