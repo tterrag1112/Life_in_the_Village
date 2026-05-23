@@ -65,10 +65,16 @@ public final class PlotInteriorRenderer {
         boolean stripesAlongX = (bb.maxX() - bb.minX())
                                  >= (bb.maxZ() - bb.minZ());
 
+        // Roll a per-plot base growth stage ONCE. Per-cell jitter
+        // (±1) then varies the actual planted stage so the plot
+        // reads as a single planting cohort rather than per-cell
+        // noise. PASTURE / ORCHARD ignore baseStage (no crop block).
+        int baseStage = rollPlotBaseStage(rng);
+
         for (int x = bb.minX(); x <= bb.maxX(); x++) {
             for (int z = bb.minZ(); z <= bb.maxZ(); z++) {
                 if (!Polygon.contains(poly, x, z)) continue;
-                renderCell(level, x, z, crop, rng, stripesAlongX);
+                renderCell(level, x, z, crop, rng, stripesAlongX, baseStage);
             }
         }
 
@@ -80,13 +86,27 @@ public final class PlotInteriorRenderer {
         // (sparse-grid filter); no post-pass.
     }
 
+    /** Roll a plot's base growth stage from the maturity-class
+     *  distribution: 25% ready (7), 50% mid (5), 15% early (3),
+     *  10% freshly-planted (1). Stages are on the wheat/carrot/
+     *  potato 0-7 scale; BEETROOT scales them down inside
+     *  cropStateFor. */
+    private static int rollPlotBaseStage(Random rng) {
+        int r = rng.nextInt(100);
+        if (r < 25) return 7;   // ready-to-harvest
+        if (r < 75) return 5;   // mid-growth
+        if (r < 90) return 3;   // early-growth
+        return 1;               // freshly-planted
+    }
+
     // =========================================================================
     // Per-cell dispatch
     // =========================================================================
 
     private static void renderCell(ServerLevel level, int x, int z,
                                     CropType crop, Random rng,
-                                    boolean stripesAlongX) {
+                                    boolean stripesAlongX,
+                                    int baseStage) {
         int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
         if (y <= 0) return;
         BlockPos surface = new BlockPos(x, y, z);
@@ -122,7 +142,7 @@ public final class PlotInteriorRenderer {
                 }
             }
             default -> renderCultivatedCell(level, surface, above, crop,
-                    rng, stripesAlongX, x, z);
+                    rng, stripesAlongX, x, z, baseStage);
         }
     }
 
@@ -134,14 +154,15 @@ public final class PlotInteriorRenderer {
                                               BlockPos surface, BlockPos above,
                                               CropType crop, Random rng,
                                               boolean stripesAlongX,
-                                              int x, int z) {
+                                              int x, int z,
+                                              int baseStage) {
         // Convert top to farmland (treat all cultivated cells as
         // moisture=0; the crop visual works either way).
         BlockState farmland = Blocks.FARMLAND.defaultBlockState();
         level.setBlock(surface, farmland, 3);
 
         CropType effective = resolveStripeCrop(crop, stripesAlongX, x, z, rng);
-        BlockState cropState = cropStateFor(effective, rng);
+        BlockState cropState = cropStateFor(effective, rng, baseStage);
         if (cropState != null) {
             level.setBlock(above, cropState, 3);
         }
@@ -175,7 +196,7 @@ public final class PlotInteriorRenderer {
     /** Build a crop blockstate at a weighted-random growth stage.
      *  Returns null for crops that don't plant a block (PASTURE /
      *  ORCHARD — already filtered out by the dispatch). */
-    private static BlockState cropStateFor(CropType crop, Random rng) {
+    private static BlockState cropStateFor(CropType crop, Random rng, int baseStage) {
         net.minecraft.world.level.block.Block block = switch (crop) {
             case WHEAT, MIXED, GRAIN -> Blocks.WHEAT;
             case CARROTS  -> Blocks.CARROTS;
@@ -188,7 +209,7 @@ public final class PlotInteriorRenderer {
                 ? BlockStateProperties.AGE_3
                 : BlockStateProperties.AGE_7;
         int maxAge = block == Blocks.BEETROOTS ? 3 : 7;
-        int age = pickGrowthStage(maxAge, rng);
+        int age = perCellStageJitter(maxAge, baseStage, rng);
         BlockState s = block.defaultBlockState();
         if (s.hasProperty(ageProp)) {
             s = s.setValue(ageProp, age);
@@ -196,16 +217,15 @@ public final class PlotInteriorRenderer {
         return s;
     }
 
-    /** Weighted growth: 70% mid (visibly growing), 20% ripe, 10%
-     *  sparse. For BEETROOT (max-age 3) the brackets collapse:
-     *  mid = 1-2, ripe = 3, sparse = 0. */
-    private static int pickGrowthStage(int maxAge, Random rng) {
-        int r = rng.nextInt(100);
-        if (r < 70) return maxAge >= 7
-                ? 4 + rng.nextInt(3)        // 4, 5, 6
-                : Math.max(1, maxAge - 1);  // beetroot mid = 1-2
-        if (r < 90) return maxAge;          // ripe
-        return rng.nextInt(3);              // 0-2 sparse
+    /** Per-cell growth = clamp(scaledBase + uniform(-1, +1), 0, maxAge).
+     *  Scales the 0-7 baseStage proportionally to the crop's actual
+     *  max-age (BEETROOT max=3 → baseStage 7 maps to 3, etc.) so a
+     *  "ready-to-harvest" wheat plot and a "ready-to-harvest"
+     *  beetroot plot both read as fully grown. */
+    private static int perCellStageJitter(int maxAge, int baseStage, Random rng) {
+        int scaledBase = (int) Math.round(baseStage * (maxAge / 7.0));
+        int stage = scaledBase + rng.nextInt(3) - 1;   // -1, 0, +1
+        return Math.max(0, Math.min(maxAge, stage));
     }
 
     // =========================================================================
