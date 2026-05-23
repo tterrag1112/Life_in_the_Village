@@ -99,6 +99,15 @@ public final class OfficeRegistry {
 
     public static final String TEMPLE_HIGH_PRIEST = "temple_high_priest";
 
+    // Phase 6.3.3.l.1 — agricultural village offices. Content-gap
+    // shape (registered with no behavioral wiring); inert until a
+    // later content pass attaches active office-power consumers, but
+    // present so eligibility, succession, and election machinery can
+    // see them when the village vote-sim hooks turn on.
+    public static final String REEVE          = "reeve";
+    public static final String HARVEST_MASTER = "harvest_master";
+    public static final String ESTATE_STEWARD = "estate_steward";
+
     // ── Public API ─────────────────────────────────────────────────────────
 
     public static OfficeDefinition get(String officeId) {
@@ -190,6 +199,7 @@ public final class OfficeRegistry {
             registerCompanyOffices();
             registerKingdomOffices();
             registerTempleOffices();
+            registerAgriculturalOffices();
             initialised = true;
             LOGGER.info("[OfficeRegistry] Registered {} offices", DEFINITIONS.size());
         } catch (Throwable t) {
@@ -433,5 +443,64 @@ public final class OfficeRegistry {
                 0,
                 List.of(OfficePower.OFFICIATE_RITE, OfficePower.BLESS, OfficePower.CURSE),
                 new Competence(Skill.SOCIAL, 50, 85, 1.20f, -0.10f)));
+    }
+
+    /**
+     * Phase 6.3.3.l.1 — agricultural offices in the content-gap shape
+     * (registered with no behavioral wiring this phase; the existing
+     * eligibility / succession / election machinery can already see
+     * them). OfficePower selections approximate the spec's suggested
+     * power names by reusing the existing OfficePower enum — no new
+     * unconsumed power values added.
+     *
+     * <ul>
+     *   <li>{@link #REEVE} — village-level agricultural overseer:
+     *       sets farm policy ({@code ISSUE_DECREE}), allocates farm
+     *       budgets ({@code SET_BUDGET}, {@code ACCESS_TREASURY}),
+     *       mediates land disputes ({@code INVESTIGATE_CRIME},
+     *       {@code TRY_ACCUSED}).</li>
+     *   <li>{@link #HARVEST_MASTER} — cross-farm harvest coordinator:
+     *       schedules harvests ({@code ISSUE_DECREE}), commands
+     *       villagers to the field ({@code COMMAND_CITIZENS}).</li>
+     *   <li>{@link #ESTATE_STEWARD} — manager of multi-Business
+     *       agricultural estates: appoints farm managers
+     *       ({@code APPOINT_SUBORDINATE}), oversees finances
+     *       ({@code VIEW_BUDGET}, {@code SET_BUDGET}).</li>
+     * </ul>
+     */
+    private static void registerAgriculturalOffices() {
+        register(OfficeDefinition.of(REEVE, OrgType.VILLAGE, "Reeve",
+                List.of(Profession.FARMER),
+                Map.of(Skill.FARMING, 55, Skill.SOCIAL, 30),
+                SelectionMethod.APPOINTED,
+                365,
+                List.of(OfficePower.ISSUE_DECREE,
+                        OfficePower.SET_BUDGET,
+                        OfficePower.ACCESS_TREASURY,
+                        OfficePower.INVESTIGATE_CRIME,
+                        OfficePower.TRY_ACCUSED),
+                new Competence(Skill.FARMING, 55, 85, 1.20f, -0.10f)));
+
+        register(OfficeDefinition.of(HARVEST_MASTER, OrgType.VILLAGE, "Harvest Master",
+                List.of(Profession.FARMER),
+                Map.of(Skill.CROP_FARMING, 55, Skill.FARMING, 40),
+                SelectionMethod.MERITOCRATIC,
+                0,
+                List.of(OfficePower.ISSUE_DECREE,
+                        OfficePower.COMMAND_CITIZENS,
+                        OfficePower.POST_REQUEST),
+                new Competence(Skill.CROP_FARMING, 55, 85, 1.18f, -0.08f)));
+
+        register(OfficeDefinition.of(ESTATE_STEWARD, OrgType.VILLAGE, "Estate Steward",
+                List.of(Profession.FARMER),
+                Map.of(Skill.FARMING, 70, Skill.COMMERCE, 40),
+                SelectionMethod.APPOINTED,
+                0,
+                List.of(OfficePower.APPOINT_SUBORDINATE,
+                        OfficePower.VIEW_BUDGET,
+                        OfficePower.SET_BUDGET,
+                        OfficePower.ACCESS_TREASURY,
+                        OfficePower.COMMAND_CITIZENS),
+                new Competence(Skill.FARMING, 70, 95, 1.25f, -0.12f)));
     }
 }
