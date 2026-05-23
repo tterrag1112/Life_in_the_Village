@@ -269,8 +269,7 @@ public class FarmPlot {
                     // > 0 means the plot is currently diseased and dates the
                     // onset for auto-fallow and yield-penalty math.
                     Codec.LONG.optionalFieldOf("blightSinceTick", 0L)
-                            .forGetter(FarmPlot::getBlightSinceTick)
-                                    : p.polygon.vertices()),
+                            .forGetter(FarmPlot::getBlightSinceTick),
                     // Detour A — owning complex. Optional; pre-Detour-A
                     // plots load with no complex. (B2.5's sectorId has
                     // been retired; the old field is silently ignored
@@ -280,16 +279,14 @@ public class FarmPlot {
                             .optionalFieldOf("complexId")
                             .forGetter(p -> Optional.ofNullable(p.complexId))
             ).apply(instance, (id, name, origin, radius, cropType, farmhouseId,
-                              subtype, polygonVertices, complexId) -> {
-                              subtype, sectorId, polygonVertices,
+                              subtype, polygonVertices,
                               soilQuality, cropHistory, fallowSinceTick, lastCompostedTick,
-                              lastGrazedTick, blightSinceTick) -> {
+                              lastGrazedTick, blightSinceTick, complexId) -> {
                 FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
                 if (polygonVertices != null && polygonVertices.size() >= 3) {
                     plot.setPolygon(new Polygon(polygonVertices));
                 }
-                complexId.ifPresent(plot::setComplexId);
                 plot.soilQuality = soilQuality;
                 if (cropHistory != null && !cropHistory.isEmpty()) {
                     plot.cropHistory.addAll(cropHistory);
@@ -298,6 +295,7 @@ public class FarmPlot {
                 plot.lastCompostedTick = lastCompostedTick;
                 plot.lastGrazedTick = lastGrazedTick;
                 plot.blightSinceTick = blightSinceTick;
+                complexId.ifPresent(plot::setComplexId);
                 return plot;
             })
     );

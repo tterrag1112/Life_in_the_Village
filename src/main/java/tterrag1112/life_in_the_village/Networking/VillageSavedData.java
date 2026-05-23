@@ -347,16 +347,16 @@ public class VillageSavedData extends SavedData implements
      * Pre-Stage-5 saves are not migrated — flagged for discard
      * at retirement time.
      */
-    public record VillageFarms(
+    public record VillageFarmData(
             List<tterrag1112.life_in_the_village.Village.Farms.Complex.FarmComplex> complexes
     ) {
-        public static final Codec<VillageFarms> CODEC =
+        public static final Codec<VillageFarmData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
                         tterrag1112.life_in_the_village.Village.Farms.Complex
                                 .FarmComplex.CODEC.listOf()
                                 .optionalFieldOf("complexes", List.of())
-                                .forGetter(VillageFarms::complexes)
-                ).apply(i, VillageFarms::new));
+                                .forGetter(VillageFarmData::complexes)
+                ).apply(i, VillageFarmData::new));
     }
 
     // ── 8. Decoration ─────────────────────────────────────────────────────────
@@ -446,7 +446,7 @@ public class VillageSavedData extends SavedData implements
                                         new VillageGardenData(List.of()))
                                 .forGetter(VillageContentData::garden),
                         VillageFarmData.CODEC
-                                .optionalFieldOf("farmSectorData",
+                                .optionalFieldOf("farmData",
                                         new VillageFarmData(List.of()))
                                 .forGetter(VillageContentData::farm),
                         VillageClimateData.CODEC
@@ -537,13 +537,16 @@ public class VillageSavedData extends SavedData implements
                                     new LinkedHashMap<>(d.libraryCatalogues))),
                     // Phase 6.3.3.l — six content sub-records consolidated
                     // under VillageContentData; six field names continue
-                    // to appear flat at the JSON top level.
+                    // to appear flat at the JSON top level. Detour A
+                    // renamed the farm slot from "farmSectorData" →
+                    // "farmData" inside VillageFarmData (now carries
+                    // complexes rather than sectors).
                     VillageContentData.MAP_CODEC.forGetter(d -> new VillageContentData(
                             new VillageDecorationData(List.copyOf(d.decorationPlacements)),
                             new VillageAdjunctData(List.copyOf(d.adjunctPlots.values())),
                             new VillageSubBuildingData(List.copyOf(d.subBuildings.values())),
                             new VillageGardenData(List.copyOf(d.gardenPlots.values())),
-                            new VillageFarmData(List.copyOf(d.farmSectors.values())),
+                            new VillageFarmData(List.copyOf(d.farmComplexes.values())),
                             new VillageClimateData(List.copyOf(d.villageClimates.values())))),
                     // Track D1 / D3.1 — KingdomMembership + capital
                     // idempotency flags, consolidated in 6.3.3.l. Both
@@ -552,39 +555,6 @@ public class VillageSavedData extends SavedData implements
                             new VillageMigrationFlags(
                                     d.kingdomMembershipMigrated,
                                     d.kingdomCapitalMigrated))
-                    VillageDecorationData.CODEC
-                            .optionalFieldOf("decorationData",
-                                    new VillageDecorationData(List.of()))
-                            .forGetter(d -> new VillageDecorationData(
-                                    List.copyOf(d.decorationPlacements))),
-                    VillageAdjunctData.CODEC
-                            .optionalFieldOf("adjunctData",
-                                    new VillageAdjunctData(List.of()))
-                            .forGetter(d -> new VillageAdjunctData(
-                                    List.copyOf(d.adjunctPlots.values()))),
-                    VillageSubBuildingData.CODEC
-                            .optionalFieldOf("subBuildingData",
-                                    new VillageSubBuildingData(List.of()))
-                            .forGetter(d -> new VillageSubBuildingData(
-                                    List.copyOf(d.subBuildings.values()))),
-                    VillageGardenData.CODEC
-                            .optionalFieldOf("gardenData",
-                                    new VillageGardenData(List.of()))
-                            .forGetter(d -> new VillageGardenData(
-                                    List.copyOf(d.gardenPlots.values()))),
-                    VillageFarms.CODEC
-                            .optionalFieldOf("farmData",
-                                    new VillageFarms(List.of()))
-                            .forGetter(d -> new VillageFarms(
-                                    List.copyOf(d.farmComplexes.values()))),
-                    // Track D1 — KingdomMembershipMigration idempotency flag.
-                    // Pre-D1 saves load false; the migration runs once and
-                    // flips it true. Fresh worlds default true.
-                    Codec.BOOL.optionalFieldOf("kingdomMembershipMigrated", false)
-                            .forGetter(d -> d.kingdomMembershipMigrated),
-                    // Track D3.1 — capital-back-fill idempotency flag.
-                    Codec.BOOL.optionalFieldOf("kingdomCapitalMigrated", false)
-                            .forGetter(d -> d.kingdomCapitalMigrated)
             ).apply(instance, VillageSavedData::fromCodec));
 
     // =========================================================================
@@ -603,13 +573,6 @@ public class VillageSavedData extends SavedData implements
             VillageScribalData    scribalData,
             VillageContentData    contentData,
             VillageMigrationFlags migrationFlags) {
-            VillageDecorationData decorationData,
-            VillageAdjunctData    adjunctData,
-            VillageSubBuildingData subBuildingData,
-            VillageGardenData     gardenData,
-            VillageFarms          farmData,
-            boolean               kingdomMembershipMigrated,
-            boolean               kingdomCapitalMigrated) {
 
         VillageSavedData data = new VillageSavedData();
         data.kingdomMembershipMigrated = migrationFlags.kingdomMembershipMigrated();
@@ -620,7 +583,7 @@ public class VillageSavedData extends SavedData implements
         VillageAdjunctData    adjunctData    = contentData.adjunct();
         VillageSubBuildingData subBuildingData = contentData.subBuilding();
         VillageGardenData     gardenData     = contentData.garden();
-        VillageFarmData       farmSectorData = contentData.farm();
+        VillageFarmData       farmData       = contentData.farm();
         VillageClimateData    climateData    = contentData.climate();
 
         // Structure
