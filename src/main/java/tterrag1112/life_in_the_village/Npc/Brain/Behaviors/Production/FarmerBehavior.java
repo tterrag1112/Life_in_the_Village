@@ -1014,25 +1014,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
      */
     private float specialtyMultiplier(
             tterrag1112.life_in_the_village.Npc.Skills.Skill target) {
-        var specId = entity.getSpecializationComponent().currentId().orElse(null);
-        if (specId == null) return 1.0f;
-        boolean isCropTarget = target == tterrag1112.life_in_the_village
-                .Npc.Skills.Skill.CROP_FARMING
-                || target == tterrag1112.life_in_the_village
-                .Npc.Skills.Skill.ORCHARDING;
-        boolean isAnimalTarget = target == tterrag1112.life_in_the_village
-                .Npc.Skills.Skill.ANIMAL_HUSBANDRY
-                || target == tterrag1112.life_in_the_village
-                .Npc.Skills.Skill.BEEKEEPING;
-        if (isCropTarget && specId.equals(tterrag1112.life_in_the_village.Npc
-                .Specialization.NpcSpecializationTypes.FARMER_CROP_FOCUS.name())) {
-            return 1.5f;
-        }
-        if (isAnimalTarget && specId.equals(tterrag1112.life_in_the_village.Npc
-                .Specialization.NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name())) {
-            return 1.5f;
-        }
-        return 1.0f;
+        return tterrag1112.life_in_the_village.Npc.Specialization
+                .FarmerSpecialtyMultiplier.of(entity, target);
     }
 
     // -------------------------------------------------------------------------
