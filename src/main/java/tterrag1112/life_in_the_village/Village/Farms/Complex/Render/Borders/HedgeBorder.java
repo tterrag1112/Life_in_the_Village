@@ -9,22 +9,21 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.Random;
 
 /**
- * Two-block-tall hedge. Bottom layer mostly oak leaves with rare
- * jungle leaves for colour pop. Top layer oak leaves, with an
- * occasional oak log "stake" every ~6 columns. Per-column height
- * jitter: 90% two-tall, 5% one-tall (sparse), 5% three-tall (lush).
+ * Uniform 2-block hedge column: oak-leaves base + oak-leaves top.
  *
- * <p>Reads as a soft, living boundary — appropriate for the
- * default-culture HEDGE style.
+ * <p>Per the "frame, not wall" design: 1 block wide, exactly 2
+ * tall, no height jitter. Variation is material-only: ~10% of
+ * columns mix in birch or jungle leaves on the base. No oak-log
+ * stakes — those broke the uniform line.
  */
 public final class HedgeBorder extends AbstractBorderGenerator {
 
     private static final BlockState OAK_LEAVES =
             Blocks.OAK_LEAVES.defaultBlockState();
+    private static final BlockState BIRCH_LEAVES =
+            Blocks.BIRCH_LEAVES.defaultBlockState();
     private static final BlockState JUNGLE_LEAVES =
             Blocks.JUNGLE_LEAVES.defaultBlockState();
-    private static final BlockState OAK_LOG =
-            Blocks.OAK_LOG.defaultBlockState();
 
     @Override
     protected void renderColumn(ServerLevel level,
@@ -32,21 +31,15 @@ public final class HedgeBorder extends AbstractBorderGenerator {
                                  Direction outwardNormal,
                                  int stepIndex,
                                  Random rng) {
-        int roll = rng.nextInt(100);
-        int height = roll < 5 ? 1 : roll < 95 ? 2 : 3;
-        boolean stake = stepIndex > 0 && stepIndex % 6 == 0;
+        BlockState base = pickLeafBlock(rng);
+        placeIfSoft(level, new BlockPos(x, groundY + 1, z), base);
+        placeIfSoft(level, new BlockPos(x, groundY + 2, z), OAK_LEAVES);
+    }
 
-        for (int dy = 1; dy <= height; dy++) {
-            BlockPos p = new BlockPos(x, groundY + dy, z);
-            BlockState s;
-            if (stake && dy == 1) {
-                s = OAK_LOG;
-            } else if (rng.nextInt(20) == 0) {
-                s = JUNGLE_LEAVES;
-            } else {
-                s = OAK_LEAVES;
-            }
-            placeIfSoft(level, p, s);
-        }
+    private static BlockState pickLeafBlock(Random rng) {
+        int r = rng.nextInt(100);
+        if (r < 5)  return BIRCH_LEAVES;
+        if (r < 10) return JUNGLE_LEAVES;
+        return OAK_LEAVES;
     }
 }

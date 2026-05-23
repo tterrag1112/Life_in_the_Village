@@ -9,13 +9,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.Random;
 
 /**
- * Mortared stone wall — one cobblestone block plus an optional
- * stone slab "cap" giving a 1.5-block effective height. Reads as
- * a hard, prosperous boundary (the spec's "stone wall" style).
+ * Uniform 2-block stone wall: cobblestone base + stone slab cap.
  *
- * <p>Occasional cobblestone wall blocks (the connecting kind)
- * replace plain cobblestone for visual variety. Slab cap fires
- * on ~70% of columns so the line isn't dead-uniform.
+ * <p>~10% mossy-cobblestone mixed into the base for material
+ * variation. No height jitter, no per-column cap probability —
+ * every column is exactly 1.5 blocks tall.
  */
 public final class StoneWallBorder extends AbstractBorderGenerator {
 
@@ -23,10 +21,8 @@ public final class StoneWallBorder extends AbstractBorderGenerator {
             Blocks.COBBLESTONE.defaultBlockState();
     private static final BlockState MOSSY_COBBLESTONE =
             Blocks.MOSSY_COBBLESTONE.defaultBlockState();
-    private static final BlockState COBBLESTONE_WALL =
-            Blocks.COBBLESTONE_WALL.defaultBlockState();
-    private static final BlockState COBBLESTONE_SLAB =
-            Blocks.COBBLESTONE_SLAB.defaultBlockState();
+    private static final BlockState SLAB_CAP =
+            Blocks.STONE_SLAB.defaultBlockState();
 
     @Override
     protected void renderColumn(ServerLevel level,
@@ -34,17 +30,8 @@ public final class StoneWallBorder extends AbstractBorderGenerator {
                                  Direction outwardNormal,
                                  int stepIndex,
                                  Random rng) {
-        // Base block — cobblestone with mossy variation, occasional wall.
-        BlockState base;
-        int r = rng.nextInt(100);
-        if (r < 10) base = COBBLESTONE_WALL;
-        else if (r < 25) base = MOSSY_COBBLESTONE;
-        else base = COBBLESTONE;
+        BlockState base = rng.nextInt(10) == 0 ? MOSSY_COBBLESTONE : COBBLESTONE;
         placeIfSoft(level, new BlockPos(x, groundY + 1, z), base);
-
-        // Cap slab on most columns.
-        if (rng.nextInt(10) < 7) {
-            placeIfSoft(level, new BlockPos(x, groundY + 2, z), COBBLESTONE_SLAB);
-        }
+        placeIfSoft(level, new BlockPos(x, groundY + 2, z), SLAB_CAP);
     }
 }

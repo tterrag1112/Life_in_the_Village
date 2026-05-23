@@ -9,13 +9,12 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.Random;
 
 /**
- * Oak post-and-rail fence. Default-state fence at every column;
- * a "post" (oak log instead of fence, with a second log atop)
- * every ~5 columns. Posts every ~15 columns carry a lantern.
+ * Oak fence with periodic oak-log posts.
  *
- * <p>Reads as a light agricultural / temperate boundary. Cheap
- * relative to stone but visually more articulated than a flat
- * fence line.
+ * <p>The fence itself is the entire visual (1 block tall but a
+ * fence collides at 1.5 blocks — unjumpable). Every 5-7 columns
+ * gets an oak-log post (1 block, solid) instead of a fence.
+ * Posts give the line its visual rhythm; no slab cap needed.
  */
 public final class PostAndRailBorder extends AbstractBorderGenerator {
 
@@ -23,10 +22,8 @@ public final class PostAndRailBorder extends AbstractBorderGenerator {
             Blocks.OAK_FENCE.defaultBlockState();
     private static final BlockState OAK_LOG =
             Blocks.OAK_LOG.defaultBlockState();
-    private static final BlockState LANTERN =
-            Blocks.LANTERN.defaultBlockState();
-    private static final BlockState HAY_BALE =
-            Blocks.HAY_BLOCK.defaultBlockState();
+
+    private static final int POST_INTERVAL = 6;
 
     @Override
     protected void renderColumn(ServerLevel level,
@@ -34,22 +31,8 @@ public final class PostAndRailBorder extends AbstractBorderGenerator {
                                  Direction outwardNormal,
                                  int stepIndex,
                                  Random rng) {
-        boolean post = stepIndex > 0 && stepIndex % 5 == 0;
-        boolean lit  = stepIndex > 0 && stepIndex % 15 == 0;
-
-        BlockPos foot = new BlockPos(x, groundY + 1, z);
-        BlockPos head = new BlockPos(x, groundY + 2, z);
-
-        if (post) {
-            placeIfSoft(level, foot, OAK_LOG);
-            placeIfSoft(level, head, OAK_LOG);
-            if (lit) {
-                placeIfSoft(level, new BlockPos(x, groundY + 3, z), LANTERN);
-            } else if (rng.nextInt(8) == 0) {
-                placeIfSoft(level, new BlockPos(x, groundY + 3, z), HAY_BALE);
-            }
-        } else {
-            placeIfSoft(level, foot, OAK_FENCE);
-        }
+        boolean post = stepIndex > 0 && stepIndex % POST_INTERVAL == 0;
+        BlockState block = post ? OAK_LOG : OAK_FENCE;
+        placeIfSoft(level, new BlockPos(x, groundY + 1, z), block);
     }
 }

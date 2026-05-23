@@ -237,6 +237,15 @@ public final class FarmComplexRenderer {
         return new Stats(placed, skipped);
     }
 
+    /** Place a fence gate where the branch line crosses the plot's
+     *  border. With the new path-aware border skip the border has
+     *  a 1-block gap at the crossing; the gate FILLS that gap.
+     *
+     *  <p>Walk the branch from spineAttach toward entry. For each
+     *  cell on the path, probe its 4 perpendicular neighbors at
+     *  y+1 for border blocks. The first cell with a perpendicular
+     *  border neighbor is the gap — place an OPEN oak fence gate
+     *  there facing along the branch direction. */
     private static boolean placeGateAlong(BlockPos start, BlockPos end,
                                             UUID plotId,
                                             ServerLevel level,
@@ -246,39 +255,59 @@ public final class FarmComplexRenderer {
         int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
         int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1;
         int err = dx - dz;
+        // Branch-facing direction (cardinal). The fence-gate's
+        // HORIZONTAL_FACING is perpendicular to the gate's panel —
+        // i.e. it points along the direction you walk THROUGH the
+        // gate. So branch direction is the right value.
+        Direction branchDir = Math.abs(x1 - x0) >= Math.abs(z1 - z0)
+                ? (x1 >= x0 ? Direction.EAST : Direction.WEST)
+                : (z1 >= z0 ? Direction.SOUTH : Direction.NORTH);
+        // Perpendicular probe offsets — pick the axis perpendicular
+        // to branchDir; we want to look "sideways" off the path
+        // for the border line.
+        int[] probeDx, probeDz;
+        if (branchDir.getStepX() != 0) { probeDx = new int[]{0, 0}; probeDz = new int[]{-1, +1}; }
+        else                            { probeDx = new int[]{-1, +1}; probeDz = new int[]{0, 0}; }
         int safety = 0;
         boolean placed = false;
         BlockPos gatePos = null;
         while (!placed && safety++ < 256) {
-            // Probe y+1 .. y+2 for fence/leaves/wall/log.
             int gy = level.getHeight(net.minecraft.world.level.levelgen
                     .Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x0, z0) - 1;
-            for (int dy = 1; dy <= 2; dy++) {
-                BlockPos p = new BlockPos(x0, gy + dy, z0);
-                BlockState s = level.getBlockState(p);
-                if (isBorderBlock(s)) {
-                    Direction facing = Math.abs(x1 - x0) >= Math.abs(z1 - z0)
-                            ? (x1 >= x0 ? Direction.EAST : Direction.WEST)
-                            : (z1 >= z0 ? Direction.SOUTH : Direction.NORTH);
-                    BlockState gate = Blocks.OAK_FENCE_GATE.defaultBlockState();
-                    if (gate.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
-                        gate = gate.setValue(
-                                BlockStateProperties.HORIZONTAL_FACING, facing);
-                    }
-                    if (gate.hasProperty(BlockStateProperties.OPEN)) {
-                        gate = gate.setValue(BlockStateProperties.OPEN, true);
-                    }
-                    level.setBlock(p, gate, 3);
-                    BlockPos above = p.above();
-                    BlockState a = level.getBlockState(above);
-                    if (a.isAir() || a.canBeReplaced() || isBorderBlock(a)) {
-                        level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
-                    }
-                    placed = true;
-                    gatePos = p;
-                    break;
+            for (int k = 0; k < 2; k++) {
+                int nx = x0 + probeDx[k];
+                int nz = z0 + probeDz[k];
+                int ny = level.getHeight(net.minecraft.world.level.levelgen
+                        .Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, nx, nz) - 1;
+                BlockState side = level.getBlockState(new BlockPos(nx, ny + 1, nz));
+                if (!isBorderBlock(side)) continue;
+                BlockPos here = new BlockPos(x0, gy + 1, z0);
+                BlockState here1 = level.getBlockState(here);
+                // Don't try to place if the cell is something we
+                // wouldn't normally over-write (e.g. an existing
+                // border block from a perpendicular fence). Air /
+                // replaceable plants ⇒ free for the gate.
+                if (!here1.isAir() && !here1.canBeReplaced()) continue;
+                BlockState gate = Blocks.OAK_FENCE_GATE.defaultBlockState();
+                if (gate.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
+                    gate = gate.setValue(
+                            BlockStateProperties.HORIZONTAL_FACING, branchDir);
                 }
+                if (gate.hasProperty(BlockStateProperties.OPEN)) {
+                    gate = gate.setValue(BlockStateProperties.OPEN, true);
+                }
+                level.setBlock(here, gate, 3);
+                // Clear anything in the head-clearance slot.
+                BlockPos above = here.above();
+                BlockState a = level.getBlockState(above);
+                if (!a.isAir() && a.canBeReplaced()) {
+                    level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
+                }
+                placed = true;
+                gatePos = here;
+                break;
             }
+            if (placed) break;
             if (x0 == x1 && z0 == z1) break;
             int e2 = 2 * err;
             if (e2 > -dz) { err -= dz; x0 += sx; }

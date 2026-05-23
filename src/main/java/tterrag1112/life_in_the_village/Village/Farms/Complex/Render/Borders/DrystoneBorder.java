@@ -9,10 +9,13 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.Random;
 
 /**
- * Irregular dry-laid stone — mix of cobblestone, mossy
- * cobblestone, gravel, and stone, with column heights jittering
- * 1-2 blocks. Reads as rougher / older / less prosperous than
- * the mortared {@link StoneWallBorder}.
+ * Uniform 2-block drystone: mixed-stone base + stone slab cap.
+ *
+ * <p>Same height profile as {@link StoneWallBorder} (1 base + 1
+ * slab) but a wider material palette gives the rough, dry-laid
+ * look: cobblestone (60%) + mossy cobblestone (20%) + stone
+ * (10%) + andesite (10%). No height jitter — the visual
+ * "irregularity" comes from material variation, not geometry.
  */
 public final class DrystoneBorder extends AbstractBorderGenerator {
 
@@ -20,12 +23,12 @@ public final class DrystoneBorder extends AbstractBorderGenerator {
             Blocks.COBBLESTONE.defaultBlockState();
     private static final BlockState MOSSY_COBBLESTONE =
             Blocks.MOSSY_COBBLESTONE.defaultBlockState();
-    private static final BlockState GRAVEL =
-            Blocks.GRAVEL.defaultBlockState();
     private static final BlockState STONE =
             Blocks.STONE.defaultBlockState();
     private static final BlockState ANDESITE =
             Blocks.ANDESITE.defaultBlockState();
+    private static final BlockState SLAB_CAP =
+            Blocks.STONE_SLAB.defaultBlockState();
 
     @Override
     protected void renderColumn(ServerLevel level,
@@ -33,19 +36,15 @@ public final class DrystoneBorder extends AbstractBorderGenerator {
                                  Direction outwardNormal,
                                  int stepIndex,
                                  Random rng) {
-        int height = 1 + rng.nextInt(2);   // 1 or 2 blocks
-        for (int dy = 1; dy <= height; dy++) {
-            BlockState s = pickStone(rng);
-            placeIfSoft(level, new BlockPos(x, groundY + dy, z), s);
-        }
+        placeIfSoft(level, new BlockPos(x, groundY + 1, z), pickStone(rng));
+        placeIfSoft(level, new BlockPos(x, groundY + 2, z), SLAB_CAP);
     }
 
     private static BlockState pickStone(Random rng) {
         int r = rng.nextInt(100);
-        if (r < 45) return COBBLESTONE;
-        if (r < 65) return MOSSY_COBBLESTONE;
-        if (r < 80) return STONE;
-        if (r < 92) return ANDESITE;
-        return GRAVEL;
+        if (r < 60) return COBBLESTONE;
+        if (r < 80) return MOSSY_COBBLESTONE;
+        if (r < 90) return STONE;
+        return ANDESITE;
     }
 }

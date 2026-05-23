@@ -74,7 +74,16 @@ public final class BspSubdivider {
         Polygon.AABB bb = Polygon.boundingBox(in.region());
         double regionArea = Polygon.area(in.region());
         if (regionArea <= 0) return new Result(List.of(), 0);
-        double targetPlotArea = (regionArea / in.targetPlotCount()) * 1.5;
+        // stopArea works on RECT (bbox) area at recursion time, so
+        // the target must also be derived from bbox area — otherwise
+        // the rect-vs-polygon-area mismatch (bbox > polygon for
+        // irregular shapes) leaves rects always "too big" and the
+        // recursion descends one level too deep. Pre-fix used
+        // polygon area and a 1.5× safety multiplier; produced 7+
+        // plots for targetPlotCount=4 on typical 500-cell regions.
+        double bboxArea = (double) (bb.maxX() - bb.minX())
+                        * (double) (bb.maxZ() - bb.minZ());
+        double targetPlotArea = bboxArea / Math.max(1, in.targetPlotCount());
         double stopArea = Math.max(targetPlotArea,
                 in.minPlotSize() * (double) in.cellSize() * 2);
         // minSideBlocks: minimum width a CHILD rect must have to be
@@ -93,11 +102,11 @@ public final class BspSubdivider {
         if (in.verbose()) {
             org.slf4j.LoggerFactory.getLogger(BspSubdivider.class).info(
                     "BspSubdivider.run: targetPlotCount={} minPlotSize={} cellSize={} "
-                            + "regionArea={} bbox=[{},{}..{},{}] ({}x{}) "
+                            + "regionArea={} bboxArea={} bbox=[{},{}..{},{}] ({}x{}) "
                             + "targetPlotArea={} stopArea={} minSideBlocks={} "
                             + "(cut requires width≥{})",
                     in.targetPlotCount(), in.minPlotSize(), in.cellSize(),
-                    (int) regionArea,
+                    (int) regionArea, (int) bboxArea,
                     bb.minX(), bb.minZ(), bb.maxX(), bb.maxZ(),
                     bb.maxX() - bb.minX(), bb.maxZ() - bb.minZ(),
                     (int) targetPlotArea, (int) stopArea, minSideBlocks,
