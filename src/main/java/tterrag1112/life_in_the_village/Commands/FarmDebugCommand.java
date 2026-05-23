@@ -11,19 +11,24 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
-import tterrag1112.life_in_the_village.Village.Farms.FarmSector;
+import tterrag1112.life_in_the_village.Village.Farms.Complex.FarmComplex;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
- * B2.5 — `/liv farms &lt;village&gt;` debug listing.
+ * Detour A — `/liv farms &lt;village&gt;` debug listing.
  *
- * <p>Reports the village's reserved {@link FarmSector} (zero or one
- * per village) plus the per-farmhouse plot allocation: id, crop
- * type, polygon vertex count, owning farmhouse. Without this
- * command testers would have to grep server logs for sector lines.
+ * <p>Reports the village's {@link FarmComplex} list (one per
+ * farmhouse). For each complex: region polygon vertex count + area,
+ * path segment count, tool-shed-present indicator, then per-plot
+ * detail: id, crop, polygon vertex count, owning farmhouse. The
+ * pre-Stage-5 sector listing was 1:N (one sector with N plots);
+ * this is N×1 (N complexes with their own plots) — the format
+ * mirrors the new structure.
  */
 @EventBusSubscriber(modid = Life_in_the_village.MODID)
 public final class FarmDebugCommand {
@@ -57,27 +62,29 @@ public final class FarmDebugCommand {
             return 0;
         }
 
-        List<FarmSector> sectors = data.getFarmSectorsForVillage(village.getId());
+        List<FarmComplex> complexes = data.getFarmComplexesForVillage(village.getId());
         var tier = village.getSizeTier();
         var inclination = village.getInclination();
         String tierStr = "tier=" + tier
                 + " inclination=" + (inclination != null ? inclination.name() : "(unset)");
-        // B2.8 — count farmhouses to narrow empty-state reason.
+
         int farmhouseCount = 0;
-        for (java.util.UUID bid : village.getBuildingIds()) {
+        for (UUID bid : village.getBuildingIds()) {
             var b = data.getBuildingById(bid).orElse(null);
             if (b != null && b.getType() == tterrag1112.life_in_the_village
                     .Village.Buildings.BuildingType.FARMHOUSE) {
                 farmhouseCount++;
             }
         }
-        if (sectors.isEmpty()) {
+
+        if (complexes.isEmpty()) {
             String reason = farmhouseCount == 0
-                    ? "no FARMHOUSE buildings in this village (sectors gate on farmhouseCount >= 1)"
-                    : "FarmSectorPlanner found no arable centre — terrain may be too steep / wet / "
-                            + "obstructed. Farmhouses present: " + farmhouseCount;
+                    ? "no FARMHOUSE buildings in this village"
+                    : "FarmComplexPlanner found no viable claim — terrain may be too steep, "
+                            + "biome-blocked, or below the arable-cell minimum. "
+                            + "Farmhouses present: " + farmhouseCount;
             ctx.getSource().sendSuccess(() -> Component.literal(
-                    "Village " + villageName + ": no reserved farm sectors.\n"
+                    "Village " + villageName + ": no farm complexes.\n"
                             + "  " + tierStr + "\n"
                             + "  reason: " + reason),
                     false);
@@ -85,34 +92,46 @@ public final class FarmDebugCommand {
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append(sectors.size()).append(" farm sector(s) in ")
+        sb.append(complexes.size()).append(" farm complex(es) in ")
                 .append(villageName).append(" (").append(tierStr).append("):\n");
-        for (FarmSector s : sectors) {
-            sb.append("  Sector ").append(s.sectorId().toString().substring(0, 8))
-                    .append(" — ").append(s.bounds().vertices().size()).append(" vertices, ")
-                    .append("area≈").append(s.approximateArea())
-                    .append(", farmhouses=").append(s.farmhouseIds().size())
-                    .append(", plots=").append(s.plotIds().size())
+        for (FarmComplex c : complexes) {
+            int verts = c.region().vertices().size();
+            int area = (int) Polygon.area(c.region());
+            int pathSegs = c.pathSegments().size();
+            int gates = c.gatePositions().size();
+            boolean hasShed = c.toolShedPosition() != null;
+            sb.append("  Complex ").append(shortId(c.id()))
+                    .append(" farmhouse=").append(shortId(c.farmhouseId()))
+                    .append(" — region: ").append(verts).append("v area≈").append(area)
+                    .append(", plots=").append(c.plotIds().size())
+                    .append(", paths=").append(pathSegs)
+                    .append(", gates=").append(gates)
+                    .append(", shed=").append(hasShed ? "yes" : "no")
                     .append("\n");
-            for (java.util.UUID plotId : s.plotIds()) {
+            for (UUID plotId : c.plotIds()) {
                 FarmPlot p = data.getFarmPlotById(plotId).orElse(null);
-                if (p == null) continue;
-                sb.append("    Plot ").append(p.getId().toString().substring(0, 8))
+                if (p == null) {
+                    sb.append("    Plot ").append(shortId(plotId))
+                            .append(" (missing from farmPlots index)\n");
+                    continue;
+                }
+                sb.append("    Plot ").append(shortId(p.getId()))
                         .append(" crop=").append(p.getCropType().name())
                         .append(" subtype=").append(p.getSubtype().name())
                         .append(" origin=(").append(p.getOrigin().getX()).append(",")
                         .append(p.getOrigin().getZ()).append(")")
-                        .append(" radius=").append(p.getRadius())
                         .append(p.getPolygon() != null
                                 ? " poly=" + p.getPolygon().vertices().size() + "v"
                                 : " poly=none")
-                        .append(p.getFarmhouseId() != null
-                                ? " farmhouse=" + p.getFarmhouseId().toString().substring(0, 8)
-                                : "")
                         .append("\n");
             }
         }
         ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
-        return sectors.size();
+        return complexes.size();
+    }
+
+    private static String shortId(UUID id) {
+        if (id == null) return "(null)";
+        return id.toString().substring(0, 8);
     }
 }

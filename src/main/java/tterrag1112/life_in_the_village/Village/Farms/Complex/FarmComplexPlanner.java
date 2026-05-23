@@ -57,11 +57,22 @@ public final class FarmComplexPlanner {
     /** Inputs to the planner. See class doc for boundary behaviour. */
     public record Input(
             BlockPos farmhouseOrigin,
-            /** Facing of the farmhouse — the road sits on this side.
-             *  The flood-fill seed is placed just past the farmhouse
-             *  in this direction; the spine enters the complex from
-             *  here too. */
-            Direction farmhouseFacing,
+            /** Direction from the farmhouse origin that the complex
+             *  flood-fill extends. The seed is placed just past the
+             *  farmhouse footprint in this direction; the path
+             *  spine enters the complex on the same side.
+             *
+             *  <p>For real spawns the typical caller computes
+             *  {@code building.facing().getOpposite()} — a farmhouse's
+             *  {@code facing()} points toward the road (front of
+             *  building); the complex extends out the back. The
+             *  Stage 6 test command may pass any direction (the
+             *  default is south).
+             *
+             *  <p>The planner itself is agnostic to front/back
+             *  conventions; this field names the direction the
+             *  complex grows. */
+            Direction complexExtendsToward,
             /** Half-extent of the farmhouse footprint along world X
              *  (i.e. the building's footprint is
              *  {@code [origin.x - halfX, origin.x + halfX]}). */
@@ -126,9 +137,9 @@ public final class FarmComplexPlanner {
         int longestHalf = Math.max(in.footprintHalfX(), in.footprintHalfZ());
         int seedOffset = longestHalf + 2;
         BlockPos seed = in.farmhouseOrigin().offset(
-                in.farmhouseFacing().getStepX() * seedOffset,
+                in.complexExtendsToward().getStepX() * seedOffset,
                 0,
-                in.farmhouseFacing().getStepZ() * seedOffset);
+                in.complexExtendsToward().getStepZ() * seedOffset);
         int maxRadius = Math.round(longestHalf * 2 * spec.radiusMultiplier());
 
         // ── 3. Flood-fill ───────────────────────────────────────────────

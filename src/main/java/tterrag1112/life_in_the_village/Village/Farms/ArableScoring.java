@@ -4,10 +4,10 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Cell;
 
 /**
- * Detour A — composite arable score, extracted verbatim from
- * {@code FarmSectorPlanner.arableScore} so the new
- * {@code FloodFillRegionClaim} can consume it without depending on
- * the soon-to-be-deleted sector planner.
+ * Detour A — composite arable score consumed by
+ * {@code FloodFillRegionClaim} (and forward-looking callers; pre-
+ * Stage-5 the same formula lived in {@code FarmSectorPlanner},
+ * since deleted).
  *
  * <p>{@link #score} returns 0..1 for OPEN/SHORE cells under
  * {@link #MAX_INTERIOR_SLOPE}, weighted toward water/forest

@@ -210,7 +210,7 @@ public final class PhasedPlanner {
         //   4 — resource core  (MINE, WOODCUTTER and their workshops)
         //   5 — HOUSE distribution (the bulk; reads all prior nuclei)
         //   6 — decorative / small (STOCKPILE, WELL, etc.)
-        //   7 — farm plots (deferred; FarmSectorPlanner in Layer 5)
+        //   7 — farm plots (deferred; FarmComplexPlanner in Layer 5)
         //
         // Batches 1 + 2 are flagged as "foundation" for cell-scoring
         // purposes so they can land off-road if a strong nucleus pull

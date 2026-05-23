@@ -337,25 +337,25 @@ public class VillageSavedData extends SavedData implements
      * B2.5 — durable farm sectors keyed by sectorId. Mirrors the
      * garden / adjunct pattern.
      */
-    public record VillageFarmData(
-            List<tterrag1112.life_in_the_village.Village.Farms.FarmSector> sectors,
-            // Detour A — farm-complex records. Coexist with sectors
-            // until Stage 5 retires the sector system; both fields
-            // optional on read so existing saves (which have only
-            // sectors) load cleanly.
+    /**
+     * Detour A — farm-complex records, one per farmhouse. Replaces
+     * the pre-Stage-5 {@code VillageFarmData} which also carried
+     * {@code FarmSector} entries; the sector system was retired
+     * together with this record's rename. The JSON key was
+     * {@code "farmSectorData"} pre-Stage-5; now {@code "farmData"}.
+     * Pre-Stage-5 saves are not migrated — flagged for discard
+     * at retirement time.
+     */
+    public record VillageFarms(
             List<tterrag1112.life_in_the_village.Village.Farms.Complex.FarmComplex> complexes
     ) {
-        public static final Codec<VillageFarmData> CODEC =
+        public static final Codec<VillageFarms> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
-                        tterrag1112.life_in_the_village.Village.Farms
-                                .FarmSector.CODEC.listOf()
-                                .optionalFieldOf("sectors", List.of())
-                                .forGetter(VillageFarmData::sectors),
                         tterrag1112.life_in_the_village.Village.Farms.Complex
                                 .FarmComplex.CODEC.listOf()
                                 .optionalFieldOf("complexes", List.of())
-                                .forGetter(VillageFarmData::complexes)
-                ).apply(i, VillageFarmData::new));
+                                .forGetter(VillageFarms::complexes)
+                ).apply(i, VillageFarms::new));
     }
 
     // ── 8. Decoration ─────────────────────────────────────────────────────────
@@ -452,11 +452,10 @@ public class VillageSavedData extends SavedData implements
                                     new VillageGardenData(List.of()))
                             .forGetter(d -> new VillageGardenData(
                                     List.copyOf(d.gardenPlots.values()))),
-                    VillageFarmData.CODEC
-                            .optionalFieldOf("farmSectorData",
-                                    new VillageFarmData(List.of(), List.of()))
-                            .forGetter(d -> new VillageFarmData(
-                                    List.copyOf(d.farmSectors.values()),
+                    VillageFarms.CODEC
+                            .optionalFieldOf("farmData",
+                                    new VillageFarms(List.of()))
+                            .forGetter(d -> new VillageFarms(
                                     List.copyOf(d.farmComplexes.values()))),
                     // Track D1 — KingdomMembershipMigration idempotency flag.
                     // Pre-D1 saves load false; the migration runs once and
@@ -486,7 +485,7 @@ public class VillageSavedData extends SavedData implements
             VillageAdjunctData    adjunctData,
             VillageSubBuildingData subBuildingData,
             VillageGardenData     gardenData,
-            VillageFarmData       farmSectorData,
+            VillageFarms          farmData,
             boolean               kingdomMembershipMigrated,
             boolean               kingdomCapitalMigrated) {
 
@@ -586,21 +585,11 @@ public class VillageSavedData extends SavedData implements
             }
         }
 
-        // Farm sectors (B2.5). Authoritative store + per-village
-        // denormalisation rebuilt from it.
-        if (farmSectorData != null) {
-            for (var sector : farmSectorData.sectors()) {
-                data.farmSectors.put(sector.sectorId(), sector);
-                data.farmSectorsByVillage
-                        .computeIfAbsent(sector.villageId(),
-                                k -> new ArrayList<>())
-                        .add(sector.sectorId());
-            }
-            // Detour A — farm complexes. Same denormalisation
-            // pattern as sectors; both live under the same
-            // VillageFarmData record until Stage 5 retires
-            // sectors.
-            for (var complex : farmSectorData.complexes()) {
+        // Farm complexes (Detour A). Authoritative store + per-
+        // village + 1:1 per-farmhouse denormalisations rebuilt
+        // from the codec list.
+        if (farmData != null) {
+            for (var complex : farmData.complexes()) {
                 data.farmComplexes.put(complex.id(), complex);
                 data.farmComplexesByVillage
                         .computeIfAbsent(complex.villageId(),
@@ -737,16 +726,10 @@ public class VillageSavedData extends SavedData implements
             .Decoration.Parks.GardenPlot> gardenPlots = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> gardenPlotsByVillage = new HashMap<>();
 
-    // Farm sectors (B2.5). Authoritative store keyed by sectorId;
-    // per-village denormalisation rebuilt on load.
-    private final Map<UUID, tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> farmSectors = new LinkedHashMap<>();
-    private final Map<UUID, List<UUID>> farmSectorsByVillage = new HashMap<>();
-
-    // Farm complexes (Detour A). Authoritative store keyed by
-    // complex id; per-village + per-farmhouse denormalisations
-    // rebuilt on load. Coexists with farmSectors above until
-    // Stage 5 retires the sector system.
+    // Farm complexes (Detour A — replaces B2.5's FarmSector). One
+    // complex per farmhouse. Authoritative store keyed by complex
+    // id; per-village + 1:1 per-farmhouse denormalisations
+    // rebuilt on load.
     private final Map<UUID, tterrag1112.life_in_the_village.Village
             .Farms.Complex.FarmComplex> farmComplexes = new LinkedHashMap<>();
     private final Map<UUID, List<UUID>> farmComplexesByVillage = new HashMap<>();
@@ -1158,53 +1141,7 @@ public class VillageSavedData extends SavedData implements
         markDirty();
     }
 
-    // ── Farm sectors (B2.5 — doc 10) ─────────────────────────────────────
-
-    public void addFarmSector(tterrag1112.life_in_the_village.Village
-                                      .Farms.FarmSector sector) {
-        if (sector == null) return;
-        farmSectors.put(sector.sectorId(), sector);
-        farmSectorsByVillage
-                .computeIfAbsent(sector.villageId(),
-                        k -> new ArrayList<>())
-                .add(sector.sectorId());
-        markDirty();
-    }
-
-    public Optional<tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> getFarmSector(UUID sectorId) {
-        if (sectorId == null) return Optional.empty();
-        return Optional.ofNullable(farmSectors.get(sectorId));
-    }
-
-    public List<tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> getFarmSectorsForVillage(UUID villageId) {
-        if (villageId == null) return List.of();
-        List<UUID> ids = farmSectorsByVillage.get(villageId);
-        if (ids == null || ids.isEmpty()) return List.of();
-        List<tterrag1112.life_in_the_village.Village
-                .Farms.FarmSector> out = new ArrayList<>(ids.size());
-        for (UUID id : ids) {
-            var s = farmSectors.get(id);
-            if (s != null) out.add(s);
-        }
-        return Collections.unmodifiableList(out);
-    }
-
-    public Collection<tterrag1112.life_in_the_village.Village
-            .Farms.FarmSector> getAllFarmSectors() {
-        return Collections.unmodifiableCollection(farmSectors.values());
-    }
-
-    public void removeFarmSectorsForVillage(UUID villageId) {
-        if (villageId == null) return;
-        List<UUID> ids = farmSectorsByVillage.remove(villageId);
-        if (ids == null || ids.isEmpty()) return;
-        for (UUID id : ids) farmSectors.remove(id);
-        markDirty();
-    }
-
-    // ── Farm complexes (Detour A) ─────────────────────────────────────────
+    // ── Farm complexes (Detour A — replaces FarmSector) ────────────────
 
     public void addFarmComplex(tterrag1112.life_in_the_village.Village
                                 .Farms.Complex.FarmComplex complex) {
