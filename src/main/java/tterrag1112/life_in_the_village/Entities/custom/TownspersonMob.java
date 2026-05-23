@@ -404,6 +404,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         this.goalSelector.addGoal(15,
                 new tterrag1112.life_in_the_village.Entities.Goals
                         .Homestead.AbstractHomesteadGoal.Child(this));
+        // Phase 6.3.3.j.2.F — ELDERLY light homestead work during
+        // SOCIAL phase. canUse skips when the elder has an active
+        // mentorTargetId so MentorBehavior remains the dominant
+        // elderly activity.
+        this.goalSelector.addGoal(16,
+                new tterrag1112.life_in_the_village.Entities.Goals
+                        .Homestead.AbstractHomesteadGoal.Elderly(this));
     }
 
     // =========================================================================

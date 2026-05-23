@@ -5,6 +5,9 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.Goals.Homestead.AbstractHomesteadGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Homestead.HomesteadHandler;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
+import tterrag1112.life_in_the_village.Npc.Specialization.FarmerSpecialtyMultiplier;
 
 /**
  * B2.6 — chicken coop handler. Walks to the plot, "tends" for
@@ -12,13 +15,16 @@ import tterrag1112.life_in_the_village.Entities.Goals.Homestead.HomesteadHandler
  * Production rate is intentionally lower than profession goals —
  * homesteads are family-scale, not commercial.
  *
- * <p>NBT-authoring will eventually add a feed trough and visible
- * coop block for visual polish; the handler ships the functional
- * loop now.</p>
+ * <p>Phase 6.3.3.j.2: awards +1 ANIMAL_HUSBANDRY per cycle through
+ * {@link SkillXp#award} so the mentee mentorship multiplier composes;
+ * specialty multiplier from {@link FarmerSpecialtyMultiplier} folds
+ * in beforehand so a FARMER_ANIMAL_FOCUS spouse / elderly farmer at
+ * the homestead earns the +50% bonus too.</p>
  */
 public final class ChickenCoopHandler implements HomesteadHandler {
 
     private static final int WORK_TICKS = 100;
+    private static final float BASE_XP_PER_CYCLE = 1f;
 
     @Override
     public boolean tick(Context ctx) {
@@ -29,10 +35,11 @@ public final class ChickenCoopHandler implements HomesteadHandler {
                     ctx.walkSpeed());
         }
         if (ctx.tickInGoal() == WORK_TICKS) {
-            // Produce one egg per cycle into the NPC's personal
-            // inventory; profession-economy logic deposits to
-            // household storage on the regular schedule.
             ctx.npc().getPersonalInventory().addItem(new ItemStack(Items.EGG, 1));
+            float boosted = BASE_XP_PER_CYCLE
+                    * FarmerSpecialtyMultiplier.of(ctx.npc(), Skill.ANIMAL_HUSBANDRY);
+            SkillXp.award(ctx.npc(), Skill.ANIMAL_HUSBANDRY,
+                    boosted, ctx.level().getGameTime());
         }
         return ctx.tickInGoal() >= WORK_TICKS;
     }

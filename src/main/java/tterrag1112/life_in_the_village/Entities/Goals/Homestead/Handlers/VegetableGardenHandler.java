@@ -5,14 +5,22 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Entities.Goals.Homestead.AbstractHomesteadGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Homestead.HomesteadHandler;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
+import tterrag1112.life_in_the_village.Npc.Specialization.FarmerSpecialtyMultiplier;
 
 /**
  * B2.6 — household vegetable garden. Walk + tend + drop a single
  * carrot or potato into the NPC's personal inventory per cycle.
+ *
+ * <p>Phase 6.3.3.j.2: awards +1 CROP_FARMING per cycle (cascades to
+ * FARMING via the hierarchical Skill tree). FARMER_CROP_FOCUS spec
+ * composes +50% on the CROP_FARMING grant.</p>
  */
 public final class VegetableGardenHandler implements HomesteadHandler {
 
     private static final int WORK_TICKS = 110;
+    private static final float BASE_XP_PER_CYCLE = 1f;
 
     @Override
     public boolean tick(Context ctx) {
@@ -23,10 +31,12 @@ public final class VegetableGardenHandler implements HomesteadHandler {
                     ctx.walkSpeed());
         }
         if (ctx.tickInGoal() == WORK_TICKS) {
-            // Alternate between carrot and potato by tick parity for
-            // determinism; ItemFrame-style mixed harvest.
             ctx.npc().getPersonalInventory().addItem(new ItemStack(
                     (ctx.npc().tickCount & 1) == 0 ? Items.CARROT : Items.POTATO, 1));
+            float boosted = BASE_XP_PER_CYCLE
+                    * FarmerSpecialtyMultiplier.of(ctx.npc(), Skill.CROP_FARMING);
+            SkillXp.award(ctx.npc(), Skill.CROP_FARMING,
+                    boosted, ctx.level().getGameTime());
         }
         return ctx.tickInGoal() >= WORK_TICKS;
     }

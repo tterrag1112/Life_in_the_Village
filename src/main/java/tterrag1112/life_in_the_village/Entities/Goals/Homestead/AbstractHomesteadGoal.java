@@ -31,6 +31,10 @@ import java.util.EnumSet;
  *   <li>{@link Spouse} runs during any {@code WORK_*} phase
  *       (matches {@code DayPhase.isWork()}).</li>
  *   <li>{@link Child} runs during {@code SOCIAL} phase.</li>
+ *   <li>{@link Elderly} (Phase 6.3.3.j.2.F) runs during {@code SOCIAL}
+ *       phase as a light fallback when the elder is not actively
+ *       mentoring — yields to {@code MentorBehavior} via the
+ *       {@code mentorTargetId} check.</li>
  * </ul>
  *
  * <p>Dispatch: looks up the household's
@@ -178,6 +182,19 @@ public abstract class AbstractHomesteadGoal extends Goal {
         public Child(TownspersonMob npc) { super(npc, FamilyRole.CHILD); }
         @Override protected boolean phaseAllows(DayPhase phase) {
             return phase == DayPhase.SOCIAL;
+        }
+    }
+
+    /** ELDERLY-role homestead helper — Phase 6.3.3.j.2.F. Runs during
+     *  SOCIAL phase, but yields to {@code MentorBehavior} by skipping
+     *  whenever the elder has an active mentor target. Mentorship is
+     *  the higher-priority elderly activity; light homestead presence
+     *  fills the SOCIAL slot when no apprentice is being mentored. */
+    public static final class Elderly extends AbstractHomesteadGoal {
+        public Elderly(TownspersonMob npc) { super(npc, FamilyRole.ELDERLY); }
+        @Override protected boolean phaseAllows(DayPhase phase) {
+            if (phase != DayPhase.SOCIAL) return false;
+            return npc.getRetirementState().mentorTargetId().isEmpty();
         }
     }
 }
