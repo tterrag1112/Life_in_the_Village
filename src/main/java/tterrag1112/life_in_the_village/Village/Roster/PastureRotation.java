@@ -48,4 +48,28 @@ public final class PastureRotation {
         }
         return Optional.ofNullable(best);
     }
+
+    /**
+     * Phase 6.3.3.j.3 — rotation + roster binding. Picks the active
+     * pen via {@link #chooseActivePen} and mirrors the choice onto
+     * {@code roster.boundPlotId} so realize-time spawn position
+     * follows the rotation. Clears the binding when no pen is
+     * available (rotation result must always be consistent with what
+     * the realize path reads).
+     *
+     * <p>Returns the chosen pen (or empty) so callers that also need
+     * the pen reference for grazing-pressure marking get it in the
+     * same call.</p>
+     */
+    public static Optional<FarmPlot> chooseAndBindActivePen(
+            ServerLevel level, UUID farmhouseId,
+            tterrag1112.life_in_the_village.Village.Roster.BuildingRoster roster) {
+        Optional<FarmPlot> chosen = chooseActivePen(level, farmhouseId);
+        if (roster != null) {
+            chosen.ifPresentOrElse(
+                    p  -> roster.bindToPlot(p.getId()),
+                    () -> roster.clearPlotBinding());
+        }
+        return chosen;
+    }
 }

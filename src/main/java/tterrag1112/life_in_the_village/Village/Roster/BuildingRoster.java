@@ -6,6 +6,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.World.WeatherContext;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -42,6 +44,12 @@ public class BuildingRoster {
     private final List<RosterSlot> slots = new ArrayList<>();
     private long lastProductionTick;
     private long lastBreedTick;
+    /** Phase 6.3.3.j.3 — optional bound plot the roster's livestock
+     *  should appear near when realized. Spec-named "adjunctPlotId"
+     *  but holds either a FarmPlot or AdjunctPlot UUID since both
+     *  are physically pens / homestead facilities. {@code null} means
+     *  no binding — realize at the building center (legacy). */
+    private UUID boundPlotId;
 
     public BuildingRoster(UUID buildingId, Identifier rosterDefinitionId) {
         this.buildingId = buildingId;
@@ -50,11 +58,13 @@ public class BuildingRoster {
 
     private BuildingRoster(UUID buildingId, Identifier rosterDefinitionId,
                            List<RosterSlot> initial,
-                           long lastProductionTick, long lastBreedTick) {
+                           long lastProductionTick, long lastBreedTick,
+                           Optional<UUID> boundPlotId) {
         this(buildingId, rosterDefinitionId);
         if (initial != null) this.slots.addAll(initial);
         this.lastProductionTick = lastProductionTick;
         this.lastBreedTick      = lastBreedTick;
+        this.boundPlotId        = boundPlotId.orElse(null);
     }
 
     public UUID buildingId()                 { return buildingId; }
@@ -62,6 +72,13 @@ public class BuildingRoster {
     public List<RosterSlot> slots()          { return Collections.unmodifiableList(slots); }
     public long lastProductionTick()         { return lastProductionTick; }
     public long lastBreedTick()              { return lastBreedTick; }
+    public Optional<UUID> boundPlotId()      { return Optional.ofNullable(boundPlotId); }
+
+    /** Phase 6.3.3.j.3 — bind the roster to a specific plot. Set by
+     *  {@code PastureRotation.chooseAndBindActivePen} on rotation;
+     *  {@code null} clears the binding. */
+    public void bindToPlot(UUID plotId)      { this.boundPlotId = plotId; }
+    public void clearPlotBinding()           { this.boundPlotId = null; }
 
     /** Resolves the definition from {@link RosterRegistry}. */
     public Optional<RosterDefinition> definition() {
@@ -145,6 +162,36 @@ public class BuildingRoster {
             onBreed(slots.get(slots.size() - 1));
             lastBreedTick = now;
         });
+    }
+
+    /**
+     * Phase 6.3.3.j.3 — picks the realize anchor with storm override.
+     *
+     * <ul>
+     *   <li>If a plot binding exists AND the plot resolves AND
+     *       {@code !WeatherContext.isStorm(level)} → returns the
+     *       bound plot's origin so livestock appear at the pen.</li>
+     *   <li>During a storm OR no binding OR the bound plot is missing
+     *       → returns {@code fallback} (the building center; livestock
+     *       retreat to the safe anchor).</li>
+     * </ul>
+     *
+     * <p>Lookup tries the FarmPlot index first (the common case —
+     * ANIMAL_PEN FarmPlots are what {@code PastureRotation} binds);
+     * falls back to the AdjunctPlot index for the rare HOMESTEAD_PEN
+     * binding case.</p>
+     */
+    public BlockPos resolveRealizationAnchor(ServerLevel level, BlockPos fallback) {
+        if (level == null || fallback == null) return fallback;
+        if (boundPlotId == null) return fallback;
+        if (WeatherContext.isStorm(level)) return fallback;
+        VillageSavedData data = VillageSavedData.get(level);
+        BlockPos origin = data.getFarmPlotById(boundPlotId)
+                .map(p -> p.getOrigin())
+                .orElseGet(() -> data.getAdjunctPlot(boundPlotId)
+                        .map(p -> p.origin())
+                        .orElse(null));
+        return origin != null ? origin : fallback;
     }
 
     // ── Realize / derealize ───────────────────────────────────────────
@@ -235,6 +282,12 @@ public class BuildingRoster {
             Codec.LONG.optionalFieldOf("lastProductionTick", 0L)
                     .forGetter(BuildingRoster::lastProductionTick),
             Codec.LONG.optionalFieldOf("lastBreedTick", 0L)
-                    .forGetter(BuildingRoster::lastBreedTick)
+                    .forGetter(BuildingRoster::lastBreedTick),
+            // Phase 6.3.3.j.3 — optional bound plot. optionalFieldOf
+            // with default Optional.empty() so existing saves load
+            // cleanly without the field and round-trip without it
+            // until a binding is set.
+            UUIDUtil.CODEC.optionalFieldOf("boundPlotId")
+                    .forGetter(BuildingRoster::boundPlotId)
     ).apply(i, BuildingRoster::new));
 }
