@@ -103,7 +103,7 @@ public final class FarmhandConsolidationMigration {
         if (promoted > 0 || workersAdded > 0) {
             LOGGER.info("[FarmhandConsolidation] {}: promoted {} farms to Businesses; "
                             + "added {} APPRENTICE workers to farm rosters",
-                    level.dimension().location(), promoted, workersAdded);
+                    level.dimension().identifier(), promoted, workersAdded);
         }
     }
 

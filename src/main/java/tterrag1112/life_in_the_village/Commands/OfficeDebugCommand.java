@@ -155,7 +155,7 @@ public final class OfficeDebugCommand {
                 return new EntityHandle(OrgType.KINGDOM, ref.uuid, k.getName(),
                         k.getOffices(), vdata::markDirty);
             }
-            case COMPANY -> {
+            case BUSINESS -> {
                 BusinessSavedData cdata = BusinessSavedData.get(level);
                 Business c = cdata.getAllBusinesses().stream()
                         .filter(x -> x.getBusinessId().equals(ref.uuid))

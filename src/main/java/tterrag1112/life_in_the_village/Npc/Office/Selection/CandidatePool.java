@@ -94,7 +94,7 @@ public final class CandidatePool {
     private static Set<UUID> scopeUuids(OfficeSelectionContext ctx) {
         return switch (ctx.orgType()) {
             case VILLAGE, GUILD, TEMPLE -> Set.of();
-            case COMPANY -> {
+            case BUSINESS -> {
                 BusinessSavedData cdata = BusinessSavedData.get(ctx.level());
                 Business c = cdata.getAllBusinesses().stream()
                         .filter(x -> x.getBusinessId().equals(ctx.orgId()))

@@ -95,7 +95,7 @@ public final class FarmerPromotion {
             details.put("business_name", businessName);
             details.put("owner_kind", owner.kind());
             HistoryProducer.record(level, v,
-                    HistoryEventType.COMPANY_FOUNDED,  // reuse the existing event type
+                    HistoryEventType.BUSINESS_FOUNDED,  // reuse the existing event type
                     now, details, List.of(npc.getUUID()));
         }
         return Optional.of(business);

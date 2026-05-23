@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus;
+import tterrag1112.life_in_the_village.Npc.Nobility.OfficeAppointmentEnnoblement;
 import tterrag1112.life_in_the_village.Npc.Office.Selection.OfficeSelectionContext;
 import tterrag1112.life_in_the_village.Npc.Office.Selection.OfficeSelectionEngine;
 import tterrag1112.life_in_the_village.Npc.Office.Selection.SelectionEngines;
@@ -274,7 +275,7 @@ public final class OfficeElection {
         // Track D3.3b — kingdom-tier office grants ennoblement to
         // commoner appointees. No-op for non-kingdom seats and for
         // already-ranked NPCs.
-        tterrag1112.life_in_the_village.Npc.Nobility.OfficeAppointmentEnnoblement
+        OfficeAppointmentEnnoblement
                 .onSeat(orgType, orgId, officeId, npcId, level);
         return true;
     }
@@ -314,7 +315,7 @@ public final class OfficeElection {
             case VILLAGE -> vdata.getVillageById(orgId).map(Village::getOffices).orElse(null);
             case GUILD   -> vdata.getGuildById(orgId).map(GuildData::offices).orElse(null);
             case KINGDOM -> vdata.getKingdomById(orgId).map(Kingdom::getOffices).orElse(null);
-            case COMPANY -> BusinessSavedData.get(level).getAllBusinesses().stream()
+            case BUSINESS -> BusinessSavedData.get(level).getAllBusinesses().stream()
                     .filter(c -> c.getBusinessId().equals(orgId))
                     .findFirst().map(Business::getOffices).orElse(null);
             case TEMPLE  -> null; // stubbed in v1
@@ -324,7 +325,7 @@ public final class OfficeElection {
     private static void markDirty(OrgType orgType, UUID orgId,
                                   ServerLevel level, VillageSavedData vdata) {
         switch (orgType) {
-            case COMPANY -> BusinessSavedData.get(level).markDirty();
+            case BUSINESS -> BusinessSavedData.get(level).markDirty();
             default -> vdata.markDirty();
         }
     }
