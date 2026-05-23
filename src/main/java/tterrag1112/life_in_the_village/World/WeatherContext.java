@@ -123,4 +123,29 @@ public final class WeatherContext {
     /** Biome temperature at-or-below which winter precipitation
      *  produces frost rather than cold rain. */
     public static final float COOL_BIOME_TEMP  = 0.35f;
+
+    /**
+     * Phase 6.3.3.k.3 — yield multiplier under frost, keyed by the
+     * crop's cold tolerance. Returns 1.0 when frost isn't active at
+     * {@code pos}, regardless of tolerance.
+     *
+     * <ul>
+     *   <li>HARDY: 1.0 (no penalty)</li>
+     *   <li>COOL_SEASON: 0.9 (small penalty — root crops survive light frost)</li>
+     *   <li>WARM_SEASON: 0.7 (full penalty — warm-season plantings fail)</li>
+     *   <li>TREE_FRUIT: 0.8 (trees survive but yield drops)</li>
+     * </ul>
+     */
+    public static float frostYieldMultiplier(ServerLevel level, BlockPos pos,
+            tterrag1112.life_in_the_village.Village.Buildings
+                    .FarmPlot.CropType.ColdTolerance tolerance) {
+        if (tolerance == null) return 1.0f;
+        if (!isFrost(level, pos)) return 1.0f;
+        return switch (tolerance) {
+            case HARDY       -> 1.0f;
+            case COOL_SEASON -> 0.9f;
+            case WARM_SEASON -> 0.7f;
+            case TREE_FRUIT  -> 0.8f;
+        };
+    }
 }

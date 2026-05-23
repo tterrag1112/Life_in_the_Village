@@ -450,10 +450,18 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         FarmPlot harvestedPlot = findPlotContaining(level, cropPos);
         float soilMult = harvestedPlot != null ? harvestedPlot.getSoilQuality() : 1.0f;
         // Phase 6.3.3.h.4 — weather contribution (rain bonus, thunder
-        // penalty). Drought / frost mechanics are deferred (no persistent
-        // weather tracker in the mod yet).
+        // penalty).
         float weatherMult = WeatherContext.yieldMultiplier(level);
-        float yieldMult = seasonMult * soilMult * weatherMult;
+        // Phase 6.3.3.k.2 — drought + frost layers. Drought is
+        // village-scoped (×0.7 yield when active); frost is plot-
+        // location-scoped and keyed by the crop's cold tolerance.
+        UUID villageIdForYield = resolveVillageId(level);
+        float droughtMult = WeatherContext.droughtYieldMultiplier(level, villageIdForYield);
+        float frostMult = harvestedPlot != null
+                ? WeatherContext.frostYieldMultiplier(level, cropPos,
+                        harvestedPlot.getCropType().coldTolerance())
+                : 1.0f;
+        float yieldMult = seasonMult * soilMult * weatherMult * droughtMult * frostMult;
 
         for (ItemStack drop : drops) {
             int scaledCount = 0;
@@ -608,6 +616,19 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             }
         }
 
+        // Phase 6.3.3.k.3 — frost-aware crop swap. Skilled non-APPRENTICE
+        // farmers refuse to plant warm-season crops where frost is
+        // currently active at the plot. Swap to POTATOES (COOL_SEASON)
+        // as a sensible cold-tolerant fallback. APPRENTICE workers
+        // plant what they're told — they're learning, not deciding.
+        if (shouldRotateCrops()
+                && plot.getCropType().coldTolerance()
+                        == FarmPlot.CropType.ColdTolerance.WARM_SEASON
+                && WeatherContext.isFrost(level, plot.getOrigin())) {
+            plot.setCropType(FarmPlot.CropType.POTATOES);
+            VillageSavedData.get(level).setDirty();
+        }
+
         Block cropBlock = plot.getCropType().resolveCropBlock();
         Item  seedItem  = plot.getCropType().resolveSeedItem();
         if (cropBlock == null) { toReplant.remove(0); return; }
@@ -629,6 +650,13 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             // cropHistory trims to MAX_HISTORY, plot may auto-enter
             // fallow if quality fell past SOIL_FALLOW_ENTER.
             plot.onPlanted(plot.getCropType(), level.getGameTime());
+            // Phase 6.3.3.k.2 — drought doubles soil-quality decay.
+            // Apply an extra SOIL_DEC_PLANT chunk on top of the
+            // normal planting decay when the village is in drought.
+            if (WeatherContext.isDrought(level, resolveVillageId(level))) {
+                plot.setSoilQuality(
+                        plot.getSoilQuality() - FarmPlot.SOIL_DEC_PLANT);
+            }
             VillageSavedData.get(level).setDirty();
         }
 
@@ -897,6 +925,21 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /**
+     * Phase 6.3.3.k.2 — resolves the FARMER's assigned village id for
+     * climate / drought queries. Returns {@code null} when the FARMER
+     * is unassigned or the village isn't loaded; downstream calls into
+     * {@code WeatherContext.isDrought} tolerate null villageId
+     * gracefully (drought reads as false).
+     */
+    private UUID resolveVillageId(ServerLevel level) {
+        VillageSavedData data = VillageSavedData.get(level);
+        return entity.getAssignedVillageName()
+                .flatMap(data::getVillageByName)
+                .map(v -> v.getId())
+                .orElse(null);
+    }
 
 
 

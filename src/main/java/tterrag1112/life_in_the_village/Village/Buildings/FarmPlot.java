@@ -179,6 +179,46 @@ public class FarmPlot {
                 case PASTURE       -> 0.6f;  // meat/leather — indirect food
             };
         }
+
+        /**
+         * Phase 6.3.3.k.3 — frost tolerance per crop. Drives the
+         * yield penalty under frost conditions (see
+         * {@code WeatherContext.frostYieldMultiplier}) and lets
+         * skilled farmers avoid warm-season plantings in cold biomes.
+         */
+        public ColdTolerance coldTolerance() {
+            return switch (this) {
+                // Wheat / mixed grains: cold-hardy staples.
+                case WHEAT, GRAIN, MIXED -> ColdTolerance.HARDY;
+                // Root vegetables: some frost tolerance, damage at
+                // sustained cold.
+                case POTATOES, CARROTS, BEETROOT -> ColdTolerance.COOL_SEASON;
+                // General vegetable rotation: less hardy than the
+                // single-root crops.
+                case VEGETABLE -> ColdTolerance.WARM_SEASON;
+                // Trees survive frost; blossom / fruit do not.
+                case ORCHARD -> ColdTolerance.TREE_FRUIT;
+                // Pasture grass: hardy enough for the climates we'd
+                // plant pens in.
+                case PASTURE -> ColdTolerance.HARDY;
+            };
+        }
+
+        /**
+         * Phase 6.3.3.k.3 — cold-tolerance tiers. The yield penalty
+         * under frost is a function of (tolerance, frost-active) and
+         * is queried via {@code WeatherContext.frostYieldMultiplier}.
+         */
+        public enum ColdTolerance {
+            /** Frost causes no yield penalty. */
+            HARDY,
+            /** Small penalty under frost — root crops survive light frost. */
+            COOL_SEASON,
+            /** Full penalty under frost — warm-season plantings fail. */
+            WARM_SEASON,
+            /** Trees survive but fruit / blossom yield drops. */
+            TREE_FRUIT
+        }
     }
 
     // =========================================================================
