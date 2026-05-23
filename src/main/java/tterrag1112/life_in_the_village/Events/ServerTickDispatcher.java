@@ -119,5 +119,60 @@ public class ServerTickDispatcher {
                 }
             }
         }
+
+        // ── Phase 6.3.3.k.4 — daily blight roll + spread + auto-fallow ───────
+        // Fires once per in-game day. For each CROP_FIELD plot, roll
+        // the onset chance (modulated by soil quality, mono-cropping,
+        // drought). Then for each blighted plot, roll spread to a
+        // same-farmhouse healthy neighbour, and tick the auto-fallow
+        // clock that retires plots blighted longer than the threshold.
+        if (tick % 24000L == 0L) {
+            var rng = new java.util.Random(tick);
+            for (var plot : vdata.getAllFarmPlots()) {
+                if (plot.getSubtype() != tterrag1112.life_in_the_village
+                        .Village.Buildings.FarmPlot.PlotSubtype.CROP_FIELD) {
+                    continue;
+                }
+                java.util.UUID vid = null;
+                if (plot.getFarmhouseId() != null) {
+                    for (var v : vdata.getAllVillages()) {
+                        if (v.getBuildingIds().contains(plot.getFarmhouseId())) {
+                            vid = v.getId();
+                            break;
+                        }
+                    }
+                }
+                boolean drought = tterrag1112.life_in_the_village.World
+                        .WeatherContext.isDrought(overworld, vid);
+                if (plot.rollDailyBlight(tick, drought, rng)) {
+                    vdata.markDirty();
+                }
+                if (plot.tickBlightAutoFallow(tick)) {
+                    vdata.markDirty();
+                }
+            }
+            // Spread pass: each currently-blighted plot rolls once
+            // against a randomly picked same-farmhouse healthy neighbour.
+            for (var src : vdata.getAllFarmPlots()) {
+                if (!src.isBlighted()) continue;
+                if (src.getFarmhouseId() == null) continue;
+                if (rng.nextFloat() >= tterrag1112.life_in_the_village
+                        .Village.Buildings.FarmPlot.BLIGHT_SPREAD_DAILY_CHANCE) continue;
+                var siblings = vdata.getFarmPlotsForFarmhouse(src.getFarmhouseId());
+                java.util.List<tterrag1112.life_in_the_village.Village
+                        .Buildings.FarmPlot> healthy = new java.util.ArrayList<>();
+                for (var sib : siblings) {
+                    if (sib != src && !sib.isBlighted()
+                            && sib.getSubtype() == tterrag1112.life_in_the_village
+                                    .Village.Buildings.FarmPlot.PlotSubtype.CROP_FIELD) {
+                        healthy.add(sib);
+                    }
+                }
+                if (healthy.isEmpty()) continue;
+                var pick = healthy.get(rng.nextInt(healthy.size()));
+                pick.setBlight(tick);
+                vdata.markDirty();
+            }
+        }
     }
 }

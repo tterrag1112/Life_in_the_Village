@@ -268,11 +268,16 @@ public class FarmPlot {
                     // Optional with default 0 (never grazed); ignored
                     // for CROP_FIELD plots.
                     Codec.LONG.optionalFieldOf("lastGrazedTick", 0L)
-                            .forGetter(FarmPlot::getLastGrazedTick)
+                            .forGetter(FarmPlot::getLastGrazedTick),
+                    // Phase 6.3.3.k.4 — crop blight onset tick. 0 = healthy;
+                    // > 0 means the plot is currently diseased and dates the
+                    // onset for auto-fallow and yield-penalty math.
+                    Codec.LONG.optionalFieldOf("blightSinceTick", 0L)
+                            .forGetter(FarmPlot::getBlightSinceTick)
             ).apply(instance, (id, name, origin, radius, cropType, farmhouseId,
                               subtype, sectorId, polygonVertices,
                               soilQuality, cropHistory, fallowSinceTick, lastCompostedTick,
-                              lastGrazedTick) -> {
+                              lastGrazedTick, blightSinceTick) -> {
                 FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
                 sectorId.ifPresent(plot::setSectorId);
@@ -286,6 +291,7 @@ public class FarmPlot {
                 plot.fallowSinceTick = fallowSinceTick;
                 plot.lastCompostedTick = lastCompostedTick;
                 plot.lastGrazedTick = lastGrazedTick;
+                plot.blightSinceTick = blightSinceTick;
                 return plot;
             })
     );
@@ -324,6 +330,9 @@ public class FarmPlot {
      *  Rotation picks the pen with the smallest (oldest) value so
      *  livestock spend time on the freshest pen. 0 = never grazed. */
     private long lastGrazedTick;
+    /** Phase 6.3.3.k.4 — crop blight onset tick. 0 = healthy. Drives
+     *  yield penalty, auto-fallow, and spread eligibility. */
+    private long blightSinceTick;
 
     public static final int   MAX_HISTORY            = 4;
     public static final float SOIL_FLOOR             = 0.1f;
@@ -331,6 +340,31 @@ public class FarmPlot {
     public static final float SOIL_FALLOW_ENTER      = 0.3f;
     public static final float SOIL_FALLOW_EXIT       = 0.7f;
     public static final float SOIL_DEC_PLANT         = 0.02f;
+
+    // Phase 6.3.3.k.4 — blight tuning.
+    /** Yield multiplier applied to a blighted plot's harvest output. */
+    public static final float BLIGHT_YIELD_MULT      = 0.5f;
+    /** Days a blight may persist before the plot is auto-fallowed
+     *  (which clears the blight as a side effect). */
+    public static final long  BLIGHT_AUTO_FALLOW_DAYS = 3L;
+    /** Composting cure chance per composting event on a blighted plot. */
+    public static final float BLIGHT_COMPOST_CURE_CHANCE = 0.30f;
+    /** Base daily blight onset probability for a healthy plot. */
+    public static final float BLIGHT_BASE_DAILY_RISK = 0.01f;
+    /** Daily blight risk added when soil quality is below the
+     *  poor-soil threshold. */
+    public static final float BLIGHT_POOR_SOIL_RISK_ADD = 0.02f;
+    /** Daily blight risk added when the last MONOCROP_STREAK
+     *  entries of cropHistory are the same family (mono-cropping). */
+    public static final float BLIGHT_MONOCROP_RISK_ADD = 0.02f;
+    /** Daily blight risk added during drought conditions. */
+    public static final float BLIGHT_DROUGHT_RISK_ADD = 0.01f;
+    /** History entries that count toward mono-cropping detection. */
+    public static final int   BLIGHT_MONOCROP_STREAK = 3;
+    /** Soil quality below this is treated as poor (risk modifier). */
+    public static final float BLIGHT_POOR_SOIL_THRESHOLD = 0.4f;
+    /** Per-day spread chance to a same-farmhouse plot per blighted plot. */
+    public static final float BLIGHT_SPREAD_DAILY_CHANCE = 0.05f;
     public static final float SOIL_DEC_SAME_FAMILY   = 0.05f;
     public static final float SOIL_RECOVER_PER_DAY   = 0.01f;
     public static final float SOIL_COMPOST_BOOST     = 0.15f;
@@ -472,6 +506,21 @@ public class FarmPlot {
     public long  getLastGrazedTick()          { return lastGrazedTick; }
     public boolean isFallow()                 { return fallowSinceTick > 0L; }
 
+    // Phase 6.3.3.k.4 — blight accessors.
+    public long    getBlightSinceTick()       { return blightSinceTick; }
+    public boolean isBlighted()               { return blightSinceTick > 0L; }
+    /** Marks the plot as blighted at {@code now}. No-op if already
+     *  diseased — the onset tick stays at the original date so the
+     *  auto-fallow clock keeps running. */
+    public void setBlight(long now) {
+        if (blightSinceTick == 0L) blightSinceTick = now;
+    }
+    /** Clears any blight. Called by composting cures, by the post-
+     *  fallow exit path, and after a successful rotation replant. */
+    public void clearBlight() {
+        blightSinceTick = 0L;
+    }
+
     /** Phase 6.3.3.h.6 — mark this pen as actively grazed at {@code now};
      *  applies a small soilQuality (grass) penalty per call. */
     public void onGrazed(long now) {
@@ -498,7 +547,11 @@ public class FarmPlot {
     /** Records a planting against this plot. Decrements soil quality
      *  (bigger hit on same-family repeat), trims cropHistory to
      *  {@link #MAX_HISTORY}, and may auto-enter fallow when quality
-     *  falls below {@link #SOIL_FALLOW_ENTER}. */
+     *  falls below {@link #SOIL_FALLOW_ENTER}.
+     *
+     *  <p>Phase 6.3.3.k.4: a different-family replant on a blighted
+     *  plot is itself the cure path — rotation breaks the disease
+     *  cycle. Same-family replant leaves the blight in place.</p> */
     public void onPlanted(CropType justPlanted, long now) {
         boolean sameFamily = !cropHistory.isEmpty()
                 && CropFamily.of(CropType.valueOf(cropHistory.get(cropHistory.size() - 1)))
@@ -508,6 +561,9 @@ public class FarmPlot {
         while (cropHistory.size() > MAX_HISTORY) cropHistory.remove(0);
         if (soilQuality <= SOIL_FALLOW_ENTER && fallowSinceTick == 0L) {
             fallowSinceTick = now;
+        }
+        if (isBlighted() && !sameFamily) {
+            clearBlight();
         }
     }
 
@@ -523,11 +579,83 @@ public class FarmPlot {
     }
 
     /** Records a composting event; boosts soil quality and stamps the
-     *  cooldown clock. */
+     *  cooldown clock. Phase 6.3.3.k.4: each composting on a blighted
+     *  plot has a {@link #BLIGHT_COMPOST_CURE_CHANCE} probability of
+     *  clearing the blight — the realistic cure is repeated composting
+     *  over multiple days, not a single application. */
     public void onComposted(long now) {
         setSoilQuality(soilQuality + SOIL_COMPOST_BOOST);
         lastCompostedTick = now;
         if (soilQuality >= SOIL_FALLOW_EXIT) fallowSinceTick = 0L;
+        if (isBlighted()
+                && new java.util.Random(now ^ id.getMostSignificantBits())
+                        .nextFloat() < BLIGHT_COMPOST_CURE_CHANCE) {
+            clearBlight();
+        }
+    }
+
+    /**
+     * Phase 6.3.3.k.4 — daily blight onset roll. Returns true if the
+     * plot transitioned from healthy to blighted on this roll. The
+     * caller is responsible for spread (which depends on the wider
+     * farm context this method doesn't have access to) and for
+     * marking the saved data dirty.
+     *
+     * <p>Risk factors:</p>
+     * <ul>
+     *   <li>{@code BLIGHT_BASE_DAILY_RISK} baseline (1%/day)</li>
+     *   <li>+{@code BLIGHT_POOR_SOIL_RISK_ADD} when soilQuality below threshold</li>
+     *   <li>+{@code BLIGHT_MONOCROP_RISK_ADD} when last 3 history entries are same family</li>
+     *   <li>+{@code BLIGHT_DROUGHT_RISK_ADD} when {@code droughtActive}</li>
+     * </ul>
+     */
+    public boolean rollDailyBlight(long now, boolean droughtActive,
+                                   java.util.Random rng) {
+        if (isBlighted()) return false;
+        if (subtype != PlotSubtype.CROP_FIELD) return false;
+        float risk = BLIGHT_BASE_DAILY_RISK;
+        if (soilQuality < BLIGHT_POOR_SOIL_THRESHOLD) {
+            risk += BLIGHT_POOR_SOIL_RISK_ADD;
+        }
+        if (isMonocropStreak()) {
+            risk += BLIGHT_MONOCROP_RISK_ADD;
+        }
+        if (droughtActive) {
+            risk += BLIGHT_DROUGHT_RISK_ADD;
+        }
+        if (rng.nextFloat() < risk) {
+            setBlight(now);
+            return true;
+        }
+        return false;
+    }
+
+    /** Phase 6.3.3.k.4 — auto-fallow check. Returns true if the plot
+     *  was just auto-fallowed by this call (blight persisted longer
+     *  than {@link #BLIGHT_AUTO_FALLOW_DAYS}). Fallow clears the
+     *  blight as a side effect since the next replant will rotate. */
+    public boolean tickBlightAutoFallow(long now) {
+        if (!isBlighted()) return false;
+        long daysBlighted = (now - blightSinceTick) / DAY_TICKS;
+        if (daysBlighted < BLIGHT_AUTO_FALLOW_DAYS) return false;
+        if (fallowSinceTick == 0L) {
+            fallowSinceTick = now;
+        }
+        clearBlight();
+        return true;
+    }
+
+    private boolean isMonocropStreak() {
+        if (cropHistory.size() < BLIGHT_MONOCROP_STREAK) return false;
+        int n = cropHistory.size();
+        CropFamily first = CropFamily.of(CropType.valueOf(
+                cropHistory.get(n - 1)));
+        for (int i = 2; i <= BLIGHT_MONOCROP_STREAK; i++) {
+            CropFamily other = CropFamily.of(CropType.valueOf(
+                    cropHistory.get(n - i)));
+            if (other != first) return false;
+        }
+        return true;
     }
 
     /**

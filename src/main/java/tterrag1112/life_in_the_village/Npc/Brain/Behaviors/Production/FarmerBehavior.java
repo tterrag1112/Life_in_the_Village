@@ -461,7 +461,12 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 ? WeatherContext.frostYieldMultiplier(level, cropPos,
                         harvestedPlot.getCropType().coldTolerance())
                 : 1.0f;
-        float yieldMult = seasonMult * soilMult * weatherMult * droughtMult * frostMult;
+        // Phase 6.3.3.k.4 — blight cuts yield in half regardless of
+        // other modifiers.
+        float blightMult = (harvestedPlot != null && harvestedPlot.isBlighted())
+                ? FarmPlot.BLIGHT_YIELD_MULT : 1.0f;
+        float yieldMult = seasonMult * soilMult * weatherMult
+                * droughtMult * frostMult * blightMult;
 
         for (ItemStack drop : drops) {
             int scaledCount = 0;
