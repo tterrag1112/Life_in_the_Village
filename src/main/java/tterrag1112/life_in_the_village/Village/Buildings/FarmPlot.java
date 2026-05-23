@@ -212,15 +212,22 @@ public class FarmPlot {
                     BlockPos.CODEC.listOf()
                             .optionalFieldOf("polygonVertices", List.of())
                             .forGetter(p -> p.polygon == null ? List.of()
-                                    : p.polygon.vertices())
+                                    : p.polygon.vertices()),
+                    // Detour A — owning complex (replaces sectorId once
+                    // Stage 5 retires the sector system). Optional; pre-
+                    // Detour-A plots load with no complex.
+                    Codec.STRING.xmap(UUID::fromString, UUID::toString)
+                            .optionalFieldOf("complexId")
+                            .forGetter(p -> Optional.ofNullable(p.complexId))
             ).apply(instance, (id, name, origin, radius, cropType, farmhouseId,
-                              subtype, sectorId, polygonVertices) -> {
+                              subtype, sectorId, polygonVertices, complexId) -> {
                 FarmPlot plot = new FarmPlot(id, name, origin, radius, cropType, subtype);
                 farmhouseId.ifPresent(plot::setFarmhouseId);
                 sectorId.ifPresent(plot::setSectorId);
                 if (polygonVertices != null && polygonVertices.size() >= 3) {
                     plot.setPolygon(new Polygon(polygonVertices));
                 }
+                complexId.ifPresent(plot::setComplexId);
                 return plot;
             })
     );
@@ -242,6 +249,10 @@ public class FarmPlot {
     /** B2.5 — terrain-following polygon. Null falls back to the
      *  legacy circle-via-origin/radius used by {@link #contains}. */
     private       Polygon   polygon;
+    /** Detour A — owning complex (replaces {@link #sectorId} once
+     *  Stage 5 retires the sector system). Null for pre-Detour-A
+     *  plots or for plots not yet associated with a complex. */
+    private       UUID      complexId;
 
 
     public FarmPlot(UUID id, String name, BlockPos origin,
@@ -348,4 +359,7 @@ public class FarmPlot {
 
     public Polygon getPolygon() { return polygon; }
     public void setPolygon(Polygon polygon) { this.polygon = polygon; }
+
+    public UUID getComplexId() { return complexId; }
+    public void setComplexId(UUID complexId) { this.complexId = complexId; }
 }
