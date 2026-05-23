@@ -46,7 +46,24 @@ public final class BspSubdivider {
             int targetPlotCount,
             Map<CropType, Float> plotTypeMix,
             int cellSize,
-            long seed) {}
+            long seed,
+            /** When true, BspSubdivider emits one log line at the
+             *  start of {@link #run} showing the effective
+             *  targetPlotCount, regionArea, stopArea, and
+             *  minSideBlocks; plus a summary line at the end with
+             *  leaf / plot / dropped counts. Off in production. */
+            boolean verbose) {
+
+        /** Backward-compat ctor for callers that don't yet pass
+         *  the verbose flag. */
+        public Input(Polygon region, Polygon buildingBounds,
+                     int minPlotSize, int targetPlotCount,
+                     Map<CropType, Float> plotTypeMix,
+                     int cellSize, long seed) {
+            this(region, buildingBounds, minPlotSize, targetPlotCount,
+                    plotTypeMix, cellSize, seed, false);
+        }
+    }
 
     public record Result(List<PlotPlan> plots, int droppedTooSmall) {}
 
@@ -60,6 +77,21 @@ public final class BspSubdivider {
         double targetPlotArea = (regionArea / in.targetPlotCount()) * 1.5;
         double stopArea = Math.max(targetPlotArea,
                 in.minPlotSize() * (double) in.cellSize() * 2);
+        int minSideBlocks = in.minPlotSize() * in.cellSize();
+
+        if (in.verbose()) {
+            org.slf4j.LoggerFactory.getLogger(BspSubdivider.class).info(
+                    "BspSubdivider.run: targetPlotCount={} minPlotSize={} cellSize={} "
+                            + "regionArea={} bbox=[{},{}..{},{}] ({}x{}) "
+                            + "targetPlotArea={} stopArea={} minSideBlocks={} "
+                            + "(cut requires width≥{})",
+                    in.targetPlotCount(), in.minPlotSize(), in.cellSize(),
+                    (int) regionArea,
+                    bb.minX(), bb.minZ(), bb.maxX(), bb.maxZ(),
+                    bb.maxX() - bb.minX(), bb.maxZ() - bb.minZ(),
+                    (int) targetPlotArea, (int) stopArea, minSideBlocks,
+                    2 * minSideBlocks);
+        }
 
         Random rng = new Random(in.seed());
 
@@ -67,8 +99,14 @@ public final class BspSubdivider {
         List<int[]> leaves = new ArrayList<>();
         recurse(new int[]{bb.minX(), bb.minZ(), bb.maxX(), bb.maxZ()},
                 /*axisToggle*/ chooseFirstAxis(bb),
-                stopArea, in.minPlotSize() * in.cellSize(),
+                stopArea, minSideBlocks,
                 rng, leaves);
+
+        if (in.verbose()) {
+            org.slf4j.LoggerFactory.getLogger(BspSubdivider.class).info(
+                    "BspSubdivider.run: recursion produced {} leaf rect(s)",
+                    leaves.size());
+        }
 
         // Sample membership: cells inside region polygon AND outside
         // buildingBounds belong to that leaf. Cell coords are
@@ -113,6 +151,11 @@ public final class BspSubdivider {
         // — when the planned type matches a same-axis-adjacent
         // plot's type, re-roll once.
         List<PlotPlan> typed = assignCrops(plots, in.plotTypeMix(), rng);
+        if (in.verbose()) {
+            org.slf4j.LoggerFactory.getLogger(BspSubdivider.class).info(
+                    "BspSubdivider.run: post-clip plots={} dropped(<minPlotSize)={}",
+                    typed.size(), dropped);
+        }
         return new Result(typed, dropped);
     }
 

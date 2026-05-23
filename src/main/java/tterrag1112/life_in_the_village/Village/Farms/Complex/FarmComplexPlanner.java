@@ -225,6 +225,13 @@ public final class FarmComplexPlanner {
             // small plots.
             targetPlotCount = Math.max(2, targetPlotCount / 2);
         }
+        if (in.verbose()) {
+            org.slf4j.LoggerFactory.getLogger(FarmComplexPlanner.class).info(
+                    "FarmComplexPlanner: spec.targetPlotCount={} fill.tight={} "
+                            + "fill.cellsClaimed={} → BSP targetPlotCount={}",
+                    spec.targetPlotCount(), fill.tight(),
+                    fill.cellsClaimed(), targetPlotCount);
+        }
         BspSubdivider.Result bsp = BspSubdivider.run(new BspSubdivider.Input(
                 fill.region(),
                 footprintPoly,
@@ -232,7 +239,8 @@ public final class FarmComplexPlanner {
                 targetPlotCount,
                 spec.plotTypeMix(),
                 in.fmap().cellSize(),
-                in.seed()));
+                in.seed(),
+                in.verbose()));
         if (bsp.plots().isEmpty()) {
             return PlanResult.fail(Status.NO_VIABLE_PLOTS,
                     "BSP produced zero plots above minPlotSize=" + spec.minPlotSize()
