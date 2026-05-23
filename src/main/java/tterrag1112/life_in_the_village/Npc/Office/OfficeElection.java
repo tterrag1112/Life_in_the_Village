@@ -271,12 +271,12 @@ public final class OfficeElection {
         state.set(officeId, holding);
         markDirty(orgType, orgId, level, vdata);
         emitChangeEvents(level, orgType, orgId, def, previous, holding);
-        return true;
         // Track D3.3b — kingdom-tier office grants ennoblement to
         // commoner appointees. No-op for non-kingdom seats and for
         // already-ranked NPCs.
         tterrag1112.life_in_the_village.Npc.Nobility.OfficeAppointmentEnnoblement
                 .onSeat(orgType, orgId, officeId, npcId, level);
+        return true;
     }
 
     // ── Vacancy hooks (death / migration / resignation) ────────────────────
