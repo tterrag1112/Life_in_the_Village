@@ -50,6 +50,22 @@ public class BuildingRoster {
      *  are physically pens / homestead facilities. {@code null} means
      *  no binding — realize at the building center (legacy). */
     private UUID boundPlotId;
+    /** Phase 6.3.3.k.5 — predator-pressure counter. Incremented by
+     *  PredatorScanBehavior when wolves / foxes are detected near
+     *  this building's animal-keeping rosters. Decays a tick per
+     *  roster cycle (per 200t) when not refreshed; drives the
+     *  simulated-mode attrition roll in {@link #tick}. Capped at
+     *  {@link #HAZARD_COUNTER_MAX} so a long siege doesn't infinitely
+     *  inflate the kill chance. */
+    private int hazardCounter;
+
+    /** Hard cap on {@link #hazardCounter}. */
+    public static final int HAZARD_COUNTER_MAX = 10;
+    /** Per-roster-cycle attrition chance multiplier per hazard point.
+     *  At hazardCounter == 10 this gives a 50% chance per cycle per
+     *  simulated adult animal, which is severe enough to register
+     *  but not instantly catastrophic on a 200t cadence. */
+    public static final float HAZARD_ATTRITION_PER_POINT = 0.05f;
 
     public BuildingRoster(UUID buildingId, Identifier rosterDefinitionId) {
         this.buildingId = buildingId;
@@ -59,12 +75,14 @@ public class BuildingRoster {
     private BuildingRoster(UUID buildingId, Identifier rosterDefinitionId,
                            List<RosterSlot> initial,
                            long lastProductionTick, long lastBreedTick,
-                           Optional<UUID> boundPlotId) {
+                           Optional<UUID> boundPlotId,
+                           int hazardCounter) {
         this(buildingId, rosterDefinitionId);
         if (initial != null) this.slots.addAll(initial);
         this.lastProductionTick = lastProductionTick;
         this.lastBreedTick      = lastBreedTick;
         this.boundPlotId        = boundPlotId.orElse(null);
+        this.hazardCounter      = Math.max(0, Math.min(HAZARD_COUNTER_MAX, hazardCounter));
     }
 
     public UUID buildingId()                 { return buildingId; }
@@ -73,12 +91,20 @@ public class BuildingRoster {
     public long lastProductionTick()         { return lastProductionTick; }
     public long lastBreedTick()              { return lastBreedTick; }
     public Optional<UUID> boundPlotId()      { return Optional.ofNullable(boundPlotId); }
+    public int hazardCounter()               { return hazardCounter; }
 
     /** Phase 6.3.3.j.3 — bind the roster to a specific plot. Set by
      *  {@code PastureRotation.chooseAndBindActivePen} on rotation;
      *  {@code null} clears the binding. */
     public void bindToPlot(UUID plotId)      { this.boundPlotId = plotId; }
     public void clearPlotBinding()           { this.boundPlotId = null; }
+
+    /** Phase 6.3.3.k.5 — bumps the hazard counter (capped). Called by
+     *  PredatorScanBehavior when a wolf / fox is detected within
+     *  range of the building. */
+    public void recordHazard() {
+        if (hazardCounter < HAZARD_COUNTER_MAX) hazardCounter++;
+    }
 
     /** Resolves the definition from {@link RosterRegistry}. */
     public Optional<RosterDefinition> definition() {
@@ -183,6 +209,35 @@ public class BuildingRoster {
             onBreed(slots.get(slots.size() - 1));
             lastBreedTick = now;
         });
+
+        // Phase 6.3.3.k.5 — predator attrition (simulated-mode).
+        // When the building has accumulated predator pressure and at
+        // least one slot, roll for a single-animal loss. Realized
+        // animals don't go through this path — the entity-death
+        // bridge in RosterChunkLoadHandler handles real predator
+        // kills. Each tick also bleeds 1 hazard point so a single
+        // wolf sighting fades naturally over time.
+        if (hazardCounter > 0) {
+            if (!slots.isEmpty()) {
+                var rng = new java.util.Random(now ^ buildingId.getMostSignificantBits());
+                float lossChance = HAZARD_ATTRITION_PER_POINT * hazardCounter;
+                if (rng.nextFloat() < lossChance) {
+                    // Prefer simulated slots — realized animals are
+                    // handled by the death bridge.
+                    int targetIdx = -1;
+                    for (int i = 0; i < slots.size(); i++) {
+                        if (slots.get(i) instanceof RosterSlot.Simulated) {
+                            targetIdx = i;
+                            break;
+                        }
+                    }
+                    if (targetIdx >= 0) {
+                        removeAt(targetIdx);
+                    }
+                }
+            }
+            hazardCounter--;
+        }
     }
 
     /**
@@ -309,6 +364,11 @@ public class BuildingRoster {
             // cleanly without the field and round-trip without it
             // until a binding is set.
             UUIDUtil.CODEC.optionalFieldOf("boundPlotId")
-                    .forGetter(BuildingRoster::boundPlotId)
+                    .forGetter(BuildingRoster::boundPlotId),
+            // Phase 6.3.3.k.5 — predator-pressure counter. Pre-k
+            // rosters load as 0; the predator scan re-populates as
+            // wolves / foxes are observed.
+            Codec.INT.optionalFieldOf("hazardCounter", 0)
+                    .forGetter(BuildingRoster::hazardCounter)
     ).apply(i, BuildingRoster::new));
 }

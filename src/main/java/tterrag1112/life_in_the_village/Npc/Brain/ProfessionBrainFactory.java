@@ -114,16 +114,33 @@ public final class ProfessionBrainFactory {
 
         // FARMER + FARMHAND: separate behaviors per separate Goal classes.
         // FarmerBehavior includes the inlined PostJob periodic side-effect.
-        REGISTRARS.put(Profession.FARMER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new FarmerBehavior())));
+        // Phase 6.3.3.k.5 — also wire the predator scan (CORE: always-on)
+        // and reuse GuardMeleeAttackBehavior in FIGHT so a farmer that
+        // detects a wolf near their pen can defend the herd. Scan sets
+        // ATTACK_TARGET only when the NPC is skill-qualified; children
+        // and unskilled farmhands have hazard recorded but don't engage.
+        REGISTRARS.put(Profession.FARMER, (npc, brain) -> {
+            brain.addActivity(NpcActivities.WORK.get(), 0,
+                    ImmutableList.of(new FarmerBehavior()));
+            brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
+                    ImmutableList.of(new tterrag1112.life_in_the_village.Npc
+                            .Brain.Behaviors.Civic.PredatorScanBehavior()));
+            brain.addActivity(NpcActivities.FIGHT.get(), 0,
+                    ImmutableList.of(new GuardMeleeAttackBehavior()));
+        });
         // Phase 6.3.3.f — FARMHAND consolidated into FARMER as the
         // APPRENTICE tier; the dedicated FarmhandBehavior was deleted.
         // Profession.FARMHAND remains as a @Deprecated load-time alias
         // (save migration rewrites FARMHAND-tagged NPCs to FARMER).
-        REGISTRARS.put(Profession.FARMHAND, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new FarmerBehavior())));
+        REGISTRARS.put(Profession.FARMHAND, (npc, brain) -> {
+            brain.addActivity(NpcActivities.WORK.get(), 0,
+                    ImmutableList.of(new FarmerBehavior()));
+            brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
+                    ImmutableList.of(new tterrag1112.life_in_the_village.Npc
+                            .Brain.Behaviors.Civic.PredatorScanBehavior()));
+            brain.addActivity(NpcActivities.FIGHT.get(), 0,
+                    ImmutableList.of(new GuardMeleeAttackBehavior()));
+        });
 
         // MINER: single behavior with inlined ChannelRouter procurement
         // (BuyFromNpc fold) and CARGO_DESTINATION-based sell handoff.
