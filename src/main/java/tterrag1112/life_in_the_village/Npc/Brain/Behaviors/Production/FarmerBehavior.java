@@ -88,8 +88,15 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     /** Phase 6.3.3.e.3 — tick of the most recent FarmRoleAssigner run.
      *  The assigner was orphan (no caller) pre-6.3.3.e; this gates a
      *  daily reassignment cadence so role distribution stays current
-     *  as workers come and go. */
-    private long  lastRoleAssignTick = Long.MIN_VALUE;
+     *  as workers come and go.
+     *  Phase 6.3.3.n.2 — sentinel changed from {@code Long.MIN_VALUE}
+     *  to {@code 0L}. The previous sentinel made {@code now -
+     *  Long.MIN_VALUE} overflow to a negative diff via two's
+     *  complement (Java's {@code -Long.MIN_VALUE == Long.MIN_VALUE}
+     *  quirk), so the cadence check {@code >= INTERVAL} was
+     *  permanently false and role assignment never fired. Treated
+     *  here as "never run yet"; first-call guard at the trigger site. */
+    private long  lastRoleAssignTick = 0L;
     private static final long ROLE_ASSIGN_INTERVAL = 24000L;
 
     private Building            farmhouse;
@@ -204,11 +211,18 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // Phase 6.3.3.e.3 — periodic FarmRoleAssigner run (every in-game
         // day). The assigner was orphan pre-6.3.3.e; this is the single
         // call site that brings role distribution to life.
+        // Phase 6.3.3.n.2 — explicit first-call guard: lastRoleAssignTick
+        // == 0L signals "never run yet" and fires immediately, then the
+        // daily cadence takes over. Replaces the Long.MIN_VALUE sentinel
+        // that two's-complement-overflowed the diff check to negative.
         long now = level.getGameTime();
-        if (now - lastRoleAssignTick >= ROLE_ASSIGN_INTERVAL) {
+        boolean firstAssign = lastRoleAssignTick == 0L;
+        if (firstAssign || now - lastRoleAssignTick >= ROLE_ASSIGN_INTERVAL) {
             tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer
                     .FarmRoleAssigner.assignRoles(level, farmhouse);
-            lastRoleAssignTick = now;
+            // Math.max(now, 1L) prevents accidentally re-pinning to the
+            // 0L "never run" sentinel on tick 0 of a fresh world.
+            lastRoleAssignTick = Math.max(now, 1L);
         }
 
         // Gather crop plots assigned to this farmhouse.
