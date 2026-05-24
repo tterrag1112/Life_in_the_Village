@@ -145,6 +145,10 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     private boolean loggedHarvestImmature    = false;
     private boolean loggedHarvestBroke       = false;
     private boolean loggedHarvestExhausted   = false;
+    /** Phase 6.3.3.r — captures navigation state on first walking
+     *  attempt so the LOG can distinguish "path not computed" from
+     *  "path computed but not progressing". */
+    private boolean loggedHarvestNavState    = false;
     /** Phase 6.3.3.h.2 — CROP_FARMING skill threshold at which a
      *  non-APPRENTICE farmer starts proactively rotating. Matches the
      *  "intermediate apprentice" milestone (level 40). */
@@ -575,6 +579,31 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             }
             entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     cropPos.getX(), cropPos.getY(), cropPos.getZ(), 1.0));
+            // Phase 6.3.3.r — also drive the navigation directly. The
+            // setMemory above is the Brain idiom (MoveToTargetSink in
+            // CORE consumes it). The direct moveTo here is the goal-
+            // system idiom and acts as a backstop: it returns false
+            // when pathfinding can't compute a route, which the log
+            // surfaces, AND it forces the navigation to start even if
+            // MoveToTargetSink misses the memory write this tick (race
+            // with other CORE behaviors / pruning). Path is centered on
+            // the block (+0.5 X/Z) so the NPC targets the block centre,
+            // not the NW corner — matches the standard vanilla pattern.
+            boolean started = entity.getNavigation().moveTo(
+                    cropPos.getX() + 0.5, cropPos.getY(), cropPos.getZ() + 0.5, 1.0);
+            if (!loggedHarvestNavState) {
+                var path = entity.getNavigation().getPath();
+                LOGGER.warn("[FarmerBehavior] {} HARVESTING nav state: " +
+                        "moveTo returned {}, path={}, isInProgress={}. " +
+                        "moveTo=false OR path=null means pathfinding cannot " +
+                        "reach the target — terrain / farm-complex border " +
+                        "is likely blocking ground-level access.",
+                        entity.getNpcName(), started,
+                        path == null ? "null"
+                                : "len=" + path.getNodeCount() + " reachable=" + path.canReach(),
+                        entity.getNavigation().isInProgress());
+                loggedHarvestNavState = true;
+            }
             return;
         }
 
