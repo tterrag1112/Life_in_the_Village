@@ -377,7 +377,17 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // don't sell). Their loop ends here with goIdle when there's
         // nothing harvestable / replantable on their plot.
         if (!isApprentice) {
-            if (needsSeeds(level) && canPlant(role)) {
+            // Phase 6.3.3.n.4 — seed gate philosophy: BUYING_SEEDS only
+            // fires when a market actually exists to buy from. A
+            // no-market village (fresh world, distant outpost) skips
+            // the phase entirely and falls through to tryHandOffToSell
+            // / goIdle rather than entering buySeeds() just to
+            // goIdle on the missing-market check. The plot stays
+            // un-replanted this cycle and is picked up next cycle if
+            // seeds become available; the farmer never deadlocks
+            // pursuing seeds they can't acquire.
+            if (needsSeeds(level) && canPlant(role)
+                    && ProductionHelpers.findMarketInVillage(entity, level).isPresent()) {
                 phase = Phase.BUYING_SEEDS;
                 return;
             }
@@ -1034,11 +1044,26 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
 
 
+    /**
+     * Phase 6.3.3.n.4 — seed-deficit probe. Returns true when at
+     * least one assigned plot is short on seeds AND the farmer can
+     * afford to buy the deficit. Accounts for seeds already in
+     * personal inventory (a farmer carrying carrot seeds from a
+     * previous trip doesn't trigger a redundant market run) in
+     * addition to farmhouse storage.
+     *
+     * <p>The market-existence check is intentionally NOT inside this
+     * probe — analyze() gates BUYING_SEEDS on
+     * {@link ProductionHelpers#findMarketInVillage} so a no-market
+     * village skips the phase cleanly without entering it just to
+     * deadlock in buySeeds().</p>
+     */
     private boolean needsSeeds(ServerLevel level) {
         if (farmhouse == null) return false;
         for (FarmPlot plot : assignedPlots) {
             Item seedItem = plot.getCropType().resolveSeedItem();
-            int available = countSeedsInFarmhouse(level, seedItem);
+            int available = countSeedsInFarmhouse(level, seedItem)
+                    + countSeedsInPersonalInventory(seedItem);
             int needed = plot.getFarmlandBlocks(level).size();
             if (available < needed) {
                 long pricePerSeed = VillageEconomy.getBasePrice(seedItem);
@@ -1048,6 +1073,21 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             }
         }
         return false;
+    }
+
+    /** Phase 6.3.3.n.4 — counts the farmer's personal-inventory
+     *  seeds of {@code seedItem}. Saves a market trip when the
+     *  farmer already carries enough seed from a previous purchase. */
+    private int countSeedsInPersonalInventory(Item seedItem) {
+        int total = 0;
+        SimpleContainer inv = entity.getPersonalInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack stack = inv.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() == seedItem) {
+                total += stack.getCount();
+            }
+        }
+        return total;
     }
 
     private int countSeedsInFarmhouse(ServerLevel level, Item seedItem) {
