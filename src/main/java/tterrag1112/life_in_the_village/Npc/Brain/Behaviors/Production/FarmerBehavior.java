@@ -509,6 +509,18 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 toReplant.add(cropPos);
             }
         }
+        // Phase 6.3.3.s.2 — also queue dirt-needs-tilling positions so
+        // the farmer recovers plots with bare dirt (newly generated,
+        // trampled, or otherwise without farmland). replant() handles
+        // till-then-plant in-place when it sees dirt under cropPos.
+        for (BlockPos dirt : plot.getTillableSurfaces(level)) {
+            BlockPos cropPos = dirt.above();
+            // Defensive — getTillableSurfaces already checks air above,
+            // but blocks can change between scan + work.
+            if (level.getBlockState(cropPos).isAir()) {
+                toReplant.add(cropPos);
+            }
+        }
     }
 
     private boolean canHarvest(FarmRole role) {
@@ -817,9 +829,31 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
-        if (!(level.getBlockState(targetPos.below()).getBlock() instanceof FarmBlock)) {
-            toReplant.remove(0);
-            return;
+        // Phase 6.3.3.s.2 — till dirt-then-plant. If the surface below
+        // isn't farmland but IS dirt / grass, till in place to FARMLAND
+        // and continue with the plant. Damages the hoe (m.3 path); no
+        // hoe == bare-hands tilling, lower productivity via the m.3
+        // multiplier ladder (already applied in harvest yield). Any
+        // surface that's neither farmland nor tillable (stone, sand,
+        // fence, water, etc.) — skip the position entirely.
+        BlockState belowState = level.getBlockState(targetPos.below());
+        if (!(belowState.getBlock() instanceof FarmBlock)) {
+            boolean tillable = belowState.is(net.minecraft.tags.BlockTags.DIRT)
+                    || belowState.getBlock() instanceof
+                        net.minecraft.world.level.block.GrassBlock;
+            if (!tillable) {
+                toReplant.remove(0);
+                return;
+            }
+            level.setBlock(targetPos.below(),
+                    Blocks.FARMLAND.defaultBlockState(), 3);
+            ToolUseSupport.useToolFromInventory(entity,
+                    FarmerBehavior::isHoe, level, InteractionHand.MAIN_HAND);
+            entity.swing(InteractionHand.MAIN_HAND);
+            level.playSound(null, targetPos.below(),
+                    SoundEvents.HOE_TILL, SoundSource.BLOCKS, 1.0f, 1.0f);
+            // Continue to the planting step below — the position is
+            // now farmland with air above, ready for a seed.
         }
 
         FarmPlot plot = findPlotContaining(level, targetPos);

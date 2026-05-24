@@ -441,6 +441,71 @@ public class FarmPlot {
         return result;
     }
 
+    /**
+     * Phase 6.3.3.s.2 — sibling to {@link #getFarmlandBlocks}.
+     * Returns positions in the plot bounds where the surface block is
+     * dirt or grass (i.e., tillable to farmland) AND the air block
+     * above is clear (i.e., a crop could be planted after tilling).
+     *
+     * <p>Used by {@code FarmerBehavior.scanPlotForTasks} so the
+     * farmer queues dirt-needs-tilling positions alongside the
+     * normal replant queue. Without this scan, a plot with bare
+     * dirt (newly generated, trampled, or otherwise reverted from
+     * farmland) would never be worked — the existing scan only
+     * sees positions where farmland already exists.</p>
+     *
+     * <p>Returns the surface (dirt/grass) position; the crop will
+     * be planted at {@code surface.above()} after tilling.</p>
+     */
+    public java.util.List<BlockPos> getTillableSurfaces(
+            net.minecraft.server.level.ServerLevel level) {
+        java.util.List<BlockPos> result = new java.util.ArrayList<>();
+        int minX, maxX, minZ, maxZ;
+        if (polygon != null && !polygon.vertices().isEmpty()) {
+            int xmn = Integer.MAX_VALUE, xmx = Integer.MIN_VALUE;
+            int zmn = Integer.MAX_VALUE, zmx = Integer.MIN_VALUE;
+            for (BlockPos v : polygon.vertices()) {
+                xmn = Math.min(xmn, v.getX()); xmx = Math.max(xmx, v.getX());
+                zmn = Math.min(zmn, v.getZ()); zmx = Math.max(zmx, v.getZ());
+            }
+            minX = xmn; maxX = xmx; minZ = zmn; maxZ = zmx;
+        } else {
+            minX = origin.getX() - radius;
+            maxX = origin.getX() + radius;
+            minZ = origin.getZ() - radius;
+            maxZ = origin.getZ() + radius;
+        }
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                BlockPos surface = new BlockPos(x, origin.getY(), z);
+                if (!contains(surface)) continue;
+                for (int dy = -3; dy <= 3; dy++) {
+                    BlockPos check = surface.offset(0, dy, 0);
+                    net.minecraft.world.level.block.state.BlockState state =
+                            level.getBlockState(check);
+                    boolean tillable = state.is(net.minecraft.tags.BlockTags.DIRT)
+                            || state.getBlock() instanceof
+                                net.minecraft.world.level.block.GrassBlock;
+                    // FarmBlock extends Block (not in DIRT tag) — exclude
+                    // it explicitly so this method doesn't overlap with
+                    // getFarmlandBlocks.
+                    if (state.getBlock() instanceof
+                            net.minecraft.world.level.block.FarmBlock) break;
+                    if (tillable) {
+                        // Clear air above is required so a crop can be
+                        // planted post-till; skip if blocked by snow,
+                        // grass, sapling, etc.
+                        if (level.getBlockState(check.above()).isAir()) {
+                            result.add(check);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
     public enum PlotSubtype {
         /** Traditional crop field with farmland and crops */
         CROP_FIELD,
