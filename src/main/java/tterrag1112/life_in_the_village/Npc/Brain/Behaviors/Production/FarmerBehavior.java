@@ -608,7 +608,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                         "(age={}, max={}). scanPlotForTasks should have filtered this; " +
                         "may indicate per-tick growth race or stale queue entries.",
                         entity.getNpcName(), cropPos.toShortString(),
-                        state.getValue(crop.getAgeProperty()), crop.getMaxAge());
+                        crop.getAge(state), crop.getMaxAge());
                 loggedHarvestImmature = true;
             }
             toHarvest.remove(0);
