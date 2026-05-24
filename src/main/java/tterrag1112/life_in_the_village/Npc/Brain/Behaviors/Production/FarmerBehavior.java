@@ -117,6 +117,18 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     /** Phase 6.3.3.n.3 — one-shot guard so the "null role fallback"
      *  warning only fires once per behavior instance, not every tick. */
     private boolean warnedNullRole = false;
+
+    // Phase 6.3.3.o.3 — one-shot diagnostic flags for the early-exit
+    // gates in checkExtraStartConditions. Each gate's first trigger
+    // per behavior instance emits a LOGGER.warn naming the gate, then
+    // sets the matching flag to suppress repeats. The n.3 warning
+    // lives INSIDE analyze(), so n.3 silence means one of these gates
+    // is firing first — having them named makes that diagnosis
+    // immediate instead of requiring an attach-debugger pass.
+    private boolean warnedNoNav        = false;
+    private boolean warnedNotServer    = false;
+    private boolean warnedOffWorkTime  = false;
+    private boolean warnedNoBuilding   = false;
     /** Phase 6.3.3.h.2 — CROP_FARMING skill threshold at which a
      *  non-APPRENTICE farmer starts proactively rotating. Matches the
      *  "intermediate apprentice" milestone (level 40). */
@@ -155,11 +167,55 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
-        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
-        if (!(entity.level() instanceof ServerLevel)) return false;
+        // Phase 6.3.3.o.3 — per-gate one-shot diagnostic logging. Each
+        // early-exit point names itself in the LOG so a stuck FARMER
+        // can be diagnosed without an attach-debugger pass. Gates are
+        // checked in the same order as before; only the warning calls
+        // are new. Idle-cooldown is intentionally NOT logged (it's a
+        // normal between-cycle pause, not a stuck state).
+        if (!BrainNavGuard.canSteerNavigation(entity)) {
+            if (!warnedNoNav) {
+                LOGGER.warn("[FarmerBehavior] {} blocked: BrainNavGuard denies "
+                        + "navigation (combat / sit / lock / other steering claim).",
+                        entity.getNpcName());
+                warnedNoNav = true;
+            }
+            return false;
+        }
+        if (!(entity.level() instanceof ServerLevel)) {
+            if (!warnedNotServer) {
+                LOGGER.warn("[FarmerBehavior] {} blocked: entity.level() is not "
+                        + "a ServerLevel (unexpected — behavior shouldn't run client-side).",
+                        entity.getNpcName());
+                warnedNotServer = true;
+            }
+            return false;
+        }
         if (idleCooldown > 0) { idleCooldown--; return false; }
-        if (!entity.isWorkTime()) return false;
-        return entity.getAssignedBuildingId().isPresent();
+        if (!entity.isWorkTime()) {
+            if (!warnedOffWorkTime) {
+                LOGGER.warn("[FarmerBehavior] {} blocked: outside work hours "
+                        + "(profession={}, schedule says no work this tick). If this "
+                        + "persists past a full daily cycle the schedule itself is "
+                        + "the bug, not a temporary off-hours pause.",
+                        entity.getNpcName(), entity.getProfession());
+                warnedOffWorkTime = true;
+            }
+            return false;
+        }
+        if (entity.getAssignedBuildingId().isEmpty()) {
+            if (!warnedNoBuilding) {
+                LOGGER.warn("[FarmerBehavior] {} blocked: assignedBuildingId is "
+                        + "empty. VillageInhabitantPopulator.spawnNpcInBuilding "
+                        + "should have set this at spawn — investigate whether the "
+                        + "NPC was created outside that path (manual spawn? mod "
+                        + "interaction?) or whether NBT load lost the field.",
+                        entity.getNpcName());
+                warnedNoBuilding = true;
+            }
+            return false;
+        }
+        return true;
     }
 
     @Override
