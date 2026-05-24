@@ -74,6 +74,18 @@ public final class FarmDebugCommand {
                                                         StringArgumentType.string())
                                                 .executes(ctx -> testSpawn(ctx,
                                                         StringArgumentType.getString(ctx, "name")))))
+                                // Phase 6.3.3.m.2 — building-scoped plot
+                                // listing. Argument is a building UUID
+                                // (full or 8-char prefix); resolves to a
+                                // FARMHOUSE and dumps its registered plots
+                                // with soil / history / fallow / blight
+                                // state. Used to diagnose plot-registration
+                                // failures ("farmer has no plots to work").
+                                .then(Commands.literal("plots")
+                                        .then(Commands.argument("building",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> listPlotsForBuilding(ctx,
+                                                        StringArgumentType.getString(ctx, "building")))))
                                 .then(Commands.argument("village",
                                                 StringArgumentType.string())
                                         .executes(ctx -> list(ctx,
@@ -167,6 +179,128 @@ public final class FarmDebugCommand {
     private static String shortId(UUID id) {
         if (id == null) return "(null)";
         return id.toString().substring(0, 8);
+    }
+
+    // =========================================================================
+    // Phase 6.3.3.m.2 — /liv farms plots <building>
+    // =========================================================================
+
+    /**
+     * Lists every {@link FarmPlot} registered to {@code buildingArg}.
+     * Argument accepts a full UUID or an 8-char prefix; if multiple
+     * buildings match the prefix, the command fails with the candidate
+     * list. Output shows plot subtype, crop, soil quality, fallow /
+     * blight state, last 3 history entries, and tick-age of the most
+     * recent compost / fallow / blight event in in-game days.
+     *
+     * <p>Primary use: diagnose "farmer has no plots to work" — if this
+     * command returns "0 plots" for a FARMHOUSE that has farmers
+     * assigned to it, the plot-registration path (FarmComplexPlanner
+     * → VillageSavedData.addFarmPlot) didn't fire.</p>
+     */
+    private static int listPlotsForBuilding(CommandContext<CommandSourceStack> ctx,
+                                            String buildingArg) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/liv farms plots must be run on a server level."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+
+        UUID buildingId = resolveBuildingId(data, buildingArg, ctx);
+        if (buildingId == null) return 0;
+
+        var b = data.getBuildingById(buildingId).orElse(null);
+        if (b == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Building " + shortId(buildingId) + " not found in VillageSavedData."));
+            return 0;
+        }
+
+        List<FarmPlot> plots = data.getFarmPlotsForFarmhouse(buildingId);
+        long now = level.getGameTime();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Building ").append(shortId(buildingId))
+                .append(" (").append(b.getType().name()).append(") — ")
+                .append(plots.size()).append(" plot(s)");
+        if (b.getType() != tterrag1112.life_in_the_village.Village.Buildings
+                .BuildingType.FARMHOUSE) {
+            sb.append("\n  WARNING: not a FARMHOUSE — farmers only resolve plots ")
+                    .append("via FARMHOUSE assignment");
+        }
+        sb.append("\n");
+
+        if (plots.isEmpty()) {
+            sb.append("  no FarmPlot records registered to this building.\n")
+                    .append("  Probable causes: FarmComplexPlanner never ran for ")
+                    .append("this farmhouse's village, or planner ran but didn't ")
+                    .append("call addFarmPlot. Cross-check /liv farms <village>.\n");
+        } else {
+            for (FarmPlot p : plots) {
+                sb.append("  ").append(shortId(p.getId()))
+                        .append("  subtype=").append(p.getSubtype().name())
+                        .append("  crop=").append(p.getCropType().name())
+                        .append("  soil=").append(String.format("%.2f", p.getSoilQuality()));
+                if (p.isFallow()) {
+                    long days = (now - p.getFallowSinceTick()) / 24000L;
+                    sb.append("  FALLOW(").append(days).append("d)");
+                }
+                if (p.isBlighted()) {
+                    long days = (now - p.getBlightSinceTick()) / 24000L;
+                    sb.append("  BLIGHT(").append(days).append("d)");
+                }
+                if (p.getLastCompostedTick() > 0L) {
+                    long days = (now - p.getLastCompostedTick()) / 24000L;
+                    sb.append("  composted=").append(days).append("d ago");
+                }
+                List<String> history = p.getCropHistory();
+                if (!history.isEmpty()) {
+                    int start = Math.max(0, history.size() - 3);
+                    sb.append("  history=[");
+                    for (int i = start; i < history.size(); i++) {
+                        if (i > start) sb.append(",");
+                        sb.append(history.get(i));
+                    }
+                    sb.append("]");
+                }
+                sb.append("\n");
+            }
+        }
+
+        ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
+        return plots.size();
+    }
+
+    /**
+     * Resolves a building UUID from a string that's either a full UUID
+     * or an 8-char prefix. Sends a failure component on the source and
+     * returns {@code null} when resolution fails / is ambiguous.
+     */
+    private static UUID resolveBuildingId(VillageSavedData data, String arg,
+                                          CommandContext<CommandSourceStack> ctx) {
+        // Full UUID path.
+        try {
+            return UUID.fromString(arg);
+        } catch (IllegalArgumentException ignore) { /* try prefix below */ }
+        // Prefix path — find matching buildings.
+        List<UUID> matches = new java.util.ArrayList<>();
+        for (var b : data.getAllBuildings()) {
+            if (b.getId().toString().startsWith(arg)) matches.add(b.getId());
+        }
+        if (matches.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No building UUID matches '" + arg + "'."));
+            return null;
+        }
+        if (matches.size() > 1) {
+            StringBuilder msg = new StringBuilder(
+                    "Ambiguous prefix '" + arg + "' — " + matches.size() + " matches:");
+            for (UUID id : matches) msg.append("\n  ").append(id);
+            ctx.getSource().sendFailure(Component.literal(msg.toString()));
+            return null;
+        }
+        return matches.get(0);
     }
 
     // =========================================================================
