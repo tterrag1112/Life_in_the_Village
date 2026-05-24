@@ -99,10 +99,16 @@ public final class FarmComplexPlanner {
              *  arable score, and the threshold + which gate rejected.
              *  Off in production spawn (no log spam on every spawn);
              *  on for the {@code /liv farms test_spawn} harness. */
-            boolean verbose) {
+            boolean verbose,
+            /** Naming prefix for the {@code FarmPlot} records this
+             *  planner mints (e.g. the village name for a real spawn,
+             *  {@code "test_complex"} for the debug harness). Null is
+             *  treated as {@code "complex"} — fallback used by
+             *  backward-compat ctors. */
+            String namePrefix) {
 
         /** Backward-compat ctor for callers that don't yet pass an
-         *  exclusion list or verbosity flag. */
+         *  exclusion list, verbosity flag, or naming prefix. */
         public Input(BlockPos farmhouseOrigin, Direction complexExtendsToward,
                      int footprintHalfX, int footprintHalfZ,
                      UUID villageId, UUID farmhouseId, String culture,
@@ -112,12 +118,11 @@ public final class FarmComplexPlanner {
             this(farmhouseOrigin, complexExtendsToward,
                     footprintHalfX, footprintHalfZ,
                     villageId, farmhouseId, culture, buildingType,
-                    fmap, biomeCheck, seed, java.util.List.of(), false);
+                    fmap, biomeCheck, seed, java.util.List.of(), false, null);
         }
 
         /** Backward-compat ctor for callers passing exclusion but no
-         *  verbosity. The V2 spawn adapter uses this overload —
-         *  production spawn stays quiet. */
+         *  verbosity / naming prefix. */
         public Input(BlockPos farmhouseOrigin, Direction complexExtendsToward,
                      int footprintHalfX, int footprintHalfZ,
                      UUID villageId, UUID farmhouseId, String culture,
@@ -129,7 +134,7 @@ public final class FarmComplexPlanner {
             this(farmhouseOrigin, complexExtendsToward,
                     footprintHalfX, footprintHalfZ,
                     villageId, farmhouseId, culture, buildingType,
-                    fmap, biomeCheck, seed, excludedPolygons, false);
+                    fmap, biomeCheck, seed, excludedPolygons, false, null);
         }
     }
 
@@ -264,21 +269,34 @@ public final class FarmComplexPlanner {
         }
 
         // ── 6. Mint FarmPlot records, paired with BSP plotIndex ────────
+        // E.bug.3 — origin Y comes from the V2FeatureMap's per-cell
+        // elevation at the plot centroid (+ 1 to land at the "surface
+        // where you stand", matching the legacy FarmPlotPlacer's
+        // medianFootprintY convention). The pre-fix code used
+        // pp.centroid().getY() which inherits from the polygon's
+        // first-vertex Y == farmhouseOrigin.Y == pad Y == one BELOW
+        // the building's floor; that put plot.origin.Y one below
+        // village.getBounds().minY, so /farmplot list filtered every
+        // complex plot out.
         UUID complexId = new UUID(in.seed() ^ 0xC0_C0_C0L,
                 in.farmhouseId().getLeastSignificantBits());
+        String namePrefix = in.namePrefix() != null
+                ? in.namePrefix() : "complex";
         List<FarmPlot> newPlots = new ArrayList<>(bsp.plots().size());
         for (PlotPlan pp : bsp.plots()) {
             UUID plotId = UUID.randomUUID();
-            String name = "Plot " + (pp.plotIndex() + 1);
             FarmPlot.CropType crop = pp.crop() == null
                     ? FarmPlot.CropType.WHEAT : pp.crop();
-            FarmPlot plot = new FarmPlot(plotId, name, pp.centroid(),
-                    /* legacy radius — bbox half-dim heuristic */
+            FarmPlot.PlotSubtype subtype = crop == FarmPlot.CropType.PASTURE
+                    ? FarmPlot.PlotSubtype.ANIMAL_PEN
+                    : FarmPlot.PlotSubtype.CROP_FIELD;
+            String name = namePrefix + "_" + (pp.plotIndex() + 1)
+                    + "_" + subtype.name().toLowerCase();
+            BlockPos plotOrigin = plotOriginAtSurface(
+                    pp.centroid(), in.fmap());
+            FarmPlot plot = new FarmPlot(plotId, name, plotOrigin,
                     radiusFromPolygon(pp.polygon()),
-                    crop,
-                    crop == FarmPlot.CropType.PASTURE
-                            ? FarmPlot.PlotSubtype.ANIMAL_PEN
-                            : FarmPlot.PlotSubtype.CROP_FIELD);
+                    crop, subtype);
             plot.setPolygon(pp.polygon());
             plot.setFarmhouseId(in.farmhouseId());
             plot.setComplexId(complexId);
@@ -447,14 +465,45 @@ public final class FarmComplexPlanner {
                 new BlockPos(minX, y, maxZ)));
     }
 
-    /** Conservative bbox half-dim → radius mapping. Stored solely
-     *  to keep the {@link FarmPlot} legacy "circle" containment
-     *  path working when the polygon path isn't taken. */
+    /** Circumscribed-circle radius: max XZ distance from the
+     *  polygon centroid to any vertex. Stored on FarmPlot so the
+     *  legacy circle-based {@code FarmPlot.contains} fallback
+     *  encloses the entire polygon. NPCs / commands that hit the
+     *  polygon-aware path use {@link FarmPlot#getPolygon} directly;
+     *  radius is only the fallback. */
     private static int radiusFromPolygon(Polygon p) {
-        Polygon.AABB bb = Polygon.boundingBox(p);
-        int hw = (bb.maxX() - bb.minX()) / 2;
-        int hh = (bb.maxZ() - bb.minZ()) / 2;
-        return Math.max(4, Math.min(hw, hh));
+        BlockPos c = Polygon.centroid(p);
+        double maxDistSq = 0;
+        for (BlockPos v : p.vertices()) {
+            double dx = v.getX() - c.getX();
+            double dz = v.getZ() - c.getZ();
+            double d2 = dx * dx + dz * dz;
+            if (d2 > maxDistSq) maxDistSq = d2;
+        }
+        return Math.max(4, (int) Math.ceil(Math.sqrt(maxDistSq)));
+    }
+
+    /** Resolve the plot's persisted {@code origin.Y} from the
+     *  feature-map's cell elevation at the centroid XZ.
+     *
+     *  <p>Returns {@code elevationY + 1} — the "surface where you
+     *  stand" Y, matching the legacy
+     *  {@code FarmPlotPlacer.medianFootprintY} convention used for
+     *  the legacy {@code flatCentre} origin. This Y lands inside
+     *  the village's building-AABB (whose minY is the building
+     *  floor block, also at {@code groundY + 1}), so
+     *  {@code /farmplot list} returns complex plots.
+     *
+     *  <p>If the centroid happens to land outside the scanned grid
+     *  (rare, large complex on a small map), falls back to the
+     *  input centroid's Y as a sentinel — better than NaN. */
+    private static BlockPos plotOriginAtSurface(BlockPos centroid, V2FeatureMap fmap) {
+        if (!fmap.inBounds(centroid.getX(), centroid.getZ())) {
+            return centroid;
+        }
+        var cell = fmap.cellAt(centroid.getX(), centroid.getZ());
+        int y = cell.elevationY() + 1;
+        return new BlockPos(centroid.getX(), y, centroid.getZ());
     }
 
     /** Pick a point near the spine, offset perpendicular, inside

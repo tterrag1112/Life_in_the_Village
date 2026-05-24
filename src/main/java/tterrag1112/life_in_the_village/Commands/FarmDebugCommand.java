@@ -264,7 +264,8 @@ public final class FarmDebugCommand {
                 /* biomeCheck */ null,
                 seed,
                 /* excludedPolygons */ java.util.List.of(),
-                /* verbose */ true);
+                /* verbose */ true,
+                /* namePrefix */ village.getName() + "_complex");
         FarmComplexPlanner.PlanResult result =
                 FarmComplexPlanner.planAndPersist(input, data);
 

@@ -480,7 +480,9 @@ public final class V2VillageSpawnerAdapter {
                         fmap,
                         /* biomeCheck */ null,
                         perFhSeed,
-                        parkExclusionPolygons);
+                        parkExclusionPolygons,
+                        /* verbose */ false,
+                        /* namePrefix */ village.getName() + "_complex");
                 var result = tterrag1112.life_in_the_village.Village.Farms
                         .Complex.FarmComplexPlanner.planAndPersist(planInput, data);
                 if (!result.success()) {
