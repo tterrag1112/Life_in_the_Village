@@ -156,6 +156,43 @@ public class BuildingStorageAccess {
                                 player, village.getId(), itemId, count, level));
     }
 
+    /**
+     * Phase 6.3.3.q.3 — store with personal-inventory fallback.
+     * Tries {@link #storeItem} into the building's containers first;
+     * if no container has space (or no containers exist at all), the
+     * stack falls back into the supplied {@code fallbackInventory}.
+     * Returns {@code true} when the stack landed in either path.
+     *
+     * <p>Used by homestead handlers (chicken coop, pen, beehives,
+     * vegetable garden, etc.) and the farmer's harvest deposit so
+     * the produce lands in farmhouse storage when chests exist,
+     * falls back to the NPC's inventory when they don't. The j.2-era
+     * "always personal inventory" path becomes "personal inventory
+     * only when storage isn't available" — making household chests
+     * meaningful without breaking homesteads that don't have one
+     * placed yet.</p>
+     */
+    public static boolean storeWithFallback(ServerLevel level,
+                                            Building building,
+                                            ItemStack stack,
+                                            net.minecraft.world.SimpleContainer fallbackInventory) {
+        if (stack == null || stack.isEmpty()) return true;
+        if (building != null) {
+            ItemStack copy = stack.copy();
+            if (storeItem(level, building, copy)) return true;
+            // storeItem mutates copy; preserve remaining for fallback.
+            if (!copy.isEmpty() && fallbackInventory != null) {
+                fallbackInventory.addItem(copy);
+                return copy.isEmpty();
+            }
+        }
+        if (fallbackInventory != null) {
+            fallbackInventory.addItem(stack);
+            return stack.isEmpty();
+        }
+        return false;
+    }
+
     public static List<StoredItemInfo> listItems(ServerLevel level, Building building) {
         Map<Item, Integer> totals = new LinkedHashMap<>();
         for (Container inv : findInventories(level, building)) {

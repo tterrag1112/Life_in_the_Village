@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Homestead.HomesteadHandler
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
 import tterrag1112.life_in_the_village.Npc.Specialization.FarmerSpecialtyMultiplier;
+import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 
 /**
  * B2.6 — pig / sheep pen. Walk, tend, drop a single feather or
@@ -32,8 +33,12 @@ public final class PenHandler implements HomesteadHandler {
                     ctx.walkSpeed());
         }
         if (ctx.tickInGoal() == WORK_TICKS) {
-            ctx.npc().getPersonalInventory().addItem(new ItemStack(
-                    (ctx.npc().tickCount % 3) == 0 ? Items.LEATHER : Items.WHITE_WOOL, 1));
+            // Phase 6.3.3.q.3 — building storage first, personal inv fallback.
+            BuildingStorageAccess.storeWithFallback(
+                    ctx.level(), ctx.parentHouse(),
+                    new ItemStack(
+                            (ctx.npc().tickCount % 3) == 0 ? Items.LEATHER : Items.WHITE_WOOL, 1),
+                    ctx.npc().getPersonalInventory());
             float boosted = BASE_XP_PER_CYCLE
                     * FarmerSpecialtyMultiplier.of(ctx.npc(), Skill.ANIMAL_HUSBANDRY);
             SkillXp.award(ctx.npc(), Skill.ANIMAL_HUSBANDRY,

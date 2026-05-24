@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Homestead.HomesteadHandler
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
 import tterrag1112.life_in_the_village.Npc.Specialization.FarmerSpecialtyMultiplier;
+import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 
 /**
  * B2.6 — chicken coop handler. Walks to the plot, "tends" for
@@ -35,7 +36,12 @@ public final class ChickenCoopHandler implements HomesteadHandler {
                     ctx.walkSpeed());
         }
         if (ctx.tickInGoal() == WORK_TICKS) {
-            ctx.npc().getPersonalInventory().addItem(new ItemStack(Items.EGG, 1));
+            // Phase 6.3.3.q.3 — try farmhouse storage first; fall back
+            // to personal inventory when no chest is placed yet.
+            BuildingStorageAccess.storeWithFallback(
+                    ctx.level(), ctx.parentHouse(),
+                    new ItemStack(Items.EGG, 1),
+                    ctx.npc().getPersonalInventory());
             float boosted = BASE_XP_PER_CYCLE
                     * FarmerSpecialtyMultiplier.of(ctx.npc(), Skill.ANIMAL_HUSBANDRY);
             SkillXp.award(ctx.npc(), Skill.ANIMAL_HUSBANDRY,
