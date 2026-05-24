@@ -129,6 +129,22 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     private boolean warnedNotServer    = false;
     private boolean warnedOffWorkTime  = false;
     private boolean warnedNoBuilding   = false;
+
+    // Phase 6.3.3.q.1 — harvest-phase diagnostic flags. NPC reports
+    // active phase "Harvesting crops" but no blocks break and no
+    // items appear in inventory. Each checkpoint in the harvest
+    // state machine emits a one-shot LOGGER.warn so the operator
+    // can identify which step is silently failing without an
+    // attach-debugger pass. Pattern matches the o.3 gate-naming
+    // shape; the q.1 commit ships logging only — the fix lands in
+    // a follow-up once the LOG identifies the stuck step.
+    private boolean loggedHarvestEntered     = false;
+    private boolean loggedHarvestWalking     = false;
+    private boolean loggedHarvestArrived     = false;
+    private boolean loggedHarvestNotCrop     = false;
+    private boolean loggedHarvestImmature    = false;
+    private boolean loggedHarvestBroke       = false;
+    private boolean loggedHarvestExhausted   = false;
     /** Phase 6.3.3.h.2 — CROP_FARMING skill threshold at which a
      *  non-APPRENTICE farmer starts proactively rotating. Matches the
      *  "intermediate apprentice" milestone (level 40). */
@@ -522,7 +538,24 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         if (actionTimer < TICKS_PER_ACTION) return;
         actionTimer = 0;
 
+        // Phase 6.3.3.q.1 — one-shot diagnostic on first entry with
+        // a non-empty queue. Confirms harvest() is actually firing
+        // (vs. some upstream short-circuit) and shows how many crops
+        // were queued by scanPlotForTasks.
+        if (!loggedHarvestEntered) {
+            LOGGER.warn("[FarmerBehavior] {} HARVESTING entered: {} crops queued (first at {})",
+                    entity.getNpcName(), toHarvest.size(),
+                    toHarvest.isEmpty() ? "(none)" : toHarvest.get(0).toShortString());
+            loggedHarvestEntered = true;
+        }
+
         if (toHarvest.isEmpty()) {
+            if (!loggedHarvestExhausted) {
+                LOGGER.warn("[FarmerBehavior] {} HARVESTING: toHarvest emptied, " +
+                        "moving to WALKING_TO_FARMHOUSE (harvested {} items this cycle)",
+                        entity.getNpcName(), harvestedThisCycle.size());
+                loggedHarvestExhausted = true;
+            }
             phase = Phase.WALKING_TO_FARMHOUSE;
             return;
         }
@@ -532,19 +565,52 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 cropPos.getX(), cropPos.getY(), cropPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
+            if (!loggedHarvestWalking) {
+                LOGGER.warn("[FarmerBehavior] {} HARVESTING: walking to crop at {} " +
+                        "(distSq={}, INTERACT_RANGE_SQ={}). If 'arrived' never logs, " +
+                        "pathfinding can't reach the plot.",
+                        entity.getNpcName(), cropPos.toShortString(),
+                        String.format("%.1f", distSq), INTERACT_RANGE_SQ);
+                loggedHarvestWalking = true;
+            }
             entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
                     cropPos.getX(), cropPos.getY(), cropPos.getZ(), 1.0));
             return;
         }
 
+        if (!loggedHarvestArrived) {
+            LOGGER.warn("[FarmerBehavior] {} HARVESTING: arrived at crop {} (distSq={}), " +
+                    "checking block state.",
+                    entity.getNpcName(), cropPos.toShortString(),
+                    String.format("%.2f", distSq));
+            loggedHarvestArrived = true;
+        }
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
         BlockState state = level.getBlockState(cropPos);
         if (!(state.getBlock() instanceof CropBlock crop)) {
+            if (!loggedHarvestNotCrop) {
+                LOGGER.warn("[FarmerBehavior] {} HARVESTING: block at {} is {} " +
+                        "(not a CropBlock). If this fires repeatedly, the scan picked " +
+                        "stale positions or the farm-complex placed non-crop blocks " +
+                        "above farmland.",
+                        entity.getNpcName(), cropPos.toShortString(),
+                        net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                                .getKey(state.getBlock()));
+                loggedHarvestNotCrop = true;
+            }
             toHarvest.remove(0);
             return;
         }
         if (!crop.isMaxAge(state)) {
+            if (!loggedHarvestImmature) {
+                LOGGER.warn("[FarmerBehavior] {} HARVESTING: crop at {} not mature " +
+                        "(age={}, max={}). scanPlotForTasks should have filtered this; " +
+                        "may indicate per-tick growth race or stale queue entries.",
+                        entity.getNpcName(), cropPos.toShortString(),
+                        state.getValue(crop.getAgeProperty()), crop.getMaxAge());
+                loggedHarvestImmature = true;
+            }
             toHarvest.remove(0);
             return;
         }
@@ -602,6 +668,16 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         }
 
         level.setBlock(cropPos, Blocks.AIR.defaultBlockState(), 3);
+        if (!loggedHarvestBroke) {
+            int dropCount = 0;
+            for (ItemStack d : drops) dropCount += d.getCount();
+            LOGGER.warn("[FarmerBehavior] {} HARVESTING: broke crop at {} " +
+                    "(yieldMult={}, raw drop count={}). Subsequent breaks suppress " +
+                    "this log to avoid flooding.",
+                    entity.getNpcName(), cropPos.toShortString(),
+                    String.format("%.3f", yieldMult), dropCount);
+            loggedHarvestBroke = true;
+        }
         // Phase 6.3.3.h.5 — equip + damage the durable hoe. If it
         // breaks mid-cycle, the next analyze() pass picks up the
         // missing-tool branch and routes to ACQUIRING_TOOL.
