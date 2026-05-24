@@ -106,4 +106,54 @@ public final class FarmerPromotion {
                 .map(HouseholdData::getHouseholdId)
                 .orElse(null);
     }
+
+    /**
+     * Phase 6.3.3.q.2 — idempotent farm-Business hook for the spawn
+     * pipeline. Used by {@code VillageInhabitantPopulator} (and any
+     * other spawn path that produces a FARMER bound to a FARMHOUSE)
+     * to guarantee that the farmhouse has a tracked
+     * {@link Business} associated with it.
+     *
+     * <p>Behavior:</p>
+     * <ul>
+     *   <li>If the NPC has no assigned building, no village id, or
+     *       no profession of {@code FARMER}/{@code FARMHAND} — no-op,
+     *       returns {@code empty}.</li>
+     *   <li>If a {@link Business} already exists with the NPC's
+     *       assigned building in its building list — no-op, returns
+     *       that existing Business. Idempotent: safe to call
+     *       multiple times per farmhouse without creating duplicates.</li>
+     *   <li>Otherwise — delegates to
+     *       {@link #promoteFarmerToBusinessOwner} which creates the
+     *       Business with the NPC as owner (FamilyOwner preferred,
+     *       NpcOwner fallback) and binds the farmhouse.</li>
+     * </ul>
+     *
+     * <p>Why a separate API: the legacy {@code promoteFarmerTo-
+     * BusinessOwner} always creates a new Business. Calling it on
+     * the spawn pipeline directly would produce duplicates whenever
+     * the populator runs again over the same farmhouse (save
+     * migration, repeat-spawn paths, etc.). The idempotency check
+     * here makes the hook safe at any call site.</p>
+     */
+    public static Optional<Business> ensureFarmBusiness(
+            ServerLevel level, TownspersonMob npc, UUID villageId) {
+        if (level == null || npc == null || villageId == null) return Optional.empty();
+        UUID buildingId = npc.getAssignedBuildingId().orElse(null);
+        if (buildingId == null) return Optional.empty();
+        var profession = npc.getProfession();
+        if (profession
+                != tterrag1112.life_in_the_village.Profession.Profession.FARMER
+                && profession
+                != tterrag1112.life_in_the_village.Profession.Profession.FARMHAND) {
+            return Optional.empty();
+        }
+        BusinessSavedData bdata = BusinessSavedData.get(level);
+        for (Business existing : bdata.getAllBusinesses()) {
+            if (existing.getBuildingIds().contains(buildingId)) {
+                return Optional.of(existing);
+            }
+        }
+        return promoteFarmerToBusinessOwner(level, npc, villageId);
+    }
 }
