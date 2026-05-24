@@ -67,7 +67,12 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
         int step = 0;
         while (true) {
             int gy = resolveGroundY(level, x0, z0);
-            if (gy > 0 && gy < MAX_BUILD_Y && !isOnPath(level, x0, gy, z0)) {
+            // World floor is level.getMinY() in 1.21 (negative on
+            // superflat). Skip only when the column is below the
+            // build floor or above MAX_BUILD_Y (avoid placing
+            // borders 200 blocks up on cliff tops).
+            if (gy >= level.getMinY() && gy < MAX_BUILD_Y
+                    && !isOnPath(level, x0, gy, z0)) {
                 clearHeadSpace(level, x0, gy, z0);
                 renderColumn(level, x0, z0, gy, outwardNormal, step, rng);
             }

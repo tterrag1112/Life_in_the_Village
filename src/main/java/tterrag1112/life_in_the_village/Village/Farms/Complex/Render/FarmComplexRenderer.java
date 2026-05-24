@@ -279,7 +279,9 @@ public final class FarmComplexRenderer {
 
         int gy = level.getHeight(net.minecraft.world.level.levelgen
                 .Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, ex, ez) - 1;
-        if (gy <= 0) {
+        // World floor is level.getMinY() in 1.21 (negative on
+        // superflat). Skip only when the column is below the floor.
+        if (gy < level.getMinY()) {
             if (verbose) {
                 org.slf4j.LoggerFactory.getLogger(FarmComplexRenderer.class).info(
                         "gate plot={} entry=({},{}) SKIPPED reason=NO_GROUND",

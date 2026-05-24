@@ -57,7 +57,9 @@ public final class ToolShedRenderer {
         // four corners so the shed sits flat even on mildly sloped
         // ground.
         int gy = medianGroundY(level, minX, minZ, maxX, maxZ);
-        if (gy <= 0) return false;
+        // World floor is level.getMinY() in 1.21 (negative on
+        // superflat). Skip only when literally below the floor.
+        if (gy < level.getMinY()) return false;
         int floorY = gy;        // floor sits at ground
         int ceilingY = floorY + WALL_HEIGHT;
 

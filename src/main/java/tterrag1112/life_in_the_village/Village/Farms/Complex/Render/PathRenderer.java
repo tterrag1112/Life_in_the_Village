@@ -160,7 +160,11 @@ public final class PathRenderer {
                                      PathPalette palette,
                                      java.util.Random rng) {
         int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, wx, wz) - 1;
-        if (y <= 0) return;
+        // World floor is level.getMinY() in 1.21 (negative on superflat
+        // worlds where grass sits at Y≈-60). Skip only when the
+        // heightmap returned literally no surface — i.e. the
+        // column is empty down to the floor.
+        if (y < level.getMinY()) return;
         BlockPos surf = new BlockPos(wx, y, wz);
         BlockState s = level.getBlockState(surf);
         if (!isPathable(s)) return;

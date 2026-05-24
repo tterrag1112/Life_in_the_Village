@@ -108,7 +108,10 @@ public final class PlotInteriorRenderer {
                                     boolean stripesAlongX,
                                     int baseStage) {
         int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
-        if (y <= 0) return;
+        // World floor is level.getMinY() in 1.21 (negative on
+        // superflat). Skip only when the column is literally
+        // empty to the floor.
+        if (y < level.getMinY()) return;
         BlockPos surface = new BlockPos(x, y, z);
         BlockState top = level.getBlockState(surface);
 
