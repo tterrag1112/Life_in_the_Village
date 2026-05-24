@@ -37,9 +37,15 @@ public interface BorderGenerator {
      * @param level          target server level
      * @param rng            deterministic stream for jitter; same
      *                       seed ⇒ same output
+     * @param pathCells      set of XZ-packed positions occupied by
+     *                       farm paths. Border generators skip any
+     *                       column whose position is in this set so
+     *                       the path stays clear at the crossing.
+     *                       Empty / null treated as "no paths".
      */
     void renderEdge(BlockPos start, BlockPos end,
                     Direction outwardNormal,
                     ServerLevel level,
-                    Random rng);
+                    Random rng,
+                    java.util.Set<Long> pathCells);
 }

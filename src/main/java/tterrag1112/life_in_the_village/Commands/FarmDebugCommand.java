@@ -282,13 +282,9 @@ public final class FarmDebugCommand {
         // Failures here don't fail the command; the dump still
         // reports the planned state for debugging.
         String renderNote = "";
-        tterrag1112.life_in_the_village.Village.Farms.Complex.Render
-                .FarmComplexRenderer.Stats stats =
-                new tterrag1112.life_in_the_village.Village.Farms.Complex.Render
-                        .FarmComplexRenderer.Stats(0, 0);
         try {
             List<FarmPlot> plots = data.getFarmPlotsForFarmhouse(farmhouse.getId());
-            stats = tterrag1112.life_in_the_village.Village.Farms.Complex.Render
+            tterrag1112.life_in_the_village.Village.Farms.Complex.Render
                     .FarmComplexRenderer.render(result.complex(), plots,
                             culture.id(), level, /* verbose */ true);
         } catch (Exception e) {
@@ -314,11 +310,8 @@ public final class FarmDebugCommand {
                     + ": " + t.getMessage() + ")";
         }
 
-        String dump = dumpComplex(result.complex(), data, pos, halfX, halfZ,
-                stats.gatesPlaced());
-        String tail = "\n  gates rendered: placed=" + stats.gatesPlaced()
-                + " skipped=" + stats.gatesSkipped()
-                + "\n  populator: " + (populatorCalled
+        String dump = dumpComplex(result.complex(), data, pos, halfX, halfZ);
+        String tail = "\n  populator: " + (populatorCalled
                         ? "invoked, NPCs in household=" + npcCount
                         : "skipped (see warning above)")
                 + renderNote;
@@ -346,8 +339,7 @@ public final class FarmDebugCommand {
      *  of Manhattan-ish segment lengths in blocks. */
     private static String dumpComplex(FarmComplex c, VillageSavedData data,
                                        BlockPos farmhousePos,
-                                       int halfX, int halfZ,
-                                       int gatesActuallyPlaced) {
+                                       int halfX, int halfZ) {
         StringBuilder sb = new StringBuilder();
         sb.append("Complex ").append(shortId(c.id()))
                 .append(" @ (").append(farmhousePos.getX()).append(", ")
@@ -431,10 +423,6 @@ public final class FarmDebugCommand {
             first = false;
         }
         sb.append("\n");
-
-        // Gates.
-        sb.append("  gates: ").append(gatesActuallyPlaced)
-                .append(" placed (renderer)\n");
 
         // Footprint context (so the user can sanity-check the
         // farmhouse vs region scale).

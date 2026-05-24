@@ -58,7 +58,8 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
     public void renderEdge(BlockPos start, BlockPos end,
                             Direction outwardNormal,
                             ServerLevel level,
-                            Random rng) {
+                            Random rng,
+                            java.util.Set<Long> pathCells) {
         int x0 = start.getX(), z0 = start.getZ();
         int x1 = end.getX(),   z1 = end.getZ();
         int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
@@ -72,7 +73,7 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
             // build floor or above MAX_BUILD_Y (avoid placing
             // borders 200 blocks up on cliff tops).
             if (gy >= level.getMinY() && gy < MAX_BUILD_Y
-                    && !isOnPath(level, x0, gy, z0)) {
+                    && !onPath(x0, z0, pathCells)) {
                 clearHeadSpace(level, x0, gy, z0);
                 renderColumn(level, x0, z0, gy, outwardNormal, step, rng);
             }
@@ -83,6 +84,18 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
             step++;
             if (step > 4096) break; // sanity belt
         }
+    }
+
+    /** True iff the column (x, z) lies on a registered farm path.
+     *  Authoritative set is rasterized once per render pass from
+     *  the complex's PathSegment list; lookup is O(1). Replaces
+     *  the prior block-state inspection which was order-dependent
+     *  on render sequence and brittle under future palette
+     *  variations. */
+    private static boolean onPath(int x, int z, java.util.Set<Long> pathCells) {
+        if (pathCells == null || pathCells.isEmpty()) return false;
+        long key = ((long) x << 32) | (z & 0xFFFFFFFFL);
+        return pathCells.contains(key);
     }
 
     /** Clear non-air blocks from {@code groundY+1} up to
@@ -145,26 +158,6 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
                     Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
         }
         return y;
-    }
-
-    /** True iff the ground block at (x, y, z) is a path-surface
-     *  material the {@link tterrag1112.life_in_the_village.Village.Farms.Complex.Render.PathRenderer}
-     *  might have stamped. Borders skip these columns so paths
-     *  cross fence lines cleanly. PathRenderer runs before borders
-     *  in the orchestrator's render order.
-     *
-     *  <p>Accepts any of the road materials cultures commonly
-     *  configure via {@code planningBias.roadMaterial} so the
-     *  check stays correct under per-culture material variation.
-     *  Default DIRT_PATH is the common case; the others cover
-     *  cultures with stone-paved or gravel roads. */
-    protected static boolean isOnPath(ServerLevel level, int x, int y, int z) {
-        BlockState s = level.getBlockState(new BlockPos(x, y, z));
-        return s.is(Blocks.DIRT_PATH)
-                || s.is(Blocks.GRAVEL)
-                || s.is(Blocks.COARSE_DIRT)
-                || s.is(Blocks.SMOOTH_STONE)
-                || s.is(Blocks.STONE_BRICKS);
     }
 
     /** Safe replacement: only set the block if the current state

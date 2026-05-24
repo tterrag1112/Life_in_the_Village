@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Random;
@@ -15,15 +16,24 @@ import java.util.Random;
  * tall, no height jitter. Variation is material-only: ~10% of
  * columns mix in birch or jungle leaves on the base. No oak-log
  * stakes — those broke the uniform line.
+ *
+ * <p>All placed leaves have {@link LeavesBlock#PERSISTENT}=true.
+ * Without it the hedge decays within a few minecraft days because
+ * the leaves are nowhere near a log block. This is local to the
+ * hedge border path; the orchard / decoration scatter etc. set
+ * their own leaf state independently.
  */
 public final class HedgeBorder extends AbstractBorderGenerator {
 
     private static final BlockState OAK_LEAVES =
-            Blocks.OAK_LEAVES.defaultBlockState();
+            Blocks.OAK_LEAVES.defaultBlockState()
+                    .setValue(LeavesBlock.PERSISTENT, true);
     private static final BlockState BIRCH_LEAVES =
-            Blocks.BIRCH_LEAVES.defaultBlockState();
+            Blocks.BIRCH_LEAVES.defaultBlockState()
+                    .setValue(LeavesBlock.PERSISTENT, true);
     private static final BlockState JUNGLE_LEAVES =
-            Blocks.JUNGLE_LEAVES.defaultBlockState();
+            Blocks.JUNGLE_LEAVES.defaultBlockState()
+                    .setValue(LeavesBlock.PERSISTENT, true);
 
     @Override
     protected void renderColumn(ServerLevel level,
