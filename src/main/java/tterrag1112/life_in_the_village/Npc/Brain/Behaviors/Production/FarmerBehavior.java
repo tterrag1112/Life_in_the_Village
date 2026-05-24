@@ -7,6 +7,8 @@ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import com.google.common.collect.ImmutableMap;
+import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmRole;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.server.level.ServerLevel;
@@ -62,6 +64,8 @@ import java.util.stream.Collectors;
  */
 public class FarmerBehavior extends Behavior<TownspersonMob> {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     // =========================================================================
     // Constants
     // =========================================================================
@@ -110,6 +114,9 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     /** Phase 6.3.3.h.2 — per-cycle dedup so a plot's cropType is only
      *  rotated once even though replant() runs per BlockPos. */
     private final java.util.Set<UUID> rotatedThisCycle = new java.util.HashSet<>();
+    /** Phase 6.3.3.n.3 — one-shot guard so the "null role fallback"
+     *  warning only fires once per behavior instance, not every tick. */
+    private boolean warnedNullRole = false;
     /** Phase 6.3.3.h.2 — CROP_FARMING skill threshold at which a
      *  non-APPRENTICE farmer starts proactively rotating. Matches the
      *  "intermediate apprentice" milestone (level 40). */
@@ -240,6 +247,21 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         // Role-based task filtering
         FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
+        // Phase 6.3.3.n.3 — defensive: if role is null (upstream assignment
+        // failed for any reason — component reset, save bug, mod
+        // interaction, etc.), the work loop used to dead-end because
+        // canHarvest/canPlant returned false. The n.2 cadence fix makes
+        // null-role rare, but the null-role fallback in canHarvest /
+        // canPlant (treating null as GENERALIST) ensures the farmer
+        // keeps working. Log once per behavior instance so the upstream
+        // bug surfaces if it ever recurs.
+        if (role == null && !warnedNullRole) {
+            LOGGER.warn("[FarmerBehavior] {} has null FarmRole at FARMHOUSE {} — "
+                    + "treating as GENERALIST. Upstream role assignment did not run "
+                    + "(check FarmRoleAssigner cadence + ProfessionRoleManager state).",
+                    entity.getNpcName(), farmhouse.getId());
+            warnedNullRole = true;
+        }
 
         // Phase 6.3.3.g.3 — animal-role workers bypass crop work entirely.
         // The roster cycle-tick handles production output passively; this
@@ -404,12 +426,20 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     }
 
     private boolean canHarvest(FarmRole role) {
+        // Phase 6.3.3.n.3 — null role treated as GENERALIST (defensive
+        // fallback paired with the analyze()-side warning). Prevents
+        // the work loop from dead-ending when upstream role assignment
+        // hasn't run; the assigner cadence fix in n.2 should make this
+        // path cold, but the fallback is cheap insurance against
+        // future regressions.
+        if (role == null) return true;
         return role == FarmRole.GENERALIST
                 || role == FarmRole.CROP_SPECIALIST
                 || role == FarmRole.HARVESTER;
     }
 
     private boolean canPlant(FarmRole role) {
+        if (role == null) return true;
         return role == FarmRole.GENERALIST
                 || role == FarmRole.CROP_SPECIALIST
                 || role == FarmRole.PLANTER;
