@@ -298,19 +298,18 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         // Decide next phase
         if (!toHarvest.isEmpty() && canHarvest(role)) {
-            // Phase 6.3.3.h.5 — durable tool model. If the farmer has
-            // no hoe in personal inventory, try farmhouse storage; if
-            // also empty, route to ACQUIRING_TOOL (non-APPRENTICE) or
-            // goIdle (APPRENTICE — master provides tools).
+            // Phase 6.3.3.m.3 — tool-gating philosophy shift. Tool
+            // tier is now a productivity multiplier on yield, not a
+            // hard prerequisite. A farmer with no hoe still harvests
+            // (bare-hands at HOE_PRODUCTIVITY_NO_HOE = 0.5×). The
+            // farmer attempts to pull a hoe from farmhouse storage
+            // opportunistically — present-from-storage gives full
+            // tier benefit — but storage absence no longer blocks
+            // work. The ACQUIRING_TOOL phase is still reachable
+            // through future opportunistic triggers but no longer
+            // fires unconditionally on missing-hoe.
             if (!ToolUseSupport.hasUsableTool(entity, FarmerBehavior::isHoe)) {
-                if (!tryAcquireHoeFromFarmhouse(level)) {
-                    if (!isApprentice) {
-                        phase = Phase.ACQUIRING_TOOL;
-                        return;
-                    }
-                    goIdle();
-                    return;
-                }
+                tryAcquireHoeFromFarmhouse(level);
             }
             phase = Phase.HARVESTING;
             return;
@@ -465,8 +464,19 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // other modifiers.
         float blightMult = (harvestedPlot != null && harvestedPlot.isBlighted())
                 ? FarmPlot.BLIGHT_YIELD_MULT : 1.0f;
+        // Phase 6.3.3.m.3 — tool tier productivity ladder. Best hoe in
+        // inventory scores its tier multiplier; no hoe at all falls
+        // back to HOE_PRODUCTIVITY_NO_HOE (0.5×) — bare-hands farming
+        // still produces, just at half rate. Composes alongside the
+        // other yield modifiers without double-counting (single
+        // multiplier per layer; specialty / mentee multipliers are
+        // applied to XP grants, not crop yields).
+        float hoeMult = ToolUseSupport.bestToolMultiplier(
+                entity, FarmerBehavior::isHoe,
+                FarmerBehavior::hoeProductivityMultiplier,
+                HOE_PRODUCTIVITY_NO_HOE);
         float yieldMult = seasonMult * soilMult * weatherMult
-                * droughtMult * frostMult * blightMult;
+                * droughtMult * frostMult * blightMult * hoeMult;
 
         for (ItemStack drop : drops) {
             int scaledCount = 0;
@@ -1130,11 +1140,39 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
     private static final long HOE_PRICE_BRONZE = 30L;
 
+    // Phase 6.3.3.m.3 — hoe productivity ladder. Tool tier scales the
+    // harvest yield multiplier; villages without iron access still
+    // produce food (bare-hands == 0.5× baseline). Composed into the
+    // yield formula via bestToolMultiplier inside harvest().
+    public static final float HOE_PRODUCTIVITY_NO_HOE     = 0.50f;
+    public static final float HOE_PRODUCTIVITY_WOOD       = 0.70f;
+    public static final float HOE_PRODUCTIVITY_STONE      = 0.85f;
+    public static final float HOE_PRODUCTIVITY_IRON       = 1.00f;
+    public static final float HOE_PRODUCTIVITY_DIAMOND    = 1.10f;
+    public static final float HOE_PRODUCTIVITY_NETHERITE  = 1.10f;
+
     /** Predicate identifying farming hoes (wood/stone/iron/diamond/netherite). */
     static boolean isHoe(ItemStack s) {
         return s.is(Items.WOODEN_HOE) || s.is(Items.STONE_HOE)
                 || s.is(Items.IRON_HOE) || s.is(Items.GOLDEN_HOE)
                 || s.is(Items.DIAMOND_HOE) || s.is(Items.NETHERITE_HOE);
+    }
+
+    /**
+     * Phase 6.3.3.m.3 — per-stack productivity score for the hoe
+     * ladder. Used as the scoring lambda passed to
+     * {@link ToolUseSupport#bestToolMultiplier} so the helper returns
+     * the highest tier present in the entity's inventory. Golden hoes
+     * score as iron-tier (same operational tier, worse durability).
+     */
+    static double hoeProductivityMultiplier(ItemStack s) {
+        if (s.is(Items.NETHERITE_HOE)) return HOE_PRODUCTIVITY_NETHERITE;
+        if (s.is(Items.DIAMOND_HOE))   return HOE_PRODUCTIVITY_DIAMOND;
+        if (s.is(Items.IRON_HOE)
+                || s.is(Items.GOLDEN_HOE)) return HOE_PRODUCTIVITY_IRON;
+        if (s.is(Items.STONE_HOE))     return HOE_PRODUCTIVITY_STONE;
+        if (s.is(Items.WOODEN_HOE))    return HOE_PRODUCTIVITY_WOOD;
+        return HOE_PRODUCTIVITY_NO_HOE;
     }
 
     /** Transfers one hoe from farmhouse storage to personal inventory.

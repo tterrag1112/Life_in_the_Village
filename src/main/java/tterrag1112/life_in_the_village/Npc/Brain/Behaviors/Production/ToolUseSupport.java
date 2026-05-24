@@ -67,4 +67,41 @@ public final class ToolUseSupport {
         }
         return false;
     }
+
+    /**
+     * Phase 6.3.3.m.3 — generic "best tool productivity multiplier"
+     * scan. Iterates the entity's personal inventory, gathers every
+     * stack matching {@code predicate}, scores each via {@code scoring},
+     * and returns the highest score found. When no matching tool is
+     * present at all, returns {@code noToolFallback}.
+     *
+     * <p>The tool-gating philosophy shift in m.3: agricultural and
+     * craft work no longer hard-gates on tool ownership. Instead,
+     * tool tier is a productivity bonus on top of a bare-hands
+     * baseline. This helper is the reusable hook for any profession
+     * that wants a "wood → stone → iron → diamond" productivity
+     * ladder. Callers compose the returned multiplier into their
+     * existing yield / cycle-duration math.</p>
+     *
+     * <p>Example (farmer hoe ladder):</p>
+     * <pre>
+     *   float mult = ToolUseSupport.bestToolMultiplier(
+     *           entity, FarmerBehavior::isHoe,
+     *           FarmerBehavior::hoeProductivityMultiplier, 0.5f);
+     * </pre>
+     */
+    public static float bestToolMultiplier(TownspersonMob entity,
+                                            Predicate<ItemStack> predicate,
+                                            java.util.function.ToDoubleFunction<ItemStack> scoring,
+                                            float noToolFallback) {
+        SimpleContainer inv = entity.getPersonalInventory();
+        float best = Float.NEGATIVE_INFINITY;
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack stack = inv.getItem(i);
+            if (stack.isEmpty() || !predicate.test(stack)) continue;
+            float score = (float) scoring.applyAsDouble(stack);
+            if (score > best) best = score;
+        }
+        return best == Float.NEGATIVE_INFINITY ? noToolFallback : best;
+    }
 }
