@@ -215,6 +215,19 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      *  continuously merchant). 0 means never assigned a real
      *  profession. */
     private long professionStartedTick;
+    /** Phase 6.3.3.p.3 — guard for the deferred Brain profession-
+     *  configuration pass. {@link #makeBrain} runs during entity
+     *  construction when {@code getProfession()} still returns NONE,
+     *  so {@code ProfessionBrainFactory.configureBrain} no-ops and no
+     *  profession-specific behaviors land in the Brain. This flag
+     *  drives a one-shot re-config from {@link #customServerAiStep}
+     *  on the first tick AFTER the populator / save-load / promotion
+     *  path has set the real profession. Reset by {@link
+     *  #setProfession} so subsequent profession changes also trigger
+     *  a reconfigure on the next tick. NOT persisted — re-evaluated
+     *  fresh each session, which guarantees existing saves get the
+     *  fix on their first server tick post-load. */
+    private boolean professionBrainConfigured = false;
     private final AppearanceComponent appearance = new AppearanceComponent();
     private final NpcRelationshipComponent relationships = new NpcRelationshipComponent();
     private final TraitVector traits = new TraitVector();
@@ -450,6 +463,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         Profession previous = getProfession();
         entityData.set(PROFESSION, profession.name());
         ProfessionGoalFactory.register(this);
+        // Phase 6.3.3.p.3 — flag the Brain for re-config on the next
+        // customServerAiStep. The Brain's profession-specific
+        // behaviors were wired (or not) during makeBrain based on
+        // the profession at that moment; a change here means the
+        // current Brain composition is stale.
+        this.professionBrainConfigured = false;
         if (appearance.getName() != null && !appearance.getName().isEmpty()) {
             updateDisplayName();
         }
@@ -1434,6 +1453,21 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // Phase 6.2.e — if combat target is set, push FIGHT activity so the
         // FIGHT-bound behaviors take over. Otherwise schedule drives.
         Brain<TownspersonMob> brain = this.getBrain();
+        // Phase 6.3.3.p.3 — deferred profession-Brain configuration.
+        // makeBrain runs during entity construction when getProfession()
+        // is still NONE, so ProfessionBrainFactory.configureBrain
+        // no-ops and no profession-specific behaviors land in the
+        // Brain. Re-run configureBrain here, on the first tick after
+        // profession has been set (by the populator, save-load, or a
+        // CareerTransitions promotion). Latent since the beginning;
+        // surfaced once the m/n fix-stack cleared the tool + role
+        // gates that had been masking it for FARMER. Universal:
+        // every profession was affected.
+        if (!professionBrainConfigured) {
+            tterrag1112.life_in_the_village.Npc.Brain.ProfessionBrainFactory
+                    .configureBrain(this, brain);
+            professionBrainConfigured = true;
+        }
         if (brain.hasMemoryValue(net.minecraft.world.entity.ai.memory.MemoryModuleType.ATTACK_TARGET)) {
             brain.setActiveActivityIfPossible(
                     tterrag1112.life_in_the_village.Npc.Brain.NpcActivities.FIGHT.get());
