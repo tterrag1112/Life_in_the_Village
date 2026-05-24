@@ -6,6 +6,8 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.ai.Brain;
+import net.minecraft.world.entity.schedule.Activity;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -14,11 +16,15 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleM
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 
+import java.lang.reflect.Field;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -76,9 +82,97 @@ public final class NpcInfoCommand {
         if (isFarmerProfession(npc.getProfession())) {
             appendFarmFields(sb, npc);
         }
+        appendBrain(sb, npc);
         appendSkills(sb, npc);
         ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
         return 1;
+    }
+
+    /**
+     * Phase 6.3.3.p.1 — Brain-level diagnostic. Shows the active
+     * non-CORE activity, the list of currently-running behaviors,
+     * and a reflection-probed dump of the registered behaviors
+     * keyed by activity. The reflection probe is the only way to
+     * tell whether a profession-specific behavior is actually
+     * REGISTERED vs. simply not running this tick — the symptom
+     * that motivated p.1 is FarmerBehavior never being checked at
+     * all, which means it's not in the Brain at all.
+     *
+     * <p>If reflection fails (Mojang renames the field, mod
+     * conflict, etc.) the probe degrades gracefully: a single line
+     * notes the failure and the rest of the output stays useful.</p>
+     */
+    private static void appendBrain(StringBuilder sb, TownspersonMob npc) {
+        sb.append("Brain:\n");
+        Brain<TownspersonMob> brain = npc.getBrain();
+        sb.append("  activeActivity = ")
+                .append(brain.getActiveNonCoreActivity()
+                        .map(Activity::getName).orElse("(none)"))
+                .append("\n");
+
+        // Running behaviors — the live signal during this tick.
+        var running = brain.getRunningBehaviors();
+        sb.append("  runningBehaviors (").append(running.size()).append("):\n");
+        if (running.isEmpty()) {
+            sb.append("    (none — brain has no behavior running this tick)\n");
+        } else {
+            for (var bc : running) {
+                sb.append("    - ").append(bc.getClass().getSimpleName()).append("\n");
+            }
+        }
+
+        // Direct FarmerBehavior probe — answers the p.1 question
+        // for FARMER NPCs without needing to scan the registered set.
+        if (isFarmerProfession(npc.getProfession())) {
+            FarmerBehavior fb = npc.getBehavior(FarmerBehavior.class);
+            sb.append("  FarmerBehavior running? = ")
+                    .append(fb != null ? "yes" : "no (not in runningBehaviors)")
+                    .append("\n");
+        }
+
+        // Registered-behaviors dump via reflection. This is the
+        // load-bearing diagnostic: if FarmerBehavior isn't in this
+        // map at all for a FARMER, the Brain was never configured
+        // for FARMER's profession (likely because makeBrain ran
+        // when profession was still NONE).
+        appendRegisteredBehaviors(sb, brain);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void appendRegisteredBehaviors(StringBuilder sb,
+                                                   Brain<TownspersonMob> brain) {
+        try {
+            Field f = Brain.class.getDeclaredField("availableBehaviorsByPriority");
+            f.setAccessible(true);
+            Object raw = f.get(brain);
+            if (!(raw instanceof Map<?, ?> byPriority)) {
+                sb.append("  registeredBehaviors: (reflection field unexpected type)\n");
+                return;
+            }
+            sb.append("  registeredBehaviors (per priority → per activity):\n");
+            if (byPriority.isEmpty()) {
+                sb.append("    (none — Brain is empty)\n");
+                return;
+            }
+            for (var prioEntry : byPriority.entrySet()) {
+                Map<Activity, Set<?>> byActivity = (Map<Activity, Set<?>>) prioEntry.getValue();
+                for (var actEntry : byActivity.entrySet()) {
+                    sb.append("    P").append(prioEntry.getKey()).append(" ")
+                            .append(actEntry.getKey().getName())
+                            .append(": ");
+                    boolean first = true;
+                    for (Object bc : actEntry.getValue()) {
+                        if (!first) sb.append(", ");
+                        sb.append(bc.getClass().getSimpleName());
+                        first = false;
+                    }
+                    sb.append("\n");
+                }
+            }
+        } catch (Throwable t) {
+            sb.append("  registeredBehaviors: (reflection failed: ")
+                    .append(t.getClass().getSimpleName()).append(")\n");
+        }
     }
 
     // ── Section builders ─────────────────────────────────────────────────────
