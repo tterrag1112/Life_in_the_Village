@@ -114,6 +114,23 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     /** Phase 6.3.3.h.2 — per-cycle dedup so a plot's cropType is only
      *  rotated once even though replant() runs per BlockPos. */
     private final java.util.Set<UUID> rotatedThisCycle = new java.util.HashSet<>();
+    /** Phase 6.3.3.t.1 — currently-selected plot for the per-plot work
+     *  cycle. {@code null} between selections; populated by
+     *  {@link #selectPlot} at ANALYZING and cleared after DEPOSITING.
+     *  The toHarvest / toReplant queues are scoped to this plot only;
+     *  they refill from {@link #scanPlotForTasks(ServerLevel, FarmPlot)}
+     *  each time a new plot is selected. */
+    private FarmPlot currentPlot;
+    /** Phase 6.3.3.t.2 — priority ordering for plot selection. Plots
+     *  with empty plantable positions (newly-cleared) win against
+     *  plots with mature crops, encouraging a "replant first, then
+     *  harvest the next field" cycle that keeps soil productive
+     *  without leaving newly-cleared land idle. */
+    private enum PlotPriority {
+        EMPTY_PLANTABLE,
+        HARVEST_READY,
+        NONE
+    }
     /** Phase 6.3.3.n.3 — one-shot guard so the "null role fallback"
      *  warning only fires once per behavior instance, not every tick. */
     private boolean warnedNullRole = false;
@@ -403,9 +420,31 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         toHarvest.clear();
         toReplant.clear();
         harvestedThisCycle.clear();
+        currentPlot = null;
 
-        for (FarmPlot plot : assignedPlots) {
-            scanPlotForTasks(level, plot);
+        // Phase 6.3.3.t.1 — per-plot work cycle. Instead of building a
+        // mega-queue across all plots (which produced 1364-position
+        // queues observed in the q.1 diagnostic), select ONE plot at
+        // a time, work it to completion, deposit, then loop back to
+        // ANALYZING to select the next. The per-plot queue stays
+        // small (typically <50 positions) and the farmer's deposit
+        // trips become naturally per-plot — more realistic walking
+        // pattern, no accumulated-yield gigantism.
+        //
+        // Phase 6.3.3.t.2 — selection priority: EMPTY_PLANTABLE plots
+        // win over HARVEST_READY. After harvest-then-plant of plot A,
+        // the freshly-cleared positions on A might already have crops
+        // back (replant ran same-cycle), so A drops out of
+        // EMPTY_PLANTABLE; plot B's mature crops then win the next
+        // ANALYZING. This produces the user's intended "newly-cleared
+        // plots get worked first" behavior without cross-plot queue
+        // mixing.
+        currentPlot = selectPlot(level, assignedPlots);
+        if (currentPlot == null) {
+            // No plot needs work right now. Fall through to the
+            // sell / idle path below.
+        } else {
+            scanPlotForTasks(level, currentPlot);
         }
 
         // Decide next phase
@@ -544,6 +583,77 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     }
 
     // =========================================================================
+    // Phase 6.3.3.t.2 — plot selection + priority scoring
+    // =========================================================================
+
+    /**
+     * Phase 6.3.3.t.2 — score a single plot for the per-plot work
+     * cycle. Higher priority plots get selected first by
+     * {@link #selectPlot}. EMPTY_PLANTABLE requires both empty
+     * positions AND seed availability (without seed availability,
+     * scoring would drive an infinite no-progress loop: re-select
+     * → re-fill toReplant → fail to plant → re-select).
+     */
+    private PlotPriority scorePlot(ServerLevel level, FarmPlot plot) {
+        boolean hasEmpty = false;
+        boolean hasMature = false;
+        for (BlockPos farmland : plot.getFarmlandBlocks(level)) {
+            BlockPos cropPos = farmland.above();
+            BlockState state = level.getBlockState(cropPos);
+            if (state.getBlock() instanceof CropBlock crop && crop.isMaxAge(state)) {
+                hasMature = true;
+            } else if (state.isAir()) {
+                hasEmpty = true;
+            }
+            if (hasMature && hasEmpty) break;
+        }
+        // s.2 — tillable dirt/grass positions count as empty-plantable.
+        if (!hasEmpty && !plot.getTillableSurfaces(level).isEmpty()) {
+            hasEmpty = true;
+        }
+        if (hasEmpty && hasAnyFarmingSeed(level, plot)) {
+            return PlotPriority.EMPTY_PLANTABLE;
+        }
+        if (hasMature) return PlotPriority.HARVEST_READY;
+        return PlotPriority.NONE;
+    }
+
+    /**
+     * Phase 6.3.3.t.2 — pick the highest-priority plot for this
+     * work cycle. EMPTY_PLANTABLE wins over HARVEST_READY (the user's
+     * "replant newly-cleared plots first" intent). Ties resolved by
+     * first-found in {@code plots} iteration order.
+     */
+    private FarmPlot selectPlot(ServerLevel level, List<FarmPlot> plots) {
+        FarmPlot bestHarvest = null;
+        for (FarmPlot p : plots) {
+            PlotPriority pri = scorePlot(level, p);
+            if (pri == PlotPriority.EMPTY_PLANTABLE) {
+                return p;  // EMPTY_PLANTABLE is strictly highest; short-circuit.
+            }
+            if (pri == PlotPriority.HARVEST_READY && bestHarvest == null) {
+                bestHarvest = p;
+            }
+        }
+        return bestHarvest;  // may be null when no plot needs work
+    }
+
+    /**
+     * Phase 6.3.3.t.2 — seed-availability gate for EMPTY_PLANTABLE
+     * scoring. Checks personal inventory AND farmhouse storage for
+     * seeds matching the plot's current crop type. Without this
+     * gate, no-seed farmers infinite-loop selecting the same empty
+     * plot every cycle and failing to plant.
+     */
+    private boolean hasAnyFarmingSeed(ServerLevel level, FarmPlot plot) {
+        if (farmhouse == null) return false;
+        Item seedItem = plot.getCropType().resolveSeedItem();
+        int available = countSeedsInPersonalInventory(seedItem)
+                + countSeedsInFarmhouse(level, seedItem);
+        return available > 0;
+    }
+
+    // =========================================================================
     // Phase: HARVESTING
     // =========================================================================
 
@@ -568,9 +678,26 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         if (toHarvest.isEmpty()) {
             if (!loggedHarvestExhausted) {
                 LOGGER.warn("[FarmerBehavior] {} HARVESTING: toHarvest emptied, " +
-                        "moving to WALKING_TO_FARMHOUSE (harvested {} items this cycle)",
-                        entity.getNpcName(), harvestedThisCycle.size());
+                        "harvested {} items this cycle; toReplant size={}",
+                        entity.getNpcName(), harvestedThisCycle.size(),
+                        toReplant.size());
                 loggedHarvestExhausted = true;
+            }
+            // Phase 6.3.3.t.1 — within-plot continuation: if the same
+            // plot has plant-target positions queued (s.2 scan picks
+            // up freshly-cleared farmland AND tillable dirt), chain
+            // straight into REPLANTING before walking back to the
+            // farmhouse. Replanting the same plot we just harvested
+            // matches the user's intended "replant before harvesting
+            // another field" cycle.
+            //
+            // canPlant(role) check uses the current FarmRole — same
+            // gate as in analyze(); MARKET_SELLER / ANIMAL_TENDER
+            // fall through to deposit without planting.
+            FarmRole role = ProfessionRoleManager.getRole(entity, FarmRole.class);
+            if (!toReplant.isEmpty() && canPlant(role)) {
+                phase = Phase.REPLANTING;
+                return;
             }
             phase = Phase.WALKING_TO_FARMHOUSE;
             return;
@@ -813,7 +940,15 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         actionTimer = 0;
 
         if (toReplant.isEmpty()) {
-            phase = Phase.ANALYZING;
+            // Phase 6.3.3.t.1 — per-plot cycle: after the plot's work
+            // is done, walk back and deposit whatever was accumulated
+            // during the harvest pass. Even pure-plant cycles (no
+            // harvest, just planting) route through this — DEPOSITING
+            // is a no-op for empty inventory and the walk is a
+            // natural rest point between plots. Pre-t.1 this went
+            // straight to ANALYZING (mega-queue model meant harvest
+            // had a separate deposit pass earlier).
+            phase = Phase.WALKING_TO_FARMHOUSE;
             return;
         }
 
