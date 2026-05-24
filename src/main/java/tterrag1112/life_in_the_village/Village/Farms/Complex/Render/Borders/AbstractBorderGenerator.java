@@ -12,15 +12,13 @@ import java.util.Random;
 
 /**
  * Common framework for the four border styles. Subclasses only
- * implement {@link #renderColumn} — this base handles the line
- * walk, ground-Y lookup, water/lava skipping, and the
- * "is-it-safe-to-replace-this-block" check.
+ * implement {@link #renderColumn} — this base handles the head-
+ * clearance pre-pass and the per-cell BorderGenerator entry point.
  *
- * <p>Line walking uses a simple Bresenham over XZ. Each step lands
- * on a discrete world-XZ; for that column we resolve ground via
- * the level's WORLD_SURFACE heightmap (drops back to MOTION_-
- * BLOCKING_NO_LEAVES if the surface block is a leaf — wouldn't
- * want a fence floating on tree canopy).
+ * <p>The orchestrator drives per-cell dispatch (rasterize all plot
+ * edges → dedupe XZ across the complex → snapshot ground Y →
+ * paint each cell once). This base's {@link #paintColumnAt} is
+ * the per-cell call.
  *
  * <p>Replaceability: the column is considered paintable iff every
  * destination Y position is currently air, a plant, or otherwise
@@ -31,23 +29,20 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
 
     /** Maximum world-Y at which we'll place a border block.
      *  Borders 60 blocks in the air are nonsensical; this guards
-     *  against pathological terrain. */
-    protected static final int MAX_BUILD_Y = 250;
+     *  against pathological terrain. Public so the orchestrator
+     *  can apply the same upper-bound when filtering cells. */
+    public static final int MAX_BUILD_Y = 250;
 
-    /** Per-column hook. Called once per XZ step along the edge.
-     *  {@code groundY} is the surface block Y (the block under the
-     *  border's foot). The implementation places blocks at
-     *  {@code groundY + 1} and above per its style.
+    /** Per-column hook. Called once per XZ cell the orchestrator
+     *  assigns to this style. {@code groundY} is a SNAPSHOT taken
+     *  before any border was placed in the complex, so subsequent
+     *  borders can't see a previous border as "ground".
      *
-     *  @param level         target level
-     *  @param x             world X
-     *  @param z             world Z
-     *  @param groundY       surface block Y resolved by the base
-     *  @param outwardNormal points away from plot interior
-     *  @param stepIndex     0-indexed step along this edge — used
-     *                       by styles that vary by stride
-     *                       (post-and-rail's "every 6th column is
-     *                       a post"). */
+     *  <p>{@code stepIndex} is always 0 in the new per-cell
+     *  dispatch — kept in the signature for backward-compat with
+     *  the previous edge-walking shape. Styles that previously
+     *  varied by stride (PostAndRail's "every 6th column is a
+     *  post") now use a position hash of (x, z) instead. */
     protected abstract void renderColumn(ServerLevel level,
                                          int x, int z, int groundY,
                                          Direction outwardNormal,
@@ -55,47 +50,33 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
                                          Random rng);
 
     @Override
-    public void renderEdge(BlockPos start, BlockPos end,
-                            Direction outwardNormal,
-                            ServerLevel level,
-                            Random rng,
-                            java.util.Set<Long> pathCells) {
-        int x0 = start.getX(), z0 = start.getZ();
-        int x1 = end.getX(),   z1 = end.getZ();
-        int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
-        int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1;
-        int err = dx - dz;
-        int step = 0;
-        while (true) {
-            int gy = resolveGroundY(level, x0, z0);
-            // World floor is level.getMinY() in 1.21 (negative on
-            // superflat). Skip only when the column is below the
-            // build floor or above MAX_BUILD_Y (avoid placing
-            // borders 200 blocks up on cliff tops).
-            if (gy >= level.getMinY() && gy < MAX_BUILD_Y
-                    && !onPath(x0, z0, pathCells)) {
-                clearHeadSpace(level, x0, gy, z0);
-                renderColumn(level, x0, z0, gy, outwardNormal, step, rng);
-            }
-            if (x0 == x1 && z0 == z1) break;
-            int e2 = 2 * err;
-            if (e2 > -dz) { err -= dz; x0 += sx; }
-            if (e2 <  dx) { err += dx; z0 += sz; }
-            step++;
-            if (step > 4096) break; // sanity belt
-        }
+    public final void paintColumnAt(ServerLevel level,
+                                     int x, int z, int groundY,
+                                     Direction outwardNormal,
+                                     Random rng) {
+        clearHeadSpace(level, x, groundY, z);
+        renderColumn(level, x, z, groundY, outwardNormal, 0, rng);
     }
 
-    /** True iff the column (x, z) lies on a registered farm path.
-     *  Authoritative set is rasterized once per render pass from
-     *  the complex's PathSegment list; lookup is O(1). Replaces
-     *  the prior block-state inspection which was order-dependent
-     *  on render sequence and brittle under future palette
-     *  variations. */
-    private static boolean onPath(int x, int z, java.util.Set<Long> pathCells) {
-        if (pathCells == null || pathCells.isEmpty()) return false;
-        long key = ((long) x << 32) | (z & 0xFFFFFFFFL);
-        return pathCells.contains(key);
+    /** Resolve the ground block Y at {@code (x, z)} for the
+     *  orchestrator's pre-render snapshot. WORLD_SURFACE includes
+     *  leaves which would float fences on tree canopies; fall back
+     *  to MOTION_BLOCKING_NO_LEAVES if the WORLD_SURFACE top is a
+     *  leaf. Public so the orchestrator can take the same snapshot
+     *  shape per cell. */
+    public static int resolveGroundY(ServerLevel level, int x, int z) {
+        int y = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+        BlockState top = level.getBlockState(new BlockPos(x, y, z));
+        if (top.is(Blocks.OAK_LEAVES)
+                || top.is(Blocks.BIRCH_LEAVES)
+                || top.is(Blocks.SPRUCE_LEAVES)
+                || top.is(Blocks.JUNGLE_LEAVES)
+                || top.is(Blocks.DARK_OAK_LEAVES)
+                || top.is(Blocks.ACACIA_LEAVES)) {
+            y = level.getHeight(
+                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+        }
+        return y;
     }
 
     /** Clear non-air blocks from {@code groundY+1} up to
@@ -139,25 +120,6 @@ public abstract class AbstractBorderGenerator implements BorderGenerator {
                 || s.is(Blocks.TALL_GRASS)
                 || s.is(Blocks.FERN)
                 || s.is(Blocks.LARGE_FERN);
-    }
-
-    /** Resolve the ground block Y at {@code (x, z)}. WORLD_SURFACE
-     *  includes leaves which would float fences on tree canopies;
-     *  fall back to MOTION_BLOCKING_NO_LEAVES if the WORLD_SURFACE
-     *  top is a leaf. */
-    protected static int resolveGroundY(ServerLevel level, int x, int z) {
-        int y = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
-        BlockState top = level.getBlockState(new BlockPos(x, y, z));
-        if (top.is(Blocks.OAK_LEAVES)
-                || top.is(Blocks.BIRCH_LEAVES)
-                || top.is(Blocks.SPRUCE_LEAVES)
-                || top.is(Blocks.JUNGLE_LEAVES)
-                || top.is(Blocks.DARK_OAK_LEAVES)
-                || top.is(Blocks.ACACIA_LEAVES)) {
-            y = level.getHeight(
-                    Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
-        }
-        return y;
     }
 
     /** Safe replacement: only set the block if the current state

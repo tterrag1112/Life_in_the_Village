@@ -169,21 +169,42 @@ public final class FarmComplexRenderer {
     // Borders (single pass — no region-perimeter duplicate)
     // =========================================================================
 
-    /** Walks every plot's polygon edges; collects each edge once
-     *  via an order-independent key; resolves the edge's style
-     *  from the deterministic {@link PlotBorders} assignment;
-     *  hands off to the registered {@link BorderGenerator}.
+    /** Three-phase per-cell border dispatch.
      *
-     *  <p>Plot polygons collectively cover the outer region
-     *  perimeter (each plot's perimeter-adjacent edges are
-     *  segments of the region perimeter). There is NO separate
-     *  region-perimeter pass — that was the source of the
-     *  doubled-border bug, because the region polygon's vertices
-     *  (traced from the full flood-fill cell set, then simplified
-     *  independently) don't align with plot polygons' vertices
-     *  (traced from BSP-clipped cell sets, simplified separately).
-     *  Different vertex coords → different edgeKeys → both passes
-     *  painted the outer perimeter. Fix: drop the region pass. */
+     *  <p><b>Resolution rule:</b> first plot to rasterize a given
+     *  XZ cell wins its border style for that cell. Plot iteration
+     *  order is {@code plots} (insertion order by UUID, stable per
+     *  save). Deterministic; seed-stable across re-renders of the
+     *  same complex.
+     *
+     *  <p><b>Pre-fix bugs (E.bug.2.1):</b>
+     *  <ol>
+     *    <li><b>Multi-variant at same XZ.</b> Adjacent plot
+     *        polygons can have extent mismatches at shared
+     *        boundaries (region-polygon clip differences); their
+     *        edges then have different vertex coords for the same
+     *        physical x or z line, edgeKey-based dedup fails, both
+     *        plots paint with their own styles along the overlap.
+     *    <li><b>Vertical stacking.</b> Each border's
+     *        {@code resolveGroundY} consulted a live WORLD_SURFACE
+     *        heightmap, which sees previously-placed border
+     *        blocks. Sequential placements stacked on each other.
+     *  </ol>
+     *
+     *  <p><b>Fix:</b> three phases.
+     *  <ol>
+     *    <li>Rasterize every plot edge to its XZ cells via
+     *        Bresenham. For each cell, {@code putIfAbsent} the
+     *        plot's style and the edge's outward normal. First
+     *        plot wins → single dispatch per XZ.
+     *    <li>Snapshot ground Y for every assigned cell via
+     *        {@code AbstractBorderGenerator.resolveGroundY}
+     *        BEFORE any border block is placed.
+     *    <li>Paint each cell once with its assigned style and
+     *        snapshot ground Y. Path-cells skipped; out-of-bound
+     *        cells skipped.
+     *  </ol>
+     */
     private static void renderBorders(FarmComplex complex, List<FarmPlot> plots,
                                        String culture,
                                        ServerLevel level, Random rng,
@@ -193,7 +214,12 @@ public final class FarmComplexRenderer {
             bordersById.put(b.plotId(), b);
         }
 
-        Set<Long> seenEdges = new HashSet<>();
+        // Phase 1: rasterize edges into per-cell style + outward.
+        // LinkedHashMap preserves first-plot-wins iteration order
+        // for phase 3 determinism.
+        java.util.LinkedHashMap<Long, BorderStyleId> cellStyles =
+                new java.util.LinkedHashMap<>();
+        Map<Long, Direction> cellOutward = new HashMap<>();
         for (FarmPlot plot : plots) {
             if (plot == null || plot.getPolygon() == null) continue;
             PlotBorders pb = bordersById.get(plot.getId());
@@ -203,22 +229,70 @@ public final class FarmComplexRenderer {
             for (int i = 0; i < n; i++) {
                 BlockPos a = verts.get(i);
                 BlockPos b = verts.get((i + 1) % n);
-                long key = edgeKey(a, b);
-                if (!seenEdges.add(key)) continue;
                 BorderStyleId style = styleForEdge(pb, i);
-                paintEdge(a, b, style, culture, level, rng, pathCells);
+                Direction outward = outwardNormal(a, b);
+                rasterizeEdge(a, b, style, outward, cellStyles, cellOutward);
             }
+        }
+
+        // Phase 2: pre-render heightmap snapshot. All reads happen
+        // before any setBlock so subsequent placements can't see a
+        // previous border as "ground".
+        Map<Long, Integer> cellGroundY = new HashMap<>(cellStyles.size());
+        for (Long cell : cellStyles.keySet()) {
+            int x = (int) (cell >> 32);
+            int z = (int) (long) cell;
+            cellGroundY.put(cell,
+                    tterrag1112.life_in_the_village.Village.Farms.Complex
+                            .Render.Borders.AbstractBorderGenerator
+                            .resolveGroundY(level, x, z));
+        }
+
+        // Phase 3: paint each cell once with its resolved style +
+        // snapshot ground Y. Skip path-cells (the path renderer's
+        // corridor stays clear) and out-of-bounds Y.
+        int minY = level.getMinY();
+        int maxY = tterrag1112.life_in_the_village.Village.Farms.Complex
+                .Render.Borders.AbstractBorderGenerator.MAX_BUILD_Y;
+        for (Map.Entry<Long, BorderStyleId> entry : cellStyles.entrySet()) {
+            long cell = entry.getKey();
+            if (pathCells.contains(cell)) continue;
+            int gy = cellGroundY.get(cell);
+            if (gy < minY || gy >= maxY) continue;
+            int x = (int) (cell >> 32);
+            int z = (int) (long) cell;
+            BorderStyleId style = entry.getValue();
+            Direction outward = cellOutward.getOrDefault(cell, Direction.SOUTH);
+            BorderGenerator gen = BorderGeneratorRegistry
+                    .get(culture, style)
+                    .orElse(new HedgeBorder());
+            gen.paintColumnAt(level, x, z, gy, outward, rng);
         }
     }
 
-    private static void paintEdge(BlockPos a, BlockPos b, BorderStyleId style,
-                                   String culture, ServerLevel level, Random rng,
-                                   Set<Long> pathCells) {
-        BorderGenerator gen = BorderGeneratorRegistry
-                .get(culture, style)
-                .orElse(new HedgeBorder());
-        Direction outward = outwardNormal(a, b);
-        gen.renderEdge(a, b, outward, level, rng, pathCells);
+    /** Bresenham-walk the edge (a → b); for each cell, assign the
+     *  given style + outward iff the cell hasn't been claimed
+     *  already (first-plot-wins). */
+    private static void rasterizeEdge(BlockPos a, BlockPos b,
+                                       BorderStyleId style,
+                                       Direction outward,
+                                       Map<Long, BorderStyleId> cellStyles,
+                                       Map<Long, Direction> cellOutward) {
+        int x0 = a.getX(), z0 = a.getZ();
+        int x1 = b.getX(), z1 = b.getZ();
+        int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
+        int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1;
+        int err = dx - dz;
+        int safety = 0;
+        while (safety++ < 4096) {
+            long key = ((long) x0 << 32) | (z0 & 0xFFFFFFFFL);
+            cellStyles.putIfAbsent(key, style);
+            cellOutward.putIfAbsent(key, outward);
+            if (x0 == x1 && z0 == z1) break;
+            int e2 = 2 * err;
+            if (e2 > -dz) { err -= dz; x0 += sx; }
+            if (e2 <  dx) { err += dx; z0 += sz; }
+        }
     }
 
     private static BorderStyleId styleForEdge(PlotBorders pb, int edgeIndex) {
@@ -226,16 +300,6 @@ public final class FarmComplexRenderer {
             if (es.edgeIndex() == edgeIndex) return es.style();
         }
         return pb.primary();
-    }
-
-    /** Order-independent edge key (matches BorderStyleAssigner's
-     *  pattern so dedup intersects correctly). */
-    private static long edgeKey(BlockPos a, BlockPos b) {
-        long ka = ((long) a.getX() << 32) | (a.getZ() & 0xFFFFFFFFL);
-        long kb = ((long) b.getX() << 32) | (b.getZ() & 0xFFFFFFFFL);
-        long lo = Math.min(ka, kb);
-        long hi = Math.max(ka, kb);
-        return lo * 1_000_003L ^ hi;
     }
 
     /** Right-hand perpendicular of (a → b), snapped to nearest

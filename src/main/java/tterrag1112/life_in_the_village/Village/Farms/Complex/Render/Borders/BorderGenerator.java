@@ -1,51 +1,51 @@
 package tterrag1112.life_in_the_village.Village.Farms.Complex.Render.Borders;
 
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 
 import java.util.Random;
 
 /**
- * Detour A Prompt B — paints a single border edge between two
- * grid corners.
+ * Detour A Prompt B — paints a single border column at a pre-
+ * resolved ground Y.
  *
- * <p>One {@code renderEdge} call corresponds to one polygon edge.
- * Concrete implementations are the four style classes
+ * <p>Concrete implementations are the four style classes
  * ({@code HedgeBorder}, {@code StoneWallBorder},
  * {@code PostAndRailBorder}, {@code DrystoneBorder}); the
- * orchestrator picks one per edge via
- * {@link BorderGeneratorRegistry#get}.
+ * orchestrator picks one per cell via {@link
+ * BorderGeneratorRegistry#get}.
  *
- * <p>Per-column safety (skip water/lava, ground-Y lookup, stop
- * above max-build-height) lives in {@code AbstractBorderGenerator}
- * so the four style classes only need to declare their per-
- * column block recipe.
+ * <p>Per-column safety (clear head space, soft-replace check)
+ * lives in {@code AbstractBorderGenerator} so the four style
+ * classes only declare their per-column block recipe.
  *
  * @see AbstractBorderGenerator
  */
 public interface BorderGenerator {
 
     /**
-     * Paint the border from {@code start} to {@code end}.
+     * Paint a single border column at a pre-resolved ground Y.
      *
-     * @param start          one polygon-vertex world position
-     * @param end            the other polygon-vertex world position
-     * @param outwardNormal  unit cardinal pointing AWAY from the
-     *                       plot interior (toward the world outside
-     *                       the border). Used by gate-aware styles.
+     * <p>The orchestrator drives per-cell dispatch (rasterize all
+     * plot edges, dedupe XZ across the complex, snapshot ground Y
+     * before any placement, paint each cell once). This entry
+     * point is the per-cell call.
+     *
      * @param level          target server level
-     * @param rng            deterministic stream for jitter; same
-     *                       seed ⇒ same output
-     * @param pathCells      set of XZ-packed positions occupied by
-     *                       farm paths. Border generators skip any
-     *                       column whose position is in this set so
-     *                       the path stays clear at the crossing.
-     *                       Empty / null treated as "no paths".
+     * @param x              world X of the column
+     * @param z              world Z of the column
+     * @param groundY        snapshot ground Y from BEFORE any
+     *                       border placement — passed in so per-
+     *                       column placements don't stack on
+     *                       earlier border blocks they'd otherwise
+     *                       see as "ground" via a live heightmap
+     *                       read.
+     * @param outwardNormal  unit cardinal pointing AWAY from the
+     *                       plot interior; available to styles that
+     *                       want a side-aware placement.
+     * @param rng            deterministic stream for material
+     *                       variation per column.
      */
-    void renderEdge(BlockPos start, BlockPos end,
-                    Direction outwardNormal,
-                    ServerLevel level,
-                    Random rng,
-                    java.util.Set<Long> pathCells);
+    void paintColumnAt(ServerLevel level, int x, int z, int groundY,
+                       Direction outwardNormal, Random rng);
 }
