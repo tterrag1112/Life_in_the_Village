@@ -577,20 +577,12 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                         String.format("%.1f", distSq), INTERACT_RANGE_SQ);
                 loggedHarvestWalking = true;
             }
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    cropPos.getX(), cropPos.getY(), cropPos.getZ(), 1.0));
-            // Phase 6.3.3.r — also drive the navigation directly. The
-            // setMemory above is the Brain idiom (MoveToTargetSink in
-            // CORE consumes it). The direct moveTo here is the goal-
-            // system idiom and acts as a backstop: it returns false
-            // when pathfinding can't compute a route, which the log
-            // surfaces, AND it forces the navigation to start even if
-            // MoveToTargetSink misses the memory write this tick (race
-            // with other CORE behaviors / pruning). Path is centered on
-            // the block (+0.5 X/Z) so the NPC targets the block centre,
-            // not the NW corner — matches the standard vanilla pattern.
-            boolean started = entity.getNavigation().moveTo(
-                    cropPos.getX() + 0.5, cropPos.getY(), cropPos.getZ() + 0.5, 1.0);
+            // Phase 6.3.3.s.3 — walkTo lifted into NpcBehaviorHelpers.
+            // Sets WALK_TARGET memory AND calls navigation.moveTo with
+            // block-centered destination; returns the moveTo result for
+            // the nav-state diagnostic LOG below.
+            boolean started = tterrag1112.life_in_the_village.Npc.Brain
+                    .NpcBehaviorHelpers.walkTo(entity, cropPos, 1.0);
             if (!loggedHarvestNavState) {
                 var path = entity.getNavigation().getPath();
                 LOGGER.warn("[FarmerBehavior] {} HARVESTING nav state: " +
@@ -748,8 +740,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    target.getX(), target.getY(), target.getZ(), 1.0));
+            tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers
+                    .walkTo(entity, target, 1.0);
         } else {
             entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             phase = Phase.DEPOSITING;
@@ -818,8 +810,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 targetPos.getX(), targetPos.getY(), targetPos.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    targetPos.getX(), targetPos.getY(), targetPos.getZ(), 1.0));
+            tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers
+                    .walkTo(entity, targetPos, 1.0);
             return;
         }
 
@@ -909,8 +901,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 target.getX(), target.getY(), target.getZ());
 
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    target.getX(), target.getY(), target.getZ(), 1.0));
+            tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers
+                    .walkTo(entity, target, 1.0);
             return;
         }
 
@@ -1042,8 +1034,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         double distSq = entity.distanceToSqr(
                 target.getX(), target.getY(), target.getZ());
         if (distSq > INTERACT_RANGE_SQ * 4.0) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    target.getX(), target.getY(), target.getZ(), 1.0));
+            tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers
+                    .walkTo(entity, target, 1.0);
             return;
         }
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
@@ -1124,8 +1116,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         double distSq = entity.distanceToSqr(
                 anchor.getX(), anchor.getY(), anchor.getZ());
         if (distSq > INTERACT_RANGE_SQ * 4.0) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    anchor.getX(), anchor.getY(), anchor.getZ(), 1.0));
+            tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers
+                    .walkTo(entity, anchor, 1.0);
         } else {
             entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         }
@@ -1454,8 +1446,8 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         double distSq = entity.distanceToSqr(
                 target.getX(), target.getY(), target.getZ());
         if (distSq > INTERACT_RANGE_SQ) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    target.getX(), target.getY(), target.getZ(), 1.0));
+            tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers
+                    .walkTo(entity, target, 1.0);
             return;
         }
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
@@ -1478,11 +1470,13 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         phase = Phase.ANALYZING;
     }
 
-    /** Bridge helper — Goal-side used entity.getNavigation().moveTo(x,y,z,speed);
-     *  Behavior-side writes WALK_TARGET memory and lets CORE MoveToTargetSink steer. */
-    private static WalkTarget navWalkTarget(double x, double y, double z, double speed) {
-        return new WalkTarget(net.minecraft.core.BlockPos.containing(x, y, z), (float) speed, 1);
-    }
+    // Phase 6.3.3.s.3 — navWalkTarget removed. All 7 walk sites now
+    // call NpcBehaviorHelpers.walkTo which writes WALK_TARGET memory
+    // AND calls navigation.moveTo with block-centered destination.
+    // The unused WalkTarget / MemoryModuleType imports can be cleaned
+    // up if the class doesn't use them elsewhere; keeping them in
+    // place avoids touching unrelated parts of the file in this
+    // commit.
 
     // -------------------------------------------------------------------------
     // Phase 6.3.3.e — sell pipeline integration
