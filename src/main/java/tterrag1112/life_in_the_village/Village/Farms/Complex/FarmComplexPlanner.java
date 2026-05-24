@@ -344,7 +344,7 @@ public final class FarmComplexPlanner {
         // ── 9. Tool shed positioning ────────────────────────────────────
         BlockPos toolShed = pickToolShedPosition(fill.region(), paths,
                 newPlots, apronPoly,
-                new java.util.Random(in.seed() ^ 0xCAFE_BABE_L),
+                new java.util.Random(in.seed() ^ 0xCAFEBABEL),
                 in.verbose());
         // null is allowed — caller renders without a shed if positioning failed.
 
