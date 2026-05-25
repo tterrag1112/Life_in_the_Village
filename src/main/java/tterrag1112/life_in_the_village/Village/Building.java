@@ -47,6 +47,14 @@ public class Building {
      */
     private String variantId;
 
+    // ── Phase 6.4.3.2 — amenity cache (transient, not persisted) ────────────
+    // Lazy scan + TTL refresh keeps the cost negligible while accommodating
+    // mid-game block changes (players adding a furnace etc.). Refresh happens
+    // on read when AMENITY_CACHE_TTL ticks have elapsed since the prior scan.
+    private transient EnumSet<AmenityType> cachedAmenities;
+    private transient long cachedAmenitiesTick = Long.MIN_VALUE;
+    private static final long AMENITY_CACHE_TTL = 24000L; // ~one game day
+
     /** Doc 15 — primary tint colour. Null = no tint (current behaviour). */
     @Nullable private DyeColor primaryColor = null;
     /** Doc 15 — accent tint colour. */
@@ -182,6 +190,55 @@ public class Building {
     public int               getLevel()         { return buildingLevel; }
     public Rotation getRotation() { return rotation; }
     public BuildingCondition getCondition()     { return condition; }
+
+    /**
+     * Phase 6.4.3.2 — block-scan amenity inventory for this building.
+     * Walks every block inside {@link BuildingShape}, classifying via
+     * {@link AmenityType#matches}. Result is cached for
+     * {@link #AMENITY_CACHE_TTL} ticks (~one game day) so repeat reads
+     * (housing decisions, profession-self-sufficiency checks) don't
+     * re-scan; mid-day block edits are eventually consistent.
+     *
+     * <p>For a typical 12×6×12 house this is ~860 block lookups, run
+     * once per game day per asking NPC. Acceptable.</p>
+     *
+     * <p>Returns an immutable view; callers that want a copy should
+     * wrap with {@code EnumSet.copyOf}.</p>
+     */
+    public Set<AmenityType> getAmenities(ServerLevel level) {
+        long now = level.getGameTime();
+        if (cachedAmenities != null && (now - cachedAmenitiesTick) < AMENITY_CACHE_TTL) {
+            return Collections.unmodifiableSet(cachedAmenities);
+        }
+        EnumSet<AmenityType> found = EnumSet.noneOf(AmenityType.class);
+        AmenityType[] all = AmenityType.values();
+        BlockPos min = buildingShape.getMin();
+        BlockPos max = buildingShape.getMax();
+        for (BlockPos pos : BlockPos.betweenClosed(min, max)) {
+            Block block = level.getBlockState(pos).getBlock();
+            for (AmenityType t : all) {
+                if (!found.contains(t) && t.matches(block)) found.add(t);
+            }
+            if (found.size() == all.length) break; // early exit — all types found
+        }
+        cachedAmenities = found;
+        cachedAmenitiesTick = now;
+        return Collections.unmodifiableSet(found);
+    }
+
+    /** Convenience: true iff {@code type} is present inside this
+     *  building per the cached scan. */
+    public boolean hasAmenity(ServerLevel level, AmenityType type) {
+        return getAmenities(level).contains(type);
+    }
+
+    /** Drops the amenity cache so the next {@link #getAmenities} read
+     *  re-scans. Use when a known block edit has invalidated the cache
+     *  ahead of its TTL — usually not needed; TTL is short enough that
+     *  most callers don't bother. */
+    public void invalidateAmenityCache() {
+        cachedAmenitiesTick = Long.MIN_VALUE;
+    }
 
     public void setName(String name)             { this.buildingName  = name; }
     public void setStructureId(Identifier id)    { this.structureId   = id; }
