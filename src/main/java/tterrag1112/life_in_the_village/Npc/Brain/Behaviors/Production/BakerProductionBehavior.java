@@ -24,11 +24,37 @@ import java.util.Optional;
 /** Phase 6.2.d.1 — migrated from {@code BakerGoal}. */
 public class BakerProductionBehavior extends AbstractProductionBehavior {
 
+    // Phase 6.3.4.10 — recipe ladder spans staple → specialty.
+    // Skill gates distinguish BAKING (homestead-level) from PASTRY
+    // (BAKER's rarer specialty for sweet/decorative goods).
     private static final ProductionRecipe FLOUR_TO_BREAD =
             ProductionRecipe.of(ModItems.WHEAT_FLOUR.get(), 1, Items.BREAD, 1, 60);
     private static final ProductionRecipe WHEAT_TO_BREAD =
             ProductionRecipe.of(Items.WHEAT, 3, Items.BREAD, 1, 200);
+    private static final ProductionRecipe MAKE_COOKIE =
+            ProductionRecipe.of(Map.of(Items.WHEAT, 2, Items.COCOA_BEANS, 1),
+                    Items.COOKIE, 8, 400)
+                .withSkillRequirement(
+                    tterrag1112.life_in_the_village.Npc.Skills.Skill.BAKING, 30);
+    private static final ProductionRecipe MAKE_PUMPKIN_PIE =
+            ProductionRecipe.of(Map.of(Items.PUMPKIN, 1, Items.SUGAR, 1, Items.EGG, 1),
+                    Items.PUMPKIN_PIE, 1, 600)
+                .withSkillRequirement(
+                    tterrag1112.life_in_the_village.Npc.Skills.Skill.PASTRY, 15);
+    private static final ProductionRecipe MAKE_CAKE =
+            ProductionRecipe.of(Map.of(Items.WHEAT, 3, Items.SUGAR, 2,
+                            Items.EGG, 1, Items.MILK_BUCKET, 3),
+                    Items.CAKE, 1, 900)
+                .withSkillRequirement(
+                    tterrag1112.life_in_the_village.Npc.Skills.Skill.PASTRY, 40);
+
     private static final int MAX_BATCH = 8;
+
+    // Priority order for chooseRecipe walks: high-value first, falls
+    // back to BREAD which has no skill gate and is always choosable.
+    private static final List<ProductionRecipe> RECIPE_PRIORITY = List.of(
+            MAKE_CAKE, MAKE_PUMPKIN_PIE, MAKE_COOKIE,
+            FLOUR_TO_BREAD, WHEAT_TO_BREAD);
 
     @Override protected BuildingType requiredBuildingType() { return BuildingType.BAKERY; }
 
@@ -39,34 +65,65 @@ public class BakerProductionBehavior extends AbstractProductionBehavior {
 
     @Override
     protected Optional<ProductionRecipe> chooseRecipe(ServerLevel level, Building building) {
-        // Phase 6.3.4.6 — stock-aware preference but no exclusion. When
-        // flour is in stock, prefer FLOUR_TO_BREAD (1:1, 60t). When only
-        // wheat is in stock, use WHEAT_TO_BREAD (3:1, 200t). When NEITHER
-        // is in stock, default to FLOUR_TO_BREAD so the analyze→executeBuy
-        // path tries to source flour from MILLER. Output-quota gate via
-        // productionTarget still applies.
-        Optional<Item> target = productionTarget(level, building);
-        if (target.isEmpty()) return Optional.empty();
+        // Phase 6.3.4.10 — multi-recipe selection with skill-gate.
+        // Walk RECIPE_PRIORITY (high-value first); for each candidate:
+        //   1. Skill-gate check (meetsSkillRequirements). Log + skip
+        //      gated recipes once per behavior instance.
+        //   2. Output-quota check — skip if already at quota for this
+        //      recipe's output item.
+        //   3. Stock-aware preference — prefer recipes whose inputs
+        //      are in-stock; otherwise fall through to the next
+        //      candidate. The base behavior allows the chosen recipe
+        //      even when inputs are missing (6.3.4.6 decoupling) — the
+        //      executeBuy path will source them. But for multi-recipe
+        //      selection, stock-aware preference avoids picking an
+        //      ambitious cake recipe when bread inputs are right there.
+        Map<Item, Integer> quotas = stockQuotas();
         Building source = resolveInputSource(level, building);
-        int flour = source != null
-                ? BuildingStorageAccess.countItem(level, source, ModItems.WHEAT_FLOUR.get()) : 0;
-        int wheat = source != null
-                ? BuildingStorageAccess.countItem(level, source, Items.WHEAT) : 0;
-        if (flour >= 1) return Optional.of(FLOUR_TO_BREAD);
-        if (wheat >= 3) return Optional.of(WHEAT_TO_BREAD);
-        return Optional.of(FLOUR_TO_BREAD);
+        ProductionRecipe firstViable = null;
+        for (ProductionRecipe recipe : RECIPE_PRIORITY) {
+            if (!meetsSkillRequirements(recipe)) {
+                logSkillGate(recipe);
+                continue;
+            }
+            int outStock = BuildingStorageAccess.countItem(
+                    level, outputBuilding(level), recipe.output());
+            int outQuota = quotas.getOrDefault(recipe.output(), 32);
+            if (outStock >= outQuota) continue;
+
+            boolean inStock = hasAllInputs(level, source, recipe);
+            if (inStock) return Optional.of(recipe);
+            if (firstViable == null) firstViable = recipe;
+        }
+        // No in-stock recipe found. Default to the first skill+quota
+        // viable recipe so the analyze→executeBuy path fires for its
+        // inputs. If none are viable, return empty (cycle stalls
+        // gracefully — diagnostic from the base layer).
+        return Optional.ofNullable(firstViable);
+    }
+
+    private static boolean hasAllInputs(ServerLevel level, Building source,
+                                        ProductionRecipe recipe) {
+        if (source == null) return false;
+        for (var e : recipe.inputs().entrySet()) {
+            if (BuildingStorageAccess.countItem(level, source, e.getKey()) < e.getValue()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
     protected int calculateBatchSize(ServerLevel level, ProductionRecipe recipe) {
         Building source = resolveInputSource(level, workBuilding);
         if (source == null) return 0;
-        int inputItem = recipe.inputs().entrySet().iterator().next().getKey()
-                == ModItems.WHEAT_FLOUR.get()
-                ? BuildingStorageAccess.countItem(level, source, ModItems.WHEAT_FLOUR.get())
-                : BuildingStorageAccess.countItem(level, source, Items.WHEAT);
-        int inputCount = recipe.inputs().values().iterator().next();
-        return Math.min(inputItem / inputCount, MAX_BATCH);
+        // Generalised across all baker recipes by walking inputs.
+        int minBatches = MAX_BATCH;
+        for (var e : recipe.inputs().entrySet()) {
+            int avail = BuildingStorageAccess.countItem(level, source, e.getKey());
+            minBatches = Math.min(minBatches, avail / e.getValue());
+        }
+        return minBatches;
     }
 
     @Override
@@ -84,31 +141,64 @@ public class BakerProductionBehavior extends AbstractProductionBehavior {
         Map<Item, Integer> consumes = new LinkedHashMap<>();
         recipe.inputs().forEach((item, count) -> consumes.put(item, count * batchSize));
         consumes.put(Items.COAL, batchSize);
-        Map<Item, Integer> produces = Map.of(Items.BREAD, batchSize);
+        // Phase 6.3.4.10 — produces map keyed on recipe.output() (was
+        // hardcoded BREAD) so cookies / pies / cakes flow through the
+        // same step machinery as bread.
+        Map<Item, Integer> produces = Map.of(recipe.output(),
+                recipe.outputCount() * batchSize);
         return List.of(new ProductionStep(ovenPos.get(), scaledTicks,
                 SoundEvents.FURNACE_FIRE_CRACKLE, Items.AIR, consumes, produces));
     }
 
     @Override
     protected Building resolveInputSource(ServerLevel level, Building workBuilding) {
+        // Stockpile when ANY recipe's primary input lives there; falls
+        // back to the bakery's own storage.
         Building stockpile = findStockpile(level);
         if (stockpile != null) {
-            boolean hasFlour = BuildingStorageAccess.countItem(
-                    level, stockpile, ModItems.WHEAT_FLOUR.get()) > 0;
-            boolean hasWheat = BuildingStorageAccess.countItem(
-                    level, stockpile, Items.WHEAT) >= 3;
-            if (hasFlour || hasWheat) return stockpile;
+            boolean hasAny =
+                    BuildingStorageAccess.countItem(level, stockpile, ModItems.WHEAT_FLOUR.get()) > 0
+                 || BuildingStorageAccess.countItem(level, stockpile, Items.WHEAT) >= 3
+                 || BuildingStorageAccess.countItem(level, stockpile, Items.COCOA_BEANS) > 0
+                 || BuildingStorageAccess.countItem(level, stockpile, Items.PUMPKIN) > 0
+                 || BuildingStorageAccess.countItem(level, stockpile, Items.SUGAR) > 0
+                 || BuildingStorageAccess.countItem(level, stockpile, Items.EGG) > 0
+                 || BuildingStorageAccess.countItem(level, stockpile, Items.MILK_BUCKET) > 0;
+            if (hasAny) return stockpile;
         }
         return workBuilding;
     }
 
-    @Override protected Map<Item, Integer> stockQuotas() { return Map.of(Items.BREAD, 32); }
-    @Override protected List<Item> sellableOutputs() { return List.of(Items.BREAD); }
-    @Override protected boolean canProduceItem(Item item) { return item == Items.BREAD; }
+    @Override
+    protected Map<Item, Integer> stockQuotas() {
+        return Map.of(
+                Items.BREAD, 32,
+                Items.COOKIE, 24,
+                Items.PUMPKIN_PIE, 8,
+                Items.CAKE, 4);
+    }
+
+    @Override
+    protected List<Item> sellableOutputs() {
+        return List.of(Items.BREAD, Items.COOKIE, Items.PUMPKIN_PIE, Items.CAKE);
+    }
+
+    @Override
+    protected boolean canProduceItem(Item item) {
+        return item == Items.BREAD || item == Items.COOKIE
+                || item == Items.PUMPKIN_PIE || item == Items.CAKE;
+    }
+
     @Override protected SoundEvent workSound() { return SoundEvents.FURNACE_FIRE_CRACKLE; }
 
     @Override
     protected Map<Item, Integer> resourcesToBuy(ServerLevel level, Building building) {
+        // Restricted to bread's inputs only. PASTRY recipes are
+        // skill-gated and dormant on a fresh BAKER, so seeding their
+        // ingredient demand into the buy path is premature — would
+        // try to source cocoa/sugar/milk before BAKER can actually
+        // use them. When PASTRY recipes become reachable, this hook
+        // can grow per-recipe demand projection.
         Map<Item, Integer> toBuy = new LinkedHashMap<>();
         Building source = resolveInputSource(level, building);
         int breadStock = BuildingStorageAccess.countItem(level, building, Items.BREAD);

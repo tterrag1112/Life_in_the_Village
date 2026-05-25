@@ -233,7 +233,11 @@ public final class DirectBusinessChannel implements EconomicChannel {
             case "bread", "cookie", "pumpkin_pie", "cake", "baked_potato" -> BuildingType.BAKERY;
             case "wheat", "carrot", "potato", "beetroot", "pumpkin", "melon", "apple",
                  "wheat_seeds", "carrot_seeds", "potato_seeds", "beetroot_seeds",
-                 "hay_block" -> BuildingType.FARMHOUSE;
+                 "hay_block",
+                 // Phase 6.3.4.10 — egg + milk_bucket sourced from
+                 // FARMER's chicken / cow rosters (the cow side stays
+                 // dormant until animal husbandry expansion lands).
+                 "egg", "milk_bucket" -> BuildingType.FARMHOUSE;
             case "iron_axe", "iron_sword", "iron_pickaxe", "iron_shovel", "iron_hoe",
                  "iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots",
                  "iron_ingot", "iron_nugget" -> BuildingType.BLACKSMITH;

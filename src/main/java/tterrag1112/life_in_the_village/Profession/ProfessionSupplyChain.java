@@ -71,17 +71,19 @@ public final class ProfessionSupplyChain {
                 Items.WHEAT, Items.BONE, Items.SUGAR_CANE));
 
         // ── BAKER ─────────────────────────────────────────────────────────────
-        // Phase 6.3.4.4.4 — WHEAT_FLOUR is the primary recipe input
-        // (FLOUR_TO_BREAD; 1 flour → 1 bread, 60t). WHEAT is the
-        // fallback (WHEAT_TO_BREAD; 3 wheat → 1 bread, 200t) used when
-        // no MILLER exists in the village. Order matters: the supply
-        // chain's consumer lookup walks inputs in declaration order, so
-        // WHEAT_FLOUR first lets baker prefer the efficient pathway.
+        // Phase 6.3.4.4.4 + 6.3.4.10 — staples (BREAD, COOKIE) plus
+        // PASTRY specialty (PUMPKIN_PIE, CAKE). Input order matches
+        // recipe priority: flour primary (FLOUR_TO_BREAD), wheat
+        // fallback (WHEAT_TO_BREAD), then pastry-specific ingredients
+        // (cocoa for cookies, pumpkin / sugar / egg / milk for the
+        // PASTRY recipes — dormant inputs until village content
+        // provides their sources).
         out.put(Profession.BAKER, List.of(
                 Items.BREAD, Items.COOKIE, Items.PUMPKIN_PIE, Items.CAKE));
         in.put(Profession.BAKER, List.of(
                 ModItems.WHEAT_FLOUR.get(), Items.WHEAT,
-                Items.EGG, Items.SUGAR, Items.PUMPKIN));
+                Items.COCOA_BEANS, Items.PUMPKIN, Items.SUGAR,
+                Items.EGG, Items.MILK_BUCKET));
 
         // ── BLACKSMITH ────────────────────────────────────────────────────────
         out.put(Profession.BLACKSMITH, List.of(
