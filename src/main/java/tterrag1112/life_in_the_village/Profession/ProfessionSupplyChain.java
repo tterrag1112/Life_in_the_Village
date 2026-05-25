@@ -53,7 +53,11 @@ public final class ProfessionSupplyChain {
         out.put(Profession.FARMER, List.of(
                 Items.WHEAT, Items.POTATO, Items.CARROT, Items.BEETROOT,
                 Items.PUMPKIN, Items.MELON, Items.BREAD, Items.APPLE,
-                Items.EGG, Items.FEATHER, Items.LEATHER));
+                Items.EGG, Items.FEATHER, Items.LEATHER,
+                // Phase 6.4.6.1 — added for DirectBusinessChannel
+                // consolidation. hay_block is bundled wheat; FARMER
+                // does produce it.
+                Items.HAY_BLOCK));
         // Farmers buy seeds from the market if they run out of their own stock.
         in.put(Profession.FARMER, List.of(
                 Items.WHEAT_SEEDS, Items.POTATO, Items.CARROT,
@@ -79,7 +83,10 @@ public final class ProfessionSupplyChain {
         // PASTRY recipes — dormant inputs until village content
         // provides their sources).
         out.put(Profession.BAKER, List.of(
-                Items.BREAD, Items.COOKIE, Items.PUMPKIN_PIE, Items.CAKE));
+                Items.BREAD, Items.COOKIE, Items.PUMPKIN_PIE, Items.CAKE,
+                // Phase 6.4.6.1 — baked_potato is BAKER-produced
+                // (consolidation from DirectBusinessChannel switch).
+                Items.BAKED_POTATO));
         in.put(Profession.BAKER, List.of(
                 ModItems.WHEAT_FLOUR.get(), Items.WHEAT,
                 Items.COCOA_BEANS, Items.PUMPKIN, Items.SUGAR,
@@ -92,7 +99,9 @@ public final class ProfessionSupplyChain {
                 Items.IRON_SHOVEL, Items.IRON_HOE,
                 Items.IRON_HELMET, Items.IRON_CHESTPLATE,
                 Items.IRON_LEGGINGS, Items.IRON_BOOTS,
-                Items.BUCKET, Items.SHEARS, Items.FLINT_AND_STEEL));
+                Items.BUCKET, Items.SHEARS, Items.FLINT_AND_STEEL,
+                // Phase 6.4.6.1 — consolidation from switch.
+                Items.IRON_NUGGET));
         in.put(Profession.BLACKSMITH, List.of(
                 Items.RAW_IRON, Items.RAW_GOLD, Items.COAL, Items.CHARCOAL,
                 Items.FLINT, Items.STICK));
@@ -114,7 +123,12 @@ public final class ProfessionSupplyChain {
                 Items.STONE_BRICKS, Items.STONE_BRICK_SLAB,
                 Items.STONE_BRICK_STAIRS, Items.STONE_BRICK_WALL,
                 Items.COBBLESTONE_SLAB, Items.CHISELED_STONE_BRICKS,
-                Items.SMOOTH_STONE, Items.SMOOTH_STONE_SLAB));
+                Items.SMOOTH_STONE, Items.SMOOTH_STONE_SLAB,
+                // Phase 6.4.6.1 — consolidation from DirectBusinessChannel
+                // switch. STONEMASON sells processed and unprocessed
+                // stone (cobble→stone→smooth chain).
+                Items.STONE, Items.COBBLESTONE, Items.ANDESITE,
+                Items.STONE_SLAB, Items.STONE_STAIRS));
         in.put(Profession.STONEMASON, List.of(
                 Items.COBBLESTONE, Items.STONE, Items.DEEPSLATE));
 
@@ -131,13 +145,20 @@ public final class ProfessionSupplyChain {
         // ── WEAVER ────────────────────────────────────────────────────────────
         out.put(Profession.WEAVER, List.of(
                 Items.WHITE_CARPET, Items.WHITE_WOOL,
-                Items.WHITE_BANNER, Items.STRING));
+                Items.WHITE_BANNER, Items.STRING,
+                // Phase 6.4.6.1 — additional WEAVER outputs from switch
+                // consolidation. Dyed wools / bed represent the full
+                // textile range; carpet is the generic alias.
+                Items.YELLOW_WOOL, Items.BLUE_WOOL, Items.RED_WOOL,
+                Items.CARPET, Items.WHITE_BED));
         in.put(Profession.WEAVER, List.of(Items.WHITE_WOOL, Items.STRING));
 
         // ── CANDLEMAKER ───────────────────────────────────────────────────────
         out.put(Profession.CANDLEMAKER, List.of(
                 Items.CANDLE, Items.WHITE_CANDLE,
-                Items.ORANGE_CANDLE, Items.TORCH));
+                Items.ORANGE_CANDLE, Items.TORCH,
+                // Phase 6.4.6.1 — switch consolidation.
+                Items.YELLOW_CANDLE, Items.LANTERN));
         in.put(Profession.CANDLEMAKER, List.of(
                 Items.HONEYCOMB, Items.STRING, Items.STICK, Items.COAL));
 

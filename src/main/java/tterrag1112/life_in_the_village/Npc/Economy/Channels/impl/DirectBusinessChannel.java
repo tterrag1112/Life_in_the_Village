@@ -18,6 +18,7 @@ import tterrag1112.life_in_the_village.Npc.Laws.LawPriceHooks;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEvent;
 import tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Profession.ProfessionSupplyChain;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -26,6 +27,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelpe
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * NPC-to-NPC trade at a producing workshop. Spec line 116. Critical for
@@ -75,12 +77,16 @@ public final class DirectBusinessChannel implements EconomicChannel {
             // handles BUY here.
             return Optional.empty();
         }
-        BuildingType producingType = workshopForItem(intent.item());
-        if (producingType == null) {
+        // Phase 6.4.6.1 — early exit when no profession claims the item
+        // as an output. Replaces the workshopForItem null-check; same
+        // semantic, single source of truth.
+        Set<Profession> producingProfessions =
+                ProfessionSupplyChain.findProducersOf(intent.item());
+        if (producingProfessions.isEmpty()) {
             if (!LOGGED_NO_WORKSHOP_MAPPING) {
-                LOGGER.warn("[DirectBusinessChannel] no workshop mapping for item={} " +
-                        "(workshopForItem returned null); channel declines.",
-                        intent.item());
+                LOGGER.warn("[DirectBusinessChannel] no producing profession for " +
+                        "item={} (ProfessionSupplyChain.findProducersOf empty); " +
+                        "channel declines.", intent.item());
                 LOGGED_NO_WORKSHOP_MAPPING = true;
             }
             return Optional.empty();
@@ -89,9 +95,9 @@ public final class DirectBusinessChannel implements EconomicChannel {
         if (match == null) {
             if (!LOGGED_NO_PRODUCER) {
                 LOGGER.warn("[DirectBusinessChannel] no producer found for item={} " +
-                        "(workshop type={}); either no building of that type, " +
-                        "no NPC at building, or empty storage. Village={}.",
-                        intent.item(), producingType, village.getName());
+                        "(eligible professions={}); either no building of that " +
+                        "type, no NPC at building, or empty storage. Village={}.",
+                        intent.item(), producingProfessions, village.getName());
                 LOGGED_NO_PRODUCER = true;
             }
             return Optional.empty();
@@ -198,18 +204,24 @@ public final class DirectBusinessChannel implements EconomicChannel {
     private static ProducerMatch findProducer(TradeIntent intent, Village village,
                                               VillageSavedData data, ServerLevel level) {
         Item item = intent.item();
-        BuildingType producingType = workshopForItem(item);
-        if (producingType == null) return null;
-        // Walk village buildings of the matching type; pick the first
-        // chest with stock and a profession-matched NPC alive nearby.
+        // Phase 6.4.6.1 — single source of truth via ProfessionSupplyChain.
+        // Pre-6.4.6 used a hardcoded workshopForItem switch with ~70 item
+        // path-strings; now the same lookup flows through the
+        // declarative OUTPUTS map. Item → producing professions, then
+        // walk village buildings filtering on Profession.professionFor.
+        Set<Profession> producingProfessions = ProfessionSupplyChain.findProducersOf(item);
+        if (producingProfessions.isEmpty()) return null;
+
         ProducerMatch best = null;
         int bestStock = 0;
         for (var bid : village.getBuildingIds()) {
             Building b = data.getBuildingById(bid).orElse(null);
-            if (b == null || b.getType() != producingType) continue;
+            if (b == null) continue;
+            Profession buildingProf = Profession.professionFor(b.getType());
+            if (!producingProfessions.contains(buildingProf)) continue;
             int stock = BuildingStorageAccess.countItem(level, b, item);
             if (stock <= 0) continue;
-            TownspersonMob producer = findProducerNpc(level, b, producingType);
+            TownspersonMob producer = findProducerNpc(level, b, b.getType());
             if (producer == null) continue;
             if (stock > bestStock) {
                 bestStock = stock;
@@ -229,42 +241,22 @@ public final class DirectBusinessChannel implements EconomicChannel {
         ).stream().findFirst().orElse(null);
     }
 
-    /**
-     * Map item → producing-workshop {@link BuildingType}. v1 covers the
-     * most common direct-trade items; gaps fall through (channel
-     * declines) so the router picks something else. Phase 4 production
-     * tag pass replaces this with a registry-backed lookup.
-     */
-    private static BuildingType workshopForItem(Item item) {
-        var key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item);
-        if (key == null) return null;
-        String path = key.getPath();
-        return switch (path) {
-            case "bread", "cookie", "pumpkin_pie", "cake", "baked_potato" -> BuildingType.BAKERY;
-            case "wheat", "carrot", "potato", "beetroot", "pumpkin", "melon", "apple",
-                 "wheat_seeds", "carrot_seeds", "potato_seeds", "beetroot_seeds",
-                 "hay_block",
-                 // Phase 6.3.4.10 — egg + milk_bucket sourced from
-                 // FARMER's chicken / cow rosters (the cow side stays
-                 // dormant until animal husbandry expansion lands).
-                 "egg", "milk_bucket" -> BuildingType.FARMHOUSE;
-            case "iron_axe", "iron_sword", "iron_pickaxe", "iron_shovel", "iron_hoe",
-                 "iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots",
-                 "iron_ingot", "iron_nugget" -> BuildingType.BLACKSMITH;
-            case "stone", "stone_bricks", "smooth_stone", "cobblestone", "andesite",
-                 "stone_slab", "stone_stairs", "stone_brick_slab", "stone_brick_stairs"
-                    -> BuildingType.STONEMASON;
-            case "white_wool", "carpet", "white_carpet", "white_bed", "yellow_wool",
-                 "blue_wool", "red_wool" -> BuildingType.WEAVER;
-            case "candle", "white_candle", "yellow_candle", "torch", "lantern"
-                    -> BuildingType.CANDLEMAKER;
-            case "oak_planks", "oak_log", "oak_door", "oak_fence", "oak_stairs",
-                 "oak_slab", "chest", "crafting_table", "ladder", "stick"
-                    -> BuildingType.CARPENTRY;
-            case "flour", "wheat_flour", "bone_meal", "sugar" -> BuildingType.MILLER;
-            default -> null;
-        };
-    }
+    // Phase 6.4.6.1 — workshopForItem switch removed. Item → producer
+    // lookup now flows through ProfessionSupplyChain.findProducersOf
+    // (see findProducer above). The OUTPUTS map in ProfessionSupplyChain
+    // is the single source of truth; previously the switch + OUTPUTS
+    // duplicated this knowledge with subtle drift (e.g. switch had
+    // seeds → FARMHOUSE but FARMER's OUTPUTS list correctly excludes
+    // them as they're inputs).
+    //
+    // Items the switch covered but ProfessionSupplyChain doesn't:
+    //   - wheat_seeds / carrot_seeds / potato_seeds / beetroot_seeds:
+    //     these are FARMER inputs, not outputs; switching means seed
+    //     buyers route through MarketChannel / CaravanChannel instead.
+    //     Correct semantic.
+    //   - milk_bucket: FARMER cow roster not yet implemented; deferred.
+    //   - oak_log / oak_planks / stick: CARPENTER's inputs vs outputs
+    //     are split correctly in ProfessionSupplyChain.
 
     // ── Relationship / travel ──────────────────────────────────────────────
 
