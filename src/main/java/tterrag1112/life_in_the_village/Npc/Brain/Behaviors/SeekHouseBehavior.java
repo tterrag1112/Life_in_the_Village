@@ -1,12 +1,14 @@
 package tterrag1112.life_in_the_village.Npc.Brain.Behaviors;
 
 import com.google.common.collect.ImmutableMap;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.behavior.Behavior;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
+import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.FamilyRole;
 import tterrag1112.life_in_the_village.Entities.HouseholdManager;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
@@ -14,12 +16,15 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal;
+import tterrag1112.life_in_the_village.Village.AmenityType;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
-import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Phase 6.2.c — migrated from {@code SeekHouseGoal}. Universal IDLE @ 1
@@ -33,12 +38,24 @@ import java.util.Optional;
  */
 public class SeekHouseBehavior extends Behavior<TownspersonMob> {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     private static final long COOLDOWN_TICKS = 600L;
     private static final int WALK_TIMEOUT = 600;
     private static final double ARRIVAL_DIST_SQ = 9.0;
     private static final float WALK_SPEED = 1.0f;
     private static final int CLOSE_ENOUGH = 1;
     private static final int MAX_RUN = WALK_TIMEOUT + 60;
+
+    // Phase 6.4.3.4 — amenity-aware scoring.
+    // amenityScore = matchedAmenities × AMENITY_PER_MATCH (strong bias)
+    // proximityScore = PROXIMITY_BASE / (distance + 1) (proximity matters
+    //                  but doesn't dominate)
+    // 2 matches at 20 blocks: 200 + 47.6 = 247.6
+    // 0 matches at  5 blocks:   0 + 166.7 = 166.7 → amenity wins, correctly
+    // 0 matches at 20 blocks:   0 +  47.6 = 47.6 → empty proximity beats nothing
+    private static final double AMENITY_PER_MATCH = 100.0;
+    private static final double PROXIMITY_BASE    = 1000.0;
 
     private Building targetHouse;
     private int walkTimer;
@@ -125,18 +142,53 @@ public class SeekHouseBehavior extends Behavior<TownspersonMob> {
 
     private static Building findEmptyHouse(ServerLevel level, VillageSavedData data,
                                            Village village, TownspersonMob entity) {
-        return village.getBuildingIds().stream()
-                .map(data::getBuildingById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .filter(b -> b.getType() == BuildingType.HOUSE
-                        || b.getType() == BuildingType.FARMHOUSE)
-                .filter(b -> isHouseEmpty(level, b))
-                .min(Comparator.comparingDouble(b -> entity.distanceToSqr(
-                        b.getShape().getOrigin().getX(),
-                        b.getShape().getOrigin().getY(),
-                        b.getShape().getOrigin().getZ())))
-                .orElse(null);
+        // Phase 6.4.3.4 — amenity-aware scoring with proximity fallback.
+        Set<AmenityType> preferred = collectPreferredAmenities(entity);
+
+        Building best = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        int bestMatchCount = 0;
+        for (var bid : village.getBuildingIds()) {
+            Building b = data.getBuildingById(bid).orElse(null);
+            if (b == null) continue;
+            if (b.getType() != BuildingType.HOUSE && b.getType() != BuildingType.FARMHOUSE) continue;
+            if (!isHouseEmpty(level, b)) continue;
+
+            BlockPos origin = b.getShape().getOrigin();
+            double distSq = entity.distanceToSqr(origin.getX(), origin.getY(), origin.getZ());
+            double proximity = PROXIMITY_BASE / (Math.sqrt(distSq) + 1.0);
+            int matched = 0;
+            if (!preferred.isEmpty()) {
+                Set<AmenityType> houseAmenities = b.getAmenities(level);
+                for (AmenityType type : preferred) {
+                    if (houseAmenities.contains(type)) matched++;
+                }
+            }
+            double score = proximity + matched * AMENITY_PER_MATCH;
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatchCount = matched;
+                best = b;
+            }
+        }
+        if (best != null && bestMatchCount > 0) {
+            LOGGER.info("[SeekHouseBehavior] {} picked house {} with " +
+                    "{}/{} preferred amenities (score={})",
+                    entity.getNpcName(), best.getName(),
+                    bestMatchCount, preferred.size(), bestScore);
+        }
+        return best;
+    }
+
+    /** Aggregates {@link LifeGoal#preferredAmenities()} across every
+     *  active life goal — same amenity needed by two goals only counts
+     *  once toward the match score. */
+    private static Set<AmenityType> collectPreferredAmenities(TownspersonMob entity) {
+        Set<AmenityType> all = EnumSet.noneOf(AmenityType.class);
+        for (LifeGoal g : entity.getLifeGoals().active()) {
+            all.addAll(g.preferredAmenities());
+        }
+        return all;
     }
 
     private static boolean isHouseEmpty(ServerLevel level, Building house) {
