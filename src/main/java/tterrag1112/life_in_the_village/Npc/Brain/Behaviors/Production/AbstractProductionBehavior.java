@@ -182,6 +182,48 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     protected Item workToolItem() { return Items.AIR; }
     protected float productionSpeedMultiplier() { return 1.0f; }
     protected boolean canStartProduction(ServerLevel level, ProductionRecipe recipe) { return true; }
+
+    /**
+     * Phase 6.3.4.10.1 — skill-gate check. Returns true if the NPC's
+     * skill levels meet every requirement listed on the recipe.
+     * Multi-skill: AND logic. Empty requirement map = always true.
+     *
+     * <p>Per-profession chooseRecipe overrides call this to filter
+     * out recipes the NPC can't yet make, surfacing the gate as a
+     * diagnostic via {@link #logSkillGate} on first failure.</p>
+     */
+    protected final boolean meetsSkillRequirements(ProductionRecipe recipe) {
+        if (recipe.skillRequirements().isEmpty()) return true;
+        var skills = entity.getSkills();
+        for (var e : recipe.skillRequirements().entrySet()) {
+            if (skills.getLevel(e.getKey()) < e.getValue()) return false;
+        }
+        return true;
+    }
+
+    /**
+     * One-shot diagnostic when a recipe is skill-gated out. Key is the
+     * recipe's output item so each gated recipe logs at most once per
+     * behavior instance. Format mirrors the other 6.3.4.x diagnostic
+     * lines.
+     */
+    private final java.util.Set<Item> loggedSkillGate = new java.util.HashSet<>();
+    protected final void logSkillGate(ProductionRecipe recipe) {
+        if (recipe.skillRequirements().isEmpty()) return;
+        if (!loggedSkillGate.add(recipe.output())) return;
+        var skills = entity.getSkills();
+        StringBuilder details = new StringBuilder();
+        for (var e : recipe.skillRequirements().entrySet()) {
+            int cur = skills.getLevel(e.getKey());
+            if (details.length() > 0) details.append(", ");
+            details.append(e.getKey()).append(' ').append(cur)
+                    .append('/').append(e.getValue());
+            if (cur < e.getValue()) details.append(" (gated)");
+        }
+        LOGGER.warn("[{}] {} skill-gated recipe={} ({})",
+                getClass().getSimpleName(), entity.getNpcName(),
+                recipe.output(), details);
+    }
     protected Building resolveInputSource(ServerLevel level, Building workBuilding) { return workBuilding; }
     protected Map<Item, Building> inputSourcePerItem(ServerLevel level, ProductionRecipe recipe) { return Map.of(); }
     protected Map<Item, Integer> fuelPerBatch(ProductionRecipe recipe) { return Map.of(); }
