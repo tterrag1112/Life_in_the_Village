@@ -175,6 +175,15 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
      *  attempt so the LOG can distinguish "path not computed" from
      *  "path computed but not progressing". */
     private boolean loggedHarvestNavState    = false;
+    // Phase 6.4.7.3 — half-replant-bug diagnostic flags. Each surfaces
+    // one of the four hypotheses from the task spec.
+    private boolean loggedReplantEntered       = false;
+    private boolean loggedReplantSeedDepleted  = false; // hypothesis C
+    private boolean loggedReplantSeedSplit     = false; // personal vs farmhouse
+    private boolean loggedReplantPhaseSwitch   = false; // schedule end-of-day
+    private boolean loggedReplantExhausted     = false; // success case
+    private int     replantSeedSuccessCount    = 0;
+    private int     replantSeedFailCount       = 0;
     /** Phase 6.3.3.h.2 — CROP_FARMING skill threshold at which a
      *  non-APPRENTICE farmer starts proactively rotating. Matches the
      *  "intermediate apprentice" milestone (level 40). */
@@ -297,8 +306,25 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     }
 
     @Override
-    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
-        goIdle(); }
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        // Phase 6.4.7.3 — hypothesis B diagnostic: if REPLANTING is
+        // interrupted mid-cycle (schedule end-of-day, work→meal,
+        // BrainNavGuard preempts, etc.), surface the orphan queue
+        // size so the user sees "we left N replant positions on
+        // the table when the behavior stopped". One-shot per
+        // behavior instance.
+        if (phase == Phase.REPLANTING && !toReplant.isEmpty()
+                && !loggedReplantPhaseSwitch) {
+            LOGGER.warn("[FarmerBehavior] {} REPLANTING interrupted at stop(): " +
+                    "{} positions still queued. Next session resumes via the " +
+                    "field's transient state; if those positions don't get " +
+                    "replanted on resume, hypothesis A (persistence) is in play.",
+                    entity.getNpcName(), toReplant.size());
+            loggedReplantPhaseSwitch = true;
+        }
+        goIdle();
+    }
 
     // =========================================================================
     // Phase: ANALYZING
@@ -948,7 +974,31 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         if (actionTimer < TICKS_PER_ACTION) return;
         actionTimer = 0;
 
+        // Phase 6.4.7.3 — entry diagnostic: surfaces hypothesis A
+        // (replant queue persists across logout — should fire after
+        // each session resumption if the queue carries over).
+        if (!loggedReplantEntered && !toReplant.isEmpty()) {
+            LOGGER.warn("[FarmerBehavior] {} REPLANTING entered: {} positions queued (first at {})",
+                    entity.getNpcName(), toReplant.size(),
+                    toReplant.get(0).toShortString());
+            loggedReplantEntered = true;
+        }
+
         if (toReplant.isEmpty()) {
+            // Phase 6.4.7.3 — exhaustion log surfaces hypothesis D
+            // (queue cleared mid-cycle). Reports success/fail tallies
+            // for hypothesis C (seed depletion). Fires once per
+            // behavior instance.
+            if (!loggedReplantExhausted
+                    && (replantSeedSuccessCount + replantSeedFailCount) > 0) {
+                LOGGER.warn("[FarmerBehavior] {} REPLANTING done: planted={} failed-no-seed={}. " +
+                        "If failed > 0, harvested seeds in personal inventory may not " +
+                        "be reaching the farmhouse (FarmerBehavior.replant only takes from " +
+                        "farmhouse, not personal). Hypothesis C confirmed if failed > planted.",
+                        entity.getNpcName(),
+                        replantSeedSuccessCount, replantSeedFailCount);
+                loggedReplantExhausted = true;
+            }
             // Phase 6.3.3.t.1 — per-plot cycle: after the plot's work
             // is done, walk back and deposit whatever was accumulated
             // during the harvest pass. Even pure-plant cycles (no
@@ -1034,31 +1084,51 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         if (cropBlock == null) { toReplant.remove(0); return; }
 
         boolean taken = BuildingStorageAccess.takeItem(level, farmhouse, seedItem, 1);
-        if (taken) {
-            level.setBlock(targetPos, cropBlock.defaultBlockState(), 3);
-            entity.getLookControl().setLookAt(
-                    targetPos.getX(), targetPos.getY(), targetPos.getZ());
-            entity.swing(InteractionHand.MAIN_HAND);
-            level.playSound(null, targetPos, SoundEvents.CROP_PLANTED,
-                    SoundSource.BLOCKS, 1.0f, 1.0f);
-            // Phase 6.3.3.i.2 — XP routed by crop context (ORCHARDING
-            // for orchards, else CROP_FARMING). Parent cascade fills
-            // FARMING at 25% via SkillComponent#addXp.
-            awardCropXp(level, plot, 1);
-            // Phase 6.3.3.h.1 — record the planting; soilQuality
-            // decrements (with same-family penalty per CropFamily.of),
-            // cropHistory trims to MAX_HISTORY, plot may auto-enter
-            // fallow if quality fell past SOIL_FALLOW_ENTER.
-            plot.onPlanted(plot.getCropType(), level.getGameTime());
-            // Phase 6.3.3.k.2 — drought doubles soil-quality decay.
-            // Apply an extra SOIL_DEC_PLANT chunk on top of the
-            // normal planting decay when the village is in drought.
-            if (WeatherContext.isDrought(level, resolveVillageId(level))) {
-                plot.setSoilQuality(
-                        plot.getSoilQuality() - FarmPlot.SOIL_DEC_PLANT);
+        if (!taken) {
+            replantSeedFailCount++;
+            if (!loggedReplantSeedDepleted) {
+                // Phase 6.4.7.3 — hypothesis C diagnostic. Logs
+                // farmhouse vs personal-inventory seed split so the
+                // user can see "we DID have seeds, just not where the
+                // takeItem call looked".
+                int farmhouseSeeds = countSeedsInFarmhouse(level, seedItem);
+                int personalSeeds  = countSeedsInPersonalInventory(seedItem);
+                LOGGER.warn("[FarmerBehavior] {} REPLANTING failed at {}: " +
+                        "no seeds taken (farmhouse={}, personal={}, item={}). " +
+                        "If personal > 0 but farmhouse = 0, harvested seeds " +
+                        "didn't make it to the farmhouse — fix is to add a " +
+                        "personal-inventory fallback to the takeItem call.",
+                        entity.getNpcName(), targetPos.toShortString(),
+                        farmhouseSeeds, personalSeeds, seedItem);
+                loggedReplantSeedDepleted = true;
             }
-            VillageSavedData.get(level).setDirty();
+            toReplant.remove(0);
+            return;
         }
+        replantSeedSuccessCount++;
+        level.setBlock(targetPos, cropBlock.defaultBlockState(), 3);
+        entity.getLookControl().setLookAt(
+                targetPos.getX(), targetPos.getY(), targetPos.getZ());
+        entity.swing(InteractionHand.MAIN_HAND);
+        level.playSound(null, targetPos, SoundEvents.CROP_PLANTED,
+                SoundSource.BLOCKS, 1.0f, 1.0f);
+        // Phase 6.3.3.i.2 — XP routed by crop context (ORCHARDING
+        // for orchards, else CROP_FARMING). Parent cascade fills
+        // FARMING at 25% via SkillComponent#addXp.
+        awardCropXp(level, plot, 1);
+        // Phase 6.3.3.h.1 — record the planting; soilQuality
+        // decrements (with same-family penalty per CropFamily.of),
+        // cropHistory trims to MAX_HISTORY, plot may auto-enter
+        // fallow if quality fell past SOIL_FALLOW_ENTER.
+        plot.onPlanted(plot.getCropType(), level.getGameTime());
+        // Phase 6.3.3.k.2 — drought doubles soil-quality decay.
+        // Apply an extra SOIL_DEC_PLANT chunk on top of the
+        // normal planting decay when the village is in drought.
+        if (WeatherContext.isDrought(level, resolveVillageId(level))) {
+            plot.setSoilQuality(
+                    plot.getSoilQuality() - FarmPlot.SOIL_DEC_PLANT);
+        }
+        VillageSavedData.get(level).setDirty();
 
         toReplant.remove(0);
     }
