@@ -287,11 +287,16 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         }
         if (!entity.isWorkTime()) {
             if (!warnedNotWorkTime) {
+                long dayTime = level.getDayTime() % 24000;
+                var win = tterrag1112.life_in_the_village.Entities.WorkSchedule
+                        .getWorkWindow(entity.getProfession());
                 LOGGER.warn("[{}] {} blocked: outside work hours " +
-                        "(profession={}). If this persists past a full daily " +
-                        "cycle, the schedule itself is misaligned.",
+                        "(profession={} dayTime={} workWindow=[{},{})). " +
+                        "If this persists past a full daily cycle, the " +
+                        "schedule itself is misaligned.",
                         getClass().getSimpleName(), entity.getNpcName(),
-                        entity.getProfession());
+                        entity.getProfession(), dayTime,
+                        win.startTick(), win.endTick());
                 warnedNotWorkTime = true;
             }
             return false;
@@ -307,9 +312,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         }
         if (!BrainNavGuard.canSteerNavigation(entity)) {
             if (!warnedNoNav) {
-                LOGGER.warn("[{}] {} blocked: BrainNavGuard denies steering " +
-                        "(combat / sit / lock / other steering claim).",
-                        getClass().getSimpleName(), entity.getNpcName());
+                LOGGER.warn("[{}] {} blocked: BrainNavGuard denies steering — {}",
+                        getClass().getSimpleName(), entity.getNpcName(),
+                        BrainNavGuard.describeNavClaim(entity));
                 warnedNoNav = true;
             }
             return false;

@@ -76,4 +76,30 @@ public final class BrainNavGuard {
         }
         return false;
     }
+
+    /**
+     * Phase 6.3.4.4.1 — diagnostic accessor returning a human-readable
+     * description of why {@link #canSteerNavigation} would currently
+     * return false, or {@code "available"} when navigation is free.
+     *
+     * <p>The pre-6.3.4.4 deny message at gated behaviors named only the
+     * category ("combat / sit / lock / other steering claim") — not
+     * actionable. This method surfaces the concrete claimant so the
+     * call site can log it.</p>
+     */
+    public static String describeNavClaim(TownspersonMob entity) {
+        if (entity.getNavigation().isInProgress()) {
+            var target = entity.getNavigation().getTargetPos();
+            return "navigation in progress"
+                    + (target != null ? " (target=" + target + ")" : "");
+        }
+        for (WrappedGoal w : entity.goalSelector.getAvailableGoals()) {
+            if (!w.isRunning()) continue;
+            if (w.getGoal().getFlags().contains(Goal.Flag.MOVE)) {
+                return "running Goal holds MOVE flag: "
+                        + w.getGoal().getClass().getSimpleName();
+            }
+        }
+        return "available";
+    }
 }
