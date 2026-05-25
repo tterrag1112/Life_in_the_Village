@@ -230,17 +230,19 @@ public final class VillageInhabitantPopulator {
             npc.setFamilyRole(familyRole);
             npc.assignToBuilding(building.getId(), village.getName());
 
-            // Phase 6.3.3.q.2 — Business creation in the spawn
-            // pipeline. When this NPC is a FARMER bound to a
-            // FARMHOUSE, ensure the farmhouse has a tracked
-            // Business (idempotent — existing Businesses bound
-            // to the same building are reused, no duplicates).
+            // Phase 6.3.3.q.2 / 6.3.4.1.4 — Business creation in the
+            // spawn pipeline. The hook is now profession-agnostic
+            // (FarmerPromotion.supportsBusiness allow-list): FARMER /
+            // FARMHAND get a FamilyOwner/NpcOwner farm Business with a
+            // seed-capital transfer; BAKER / MILLER get an NpcOwner
+            // workshop Business with an empty treasury (proprietor's
+            // wallet stays the income source until commerce flows
+            // through). Idempotent — repeat calls over the same
+            // building reuse the existing Business, no duplicates.
             // FarmhandConsolidationMigration stays in place as a
-            // fallback for save-loaded farms that predate this
-            // hook; for new worlds every populator-spawned farmer
-            // gets a Business automatically.
+            // fallback for save-loaded farms that predate this hook.
             tterrag1112.life_in_the_village.Guilds.Companies.Ai
-                    .FarmerPromotion.ensureFarmBusiness(
+                    .FarmerPromotion.ensureBusinessForBuilding(
                             level, npc, village.getId());
 
             // Phase 2 task 17 — scribal professions need a literacy
