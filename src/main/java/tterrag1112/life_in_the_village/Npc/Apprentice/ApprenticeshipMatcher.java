@@ -106,9 +106,24 @@ public final class ApprenticeshipMatcher {
 
     /**
      * Master-side accept/reject decision (spec line 106). Returns
-     * {@code true} when the master is willing to take the
-     * candidate. Compassion masters accept more candidates;
-     * Ambition masters get pickier.
+     * {@code true} when the master is willing to take the candidate.
+     *
+     * <p>Trait biases (post-6.4.2.4):</p>
+     * <ul>
+     *   <li>COMPASSION × +0.5 — compassionate masters teach more</li>
+     *   <li>AMBITION × +0.3 — ambitious masters teach to grow
+     *       influence and network. Pre-6.4.2.4 weight was -0.4
+     *       (ambitious masters refused because "busy with own
+     *       work"); flipped per 6.4.0.7.B.9 design review.</li>
+     * </ul>
+     *
+     * <p>LifeGoal hooks (6.4.2.3):</p>
+     * <ul>
+     *   <li>TEACH_APPRENTICE active on master adds +0.7 (master
+     *       actively wants to take students).</li>
+     *   <li>Candidate's preferredProfession matching the master's
+     *       adds a further +0.3 (willing student, well-aimed).</li>
+     * </ul>
      */
     public static boolean masterAccepts(TownspersonMob master,
                                         TownspersonMob candidate,
@@ -120,7 +135,15 @@ public final class ApprenticeshipMatcher {
 
         float compassion = master.getTraitVector().get(TraitAxis.COMPASSION);
         float ambition = master.getTraitVector().get(TraitAxis.AMBITION);
-        float bias = compassion * 0.5f - ambition * 0.4f;
+        float bias = compassion * 0.5f + ambition * 0.3f;
+
+        if (master.getLifeGoals().has(LifeGoalType.TEACH_APPRENTICE)) {
+            bias += 0.7f;
+            if (preferredProfessionFor(candidate) == master.getProfession()) {
+                bias += 0.3f;
+            }
+        }
+
         float relScore = relationshipBonus(mode);
         return (relScore + bias) >= ACCEPT_FLOOR;
     }
