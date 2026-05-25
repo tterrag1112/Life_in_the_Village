@@ -27,9 +27,13 @@ public class BakerProductionBehavior extends AbstractProductionBehavior {
     // Phase 6.3.4.10 — recipe ladder spans staple → specialty.
     // Skill gates distinguish BAKING (homestead-level) from PASTRY
     // (BAKER's rarer specialty for sweet/decorative goods).
-    private static final ProductionRecipe FLOUR_TO_BREAD =
+    //
+    // Phase 6.4.5 — FLOUR_TO_BREAD and WHEAT_TO_BREAD are public so
+    // homestead-skill behaviors (HomeBakingBehavior) can reuse them
+    // without redefining. Single source of truth for the recipe shape.
+    public static final ProductionRecipe FLOUR_TO_BREAD =
             ProductionRecipe.of(ModItems.WHEAT_FLOUR.get(), 1, Items.BREAD, 1, 60);
-    private static final ProductionRecipe WHEAT_TO_BREAD =
+    public static final ProductionRecipe WHEAT_TO_BREAD =
             ProductionRecipe.of(Items.WHEAT, 3, Items.BREAD, 1, 200);
     private static final ProductionRecipe MAKE_COOKIE =
             ProductionRecipe.of(Map.of(Items.WHEAT, 2, Items.COCOA_BEANS, 1),

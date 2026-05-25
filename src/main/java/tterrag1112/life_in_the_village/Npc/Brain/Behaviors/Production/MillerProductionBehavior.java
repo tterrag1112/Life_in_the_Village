@@ -36,7 +36,11 @@ public class MillerProductionBehavior extends AbstractProductionBehavior {
     //   PROCESS_SUGAR_CANE: 1 sugar_cane → 1 sugar (unblocks BAKER
     //                       cake / pumpkin_pie recipes; dormant until
     //                       sugar_cane has a producer in the village)
-    private static final ProductionRecipe GRIND_WHEAT =
+    // Phase 6.4.5 — GRIND_WHEAT is public so homestead-skill behaviors
+    // (HomeMillingBehavior) can reuse it without redefining. The other
+    // miller recipes stay private — bones / sugar_cane processing
+    // are profession-tier, not homestead-tier.
+    public static final ProductionRecipe GRIND_WHEAT =
             ProductionRecipe.of(Items.WHEAT, 2, ModItems.WHEAT_FLOUR.get(), 3, 80);
     private static final ProductionRecipe GRIND_BONES =
             ProductionRecipe.of(Items.BONE, 1, Items.BONE_MEAL, 3, 60);
