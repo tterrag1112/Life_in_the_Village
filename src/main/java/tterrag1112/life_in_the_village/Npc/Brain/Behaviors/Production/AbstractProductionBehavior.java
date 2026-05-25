@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import com.google.common.collect.ImmutableMap;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -53,6 +54,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+
 /**
  * Phase 6.2.d.1 — Brain-side port of {@code AbstractWorkstationProductionGoal}.
  *
@@ -74,6 +77,8 @@ import java.util.UUID;
  */
 public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob> {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     // ── Timing constants ─────────────────────────────────────────────────────
     protected static final int    IDLE_COOLDOWN_TICKS  = 600;
     protected static final double INTERACT_RANGE_SQ    = 9.0;
@@ -94,6 +99,27 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     /** Entity bound at start(). Lets subclasses match Goal subclasses
      *  byte-for-byte (they reference {@code entity} as a field). */
     protected TownspersonMob entity;
+
+    // ── Phase 6.3.4.1.1 — diagnostic one-shot flags ─────────────────────────
+    // Matches the o.3 / q.1 / r-style pattern from FarmerBehavior — each
+    // checkpoint emits a LOGGER.warn the first time it fires per behavior
+    // instance, then sets the flag to suppress repeats. Operator can
+    // diagnose silent failures in production behaviors (BAKER, MILLER,
+    // BLACKSMITH, etc.) from a LOG without an attach-debugger pass. Flag
+    // names mirror the symptom — "missingInput" means the GATHERING phase
+    // couldn't find some required input in any source.
+    private boolean warnedNotWorkTime    = false;
+    private boolean warnedWorkBlocked    = false;
+    private boolean warnedNoNav          = false;
+    private boolean warnedNoWorkBuilding = false;
+    private boolean warnedBlockedByRole  = false;
+    private boolean loggedAnalyzeNoRecipe   = false;
+    private boolean loggedGatheringStart    = false;
+    private boolean loggedGatheringMissing  = false;
+    private boolean loggedWorkstationFound  = false;
+    private boolean loggedRecipeStart       = false;
+    private boolean loggedFirstProduction   = false;
+    private boolean loggedDepositTarget     = false;
 
     protected Building workBuilding;
     protected Building market;
@@ -241,12 +267,61 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
-        if (isBlockedByRole()) return false;
-        if (!entity.isWorkTime()) return false;
-        if (entity.isWorkingBlocked()) return false;
-        if (!BrainNavGuard.canSteerNavigation(entity)) return false;
+        // Phase 6.3.4.1.1 — per-gate one-shot diagnostic logging.
+        // Pattern matches FarmerBehavior's o.3 fix: silent early-exits
+        // hide "behavior not running, but why?" — these LOGs name the
+        // exact gate the first time it fires per behavior instance.
+        if (isBlockedByRole()) {
+            if (!warnedBlockedByRole) {
+                LOGGER.warn("[{}] {} blocked: isBlockedByRole=true (workshop role gate).",
+                        getClass().getSimpleName(), entity.getNpcName());
+                warnedBlockedByRole = true;
+            }
+            return false;
+        }
+        if (!entity.isWorkTime()) {
+            if (!warnedNotWorkTime) {
+                LOGGER.warn("[{}] {} blocked: outside work hours " +
+                        "(profession={}). If this persists past a full daily " +
+                        "cycle, the schedule itself is misaligned.",
+                        getClass().getSimpleName(), entity.getNpcName(),
+                        entity.getProfession());
+                warnedNotWorkTime = true;
+            }
+            return false;
+        }
+        if (entity.isWorkingBlocked()) {
+            if (!warnedWorkBlocked) {
+                LOGGER.warn("[{}] {} blocked: isWorkingBlocked=true " +
+                        "(injury / sleep / other override).",
+                        getClass().getSimpleName(), entity.getNpcName());
+                warnedWorkBlocked = true;
+            }
+            return false;
+        }
+        if (!BrainNavGuard.canSteerNavigation(entity)) {
+            if (!warnedNoNav) {
+                LOGGER.warn("[{}] {} blocked: BrainNavGuard denies steering " +
+                        "(combat / sit / lock / other steering claim).",
+                        getClass().getSimpleName(), entity.getNpcName());
+                warnedNoNav = true;
+            }
+            return false;
+        }
         workBuilding = findAssignedBuilding(entity, level, requiredBuildingType()).orElse(null);
-        if (workBuilding == null) return false;
+        if (workBuilding == null) {
+            if (!warnedNoWorkBuilding) {
+                LOGGER.warn("[{}] {} blocked: no assigned building of type {} " +
+                        "(assignedBuildingId={}). VillageInhabitantPopulator " +
+                        "should set this at spawn; check NBT load if blank.",
+                        getClass().getSimpleName(), entity.getNpcName(),
+                        requiredBuildingType(),
+                        entity.getAssignedBuildingId().map(UUID::toString)
+                                .orElse("(none)"));
+                warnedNoWorkBuilding = true;
+            }
+            return false;
+        }
         tickRoleCheck(level, workBuilding);
         return true;
     }
@@ -312,6 +387,27 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     return;
                 }
             }
+            // Phase 6.3.4.1.1 — recipe found but couldn't start. Surface
+            // the specific blocker: batch=0 (no inputs), output capped,
+            // canStartProduction false, or empty step list.
+            if (!loggedAnalyzeNoRecipe) {
+                LOGGER.warn("[{}] {} analyze: recipe={} found but cycle blocked " +
+                        "(batchSize={}, outputAtCapacity={}, canStart={}, " +
+                        "stepsEmpty={}). Most often: input depletion " +
+                        "(batchSize=0) or stock quota reached.",
+                        getClass().getSimpleName(), entity.getNpcName(),
+                        r.output(), batchSize,
+                        isOutputAtCapacity(level, r),
+                        canStartProduction(level, r),
+                        buildSteps(level, workBuilding, r, batchSize).isEmpty());
+                loggedAnalyzeNoRecipe = true;
+            }
+        } else if (!loggedAnalyzeNoRecipe) {
+            LOGGER.warn("[{}] {} analyze: chooseRecipe returned empty — no " +
+                    "viable recipe with current inputs. Cycle stalls until " +
+                    "stockpile / work-building inputs change.",
+                    getClass().getSimpleName(), entity.getNpcName());
+            loggedAnalyzeNoRecipe = true;
         }
         goIdle();
     }
@@ -322,6 +418,14 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     protected void gather(ServerLevel level) {
         entity.setCurrentActivity("Gathering materials");
         if (currentRecipe == null) { goIdle(); return; }
+
+        if (!loggedGatheringStart) {
+            LOGGER.warn("[{}] {} GATHERING: recipe={} batch={} (will look for " +
+                    "inputs in stockpile/work-building/market in that order).",
+                    getClass().getSimpleName(), entity.getNpcName(),
+                    currentRecipe.output(), currentBatchSize);
+            loggedGatheringStart = true;
+        }
 
         Map<Item, Integer> toGather = new LinkedHashMap<>();
         currentRecipe.inputs().forEach((item, count) ->
@@ -347,6 +451,15 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         }
 
         if (missingAny) {
+            if (!loggedGatheringMissing) {
+                LOGGER.warn("[{}] {} GATHERING: missing inputs (needed={}, " +
+                        "source={}). Returning gathered items to building and " +
+                        "going idle; cycle stalls until inputs land in source " +
+                        "or buyForward succeeds.",
+                        getClass().getSimpleName(), entity.getNpcName(),
+                        toGather, defaultSource != null ? defaultSource.getName() : "(none)");
+                loggedGatheringMissing = true;
+            }
             returnPersonalInventoryToBuilding(level, defaultSource);
             Map<Item, Integer> toBuy = resourcesToBuy(level, workBuilding);
             if (!toBuy.isEmpty()) executeBuy(level, toBuy);
@@ -385,6 +498,17 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         ProductionStep step = currentSteps.get(currentStepIndex);
         BlockPos target = stepTarget(step);
 
+        if (!loggedRecipeStart) {
+            LOGGER.warn("[{}] {} WORKING_STEP: recipe={} at workstation {} " +
+                    "(consumes={}, produces={}, ticks={}). NPC consumes from " +
+                    "PERSONAL inventory and produces TO personal inventory — " +
+                    "workstation block itself is never touched.",
+                    getClass().getSimpleName(), entity.getNpcName(),
+                    currentRecipe.output(), target.toShortString(),
+                    step.consumes(), step.produces(), step.ticks());
+            loggedRecipeStart = true;
+        }
+
         entity.setCurrentActivity("Crafting " + currentRecipe.output().getDescriptionId());
         workTimer++;
         entity.getLookControl().setLookAt(target.getX(), target.getY(), target.getZ());
@@ -397,6 +521,13 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             step.consumes().forEach((item, count) -> removeFromPersonalInventory(item, count));
             step.produces().forEach((item, count) ->
                     entity.getPersonalInventory().addItem(new ItemStack(item, count)));
+            if (!loggedFirstProduction) {
+                LOGGER.warn("[{}] {} WORKING_STEP: produced {} items (recipe={}). " +
+                        "Subsequent productions suppress this log.",
+                        getClass().getSimpleName(), entity.getNpcName(),
+                        step.produces(), currentRecipe.output());
+                loggedFirstProduction = true;
+            }
             onStepComplete(level, step, currentStepIndex);
             workTimer = 0;
             currentStepIndex++;
@@ -423,6 +554,14 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         entity.setCurrentActivity("Depositing goods");
         Building dest = outputBuilding(level);
         if (dest == null) { goIdle(); return; }
+
+        if (!loggedDepositTarget) {
+            LOGGER.warn("[{}] {} DEPOSITING: target={} ({}). Items in personal " +
+                    "inventory get pushed through BuildingStorageAccess.storeItem.",
+                    getClass().getSimpleName(), entity.getNpcName(),
+                    dest.getName(), dest.getType());
+            loggedDepositTarget = true;
+        }
 
         // Show arms-forward carry pose while the NPC is en route to / at the
         // deposit container — repeat-write each tick is cheap and keeps the
