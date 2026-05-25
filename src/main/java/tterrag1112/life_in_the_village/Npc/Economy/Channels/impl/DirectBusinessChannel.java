@@ -100,7 +100,17 @@ public final class DirectBusinessChannel implements EconomicChannel {
         long base = MarketPriceHelper.getDynamicSellPrice(level, village, intent.item());
         TownspersonMob buyer = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
         double relMod = relationshipModifier(match.producer, buyer);
-        long raw = Math.round(base * (1.0 + relMod * 0.05)
+        // Phase 6.4.1.2.B — GENEROSITY on the seller side modulates
+        // their asking price. Generous producer (GENEROSITY ≈ +1) →
+        // 0.875 (12.5% discount); greedy/miserly (GENEROSITY ≈ -1) →
+        // 1.125 (12.5% markup). Replaces dead code in
+        // AppearanceComponent.getPriceModifier (GREEDY / GENEROUS /
+        // FRIENDLY / SUSPICIOUS), continuous gradient version.
+        // Stacks with the existing ±5% relationshipModifier.
+        double sellerGenerosity = match.producer.getTraitVector()
+                .get(tterrag1112.life_in_the_village.Npc.Traits.TraitAxis.GENEROSITY);
+        double traitMod = 1.0 - (sellerGenerosity * 0.125);
+        long raw = Math.round(base * traitMod * (1.0 + relMod * 0.05)
                 * LawPriceHooks.sellMultiplier(village, ChannelType.DIRECT_BUSINESS, intent.item()));
         long floor = LawPriceHooks.priceFloor(village, ChannelType.DIRECT_BUSINESS, intent.item());
         long withFloor = floor > 0 ? Math.max(floor, raw) : raw;
