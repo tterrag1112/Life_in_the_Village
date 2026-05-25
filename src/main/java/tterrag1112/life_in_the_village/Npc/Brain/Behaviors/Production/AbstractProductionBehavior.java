@@ -180,7 +180,25 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     protected Optional<BlockPos> findWorkstation(ServerLevel level, Building building) { return Optional.empty(); }
     protected SoundEvent workSound() { return SoundEvents.ANVIL_USE; }
     protected Item workToolItem() { return Items.AIR; }
-    protected float productionSpeedMultiplier() { return 1.0f; }
+    /**
+     * Phase 6.4.1 — base multiplier on the NPC's INDUSTRY axis.
+     * The multiplier is applied to recipe tick durations in buildSteps,
+     * so higher = slower (more ticks). Industrious NPCs (INDUSTRY ≈ +1)
+     * scale to ~0.85 (15% faster); lazy NPCs (INDUSTRY ≈ -1) scale to
+     * ~1.15 (15% slower). Replaces the dead-code path
+     * AppearanceComponent.getWorkSpeedModifier (DILIGENT/LAZY etc.)
+     * that had no callers — same magnitudes, continuous gradient.
+     *
+     * <p>Subclasses can still override to add profession-specific
+     * modifiers; call super.productionSpeedMultiplier() and multiply
+     * to preserve the trait-driven variance.</p>
+     */
+    protected float productionSpeedMultiplier() {
+        if (entity == null) return 1.0f;
+        float industry = entity.getTraitVector()
+                .get(tterrag1112.life_in_the_village.Npc.Traits.TraitAxis.INDUSTRY);
+        return 1.0f - (industry * 0.15f);
+    }
     protected boolean canStartProduction(ServerLevel level, ProductionRecipe recipe) { return true; }
 
     /**
