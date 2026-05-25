@@ -4,6 +4,9 @@ import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.goal.WrappedGoal;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Coexistence guard for Brain behaviors that share the entity with the
  * vanilla GoalSelector during Phase 6.0+. Brain behaviors that would
@@ -31,6 +34,25 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
  */
 public final class BrainNavGuard {
 
+    /**
+     * Phase 6.3.4.5.2 — stale-nav escape hatch.
+     *
+     * <p>Vanilla {@code PathNavigation.isInProgress()} stays {@code true}
+     * when a path is active but the entity has stopped advancing
+     * (target unreachable, blocked by a colliding entity, path
+     * succeeded but the navigation state wasn't cleared, etc.). This
+     * left production behaviors permanently denied because the guard
+     * had no way to detect "in progress but stuck."</p>
+     *
+     * <p>We track the first tick at which each entity was observed
+     * with {@code isInProgress=true}; when that interval exceeds
+     * {@link #STALE_NAV_TICKS} the guard force-stops navigation and
+     * allows steering. Cleared when navigation goes idle on its own.</p>
+     */
+    private static final ConcurrentHashMap<UUID, Long> NAV_BUSY_SINCE =
+            new ConcurrentHashMap<>();
+    private static final long STALE_NAV_TICKS = 200L;
+
     private BrainNavGuard() {}
 
     /**
@@ -40,7 +62,20 @@ public final class BrainNavGuard {
      * ships now so 6.1.b's navigating behaviors land on stable ground.
      */
     public static boolean canSteerNavigation(TownspersonMob entity) {
-        if (entity.getNavigation().isInProgress()) return false;
+        var nav = entity.getNavigation();
+        if (nav.isInProgress()) {
+            long now = entity.level().getGameTime();
+            UUID id = entity.getUUID();
+            Long since = NAV_BUSY_SINCE.putIfAbsent(id, now);
+            long started = since == null ? now : since;
+            if (now - started >= STALE_NAV_TICKS) {
+                nav.stop();
+                NAV_BUSY_SINCE.remove(id);
+                return !hasRunningGoalWithFlag(entity, Goal.Flag.MOVE);
+            }
+            return false;
+        }
+        NAV_BUSY_SINCE.remove(entity.getUUID());
         return !hasRunningGoalWithFlag(entity, Goal.Flag.MOVE);
     }
 
