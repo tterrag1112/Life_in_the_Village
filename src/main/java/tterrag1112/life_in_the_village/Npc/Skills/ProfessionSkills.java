@@ -44,7 +44,13 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         // the "career retention" axis for profession switches and
         // CRAFTING matches MILLER's general processing-trade identity.
         m.put(Profession.MILLER,           new ProfessionSkills(Skill.MILLING,  Skill.CRAFTING));
-        m.put(Profession.BAKER,            new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
+        // Phase 6.3.4.10 — BAKER's primary moves to BAKING (CRAFTING
+        // sub-skill). Secondary stays COMMERCE (BAKER sells bread to
+        // households / market). BAKING cascades to CRAFTING at 25%
+        // and PASTRY recipes route to PASTRY which cascades through
+        // BAKING to CRAFTING — three-level propagation handled in
+        // SkillComponent.addXp.
+        m.put(Profession.BAKER,            new ProfessionSkills(Skill.BAKING,   Skill.COMMERCE));
         m.put(Profession.BUILDER,          new ProfessionSkills(Skill.CRAFTING, Skill.SURVIVAL));
         m.put(Profession.MINER,            new ProfessionSkills(Skill.SURVIVAL, Skill.CRAFTING));
         m.put(Profession.STOCKPILE_KEEPER, new ProfessionSkills(Skill.COMMERCE, Skill.SOCIAL));

@@ -124,6 +124,28 @@ public class BakerProductionBehavior extends AbstractProductionBehavior {
         return toBuy;
     }
 
+    /**
+     * Phase 6.3.4.10 — recipe-output-driven XP routing. Staple recipes
+     * (BREAD, COOKIE) award BAKING; pastry recipes (PUMPKIN_PIE, CAKE)
+     * award PASTRY. Cascade then propagates upward (PASTRY → BAKING →
+     * CRAFTING) automatically via SkillComponent.addXp.
+     *
+     * <p>Without this override, the base would route every recipe's
+     * XP to BAKER's profession-wide primary (BAKING). That's coarse —
+     * it would mean a BAKER making CAKE all day still levels BAKING
+     * rather than the rarer PASTRY child, defeating the purpose of
+     * the sub-skill distinction.</p>
+     */
+    @Override
+    protected void awardProductionXp(ServerLevel level,
+            net.minecraft.world.item.Item output, int amount) {
+        var skill = (output == Items.PUMPKIN_PIE || output == Items.CAKE)
+                ? tterrag1112.life_in_the_village.Npc.Skills.Skill.PASTRY
+                : tterrag1112.life_in_the_village.Npc.Skills.Skill.BAKING;
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity, skill, amount, level.getGameTime());
+    }
+
     @Override
     protected void onProductionComplete(ServerLevel level, ProductionRecipe recipe, int batchSize) {
         if (workBuilding == null) return;

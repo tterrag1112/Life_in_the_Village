@@ -78,7 +78,23 @@ public enum Skill {
      *  FARMING, treating grinding as an agricultural sub-task; the
      *  correction reflects that milling is a CRAFTING-family
      *  processing activity, distinct from raising crops. */
-    MILLING(CRAFTING, 0.25);
+    MILLING(CRAFTING, 0.25),
+
+    // ── Tier 1 (Phase 6.3.4.10 additions — baking) ─────────────────────────
+    /** Baking sub-skill. Cascades 25% → CRAFTING. BAKER's primary
+     *  skill axis. Earned from baking staples (BREAD, COOKIE).
+     *  Homestead-level food self-sufficiency lives here — anyone with
+     *  BAKING + a furnace can make bread; BAKER's edge is mastering
+     *  the PASTRY child below for sweet/decorative goods. */
+    BAKING(CRAFTING, 0.25),
+
+    // ── Tier 2 (Phase 6.3.4.10 additions — pastry) ─────────────────────────
+    /** Pastry sub-skill. Cascades 25% → BAKING (then 25% → CRAFTING).
+     *  Rarer / harder to develop — earned from sweets and
+     *  decorative goods (PUMPKIN_PIE, CAKE). Three-level propagation
+     *  via SkillComponent.addXp recursion: PASTRY xp → BAKING ¼ →
+     *  CRAFTING 1/16. */
+    PASTRY(BAKING, 0.25);
 
     @Nullable private final Skill parent;
     private final double propRate;
