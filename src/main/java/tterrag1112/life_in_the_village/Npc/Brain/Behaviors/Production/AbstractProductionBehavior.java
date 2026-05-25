@@ -860,8 +860,22 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         return ProductionHelpers.findAssignedBuilding(npc, level, type);
     }
 
+    /**
+     * Phase 6.3.4.4.4 — uses dynamic sell price (the same number
+     * {@code DirectBusinessChannel} and {@code MarketChannel} quote at)
+     * so the buyer's perUnitCeiling tracks actual market conditions
+     * instead of the raw JSON base. Pre-fix, the ceiling was the raw
+     * base and channel quotes were base×supply×demand×lawMods — under
+     * any non-trivial supply/demand the channel quote was rejected
+     * systemically. See 6.3.4.3 static-analysis note.
+     */
     protected long getItemBuyPrice(ServerLevel level, Item item) {
-        return Math.max(1L, VillageEconomy.getBasePrice(item));
+        Village village = entity.getAssignedVillageName()
+                .flatMap(name -> VillageSavedData.get(level).getVillageByName(name))
+                .orElse(null);
+        return Math.max(1L,
+                tterrag1112.life_in_the_village.Village.Economy.Currency
+                        .MarketPriceHelper.getDynamicSellPrice(level, village, item));
     }
 
     protected long getItemSellPrice(ServerLevel level, Item item) {
