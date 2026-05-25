@@ -409,6 +409,17 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     return;
                 }
             }
+            // Phase 6.3.4.6 — recipe wanted but can't run yet. If output
+            // isn't already at capacity, the most likely reason is input
+            // depletion (batchSize=0). Attempt procurement here so the
+            // buy path fires without needing the GATHERING transition;
+            // next analyze cycle will see the bought inputs and proceed.
+            // Output-cap case skips the buy — no point sourcing inputs
+            // we won't use.
+            if (!isOutputAtCapacity(level, r)) {
+                Map<Item, Integer> toBuy = resourcesToBuy(level, workBuilding);
+                if (!toBuy.isEmpty()) executeBuy(level, toBuy);
+            }
             // Phase 6.3.4.1.1 — recipe found but couldn't start. Surface
             // the specific blocker: batch=0 (no inputs), output capped,
             // canStartProduction false, or empty step list.
@@ -416,7 +427,8 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 LOGGER.warn("[{}] {} analyze: recipe={} found but cycle blocked " +
                         "(batchSize={}, outputAtCapacity={}, canStart={}, " +
                         "stepsEmpty={}). Most often: input depletion " +
-                        "(batchSize=0) or stock quota reached.",
+                        "(batchSize=0) — buy path attempted, see executeBuy " +
+                        "flags for outcome.",
                         getClass().getSimpleName(), entity.getNpcName(),
                         r.output(), batchSize,
                         isOutputAtCapacity(level, r),
@@ -426,8 +438,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             }
         } else if (!loggedAnalyzeNoRecipe) {
             LOGGER.warn("[{}] {} analyze: chooseRecipe returned empty — no " +
-                    "viable recipe with current inputs. Cycle stalls until " +
-                    "stockpile / work-building inputs change.",
+                    "viable recipe (workstation missing, output quota met, " +
+                    "or no production target). Cycle stalls until that " +
+                    "condition changes.",
                     getClass().getSimpleName(), entity.getNpcName());
             loggedAnalyzeNoRecipe = true;
         }

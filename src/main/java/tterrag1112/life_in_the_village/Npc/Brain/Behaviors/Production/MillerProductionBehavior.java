@@ -45,19 +45,12 @@ public class MillerProductionBehavior extends AbstractProductionBehavior {
 
     @Override
     protected Optional<ProductionRecipe> chooseRecipe(ServerLevel level, Building building) {
-        Building source = resolveInputSource(level, building);
-        if (source == null) return Optional.empty();
-
-        int wheatAvail = BuildingStorageAccess.countItem(level, source, Items.WHEAT);
-        // Need at least 2 wheat per batch unit
-        if (wheatAvail >= GRIND_WHEAT.inputs().values().iterator().next()) {
-            // Only grind if flour supply is below quota
-            Optional<Item> target = productionTarget(level, building);
-            if (target.map(t -> t == ModItems.WHEAT_FLOUR.get()).orElse(true)) {
-                return Optional.of(GRIND_WHEAT);
-            }
-        }
-        return Optional.empty();
+        // Phase 6.3.4.6 — decoupled from input availability. Returning
+        // the recipe even when wheat==0 lets the analyze→executeBuy
+        // path fire, sourcing wheat from FARMER via DirectBusinessChannel.
+        // Output-capacity gate (isOutputAtCapacity) still applies in
+        // analyze, so we don't produce flour past the quota.
+        return Optional.of(GRIND_WHEAT);
     }
 
     @Override

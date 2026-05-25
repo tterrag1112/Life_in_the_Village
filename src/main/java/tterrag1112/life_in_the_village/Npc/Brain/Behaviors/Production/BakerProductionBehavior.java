@@ -39,15 +39,22 @@ public class BakerProductionBehavior extends AbstractProductionBehavior {
 
     @Override
     protected Optional<ProductionRecipe> chooseRecipe(ServerLevel level, Building building) {
+        // Phase 6.3.4.6 — stock-aware preference but no exclusion. When
+        // flour is in stock, prefer FLOUR_TO_BREAD (1:1, 60t). When only
+        // wheat is in stock, use WHEAT_TO_BREAD (3:1, 200t). When NEITHER
+        // is in stock, default to FLOUR_TO_BREAD so the analyze→executeBuy
+        // path tries to source flour from MILLER. Output-quota gate via
+        // productionTarget still applies.
         Optional<Item> target = productionTarget(level, building);
         if (target.isEmpty()) return Optional.empty();
         Building source = resolveInputSource(level, building);
-        if (source == null) return Optional.empty();
-        int flour = BuildingStorageAccess.countItem(level, source, ModItems.WHEAT_FLOUR.get());
+        int flour = source != null
+                ? BuildingStorageAccess.countItem(level, source, ModItems.WHEAT_FLOUR.get()) : 0;
+        int wheat = source != null
+                ? BuildingStorageAccess.countItem(level, source, Items.WHEAT) : 0;
         if (flour >= 1) return Optional.of(FLOUR_TO_BREAD);
-        int wheat = BuildingStorageAccess.countItem(level, source, Items.WHEAT);
         if (wheat >= 3) return Optional.of(WHEAT_TO_BREAD);
-        return Optional.empty();
+        return Optional.of(FLOUR_TO_BREAD);
     }
 
     @Override
