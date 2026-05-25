@@ -70,7 +70,16 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     // Constants
     // =========================================================================
 
-    private static final int    TICKS_PER_ACTION   = 40;
+    // Phase 6.4.7.2 — per-action tick budget for harvest / replant /
+    // till / buy-seeds. Reduced from 40 → 20 so a moderate-sized plot
+    // completes within a single in-game work window rather than
+    // spanning multiple days. Conservative tuning — fast enough to
+    // close the cycle, slow enough that the animation still reads.
+    // The other 6.4.x trait modifiers (INDUSTRY → productionSpeed at
+    // 6.4.1.2.A) apply on top of this baseline for production behaviors
+    // but FarmerBehavior is a separate phase machine; the baseline
+    // value here is the only knob for farmer pacing.
+    private static final int    TICKS_PER_ACTION   = 20;
     private static final int    IDLE_COOLDOWN      = 200;
     private static final double INTERACT_RANGE_SQ  = 4.0;
 
