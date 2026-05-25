@@ -247,7 +247,7 @@ public final class DirectBusinessChannel implements EconomicChannel {
             case "oak_planks", "oak_log", "oak_door", "oak_fence", "oak_stairs",
                  "oak_slab", "chest", "crafting_table", "ladder", "stick"
                     -> BuildingType.CARPENTRY;
-            case "flour", "wheat_flour" -> BuildingType.MILLER;
+            case "flour", "wheat_flour", "bone_meal", "sugar" -> BuildingType.MILLER;
             default -> null;
         };
     }

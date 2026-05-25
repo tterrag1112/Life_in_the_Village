@@ -60,8 +60,15 @@ public final class ProfessionSupplyChain {
                 Items.BEETROOT_SEEDS, Items.PUMPKIN_SEEDS, Items.MELON_SEEDS));
 
         // ── MILLER ────────────────────────────────────────────────────────────
-        out.put(Profession.MILLER, List.of(ModItems.WHEAT_FLOUR.get()));      // milled wheat re-sold as flour stand-in
-        in.put(Profession.MILLER, List.of(Items.WHEAT));
+        // Phase 6.3.4.9 — MILLER is the village's general grinder.
+        // wheat → flour (primary chain to BAKER),
+        // bones → bone_meal (FARMER's composting / FERTILIZER chain),
+        // sugar_cane → sugar (dormant until a sugar_cane producer
+        // exists in the village; needed by BAKER for cake/pumpkin_pie).
+        out.put(Profession.MILLER, List.of(
+                ModItems.WHEAT_FLOUR.get(), Items.BONE_MEAL, Items.SUGAR));
+        in.put(Profession.MILLER, List.of(
+                Items.WHEAT, Items.BONE, Items.SUGAR_CANE));
 
         // ── BAKER ─────────────────────────────────────────────────────────────
         // Phase 6.3.4.4.4 — WHEAT_FLOUR is the primary recipe input
