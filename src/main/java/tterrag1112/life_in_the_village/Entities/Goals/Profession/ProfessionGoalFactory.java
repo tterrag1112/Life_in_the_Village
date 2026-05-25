@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Entities.Goals.Profession;
 
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.player.Player;
+import tterrag1112.life_in_the_village.Entities.Goals.NpcRandomLookAroundGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopStallDecisionGoal;
 import tterrag1112.life_in_the_village.Entities.Goals.Social.*;
 import tterrag1112.life_in_the_village.Entities.LifeStage;
@@ -115,7 +116,7 @@ public final class ProfessionGoalFactory {
         // PowerGrant.hasPower check the goal did.
         npc.goalSelector.addGoal(P_IDLE,      new WanderInBuildingGoal(npc));
         npc.goalSelector.addGoal(P_AMBIENT,   new LookAtPlayerGoal(npc, Player.class, 8.0f));
-        npc.goalSelector.addGoal(P_AMBIENT,   new RandomLookAroundGoal(npc));
+        npc.goalSelector.addGoal(P_AMBIENT,   new NpcRandomLookAroundGoal(npc));
     }
 
     // =========================================================================
