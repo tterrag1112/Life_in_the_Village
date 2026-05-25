@@ -8,7 +8,9 @@ import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.CraftingTableBlock;
 import net.minecraft.world.level.block.FurnaceBlock;
 import net.minecraft.world.level.block.GrindstoneBlock;
+import net.minecraft.world.level.block.LoomBlock;
 import net.minecraft.world.level.block.SmokerBlock;
+import net.minecraft.world.level.block.StonecutterBlock;
 
 import java.util.function.Predicate;
 
@@ -42,7 +44,11 @@ public enum AmenityType {
     /** Vanilla brewing stand — potion work. */
     BREWING_STAND(b -> b instanceof BrewingStandBlock),
     /** Vanilla chest — storage. ChestBlock covers single + double chests. */
-    CHEST        (b -> b instanceof ChestBlock);
+    CHEST        (b -> b instanceof ChestBlock),
+    /** Vanilla stonecutter — STONEMASON workstation (Phase 6.6.1.3). */
+    STONECUTTER  (b -> b instanceof StonecutterBlock),
+    /** Vanilla loom — WEAVER workstation (Phase 6.6.1.3). */
+    LOOM         (b -> b instanceof LoomBlock);
 
     // GARDEN_PLOT intentionally omitted at v1 — adjunct plots live on
     // HouseholdData, not on the building's own block bounds, so the

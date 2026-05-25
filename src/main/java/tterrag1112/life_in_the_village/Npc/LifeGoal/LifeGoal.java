@@ -99,6 +99,14 @@ public record LifeGoal(
                  WEAPONSMITHING,
                  ARMORSMITHING            -> EnumSet.of(AmenityType.ANVIL, AmenityType.FURNACE);
             case CRAFTING                 -> EnumSet.of(AmenityType.CRAFTING_TABLE);
+            // Phase 6.6.1.3 — production sub-skills land their amenity
+            // preferences here. CANDLEMAKING intentionally returns {}
+            // since CandlemakerProductionBehavior uses building origin
+            // (no specific workstation block) — no amenity gates the
+            // craft.
+            case CARPENTRY                -> EnumSet.of(AmenityType.CRAFTING_TABLE);
+            case MASONRY                  -> EnumSet.of(AmenityType.STONECUTTER);
+            case WEAVING                  -> EnumSet.of(AmenityType.LOOM);
             case MEDICINE,
                  VILLAGE_MEDICINE,
                  COMBAT_MEDICINE          -> EnumSet.of(AmenityType.BREWING_STAND);
@@ -116,6 +124,14 @@ public record LifeGoal(
             case MILLER     -> EnumSet.of(AmenityType.GRINDSTONE, AmenityType.CHEST);
             case BLACKSMITH -> EnumSet.of(AmenityType.ANVIL, AmenityType.FURNACE, AmenityType.CHEST);
             case CARPENTER  -> EnumSet.of(AmenityType.CRAFTING_TABLE, AmenityType.CHEST);
+            // Phase 6.6.1.3 — production-trade founders want their
+            // workstation + storage in the same building.
+            case STONEMASON -> EnumSet.of(AmenityType.STONECUTTER, AmenityType.CHEST);
+            case WEAVER     -> EnumSet.of(AmenityType.LOOM, AmenityType.CHEST);
+            // CANDLEMAKER has no workstation block (works at building
+            // origin); storage-only preference is still meaningful for
+            // a founder choosing a house.
+            case CANDLEMAKER -> EnumSet.of(AmenityType.CHEST);
             default         -> Set.of();
         };
     }
