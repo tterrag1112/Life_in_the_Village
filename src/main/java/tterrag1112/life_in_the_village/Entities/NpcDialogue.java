@@ -3,8 +3,9 @@ package tterrag1112.life_in_the_village.Entities;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
-import tterrag1112.life_in_the_village.Entities.custom.AppearanceComponent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Traits.DisplayedTrait;
+import tterrag1112.life_in_the_village.Npc.Traits.TraitAxis;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Needs.NeedCategory;
@@ -311,55 +312,67 @@ public final class NpcDialogue {
 
     private static Optional<String> getTraitLine(TownspersonMob npc,
                                                  RandomSource rng) {
-        // Pick from the NPC's actual traits
-        List<AppearanceComponent.PersonalityTrait> traits = npc.getTraits();
-        if (traits.isEmpty()) return Optional.empty();
+        // Phase 6.4.1.4 — pick a significant trait axis. significantTraits()
+        // returns axes whose |value| ≥ DISPLAY_THRESHOLD (0.40) — naturally
+        // excludes near-zero axes that have no character. Better than the
+        // legacy random-pick which could hit a flavorless trait.
+        List<DisplayedTrait> significant = npc.getTraitVector().significantTraits();
+        if (significant.isEmpty()) return Optional.empty();
 
-        AppearanceComponent.PersonalityTrait trait = traits.get(rng.nextInt(traits.size()));
-        String line = switch (trait) {
-            case FRIENDLY -> pick(rng,
-                    "It's nice to see a new face!",
-                    "I hope you're enjoying our village.",
-                    "Let me know if you need anything.");
-            case SUSPICIOUS -> pick(rng,
-                    "I don't know you. Keep your hands where I can see them.",
-                    "Hmm. You're not from around here.",
-                    "I'll be watching.");
-            case GREEDY -> pick(rng,
-                    "Everything has a price, friend.",
-                    "Business is business.",
-                    "I don't work for free, you know.");
-            case GENEROUS -> pick(rng,
-                    "Take your time. No rush here.",
-                    "If you need help, just ask. Happy to lend a hand.",
-                    "Sharing's what makes a village a village.");
-            case BRAVE -> pick(rng,
-                    "Monsters don't scare me. Let them come.",
-                    "I'd rather face danger than hide from it.",
-                    "A little courage goes a long way.");
-            case TIMID -> pick(rng,
-                    "I... I hope nothing bad happens today.",
-                    "Did you hear something? Probably nothing.",
-                    "I prefer staying close to the village.");
-            case CHEERFUL -> pick(rng,
-                    "Beautiful day, isn't it?",
-                    "I woke up with a good feeling today!",
-                    "Life is good when the village is peaceful.");
-            case GRUMPY -> pick(rng,
-                    "What? Make it quick.",
-                    "I've got things to do.",
-                    "Hmph.");
-            case DILIGENT -> pick(rng,
-                    "No rest for the willing.",
-                    "There's always more work to be done.",
-                    "I take pride in my craft.");
-            case LAZY -> pick(rng,
-                    "I was just about to take a break...",
-                    "Work will still be there tomorrow.",
-                    "I'm pacing myself.");
+        DisplayedTrait dt = significant.get(rng.nextInt(significant.size()));
+        boolean positive = dt.positivePole();
+        String line = switch (dt.axis()) {
+            case SOCIABILITY -> positive
+                    ? pick(rng,
+                            "It's nice to see a new face!",
+                            "I hope you're enjoying our village.",
+                            "Let me know if you need anything.")
+                    : pick(rng,
+                            "I don't know you. Keep your hands where I can see them.",
+                            "Hmm. You're not from around here.",
+                            "I'll be watching.");
+            case GENEROSITY -> positive
+                    ? pick(rng,
+                            "Take your time. No rush here.",
+                            "If you need help, just ask. Happy to lend a hand.",
+                            "Sharing's what makes a village a village.")
+                    : pick(rng,
+                            "Everything has a price, friend.",
+                            "Business is business.",
+                            "I don't work for free, you know.");
+            case COURAGE -> positive
+                    ? pick(rng,
+                            "Monsters don't scare me. Let them come.",
+                            "I'd rather face danger than hide from it.",
+                            "A little courage goes a long way.")
+                    : pick(rng,
+                            "I... I hope nothing bad happens today.",
+                            "Did you hear something? Probably nothing.",
+                            "I prefer staying close to the village.");
+            case COMPASSION -> positive
+                    ? pick(rng,
+                            "Beautiful day, isn't it?",
+                            "I woke up with a good feeling today!",
+                            "Life is good when the village is peaceful.")
+                    : pick(rng,
+                            "What? Make it quick.",
+                            "I've got things to do.",
+                            "Hmph.");
+            case INDUSTRY -> positive
+                    ? pick(rng,
+                            "No rest for the willing.",
+                            "There's always more work to be done.",
+                            "I take pride in my craft.")
+                    : pick(rng,
+                            "I was just about to take a break...",
+                            "Work will still be there tomorrow.",
+                            "I'm pacing myself.");
+            // HONESTY, AMBITION, TEMPERANCE, PIETY, SCHOLARSHIP — no legacy
+            // dialogue; significant magnitude on these axes falls through
+            // to the next pick attempt (caller may retry or use FALLBACK).
+            default -> null;
         };
-
-        return Optional.of(line);
+        return Optional.ofNullable(line);
     }
 
     // =========================================================================

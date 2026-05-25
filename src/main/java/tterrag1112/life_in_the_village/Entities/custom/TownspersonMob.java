@@ -704,26 +704,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
     }
 
     // =========================================================================
-    // PERSONALITY — delegated to AppearanceComponent
+    // PERSONALITY — TraitVector is the source of truth (Phase 6.4.1.4)
     // =========================================================================
 
-    public List<AppearanceComponent.PersonalityTrait> getTraits() {
-        return appearance.getTraits();
-    }
-
-    public boolean hasTrait(AppearanceComponent.PersonalityTrait trait) {
-        return appearance.hasTrait(trait);
-    }
-
-    public void addTrait(AppearanceComponent.PersonalityTrait trait) {
-        appearance.addTrait(trait);
-    }
-
     /**
-     * Returns the 8-axis trait vector. Named {@code getTraitVector} rather
-     * than {@code getTraits} because the legacy {@link #getTraits()} method
-     * still returns the old {@code PersonalityTrait} list during the one-
-     * release migration window.
+     * Returns the 10-axis trait vector. The pre-6.4.1.4 legacy
+     * {@code getTraits()} list accessor and {@code hasTrait} / {@code
+     * addTrait} delegations were removed; all trait reads go through
+     * {@link TraitVector#get} and writes through {@link
+     * TraitVector#set} / {@link TraitVector#adjust}.
      */
     public TraitVector getTraitVector() {
         return traits;
@@ -836,26 +825,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
      *  ephemeral visitor (not a settled refugee). */
     public boolean isVisitor() { return visitorState.isVisitor(); }
 
-    public void clearTraits() {
-        appearance.clearTraits();
-    }
-
-    public int getActionTickRate(int baseRate) {
-        return appearance.getActionTickRate(baseRate);
-    }
-
-    public double getPriceModifier() {
-        return appearance.getPriceModifier();
-    }
-
-    public double getDetectionRange() {
-        return appearance.getDetectionRange();
-    }
-
-    public static AppearanceComponent.PersonalityTrait randomTrait(RandomSource random) {
-        AppearanceComponent.PersonalityTrait[] values = AppearanceComponent.PersonalityTrait.values();
-        return values[random.nextInt(values.length)];
-    }
+    // Phase 6.4.1.4 — removed dead legacy delegations: getActionTickRate,
+    // getPriceModifier, getDetectionRange, randomTrait, clearTraits.
+    // INDUSTRY → AbstractProductionBehavior.productionSpeedMultiplier,
+    // GENEROSITY → DirectBusinessChannel.quote, AMBITION → SkillXp.award
+    // now carry the same effects via TraitVector.
 
     // =========================================================================
     // FAMILY — delegated to FamilyComponent
@@ -1345,10 +1319,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 "Family Role: " + getFamilyRole()), false);
 
         // ── Personality & economy ─────────────────────────────────────────────
-        player.displayClientMessage(Component.literal(
-                "Traits: " + (getTraits().isEmpty() ? "none"
-                        : getTraits().stream().map(Enum::name)
-                        .collect(Collectors.joining(", ")))), false);
+        // Phase 6.4.1.4 — TraitVector display. EMPHATIC magnitude (|v| ≥ 0.85)
+        // renders as "Very <pole>".
+        var significantTraits = traits.significantTraits();
+        String traitText = significantTraits.isEmpty() ? "none"
+                : significantTraits.stream().map(dt -> {
+                    String label = dt.axis().poleLabel(dt.positivePole());
+                    return dt.intensity() ==
+                            tterrag1112.life_in_the_village.Npc.Traits.TraitIntensity.EMPHATIC
+                            ? "Very " + label : label;
+                }).collect(Collectors.joining(", "));
+        player.displayClientMessage(Component.literal("Traits: " + traitText), false);
         player.displayClientMessage(Component.literal(
                 "Wealth: " + getWealth()
                         + "  |  Wallet: " + getWallet().toValue()), false);
@@ -1890,19 +1871,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         String surname = NpcNameRegistry.INSTANCE.generateSurname(random);
         setNpcName(firstName + " " + surname);
 
-        AppearanceComponent.PersonalityTrait first = randomTrait(random);
-        addTrait(first);
-        if (random.nextBoolean()) {
-            AppearanceComponent.PersonalityTrait[] all = AppearanceComponent.PersonalityTrait.values();
-            for (int attempts = 0; attempts < 10; attempts++) {
-                AppearanceComponent.PersonalityTrait candidate = all[random.nextInt(all.length)];
-                if (candidate != first) {
-                    addTrait(candidate);
-                    break;
-                }
-            }
-        }
-
+        // Phase 6.4.1.4 — legacy PersonalityTrait random-assign retired.
+        // TraitVector below carries all trait state (Gaussian per-axis;
+        // culture biases applied later in setProfession path).
         randomizeAppearance(random);
         traits.randomize(random);
         // Mood baseline derives from traits; init after traits are set.
@@ -1976,12 +1947,9 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         output.putInt("hairStyle", appearance.getHairStyle());
         output.putInt("hairColor", appearance.getHairColor());
 
-        // ── Personality ──────────────────────────────────────────────────────
-        List<AppearanceComponent.PersonalityTrait> legacyTraits = appearance.getTraits();
-        if (!legacyTraits.isEmpty()) {
-            output.putString("traits", legacyTraits.stream()
-                    .map(AppearanceComponent.PersonalityTrait::name).collect(Collectors.joining(",")));
-        }
+        // Phase 6.4.1.4 — legacy "traits" string field retired from save.
+        // TraitVector saves to npcTraits.<axis> keys via traits.save below.
+        // Legacy field on disk gets migrated on load and dropped.
 
         // ── Family ───────────────────────────────────────────────────────────
         output.putString("familyRole", family.getRole().name());
@@ -2222,11 +2190,17 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // ── Relationships ────────────────────────────────────────────────────
         input.read("npcRelationships", Codec.STRING).ifPresent(relationships::decode);
 
-        // ── Traits (new 8-axis system; migrate from legacy if not yet stored)
+        // ── Traits (TraitVector is canonical post-6.4.1.4) ────────────────
+        // If TraitVector axis keys are present, use them. If not — meaning
+        // this save was written by a pre-6.4.1.4 build — migrate the
+        // legacy "traits" string list (read into appearance.getTraits()
+        // a few lines up) into axis adjustments, then drop the legacy list
+        // so it doesn't get re-saved.
         boolean traitsLoaded = traits.load(input);
         if (!traitsLoaded && !appearance.getTraits().isEmpty()) {
             traits.migrateFromLegacy(appearance.getTraits());
         }
+        appearance.clearTraits();
 
         // ── Memory log ───────────────────────────────────────────────────────
         memory.load(input);

@@ -3,8 +3,9 @@ package tterrag1112.life_in_the_village.Entities;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.MerchantBehavior;
-import tterrag1112.life_in_the_village.Entities.custom.AppearanceComponent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Traits.DisplayedTrait;
+import tterrag1112.life_in_the_village.Npc.Traits.TraitIntensity;
 import tterrag1112.life_in_the_village.Guilds.Companies.Business;
 import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.NpcProfileSnapshot;
@@ -79,9 +80,15 @@ public final class NpcProfileSnapshotBuilder {
                 .map(Building::getName).orElse("");
 
         // ── Traits ───────────────────────────────────────────────────────────
+        // Phase 6.4.1.4 — TraitVector display. significantTraits() returns
+        // axes whose |value| ≥ DISPLAY_THRESHOLD; EMPHATIC intensity (|v| ≥
+        // 0.85) renders as "Very <pole>". Richer than the legacy enum dump
+        // which only knew named-pair traits.
         List<String> traitNames = new ArrayList<>();
-        for (AppearanceComponent.PersonalityTrait t : npc.getTraits()) {
-            traitNames.add(t.name());
+        for (DisplayedTrait dt : npc.getTraitVector().significantTraits()) {
+            String label = dt.axis().poleLabel(dt.positivePole());
+            if (dt.intensity() == TraitIntensity.EMPHATIC) label = "Very " + label;
+            traitNames.add(label);
         }
 
         // ── Dialogue line ────────────────────────────────────────────────────

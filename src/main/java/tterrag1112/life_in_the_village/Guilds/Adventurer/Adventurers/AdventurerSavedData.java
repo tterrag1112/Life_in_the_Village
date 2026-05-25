@@ -13,7 +13,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 import tterrag1112.life_in_the_village.Entities.ModEntities;
-import tterrag1112.life_in_the_village.Entities.custom.AppearanceComponent;
+import tterrag1112.life_in_the_village.Npc.Traits.TraitAxis;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.CombatRole;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
@@ -362,8 +362,10 @@ public class AdventurerSavedData extends SavedData {
         npc.setAppearance(skinTone, hairStyle, hairColor);
 
         // ── Personality ───────────────────────────────────────────────
-        npc.clearTraits();
-        npc.addTrait(AppearanceComponent.PersonalityTrait.BRAVE);
+        // Phase 6.4.1.4 — adventurers push COURAGE +0.5 on top of the
+        // Gaussian roll done at finalizeSpawn. Magnitude class mirrors
+        // CultureRegistry's culture-bias deltas (Tindar +0.4 COURAGE etc.).
+        npc.getTraitVector().adjust(TraitAxis.COURAGE, +0.5f);
 
 
         // ── Village assignment ────────────────────────────────────────

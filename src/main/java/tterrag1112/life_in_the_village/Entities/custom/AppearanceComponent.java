@@ -118,72 +118,28 @@ public class AppearanceComponent {
     }
 
     // =========================================================================
-    // Personality traits
+    // Personality traits — load-only post-6.4.1.4
     // =========================================================================
 
+    /**
+     * Phase 6.4.1.4 — these three methods survive the legacy enum
+     * retirement because the NBT load path still parses a legacy
+     * {@code traits} string field (when present on pre-6.4.1.4 saves)
+     * and feeds the list to {@link tterrag1112.life_in_the_village.Npc
+     * .Traits.TraitVector#migrateFromLegacy} before clearing it.
+     * {@code hasTrait} and {@code randomizeTraits} were removed —
+     * neither had any callers after retirement.
+     */
     public List<PersonalityTrait> getTraits() {
         return Collections.unmodifiableList(traits);
-    }
-
-    public boolean hasTrait(PersonalityTrait trait) {
-        return traits.contains(trait);
     }
 
     public void addTrait(PersonalityTrait trait) {
         if (!traits.contains(trait)) traits.add(trait);
     }
 
-    /**
-     * Assigns random traits at spawn time.
-     * Typically 1-3 traits per NPC.
-     */
-    public void randomizeTraits(RandomSource random, int count) {
+    public void clearTraits() {
         traits.clear();
-        PersonalityTrait[] values = PersonalityTrait.values();
-        for (int i = 0; i < count && traits.size() < values.length; i++) {
-            PersonalityTrait candidate = values[random.nextInt(values.length)];
-            if (!traits.contains(candidate)) {
-                traits.add(candidate);
-            }
-        }
-    }
-
-    public void clearTraits(){
-        traits.clear();
-    }
-
-    // ── Aggregate modifiers ──────────────────────────────────────────────────
-
-    /**
-     * Multiplier applied to work tick rates.
-     * DILIGENT = faster (lower ticks), LAZY = slower (higher ticks).
-     */
-    public double getWorkSpeedModifier() {
-        return traits.stream()
-                .mapToDouble(PersonalityTrait::workSpeedModifier)
-                .reduce(1.0, (a, b) -> a * b);
-    }
-
-    /**
-     * Returns the effective tick rate for an action, modified by traits.
-     */
-    public int getActionTickRate(int baseRate) {
-        double modifier = getWorkSpeedModifier();
-        return Math.max(1, (int) (baseRate / modifier));
-    }
-
-    /** Aggregate price modifier from all traits. */
-    public double getPriceModifier() {
-        return traits.stream()
-                .mapToDouble(PersonalityTrait::priceModifier)
-                .reduce(1.0, (a, b) -> a * b);
-    }
-
-    /** Detection range modified by brave/timid traits. */
-    public double getDetectionRange() {
-        if (hasTrait(PersonalityTrait.BRAVE))  return 24.0;
-        if (hasTrait(PersonalityTrait.TIMID))  return 8.0;
-        return 16.0;
     }
 
     // =========================================================================
@@ -480,36 +436,31 @@ public class AppearanceComponent {
     }
 
     // =========================================================================
-    // PersonalityTrait enum (moved here from TownspersonMob inner scope)
+    // PersonalityTrait enum — RETIRED in Phase 6.4.1.4
     // =========================================================================
 
     /**
-     * Intrinsic personality traits that affect NPC behavior modifiers.
+     * Phase 6.4.1.4 — retired in favour of {@link
+     * tterrag1112.life_in_the_village.Npc.Traits.TraitVector}.
      *
-     * Each trait defines multipliers for work speed and price negotiation.
-     * Multiple traits stack multiplicatively.
+     * <p>Pre-retirement this enum carried per-trait work-speed and
+     * price modifiers (DILIGENT=1.15× etc.) but had zero consumers
+     * via {@code getWorkSpeedModifier} / {@code getPriceModifier} /
+     * {@code getDetectionRange} — they were dead code. The same
+     * effects now flow through {@code TraitVector} axes (INDUSTRY →
+     * production speed, GENEROSITY → channel quote price, AMBITION
+     * → XP rate), all wired in 6.4.1.2/.3.</p>
+     *
+     * <p>The enum stays as a load-only name carrier for one release.
+     * Legacy NBT saves contain a comma-separated string of these
+     * names; on load, {@link TownspersonMob}'s NBT path migrates
+     * them into TraitVector axis adjustments via
+     * {@link tterrag1112.life_in_the_village.Npc.Traits.TraitVector
+     * #migrateFromLegacy} and clears the legacy list. New saves do
+     * NOT persist this enum any more.</p>
      */
     public enum PersonalityTrait {
-        DILIGENT  (1.15, 1.0),   // works faster
-        LAZY      (0.85, 1.0),   // works slower
-        GREEDY    (1.0,  1.15),  // charges more
-        GENEROUS  (1.0,  0.9),   // charges less
-        BRAVE     (1.0,  1.0),   // wider detection range
-        TIMID     (1.0,  1.0),   // narrower detection range
-        FRIENDLY  (1.0,  0.95),  // slightly lower prices
-        SUSPICIOUS(1.0,  1.05),  // slightly higher prices
-        CHEERFUL  (1.05, 1.0),   // slightly faster work
-        GRUMPY    (0.95, 1.0);   // slightly slower work
-
-        private final double workSpeed;
-        private final double price;
-
-        PersonalityTrait(double workSpeed, double price) {
-            this.workSpeed = workSpeed;
-            this.price = price;
-        }
-
-        public double workSpeedModifier() { return workSpeed; }
-        public double priceModifier()     { return price; }
+        DILIGENT, LAZY, GREEDY, GENEROUS, BRAVE, TIMID,
+        FRIENDLY, SUSPICIOUS, CHEERFUL, GRUMPY
     }
 }
