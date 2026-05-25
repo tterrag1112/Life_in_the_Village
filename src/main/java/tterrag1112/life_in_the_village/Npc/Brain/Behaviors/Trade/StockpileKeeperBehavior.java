@@ -15,7 +15,6 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy;
-import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
@@ -84,18 +83,13 @@ public class StockpileKeeperBehavior extends Behavior<TownspersonMob> {
 
             if (bought) return;
 
-            // ── Step 2: no seller available — post a crafting order ───────
-            String itemId = BuiltInRegistries.ITEM.getKey(item).toString();
-
-            CraftingOrderManager.postOrderIfNeeded(
-                    entity.getUUID(),
-                    village.getId(),
-                    itemId,
-                    // Cap the order at a sensible per-order quantity so the
-                    // board isn't flooded with huge single requests
-                    Math.min(needed, 64),
-                    currentTick,
-                    data);
+            // Phase 6.4.6.3 — postOrderIfNeeded retired. The player-quest
+            // board never produced fulfilled orders in NPC-driven worlds,
+            // so the fallback added noise without value. tryBuyFromMarket
+            // above remains the primary procurement path; when it fails
+            // the stockpile just waits for next-day re-check. Future
+            // ChannelRouter integration would replace tryBuyFromMarket
+            // wholesale; that refactor is intentionally out of scope here.
         });
     }
 

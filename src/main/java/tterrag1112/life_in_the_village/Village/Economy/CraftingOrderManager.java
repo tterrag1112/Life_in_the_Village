@@ -1,6 +1,7 @@
 // src/main/java/tterrag1112/life_in_the_village/Village/Economy/Orders/CraftingOrderManager.java
 package tterrag1112.life_in_the_village.Village.Economy;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -9,6 +10,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.DataAttachments.ModData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.PlayerProfession;
@@ -28,25 +30,32 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Manages the full lifecycle of {@link CraftingOrder} objects:
- * <ul>
- *   <li>Economy-driven posting when the village stockpile is short</li>
- *   <li>Player claiming via town hall interaction</li>
- *   <li>Item delivery detection when the player deposits to town hall</li>
- *   <li>Reward payment and profession XP on fulfilment</li>
- *   <li>Expiry tick sweep</li>
- * </ul>
+ * <h3>Phase 6.4.6 — partially retired</h3>
  *
- * <h3>Integration points</h3>
- * <ul>
- *   <li>{@code ServerTickDispatcher} — call {@link #tick} every 20 ticks</li>
- *   <li>Town hall NPC interaction — call {@link #claimOrder}</li>
- *   <li>Town hall chest deposit event — call {@link #onItemDeposited}</li>
- *   <li>{@code VillageEconomy} / NPC building goals — call
- *       {@link #postOrderIfNeeded} when a building runs short</li>
- * </ul>
+ * <p>Player-facing quest board: {@link #claimOrder} via town hall NPC
+ * interaction, {@link #onItemDeposited} via town hall chest deposit,
+ * {@link #fulfillOrder} reward payment. <b>Preserved</b> as the
+ * existing player-economy interaction surface pending dedicated
+ * redesign (probably alongside the MERCHANT activation phase).</p>
+ *
+ * <p>NPC-side order creation: {@link #tickEconomyOrders} daily sweep
+ * and the two {@code StockpileKeeperBehavior} / {@code BuilderBehavior}
+ * {@link #postOrderIfNeeded} callers were retired in 6.4.6.3. The
+ * crafting-order quest board never produced fulfilled orders in
+ * NPC-driven worlds — the demand-aggregation function it was meant
+ * to perform belongs to the channel system (ChannelRouter,
+ * DirectBusinessChannel) post-6.3.4.2.</p>
+ *
+ * <p><b>Do not add new NPC-side callers.</b> The {@link
+ * #postOrderIfNeeded} method is retained because the player UI path
+ * still calls into the same data structures, but NPC procurement
+ * should use {@code ChannelRouter.findBestChannel} via {@code
+ * AbstractProductionBehavior.executeBuy} or the equivalent in your
+ * behavior.</p>
  */
 public final class CraftingOrderManager {
+
+    private static final Logger LOGGER = LogUtils.getLogger();
 
     // How long (in ticks) an order stays on the board before expiring
     private static final long ORDER_DURATION = 24000L * 5; // 5 in-game days
@@ -66,14 +75,13 @@ public final class CraftingOrderManager {
     public static void tick(ServerLevel level,
                             VillageSavedData data,
                             long currentTick) {
-        // Expire overdue orders
+        // Expire overdue orders. Player-claimed orders that age out
+        // are released back to the board / dropped per OrderStatus.
         tickExpiry(data, currentTick);
-
-        // Once per day, post new economy-driven orders for each village
-        if (currentTick % ECONOMY_POST_INTERVAL == 0) {
-            data.getAllVillages().forEach(village ->
-                    tickEconomyOrders(level, village, data, currentTick));
-        }
+        // Phase 6.4.6.3 — daily economy-driven sweep retired. The
+        // tickEconomyOrders method is kept for the player UI / admin
+        // command path but is no longer auto-fired here; NPC-side
+        // demand aggregation flows through ChannelRouter post-6.3.4.2.
     }
 
     // =========================================================================
@@ -137,9 +145,8 @@ public final class CraftingOrderManager {
 
             data.addCraftingOrder(order);
 
-            System.out.println("CraftingOrderManager: posted order for "
-                    + needed + "x " + itemId + " in " + village.getName()
-                    + " (reward: " + reward + "b)");
+            LOGGER.debug("[CraftingOrderManager] posted order for {}x{} in {} (reward {}b)",
+                    needed, itemId, village.getName(), reward);
         });
     }
 
@@ -338,7 +345,7 @@ public final class CraftingOrderManager {
                 .filter(o -> o.isActive() && o.isExpired(currentTick))
                 .forEach(o -> {
                     o.expire();
-                    System.out.println("CraftingOrderManager: expired " + o);
+                    LOGGER.debug("[CraftingOrderManager] expired {}", o);
                 });
 
         if (data.getAllCraftingOrders().stream().anyMatch(o ->

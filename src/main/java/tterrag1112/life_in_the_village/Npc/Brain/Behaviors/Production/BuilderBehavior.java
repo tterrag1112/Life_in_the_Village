@@ -8,7 +8,6 @@ import net.minecraft.world.entity.ai.memory.WalkTarget;
 import com.google.common.collect.ImmutableMap;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import net.minecraft.core.Vec3i;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
@@ -33,7 +32,6 @@ import tterrag1112.life_in_the_village.Village.Buildings.VillageExpansionManager
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.*;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageBiomeStyle;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageDecorator;
-import tterrag1112.life_in_the_village.Village.Economy.CraftingOrderManager;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
 
@@ -303,26 +301,15 @@ public class BuilderBehavior extends Behavior<TownspersonMob> {
             entity.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_PICKAXE));
             phase = Phase.WALKING_TO_BUILDING;
         } else {
-            if (!missingMaterials.isEmpty()) {
-                VillageSavedData vdata = VillageSavedData.get(level);
-                long tick = level.getGameTime();
-
-                String villageName = entity.getAssignedVillageName().orElse("");
-                vdata.getVillageByName(villageName).ifPresent(village -> {
-                    missingMaterials.forEach((item, qty) -> {
-                        String itemId = BuiltInRegistries.ITEM
-                                .getKey(item).toString();
-                        CraftingOrderManager.postOrderIfNeeded(
-                                entity.getUUID(),
-                                village.getId(),
-                                itemId,
-                                Math.min(qty, 64),   // sensible per-order cap
-                                tick,
-                                vdata);
-                    });
-                });
-            }
-
+            // Phase 6.4.6.3 — postOrderIfNeeded retired. The player-quest
+            // board never produced fulfilled orders in NPC-driven worlds;
+            // the call was advisory and execution proceeded regardless.
+            // Builder now silently attempts construction with available
+            // materials — same effective behaviour. ChannelRouter
+            // integration would be a meaningful follow-up: when stone /
+            // planks / etc. are missing, query DirectBusinessChannel for
+            // a STONEMASON / CARPENTER quote. Out of scope for the
+            // CraftingOrderManager retirement pass.
             entity.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_PICKAXE));
             phase = Phase.WALKING_TO_BUILDING;
         }
