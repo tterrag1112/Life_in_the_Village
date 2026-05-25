@@ -138,6 +138,32 @@ public class MillerProductionBehavior extends AbstractProductionBehavior {
                 batchSize * recipe.outputCount());
     }
 
+    /**
+     * Phase 6.3.4.1.4 — MILLER routes production XP to CROP_FARMING
+     * specifically, not the flat FARMING parent. Wheat-grinding IS
+     * agricultural work; the 6.3.3.i sub-skill subdivision under
+     * FARMING (CROP_FARMING / ORCHARDING / ANIMAL_HUSBANDRY) makes
+     * CROP_FARMING the right axis. The skill hierarchy cascade in
+     * SkillComponent propagates 25% from CROP_FARMING → FARMING
+     * automatically, so the parent skill still accrues.
+     *
+     * <p>Without this override, the base class's
+     * ProfessionSkills.primary lookup would route MILLER's XP to
+     * FARMING (flat parent) — correct but coarse. Routing to
+     * CROP_FARMING enables MILLER ↔ FARMER mentorship on the same
+     * skill axis and lays groundwork for any future MILLER
+     * specialization to compose via the FarmerSpecialtyMultiplier
+     * pattern.</p>
+     */
+    @Override
+    protected void awardProductionXp(ServerLevel level,
+            net.minecraft.world.item.Item output, int amount) {
+        tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
+                entity,
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.CROP_FARMING,
+                amount, level.getGameTime());
+    }
+
     private Building findStockpile(ServerLevel level) {
         VillageSavedData data = VillageSavedData.get(level);
         return entity.getAssignedVillageName()

@@ -844,16 +844,34 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     }
 
     /**
-     * Phase 6.3.2.b — overrideable XP-award hook. Default awards
-     * {@code CRAFTING}. Subclasses with a more-specific subskill
-     * (e.g. blacksmith → toolsmithing / weaponsmithing / armorsmithing)
-     * override and route to the appropriate child skill; the
+     * Phase 6.3.2.b — overrideable XP-award hook. Subclasses with a
+     * more-specific subskill (e.g. blacksmith → toolsmithing /
+     * weaponsmithing / armorsmithing) override and route to the
+     * appropriate child skill; the
      * {@link tterrag1112.life_in_the_village.Npc.Skills.SkillComponent}
      * cascade then propagates 25% upward.
+     *
+     * <p>Phase 6.3.4.1.4 — default now uses the profession's primary
+     * skill via {@link tterrag1112.life_in_the_village.Npc.Skills
+     * .ProfessionSkills#of} instead of hardcoded {@code CRAFTING}.
+     * Closes the 6.3.4.0.E cascade mismatch: MILLER's
+     * ProfessionSkills primary is FARMING (line 41), but pre-fix
+     * the base routed all production XP to CRAFTING — Miller's
+     * declared primary skill never accrued. With this change,
+     * MILLER's production XP routes to FARMING (which propagates
+     * 25% downward through the hierarchy in {@code SkillComponent
+     * .addXp}). Other professions whose primary is already CRAFTING
+     * (BAKER, BLACKSMITH, CARPENTER, etc.) behave identically.
+     * Professions without a ProfessionSkills entry (CITIZEN, NONE)
+     * fall back to CRAFTING.</p>
      */
     protected void awardProductionXp(ServerLevel level, Item output, int amount) {
+        Skill skill = tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills
+                .of(entity.getProfession())
+                .map(tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills::primary)
+                .orElse(Skill.CRAFTING);
         tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
-                entity, Skill.CRAFTING, amount, level.getGameTime());
+                entity, skill, amount, level.getGameTime());
     }
 
     protected Optional<BlockPos> findBlock(ServerLevel level, Building building,
