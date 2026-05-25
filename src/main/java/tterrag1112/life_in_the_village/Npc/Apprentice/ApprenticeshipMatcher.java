@@ -1,8 +1,12 @@
 package tterrag1112.life_in_the_village.Npc.Apprentice;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerLevel;
+import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoal;
+import tterrag1112.life_in_the_village.Npc.LifeGoal.LifeGoalType;
 import tterrag1112.life_in_the_village.Npc.Relations.RelationshipMode;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Npc.Skills.ProfessionSkills;
@@ -33,6 +37,8 @@ import java.util.UUID;
  */
 public final class ApprenticeshipMatcher {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     /** Skill threshold for an NPC to count as a "master". */
     public static final int MASTER_SKILL_THRESHOLD =
             ApprenticeshipContract.MASTER_SKILL_THRESHOLD;
@@ -44,6 +50,9 @@ public final class ApprenticeshipMatcher {
     public static final float CROWD_PENALTY = -1.0f;
     /** Master decision threshold: rejection cutoff. */
     public static final float ACCEPT_FLOOR = -0.4f;
+    /** Phase 6.4.2.2 — LifeGoal alignment bonus on scoreMaster. */
+    public static final double LIFEGOAL_SKILL_BONUS    = 5.0;
+    public static final double LIFEGOAL_BUSINESS_BONUS = 3.0;
 
     private ApprenticeshipMatcher() {}
 
@@ -79,8 +88,20 @@ public final class ApprenticeshipMatcher {
                                 < ApprenticeshipContract.MAX_APPRENTICES_PER_MASTER);
         if (villagers.isEmpty()) return Optional.empty();
 
-        return villagers.stream()
+        Optional<TownspersonMob> picked = villagers.stream()
                 .max(Comparator.comparingDouble(m -> scoreMaster(candidate, m, reg, primary)));
+        // Phase 6.4.2.2 — log when LifeGoal alignment factored into the
+        // pick. Fires per selection call (rare event), no flag needed.
+        picked.ifPresent(m -> {
+            double bonus = lifeGoalAlignmentBonus(candidate, m);
+            if (bonus > 0) {
+                LOGGER.info("[ApprenticeshipMatcher] {} selected master {} ({}) " +
+                        "with +{} LifeGoal alignment bonus",
+                        candidate.getNpcName(), m.getNpcName(),
+                        m.getProfession(), bonus);
+            }
+        });
+        return picked;
     }
 
     /**
@@ -113,7 +134,65 @@ public final class ApprenticeshipMatcher {
         double skill = SKILL_WEIGHT * (master.getSkills().getLevel(primary)
                 - MASTER_SKILL_THRESHOLD);
         double crowd = CROWD_PENALTY * reg.getActiveByMaster(master.getUUID()).size();
-        return rel + skill + crowd;
+        // Phase 6.4.2.2 — LifeGoal alignment bonus. Magnitude dominates
+        // relationship + skill so a goal-matched master wins over a
+        // friendly stranger of a different profession. See bonus
+        // constants for stacking shape.
+        double lifeGoal = lifeGoalAlignmentBonus(candidate, master);
+        return rel + skill + crowd + lifeGoal;
+    }
+
+    /**
+     * Phase 6.4.2.2 — sums any LifeGoal-driven preference bonuses for
+     * picking {@code master}. Active REACH_SKILL_LEVEL whose targetParam
+     * matches the master's profession primary skill adds
+     * {@link #LIFEGOAL_SKILL_BONUS}; active FOUND_BUSINESS whose
+     * targetParam names the master's profession adds
+     * {@link #LIFEGOAL_BUSINESS_BONUS}. Both can stack — wanting to
+     * "master BAKING" and "found a BAKER business" both reinforce the
+     * same master pick.
+     */
+    private static double lifeGoalAlignmentBonus(TownspersonMob candidate,
+                                                 TownspersonMob master) {
+        double bonus = 0;
+        var goals = candidate.getLifeGoals();
+        Profession masterProf = master.getProfession();
+        if (masterProf == Profession.NONE || masterProf == Profession.CITIZEN) return 0;
+        Skill masterPrimary = ProfessionSkills.of(masterProf)
+                .map(ProfessionSkills::primary).orElse(null);
+
+        Optional<LifeGoal> skillGoal = goals.activeByType(LifeGoalType.REACH_SKILL_LEVEL);
+        if (skillGoal.isPresent() && masterPrimary != null) {
+            Skill target = parseSkill(skillGoal.get().targetParam());
+            if (target == masterPrimary) bonus += LIFEGOAL_SKILL_BONUS;
+        }
+        Optional<LifeGoal> businessGoal = goals.activeByType(LifeGoalType.FOUND_BUSINESS);
+        if (businessGoal.isPresent()) {
+            Profession target = parseProfession(businessGoal.get().targetParam());
+            if (target == masterProf) bonus += LIFEGOAL_BUSINESS_BONUS;
+        }
+        return bonus;
+    }
+
+    private static Skill parseSkill(String name) {
+        if (name == null || name.isEmpty()) return null;
+        try { return Skill.valueOf(name); }
+        catch (IllegalArgumentException e) { return null; }
+    }
+
+    private static Profession parseProfession(String name) {
+        if (name == null || name.isEmpty()) return Profession.NONE;
+        try { return Profession.valueOf(name); }
+        catch (IllegalArgumentException e) { return Profession.NONE; }
+    }
+
+    private static Profession professionForPrimarySkill(Skill target) {
+        if (target == null) return Profession.NONE;
+        for (Profession p : Profession.values()) {
+            var ps = ProfessionSkills.of(p).orElse(null);
+            if (ps != null && ps.primary() == target) return p;
+        }
+        return Profession.NONE;
     }
 
     private static float relationshipBonus(RelationshipMode mode) {
@@ -128,20 +207,40 @@ public final class ApprenticeshipMatcher {
     }
 
     /**
-     * Phase 2 proxy for the spec's {@code preferredProfession}: use
-     * the NPC's current profession when set, otherwise reverse-lookup
-     * profession from the highest-XP skill.
+     * Phase 6.4.2.2 — LifeGoal-aware preference, with the Phase-2
+     * proxy as fallback. Resolution order:
+     * <ol>
+     *   <li>{@link LifeGoalType#REACH_SKILL_LEVEL} active — reverse-
+     *       lookup profession whose primary skill is the goal's
+     *       targetParam (e.g. "BAKING" → BAKER).</li>
+     *   <li>{@link LifeGoalType#FOUND_BUSINESS} active — targetParam
+     *       names the profession directly (e.g. "BAKER").</li>
+     *   <li>Current profession when set and not NONE/CITIZEN.</li>
+     *   <li>Reverse-lookup from the NPC's highest-XP skill.</li>
+     * </ol>
+     *
+     * <p>This is the apprentice's "what do I want to learn?" lookup;
+     * {@link #findMaster} uses it to filter candidate masters by
+     * profession.</p>
      */
     public static Profession preferredProfessionFor(TownspersonMob npc) {
+        var goals = npc.getLifeGoals();
+        Optional<LifeGoal> skillGoal = goals.activeByType(LifeGoalType.REACH_SKILL_LEVEL);
+        if (skillGoal.isPresent()) {
+            Profession fromSkill = professionForPrimarySkill(
+                    parseSkill(skillGoal.get().targetParam()));
+            if (fromSkill != Profession.NONE) return fromSkill;
+        }
+        Optional<LifeGoal> businessGoal = goals.activeByType(LifeGoalType.FOUND_BUSINESS);
+        if (businessGoal.isPresent()) {
+            Profession fromBusiness = parseProfession(businessGoal.get().targetParam());
+            if (fromBusiness != Profession.NONE) return fromBusiness;
+        }
+
         Profession current = npc.getProfession();
         if (current != Profession.NONE && current != Profession.CITIZEN) return current;
         Skill primary = npc.getSkills().primary();
-        // Reverse lookup: pick first profession whose primary matches.
-        for (Profession p : Profession.values()) {
-            var ps = ProfessionSkills.of(p).orElse(null);
-            if (ps != null && ps.primary() == primary) return p;
-        }
-        return Profession.NONE;
+        return professionForPrimarySkill(primary);
     }
 
     /**
