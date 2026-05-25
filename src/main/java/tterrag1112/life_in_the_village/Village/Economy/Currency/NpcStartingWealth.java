@@ -30,6 +30,13 @@ public final class NpcStartingWealth {
             case BLACKSMITH     -> range(rng,  400,  900);
             case CARPENTER      -> range(rng,  300,  700);
             case MINER          -> range(rng,  250,  600);
+            // Phase 6.3.4.1.4 — food-production workshops: similar tier
+            // to MINER. Margins on bread / flour are modest; starter
+            // wealth lets BAKER buy COAL for the furnace and MILLER
+            // buy a backup grinding stone before the cycle's own
+            // revenue covers replacement.
+            case BAKER          -> range(rng,  250,  600);
+            case MILLER         -> range(rng,  250,  600);
             // Farmers have seasonal income — variable
             case FARMER         -> range(rng,  150,  500);
             case FARMHAND       -> range(rng,   80,  250);
