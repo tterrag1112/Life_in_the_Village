@@ -132,28 +132,26 @@ public class MillerProductionBehavior extends AbstractProductionBehavior {
     }
 
     /**
-     * Phase 6.3.4.1.4 — MILLER routes production XP to CROP_FARMING
-     * specifically, not the flat FARMING parent. Wheat-grinding IS
-     * agricultural work; the 6.3.3.i sub-skill subdivision under
-     * FARMING (CROP_FARMING / ORCHARDING / ANIMAL_HUSBANDRY) makes
-     * CROP_FARMING the right axis. The skill hierarchy cascade in
-     * SkillComponent propagates 25% from CROP_FARMING → FARMING
-     * automatically, so the parent skill still accrues.
+     * Phase 6.3.4.9 — MILLER's production XP routes to MILLING, a new
+     * CRAFTING sub-skill (replaces the 6.3.4.1.4 CROP_FARMING routing).
+     * Reasoning: milling is a processing trade, not crop husbandry —
+     * grinding wheat, bones, or sugar cane is the same physical
+     * activity regardless of what's being ground. The skill hierarchy
+     * cascade propagates 25% MILLING → CRAFTING automatically, so the
+     * CRAFTING parent still accrues.
      *
-     * <p>Without this override, the base class's
-     * ProfessionSkills.primary lookup would route MILLER's XP to
-     * FARMING (flat parent) — correct but coarse. Routing to
-     * CROP_FARMING enables MILLER ↔ FARMER mentorship on the same
-     * skill axis and lays groundwork for any future MILLER
-     * specialization to compose via the FarmerSpecialtyMultiplier
-     * pattern.</p>
+     * <p>This override remains in place because the base class falls
+     * back to {@code ProfessionSkills.primary} which now returns
+     * MILLING — so technically the override is redundant. Keeping it
+     * explicit for clarity and to lock the routing against future
+     * ProfessionSkills changes.</p>
      */
     @Override
     protected void awardProductionXp(ServerLevel level,
             net.minecraft.world.item.Item output, int amount) {
         tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(
                 entity,
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.CROP_FARMING,
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.MILLING,
                 amount, level.getGameTime());
     }
 

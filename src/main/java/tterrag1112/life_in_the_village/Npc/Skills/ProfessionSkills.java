@@ -38,7 +38,12 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         m.put(Profession.STONEMASON,       new ProfessionSkills(Skill.CRAFTING, Skill.SURVIVAL));
         m.put(Profession.WEAVER,           new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
         m.put(Profession.CANDLEMAKER,      new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
-        m.put(Profession.MILLER,           new ProfessionSkills(Skill.FARMING,  Skill.CRAFTING));
+        // Phase 6.3.4.9 — MILLER's primary moves to MILLING (CRAFTING
+        // sub-skill). Secondary stays CRAFTING — somewhat redundant
+        // since MILLING cascades to CRAFTING anyway, but secondary is
+        // the "career retention" axis for profession switches and
+        // CRAFTING matches MILLER's general processing-trade identity.
+        m.put(Profession.MILLER,           new ProfessionSkills(Skill.MILLING,  Skill.CRAFTING));
         m.put(Profession.BAKER,            new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
         m.put(Profession.BUILDER,          new ProfessionSkills(Skill.CRAFTING, Skill.SURVIVAL));
         m.put(Profession.MINER,            new ProfessionSkills(Skill.SURVIVAL, Skill.CRAFTING));

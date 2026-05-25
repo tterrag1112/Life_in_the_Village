@@ -68,7 +68,17 @@ public enum Skill {
      *  FARMING). Used for ORCHARD-type crop plots. Future content
      *  surfaces VINTNER / ORCHARDIST emergent specialties off the
      *  highest-ORCHARDING NPC in a village (no formal spec needed). */
-    ORCHARDING(CROP_FARMING, 0.25);
+    ORCHARDING(CROP_FARMING, 0.25),
+
+    // ── Tier 1 (Phase 6.3.4.9 additions — milling) ─────────────────────────
+    /** Grinding / milling sub-skill. Cascades 25% → CRAFTING. MILLER's
+     *  primary skill axis. Earned from any MillerProductionBehavior
+     *  recipe (wheat → flour, bones → bone_meal, sugar_cane → sugar).
+     *  Pre-6.3.4.9 MILLER routed production XP to CROP_FARMING under
+     *  FARMING, treating grinding as an agricultural sub-task; the
+     *  correction reflects that milling is a CRAFTING-family
+     *  processing activity, distinct from raising crops. */
+    MILLING(CRAFTING, 0.25);
 
     @Nullable private final Skill parent;
     private final double propRate;
