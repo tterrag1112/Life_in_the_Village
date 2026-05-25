@@ -38,6 +38,15 @@ public final class SkillXp {
         if (recipient.level() instanceof ServerLevel sl) {
             multiplier = MentorshipBonus.npcMentorshipFor(recipient, sl);
         }
+        // Phase 6.4.1.3.A — AMBITION axis modulates XP rate. Ambitious
+        // NPCs (AMBITION ≈ +1) gain XP at ~1.15× across all sources
+        // (production, hobbies, combat); content NPCs (-1) at ~0.85×.
+        // Stacks multiplicatively with the mentorship bonus above.
+        // The single award funnel guarantees uniform application:
+        // no source can accidentally bypass the trait modifier.
+        float ambition = recipient.getTraitVector()
+                .get(tterrag1112.life_in_the_village.Npc.Traits.TraitAxis.AMBITION);
+        multiplier *= (1f + ambition * 0.15f);
         recipient.getSkills().addXp(skill, amount * multiplier, currentTick);
     }
 
