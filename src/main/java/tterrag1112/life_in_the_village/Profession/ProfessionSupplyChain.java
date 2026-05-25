@@ -116,7 +116,11 @@ public final class ProfessionSupplyChain {
                 Items.BOOKSHELF, Items.LADDER, Items.STICK));
         in.put(Profession.CARPENTER, List.of(
                 Items.OAK_LOG, Items.SPRUCE_LOG, Items.BIRCH_LOG,
-                Items.DARK_OAK_LOG, Items.ACACIA_LOG));
+                Items.DARK_OAK_LOG, Items.ACACIA_LOG,
+                // Phase 6.6.1.4 — exotic logs declared. CarpenterProductionBehavior's
+                // LOG_RECIPES handle all 8 vanilla log types; the supply chain
+                // input declaration now matches.
+                Items.JUNGLE_LOG, Items.MANGROVE_LOG, Items.CHERRY_LOG));
 
         // ── STONEMASON ────────────────────────────────────────────────────────
         out.put(Profession.STONEMASON, List.of(
@@ -130,7 +134,12 @@ public final class ProfessionSupplyChain {
                 Items.STONE, Items.COBBLESTONE, Items.ANDESITE,
                 Items.STONE_SLAB, Items.STONE_STAIRS));
         in.put(Profession.STONEMASON, List.of(
-                Items.COBBLESTONE, Items.STONE, Items.DEEPSLATE));
+                Items.COBBLESTONE, Items.STONE, Items.DEEPSLATE,
+                // Phase 6.6.1.4 — polished-stone inputs feed the polished
+                // brick / slab / stair recipes that StonemasonProductionBehavior
+                // declares (the 2→2 polished variant chain).
+                Items.ANDESITE, Items.GRANITE, Items.DIORITE,
+                Items.SMOOTH_STONE));
 
         // ── MINER ─────────────────────────────────────────────────────────────
         out.put(Profession.MINER, List.of(
@@ -151,7 +160,17 @@ public final class ProfessionSupplyChain {
                 // textile range; carpet is the generic alias.
                 Items.YELLOW_WOOL, Items.BLUE_WOOL, Items.RED_WOOL,
                 Items.CARPET, Items.WHITE_BED));
-        in.put(Profession.WEAVER, List.of(Items.WHITE_WOOL, Items.STRING));
+        // Phase 6.6.1.4 — all 16 wool colors as inputs (WeaverProductionBehavior's
+        // wool→carpet recipes cover all colors). String stays as the primary
+        // raw-fiber input.
+        in.put(Profession.WEAVER, List.of(
+                Items.STRING,
+                Items.WHITE_WOOL, Items.LIGHT_GRAY_WOOL, Items.GRAY_WOOL,
+                Items.BLACK_WOOL, Items.BROWN_WOOL, Items.RED_WOOL,
+                Items.ORANGE_WOOL, Items.YELLOW_WOOL, Items.LIME_WOOL,
+                Items.GREEN_WOOL, Items.CYAN_WOOL, Items.LIGHT_BLUE_WOOL,
+                Items.BLUE_WOOL, Items.PURPLE_WOOL, Items.MAGENTA_WOOL,
+                Items.PINK_WOOL));
 
         // ── CANDLEMAKER ───────────────────────────────────────────────────────
         out.put(Profession.CANDLEMAKER, List.of(

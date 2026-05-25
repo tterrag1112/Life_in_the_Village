@@ -220,10 +220,15 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
         woolToCarpet.put(Items.BLACK_WOOL,      Items.BLACK_CARPET);
         woolToCarpet.forEach((wool, carpet) -> r.add(new WeaverRecipe(wool, 2, carpet, 3, 50)));
 
-        // 4 string + 1 slimeball → 2 leads (vanilla recipe)
-        // Handled as multi-ingredient in ProductionRecipe
-        // Note: leads use ProductionRecipe.of(Map.of(...)) directly in chooseRecipe
-        // since the record format doesn't support multi-input in WeaverRecipe
+        // Phase 6.6.1.5 — removed lead-recipe stub comment. The previous
+        // note pointed at a multi-input lead recipe that was never wired:
+        // chooseRecipe only iterates WeaverRecipe (single-input) and never
+        // referenced a ProductionRecipe.of(Map.of(...)) path. The
+        // CandlemakerProductionBehavior is the codebase's actual first
+        // multi-input consumer. If a leads recipe lands later, the
+        // implementation path is to either generalise WeaverRecipe to
+        // multi-input or add a parallel chooseRecipe branch for the
+        // multi-input variant — clean call when needed, no stub today.
 
         return Collections.unmodifiableList(r);
     }
