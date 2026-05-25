@@ -72,6 +72,12 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.Aging.ChildhoodInitializer());
         register(new tterrag1112.life_in_the_village.Npc.Aging.ComingOfAgeHandler());
         register(new tterrag1112.life_in_the_village.Npc.Aging.RetirementHandler());
+        // Phase 6.4.4.4: probabilistic skill seeding on TEEN→ADULT —
+        // gives a fraction of every cohort a head start in BAKING /
+        // MILLING / CRAFTING / FARMING so emergent-specialty stories
+        // (homestead-skill behaviors, hobby drift) have qualified
+        // candidates from day one.
+        register(new tterrag1112.life_in_the_village.Npc.Aging.FamilySkillSeeder());
         // Phase 4 task 30: archive lifecycle events into village history.
         register(new tterrag1112.life_in_the_village.Village.History.HistoryProducer());
         // Phase 5 task 32: schedule WEDDING / FUNERAL / NAMING_CEREMONY /
