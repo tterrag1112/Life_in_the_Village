@@ -34,10 +34,16 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         // weavers lean on CRAFTING"; etc.).
         m.put(Profession.FARMHAND,         new ProfessionSkills(Skill.FARMING,  Skill.SURVIVAL));
         m.put(Profession.WANDERING_TRADER, new ProfessionSkills(Skill.COMMERCE, Skill.SOCIAL));
-        m.put(Profession.CARPENTER,        new ProfessionSkills(Skill.CRAFTING, Skill.SURVIVAL));
-        m.put(Profession.STONEMASON,       new ProfessionSkills(Skill.CRAFTING, Skill.SURVIVAL));
-        m.put(Profession.WEAVER,           new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
-        m.put(Profession.CANDLEMAKER,      new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
+        // Phase 6.6.1.2 — four production professions move primary to
+        // their dedicated sub-skill (CRAFTING children at 25% cascade).
+        // Matches the MILLING/BAKING pattern from 6.3.4.9/.10. Secondary
+        // unchanged — captures "career retention" axis for profession
+        // switches (SURVIVAL for outdoor/material trades, COMMERCE for
+        // sell-to-customer trades).
+        m.put(Profession.CARPENTER,        new ProfessionSkills(Skill.CARPENTRY,    Skill.SURVIVAL));
+        m.put(Profession.STONEMASON,       new ProfessionSkills(Skill.MASONRY,      Skill.SURVIVAL));
+        m.put(Profession.WEAVER,           new ProfessionSkills(Skill.WEAVING,      Skill.COMMERCE));
+        m.put(Profession.CANDLEMAKER,      new ProfessionSkills(Skill.CANDLEMAKING, Skill.COMMERCE));
         // Phase 6.3.4.9 — MILLER's primary moves to MILLING (CRAFTING
         // sub-skill). Secondary stays CRAFTING — somewhat redundant
         // since MILLING cascades to CRAFTING anyway, but secondary is

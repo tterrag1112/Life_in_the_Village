@@ -37,6 +37,14 @@ public final class NpcStartingWealth {
             // revenue covers replacement.
             case BAKER          -> range(rng,  250,  600);
             case MILLER         -> range(rng,  250,  600);
+            // Phase 6.6.1.1 — three production professions previously
+            // fell through to default 50-200 by omission (per 6.6.0
+            // inspection). Same production-trade tier as BAKER / MILLER:
+            // workshop margins are modest, starter wealth covers the
+            // initial cycle's input procurement.
+            case STONEMASON     -> range(rng,  250,  600);
+            case WEAVER         -> range(rng,  250,  600);
+            case CANDLEMAKER    -> range(rng,  250,  600);
             // Farmers have seasonal income — variable
             case FARMER         -> range(rng,  150,  500);
             case FARMHAND       -> range(rng,   80,  250);

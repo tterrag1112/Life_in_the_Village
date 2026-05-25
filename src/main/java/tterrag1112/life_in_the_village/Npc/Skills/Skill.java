@@ -94,7 +94,28 @@ public enum Skill {
      *  decorative goods (PUMPKIN_PIE, CAKE). Three-level propagation
      *  via SkillComponent.addXp recursion: PASTRY xp → BAKING ¼ →
      *  CRAFTING 1/16. */
-    PASTRY(BAKING, 0.25);
+    PASTRY(BAKING, 0.25),
+
+    // ── Tier 1 (Phase 6.6.1.2 additions — production-trade sub-skills) ─────
+    /** Woodworking sub-skill. Cascades 25% → CRAFTING. CARPENTER's
+     *  primary skill axis. Earned from log→planks, plank→furniture,
+     *  fence/door/stair recipes. Mirrors the BAKING/MILLING pattern:
+     *  homestead-level woodwork lives here; future sub-skills
+     *  (FINE_CARPENTRY, SHIPWRIGHTING) cascade through this. */
+    CARPENTRY(CRAFTING, 0.25),
+    /** Stoneworking sub-skill. Cascades 25% → CRAFTING. STONEMASON's
+     *  primary skill axis. Earned from cut-stone, brick, slab/stair/
+     *  wall recipes at the stonecutter. */
+    MASONRY(CRAFTING, 0.25),
+    /** Textile sub-skill. Cascades 25% → CRAFTING. WEAVER's primary
+     *  skill axis. Earned from string→wool, wool→carpet, banner work
+     *  at the loom. */
+    WEAVING(CRAFTING, 0.25),
+    /** Wax / light sub-skill. Cascades 25% → CRAFTING. CANDLEMAKER's
+     *  primary skill axis. Earned from candle (honeycomb+string) and
+     *  torch (stick+coal) recipes. No dedicated workstation — the
+     *  craft happens at the building origin. */
+    CANDLEMAKING(CRAFTING, 0.25);
 
     @Nullable private final Skill parent;
     private final double propRate;
