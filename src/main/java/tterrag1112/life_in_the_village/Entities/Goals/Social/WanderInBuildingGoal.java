@@ -18,7 +18,25 @@ public class WanderInBuildingGoal extends Goal {
 
     public WanderInBuildingGoal(TownspersonMob entity) {
         this.entity = entity;
-        setFlags(EnumSet.of(Flag.MOVE));
+        // Phase 6.3.4.8.1 — no flags. The goal does pathfind via
+        // entity.getNavigation().moveTo() in start(), but holding the
+        // MOVE flag indefinitely while wander runs blocks
+        // BrainNavGuard.canSteerNavigation for any production / sell /
+        // buy Brain behavior that wants nav. Mirrors the
+        // NpcRandomLookAroundGoal precedent from 6.3.4.5.1.
+        //
+        // Coordination still works: canUse self-gates on
+        // !nav.isInProgress() so the wander won't start while another
+        // behavior is steering. Once a wander is running and a Brain
+        // behavior wants to claim nav, BrainNavGuard's stale-nav
+        // escape hatch (NAV_BUSY_SINCE, STALE_NAV_TICKS ≈ 10s)
+        // force-stops the nav and the wander naturally ends —
+        // canContinueToUse returns false the moment nav stops.
+        //
+        // Vanilla GoalSelector preemption-via-flag is unused since
+        // no other goal in our registration competes for nav at
+        // P_IDLE / P_AMBIENT priority.
+        setFlags(EnumSet.noneOf(Flag.class));
     }
 
     @Override
