@@ -149,6 +149,11 @@ public final class HobbyCatalogue {
                 .duration(1200)
                 .weight(TraitAxis.COMPASSION, 0.6f)
                 .weight(TraitAxis.COURAGE, -0.2f)
+                // Phase 6.4.4.2 — modest FARMING drift. Flower-tenders
+                // accumulate plant-care knowledge that crosses into
+                // crops over time. Same magnitude as tend_garden so
+                // either-or hobby choice doesn't create a progression gap.
+                .grants(Skill.FARMING, 1)
                 .build());
 
         register(HobbyDefinition.builder("pray_shrine")
@@ -200,6 +205,11 @@ public final class HobbyCatalogue {
                 .activity(HobbyActivity.COOK)
                 .duration(1600)
                 .weight(TraitAxis.COMPASSION, 0.5f)
+                // Phase 6.4.4.2 — drift toward BAKING. Home cooks
+                // become emergent backup bakers over years of practice
+                // without needing the BAKER profession. Prepares the
+                // ground for the deferred homestead-skill framework.
+                .grants(Skill.BAKING, 1)
                 .build());
 
         register(HobbyDefinition.builder("write_letter")
