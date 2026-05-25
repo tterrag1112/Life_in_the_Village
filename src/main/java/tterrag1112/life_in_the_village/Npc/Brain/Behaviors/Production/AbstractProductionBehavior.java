@@ -684,9 +684,10 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         if (village == null) return;
 
         if (!loggedBuyEntry) {
-            LOGGER.warn("[{}] {} executeBuy: needs={} budget={}br village={}",
+            LOGGER.warn("[{}] {} executeBuy: needs={} treasury={}br wallet={}br village={}",
                     getClass().getSimpleName(), entity.getNpcName(),
-                    toBuy, bEconomy.getTreasury(), village.getName());
+                    toBuy, bEconomy.getTreasury(),
+                    entity.getWallet().toBronze(), village.getName());
             loggedBuyEntry = true;
         }
 
@@ -714,53 +715,97 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 }
                 continue;
             }
-            long total = quote.totalBronze();
-            if (!bEconomy.canAfford(total)) {
+
+            // Phase 6.3.4.7 — partial-fill: cap qty to combined treasury
+            // + wallet budget. Building treasury is drained first; the
+            // proprietor's wallet covers the shortfall (per the 6.3.4.4.4
+            // workshop business design: "proprietor's wallet stays the
+            // income source until commerce flows through the Business").
+            // 0.9 safety margin for tax/rounding so we don't overshoot
+            // on the channel's tax-inclusive total.
+            long pricePerUnit = quote.pricePerUnit();
+            long combinedBudget = bEconomy.getTreasury() + entity.getWallet().toBronze();
+            long maxAffordableUnits = (long)((combinedBudget * 0.9) / pricePerUnit);
+            int affordableQty = (int) Math.min(quote.availableQuantity(),
+                    Math.max(0L, maxAffordableUnits));
+            if (affordableQty <= 0) {
                 if (!loggedBuyAffordFail) {
                     LOGGER.warn("[{}] {} executeBuy: AFFORD FAIL for {}x{} " +
-                            "from channel={} (total={}br, budget={}br)",
+                            "from channel={} (price={}br/unit, treasury={}br, " +
+                            "wallet={}br — combined budget insufficient for " +
+                            "even 1 unit)",
                             getClass().getSimpleName(), entity.getNpcName(),
-                            wanted, item, quote.channel(), total, bEconomy.getTreasury());
+                            wanted, item, quote.channel(), pricePerUnit,
+                            bEconomy.getTreasury(), entity.getWallet().toBronze());
                     loggedBuyAffordFail = true;
                 }
                 continue;
             }
-            bEconomy.withdraw(total);
-            entity.getWallet().receive(CurrencyValue.of(total));
+
+            // Build a partial quote so channel.execute clamps to
+            // affordableQty rather than the original full ask.
+            var partialQuote = new tterrag1112.life_in_the_village.Npc.Economy.Channels
+                    .ChannelQuote(quote.channel(), quote.intent(), pricePerUnit,
+                            affordableQty, quote.travelTimeTicks(),
+                            quote.quoteValidUntilTick(), quote.location());
+            long total = pricePerUnit * affordableQty;
+
+            // Two-source funding: drain treasury first (up to total),
+            // top up wallet from that portion so channel.execute (which
+            // spends from wallet) sees the full amount. Wallet's
+            // pre-existing balance covers any remainder.
+            long fromTreasury = Math.min(total, bEconomy.getTreasury());
+            if (fromTreasury > 0) {
+                bEconomy.withdraw(fromTreasury);
+                entity.getWallet().receive(CurrencyValue.of(fromTreasury));
+            }
+
             var channel = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
                     .registeredChannels().stream()
-                    .filter(c -> c.type() == quote.channel())
+                    .filter(c -> c.type() == partialQuote.channel())
                     .findFirst().orElse(null);
             var result = channel == null
                     ? tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult.fail("channel missing")
-                    : channel.execute(quote, intent, level);
+                    : channel.execute(partialQuote, intent, level);
             if (!result.success()) {
                 if (!loggedBuyExecuteFail) {
                     LOGGER.warn("[{}] {} executeBuy: EXECUTE FAIL for {}x{} " +
                             "from channel={} reason='{}'",
                             getClass().getSimpleName(), entity.getNpcName(),
-                            wanted, item, quote.channel(),
+                            affordableQty, item, partialQuote.channel(),
                             result.failureReason());
                     loggedBuyExecuteFail = true;
                 }
-                entity.getWallet().spend(CurrencyValue.of(total));
-                bEconomy.depositRevenue(total);
+                // Refund the treasury portion. Wallet's own contribution
+                // was never spent by the channel, so it stays put.
+                if (fromTreasury > 0) {
+                    entity.getWallet().spend(CurrencyValue.of(fromTreasury));
+                    bEconomy.depositRevenue(fromTreasury);
+                }
                 continue;
             }
-            long leftover = total - result.totalBronze();
+            long actualSpent = result.totalBronze();
+            long leftover = total - actualSpent;
             if (leftover > 0) {
-                entity.getWallet().spend(CurrencyValue.of(leftover));
-                bEconomy.depositRevenue(leftover);
+                // Channel spent less than expected (partial fill). Refund
+                // up to the treasury portion first, the rest stays in
+                // wallet for the next buy attempt.
+                long refundToTreasury = Math.min(leftover, fromTreasury);
+                if (refundToTreasury > 0) {
+                    entity.getWallet().spend(CurrencyValue.of(refundToTreasury));
+                    bEconomy.depositRevenue(refundToTreasury);
+                }
             }
             BuildingStorageAccess.storeItem(level, workBuilding,
                     new ItemStack(item, result.quantityTraded()));
             data.setDirty();
             if (!loggedBuyAccepted) {
                 LOGGER.warn("[{}] {} executeBuy: ACCEPTED {}x{} from channel={} " +
-                        "at {}br/unit (total={}br)",
+                        "at {}br/unit (total={}br, fromTreasury={}br, fromWallet={}br)",
                         getClass().getSimpleName(), entity.getNpcName(),
-                        result.quantityTraded(), item, quote.channel(),
-                        quote.pricePerUnit(), result.totalBronze());
+                        result.quantityTraded(), item, partialQuote.channel(),
+                        pricePerUnit, actualSpent, fromTreasury,
+                        Math.max(0L, actualSpent - fromTreasury));
                 loggedBuyAccepted = true;
             }
         }
