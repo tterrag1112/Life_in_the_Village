@@ -3,7 +3,12 @@ package tterrag1112.life_in_the_village.Npc.LifeGoal;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.UUIDUtil;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Village.AmenityType;
 
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -51,6 +56,80 @@ public record LifeGoal(
 
     public boolean isExpired(long now) {
         return targetTick > 0L && now > targetTick;
+    }
+
+    /**
+     * Phase 6.4.3.3 — block-amenity preferences this goal expresses,
+     * for {@link tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+     * .SeekHouseBehavior} to bias home selection toward houses that
+     * support the goal.
+     *
+     * <p>Resolution:</p>
+     * <ul>
+     *   <li>{@code REACH_SKILL_LEVEL} — parse targetParam as Skill and
+     *       map to the typical workstation(s) for that skill.</li>
+     *   <li>{@code FOUND_BUSINESS} — parse targetParam as Profession
+     *       and return the workshop-quality amenity set (workstation
+     *       + storage).</li>
+     *   <li>Other types — empty set (no amenity preference yet).</li>
+     * </ul>
+     *
+     * <p>Unmapped skills / professions return an empty set rather than
+     * throwing, so adding a new goal target without an amenity
+     * mapping is safe — housing falls back to proximity-only.</p>
+     */
+    public Set<AmenityType> preferredAmenities() {
+        return switch (type) {
+            case REACH_SKILL_LEVEL -> amenitiesForSkill(parseSkill(targetParam));
+            case FOUND_BUSINESS    -> amenitiesForProfession(parseProfession(targetParam));
+            default -> Set.of();
+        };
+    }
+
+    private static Set<AmenityType> amenitiesForSkill(Skill s) {
+        if (s == null) return Set.of();
+        return switch (s) {
+            case BAKING                   -> EnumSet.of(AmenityType.SMOKER, AmenityType.FURNACE);
+            case PASTRY                   -> EnumSet.of(AmenityType.SMOKER, AmenityType.FURNACE);
+            case MILLING                  -> EnumSet.of(AmenityType.GRINDSTONE);
+            case FARMING, CROP_FARMING,
+                 ORCHARDING               -> Set.of(); // GARDEN_PLOT deferred per 6.4.3.2
+            case BLACKSMITHING,
+                 TOOLSMITHING,
+                 WEAPONSMITHING,
+                 ARMORSMITHING            -> EnumSet.of(AmenityType.ANVIL, AmenityType.FURNACE);
+            case CRAFTING                 -> EnumSet.of(AmenityType.CRAFTING_TABLE);
+            case MEDICINE,
+                 VILLAGE_MEDICINE,
+                 COMBAT_MEDICINE          -> EnumSet.of(AmenityType.BREWING_STAND);
+            default                       -> Set.of();
+        };
+    }
+
+    private static Set<AmenityType> amenitiesForProfession(Profession p) {
+        if (p == null || p == Profession.NONE) return Set.of();
+        // Profession-side preferences are slightly richer than skill-side —
+        // a founder wants storage too, not just the workstation. Chest
+        // covers the storage need for any workshop-tier business.
+        return switch (p) {
+            case BAKER      -> EnumSet.of(AmenityType.SMOKER, AmenityType.FURNACE, AmenityType.CHEST);
+            case MILLER     -> EnumSet.of(AmenityType.GRINDSTONE, AmenityType.CHEST);
+            case BLACKSMITH -> EnumSet.of(AmenityType.ANVIL, AmenityType.FURNACE, AmenityType.CHEST);
+            case CARPENTER  -> EnumSet.of(AmenityType.CRAFTING_TABLE, AmenityType.CHEST);
+            default         -> Set.of();
+        };
+    }
+
+    private static Skill parseSkill(String name) {
+        if (name == null || name.isEmpty()) return null;
+        try { return Skill.valueOf(name); }
+        catch (IllegalArgumentException e) { return null; }
+    }
+
+    private static Profession parseProfession(String name) {
+        if (name == null || name.isEmpty()) return Profession.NONE;
+        try { return Profession.valueOf(name); }
+        catch (IllegalArgumentException e) { return Profession.NONE; }
     }
 
     public LifeGoal withProgress(int newProgress) {
