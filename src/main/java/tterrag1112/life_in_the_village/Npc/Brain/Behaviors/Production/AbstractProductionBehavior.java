@@ -287,16 +287,27 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         }
         if (!entity.isWorkTime()) {
             if (!warnedNotWorkTime) {
-                long dayTime = level.getDayTime() % 24000;
-                var win = tterrag1112.life_in_the_village.Entities.WorkSchedule
-                        .getWorkWindow(entity.getProfession());
+                long gameTick = level.getDayTime();
+                long dayTime = gameTick % 24000;
+                // Phase 6.3.4.5.3 — the prior diagnostic summarised
+                // workPrimary..workSecondary as a single span, which
+                // hid the MEAL/break window between them. Report the
+                // actual resolved phase plus the relevant per-phase
+                // windows so a "schedule disagreement" surfaces clearly.
+                var phase = tterrag1112.life_in_the_village.Npc.Schedule
+                        .ScheduleResolver.phaseAt(entity, gameTick);
+                var weekly = tterrag1112.life_in_the_village.Npc.Schedule
+                        .WeeklyScheduleLibrary.forProfession(entity.getProfession());
+                var daily = weekly.getForDay(gameTick);
                 LOGGER.warn("[{}] {} blocked: outside work hours " +
-                        "(profession={} dayTime={} workWindow=[{},{})). " +
-                        "If this persists past a full daily cycle, the " +
-                        "schedule itself is misaligned.",
+                        "(profession={} dayTime={} resolvedPhase={} " +
+                        "workPrimary={} meal={} workSecondary={}). " +
+                        "If resolvedPhase is non-WORK during what should " +
+                        "be a work block, the schedule is misaligned; " +
+                        "MEAL between work blocks is expected behaviour.",
                         getClass().getSimpleName(), entity.getNpcName(),
-                        entity.getProfession(), dayTime,
-                        win.startTick(), win.endTick());
+                        entity.getProfession(), dayTime, phase,
+                        daily.workPrimary(), daily.meal(), daily.workSecondary());
                 warnedNotWorkTime = true;
             }
             return false;
