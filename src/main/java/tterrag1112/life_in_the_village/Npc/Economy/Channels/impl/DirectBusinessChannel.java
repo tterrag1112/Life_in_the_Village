@@ -1,9 +1,11 @@
 package tterrag1112.life_in_the_village.Npc.Economy.Channels.impl;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelQuote;
@@ -44,6 +46,15 @@ import java.util.Optional;
  */
 public final class DirectBusinessChannel implements EconomicChannel {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+    // Phase 6.3.4.3.1 — one-shot diagnostic flags per JVM session.
+    // Each fires at most once across all NPCs/items so logs stay
+    // readable but every rejection path surfaces at least once.
+    private static volatile boolean LOGGED_NO_WORKSHOP_MAPPING = false;
+    private static volatile boolean LOGGED_NO_PRODUCER         = false;
+    private static volatile boolean LOGGED_CEILING_REJECT      = false;
+    private static volatile boolean LOGGED_QUOTE_ACCEPTED      = false;
+
     @Override public ChannelType type() { return ChannelType.DIRECT_BUSINESS; }
 
     @Override public int basePriority() { return 70; }
@@ -64,8 +75,27 @@ public final class DirectBusinessChannel implements EconomicChannel {
             // handles BUY here.
             return Optional.empty();
         }
+        BuildingType producingType = workshopForItem(intent.item());
+        if (producingType == null) {
+            if (!LOGGED_NO_WORKSHOP_MAPPING) {
+                LOGGER.warn("[DirectBusinessChannel] no workshop mapping for item={} " +
+                        "(workshopForItem returned null); channel declines.",
+                        intent.item());
+                LOGGED_NO_WORKSHOP_MAPPING = true;
+            }
+            return Optional.empty();
+        }
         ProducerMatch match = findProducer(intent, village, data, level);
-        if (match == null) return Optional.empty();
+        if (match == null) {
+            if (!LOGGED_NO_PRODUCER) {
+                LOGGER.warn("[DirectBusinessChannel] no producer found for item={} " +
+                        "(workshop type={}); either no building of that type, " +
+                        "no NPC at building, or empty storage. Village={}.",
+                        intent.item(), producingType, village.getName());
+                LOGGED_NO_PRODUCER = true;
+            }
+            return Optional.empty();
+        }
 
         long base = MarketPriceHelper.getDynamicSellPrice(level, village, intent.item());
         TownspersonMob buyer = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
@@ -77,11 +107,29 @@ public final class DirectBusinessChannel implements EconomicChannel {
         long policied = LawPriceHooks.priceCeiling(village, ChannelType.DIRECT_BUSINESS, intent.item())
                 .map(cap -> Math.min(cap, withFloor))
                 .orElse(withFloor);
-        if (policied > intent.maxPrice()) return Optional.empty();
+        if (policied > intent.maxPrice()) {
+            if (!LOGGED_CEILING_REJECT) {
+                LOGGER.warn("[DirectBusinessChannel] CEILING REJECT item={} quote={}br/unit " +
+                        "EXCEEDS intent.maxPrice={}br/unit (base={}br relMod={} producer={}). " +
+                        "Buyer's perUnitCeiling is from getItemBuyPrice (raw base price); " +
+                        "DirectBusinessChannel quotes at dynamic sell price + mods. " +
+                        "Systemic mismatch — see 6.3.4.3 analysis.",
+                        intent.item(), policied, intent.maxPrice(), base, relMod,
+                        match.producer.getNpcName());
+                LOGGED_CEILING_REJECT = true;
+            }
+            return Optional.empty();
+        }
 
         int travelTicks = estimateTravelTicks(buyer, match.location);
         long validUntil = level.getGameTime() + 6000L; // 5 in-game minutes
         int qty = Math.min(intent.quantity(), match.availableQuantity);
+        if (!LOGGED_QUOTE_ACCEPTED) {
+            LOGGER.warn("[DirectBusinessChannel] QUOTE OK item={} {}br/unit qty={} " +
+                    "producer={} workshop={}", intent.item(), policied, qty,
+                    match.producer.getNpcName(), match.workshop.getName());
+            LOGGED_QUOTE_ACCEPTED = true;
+        }
         return Optional.of(new ChannelQuote(ChannelType.DIRECT_BUSINESS, intent,
                 policied, qty, travelTicks, validUntil, match.location));
     }

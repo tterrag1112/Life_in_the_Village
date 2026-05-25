@@ -120,6 +120,12 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     private boolean loggedRecipeStart       = false;
     private boolean loggedFirstProduction   = false;
     private boolean loggedDepositTarget     = false;
+    // Phase 6.3.4.3.1 — executeBuy diagnostic flags
+    private boolean loggedBuyEntry          = false;
+    private boolean loggedBuyAccepted       = false;
+    private boolean loggedBuyNoQuote        = false;
+    private boolean loggedBuyAffordFail     = false;
+    private boolean loggedBuyExecuteFail    = false;
 
     protected Building workBuilding;
     protected Building market;
@@ -648,6 +654,13 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 .flatMap(data::getVillageByName).orElse(null);
         if (village == null) return;
 
+        if (!loggedBuyEntry) {
+            LOGGER.warn("[{}] {} executeBuy: needs={} budget={}br village={}",
+                    getClass().getSimpleName(), entity.getNpcName(),
+                    toBuy, bEconomy.getTreasury(), village.getName());
+            loggedBuyEntry = true;
+        }
+
         for (Map.Entry<Item, Integer> entry : toBuy.entrySet()) {
             Item item = entry.getKey();
             int wanted = entry.getValue();
@@ -661,9 +674,28 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                             java.util.Set.of());
             var quote = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
                     .findBestChannel(intent, village, data, level).orElse(null);
-            if (quote == null) continue;
+            if (quote == null) {
+                if (!loggedBuyNoQuote) {
+                    LOGGER.warn("[{}] {} executeBuy: NO QUOTE for {}x{} " +
+                            "(perUnitCeiling={}br). All channels declined; " +
+                            "see per-channel diagnostic flags for reasons.",
+                            getClass().getSimpleName(), entity.getNpcName(),
+                            wanted, item, perUnitCeiling);
+                    loggedBuyNoQuote = true;
+                }
+                continue;
+            }
             long total = quote.totalBronze();
-            if (!bEconomy.canAfford(total)) continue;
+            if (!bEconomy.canAfford(total)) {
+                if (!loggedBuyAffordFail) {
+                    LOGGER.warn("[{}] {} executeBuy: AFFORD FAIL for {}x{} " +
+                            "from channel={} (total={}br, budget={}br)",
+                            getClass().getSimpleName(), entity.getNpcName(),
+                            wanted, item, quote.channel(), total, bEconomy.getTreasury());
+                    loggedBuyAffordFail = true;
+                }
+                continue;
+            }
             bEconomy.withdraw(total);
             entity.getWallet().receive(CurrencyValue.of(total));
             var channel = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
@@ -674,6 +706,14 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     ? tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult.fail("channel missing")
                     : channel.execute(quote, intent, level);
             if (!result.success()) {
+                if (!loggedBuyExecuteFail) {
+                    LOGGER.warn("[{}] {} executeBuy: EXECUTE FAIL for {}x{} " +
+                            "from channel={} reason='{}'",
+                            getClass().getSimpleName(), entity.getNpcName(),
+                            wanted, item, quote.channel(),
+                            result.failureReason());
+                    loggedBuyExecuteFail = true;
+                }
                 entity.getWallet().spend(CurrencyValue.of(total));
                 bEconomy.depositRevenue(total);
                 continue;
@@ -686,6 +726,14 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             BuildingStorageAccess.storeItem(level, workBuilding,
                     new ItemStack(item, result.quantityTraded()));
             data.setDirty();
+            if (!loggedBuyAccepted) {
+                LOGGER.warn("[{}] {} executeBuy: ACCEPTED {}x{} from channel={} " +
+                        "at {}br/unit (total={}br)",
+                        getClass().getSimpleName(), entity.getNpcName(),
+                        result.quantityTraded(), item, quote.channel(),
+                        quote.pricePerUnit(), result.totalBronze());
+                loggedBuyAccepted = true;
+            }
         }
     }
 

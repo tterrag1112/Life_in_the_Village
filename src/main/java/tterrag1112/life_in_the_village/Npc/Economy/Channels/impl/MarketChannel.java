@@ -1,8 +1,10 @@
 package tterrag1112.life_in_the_village.Npc.Economy.Channels.impl;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
+import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelQuote;
@@ -39,13 +41,29 @@ import java.util.Optional;
  */
 public final class MarketChannel implements EconomicChannel {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+    // Phase 6.3.4.3.1 — one-shot diagnostic flags per JVM session.
+    private static volatile boolean LOGGED_NO_MARKET     = false;
+    private static volatile boolean LOGGED_NO_STOCK      = false;
+    private static volatile boolean LOGGED_CEILING_BUY   = false;
+    private static volatile boolean LOGGED_FLOOR_SELL    = false;
+    private static volatile boolean LOGGED_QUOTE_OK      = false;
+
     @Override public ChannelType type() { return ChannelType.MARKET; }
 
     @Override public int basePriority() { return 100; }
 
     @Override
     public boolean isAvailable(Village village, VillageSavedData data, ServerLevel level, long tick) {
-        return findMarket(village, data).isPresent();
+        boolean has = findMarket(village, data).isPresent();
+        if (!has && !LOGGED_NO_MARKET) {
+            LOGGER.warn("[MarketChannel] isAvailable=false — no MARKET building " +
+                    "in village={}; channel sits out, router falls through to " +
+                    "DirectBusinessChannel / other channels.",
+                    village == null ? "(null)" : village.getName());
+            LOGGED_NO_MARKET = true;
+        }
+        return has;
     }
 
     @Override
@@ -69,11 +87,40 @@ public final class MarketChannel implements EconomicChannel {
             // may cap this; not in v1.
             available = intent.quantity();
         }
-        if (available <= 0) return Optional.empty();
+        if (available <= 0) {
+            if (!LOGGED_NO_STOCK) {
+                LOGGER.warn("[MarketChannel] NO STOCK item={} at MARKET in " +
+                        "village={}; channel declines, router falls through.",
+                        intent.item(), village.getName());
+                LOGGED_NO_STOCK = true;
+            }
+            return Optional.empty();
+        }
 
         long policied = applyPolicy(intent, village, basePrice);
-        if (intent.direction() == TradeDirection.BUY && policied > intent.maxPrice()) return Optional.empty();
-        if (intent.direction() == TradeDirection.SELL && policied < intent.minPrice()) return Optional.empty();
+        if (intent.direction() == TradeDirection.BUY && policied > intent.maxPrice()) {
+            if (!LOGGED_CEILING_BUY) {
+                LOGGER.warn("[MarketChannel] CEILING REJECT item={} quote={}br/unit " +
+                        "EXCEEDS intent.maxPrice={}br/unit (base={}br)",
+                        intent.item(), policied, intent.maxPrice(), basePrice);
+                LOGGED_CEILING_BUY = true;
+            }
+            return Optional.empty();
+        }
+        if (intent.direction() == TradeDirection.SELL && policied < intent.minPrice()) {
+            if (!LOGGED_FLOOR_SELL) {
+                LOGGER.warn("[MarketChannel] FLOOR REJECT item={} quote={}br/unit " +
+                        "BELOW intent.minPrice={}br/unit", intent.item(), policied,
+                        intent.minPrice());
+                LOGGED_FLOOR_SELL = true;
+            }
+            return Optional.empty();
+        }
+        if (!LOGGED_QUOTE_OK) {
+            LOGGER.warn("[MarketChannel] QUOTE OK item={} dir={} {}br/unit qty={}",
+                    intent.item(), intent.direction(), policied, available);
+            LOGGED_QUOTE_OK = true;
+        }
 
         // Quote valid for one in-game day; the daily tick refreshes.
         long validUntil = level.getGameTime() + 24000L;
