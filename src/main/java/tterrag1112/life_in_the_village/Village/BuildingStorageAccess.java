@@ -86,6 +86,65 @@ public class BuildingStorageAccess {
     }
 
     /**
+     * Phase 6.4.7.1 — batched deposit. Scans inventories ONCE then
+     * walks the source container, fitting each non-empty stack into
+     * the cached inventory list. Replaces N×{@link #storeItem} calls
+     * (each of which re-runs the full block scan) for the common
+     * "dump my whole personal inventory" deposit case.
+     *
+     * <p>Cost: 1 block scan (~860 lookups for a typical 12×6×12
+     * building) plus per-stack slot iteration on the cached list.
+     * Pre-fix the equivalent operation did N scans × N stacks ≈
+     * 12k lookups per deposit cycle.</p>
+     *
+     * <p>Mutates the source container in place: each stored stack is
+     * cleared from its slot. Returns the count of stacks
+     * successfully stored. Stacks that don't fit (storage full)
+     * stay in the source.</p>
+     */
+    public static int storeAll(ServerLevel level, Building building,
+                               net.minecraft.world.SimpleContainer source) {
+        List<Container> cached = findInventories(level, building);
+        if (cached.isEmpty()) return 0;
+        int stored = 0;
+        for (int s = 0; s < source.getContainerSize(); s++) {
+            ItemStack stack = source.getItem(s);
+            if (stack.isEmpty()) continue;
+            if (storeIntoCached(cached, stack)) {
+                source.setItem(s, ItemStack.EMPTY);
+                stored++;
+            }
+        }
+        return stored;
+    }
+
+    /** Internal: stores stack into the pre-fetched inventory list using
+     *  the same merge-then-empty-slot semantics as {@link #storeItem}. */
+    private static boolean storeIntoCached(List<Container> cached, ItemStack stack) {
+        for (Container inv : cached) {
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack existing = inv.getItem(i);
+                if (existing.is(stack.getItem())
+                        && existing.getCount() < existing.getMaxStackSize()) {
+                    int space = existing.getMaxStackSize() - existing.getCount();
+                    int add = Math.min(space, stack.getCount());
+                    existing.grow(add);
+                    stack.shrink(add);
+                    if (stack.isEmpty()) return true;
+                }
+            }
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                if (inv.getItem(i).isEmpty()) {
+                    inv.setItem(i, stack.copy());
+                    stack.setCount(0);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Stores an item into the first available space across all
      * containers in the building bounds.
      */

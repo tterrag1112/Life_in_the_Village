@@ -669,14 +669,13 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
 
         if (!moveToOrArrived(dest.getShape().getOrigin())) return;
 
+        // Phase 6.4.7.1 — single-scan batched deposit. Pre-fix this was
+        // a per-stack storeItem loop where each call re-scanned the
+        // entire building's block bounds for containers (~14 stacks ×
+        // ~860 blocks = 12k lookups per deposit cycle); now ~860
+        // lookups total.
         SimpleContainer inv = entity.getPersonalInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack stack = inv.getItem(i);
-            if (stack.isEmpty()) continue;
-            if (BuildingStorageAccess.storeItem(level, dest, stack.copy())) {
-                inv.setItem(i, ItemStack.EMPTY);
-            }
-        }
+        BuildingStorageAccess.storeAll(level, dest, inv);
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
 
