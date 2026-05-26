@@ -5,9 +5,30 @@ import java.util.List;
 
 public class BlacksmithRecipeData {
 
-    public record SmeltingRecipe(Item input, Item output, int count, int ticks) {}
+    /**
+     * Phase 6.6.2.2 — recipe records gained a {@code minSkillLevel} field
+     * for tier-based skill gating. The relevant skill is inferred from the
+     * output via {@link
+     * tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith
+     * .BlacksmithSpecialization#categorize}: TOOLSMITHING for tools,
+     * WEAPONSMITHING for weapons, ARMORSMITHING for armor, BLACKSMITHING
+     * for ingots / smelting. Default 0 = no gate (preserves backward
+     * compat with JSON files that omit the field).
+     */
+    public record SmeltingRecipe(Item input, Item output, int count,
+                                 int ticks, int minSkillLevel) {
+        public SmeltingRecipe(Item input, Item output, int count, int ticks) {
+            this(input, output, count, ticks, 0);
+        }
+    }
     public record CraftingRecipe(Item input, int inputCount,
-                                 Item output, int count, int ticks) {}
+                                 Item output, int count, int ticks,
+                                 int minSkillLevel) {
+        public CraftingRecipe(Item input, int inputCount, Item output,
+                              int count, int ticks) {
+            this(input, inputCount, output, count, ticks, 0);
+        }
+    }
 
     private final List<SmeltingRecipe> smeltingRecipes;
     private final List<CraftingRecipe> craftingRecipes;

@@ -8,12 +8,6 @@
     },
     {
       "count": 1,
-      "input": "minecraft:raw_gold",
-      "output": "minecraft:gold_ingot",
-      "ticks": 200
-    },
-    {
-      "count": 1,
       "input": "minecraft:raw_copper",
       "output": "minecraft:copper_ingot",
       "ticks": 200
@@ -26,7 +20,15 @@
     },
     {
       "count": 1,
+      "input": "minecraft:raw_gold",
+      "min_skill_level": 15,
+      "output": "minecraft:gold_ingot",
+      "ticks": 200
+    },
+    {
+      "count": 1,
       "input": "minecraft:gold_ore",
+      "min_skill_level": 15,
       "output": "minecraft:gold_ingot",
       "ticks": 200
     }

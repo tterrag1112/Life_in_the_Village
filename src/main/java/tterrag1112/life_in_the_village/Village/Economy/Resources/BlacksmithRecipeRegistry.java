@@ -44,10 +44,14 @@ public class BlacksmithRecipeRegistry extends
                         Item input  = getItem(r.get("input").getAsString());
                         Item output = getItem(r.get("output").getAsString());
                         if (input == null || output == null) return;
+                        // Phase 6.6.2.2 — optional min_skill_level for tier gating.
+                        int minSkill = r.has("min_skill_level")
+                                ? r.get("min_skill_level").getAsInt() : 0;
                         smelting.add(new BlacksmithRecipeData.SmeltingRecipe(
                                 input, output,
                                 r.get("count").getAsInt(),
-                                r.get("ticks").getAsInt()
+                                r.get("ticks").getAsInt(),
+                                minSkill
                         ));
                     }
                 });
@@ -60,12 +64,15 @@ public class BlacksmithRecipeRegistry extends
                         Item input  = getItem(r.get("input").getAsString());
                         Item output = getItem(r.get("output").getAsString());
                         if (input == null || output == null) return;
+                        int minSkill = r.has("min_skill_level")
+                                ? r.get("min_skill_level").getAsInt() : 0;
                         crafting.add(new BlacksmithRecipeData.CraftingRecipe(
                                 input,
                                 r.get("input_count").getAsInt(),
                                 output,
                                 r.get("count").getAsInt(),
-                                r.get("ticks").getAsInt()
+                                r.get("ticks").getAsInt(),
+                                minSkill
                         ));
                     }
                 });

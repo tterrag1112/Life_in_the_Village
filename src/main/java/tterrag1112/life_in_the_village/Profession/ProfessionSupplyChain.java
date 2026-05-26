@@ -101,7 +101,12 @@ public final class ProfessionSupplyChain {
                 Items.IRON_LEGGINGS, Items.IRON_BOOTS,
                 Items.BUCKET, Items.SHEARS, Items.FLINT_AND_STEEL,
                 // Phase 6.4.6.1 — consolidation from switch.
-                Items.IRON_NUGGET));
+                Items.IRON_NUGGET,
+                // Phase 6.6.2.3 — masterpiece outputs (dormant until
+                // diamond inputs appear in stock). DirectBusinessChannel
+                // now routes diamond-tool buys to BLACKSMITH.
+                Items.DIAMOND_PICKAXE, Items.DIAMOND_SWORD,
+                Items.DIAMOND_CHESTPLATE));
         in.put(Profession.BLACKSMITH, List.of(
                 Items.RAW_IRON, Items.RAW_GOLD, Items.COAL, Items.CHARCOAL,
                 Items.FLINT, Items.STICK));

@@ -33,11 +33,15 @@ public class BlacksmithRecipeDatagen implements DataProvider {
     private JsonObject buildSmelting() {
         JsonObject json = new JsonObject();
         JsonArray recipes = new JsonArray();
-        recipes.add(smelt("minecraft:raw_iron",   "minecraft:iron_ingot",   1, 200));
-        recipes.add(smelt("minecraft:raw_gold",   "minecraft:gold_ingot",   1, 200));
-        recipes.add(smelt("minecraft:raw_copper", "minecraft:copper_ingot", 1, 200));
-        recipes.add(smelt("minecraft:iron_ore",   "minecraft:iron_ingot",   1, 200));
-        recipes.add(smelt("minecraft:gold_ore",   "minecraft:gold_ingot",   1, 200));
+        // No gates on basic smelting — ingots are entry-level work
+        // every blacksmith does. The gate appears at gold tier and up.
+        recipes.add(smelt("minecraft:raw_iron",   "minecraft:iron_ingot",   1, 200,  0));
+        recipes.add(smelt("minecraft:raw_copper", "minecraft:copper_ingot", 1, 200,  0));
+        recipes.add(smelt("minecraft:iron_ore",   "minecraft:iron_ingot",   1, 200,  0));
+        // Phase 6.6.2.2 — gold smelt gated at BLACKSMITHING 15.
+        // Gold-tier work is "I know my way around the forge" tier.
+        recipes.add(smelt("minecraft:raw_gold",   "minecraft:gold_ingot",   1, 200, 15));
+        recipes.add(smelt("minecraft:gold_ore",   "minecraft:gold_ingot",   1, 200, 15));
         json.add("recipes", recipes);
         return json;
     }
@@ -45,37 +49,61 @@ public class BlacksmithRecipeDatagen implements DataProvider {
     private JsonObject buildCrafting() {
         JsonObject json = new JsonObject();
         JsonArray recipes = new JsonArray();
-        recipes.add(craft("minecraft:iron_ingot", 3, "minecraft:iron_sword",     1, 400));
-        recipes.add(craft("minecraft:iron_ingot", 3, "minecraft:iron_pickaxe",   1, 400));
-        recipes.add(craft("minecraft:iron_ingot", 3, "minecraft:iron_axe",       1, 400));
-        recipes.add(craft("minecraft:iron_ingot", 5, "minecraft:iron_helmet",    1, 600));
-        recipes.add(craft("minecraft:iron_ingot", 8, "minecraft:iron_chestplate",1, 800));
-        recipes.add(craft("minecraft:iron_ingot", 7, "minecraft:iron_leggings",  1, 700));
-        recipes.add(craft("minecraft:iron_ingot", 4, "minecraft:iron_boots",     1, 500));
-        recipes.add(craft("minecraft:gold_ingot", 3, "minecraft:golden_sword",   1, 400));
-        recipes.add(craft("minecraft:gold_ingot", 5, "minecraft:golden_helmet",  1, 600));
+        // Phase 6.6.2.2 — iron-tier gates at level 15 in the matching
+        // specialty sub-skill. Tools, weapons, armor each gate
+        // independently: a TOOLSMITH 20 can make iron picks/axes but
+        // not iron swords (their WEAPONSMITHING is whatever it is).
+        // Specialty +50% XP bonus from awardProductionXp encourages
+        // each blacksmith to follow their specialty up the tiers.
+        recipes.add(craft("minecraft:iron_ingot", 3, "minecraft:iron_sword",     1, 400, 15));
+        recipes.add(craft("minecraft:iron_ingot", 3, "minecraft:iron_pickaxe",   1, 400, 15));
+        recipes.add(craft("minecraft:iron_ingot", 3, "minecraft:iron_axe",       1, 400, 15));
+        recipes.add(craft("minecraft:iron_ingot", 5, "minecraft:iron_helmet",    1, 600, 15));
+        recipes.add(craft("minecraft:iron_ingot", 8, "minecraft:iron_chestplate",1, 800, 15));
+        recipes.add(craft("minecraft:iron_ingot", 7, "minecraft:iron_leggings",  1, 700, 15));
+        recipes.add(craft("minecraft:iron_ingot", 4, "minecraft:iron_boots",     1, 500, 15));
+        recipes.add(craft("minecraft:gold_ingot", 3, "minecraft:golden_sword",   1, 400, 15));
+        recipes.add(craft("minecraft:gold_ingot", 5, "minecraft:golden_helmet",  1, 600, 15));
+
+        // Phase 6.6.2.3 — per-specialization masterpieces. Diamond-tier
+        // recipes gated at level 50 in the matching specialty.
+        //
+        // The recipe schema is single-input only, so vanilla's
+        // "diamond + stick" tools are approximated as diamond-only —
+        // the stick is implicit (handle wrapping the head; carpenter
+        // supply chain still routes sticks via Channel if the
+        // blacksmith wants real handle stock). Schema generalisation
+        // to multi-input is a future cleanup if/when several recipes
+        // need it (CandlemakerProductionBehavior is the only other
+        // multi-input consumer today).
+        recipes.add(craft("minecraft:diamond", 3, "minecraft:diamond_pickaxe",   1, 600, 50));
+        recipes.add(craft("minecraft:diamond", 2, "minecraft:diamond_sword",     1, 500, 50));
+        recipes.add(craft("minecraft:diamond", 8, "minecraft:diamond_chestplate",1,1000, 50));
         json.add("recipes", recipes);
         return json;
     }
 
     private JsonObject smelt(String input, String output,
-                             int count, int ticks) {
+                             int count, int ticks, int minSkillLevel) {
         JsonObject obj = new JsonObject();
         obj.addProperty("input", input);
         obj.addProperty("output", output);
         obj.addProperty("count", count);
         obj.addProperty("ticks", ticks);
+        if (minSkillLevel > 0) obj.addProperty("min_skill_level", minSkillLevel);
         return obj;
     }
 
     private JsonObject craft(String input, int inputCount,
-                             String output, int count, int ticks) {
+                             String output, int count, int ticks,
+                             int minSkillLevel) {
         JsonObject obj = new JsonObject();
         obj.addProperty("input", input);
         obj.addProperty("input_count", inputCount);
         obj.addProperty("output", output);
         obj.addProperty("count", count);
         obj.addProperty("ticks", ticks);
+        if (minSkillLevel > 0) obj.addProperty("min_skill_level", minSkillLevel);
         return obj;
     }
 

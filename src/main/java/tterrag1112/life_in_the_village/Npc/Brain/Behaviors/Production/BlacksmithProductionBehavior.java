@@ -74,6 +74,7 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
 
             for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
                 if (r.output() != t) continue;
+                if (!meetsSkillGate(r.output(), r.minSkillLevel())) continue;
                 if (countFromOreSource(level, r.input()) > 0) {
                     isSmeltRecipe = true;
                     return Optional.of(ProductionRecipe.of(
@@ -83,6 +84,7 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
 
             for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
                 if (r.output() != t) continue;
+                if (!meetsSkillGate(r.output(), r.minSkillLevel())) continue;
                 int avail = BuildingStorageAccess.countItem(level, building, r.input());
                 if (avail >= r.inputCount()) {
                     isSmeltRecipe = false;
@@ -95,6 +97,7 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         // ── Opportunistic: smelt any available ore (no spec bias — ingots
         //     are intermediate goods, no specialty has preference) ──────────
         for (BlacksmithRecipeData.SmeltingRecipe r : data.getSmeltingRecipes()) {
+            if (!meetsSkillGate(r.output(), r.minSkillLevel())) continue;
             int oreAvail  = countFromOreSource(level, r.input());
             int ingotStock = BuildingStorageAccess.countItem(level, building, r.output());
             int quota     = stockQuotas().getOrDefault(r.output(), 0);
@@ -112,6 +115,7 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         double bestScore = Double.NEGATIVE_INFINITY;
         BlacksmithSpecialization spec = getSpecialization(BlacksmithSpecialization.class);
         for (BlacksmithRecipeData.CraftingRecipe r : data.getCraftingRecipes()) {
+            if (!meetsSkillGate(r.output(), r.minSkillLevel())) continue;
             int avail = BuildingStorageAccess.countItem(level, building, r.input());
             if (avail < r.inputCount()) continue;
             int stock = BuildingStorageAccess.countItem(level, building, r.output());
@@ -128,6 +132,28 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         }
 
         return Optional.empty();
+    }
+
+    /**
+     * Phase 6.6.2.2 — skill-gate check. Recipe's {@code minSkillLevel}
+     * (parsed from {@code min_skill_level} in JSON, default 0) is
+     * compared against the NPC's level in the skill that
+     * {@link BlacksmithSpecialization#categorize} maps the output to.
+     * Tools → TOOLSMITHING, weapons → WEAPONSMITHING, armor →
+     * ARMORSMITHING, ingots / unmapped → BLACKSMITHING.
+     *
+     * <p>The cascade in {@code SkillComponent} means a TOOLSMITH with
+     * TOOLSMITHING 20 also has BLACKSMITHING 5+ (25% propagation),
+     * so a level-15 BLACKSMITHING gate on golden_ingot smelt is met
+     * by anyone with TOOLSMITHING 60 or by a generalist who's smelted
+     * to BLACKSMITHING 15 directly. The gate semantically reads
+     * "minimum experience in the relevant specialty."</p>
+     */
+    private boolean meetsSkillGate(Item output, int minLevel) {
+        if (minLevel <= 0) return true;
+        tterrag1112.life_in_the_village.Npc.Skills.Skill category =
+                BlacksmithSpecialization.categorize(output);
+        return entity.getSkills().getLevel(category) >= minLevel;
     }
 
     /**
