@@ -118,7 +118,10 @@ public final class ProfessionSupplyChain {
                 Items.CHEST, Items.BARREL, Items.CRAFTING_TABLE,
                 Items.OAK_DOOR, Items.SPRUCE_DOOR,
                 Items.OAK_FENCE, Items.OAK_FENCE_GATE,
-                Items.BOOKSHELF, Items.LADDER, Items.STICK));
+                Items.BOOKSHELF, Items.LADDER, Items.STICK,
+                // Phase 6.6.3.3 — masterpiece output (dormant until a
+                // master-tier carpenter spawns).
+                Items.CHISELED_BOOKSHELF));
         in.put(Profession.CARPENTER, List.of(
                 Items.OAK_LOG, Items.SPRUCE_LOG, Items.BIRCH_LOG,
                 Items.DARK_OAK_LOG, Items.ACACIA_LOG,
