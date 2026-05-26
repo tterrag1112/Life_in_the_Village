@@ -23,15 +23,34 @@ import java.util.*;
  */
 public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
 
-    // 1 honeycomb + 1 string → 1 candle (vanilla recipe, 60 ticks)
+    // 1 honeycomb + 1 string → 1 candle (vanilla recipe, 60 ticks).
+    // Entry-tier — no skill gate. Honeycomb is the rate-limiter
+    // (no producer today; awaiting BEEKEEPER per 6.6.0.4).
     private static final ProductionRecipe MAKE_CANDLE = ProductionRecipe.of(
             Map.of(Items.HONEYCOMB, 1, Items.STRING, 1),
             Items.CANDLE, 1, 60);
 
-    // 1 stick + 1 coal → 4 torches (vanilla 1 stick + 1 coal = 4 torches, 40 ticks)
+    // 1 stick + 1 coal → 4 torches (vanilla 1 stick + 1 coal = 4 torches, 40 ticks).
+    // Entry-tier — no skill gate. Both inputs sourceable today
+    // (sticks via CARPENTER, coal via MINER fallback / merchant).
     private static final ProductionRecipe MAKE_TORCH = ProductionRecipe.of(
             Map.of(Items.STICK, 1, Items.COAL, 1),
             Items.TORCH, 4, 40);
+
+    // Phase 6.6.4.3 masterpiece — LANTERN. 8 iron_nugget + 1 torch → 1
+    // lantern (vanilla recipe, 100 ticks). Multi-input via the
+    // 6.4.10.1 .withSkillRequirement infrastructure — no schema work
+    // needed since ProductionRecipe natively supports both the
+    // multi-input Map shape and skill gates.
+    // Iron nugget sourcing flows from BLACKSMITH via DirectBusinessChannel;
+    // torch is self-produced by this behavior. Cross-profession dependency
+    // is intentional — masterpiece work requires the village to have a
+    // functioning blacksmith too.
+    private static final ProductionRecipe MAKE_LANTERN = ProductionRecipe.of(
+            Map.of(Items.IRON_NUGGET, 8, Items.TORCH, 1),
+            Items.LANTERN, 1, 100)
+            .withSkillRequirement(
+                    tterrag1112.life_in_the_village.Npc.Skills.Skill.CANDLEMAKING, 50);
 
     private static final int MAX_BATCH = 8;
 
@@ -51,11 +70,21 @@ public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
 
         Item t = target.get();
 
-        if (t == Items.CANDLE && hasAllInputs(level, source, MAKE_CANDLE)) {
+        // Phase 6.6.4.3 — skill-gate check via the 6.4.10.1
+        // meetsSkillRequirements helper (base class). CANDLE / TORCH
+        // pass the check trivially (no .withSkillRequirement on them);
+        // LANTERN's gate is enforced here.
+        if (t == Items.CANDLE && meetsSkillRequirements(MAKE_CANDLE)
+                && hasAllInputs(level, source, MAKE_CANDLE)) {
             return Optional.of(MAKE_CANDLE);
         }
-        if (t == Items.TORCH && hasAllInputs(level, source, MAKE_TORCH)) {
+        if (t == Items.TORCH && meetsSkillRequirements(MAKE_TORCH)
+                && hasAllInputs(level, source, MAKE_TORCH)) {
             return Optional.of(MAKE_TORCH);
+        }
+        if (t == Items.LANTERN && meetsSkillRequirements(MAKE_LANTERN)
+                && hasAllInputs(level, source, MAKE_LANTERN)) {
+            return Optional.of(MAKE_LANTERN);
         }
         return Optional.empty();
     }
@@ -74,16 +103,22 @@ public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
     @Override
     protected Map<Item, Integer> stockQuotas() {
         return Map.of(
-                Items.CANDLE, 16,
-                Items.TORCH,  32);
+                Items.CANDLE,  16,
+                Items.TORCH,   32,
+                // Phase 6.6.4.3 — masterpiece quota kept low (dormant
+                // until a master-tier candlemaker spawns AND iron_nugget
+                // supply exists from BLACKSMITH).
+                Items.LANTERN, 4);
     }
 
     @Override
-    protected List<Item> sellableOutputs() { return List.of(Items.CANDLE, Items.TORCH); }
+    protected List<Item> sellableOutputs() {
+        return List.of(Items.CANDLE, Items.TORCH, Items.LANTERN);
+    }
 
     @Override
     protected boolean canProduceItem(Item item) {
-        return item == Items.CANDLE || item == Items.TORCH;
+        return item == Items.CANDLE || item == Items.TORCH || item == Items.LANTERN;
     }
 
     @Override
@@ -94,8 +129,12 @@ public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
         Map<Item, Integer> toBuy = new LinkedHashMap<>();
         Building source = resolveInputSource(level, building);
 
-        // Buy honeycomb and string when short (primary candle inputs)
-        for (Item item : List.of(Items.HONEYCOMB, Items.STRING, Items.STICK, Items.COAL)) {
+        // Buy honeycomb and string when short (primary candle inputs).
+        // Phase 6.6.4.3 — iron_nugget added for LANTERN masterpiece
+        // procurement. ChannelRouter routes iron_nugget buys to
+        // BLACKSMITH per the supply chain.
+        for (Item item : List.of(Items.HONEYCOMB, Items.STRING,
+                Items.STICK, Items.COAL, Items.IRON_NUGGET)) {
             int avail = source != null
                     ? BuildingStorageAccess.countItem(level, source, item) : 0;
             if (avail < 8) toBuy.put(item, 16 - avail);
