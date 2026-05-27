@@ -270,14 +270,18 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             }
             return false;
         }
-        // Phase 6.7.2.6 — defer when ShepherdBehavior has actionable
-        // work for this NPC (locked SHEPHERD role + sheep roster +
-        // shears). ShepherdBehavior is registered before FarmerBehavior
-        // in the WORK priority-0 list, so it gets first chance via
-        // memory contention; this explicit defer is a safety belt so
-        // the SHEPHERD doesn't also enter generic-FARMER phases when
-        // a shepherd phase is pending.
+        // Phase 6.7.2.6 / 6.7.3.6 — defer when a species-specific
+        // farm behavior has actionable work for this NPC (locked
+        // SHEPHERD/BEEKEEPER role + species roster + tools).
+        // Shepherd/Beekeeper behaviors are registered before
+        // FarmerBehavior in the WORK priority-0 list, so they get
+        // first chance via memory contention; this explicit defer is
+        // a safety belt against also entering generic-FARMER phases
+        // when a species phase is pending.
         if (ShepherdBehavior.hasActionableWork(level, entity)) {
+            return false;
+        }
+        if (BeekeeperBehavior.hasActionableWork(level, entity)) {
             return false;
         }
         return true;
