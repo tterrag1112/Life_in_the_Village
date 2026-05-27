@@ -26,7 +26,9 @@ public class StonemasonProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
-    private static final List<MasonRecipe> RECIPES = buildRecipes();
+    // Phase 6.6.5 — recipes migrated from inline MasonRecipe records to
+    // ProductionRecipe (6.4.10.1 multi-input + skill-gate type).
+    private static final List<ProductionRecipe> RECIPES = buildRecipes();
 
     
 
@@ -56,18 +58,9 @@ public class StonemasonProductionBehavior extends AbstractProductionBehavior {
         return findBestAvailable(level, building, source);
     }
 
-    /**
-     * Phase 6.6.3.4 — skill-gate check shared by both recipe-iteration
-     * sites below. {@link MasonRecipe#minSkillLevel} is compared
-     * against MASONRY (post-6.6.1.2 primary). Recipes failing the gate
-     * are skipped silently.
-     */
-    private boolean meetsSkillGate(MasonRecipe r) {
-        if (r.minSkillLevel() <= 0) return true;
-        return entity.getSkills().getLevel(
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.MASONRY)
-                >= r.minSkillLevel();
-    }
+    // Phase 6.6.5 — meetsSkillGate(MasonRecipe) removed. The base class
+    // meetsSkillRequirements (6.4.10.1) is now the canonical check; gates
+    // live on ProductionRecipe.skillRequirements.
 
     @Override
     protected int calculateBatchSize(ServerLevel level, ProductionRecipe recipe) {
@@ -121,7 +114,7 @@ public class StonemasonProductionBehavior extends AbstractProductionBehavior {
 
     @Override
     protected List<Item> sellableOutputs() {
-        return RECIPES.stream().map(MasonRecipe::output).distinct().toList();
+        return RECIPES.stream().map(ProductionRecipe::output).distinct().toList();
     }
 
     @Override
@@ -167,79 +160,79 @@ public class StonemasonProductionBehavior extends AbstractProductionBehavior {
                                                            Building source, Item output) {
         return RECIPES.stream()
                 .filter(r -> r.output() == output)
-                .filter(this::meetsSkillGate)
-                .filter(r -> BuildingStorageAccess.countItem(level, source, r.input())
-                        >= r.inputCount())
-                .findFirst()
-                .map(MasonRecipe::toProduction);
+                .filter(this::meetsSkillRequirements)
+                .filter(r -> hasAllInputs(level, source, r))
+                .findFirst();
     }
 
     private Optional<ProductionRecipe> findBestAvailable(ServerLevel level,
-                                                         Building building,
-                                                         Building source) {
+                                                        Building building,
+                                                        Building source) {
         Map<Item, Integer> quotas = stockQuotas();
-        MasonRecipe best = null;
+        ProductionRecipe best = null;
         double lowestRatio = Double.MAX_VALUE;
 
-        for (MasonRecipe r : RECIPES) {
-            if (!meetsSkillGate(r)) continue;
-            if (BuildingStorageAccess.countItem(level, source, r.input()) < r.inputCount()) continue;
+        for (ProductionRecipe r : RECIPES) {
+            if (!meetsSkillRequirements(r)) continue;
+            if (!hasAllInputs(level, source, r)) continue;
             int stock = BuildingStorageAccess.countItem(level, building, r.output());
             int quota = quotas.getOrDefault(r.output(), 0);
             if (stock >= quota) continue;
             double ratio = quota == 0 ? 0.0 : (double) stock / quota;
             if (ratio < lowestRatio) { lowestRatio = ratio; best = r; }
         }
-        return Optional.ofNullable(best).map(MasonRecipe::toProduction);
+        return Optional.ofNullable(best);
     }
 
     private boolean hasStoneInputs(ServerLevel level, Building building) {
-        return RECIPES.stream().anyMatch(r ->
-                BuildingStorageAccess.countItem(level, building, r.input()) >= r.inputCount());
+        return RECIPES.stream().anyMatch(r -> hasAllInputs(level, building, r));
+    }
+
+    private static boolean hasAllInputs(ServerLevel level, Building source,
+                                        ProductionRecipe recipe) {
+        for (var e : recipe.inputs().entrySet()) {
+            if (BuildingStorageAccess.countItem(level, source, e.getKey()) < e.getValue()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ── Recipe definitions ────────────────────────────────────────────────────
 
-    /**
-     * Phase 6.6.3.4 — {@code minSkillLevel} gates the recipe against
-     * the NPC's MASONRY level. Default 0 = no gate.
-     */
-    private record MasonRecipe(Item input, int inputCount, Item output,
-                               int outputCount, int ticks, int minSkillLevel) {
-        // Backward-compat no-gate constructor.
-        MasonRecipe(Item input, int inputCount, Item output,
-                    int outputCount, int ticks) {
-            this(input, inputCount, output, outputCount, ticks, 0);
-        }
-        ProductionRecipe toProduction() {
-            return ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
-        }
+    // Phase 6.6.5 — recipes defined directly as ProductionRecipe.of(...)
+    // with .withSkillRequirement(MASONRY, N) for tier gates. The
+    // MasonRecipe inline record was removed.
+
+    private static ProductionRecipe mason(Item input, int inputCount,
+                                          Item output, int outputCount,
+                                          int ticks, int minSkill) {
+        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
+        return minSkill > 0
+                ? r.withSkillRequirement(
+                        tterrag1112.life_in_the_village.Npc.Skills.Skill.MASONRY, minSkill)
+                : r;
     }
 
-    private static List<MasonRecipe> buildRecipes() {
-        // Phase 6.6.3.4 tier ladder:
+    private static List<ProductionRecipe> buildRecipes() {
+        // Phase 6.6.3.4 tier ladder (unchanged by 6.6.5 migration):
         //   bricks / slabs / stairs / walls (basic stone/cobble) → MASONRY 0
         //   polished variants                                    → MASONRY 15
         //   smooth-stone slab                                    → MASONRY 15
         //   chiseled_stone_bricks                                → MASONRY 50 (masterpiece)
-        List<MasonRecipe> r = new ArrayList<>();
-        // Stone → dressed stone (basic transforms — MASONRY 0)
-        r.add(new MasonRecipe(Items.STONE, 1,  Items.STONE_BRICKS,          1, 40));
-        r.add(new MasonRecipe(Items.STONE, 1,  Items.STONE_BRICK_SLAB,      2, 40));
-        r.add(new MasonRecipe(Items.STONE, 1,  Items.STONE_BRICK_STAIRS,    1, 40));
-        r.add(new MasonRecipe(Items.STONE, 1,  Items.STONE_BRICK_WALL,      1, 40));
-        // Masterpiece — chiseled stone is the mark of a master mason.
-        r.add(new MasonRecipe(Items.STONE, 1,  Items.CHISELED_STONE_BRICKS, 1, 80, 50));
-        // Cobblestone (basic)
-        r.add(new MasonRecipe(Items.COBBLESTONE, 1, Items.COBBLESTONE_SLAB,   2, 40));
-        r.add(new MasonRecipe(Items.COBBLESTONE, 1, Items.COBBLESTONE_STAIRS, 1, 40));
-        r.add(new MasonRecipe(Items.COBBLESTONE, 1, Items.COBBLESTONE_WALL,   1, 40));
-        // Smooth stone (intermediate-tier finishing)
-        r.add(new MasonRecipe(Items.SMOOTH_STONE, 1, Items.SMOOTH_STONE_SLAB, 2, 40, 15));
-        // Polished variants — controlled chipping work
-        r.add(new MasonRecipe(Items.ANDESITE, 2, Items.POLISHED_ANDESITE, 2, 40, 15));
-        r.add(new MasonRecipe(Items.GRANITE,  2, Items.POLISHED_GRANITE,  2, 40, 15));
-        r.add(new MasonRecipe(Items.DIORITE,  2, Items.POLISHED_DIORITE,  2, 40, 15));
+        List<ProductionRecipe> r = new ArrayList<>();
+        r.add(mason(Items.STONE, 1,  Items.STONE_BRICKS,          1, 40, 0));
+        r.add(mason(Items.STONE, 1,  Items.STONE_BRICK_SLAB,      2, 40, 0));
+        r.add(mason(Items.STONE, 1,  Items.STONE_BRICK_STAIRS,    1, 40, 0));
+        r.add(mason(Items.STONE, 1,  Items.STONE_BRICK_WALL,      1, 40, 0));
+        r.add(mason(Items.STONE, 1,  Items.CHISELED_STONE_BRICKS, 1, 80, 50));
+        r.add(mason(Items.COBBLESTONE, 1, Items.COBBLESTONE_SLAB,   2, 40, 0));
+        r.add(mason(Items.COBBLESTONE, 1, Items.COBBLESTONE_STAIRS, 1, 40, 0));
+        r.add(mason(Items.COBBLESTONE, 1, Items.COBBLESTONE_WALL,   1, 40, 0));
+        r.add(mason(Items.SMOOTH_STONE, 1, Items.SMOOTH_STONE_SLAB, 2, 40, 15));
+        r.add(mason(Items.ANDESITE, 2, Items.POLISHED_ANDESITE, 2, 40, 15));
+        r.add(mason(Items.GRANITE,  2, Items.POLISHED_GRANITE,  2, 40, 15));
+        r.add(mason(Items.DIORITE,  2, Items.POLISHED_DIORITE,  2, 40, 15));
         return Collections.unmodifiableList(r);
     }
 }

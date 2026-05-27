@@ -23,18 +23,20 @@ import java.util.*;
  *
  * <h3>Future</h3>
  * The loom workstation and quota system are already wired to accept clothing
- * recipes when that system is ready. Add new {@link WeaverRecipe} entries and
- * new {@link #stockQuotas()} entries without touching the abstract class.
+ * recipes when that system is ready. Add new {@link ProductionRecipe} entries
+ * and new {@link #stockQuotas()} entries without touching the abstract class.
  */
 public class WeaverProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
-    // String spinning: 4 string → 1 white wool (useful when sheep are scarce)
-    private static final WeaverRecipe SPIN_STRING =
-            new WeaverRecipe(Items.STRING, 4, Items.WHITE_WOOL, 1, 60);
+    // String spinning: 4 string → 1 white wool (useful when sheep are scarce).
+    // Phase 6.6.5 — migrated to ProductionRecipe; kept as named static for
+    // readability (referenced by name in buildRecipes below).
+    private static final ProductionRecipe SPIN_STRING =
+            ProductionRecipe.of(Items.STRING, 4, Items.WHITE_WOOL, 1, 60);
 
-    private static final List<WeaverRecipe> RECIPES = buildRecipes();
+    private static final List<ProductionRecipe> RECIPES = buildRecipes();
 
     // All wool items the weaver accepts as inputs
     private static final List<Item> WOOL_TYPES = List.of(
@@ -74,18 +76,8 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
         return findBestAvailable(level, building, source);
     }
 
-    /**
-     * Phase 6.6.4.2 — skill-gate check shared by both recipe-iteration
-     * sites below. {@link WeaverRecipe#minSkillLevel} is compared
-     * against WEAVING (post-6.6.1.2 primary). Recipes failing the
-     * gate are skipped silently.
-     */
-    private boolean meetsSkillGate(WeaverRecipe r) {
-        if (r.minSkillLevel() <= 0) return true;
-        return entity.getSkills().getLevel(
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAVING)
-                >= r.minSkillLevel();
-    }
+    // Phase 6.6.5 — meetsSkillGate(WeaverRecipe) removed. Base class
+    // meetsSkillRequirements (6.4.10.1) is canonical.
 
     @Override
     protected int calculateBatchSize(ServerLevel level, ProductionRecipe recipe) {
@@ -131,7 +123,7 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
 
     @Override
     protected List<Item> sellableOutputs() {
-        return RECIPES.stream().map(WeaverRecipe::output).distinct().toList();
+        return RECIPES.stream().map(ProductionRecipe::output).distinct().toList();
     }
 
     @Override
@@ -178,59 +170,64 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
                                                            Building source, Item output) {
         return RECIPES.stream()
                 .filter(r -> r.output() == output)
-                .filter(this::meetsSkillGate)
-                .filter(r -> BuildingStorageAccess.countItem(level, source, r.input())
-                        >= r.inputCount())
-                .findFirst()
-                .map(WeaverRecipe::toProduction);
+                .filter(this::meetsSkillRequirements)
+                .filter(r -> hasAllInputs(level, source, r))
+                .findFirst();
     }
 
     private Optional<ProductionRecipe> findBestAvailable(ServerLevel level,
-                                                         Building building,
-                                                         Building source) {
+                                                        Building building,
+                                                        Building source) {
         Map<Item, Integer> quotas = stockQuotas();
-        WeaverRecipe best = null;
+        ProductionRecipe best = null;
         double lowestRatio = Double.MAX_VALUE;
 
-        for (WeaverRecipe r : RECIPES) {
-            if (!meetsSkillGate(r)) continue;
-            if (BuildingStorageAccess.countItem(level, source, r.input()) < r.inputCount()) continue;
+        for (ProductionRecipe r : RECIPES) {
+            if (!meetsSkillRequirements(r)) continue;
+            if (!hasAllInputs(level, source, r)) continue;
             int stock = BuildingStorageAccess.countItem(level, building, r.output());
             int quota = quotas.getOrDefault(r.output(), 0);
             if (stock >= quota) continue;
             double ratio = quota == 0 ? 0.0 : (double) stock / quota;
             if (ratio < lowestRatio) { lowestRatio = ratio; best = r; }
         }
-        return Optional.ofNullable(best).map(WeaverRecipe::toProduction);
+        return Optional.ofNullable(best);
+    }
+
+    private static boolean hasAllInputs(ServerLevel level, Building source,
+                                        ProductionRecipe recipe) {
+        for (var e : recipe.inputs().entrySet()) {
+            if (BuildingStorageAccess.countItem(level, source, e.getKey()) < e.getValue()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ── Recipe list ───────────────────────────────────────────────────────────
 
-    /**
-     * Phase 6.6.4.2 — {@code minSkillLevel} gates the recipe against
-     * the NPC's WEAVING level. Default 0 = no gate (preserves the
-     * pre-fix behavior for string-spinning and basic colors).
-     */
-    private record WeaverRecipe(Item input, int inputCount, Item output,
-                                int outputCount, int ticks, int minSkillLevel) {
-        // Backward-compat constructor (no skill gate).
-        WeaverRecipe(Item input, int inputCount, Item output,
-                     int outputCount, int ticks) {
-            this(input, inputCount, output, outputCount, ticks, 0);
-        }
-        ProductionRecipe toProduction() {
-            return ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
-        }
+    // Phase 6.6.5 — recipes defined directly as ProductionRecipe.of(...)
+    // with .withSkillRequirement(WEAVING, N) for tier gates. WeaverRecipe
+    // inline record removed.
+
+    private static ProductionRecipe weave(Item input, int inputCount,
+                                          Item output, int outputCount,
+                                          int ticks, int minSkill) {
+        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
+        return minSkill > 0
+                ? r.withSkillRequirement(
+                        tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAVING, minSkill)
+                : r;
     }
 
-    private static List<WeaverRecipe> buildRecipes() {
+    private static List<ProductionRecipe> buildRecipes() {
         // Phase 6.6.4.2 tier ladder. Wool→carpet recipes split by color
         // accessibility: pre-fix all 16 colors were equally available;
         // post-fix the rarer dye combinations (cyan, magenta, etc.)
         // require WEAVING practice. Vanilla colour-mixing logic informs
         // the tiers — primary colours are entry-level, secondary need
         // some craft, tertiary need real skill.
-        List<WeaverRecipe> r = new ArrayList<>();
+        List<ProductionRecipe> r = new ArrayList<>();
 
         // String → white wool (spinning). Entry-level fiber work.
         r.add(SPIN_STRING);
@@ -240,35 +237,32 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
                 Items.RED_WOOL,    Items.RED_CARPET,
                 Items.YELLOW_WOOL, Items.YELLOW_CARPET,
                 Items.BLUE_WOOL,   Items.BLUE_CARPET)
-                .forEach((w, c) -> r.add(new WeaverRecipe(w, 2, c, 3, 50, 0)));
+                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 0)));
 
-        // Tier 2: common — secondary colors (single-dye mixes).
+        // Tier 2: common — secondary colors.
         Map.of(Items.ORANGE_WOOL,     Items.ORANGE_CARPET,
                 Items.GREEN_WOOL,      Items.GREEN_CARPET,
                 Items.PINK_WOOL,       Items.PINK_CARPET,
                 Items.LIGHT_BLUE_WOOL, Items.LIGHT_BLUE_CARPET)
-                .forEach((w, c) -> r.add(new WeaverRecipe(w, 2, c, 3, 50, 15)));
+                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 15)));
 
-        // Tier 3: skilled — tertiary colors (multi-dye / harder mixes).
+        // Tier 3: skilled — tertiary colors.
         Map.of(Items.CYAN_WOOL,    Items.CYAN_CARPET,
                 Items.MAGENTA_WOOL, Items.MAGENTA_CARPET,
                 Items.PURPLE_WOOL,  Items.PURPLE_CARPET,
                 Items.LIME_WOOL,    Items.LIME_CARPET,
                 Items.BROWN_WOOL,   Items.BROWN_CARPET)
-                .forEach((w, c) -> r.add(new WeaverRecipe(w, 2, c, 3, 50, 30)));
+                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 30)));
 
-        // Tier 4: master — grayscale + black (controlled saturation).
+        // Tier 4: master — grayscale + black.
         Map.of(Items.LIGHT_GRAY_WOOL, Items.LIGHT_GRAY_CARPET,
                 Items.GRAY_WOOL,       Items.GRAY_CARPET,
                 Items.BLACK_WOOL,      Items.BLACK_CARPET)
-                .forEach((w, c) -> r.add(new WeaverRecipe(w, 2, c, 3, 50, 40)));
+                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 40)));
 
-        // Phase 6.6.4.2 masterpiece — WHITE_BANNER. Vanilla recipe is
-        // 6 wool + 1 stick → 1 banner; single-input schema treats wool
-        // as limiting (stick implicit, same approximation as BLACKSMITH
-        // diamond-tools 6.6.2.3 and CARPENTER chiseled_bookshelf 6.6.3.3).
-        // 80 ticks signals mastery work above the 50t baseline.
-        r.add(new WeaverRecipe(Items.WHITE_WOOL, 6, Items.WHITE_BANNER, 1, 80, 50));
+        // WHITE_BANNER masterpiece — placeholder single-input until
+        // 6.6.5.3 promotes it to true multi-input with stick.
+        r.add(weave(Items.WHITE_WOOL, 6, Items.WHITE_BANNER, 1, 80, 50));
 
         // Phase 6.6.1.5 — removed lead-recipe stub comment. The previous
         // note pointed at a multi-input lead recipe that was never wired:

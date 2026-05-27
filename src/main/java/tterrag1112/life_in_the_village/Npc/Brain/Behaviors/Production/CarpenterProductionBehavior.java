@@ -34,15 +34,27 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
             Items.JUNGLE_LOG, Items.ACACIA_LOG, Items.DARK_OAK_LOG,
             Items.MANGROVE_LOG, Items.CHERRY_LOG);
 
-    private static final List<CarpenterRecipe> LOG_RECIPES   = buildLogRecipes();
-    private static final List<CarpenterRecipe> PLANK_RECIPES = buildPlankRecipes();
-    private static final Set<Item>             ALL_OUTPUTS;
+    // Phase 6.6.5 — recipes migrated from inline CarpenterRecipe records
+    // to ProductionRecipe (the unified 6.4.10.1 multi-input + skill-gate
+    // type). Single-input recipes stay structurally identical; the
+    // skill-gate moves from a per-profession field to the canonical
+    // ProductionRecipe.skillRequirements map via .withSkillRequirement.
+    private static final List<ProductionRecipe> LOG_RECIPES   = buildLogRecipes();
+    private static final List<ProductionRecipe> PLANK_RECIPES = buildPlankRecipes();
+    private static final Set<Item>              ALL_OUTPUTS;
 
     static {
         Set<Item> out = new LinkedHashSet<>();
         LOG_RECIPES  .forEach(r -> out.add(r.output()));
         PLANK_RECIPES.forEach(r -> out.add(r.output()));
         ALL_OUTPUTS = Collections.unmodifiableSet(out);
+    }
+
+    private static List<ProductionRecipe> allRecipes() {
+        List<ProductionRecipe> all = new ArrayList<>(LOG_RECIPES.size() + PLANK_RECIPES.size());
+        all.addAll(LOG_RECIPES);
+        all.addAll(PLANK_RECIPES);
+        return all;
     }
 
     
@@ -84,25 +96,19 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
         return findBestAvailableRecipe(level, building, source);
     }
 
-    /**
-     * Phase 6.6.3.3 — skill-gate check shared by both recipe-iteration
-     * sites below. {@link CarpenterRecipe#minSkillLevel} is compared
-     * against CARPENTRY (the profession's primary skill post-6.6.1.2).
-     * Recipes failing the gate are skipped silently — the gate is
-     * intentional, not an error.
-     */
-    private boolean meetsSkillGate(CarpenterRecipe r) {
-        if (r.minSkillLevel() <= 0) return true;
-        return entity.getSkills().getLevel(
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY)
-                >= r.minSkillLevel();
-    }
+    // Phase 6.6.5 — meetsSkillGate(CarpenterRecipe) removed. Skill
+    // thresholds live in ProductionRecipe.skillRequirements via
+    // .withSkillRequirement(); the base class meetsSkillRequirements
+    // helper (6.4.10.1) is now the single canonical check.
 
     @Override
     protected int calculateBatchSize(ServerLevel level, ProductionRecipe recipe) {
         Building source = resolveInputSource(level, workBuilding);
         if (source == null) return 0;
-        // recipe.inputs() has exactly one entry for carpenter recipes
+        // Phase 6.6.5 — multi-input safe via min-batches-across-inputs.
+        // Pre-6.6.5 comment said "exactly one entry"; CHISELED_BOOKSHELF
+        // masterpiece (after 6.6.5.3) is the first multi-input carpenter
+        // recipe.
         int available = recipe.inputs().entrySet().stream()
                 .mapToInt(e -> BuildingStorageAccess.countItem(level, source, e.getKey())
                         / e.getValue())
@@ -187,17 +193,10 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
     private Optional<ProductionRecipe> findRecipeForOutput(ServerLevel level,
                                                            Building source,
                                                            Item output) {
-        for (CarpenterRecipe r : LOG_RECIPES) {
+        for (ProductionRecipe r : allRecipes()) {
             if (r.output() != output) continue;
-            if (!meetsSkillGate(r)) continue;
-            if (BuildingStorageAccess.countItem(level, source, r.input()) >= r.inputCount())
-                return Optional.of(r.toProduction());
-        }
-        for (CarpenterRecipe r : PLANK_RECIPES) {
-            if (r.output() != output) continue;
-            if (!meetsSkillGate(r)) continue;
-            if (BuildingStorageAccess.countItem(level, source, r.input()) >= r.inputCount())
-                return Optional.of(r.toProduction());
+            if (!meetsSkillRequirements(r)) continue;
+            if (hasAllInputs(level, source, r)) return Optional.of(r);
         }
         return Optional.empty();
     }
@@ -206,22 +205,26 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
                                                                Building building,
                                                                Building source) {
         Map<Item, Integer> quotas = stockQuotas();
-        CarpenterRecipe best      = null;
-        double          lowest    = Double.MAX_VALUE;
+        ProductionRecipe best   = null;
+        double           lowest = Double.MAX_VALUE;
 
-        for (CarpenterRecipe r : LOG_RECIPES) {
-            if (!meetsSkillGate(r)) continue;
-            if (BuildingStorageAccess.countItem(level, source, r.input()) < r.inputCount()) continue;
+        for (ProductionRecipe r : allRecipes()) {
+            if (!meetsSkillRequirements(r)) continue;
+            if (!hasAllInputs(level, source, r)) continue;
             double ratio = stockRatio(level, building, r.output(), quotas);
             if (ratio < 1.0 && ratio < lowest) { lowest = ratio; best = r; }
         }
-        for (CarpenterRecipe r : PLANK_RECIPES) {
-            if (!meetsSkillGate(r)) continue;
-            if (BuildingStorageAccess.countItem(level, source, r.input()) < r.inputCount()) continue;
-            double ratio = stockRatio(level, building, r.output(), quotas);
-            if (ratio < 1.0 && ratio < lowest) { lowest = ratio; best = r; }
+        return Optional.ofNullable(best);
+    }
+
+    private static boolean hasAllInputs(ServerLevel level, Building source,
+                                        ProductionRecipe recipe) {
+        for (var e : recipe.inputs().entrySet()) {
+            if (BuildingStorageAccess.countItem(level, source, e.getKey()) < e.getValue()) {
+                return false;
+            }
         }
-        return Optional.ofNullable(best).map(CarpenterRecipe::toProduction);
+        return true;
     }
 
     private double stockRatio(ServerLevel level, Building building, Item item,
@@ -235,31 +238,38 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
     // Recipe list
     // =========================================================================
 
-    /**
-     * Phase 6.6.3.3 — {@code minSkillLevel} gates the recipe against
-     * the NPC's CARPENTRY level. Default 0 = no gate (preserves the
-     * pre-fix behavior for log→planks and other entry-level
-     * transformations). Higher tiers unlock as the carpenter levels.
-     */
-    private record CarpenterRecipe(Item input, int inputCount,
-                                   Item output, int outputCount,
-                                   int ticks, int minSkillLevel) {
-        // Convenience constructors: no-gate, default ticks.
-        CarpenterRecipe(Item input, int inputCount, Item output, int outputCount) {
-            this(input, inputCount, output, outputCount, CRAFT_TICKS, 0);
-        }
-        CarpenterRecipe(Item input, int inputCount, Item output, int outputCount,
-                        int minSkillLevel) {
-            this(input, inputCount, output, outputCount, CRAFT_TICKS, minSkillLevel);
-        }
-        ProductionRecipe toProduction() {
-            return ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
-        }
+    // Phase 6.6.5 — recipes defined directly as ProductionRecipe.of(...)
+    // with .withSkillRequirement(Skill.CARPENTRY, N) for tier gates.
+    // The CarpenterRecipe inline record was removed; ProductionRecipe is
+    // the canonical multi-input + skill-gate type (6.4.10.1).
+    //
+    // Masterpiece (CHISELED_BOOKSHELF) is promoted to true vanilla
+    // multi-input in 6.6.5.3; this list still defines it single-input
+    // as a placeholder and is updated by the masterpiece commit.
+
+    private static ProductionRecipe craft(Item input, int inputCount,
+                                          Item output, int outputCount,
+                                          int minSkill) {
+        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, CRAFT_TICKS);
+        return minSkill > 0
+                ? r.withSkillRequirement(
+                        tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY, minSkill)
+                : r;
     }
 
-    private static List<CarpenterRecipe> buildLogRecipes() {
+    private static ProductionRecipe craft(Item input, int inputCount,
+                                          Item output, int outputCount,
+                                          int ticks, int minSkill) {
+        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
+        return minSkill > 0
+                ? r.withSkillRequirement(
+                        tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY, minSkill)
+                : r;
+    }
+
+    private static List<ProductionRecipe> buildLogRecipes() {
         // Log → planks is entry-level; CARPENTRY 0.
-        List<CarpenterRecipe> r = new ArrayList<>();
+        List<ProductionRecipe> r = new ArrayList<>();
         Map.of(Items.OAK_LOG,      Items.OAK_PLANKS,
                         Items.SPRUCE_LOG,   Items.SPRUCE_PLANKS,
                         Items.BIRCH_LOG,    Items.BIRCH_PLANKS,
@@ -268,47 +278,41 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
                         Items.DARK_OAK_LOG, Items.DARK_OAK_PLANKS,
                         Items.MANGROVE_LOG, Items.MANGROVE_PLANKS,
                         Items.CHERRY_LOG,   Items.CHERRY_PLANKS)
-                .forEach((log, planks) -> r.add(new CarpenterRecipe(log, 1, planks, 4)));
+                .forEach((log, planks) -> r.add(craft(log, 1, planks, 4, 0)));
         return r;
     }
 
-    private static List<CarpenterRecipe> buildPlankRecipes() {
-        // Phase 6.6.3.3 tier ladder:
-        //   slabs / stairs     → CARPENTRY 0  (basic transformations)
-        //   doors / fences     → CARPENTRY 15 (joinery: harder than slabs)
+    private static List<ProductionRecipe> buildPlankRecipes() {
+        // Phase 6.6.3.3 tier ladder (unchanged by 6.6.5 migration):
+        //   slabs / stairs     → CARPENTRY 0
+        //   doors / fences     → CARPENTRY 15
         //   chest / barrel /
         //     bookshelf /
-        //     crafting_table   → CARPENTRY 30 (assemblies)
+        //     crafting_table   → CARPENTRY 30
         //   chiseled_bookshelf → CARPENTRY 50 (masterpiece)
-        List<CarpenterRecipe> r = new ArrayList<>();
+        List<ProductionRecipe> r = new ArrayList<>();
         Map.of(Items.OAK_PLANKS, Items.OAK_SLAB, Items.SPRUCE_PLANKS, Items.SPRUCE_SLAB,
                         Items.BIRCH_PLANKS, Items.BIRCH_SLAB, Items.JUNGLE_PLANKS, Items.JUNGLE_SLAB,
                         Items.ACACIA_PLANKS, Items.ACACIA_SLAB, Items.DARK_OAK_PLANKS, Items.DARK_OAK_SLAB)
-                .forEach((p, s) -> r.add(new CarpenterRecipe(p, 3, s, 6)));
+                .forEach((p, s) -> r.add(craft(p, 3, s, 6, 0)));
         Map.of(Items.OAK_PLANKS, Items.OAK_STAIRS, Items.SPRUCE_PLANKS, Items.SPRUCE_STAIRS,
                         Items.BIRCH_PLANKS, Items.BIRCH_STAIRS)
-                .forEach((p, s) -> r.add(new CarpenterRecipe(p, 6, s, 4)));
-        // Joinery tier
+                .forEach((p, s) -> r.add(craft(p, 6, s, 4, 0)));
         Map.of(Items.OAK_PLANKS, Items.OAK_DOOR, Items.SPRUCE_PLANKS, Items.SPRUCE_DOOR,
                         Items.BIRCH_PLANKS, Items.BIRCH_DOOR)
-                .forEach((p, d) -> r.add(new CarpenterRecipe(p, 6, d, 3, 15)));
+                .forEach((p, d) -> r.add(craft(p, 6, d, 3, 15)));
         Map.of(Items.OAK_PLANKS, Items.OAK_FENCE, Items.SPRUCE_PLANKS, Items.SPRUCE_FENCE,
                         Items.BIRCH_PLANKS, Items.BIRCH_FENCE)
-                .forEach((p, f) -> r.add(new CarpenterRecipe(p, 6, f, 3, 15)));
-        r.add(new CarpenterRecipe(Items.OAK_PLANKS,    6, Items.OAK_FENCE_GATE,    1, 15));
-        r.add(new CarpenterRecipe(Items.SPRUCE_PLANKS, 6, Items.SPRUCE_FENCE_GATE, 1, 15));
-        // Assembly tier — multi-component pieces; gated at CARPENTRY 30.
-        r.add(new CarpenterRecipe(Items.OAK_PLANKS, 8, Items.CHEST,          1, 30));
-        r.add(new CarpenterRecipe(Items.OAK_PLANKS, 6, Items.BARREL,         1, 30));
-        r.add(new CarpenterRecipe(Items.OAK_PLANKS, 4, Items.CRAFTING_TABLE, 1, 30));
-        r.add(new CarpenterRecipe(Items.OAK_PLANKS, 6, Items.BOOKSHELF,      1, 30));
-        // Phase 6.6.3.3 masterpiece — CHISELED_BOOKSHELF. Vanilla
-        // recipe is 6 wood_slabs + 3 books → 1; single-input schema
-        // approximates as 6 OAK_PLANKS (books implicit, same
-        // simplification as BLACKSMITH's diamond-stick approximation
-        // in 6.6.2.3). 80t per batch unit — heavier than the 60t
-        // baseline to signal mastery work.
-        r.add(new CarpenterRecipe(Items.OAK_PLANKS, 6, Items.CHISELED_BOOKSHELF, 1, 80, 50));
+                .forEach((p, f) -> r.add(craft(p, 6, f, 3, 15)));
+        r.add(craft(Items.OAK_PLANKS,    6, Items.OAK_FENCE_GATE,    1, 15));
+        r.add(craft(Items.SPRUCE_PLANKS, 6, Items.SPRUCE_FENCE_GATE, 1, 15));
+        r.add(craft(Items.OAK_PLANKS, 8, Items.CHEST,          1, 30));
+        r.add(craft(Items.OAK_PLANKS, 6, Items.BARREL,         1, 30));
+        r.add(craft(Items.OAK_PLANKS, 4, Items.CRAFTING_TABLE, 1, 30));
+        r.add(craft(Items.OAK_PLANKS, 6, Items.BOOKSHELF,      1, 30));
+        // CHISELED_BOOKSHELF placeholder — single-input until 6.6.5.3
+        // promotes it to true multi-input with books.
+        r.add(craft(Items.OAK_PLANKS, 6, Items.CHISELED_BOOKSHELF, 1, 80, 50));
         return r;
     }
 
