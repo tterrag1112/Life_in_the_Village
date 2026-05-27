@@ -106,10 +106,18 @@ public final class ProfessionSupplyChain {
                 // diamond inputs appear in stock). DirectBusinessChannel
                 // now routes diamond-tool buys to BLACKSMITH.
                 Items.DIAMOND_PICKAXE, Items.DIAMOND_SWORD,
-                Items.DIAMOND_CHESTPLATE));
+                Items.DIAMOND_CHESTPLATE,
+                // Phase 6.6.5.3 — GENERALIST masterpiece. Dormant until
+                // NETHERITE_SCRAP source exists (Nether mining /
+                // merchant import).
+                Items.NETHERITE_INGOT));
         in.put(Profession.BLACKSMITH, List.of(
                 Items.RAW_IRON, Items.RAW_GOLD, Items.COAL, Items.CHARCOAL,
-                Items.FLINT, Items.STICK));
+                Items.FLINT, Items.STICK,
+                // Phase 6.6.5.3 — diamond + stick (sticks from CARPENTER)
+                // for masterpiece diamond tools; netherite_scrap for the
+                // GENERALIST masterpiece NETHERITE_INGOT.
+                Items.DIAMOND, Items.NETHERITE_SCRAP));
 
         // ── CARPENTER ─────────────────────────────────────────────────────────
         out.put(Profession.CARPENTER, List.of(

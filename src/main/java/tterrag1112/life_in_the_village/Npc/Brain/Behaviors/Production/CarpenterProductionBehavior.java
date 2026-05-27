@@ -310,9 +310,20 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
         r.add(craft(Items.OAK_PLANKS, 6, Items.BARREL,         1, 30));
         r.add(craft(Items.OAK_PLANKS, 4, Items.CRAFTING_TABLE, 1, 30));
         r.add(craft(Items.OAK_PLANKS, 6, Items.BOOKSHELF,      1, 30));
-        // CHISELED_BOOKSHELF placeholder — single-input until 6.6.5.3
-        // promotes it to true multi-input with books.
-        r.add(craft(Items.OAK_PLANKS, 6, Items.CHISELED_BOOKSHELF, 1, 80, 50));
+        // Phase 6.6.5.3 — CHISELED_BOOKSHELF promoted to true vanilla
+        // multi-input (6 wood_slabs + 3 books → 1). OAK_SLAB stands
+        // in for "wood_slabs"; books come from a future LIBRARIAN
+        // profession or merchant import — same dormancy pattern as
+        // CANDLEMAKER LANTERN (waits on cross-profession supply),
+        // BAKER CAKE (waits on milk_bucket from animal husbandry),
+        // BLACKSMITH NETHERITE_INGOT (waits on netherite_scrap).
+        // Self-activating: when BOOK becomes channel-queryable, the
+        // recipe fires automatically.
+        r.add(ProductionRecipe.of(
+                Map.of(Items.OAK_SLAB, 6, Items.BOOK, 3),
+                Items.CHISELED_BOOKSHELF, 1, 80)
+                .withSkillRequirement(
+                        tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY, 50));
         return r;
     }
 

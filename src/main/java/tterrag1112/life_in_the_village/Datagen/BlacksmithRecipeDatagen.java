@@ -65,19 +65,12 @@ public class BlacksmithRecipeDatagen implements DataProvider {
         recipes.add(craft("minecraft:gold_ingot", 3, "minecraft:golden_sword",   1, 400, 15));
         recipes.add(craft("minecraft:gold_ingot", 5, "minecraft:golden_helmet",  1, 600, 15));
 
-        // Phase 6.6.2.3 — per-specialization masterpieces. Diamond-tier
-        // recipes gated at level 50 in the matching specialty.
-        //
-        // The recipe schema is single-input only, so vanilla's
-        // "diamond + stick" tools are approximated as diamond-only —
-        // the stick is implicit (handle wrapping the head; carpenter
-        // supply chain still routes sticks via Channel if the
-        // blacksmith wants real handle stock). Schema generalisation
-        // to multi-input is a future cleanup if/when several recipes
-        // need it (CandlemakerProductionBehavior is the only other
-        // multi-input consumer today).
-        recipes.add(craft("minecraft:diamond", 3, "minecraft:diamond_pickaxe",   1, 600, 50));
-        recipes.add(craft("minecraft:diamond", 2, "minecraft:diamond_sword",     1, 500, 50));
+        // Phase 6.6.5.3 — single-input diamond_chestplate stays in JSON
+        // (vanilla recipe is genuinely 8 diamonds, no second input).
+        // Multi-input masterpieces (DIAMOND_PICKAXE, DIAMOND_SWORD,
+        // NETHERITE_INGOT) moved inline to BlacksmithProductionBehavior
+        // per the 6.6.5 Option A1 hybrid: single-input → JSON,
+        // multi-input → inline ProductionRecipe.of(Map.of(...)).
         recipes.add(craft("minecraft:diamond", 8, "minecraft:diamond_chestplate",1,1000, 50));
         json.add("recipes", recipes);
         return json;

@@ -260,9 +260,16 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
                 Items.BLACK_WOOL,      Items.BLACK_CARPET)
                 .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 40)));
 
-        // WHITE_BANNER masterpiece — placeholder single-input until
-        // 6.6.5.3 promotes it to true multi-input with stick.
-        r.add(weave(Items.WHITE_WOOL, 6, Items.WHITE_BANNER, 1, 80, 50));
+        // Phase 6.6.5.3 — WHITE_BANNER promoted to true vanilla
+        // multi-input (6 white_wool + 1 stick → 1 banner). Sticks
+        // come from CARPENTER via DirectBusinessChannel — cross-
+        // profession dependency intentional, mirrors LANTERN's
+        // iron_nugget requirement.
+        r.add(ProductionRecipe.of(
+                Map.of(Items.WHITE_WOOL, 6, Items.STICK, 1),
+                Items.WHITE_BANNER, 1, 80)
+                .withSkillRequirement(
+                        tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAVING, 50));
 
         // Phase 6.6.1.5 — removed lead-recipe stub comment. The previous
         // note pointed at a multi-input lead recipe that was never wired:

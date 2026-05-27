@@ -41,6 +41,45 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
     /** Set in chooseRecipe; read by buildSteps, resolveInputSource, fuelPerBatch. */
     private boolean isSmeltRecipe = false;
 
+    // Phase 6.6.5.3 — multi-input masterpieces. Inline ProductionRecipe.of(Map.of(...))
+    // instances; live alongside the JSON-loaded single-input recipes per the
+    // Option A1 hybrid. Diamond tools now require genuine stick handles
+    // (sourced from CARPENTER via DirectBusinessChannel); NETHERITE_INGOT
+    // is the GENERALIST masterpiece (deferred from 6.6.2.3 pending schema
+    // support — now unblocked).
+    //
+    // Dormancy chains (recipe ships ready, activates when input source
+    // exists — same self-activating pattern as MILLER SUGAR, BAKER PASTRY):
+    //   DIAMOND_PICKAXE / DIAMOND_SWORD → diamond from MINER (deferred)
+    //   NETHERITE_INGOT → netherite_scrap from Nether mining / merchant
+    //                     (deferred); gold_ingot from this profession's
+    //                     own smelting chain (works today).
+    private static final ProductionRecipe MAKE_DIAMOND_PICKAXE = ProductionRecipe.of(
+            Map.of(Items.DIAMOND, 3, Items.STICK, 2),
+            Items.DIAMOND_PICKAXE, 1, 600)
+            .withSkillRequirement(
+                    tterrag1112.life_in_the_village.Npc.Skills.Skill.TOOLSMITHING, 50);
+    private static final ProductionRecipe MAKE_DIAMOND_SWORD = ProductionRecipe.of(
+            Map.of(Items.DIAMOND, 2, Items.STICK, 1),
+            Items.DIAMOND_SWORD, 1, 500)
+            .withSkillRequirement(
+                    tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAPONSMITHING, 50);
+    private static final ProductionRecipe MAKE_NETHERITE_INGOT = ProductionRecipe.of(
+            Map.of(Items.NETHERITE_SCRAP, 4, Items.GOLD_INGOT, 4),
+            Items.NETHERITE_INGOT, 1, 1200)
+            .withSkillRequirement(
+                    tterrag1112.life_in_the_village.Npc.Skills.Skill.BLACKSMITHING, 65);
+
+    /** Inline crafting masterpieces appended to the JSON-loaded list. */
+    private static final List<ProductionRecipe> INLINE_CRAFTING_RECIPES = List.of(
+            MAKE_DIAMOND_PICKAXE, MAKE_DIAMOND_SWORD);
+
+    /** Inline smelting masterpieces appended to the JSON-loaded smelting list.
+     *  NETHERITE_INGOT smelt-flavor recipe uses the furnace workstation +
+     *  coal fuel via the existing isSmeltRecipe branch. */
+    private static final List<ProductionRecipe> INLINE_SMELTING_RECIPES = List.of(
+            MAKE_NETHERITE_INGOT);
+
     
 
     // =========================================================================
@@ -70,22 +109,29 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         // class meetsSkillRequirements (6.4.10.1); per-profession
         // meetsSkillGate helper removed.
         BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
+        // Phase 6.6.5.3 — concatenate JSON-loaded + inline masterpiece
+        // recipes for each flavor. Inline masterpieces participate in
+        // iteration on equal footing with JSON-loaded recipes.
+        List<ProductionRecipe> allSmelting = concat(data.getSmeltingRecipes(),
+                INLINE_SMELTING_RECIPES);
+        List<ProductionRecipe> allCrafting = concat(data.getCraftingRecipes(),
+                INLINE_CRAFTING_RECIPES);
         Optional<Item> target = productionTarget(level, building);
 
         // ── Try to fill the priority target (commission overrides bias) ─────
         if (target.isPresent()) {
             Item t = target.get();
 
-            for (ProductionRecipe r : data.getSmeltingRecipes()) {
+            for (ProductionRecipe r : allSmelting) {
                 if (r.output() != t) continue;
                 if (!meetsSkillRequirements(r)) continue;
-                if (countFromOreSource(level, smeltInput(r)) > 0) {
+                if (smeltInputsAvailable(level, r)) {
                     isSmeltRecipe = true;
                     return Optional.of(r);
                 }
             }
 
-            for (ProductionRecipe r : data.getCraftingRecipes()) {
+            for (ProductionRecipe r : allCrafting) {
                 if (r.output() != t) continue;
                 if (!meetsSkillRequirements(r)) continue;
                 if (hasAllInputs(level, building, r)) {
@@ -97,12 +143,12 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
 
         // ── Opportunistic: smelt any available ore (no spec bias — ingots
         //     are intermediate goods, no specialty has preference) ──────────
-        for (ProductionRecipe r : data.getSmeltingRecipes()) {
+        for (ProductionRecipe r : allSmelting) {
             if (!meetsSkillRequirements(r)) continue;
-            int oreAvail  = countFromOreSource(level, smeltInput(r));
+            if (!smeltInputsAvailable(level, r)) continue;
             int ingotStock = BuildingStorageAccess.countItem(level, building, r.output());
             int quota     = stockQuotas().getOrDefault(r.output(), 0);
-            if (oreAvail > 0 && ingotStock < quota) {
+            if (ingotStock < quota) {
                 isSmeltRecipe = true;
                 return Optional.of(r);
             }
@@ -112,7 +158,7 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         ProductionRecipe best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
         BlacksmithSpecialization spec = getSpecialization(BlacksmithSpecialization.class);
-        for (ProductionRecipe r : data.getCraftingRecipes()) {
+        for (ProductionRecipe r : allCrafting) {
             if (!meetsSkillRequirements(r)) continue;
             if (!hasAllInputs(level, building, r)) continue;
             int stock = BuildingStorageAccess.countItem(level, building, r.output());
@@ -128,6 +174,40 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         }
 
         return Optional.empty();
+    }
+
+    private static List<ProductionRecipe> concat(List<ProductionRecipe> a,
+                                                 List<ProductionRecipe> b) {
+        if (b.isEmpty()) return a;
+        List<ProductionRecipe> out = new ArrayList<>(a.size() + b.size());
+        out.addAll(a);
+        out.addAll(b);
+        return out;
+    }
+
+    /** Smelt-flavor input check. JSON-loaded smelting recipes are
+     *  single-input (ore from mine/stockpile); inline multi-input
+     *  smelting (NETHERITE_INGOT: scrap + gold_ingot) checks every
+     *  input — scrap via ore source, gold_ingot from this building's
+     *  own smelt stock. */
+    private boolean smeltInputsAvailable(ServerLevel level, ProductionRecipe r) {
+        // Single-input case: classic ore-from-mine lookup.
+        if (r.inputs().size() == 1) {
+            return countFromOreSource(level, smeltInput(r)) > 0;
+        }
+        // Multi-input case: every input must be present in workBuilding
+        // (BlacksmithProductionBehavior accumulates intermediate ingots
+        // like gold_ingot here) or in the ore source (raw inputs like
+        // netherite_scrap).
+        Building oreSource = findOreSource(level);
+        for (var e : r.inputs().entrySet()) {
+            int avail = BuildingStorageAccess.countItem(level, workBuilding, e.getKey());
+            if (avail < e.getValue() && oreSource != null) {
+                avail += BuildingStorageAccess.countItem(level, oreSource, e.getKey());
+            }
+            if (avail < e.getValue()) return false;
+        }
+        return true;
     }
 
     /** Smelting recipes have exactly one input (single-input JSON schema).
@@ -242,20 +322,26 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
     @Override
     protected Map<Item, Integer> stockQuotas() {
         return Map.ofEntries(
-                Map.entry(Items.IRON_INGOT,       32),
-                Map.entry(Items.GOLD_INGOT,        8),
-                Map.entry(Items.COPPER_INGOT,     16),
-                Map.entry(Items.IRON_SWORD,        4),
-                Map.entry(Items.IRON_PICKAXE,      4),
-                Map.entry(Items.IRON_AXE,          4),
-                Map.entry(Items.IRON_SHOVEL,       2),
-                Map.entry(Items.IRON_HOE,          2),
-                Map.entry(Items.IRON_HELMET,       2),
-                Map.entry(Items.IRON_CHESTPLATE,   2),
-                Map.entry(Items.IRON_LEGGINGS,     2),
-                Map.entry(Items.IRON_BOOTS,        2),
-                Map.entry(Items.GOLDEN_SWORD,      1),
-                Map.entry(Items.GOLDEN_HELMET,     1));
+                Map.entry(Items.IRON_INGOT,         32),
+                Map.entry(Items.GOLD_INGOT,          8),
+                Map.entry(Items.COPPER_INGOT,       16),
+                Map.entry(Items.IRON_SWORD,          4),
+                Map.entry(Items.IRON_PICKAXE,        4),
+                Map.entry(Items.IRON_AXE,            4),
+                Map.entry(Items.IRON_SHOVEL,         2),
+                Map.entry(Items.IRON_HOE,            2),
+                Map.entry(Items.IRON_HELMET,         2),
+                Map.entry(Items.IRON_CHESTPLATE,     2),
+                Map.entry(Items.IRON_LEGGINGS,       2),
+                Map.entry(Items.IRON_BOOTS,          2),
+                Map.entry(Items.GOLDEN_SWORD,        1),
+                Map.entry(Items.GOLDEN_HELMET,       1),
+                // Phase 6.6.5.3 — masterpiece quotas kept low (dormant
+                // until master-tier blacksmith + input source exist).
+                Map.entry(Items.DIAMOND_PICKAXE,     1),
+                Map.entry(Items.DIAMOND_SWORD,       1),
+                Map.entry(Items.DIAMOND_CHESTPLATE,  1),
+                Map.entry(Items.NETHERITE_INGOT,     1));
     }
 
     @Override
@@ -264,6 +350,8 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         Set<Item> items = new LinkedHashSet<>();
         data.getCraftingRecipes().forEach(r -> items.add(r.output()));
         data.getSmeltingRecipes().forEach(r -> items.add(r.output()));
+        INLINE_CRAFTING_RECIPES.forEach(r -> items.add(r.output()));
+        INLINE_SMELTING_RECIPES.forEach(r -> items.add(r.output()));
         return List.copyOf(items);
     }
 
@@ -271,7 +359,9 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
     protected boolean canProduceItem(Item item) {
         BlacksmithRecipeData data = BlacksmithRecipeRegistry.INSTANCE.getData();
         return data.getSmeltingRecipes().stream().anyMatch(r -> r.output() == item)
-                || data.getCraftingRecipes().stream().anyMatch(r -> r.output() == item);
+                || data.getCraftingRecipes().stream().anyMatch(r -> r.output() == item)
+                || INLINE_CRAFTING_RECIPES.stream().anyMatch(r -> r.output() == item)
+                || INLINE_SMELTING_RECIPES.stream().anyMatch(r -> r.output() == item);
     }
 
     @Override

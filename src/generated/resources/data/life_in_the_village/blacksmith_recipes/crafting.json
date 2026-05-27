@@ -75,22 +75,6 @@
     {
       "count": 1,
       "input": "minecraft:diamond",
-      "input_count": 3,
-      "min_skill_level": 50,
-      "output": "minecraft:diamond_pickaxe",
-      "ticks": 600
-    },
-    {
-      "count": 1,
-      "input": "minecraft:diamond",
-      "input_count": 2,
-      "min_skill_level": 50,
-      "output": "minecraft:diamond_sword",
-      "ticks": 500
-    },
-    {
-      "count": 1,
-      "input": "minecraft:diamond",
       "input_count": 8,
       "min_skill_level": 50,
       "output": "minecraft:diamond_chestplate",
