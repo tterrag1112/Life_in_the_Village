@@ -511,7 +511,15 @@ public class FarmPlot {
         CROP_FIELD,
 
         /** Fenced grass area for livestock - no farmland */
-        ANIMAL_PEN;
+        ANIMAL_PEN,
+
+        /** Phase 6.7.2 — apiary plot (hives + supporting flower garden).
+         *  Reserved enum value only; placement generation, hive-block
+         *  layout, and flower planting are deferred to a dedicated
+         *  pass. Until then no plot reports this subtype, so
+         *  exhaustive switches on existing call sites stay correct
+         *  (no realiser implementation yet). */
+        APIARY;
 
         public boolean isCropPlot() {
             return this == CROP_FIELD;
