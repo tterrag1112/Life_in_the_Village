@@ -231,8 +231,9 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         if (!BrainNavGuard.canSteerNavigation(entity)) {
             if (!warnedNoNav) {
                 LOGGER.warn("[FarmerBehavior] {} blocked: BrainNavGuard denies "
-                        + "navigation (combat / sit / lock / other steering claim).",
-                        entity.getNpcName());
+                        + "steering — {}",
+                        entity.getNpcName(),
+                        BrainNavGuard.describeNavClaim(entity));
                 warnedNoNav = true;
             }
             return false;
