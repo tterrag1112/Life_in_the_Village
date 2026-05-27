@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Entities.HouseholdData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Schedule.DayPhase;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlot;
 
@@ -169,12 +170,37 @@ public abstract class AbstractHomesteadGoal extends Goal {
 
     // ── Concrete subclasses ────────────────────────────────────────────
 
-    /** SPOUSE-role homestead worker — runs during any WORK_* phase. */
+    /** SPOUSE-role homestead worker — runs during any WORK_* phase
+     *  EXCEPT when the spouse has an active profession with an
+     *  assigned workplace (Phase 6.8.3.2). A SPOUSE who is also a
+     *  FARMER / BAKER / etc. does their profession work during WORK;
+     *  the Spouse Goal would otherwise claim {@code Goal.Flag.MOVE}
+     *  and block the profession Brain behavior via BrainNavGuard.
+     *  A SPOUSE without a profession (housekeeper / homemaker) keeps
+     *  doing homestead chores during WORK as before. */
     public static final class Spouse extends AbstractHomesteadGoal {
         public Spouse(TownspersonMob npc) { super(npc, FamilyRole.SPOUSE); }
         @Override protected boolean phaseAllows(DayPhase phase) {
             return phase != null && phase.isWork();
         }
+        @Override public boolean canUse() {
+            if (hasActiveProfession(npc)) return false;
+            return super.canUse();
+        }
+        @Override public boolean canContinueToUse() {
+            if (hasActiveProfession(npc)) return false;
+            return super.canContinueToUse();
+        }
+    }
+
+    /** True when {@code npc} has both a non-NONE profession AND an
+     *  assigned workplace building. Used by {@link Spouse} to step
+     *  aside in favor of profession Brain behaviors. */
+    private static boolean hasActiveProfession(TownspersonMob npc) {
+        if (npc == null) return false;
+        Profession p = npc.getProfession();
+        if (p == null || p == Profession.NONE) return false;
+        return npc.getAssignedBuildingId().isPresent();
     }
 
     /** CHILD-role homestead helper — runs during SOCIAL phase. */
