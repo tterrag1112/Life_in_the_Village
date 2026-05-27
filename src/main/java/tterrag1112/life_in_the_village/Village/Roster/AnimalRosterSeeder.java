@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Roster;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
@@ -10,31 +11,37 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Phase 6.7.2.2 — eager animal-roster seeding at FarmComplex
+ * Phase 6.7.2.2 / 6.7.3.3 — eager animal-roster seeding at FarmComplex
  * generation time. Before this phase nothing called
  * {@link RosterSavedData#putRoster}, so the simulation cycle was
- * dormant in practice. SHEPHERD content (6.7.2) needs sheep rosters
- * to exist as soon as a pasture is planted; BEEKEEPER (6.7.3) will
- * mirror this for APIARY plots once that subtype's realiser lands.
+ * dormant in practice. SHEPHERD content (6.7.2) and BEEKEEPER content
+ * (6.7.3) both rely on rosters existing as soon as the supporting
+ * plot subtype is planted.
  *
- * <p>Seeding contract per ANIMAL_PEN plot:</p>
+ * <p>Per-subtype species mapping:</p>
  * <ul>
- *   <li>Default species: {@link AnimalRosterDefinitions#SHEEP}
- *       (until pasture-type planning differentiates pen species).</li>
+ *   <li>{@link FarmPlot.PlotSubtype#ANIMAL_PEN} →
+ *       {@link AnimalRosterDefinitions#SHEEP}</li>
+ *   <li>{@link FarmPlot.PlotSubtype#APIARY} →
+ *       {@link AnimalRosterDefinitions#BEE}</li>
+ * </ul>
+ *
+ * <p>Seeding contract (uniform across species):</p>
+ * <ul>
  *   <li>Population: {@code defaultPopulation} from the species
- *       definition (3 sheep).</li>
+ *       definition (3 sheep, 1 bee hive).</li>
  *   <li>All slots start {@code Simulated} and {@code isAdult=true} —
  *       fresh-spawn rosters skip the growth cycle so the first
  *       production tick fires without waiting a day.</li>
- *   <li>{@code boundPlotId = pen.getId()} so
- *       {@link BuildingRoster#realizeNear} spawns sheep at the
- *       pasture origin rather than the farmhouse center.</li>
+ *   <li>{@code boundPlotId = plot.getId()} so
+ *       {@link BuildingRoster#realizeNear} spawns animals at the
+ *       plot origin rather than the farmhouse center.</li>
  * </ul>
  *
  * <p>Idempotent: if a roster for the same (buildingId, definitionId)
  * pair already exists in {@link RosterSavedData}, this helper skips
- * the rebuild. Safe to call multiple times on a complex (e.g.,
- * regenerated via the debug command).</p>
+ * the rebuild (just refreshes the plot binding). Safe to call
+ * multiple times on a complex.</p>
  */
 public final class AnimalRosterSeeder {
 
@@ -43,10 +50,11 @@ public final class AnimalRosterSeeder {
     private AnimalRosterSeeder() {}
 
     /**
-     * Seeds rosters for every ANIMAL_PEN plot in {@code complex}.
-     * Each pasture binds to its own roster; multi-pasture farms get
-     * one roster per pen (pasture rotation chooses the active pen
-     * separately via {@link PastureRotation}).
+     * Seeds rosters for every ANIMAL_PEN and APIARY plot in
+     * {@code complex}. One roster per plot; multi-pen / multi-apiary
+     * farms get one roster per plot (pasture rotation chooses the
+     * active pen separately via {@link PastureRotation}; future
+     * apiary rotation will mirror that).
      */
     public static void seedFor(ServerLevel level,
                                FarmComplex complex,
@@ -54,37 +62,52 @@ public final class AnimalRosterSeeder {
         if (level == null || complex == null || newPlots == null) return;
         RosterSavedData rdata = RosterSavedData.get(level);
         long now = level.getGameTime();
+        UUID buildingId = complex.farmhouseId();
 
         for (FarmPlot plot : newPlots) {
-            if (plot.getSubtype() != FarmPlot.PlotSubtype.ANIMAL_PEN) continue;
-            seedSheepRoster(rdata, complex.farmhouseId(), plot.getId(), now);
+            switch (plot.getSubtype()) {
+                case ANIMAL_PEN ->
+                        seedRoster(rdata, buildingId, plot.getId(),
+                                AnimalRosterDefinitions.SHEEP, now);
+                case APIARY     ->
+                        seedRoster(rdata, buildingId, plot.getId(),
+                                AnimalRosterDefinitions.BEE, now);
+                default         -> { /* CROP_FIELD — no roster */ }
+            }
         }
     }
 
-    private static void seedSheepRoster(RosterSavedData rdata, UUID buildingId,
-                                        UUID penPlotId, long now) {
-        var existing = rdata.getRoster(buildingId, AnimalRosterDefinitions.SHEEP);
+    /**
+     * Idempotent roster seed for a given (building, species) pair.
+     * If the roster already exists, refreshes the plot binding (the
+     * roster may have been seeded against a previous APIARY/PEN whose
+     * plot got replaced by regeneration). Otherwise constructs a
+     * fresh roster with {@code defaultPopulation} adult Simulated
+     * slots and registers it.
+     */
+    private static void seedRoster(RosterSavedData rdata, UUID buildingId,
+                                   UUID plotId, Identifier species, long now) {
+        var existing = rdata.getRoster(buildingId, species);
         if (existing.isPresent()) {
-            existing.get().bindToPlot(penPlotId);
+            existing.get().bindToPlot(plotId);
             rdata.markDirty();
             return;
         }
 
-        var def = RosterRegistry.get(AnimalRosterDefinitions.SHEEP).orElse(null);
+        var def = RosterRegistry.get(species).orElse(null);
         if (def == null) {
-            LOGGER.warn("[AnimalRosterSeeder] SHEEP definition unregistered; "
-                    + "cannot seed roster for {}", buildingId);
+            LOGGER.warn("[AnimalRosterSeeder] {} definition unregistered; "
+                    + "cannot seed roster for {}", species, buildingId);
             return;
         }
-        BuildingRoster roster = new BuildingRoster(buildingId,
-                AnimalRosterDefinitions.SHEEP);
+        BuildingRoster roster = new BuildingRoster(buildingId, species);
         for (int i = 0; i < def.defaultPopulation(); i++) {
             roster.addSimulated(true, now);
         }
-        roster.bindToPlot(penPlotId);
+        roster.bindToPlot(plotId);
         rdata.putRoster(roster);
-        LOGGER.info("[AnimalRosterSeeder] Seeded SHEEP roster ({} adults) at "
-                + "building {} bound to pen {}",
-                def.defaultPopulation(), buildingId, penPlotId);
+        LOGGER.info("[AnimalRosterSeeder] Seeded {} roster ({} adults) at "
+                + "building {} bound to plot {}",
+                species, def.defaultPopulation(), buildingId, plotId);
     }
 }
