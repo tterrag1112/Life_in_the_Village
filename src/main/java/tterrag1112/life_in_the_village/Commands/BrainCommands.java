@@ -66,8 +66,10 @@ public final class BrainCommands {
 
         // Schedule's expectation at current day-time (vanilla Schedule
         // was removed in 1.21.11; this uses our NpcSchedules table).
+        // Phase 6.8.1 — derived from DayPhase via ScheduleResolver
+        // so per-profession phase windows drive the answer.
         Activity expected = tterrag1112.life_in_the_village.Npc.Brain
-                .NpcSchedules.activityAt(dayTime);
+                .NpcSchedules.activityAt(npc, dayTime);
         src.sendSuccess(() -> Component.literal("Schedule expects: " + expected), false);
 
         // Running behaviors
