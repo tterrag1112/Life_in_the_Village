@@ -1,5 +1,7 @@
 package tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop;
 
+import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationTypes;
 import tterrag1112.life_in_the_village.Npc.Specialization.SpecializationDef;
@@ -22,6 +24,8 @@ import java.util.function.Function;
  * key is migrated once via {@link #migrateLegacyNbt}.
  */
 public final class SpecializationManager {
+
+    private static final Logger LOGGER = LogUtils.getLogger();
 
     private SpecializationManager() {}
 
@@ -65,7 +69,15 @@ public final class SpecializationManager {
                                                ProfessionSpecialization spec) {
         SpecializationDef def = SpecializationDefBridge.toDef(spec);
         if (def == null) { npc.getSpecializationComponent().clear(); return true; }
-        return npc.getSpecializationComponent().assign(def, npc, false);
+        var component = npc.getSpecializationComponent();
+        if (component.isLocked()) {
+            LOGGER.info("[SpecializationManager] {} is locked into {}; cannot change to {}.",
+                    npc.getNpcName(),
+                    component.currentId().map(Object::toString).orElse("(none)"),
+                    def.name());
+            return false;
+        }
+        return component.assign(def, npc, false);
     }
 
     @Nullable

@@ -181,9 +181,11 @@ public final class NpcInfoCommand {
         sb.append("NPC ").append(shortId(npc.getUUID()))
                 .append(" (").append(npc.getNpcName()).append(")\n");
         sb.append("  profession     = ").append(npc.getProfession().name()).append("\n");
-        String spec = npc.getSpecializationComponent().currentId()
-                .map(id -> id.toString()).orElse("(none)");
-        sb.append("  specialization = ").append(spec).append("\n");
+        var specComp = npc.getSpecializationComponent();
+        String spec = specComp.currentId().map(id -> id.toString()).orElse("(none)");
+        sb.append("  specialization = ").append(spec);
+        if (specComp.isLocked()) sb.append(" [LOCKED]");
+        sb.append("\n");
     }
 
     private static void appendAssignment(StringBuilder sb, ServerLevel level,
@@ -232,6 +234,7 @@ public final class NpcInfoCommand {
         appendSkillLine(sb, npc, Skill.ORCHARDING);
         appendSkillLine(sb, npc, Skill.ANIMAL_HUSBANDRY);
         appendSkillLine(sb, npc, Skill.BEEKEEPING);
+        appendSkillLine(sb, npc, Skill.SHEPHERDING);
         appendSkillLine(sb, npc, Skill.SOCIAL);
         appendSkillLine(sb, npc, Skill.COMBAT);
     }
