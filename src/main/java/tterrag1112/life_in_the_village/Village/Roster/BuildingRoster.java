@@ -448,6 +448,19 @@ public class BuildingRoster {
                         net.minecraft.world.entity.EntitySpawnReason.NATURAL);
                 if (entity == null) continue;
                 entity.setPos(anchor.getX() + 0.5, anchor.getY() + 1.0, anchor.getZ() + 0.5);
+                // Phase 6.7.2.3 — invoke vanilla finalizeSpawn so
+                // species-specific spawn-time initialization runs.
+                // For SheepEntity this picks wool DyeColor from the
+                // biome's color table (1.21.5+ mechanic); for other
+                // mobs it's the standard finalize hook (no-op or
+                // species-specific). Matches the established pattern
+                // in VillageInhabitantPopulator / KingdomOfficeBootstrap
+                // / ChildBirthBehavior.
+                if (entity instanceof net.minecraft.world.entity.Mob mob) {
+                    mob.finalizeSpawn(level,
+                            level.getCurrentDifficultyAt(anchor),
+                            net.minecraft.world.entity.EntitySpawnReason.NATURAL, null);
+                }
                 if (entity instanceof net.minecraft.world.entity.AgeableMob mob) {
                     if (z.isAdult()) mob.setAge(0); else mob.setAge(-24000);
                 }
