@@ -513,12 +513,12 @@ public class FarmPlot {
         /** Fenced grass area for livestock - no farmland */
         ANIMAL_PEN,
 
-        /** E.bug.4 — Beekeeper-profession plot. Grass interior with
-         *  a placeholder beehive at the centroid; full visual
-         *  design lives in a Track E follow-up. CropType for an
-         *  APIARY plot is left as MIXED for now (see
-         *  FarmComplexPlanner; no dedicated CropType added to
-         *  keep the codec unchanged). */
+        /** Phase 6.7.2 — apiary plot (hives + supporting flower garden).
+         *  Reserved enum value only; placement generation, hive-block
+         *  layout, and flower planting are deferred to a dedicated
+         *  pass. Until then no plot reports this subtype, so
+         *  exhaustive switches on existing call sites stay correct
+         *  (no realiser implementation yet). */
         APIARY;
 
         public boolean isCropPlot() {

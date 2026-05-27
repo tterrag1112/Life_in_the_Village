@@ -22,6 +22,7 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CarpenterP
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerLivestockVisitBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ShepherdBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MillerProductionBehavior;
@@ -121,8 +122,16 @@ public final class ProfessionBrainFactory {
         // ATTACK_TARGET only when the NPC is skill-qualified; children
         // and unskilled farmhands have hazard recorded but don't engage.
         REGISTRARS.put(Profession.FARMER, (npc, brain) -> {
+            // Phase 6.7.2 — ShepherdBehavior precedes FarmerBehavior in
+            // the WORK priority-0 bucket. It gates strictly on
+            // role==SHEPHERD + sheep roster + shears, so it's dormant
+            // for the typical farmer; when active it pre-empts the
+            // generic FarmerBehavior phases via WALK_TARGET memory
+            // contention. FarmerBehavior also explicitly defers via
+            // ShepherdBehavior.hasActionableWork — see FarmerBehavior
+            // .checkExtraStartConditions.
             brain.addActivity(NpcActivities.WORK.get(), 0,
-                    ImmutableList.of(new FarmerBehavior()));
+                    ImmutableList.of(new ShepherdBehavior(), new FarmerBehavior()));
             brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
                     ImmutableList.of(new tterrag1112.life_in_the_village.Npc
                             .Brain.Behaviors.Civic.PredatorScanBehavior()));
@@ -135,7 +144,7 @@ public final class ProfessionBrainFactory {
         // (save migration rewrites FARMHAND-tagged NPCs to FARMER).
         REGISTRARS.put(Profession.FARMHAND, (npc, brain) -> {
             brain.addActivity(NpcActivities.WORK.get(), 0,
-                    ImmutableList.of(new FarmerBehavior()));
+                    ImmutableList.of(new ShepherdBehavior(), new FarmerBehavior()));
             brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
                     ImmutableList.of(new tterrag1112.life_in_the_village.Npc
                             .Brain.Behaviors.Civic.PredatorScanBehavior()));

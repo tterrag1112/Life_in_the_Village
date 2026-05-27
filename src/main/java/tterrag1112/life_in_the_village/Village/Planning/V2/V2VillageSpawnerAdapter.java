@@ -490,6 +490,10 @@ public final class V2VillageSpawnerAdapter {
                             fh.building().getName(), result.status(), result.detail());
                     continue;
                 }
+                // Phase 6.7.2.2 — seed sheep rosters for ANIMAL_PEN
+                // plots produced by this complex generation.
+                tterrag1112.life_in_the_village.Village.Roster.AnimalRosterSeeder
+                        .seedFor(level, result.complex(), result.newPlots());
                 // Prompt B Stage G — render the just-planned complex.
                 // Plots are returned in result.newPlots(); we also
                 // query the persisted store for safety (handles a

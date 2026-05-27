@@ -402,6 +402,12 @@ public final class FarmDebugCommand {
                 /* namePrefix */ village.getName() + "_complex");
         FarmComplexPlanner.PlanResult result =
                 FarmComplexPlanner.planAndPersist(input, data);
+        if (result.success()) {
+            // Phase 6.7.2.2 — seed sheep rosters for newly-minted
+            // ANIMAL_PEN plots. No-op when no pens were planted.
+            tterrag1112.life_in_the_village.Village.Roster.AnimalRosterSeeder
+                    .seedFor(level, result.complex(), result.newPlots());
+        }
 
         if (!result.success()) {
             ctx.getSource().sendFailure(Component.literal(
