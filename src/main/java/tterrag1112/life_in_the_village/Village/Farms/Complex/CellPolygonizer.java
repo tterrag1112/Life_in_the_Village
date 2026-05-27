@@ -137,6 +137,50 @@ public final class CellPolygonizer {
         return Polygon.simplify(raw, 1.0);
     }
 
+    /** E.bug.4 — Chaikin corner-cutting smoothing pass.
+     *
+     *  <p>Replaces each polygon vertex with two new vertices at
+     *  1/4 and 3/4 along the incoming/outgoing edges. One
+     *  iteration rounds off sharp corners; the result reads as
+     *  organic / lobed rather than rectilinear. Vertex count
+     *  doubles per iteration — only used on the OUTER region
+     *  polygon (where high vertex count is fine), never on plot
+     *  perimeters (where the border renderer's edge rasterization
+     *  is per-vertex-pair and keeping them tight is desirable).
+     *
+     *  <p>Output is simplified at 1.5 tolerance to drop the
+     *  smallest 1-block jitter the corner-cutting still leaves,
+     *  yielding a polygon ~1.5× the input vertex count rather
+     *  than 2×.
+     *
+     *  @param poly       input polygon
+     *  @param iterations 1 is the usual call; 2+ gives noticeably
+     *                    smoother / more circular shape
+     *  @return smoothed polygon, or {@code poly} unchanged if it
+     *          has fewer than 4 vertices */
+    public static Polygon chaikinSmooth(Polygon poly, int iterations) {
+        if (poly == null) return null;
+        List<BlockPos> current = poly.vertices();
+        int y = current.isEmpty() ? 0 : current.get(0).getY();
+        for (int iter = 0; iter < iterations && current.size() >= 4; iter++) {
+            int n = current.size();
+            List<BlockPos> next = new ArrayList<>(n * 2);
+            for (int i = 0; i < n; i++) {
+                BlockPos a = current.get(i);
+                BlockPos b = current.get((i + 1) % n);
+                int qx = (int) Math.round(a.getX() * 0.75 + b.getX() * 0.25);
+                int qz = (int) Math.round(a.getZ() * 0.75 + b.getZ() * 0.25);
+                int rx = (int) Math.round(a.getX() * 0.25 + b.getX() * 0.75);
+                int rz = (int) Math.round(a.getZ() * 0.25 + b.getZ() * 0.75);
+                next.add(new BlockPos(qx, y, qz));
+                next.add(new BlockPos(rx, y, rz));
+            }
+            current = next;
+        }
+        if (current.size() < 3) return poly;
+        return Polygon.simplify(new Polygon(current), 1.5);
+    }
+
     /** Pack a grid CORNER coord — same layout as packCell but on
      *  the corner lattice. Kept separate for readability. */
     private static long packCorner(int cx, int cz) {
