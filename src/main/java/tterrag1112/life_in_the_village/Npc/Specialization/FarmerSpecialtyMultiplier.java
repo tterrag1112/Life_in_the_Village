@@ -23,6 +23,10 @@ import tterrag1112.life_in_the_village.Npc.Skills.Skill;
  *       {@code ORCHARDING}</li>
  *   <li>{@code FARMER_ANIMAL_FOCUS} → +50% on {@code ANIMAL_HUSBANDRY}
  *       and {@code BEEKEEPING}</li>
+ *   <li>{@code FARMER_SHEPHERD} → +50% on {@code SHEPHERDING} and
+ *       {@code ANIMAL_HUSBANDRY} (Phase 6.7.1)</li>
+ *   <li>{@code FARMER_BEEKEEPER} → +50% on {@code BEEKEEPING} and
+ *       {@code ANIMAL_HUSBANDRY} (Phase 6.7.1)</li>
  *   <li>{@code FARMER_MIXED} / no spec / mismatch → 1.0</li>
  * </ul>
  */
@@ -53,6 +57,19 @@ public final class FarmerSpecialtyMultiplier {
         }
         if (isAnimalTarget
                 && specId.equals(NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name())) {
+            return SPEC_MATCH_MULTIPLIER;
+        }
+        // Phase 6.7.1 — concrete shepherd / beekeeper specializations.
+        // Match on their primary species sub-skill and on ANIMAL_HUSBANDRY
+        // (cascade parent) so the +50% applies both when XP is awarded
+        // directly to the sub-skill and when behaviors route XP through
+        // the parent axis.
+        if (specId.equals(NpcSpecializationTypes.FARMER_SHEPHERD.name())
+                && (target == Skill.SHEPHERDING || target == Skill.ANIMAL_HUSBANDRY)) {
+            return SPEC_MATCH_MULTIPLIER;
+        }
+        if (specId.equals(NpcSpecializationTypes.FARMER_BEEKEEPER.name())
+                && (target == Skill.BEEKEEPING || target == Skill.ANIMAL_HUSBANDRY)) {
             return SPEC_MATCH_MULTIPLIER;
         }
         return 1.0f;

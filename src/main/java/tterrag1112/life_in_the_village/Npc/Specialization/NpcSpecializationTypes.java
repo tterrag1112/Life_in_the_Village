@@ -159,6 +159,23 @@ public final class NpcSpecializationTypes {
             List.of(new SkillRequirement(Skill.ANIMAL_HUSBANDRY, FOUNDATION)),
             false, SpecializationData.None.INSTANCE));
 
+    // Phase 6.7.1 — concrete animal-husbandry specializations. Siblings to
+    // FARMER_ANIMAL_FOCUS (which remains the generalist-tier animal spec).
+    // Both gated on the species-specific sub-skill ≥ FOUNDATION (20).
+    // Initial inhabitant assignment with the locked flag bypasses the gate
+    // via force=true so a fresh shepherd / beekeeper can start their craft.
+    public static final SpecializationDef FARMER_SHEPHERD = register(new SpecializationDef(
+            id("farmer/shepherd"), Profession.FARMER,
+            Component.literal("Shepherd"),
+            List.of(new SkillRequirement(Skill.SHEPHERDING, FOUNDATION)),
+            false, SpecializationData.None.INSTANCE));
+
+    public static final SpecializationDef FARMER_BEEKEEPER = register(new SpecializationDef(
+            id("farmer/beekeeper"), Profession.FARMER,
+            Component.literal("Beekeeper"),
+            List.of(new SkillRequirement(Skill.BEEKEEPING, FOUNDATION)),
+            false, SpecializationData.None.INSTANCE));
+
     // ── Lookup ───────────────────────────────────────────────────────────
 
     public static Optional<SpecializationDef> byId(Identifier id) {

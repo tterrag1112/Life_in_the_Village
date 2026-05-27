@@ -11,6 +11,12 @@ public enum FarmRole implements tterrag1112.life_in_the_village.Profession.Roles
     MARKET_SELLER,
     ANIMAL_TENDER,
     FERTILIZER,
+    /** Phase 6.7.1 — concrete species-specific animal role. Pinned by
+     *  locked FARMER_SHEPHERD specialization in FarmRoleAssigner. */
+    SHEPHERD,
+    /** Phase 6.7.1 — concrete species-specific animal role. Pinned by
+     *  locked FARMER_BEEKEEPER specialization in FarmRoleAssigner. */
+    BEEKEEPER,
     /** Learner hired via an APPRENTICE job posting (FARMHAND profession was
      *  folded into FARMER+APPRENTICE tier in 6.3.3.f). Works at 60% speed. */
     APPRENTICE;

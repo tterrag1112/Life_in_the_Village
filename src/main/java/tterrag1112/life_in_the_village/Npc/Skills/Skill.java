@@ -57,6 +57,13 @@ public enum Skill {
      *  no formal Specialization needed. */
     BEEKEEPING(ANIMAL_HUSBANDRY, 0.25),
 
+    // ── Tier 2 (Phase 6.7.1 additions — shepherding) ───────────────────────
+    /** Shepherding sub-skill. Cascades 25% → ANIMAL_HUSBANDRY (then 25%
+     *  → FARMING). Sibling to BEEKEEPING in the animal-husbandry domain;
+     *  primary axis for FARMER_SHEPHERD specialization. Earned from
+     *  shearing, sheep breeding, and pen rotation work (6.7.2 content). */
+    SHEPHERDING(ANIMAL_HUSBANDRY, 0.25),
+
     // ── Tier 1 (Phase 6.3.3.i additions — crop specialization) ─────────────
     /** Crop-farming sub-skill. Cascades 25% → FARMING. Earned from
      *  harvest / replant on non-ORCHARD crop plots. The crop_focus
