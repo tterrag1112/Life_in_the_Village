@@ -1623,14 +1623,18 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .FollowEscortLeaderBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .ElderlyRelaxBehavior(),
-                        // Phase 6.4.5 — opportunistic homestead-skill behaviors.
-                        // Each self-gates on workstation presence, family stock,
-                        // and motive (economic OR LEISURE-hobby). Universal
-                        // (no profession restriction) — any seeded skill works.
+                        // Phase 6.4.5 + 6.6.6 — opportunistic homestead-skill behaviors.
+                        // Each self-gates on workstation presence (where applicable),
+                        // family stock, and motive (economic OR LEISURE-hobby).
+                        // Universal (no profession restriction) — any seeded skill works.
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .Homestead.HomeBakingBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .Homestead.HomeMillingBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Homestead.HomeWeavingBehavior(),
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Homestead.HomeCandlemakingBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior()
                 );

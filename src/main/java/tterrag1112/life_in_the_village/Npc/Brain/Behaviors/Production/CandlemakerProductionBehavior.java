@@ -33,7 +33,10 @@ public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
     // 1 stick + 1 coal → 4 torches (vanilla 1 stick + 1 coal = 4 torches, 40 ticks).
     // Entry-tier — no skill gate. Both inputs sourceable today
     // (sticks via CARPENTER, coal via MINER fallback / merchant).
-    private static final ProductionRecipe MAKE_TORCH = ProductionRecipe.of(
+    // Phase 6.6.6 — public so HomeCandlemakingBehavior can reuse the
+    // same recipe. MAKE_CANDLE stays private (honeycomb is rate-limited
+    // by future BEEKEEPER content; homestead-tier doesn't need it).
+    public static final ProductionRecipe MAKE_TORCH = ProductionRecipe.of(
             Map.of(Items.STICK, 1, Items.COAL, 1),
             Items.TORCH, 4, 40);
 

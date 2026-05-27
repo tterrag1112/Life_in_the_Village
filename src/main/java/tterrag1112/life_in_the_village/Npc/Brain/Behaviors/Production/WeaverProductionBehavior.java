@@ -33,7 +33,10 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
     // String spinning: 4 string → 1 white wool (useful when sheep are scarce).
     // Phase 6.6.5 — migrated to ProductionRecipe; kept as named static for
     // readability (referenced by name in buildRecipes below).
-    private static final ProductionRecipe SPIN_STRING =
+    // Phase 6.6.6 — public so HomeWeavingBehavior can reuse the same recipe
+    // (single source of truth; same precedent as 6.4.5.1 widening of
+    // WHEAT_TO_BREAD for HomeBakingBehavior).
+    public static final ProductionRecipe SPIN_STRING =
             ProductionRecipe.of(Items.STRING, 4, Items.WHITE_WOOL, 1, 60);
 
     private static final List<ProductionRecipe> RECIPES = buildRecipes();
