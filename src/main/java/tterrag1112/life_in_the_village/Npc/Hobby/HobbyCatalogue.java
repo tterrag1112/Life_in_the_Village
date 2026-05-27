@@ -212,6 +212,32 @@ public final class HobbyCatalogue {
                 .grants(Skill.BAKING, 1)
                 .build());
 
+        // Phase 6.6.6.4 — homestead-skill drift hobbies, siblings to
+        // home_cooking. Each trains a profession-adjacent CRAFTING
+        // sub-skill via the same +1 XP/session magnitude, so emergent
+        // backup weavers / chandlers develop over years of practice.
+        // Activity visual reuses SIT_AND_CARVE (handwork pose) — both
+        // are "sitting calmly working with the hands" in animation.
+        register(HobbyDefinition.builder("home_weaving")
+                .display("Spinning at home")
+                .at(HobbyLocation.HOME)
+                .activity(HobbyActivity.SIT_AND_CARVE)
+                .duration(600)
+                .weight(TraitAxis.COMPASSION, 0.4f)
+                .weight(TraitAxis.INDUSTRY, -0.2f)
+                .grants(Skill.WEAVING, 1)
+                .build());
+
+        register(HobbyDefinition.builder("home_chandlery")
+                .display("Making candles at home")
+                .at(HobbyLocation.HOME)
+                .activity(HobbyActivity.SIT_AND_CARVE)
+                .duration(500)
+                .weight(TraitAxis.TEMPERANCE, 0.4f)
+                .weight(TraitAxis.COMPASSION, 0.3f)
+                .grants(Skill.CANDLEMAKING, 1)
+                .build());
+
         register(HobbyDefinition.builder("write_letter")
                 .display("Writing letters")
                 .at(HobbyLocation.HOME)
