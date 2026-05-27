@@ -77,11 +77,21 @@ public final class FarmComplexRenderer {
                 PathRenderer.DEFAULT_HEAD_CLEARANCE);
         PathRenderer.render(complex.pathSegments(), pathPalette, level);
 
-        // 2. Borders. The path-cell set is built from the complex's
-        //    PathSegment list (the registry the complex already
-        //    maintains) — borders consult it via the BorderGenerator
-        //    interface, no block-state lookup needed.
+        // E.bug.4 — footpath cells: cells inside the region but
+        // outside every plot polygon. BSP leaves a gap between
+        // adjacent plots; the gap cells become this complex's
+        // inter-plot footpath network. Painted with the same
+        // path material as the spine/branches, then joined to the
+        // pathCells set so borders skip them just like the main
+        // paths.
+        Set<Long> footpathCells = deriveFootpathCells(complex, plots);
+        paintFootpathCells(footpathCells, roadMaterial, level);
+
+        // 2. Borders. The path-cell set is the rasterized
+        //    PathSegments PLUS the derived footpath cells —
+        //    borders skip both via the same Set<Long>.
         Set<Long> pathCells = rasterizePathCells(complex.pathSegments());
+        pathCells.addAll(footpathCells);
         renderBorders(complex, plots, culture, level, rng, pathCells);
 
         // 3. Plot interiors.
@@ -108,6 +118,67 @@ public final class FarmComplexRenderer {
     // =========================================================================
     // Path-cell registry
     // =========================================================================
+
+    /** E.bug.4 — derive the inter-plot footpath cells at render
+     *  time. With BSP leaving a {@code FOOTPATH_BLOCKS}-wide gap
+     *  between adjacent plot rects, the cells in that gap satisfy:
+     *  inside region polygon AND outside every plot polygon. We
+     *  walk the region's bounding box at 1-block step and collect
+     *  the qualifying cells.
+     *
+     *  <p>Cost: O(regionBBoxArea × plotCount) point-in-poly checks.
+     *  For a typical 600-cell (~50×50 block) complex with 4-6
+     *  plots that's ~15k checks total — negligible at render time. */
+    static Set<Long> deriveFootpathCells(FarmComplex complex, List<FarmPlot> plots) {
+        Set<Long> footpath = new HashSet<>();
+        if (complex.region() == null) return footpath;
+        Polygon region = complex.region();
+        Polygon.AABB bb = Polygon.boundingBox(region);
+        List<Polygon> plotPolys = new ArrayList<>(plots.size());
+        for (FarmPlot p : plots) {
+            if (p != null && p.getPolygon() != null) plotPolys.add(p.getPolygon());
+        }
+        for (int x = bb.minX(); x <= bb.maxX(); x++) {
+            outer:
+            for (int z = bb.minZ(); z <= bb.maxZ(); z++) {
+                if (!Polygon.contains(region, x, z)) continue;
+                for (Polygon pp : plotPolys) {
+                    if (Polygon.contains(pp, x, z)) continue outer;
+                }
+                footpath.add(packXZ(x, z));
+            }
+        }
+        return footpath;
+    }
+
+    /** Paint footpath cells with the culture's road material.
+     *  Uses the same surface / replaceability checks as
+     *  PathRenderer so the visual is consistent with the spine
+     *  and branches. */
+    private static void paintFootpathCells(Set<Long> cells,
+                                            net.minecraft.world.level.block.state.BlockState material,
+                                            ServerLevel level) {
+        for (Long cell : cells) {
+            int x = (int) (cell >> 32);
+            int z = (int) (long) cell;
+            int y = level.getHeight(net.minecraft.world.level.levelgen
+                    .Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+            if (y < level.getMinY()) continue;
+            BlockPos surf = new BlockPos(x, y, z);
+            var s = level.getBlockState(surf);
+            // Same surface filter PathRenderer uses — replaceable
+            // grass/dirt-family blocks only.
+            if (!s.is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK)
+                    && !s.is(net.minecraft.world.level.block.Blocks.DIRT)
+                    && !s.is(net.minecraft.world.level.block.Blocks.COARSE_DIRT)
+                    && !s.is(net.minecraft.world.level.block.Blocks.PODZOL)
+                    && !s.is(net.minecraft.world.level.block.Blocks.MUD)
+                    && !s.is(net.minecraft.world.level.block.Blocks.DIRT_PATH)) {
+                continue;
+            }
+            level.setBlock(surf, material, 3);
+        }
+    }
 
     /** Pack an XZ pair into a long matching
      *  {@link tterrag1112.life_in_the_village.Village.Farms.Complex.CellPolygonizer#packCell}'s

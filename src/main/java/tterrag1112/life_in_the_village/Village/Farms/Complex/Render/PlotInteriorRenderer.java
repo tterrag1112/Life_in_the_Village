@@ -59,6 +59,19 @@ public final class PlotInteriorRenderer {
 
         Polygon.AABB bb = Polygon.boundingBox(poly);
 
+        // E.bug.4 — APIARY plots use a dedicated stub: grass
+        // interior + placeholder beehive at the centroid. Full
+        // visual design is a Track E follow-up. Dispatched by
+        // subtype before the per-cell-by-crop loop because the
+        // CropType for an apiary is MIXED (placeholder) — we
+        // can't distinguish via crop alone.
+        // TODO Track E: apiary visual design (flower meadow,
+        // multi-hive arrangement, beekeeper paths).
+        if (plot.getSubtype() == FarmPlot.PlotSubtype.APIARY) {
+            renderApiary(plot, poly, bb, level, rng);
+            return;
+        }
+
         // Pre-compute row axis for MIXED/GRAIN stripe direction.
         // Stripes align with the longer side; the index modulo 3
         // along that axis selects the crop in MIXED.
@@ -84,6 +97,47 @@ public final class PlotInteriorRenderer {
         }
         // Orchard trees are placed inline during the cell walk
         // (sparse-grid filter); no post-pass.
+    }
+
+    /** E.bug.4 stub — APIARY plot interior. Leaves grass; places a
+     *  single bee_nest at the plot centroid plus a few short-grass
+     *  decorations. Track E owns the real visual: clusters of
+     *  beehives on stripped logs, flower meadow, beekeeper path. */
+    private static void renderApiary(FarmPlot plot, Polygon poly,
+                                       Polygon.AABB bb,
+                                       ServerLevel level, Random rng) {
+        for (int x = bb.minX(); x <= bb.maxX(); x++) {
+            for (int z = bb.minZ(); z <= bb.maxZ(); z++) {
+                if (!Polygon.contains(poly, x, z)) continue;
+                int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                if (y < level.getMinY()) continue;
+                BlockPos surface = new BlockPos(x, y, z);
+                BlockState top = level.getBlockState(surface);
+                if (top.is(Blocks.DIRT_PATH)) continue;
+                if (!top.is(Blocks.GRASS_BLOCK) && !top.is(Blocks.DIRT)
+                        && !top.is(Blocks.COARSE_DIRT)) continue;
+                if (top.is(Blocks.DIRT) || top.is(Blocks.COARSE_DIRT)) {
+                    level.setBlock(surface, Blocks.GRASS_BLOCK.defaultBlockState(), 3);
+                }
+                BlockPos above = surface.above();
+                BlockState aboveState = level.getBlockState(above);
+                if (!aboveState.isAir() && !aboveState.canBeReplaced()) continue;
+                if (rng.nextInt(6) == 0) {
+                    level.setBlock(above, Blocks.SHORT_GRASS.defaultBlockState(), 3);
+                }
+            }
+        }
+        // Placeholder hive at the centroid.
+        BlockPos centroid = plot.getOrigin();
+        if (centroid != null) {
+            int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                    centroid.getX(), centroid.getZ());
+            BlockPos hivePos = new BlockPos(centroid.getX(), y, centroid.getZ());
+            BlockState here = level.getBlockState(hivePos);
+            if (here.isAir() || here.canBeReplaced()) {
+                level.setBlock(hivePos, Blocks.BEE_NEST.defaultBlockState(), 3);
+            }
+        }
     }
 
     /** Roll a plot's base growth stage from the maturity-class

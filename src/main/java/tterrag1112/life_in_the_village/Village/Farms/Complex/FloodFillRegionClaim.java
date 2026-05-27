@@ -231,6 +231,17 @@ public final class FloodFillRegionClaim {
             return fail(in, FailReason.INSUFFICIENT_AREA,
                     "Polygon construction failed (degenerate boundary).");
         }
+        // E.bug.4 — soften the outer region silhouette. Chaikin
+        // corner-cutting once rounds the BSP-grid-aligned vertices
+        // produced by polygonize, removing the rectilinear "near-
+        // square" look without going back to the diamond extreme.
+        // Plot polygons (from BspSubdivider per leaf) stay tight —
+        // smoothing only applied here on the region.
+        polygon = CellPolygonizer.chaikinSmooth(polygon, 1);
+        if (polygon == null || polygon.vertices().size() < 3) {
+            return fail(in, FailReason.INSUFFICIENT_AREA,
+                    "Region polygon collapsed during smoothing.");
+        }
         boolean tight = admitted.size() < TIGHT_FRACTION * budget;
         return new Result(polygon, admitted, admitted.size(), budget,
                 tight, null, null);
@@ -238,8 +249,12 @@ public final class FloodFillRegionClaim {
 
     /** Fraction of boundary cells dropped during roughening.
      *  Tuned so the perimeter reads as organic / ragged without
-     *  fragmenting the region or punching obvious notches. */
-    private static final double BOUNDARY_DROP_RATE = 0.18;
+     *  fragmenting the region or punching obvious notches.
+     *  E.bug.4: lowered 0.18 → 0.10 to drop fewer small notches
+     *  (the "squiggles"); CellPolygonizer adds a Chaikin smoothing
+     *  pass on the region polygon which finishes the softening
+     *  without requiring more aggressive roughening here. */
+    private static final double BOUNDARY_DROP_RATE = 0.10;
 
     /** Identify boundary cells (cells with at least one missing
      *  neighbour out of the 8 directions), then remove a

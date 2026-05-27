@@ -282,14 +282,27 @@ public final class FarmComplexPlanner {
                 in.farmhouseId().getLeastSignificantBits());
         String namePrefix = in.namePrefix() != null
                 ? in.namePrefix() : "complex";
+        // E.bug.4 — APIARY subtype assignment. Deterministic per
+        // plotIndex via the per-complex seed: roughly 1-in-10 crop-
+        // field plots become an apiary. CropType remains MIXED for
+        // those — no dedicated apiary CropType added to keep the
+        // existing FarmPlot codec untouched.
+        // TODO Track E: dedicated CropType.HONEY for apiary plots.
+        java.util.Random apiaryRng = new java.util.Random(in.seed() ^ 0xA9_1A_BEEL);
         List<FarmPlot> newPlots = new ArrayList<>(bsp.plots().size());
         for (PlotPlan pp : bsp.plots()) {
             UUID plotId = UUID.randomUUID();
             FarmPlot.CropType crop = pp.crop() == null
                     ? FarmPlot.CropType.WHEAT : pp.crop();
-            FarmPlot.PlotSubtype subtype = crop == FarmPlot.CropType.PASTURE
-                    ? FarmPlot.PlotSubtype.ANIMAL_PEN
-                    : FarmPlot.PlotSubtype.CROP_FIELD;
+            FarmPlot.PlotSubtype subtype;
+            if (crop == FarmPlot.CropType.PASTURE) {
+                subtype = FarmPlot.PlotSubtype.ANIMAL_PEN;
+            } else if (apiaryRng.nextDouble() < APIARY_PROMOTION_RATE) {
+                subtype = FarmPlot.PlotSubtype.APIARY;
+                crop = FarmPlot.CropType.MIXED;   // placeholder; see TODO above
+            } else {
+                subtype = FarmPlot.PlotSubtype.CROP_FIELD;
+            }
             String name = namePrefix + "_" + (pp.plotIndex() + 1)
                     + "_" + subtype.name().toLowerCase();
             BlockPos plotOrigin = plotOriginAtSurface(
@@ -405,6 +418,12 @@ public final class FarmComplexPlanner {
      *  {@link #APRON_DEPTH} blocks deep along {@code extendsToward},
      *  abutting the farmhouse footprint with no gap. */
     private static final int APRON_DEPTH = 4;
+
+    /** E.bug.4 — fraction of non-pasture plots promoted to APIARY
+     *  subtype. Tunable. 10% feels sparse-enough that an APIARY
+     *  reads as a distinctive feature rather than the dominant
+     *  plot type. */
+    private static final double APIARY_PROMOTION_RATE = 0.10;
 
     private static Polygon buildApronPolygon(Input in) {
         BlockPos o = in.farmhouseOrigin();

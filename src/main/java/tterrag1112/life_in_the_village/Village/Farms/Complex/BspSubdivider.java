@@ -225,26 +225,46 @@ public final class BspSubdivider {
             out.add(rect);
             return;
         }
+        // E.bug.4 — Leave a {@link #FOOTPATH_BLOCKS} gap between
+        // children so adjacent plots never share a border edge.
+        // The gap cells become footpath territory: they're inside
+        // the region polygon, not in any plot polygon, and
+        // FarmComplexRenderer rasterizes them into pathCells at
+        // render time so paths cross there and borders skip them.
         // Cut at a random position in the middle 50% of the axis.
         int cut;
+        int gapHalf = FOOTPATH_BLOCKS / 2;
         if (axis == 0) {
             int lo = rect[0] + w / 4;
             int hi = rect[2] - w / 4;
             cut = lo + rng.nextInt(Math.max(1, hi - lo + 1));
-            int[] left  = new int[]{rect[0], rect[1], cut,     rect[3]};
-            int[] right = new int[]{cut,     rect[1], rect[2], rect[3]};
+            int[] left  = new int[]{rect[0],          rect[1],
+                                     cut - gapHalf,    rect[3]};
+            int[] right = new int[]{cut + gapHalf,    rect[1],
+                                     rect[2],          rect[3]};
             recurse(left,  1, stopArea, minSideBlocks, rng, out);
             recurse(right, 1, stopArea, minSideBlocks, rng, out);
         } else {
             int lo = rect[1] + h / 4;
             int hi = rect[3] - h / 4;
             cut = lo + rng.nextInt(Math.max(1, hi - lo + 1));
-            int[] top    = new int[]{rect[0], rect[1], rect[2], cut};
-            int[] bottom = new int[]{rect[0], cut,     rect[2], rect[3]};
+            int[] top    = new int[]{rect[0],          rect[1],
+                                     rect[2],          cut - gapHalf};
+            int[] bottom = new int[]{rect[0],          cut + gapHalf,
+                                     rect[2],          rect[3]};
             recurse(top,    0, stopArea, minSideBlocks, rng, out);
             recurse(bottom, 0, stopArea, minSideBlocks, rng, out);
         }
     }
+
+    /** E.bug.4 — width of the footpath inserted between adjacent
+     *  BSP plots, in blocks. Each child rect shrinks by half this
+     *  amount along the cut axis, so the gap between two adjacent
+     *  plots is exactly this many blocks. The cells in the gap
+     *  fall inside the region polygon but outside every plot
+     *  polygon → derived as footpath cells at render time.
+     *  Tunable per visual feedback. */
+    private static final int FOOTPATH_BLOCKS = 2;
 
     // ── Crop assignment (size-aware) ──────────────────────────────────
 
