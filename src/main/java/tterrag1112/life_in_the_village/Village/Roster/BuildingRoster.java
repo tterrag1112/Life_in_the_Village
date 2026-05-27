@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -60,8 +61,31 @@ import java.util.UUID;
  * (1 - diseaseLevel × DISEASE_OUTPUT_PENALTY_PER_LEVEL); subclasses
  * overriding the hook should respect that semantics or apply their
  * own health-aware scaling.</p>
+ *
+ * <h3>Phase 6.7.1.5 — chunk-aware production gate</h3>
+ * <p>For species in {@link #GATED_SPECIES}, the per-cycle production
+ * loop only fires for {@code Simulated} slots. {@code Realized} slots
+ * are expected to have their production driven by an NPC behavior
+ * that physically interacts with the entity (e.g., SHEPHERD shearing
+ * a sheep, BEEKEEPER harvesting honeycomb), so summing both paths
+ * would double-count. Non-gated species ({@code CHICKEN}, {@code PIG},
+ * {@code COW}) retain the legacy "every adult produces" semantics
+ * until their commercial behaviors land — at which point they should
+ * be added to the gated set.</p>
  */
 public class BuildingRoster {
+
+    /**
+     * Phase 6.7.1.5 — species whose Realized slots are EXCLUDED from
+     * the simulation-cycle production count. A commercial NPC behavior
+     * is expected to drive production for realized members of these
+     * species (SHEPHERD for sheep in 6.7.2, BEEKEEPER for bees in
+     * 6.7.3). Other species keep the legacy slot-type-agnostic path
+     * until they get their own commercial behavior.
+     */
+    private static final Set<Identifier> GATED_SPECIES = Set.of(
+            AnimalRosterDefinitions.SHEEP,
+            AnimalRosterDefinitions.BEE);
 
     private final UUID buildingId;
     private final Identifier rosterDefinitionId;
@@ -173,6 +197,26 @@ public class BuildingRoster {
         return n;
     }
 
+    /**
+     * Phase 6.7.1.5 — adult count restricted to {@code Simulated}
+     * slots. Used by the production cycle for gated species so
+     * realized animals (driven by commercial behaviors) don't
+     * double-count against simulation-cycle output.
+     */
+    public int countSimulatedAdults() {
+        int n = 0;
+        for (RosterSlot s : slots) {
+            if (s.isAdult() && s instanceof RosterSlot.Simulated) n++;
+        }
+        return n;
+    }
+
+    /** Phase 6.7.1.5 — true iff this roster's species opts into the
+     *  simulation/realization mutual exclusion. */
+    public boolean isProductionGated() {
+        return GATED_SPECIES.contains(rosterDefinitionId);
+    }
+
     public int countBabies() {
         int n = 0;
         for (RosterSlot s : slots) if (!s.isAdult()) n++;
@@ -248,8 +292,14 @@ public class BuildingRoster {
         }
 
         // Production cycle.
+        // Phase 6.7.1.5 — gated species (SHEEP, BEE) only count Simulated
+        // adults; realized members are expected to produce via a
+        // commercial NPC behavior (SHEPHERD in 6.7.2, BEEKEEPER in
+        // 6.7.3). lastProductionTick still advances on the cycle
+        // boundary so all-realized rosters don't accumulate a debt that
+        // would dump on the next derealize.
         if (now - lastProductionTick >= def.productionPeriodTicks()) {
-            int adults = countAdults();
+            int adults = isProductionGated() ? countSimulatedAdults() : countAdults();
             for (int i = 0; i < adults; i++) onProductionCycle(def, sink);
             lastProductionTick = now;
         }

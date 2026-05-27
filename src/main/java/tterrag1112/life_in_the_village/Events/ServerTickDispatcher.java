@@ -81,10 +81,14 @@ public class ServerTickDispatcher {
         TickSubsystemRegistry.tickAll(ctx);
 
         // ── Phase 6.3.3.g.1 — animal-husbandry roster driver ─────────────────
-        // Each BuildingRoster's internal tick advances growth + production
-        // + breeding regardless of realized/simulated state, so simply
-        // calling tick on every roster every 200 ticks suffices for v1.
-        // Future optimization: realize/derealize via chunk-load events.
+        // Each BuildingRoster's internal tick advances growth + breeding
+        // + production. Realize/derealize on chunk-load events is wired
+        // via RosterChunkLoadHandler; the production cycle itself is
+        // gated per-species in BuildingRoster.tick (see Phase 6.7.1.5):
+        // SHEEP and BEE skip simulation production for Realized slots
+        // because their loaded production is driven by SHEPHERD /
+        // BEEKEEPER behaviors; other species retain the slot-type-
+        // agnostic legacy path until their commercial behaviors land.
         if (tick % 200L == 0L) {
             var rdata = tterrag1112.life_in_the_village.Village.Roster
                     .RosterSavedData.get(overworld);
