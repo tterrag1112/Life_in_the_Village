@@ -175,7 +175,7 @@ public final class ProfessionSupplyChain {
                 // consolidation. Dyed wools / bed represent the full
                 // textile range; carpet is the generic alias.
                 Items.YELLOW_WOOL, Items.BLUE_WOOL, Items.RED_WOOL,
-                Items.CARPET, Items.WHITE_BED));
+                Items.RED_CARPET, Items.WHITE_BED));
         // Phase 6.6.1.4 — all 16 wool colors as inputs (WeaverProductionBehavior's
         // wool→carpet recipes cover all colors). String stays as the primary
         // raw-fiber input.

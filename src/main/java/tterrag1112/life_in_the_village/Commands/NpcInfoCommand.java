@@ -237,6 +237,16 @@ public final class NpcInfoCommand {
         appendSkillLine(sb, npc, Skill.SHEPHERDING);
         appendSkillLine(sb, npc, Skill.SOCIAL);
         appendSkillLine(sb, npc, Skill.COMBAT);
+        appendSkillLine(sb, npc, Skill.BAKING);
+        appendSkillLine(sb, npc, Skill.CRAFTING);
+        appendSkillLine(sb, npc, Skill.PASTRY);
+        appendSkillLine(sb, npc, Skill.LITERACY);
+        appendSkillLine(sb, npc, Skill.MILLING);
+        appendSkillLine(sb, npc, Skill.MAGIC);
+        appendSkillLine(sb, npc, Skill.MEDICINE);
+        appendSkillLine(sb, npc, Skill.BLACKSMITHING);
+
+
     }
 
     private static void appendSkillLine(StringBuilder sb, TownspersonMob npc, Skill skill) {

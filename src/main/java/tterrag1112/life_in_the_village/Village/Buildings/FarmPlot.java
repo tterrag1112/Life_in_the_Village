@@ -4,7 +4,9 @@ package tterrag1112.life_in_the_village.Village.Buildings;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
+import net.minecraft.data.loot.packs.VanillaShearingLoot;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.animal.sheep.Sheep;
 import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 
 import java.util.List;
@@ -792,4 +794,5 @@ public class FarmPlot {
             return candidates[random.nextInt(candidates.length)];
         }
     }
+
 }
