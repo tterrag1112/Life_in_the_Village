@@ -882,3 +882,161 @@ try/catch-and-continue shape.
    each culture's roads.
 6. Logs: per-market "market pad rendered (margin=N)" or a clean skip
    reason; no exception aborts the spawn.
+
+---
+
+## Phase 2b — Stall pool + allocator + aisle-facing rotation (safe core)
+
+**Goal:** make stalls actually appear — a stall pool, a runtime allocator
+that fits them onto the 2a pad, aisle-facing rotation, a few seeded at
+spawn, and removal of the dead fixed-anchor stall path.
+
+**Scope decision (important).** The 2c/2d prompts confirm their only 2b
+dependencies are: stalls *placed* with chests, `MarketStall` records, a
+claim API, and work-post placement geometry — **not** the
+`MARKET_STALL` `BuildingType` promotion or the manifest variant system.
+In a no-compile sandbox, adding `MARKET_STALL` to `BuildingType` means a
+blind exhaustive-switch audit across **60 files** (a single missed arm =
+undetectable broken build), and the variant-system promotion also needs
+binary NBT relocation + `manifest.json` authoring (asset work). Both are
+**deferred** (flagged below); neither blocks 2c/2d. 2b ships the
+allocator + seeding + claim rewire + dead-path removal as the safe,
+additive core.
+
+### What shipped
+
+New, in `Village/Markets/Complex/`:
+- `StallVariant(id, nbt, weight)` — typed pool entry (replaces 2a's
+  `List<String>` stub). Footprint is read from the loaded template at
+  allocation time, never hardcoded.
+- `StallAllocator` — fits a stall onto the pad's perimeter band and
+  places it **facing outward onto the aisle**. Seat search scans the
+  region inset by the aisle, queries the stall's actual placed
+  `BoundingBox` via `StructureTemplate.getBoundingBox(settings, origin)`,
+  and accepts the first seat fully inside the inset region, entirely on
+  one side of the building footprint (+gap), and clear of occupied
+  boxes. First-fit; callers accumulate occupancy → no overlap → "market
+  full" when nothing fits.
+- `MarketStallSeeder` — seeds up to `SEED_COUNT` (4) vacant stalls onto a
+  freshly graded pad in the V2 spawn hook (region geometry in hand → no
+  runtime recompute).
+
+Changed:
+- `MarketComplexSpec.stallPool` → `List<StallVariant>`; registry default
+  `padMargin` 6 / `minPadMargin` 2 (deeper band to host stalls) + the one
+  authored stall NBT resolved by its **real** path
+  (`default/rural/market/stall/stall_1`).
+- `MarketStall` — added `VACANT_UUID` sentinel + `isVacant()` (a seeded,
+  unclaimed "for rent" stall) **without** a new `OwnerType` arm or codec
+  field.
+- `V2VillageSpawnerAdapter` — after rendering the pad, seeds stalls.
+- `MarketStallPlacer.claimSlot` — **rewired** to assign ownership to a
+  vacant seeded stall (signature preserved → callers unchanged); the
+  broken `STALL_TEMPLATE` path corrected (used by `reclaimStall` sizing).
+- `VillageSpawner.setupMerchantStalls` — **deleted** (orphan, broken path).
+
+### Allocator algorithm (pseudocode)
+
+```
+place(level, market, region, footprint, padY, variant, owner…, occupied):
+  template = loadTemplate(variant.nbt)            # else empty
+  seat = findSeat(template, regionAABB, footprintAABB, padY, occupied)
+  if no seat: return empty                         # market full
+  placeInWorld(seat.origin, seat.rotation)
+  stall = MarketStall.create(…, seat.origin, owner…)
+  stall.chestPos = first chest in seat.box
+  occupied += seat.box; return stall
+
+findSeat:
+  inset = region shrunk by AISLE_WIDTH (the walkable perimeter ring)
+  for side in [SOUTH, EAST, NORTH, WEST]:
+    rot = rotationForOutward(side)                 # aisle-facing, below
+    for origin in inset grid at padY+1:
+      box = template.getBoundingBox(settings(rot), origin)
+      accept iff box ⊆ inset AND box on `side` of footprint(+gap)
+             AND box ∩ footprint(+gap) = ∅ AND box ∩ occupied = ∅
+```
+
+### Aisle-facing rotation derivation (replaces dominant-axis snap)
+
+Stall NBT authored facing SOUTH (+Z). A seat on a side faces **outward**
+on that side, so rotation comes from the *side*, never from a vector to
+the building centre (the old `facingRotation` bug):
+`SOUTH→NONE, WEST→CLOCKWISE_90, NORTH→CLOCKWISE_180, EAST→COUNTERCLOCKWISE_90`.
+`onSide` guarantees the stall sits wholly on that side, so its front
+opens onto the perimeter aisle.
+
+### Claim-caller re-point
+
+`claimSlot`'s signature is **unchanged**, so its callers
+(`NpcInteractionHandler` ×2, `WorkshopStallDecisionGoal`,
+`StallLeaseActionPacket`/lease) were **not** re-pointed — they keep
+calling `claimSlot`, which now assigns a vacant seeded stall instead of
+stamping an anchor. `findAnchorSlots` is kept (still read by
+`MarketApproach` + the lease slot-count display); it is now vestigial for
+stall placement and may return 0 if the market NBT has no STALL anchors —
+cosmetic, flagged.
+
+### Delete list
+
+- `VillageSpawner.setupMerchantStalls` — **deleted** (orphan).
+- `MarketStallPlacer.claimSlot` anchor/STALL_TEMPLATE-stamping body —
+  **replaced** with the assign-vacant body.
+- `MarketStallPlacer.findChestInRegion` — **deleted** (chest detection
+  moved to `StallAllocator.findChestInBox`).
+- `MarketStallPlacer.facingRotation` (dominant-axis) — **orphaned**; the
+  Edit tooling couldn't match its unicode-comment body cleanly in this
+  no-compile session, so it is left in place but **unused** (no callers;
+  a warning, not a build error). Flagged for a trivial follow-up delete.
+
+### `MARKET_STALL` enum switch audit
+
+Not performed — `MARKET_STALL` was **not** added to `BuildingType` (see
+Scope decision). No enum/switch surface touched. `OwnerType` unchanged
+(vacancy uses a sentinel UUID, not a new arm).
+
+### Tie-In / Simplification / Deviations
+
+- **Tie-In.** Upstream: 2a region/pad (recomputed in the spawn hook),
+  `StructureSizeCache`-backed footprints (via the loaded template).
+  Downstream: `MarketStall` record shape unchanged → all readers
+  unaffected; `claimSlot` callers unchanged. Sibling: `MarketApproach`/
+  lease slot-count read `findAnchorSlots` (kept); `MarketRentManager`
+  `reclaimStall` kept (STALL_TEMPLATE path now valid).
+- **Simplification.** Placement logic consolidated into `StallAllocator`;
+  the old anchor-claim + dominant-axis path removed from `claimSlot`.
+  `MarketStallPlacer` survives as a thin shell (claim + reclaim + helpers).
+- **Deviations:** (1) `MARKET_STALL` BuildingType + manifest variant
+  system **deferred** (60-switch blind audit + binary asset authoring);
+  the single stall NBT loads by direct path via the pool — the 7-step/
+  manifest fallback isn't wired, acceptable with one variant. (2) Claim
+  uses **assign-vacant** (seed at spawn, assign on claim) rather than
+  runtime allocate-on-claim — simpler, and avoids needing to persist or
+  recompute the pad region at claim time (the 2a region wasn't
+  persisted). Runtime allocation still exists (`StallAllocator.place`)
+  for 2d event stalls. (3) `facingRotation` left orphaned (tooling).
+- **Out-of-scope but flagged:** per-stall inventory authority, sign
+  lifecycle, work-post behaviour, rent/lease money (all 2c); event stalls
+  (2d); WANDERING_TRADER.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review:
+allocator uses `StructureTemplate.getBoundingBox`/`placeInWorld` +
+`BoundingBox` accessors (vanilla); `MarketStall.create`/`addMarketStall`/
+`getStallsForMarket` signatures confirmed; `claimSlot` contract preserved
+for callers; no `BuildingType`/`OwnerType` enum change. Unused imports +
+the orphaned `facingRotation` are warnings, not errors.
+
+### Smoke test
+
+1. Generate a village → a few stalls seeded on the market pad, flat, not
+   overlapping each other or the building, fronts on the perimeter aisle.
+2. Rotation faces the aisle per side (no dominant-axis backwards snap).
+3. One authored NBT places everywhere via the pool (clean "not found"
+   log only if the path is wrong).
+4. NPC (`WorkshopStallDecisionGoal`) + player (lease) claim → a vacant
+   seeded stall becomes owned (old anchor/STALL_TEMPLATE path gone).
+5. Claims past the seeded count → "market full" (empty), no overlap.
+6. No NPE from the deleted `setupMerchantStalls`; non-stall SubBuilding
+   anchors untouched.

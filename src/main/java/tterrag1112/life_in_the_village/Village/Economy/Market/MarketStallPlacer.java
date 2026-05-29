@@ -55,10 +55,14 @@ import java.util.stream.Collectors;
  */
 public final class MarketStallPlacer {
 
-    /** Stall structure template path. */
+    /** Stall structure template path. Phase 2b: corrected to the real
+     *  resource location (the legacy value omitted the {@code /rural/}
+     *  style segment, so {@code loadTemplate} always failed). Used by
+     *  {@link #reclaimStall} for sizing; placement now goes through the
+     *  pad allocator ({@code StallAllocator}). */
     private static final Identifier STALL_TEMPLATE =
             Identifier.fromNamespaceAndPath(Life_in_the_village.MODID,
-                    "default/market/stall/stall_1");
+                    "default/rural/market/stall/stall_1");
 
     /** Daily rent cost in bronze per stall. */
     public static final long RENT_PER_DAY = 10L;
@@ -107,12 +111,16 @@ public final class MarketStallPlacer {
     }
 
     /**
-     * Claims the next free anchor slot in the given market building.
-     * Places the stall NBT at that position, detects the chest inside it,
-     * and returns a populated {@link MarketStall} ready to be persisted.
+     * Claims a free stall in the market. Phase 2b: stalls are seeded onto
+     * the market pad as vacant records by {@code MarketStallSeeder}; a
+     * claim assigns ownership to the first vacant one. This replaces the
+     * old authored-anchor + {@code STALL_TEMPLATE} stamping path (which
+     * was broken — the template path didn't exist). The placement geometry
+     * + aisle-facing rotation now live in {@code StallAllocator} (run at
+     * spawn). Sign rewriting is consolidated in Phase 2c.
      *
      * @param rentUntilTick pass {@code Long.MAX_VALUE} for a purchase
-     * @return empty if no free slots exist or the stall template is missing
+     * @return empty if the market has no free (vacant) stall
      */
     public static Optional<MarketStall> claimSlot(
             ServerLevel level,
@@ -122,78 +130,21 @@ public final class MarketStallPlacer {
             long rentUntilTick,
             VillageSavedData data) {
 
-        List<BlockPos> allAnchors = findAnchorSlots(marketBuilding, data);
-        if (allAnchors.isEmpty()) return Optional.empty();
-
-        // Find which slot indices are already occupied
-        Set<Integer> occupied = new HashSet<>();
-        data.getStallsForMarket(marketBuilding.getId())
-                .forEach(s -> { if (s.isActive()) occupied.add(s.getSlotIndex()); });
-
-        // Pick the first free slot
-        int freeSlot = -1;
-        BlockPos anchorPos = null;
-        for (int i = 0; i < allAnchors.size(); i++) {
-            if (!occupied.contains(i)) {
-                freeSlot  = i;
-                anchorPos = allAnchors.get(i);
-                break;
-            }
+        MarketStall vacant = null;
+        for (MarketStall s : data.getStallsForMarket(marketBuilding.getId())) {
+            if (s.isActive() && s.isVacant()) { vacant = s; break; }
         }
+        if (vacant == null) return Optional.empty(); // market full / none seeded
 
-        if (freeSlot < 0 || anchorPos == null) return Optional.empty(); // market full
-
-        // Place the stall NBT at the anchor position
-        Optional<StructureTemplate> templateOpt =
-                BuildingPlacer.loadTemplate(level, STALL_TEMPLATE);
-        if (templateOpt.isEmpty()) {
-            System.err.println("[MarketStallPlacer] Stall template not found: "
-                    + STALL_TEMPLATE);
-            return Optional.empty();
-        }
-
-        // P0d-04: anchor block has already been replaced with air by
-        // SubBuildingScanner at building-placement time, so no extra
-        // clearing is required before stamping.
-
-        Rotation stallRotation = facingRotation(anchorPos, marketBuilding);
-
-        StructureTemplate template = templateOpt.get();
-        StructurePlaceSettings settings = new StructurePlaceSettings()
-                .setRotation(stallRotation)
-                .setIgnoreEntities(false);
-
-        template.placeInWorld(level, anchorPos, BlockPos.ZERO, settings,
-                level.getRandom(), 2);
         String displayName = resolveOwnerName(level, ownerUUID, ownerType);
+        vacant.setOwner(ownerUUID, ownerType);
+        vacant.setOwnerDisplayName(displayName);
+        vacant.setRentPaidUntilTick(rentUntilTick);
+        data.markDirty();
 
-
-        // Create the stall record
-        MarketStall stall = MarketStall.create(
-                marketBuilding.getId(),
-                freeSlot,
-                anchorPos,
-                ownerUUID,
-                displayName,
-                ownerType,
-                rentUntilTick);
-
-        // Scan for a chest inside the stall footprint
-        net.minecraft.core.Vec3i size = template.getSize();
-        BlockPos chestPos = findChestInRegion(level, anchorPos,
-                anchorPos.offset(size.getX(), size.getY(), size.getZ()));
-        if (chestPos != null) {
-            stall.setChestPos(chestPos);
-        }
-        String ownerName = resolveOwnerName(level, ownerUUID, ownerType);
-        updateStallSigns(level, anchorPos, template.getSize(),
-                stall.getSlotIndex(), stall, rentUntilTick);
-
-        System.out.println("[MarketStallPlacer] Placed stall slot " + freeSlot
-                + " at " + anchorPos + " for owner " + ownerUUID
-                + " (chest: " + chestPos + ")");
-
-        return Optional.of(stall);
+        System.out.println("[MarketStallPlacer] Claimed stall slot "
+                + vacant.getSlotIndex() + " for owner " + ownerUUID);
+        return Optional.of(vacant);
     }
 
     /**
@@ -235,19 +186,6 @@ public final class MarketStallPlacer {
     // Helpers
     // =========================================================================
 
-    private static BlockPos findChestInRegion(ServerLevel level,
-                                              BlockPos min, BlockPos max) {
-        for (int x = min.getX(); x <= max.getX(); x++) {
-            for (int y = min.getY(); y <= max.getY(); y++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockEntity be = level.getBlockEntity(pos);
-                    if (be instanceof ChestBlockEntity) return pos;
-                }
-            }
-        }
-        return null;
-    }
     public static void assignGoalIfNpc(ServerLevel level, MarketStall stall) {
         // Phase 6.2.d.5: StallKeeperGoal was removed in the Goal→Brain migration.
         // Stall ownership is now read directly off MarketStall state by

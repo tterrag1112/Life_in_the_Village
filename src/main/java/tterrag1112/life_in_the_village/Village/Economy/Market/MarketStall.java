@@ -127,6 +127,16 @@ public class MarketStall {
     public static final double PRICE_BAND = 0.20;
     public static final int    MAX_REPUTATION = 100;
 
+    /**
+     * Sentinel owner for a placed-but-unclaimed ("for rent") stall
+     * (merchant arc Phase 2b). Lets a stall be seeded on the pad with no
+     * real owner without adding a {@code VACANT} {@link OwnerType} arm
+     * (which would force an enum-switch audit). {@link #isVacant()} is the
+     * canonical check; vacant stalls are skipped by rent and read as
+     * "For Rent" on their sign.
+     */
+    public static final UUID VACANT_UUID = new UUID(0L, 0L);
+
     // ── Fields ─────────────────────────────────────────────────────────────────
 
     private final UUID     stallId;
@@ -243,6 +253,11 @@ public class MarketStall {
 
     public boolean isPurchased() {
         return rentPaidUntilTick == Long.MAX_VALUE;
+    }
+
+    /** True when this stall is placed but unclaimed (seeded "for rent"). */
+    public boolean isVacant() {
+        return VACANT_UUID.equals(ownerUUID);
     }
 
     // =========================================================================

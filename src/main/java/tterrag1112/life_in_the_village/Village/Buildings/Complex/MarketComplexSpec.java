@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Buildings.Complex;
 
 import org.jetbrains.annotations.Nullable;
+import tterrag1112.life_in_the_village.Village.Markets.Complex.StallVariant;
 
 import java.util.List;
 
@@ -30,15 +31,15 @@ import java.util.List;
  * @param padBlockId   optional surface block id (e.g. {@code
  *                     "minecraft:stone_bricks"}); {@code null} ⇒ culture
  *                     path palette.
- * @param stallPool    2a stub — opaque placeholder, empty for now; 2b
- *                     replaces this with a typed stall-slot spec list.
+ * @param stallPool    candidate {@link StallVariant}s the allocator may
+ *                     place on the pad (2b). Empty ⇒ no stalls placed.
  */
 public record MarketComplexSpec(
         int padMargin,
         int minPadMargin,
         MarketAisleModel aisleModel,
         @Nullable String padBlockId,
-        List<String> stallPool) {
+        List<StallVariant> stallPool) {
 
     public MarketComplexSpec {
         if (padMargin < 0) {

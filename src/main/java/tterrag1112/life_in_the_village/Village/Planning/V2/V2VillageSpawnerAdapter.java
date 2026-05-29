@@ -563,6 +563,15 @@ public final class V2VillageSpawnerAdapter {
                         .MarketComplexRenderer.render(result, culture.id(), level);
                 LOGGER.info("V2: market pad rendered for {} (margin={})",
                         mk.building().getName(), result.chosenMargin());
+                // Phase 2b — seed vacant stalls onto the just-graded pad
+                // via the allocator (region geometry is in hand here).
+                tterrag1112.life_in_the_village.Village.Buildings.Complex
+                        .MarketComplexRegistry.get(culture.id(), BuildingType.MARKET)
+                        .ifPresent(spec ->
+                                tterrag1112.life_in_the_village.Village.Markets.Complex
+                                        .MarketStallSeeder.seed(level, data, mk.building(),
+                                                result.region(), result.buildingBounds(),
+                                                result.padY(), spec));
             } catch (Exception e) {
                 LOGGER.warn("V2: MarketComplex plan/render failed for {}: {}",
                         mk.building().getName(), e.getMessage());
