@@ -1040,3 +1040,109 @@ the orphaned `facingRotation` are warnings, not errors.
 5. Claims past the seeded count → "market full" (empty), no overlap.
 6. No NPE from the deleted `setupMerchantStalls`; non-stall SubBuilding
    anchors untouched.
+
+---
+
+## Phase 2c — Stall inventory authority + sign funnel + work-post + rent/lease
+
+**Goal:** the economic/lifecycle layer on 2b's stalls — make the per-stall
+chest the authoritative goods endpoint (1b did money, 2c does goods), a
+drift-proof owner-sign funnel, work-post data for Phase 3, and route
+rent/lease money correctly.
+
+### What shipped
+
+New, in `Village/Markets/Complex/`:
+- `StallGoods` — per-stall goods authority. `available` / `take` / `store`
+  with **stall chest first, market hub as overflow/backstock**; a
+  {@code null} stall = stall-less sale → hub. Consolidates chest take/
+  store logic.
+- `MarketWorkPost` — pure `WorkPost(stand, facing)` accessor: the vendor
+  stands at the counter (chest, else origin) and faces **outward onto the
+  perimeter aisle** (matching the 2b allocator's aisle-facing rotation).
+  Data only — Phase 3 occupancy + 2d producers consume it.
+
+New, in `Village/Economy/Market/`:
+- `MarketStallOwnership` — the single funnel for owner changes:
+  `assign` / `vacate` mutate ownership **and** rewrite the sign in the
+  same call, so the sign can't desync.
+
+Routed:
+- `MarketChannel.executeBuy` — availability + take now go through
+  `StallGoods` (stall chest first, then hub); restore-on-fail stores back
+  to the same endpoint. `executeSell` stores via `StallGoods` (hub
+  backstock). The 1b money endpoint (`resolveStallEndpoint`) and the 2c
+  goods endpoint now resolve to the **same stall**.
+- `MarketStallPlacer.claimSlot` — ownership assignment routed through
+  `MarketStallOwnership.assign` (sign rewritten on claim).
+
+### Inventory-authority model
+
+Stall chest = authoritative for goods traded at that stall; market hub =
+overflow/backstock. Buy: draw stall→hub. Sell: fill stall→hub. Stall-less
+sale: hub. `MarketChannel` (was hub-only) now routes through this, closing
+the "goods come from the building, money goes to the stall" disconnect.
+`SellToMarketBehavior`/producer sells deposit to the **hub** (backstock),
+unchanged.
+
+### `OwnerType` switch audit
+
+`OwnerType` (NPC/PLAYER/WANDERING_TRADER) is unchanged. Routing/goods don't
+switch on it (the stall chest is the endpoint regardless of owner type);
+sign text reads the display name, not the type; vacancy uses the
+`VACANT_UUID` sentinel, not a new arm. WANDERING_TRADER arm untouched.
+
+### Tie-In / Simplification / Deviations
+
+- **Tie-In.** Upstream: 2b stall records + chest + placement geometry,
+  1b settle, `BuildingStorageAccess`. Downstream: both trade paths' goods
+  go through `StallGoods` where a stall is the endpoint; `MarketStall`
+  record shape unchanged → readers unaffected. Phase-3 contract:
+  `MarketWorkPost.forStall(market, stall)` → stand + facing; an event
+  stall (2d) exposes the same.
+- **Simplification.** `StallGoods` consolidates chest take/store;
+  `MarketStallOwnership` consolidates the sign write for owner changes.
+- **Deviations (flagged):**
+  1. **Rent/lease NOT re-pointed through `settlePurchase`/`settleSale`.**
+     Those are party↔party *trade* settlements that apply the market-tax/
+     burn rule; rent (NPC wallet → village treasury) and lease (player →
+     treasury) are *treasury fee* flows the 1b model doesn't represent —
+     forcing them through the trade settle would mis-tax/burn the payment.
+     They remain clean treasury transactions (`wallet.spend` +
+     `depositToTreasury`), which is the correct model. The "no bespoke
+     poke" intent is met by their being simple + correct, not by a wrong
+     mapping.
+  2. **`TradeHandler` goods not fully consolidated.** Its buy path is
+     already stall-authoritative (sources from the merchant's stall); its
+     sell goes to the hub because the merchant being traded with isn't a
+     stall owner in the seeded model. Its private chest helpers remain
+     (not migrated to `StallGoods`) to bound risk in the no-compile
+     session. Flagged for a follow-up sweep.
+  3. **Sign funnel covers owner *changes* (claim).** `reclaimStall`
+     (a destroy path, not an owner change) keeps its legacy
+     `updateStallSigns` call; the live owner-change path goes through the
+     funnel. Trivial follow-up to retire `updateStallSigns`.
+- **Out-of-scope but flagged:** merchant standing/tending behaviour
+  (Phase 3, consumes `MarketWorkPost`); temporary/event stalls (2d);
+  pricing/settlement core (1a/1b).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: `StallGoods`
+uses `Container`/`BuildingStorageAccess` (existing APIs); `MarketChannel`
+keeps a single `stall` decl (moved up) and still imports
+`BuildingStorageAccess` (used in `quote`); `DynamicSignUpdater.updateSigns`
+signature matched; `MarketStall` record/codec unchanged (no field added).
+
+### Smoke test
+
+1. Buy at an NPC-owned stall: goods come from the stall chest (then hub
+   backstock), money to the stall owner (1b endpoint) — disconnect gone.
+2. Sell into the market (NPC channel): goods land in the hub backstock.
+3. Stall-less market sale still works via the hub.
+4. Claim a stall: the sign updates in the same call (no drift) for the
+   owned state; vacant stalls read "For Rent".
+5. Rent/lease still move money correctly (treasury flows; not the trade
+   settle, by design).
+6. `MarketWorkPost.forStall` returns a sane stand + outward facing for a
+   stall (Phase 3 input; no standing behaviour yet).

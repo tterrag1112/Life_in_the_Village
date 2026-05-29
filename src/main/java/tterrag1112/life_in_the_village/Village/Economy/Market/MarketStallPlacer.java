@@ -137,9 +137,10 @@ public final class MarketStallPlacer {
         if (vacant == null) return Optional.empty(); // market full / none seeded
 
         String displayName = resolveOwnerName(level, ownerUUID, ownerType);
-        vacant.setOwner(ownerUUID, ownerType);
-        vacant.setOwnerDisplayName(displayName);
-        vacant.setRentPaidUntilTick(rentUntilTick);
+        // 2c: ownership + sign go through the single funnel so the sign
+        // can't desync from the owner.
+        MarketStallOwnership.assign(level, vacant, ownerUUID, ownerType,
+                displayName, rentUntilTick);
         data.markDirty();
 
         System.out.println("[MarketStallPlacer] Claimed stall slot "
