@@ -77,6 +77,7 @@ public abstract class AbstractHomesteadGoal extends Goal {
     public boolean canUse() {
         if (npc == null || npc.getFamilyRole() != requiredRole) return false;
         if (!phaseAllows(npc.getCurrentPhase())) return false;
+        if (!roleGateAllows()) return false;
         // Only re-resolve household / plot every TICK_INTERVAL ticks
         // so canUse stays cheap on the goal-poll loop.
         if (npc.tickCount % TICK_INTERVAL != 0) return false;
@@ -87,8 +88,23 @@ public abstract class AbstractHomesteadGoal extends Goal {
     public boolean canContinueToUse() {
         if (npc == null || npc.getFamilyRole() != requiredRole) return false;
         if (!phaseAllows(npc.getCurrentPhase())) return false;
+        // Consulted here as well as in canUse so a SPOUSE who becomes
+        // profession-eligible mid-phase releases the MOVE flag at once
+        // (rather than holding the Goal — and the nav guard — until the
+        // phase ends).
+        if (!roleGateAllows()) return false;
         return household != null;
     }
+
+    /**
+     * Extra per-tick gate beyond role + phase + context. Base returns
+     * {@code true} (no extra gate). {@link Spouse} overrides to yield
+     * the homestead Goal — and its {@code Goal.Flag.MOVE} claim — to an
+     * active profession during WORK, since profession work runs
+     * Brain-side and is denied navigation by {@code BrainNavGuard}
+     * whenever this Goal holds MOVE.
+     */
+    protected boolean roleGateAllows() { return true; }
 
     @Override
     public void start() {
@@ -183,24 +199,17 @@ public abstract class AbstractHomesteadGoal extends Goal {
         @Override protected boolean phaseAllows(DayPhase phase) {
             return phase != null && phase.isWork();
         }
-        @Override public boolean canUse() {
-            if (hasActiveProfession(npc)) return false;
-            return super.canUse();
+        @Override protected boolean roleGateAllows() {
+            // Yield to an active profession during WORK: profession is
+            // the commercial-scale primary, homestead is the
+            // family-scale backup. A SPOUSE with no profession
+            // (Profession.NONE) or a profession but no assigned
+            // building keeps running homestead chores as before.
+            boolean hasActiveProfession =
+                    npc.getProfession() != Profession.NONE
+                    && npc.getAssignedBuildingId().isPresent();
+            return !hasActiveProfession;
         }
-        @Override public boolean canContinueToUse() {
-            if (hasActiveProfession(npc)) return false;
-            return super.canContinueToUse();
-        }
-    }
-
-    /** True when {@code npc} has both a non-NONE profession AND an
-     *  assigned workplace building. Used by {@link Spouse} to step
-     *  aside in favor of profession Brain behaviors. */
-    private static boolean hasActiveProfession(TownspersonMob npc) {
-        if (npc == null) return false;
-        Profession p = npc.getProfession();
-        if (p == null || p == Profession.NONE) return false;
-        return npc.getAssignedBuildingId().isPresent();
     }
 
     /** CHILD-role homestead helper — runs during SOCIAL phase. */

@@ -2200,3 +2200,124 @@ Spec deviations + deferrals (logged in 33 Revision Notes):
   spec.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).
+═══════════════════════════════════════════════════════════════
+Phase 6.8.3 — SPOUSE/profession override + FarmerBehavior diagnostic
+═══════════════════════════════════════════════════════════════
+
+Two surgical fix-ups (no redesign) for working-spouse profession
+work being permanently blocked during WORK, plus the misleading
+diagnostic that hid the bug.
+
+Root cause (confirmed, not assumed):
+- AbstractHomesteadGoal sets EnumSet.of(Flag.MOVE, Flag.LOOK) in its
+  constructor. Spouse.phaseAllows -> phase.isWork(); registered at
+  goal priority 15 in TownspersonMob.registerGoals.
+- Profession work runs Brain-side (FarmerBehavior /
+  AbstractProductionBehavior), gated by BrainNavGuard
+  .canSteerNavigation, which returns false when any running Goal
+  holds Flag.MOVE. So a SPOUSE+profession NPC (Thomas Miller =
+  FARMER+SPOUSE, Jane Miller = BAKER+SPOUSE) had its profession
+  behavior permanently nav-denied during WORK by the running
+  priority-15 Spouse Goal. Priority never entered into it — the old
+  registration comment's "SPOUSE/CHILD don't have profession goals
+  competing" reasoned about goal-vs-goal and missed the real
+  Goal-vs-Brain-via-nav-guard competition.
+
+Fix shape: fix-at-source. Dropping the Spouse Goal's MOVE claim
+during WORK frees the nav guard for ALL eight profession behaviors
+at once (FarmerBehavior + 7 AbstractProductionBehavior professions);
+no per-behavior patching.
+
+Implementation:
+- Fix 1 (the bug): base-class hook roleGateAllows() on
+  AbstractHomesteadGoal, permissive default (true), consulted in BOTH
+  canUse() and canContinueToUse(). Spouse overrides it to yield when
+  npc.getProfession() != NONE && getAssignedBuildingId().isPresent().
+  The canContinueToUse consult is essential — it releases the MOVE
+  flag mid-phase the moment the profession becomes eligible, rather
+  than holding it until phase end. Constructor flag set, priority
+  slot, and phase predicate UNCHANGED — the fix is purely the new
+  gate. (Refactored from an earlier per-subclass canUse/
+  canContinueToUse override + static helper into the base-class hook
+  per the "extend via base-class hooks, not per-subclass repetition"
+  constraint.)
+- Fix 2 (diagnostic): FarmerBehavior.checkExtraStartConditions
+  nav-block branch now logs BrainNavGuard.describeNavClaim(entity)
+  instead of the legacy "combat / sit / lock / other steering claim"
+  placeholder, matching the AbstractProductionBehavior pattern. (Was
+  already landed in commit e12367f under this phase; the placeholder
+  string no longer appears anywhere in src except the BrainNavGuard
+  javadoc that documents it historically.)
+- Comment fix: TownspersonMob.registerGoals comment rewritten to
+  state the real arbitration (Brain-side profession vs Goal MOVE
+  claim via the nav guard), not the wrong goal-priority reasoning.
+
+Tie-In Audit:
+1. Upstream feeders: getProfession() -> Profession (returns NONE
+   when unset, TownspersonMob:433); getAssignedBuildingId() ->
+   Optional<UUID> (line 979). Both confirmed as the gate's inputs.
+2. Downstream callers of the touched type: all Handlers in
+   Entities/Goals/Homestead/Handlers/ reach AbstractHomesteadGoal
+   .navTarget(ctx) — a static helper reading the Context, not any
+   field the gate changes. The gate only changes canUse/
+   canContinueToUse return values. No handler reads gate-affected
+   state. Child/Elderly subclasses run SOCIAL-phase only, never
+   WORK, so they cannot collide with profession WORK behavior — gate
+   applies to Spouse only (base default keeps them permissive).
+3. Sibling MOVE-channel systems: behaviors calling canSteerNavigation
+   — FarmerBehavior, all AbstractProductionBehavior subclasses
+   (Baker/Blacksmith/Carpenter/Stonemason/Weaver/Candlemaker/Miller),
+   ShepherdBehavior, BeekeeperBehavior, plus social/idle behaviors
+   (EatMeal, SeekHouse, SeekShelter, ReturnHome, BuyGoods, Courting,
+   etc.). Every one is UNBLOCKED (never newly blocked) by removing
+   the Spouse MOVE claim during WORK.
+4. Exhaustive switches: N/A — no enum/sealed edits.
+
+Simplification Sweep:
+- AbstractHomesteadGoal subclasses: Spouse (WORK), Child (SOCIAL),
+  Elderly (SOCIAL). Gate logic belongs on the base class as a
+  reusable hook (roleGateAllows), NOT duplicated per subclass —
+  implemented that way. Child/Elderly inherit the permissive default
+  unchanged.
+
+Deviations from prompt:
+- Fix 2 message wording: prompt's example showed "denies navigation
+  — {}."; kept the already-committed "denies steering — {}" which
+  matches AbstractProductionBehavior:386-388 exactly. The prompt's
+  governing instruction was "matching the pattern
+  AbstractProductionBehavior already uses", so codebase consistency
+  was prioritized over the example's literal wording. Cosmetic only.
+- Fix 2 was already committed (e12367f) before this refactor prompt
+  arrived; not re-committed.
+
+Out-of-scope but flagged:
+- Distributed input-availability filter cleanup across BLACKSMITH/
+  CARPENTER/STONEMASON/WEAVER/CANDLEMAKER (next sub-phase, gated on
+  this fix smoke-testing clean).
+- Homestead-Goal -> Brain-behavior migration (long-term coexistence
+  refactor).
+- CITIZEN-with-stale-building edge: if a SPOUSE villager with
+  Profession.CITIZEN ends up with an assigned building, the gate
+  would suppress homestead. Not observed; predicate is trivial to
+  tighten (add CITIZEN to a skip list) if it surfaces.
+
+Smoke-test plan (user-executable):
+1. Locate a FarmComplex with a FARMER+SPOUSE (Thomas Miller) and a
+   BAKER+SPOUSE (Jane Miller).
+2. Advance into a WORK phase. Confirm both path to their buildings/
+   plots and begin profession work instead of homestead chores.
+3. Confirm a SPOUSE with no profession still does homestead chores
+   during WORK (gate negative-case regression check).
+4. Watch the log: "[FarmerBehavior] ... blocked: BrainNavGuard denies
+   steering" should either not fire for the working spouse, or name a
+   concrete non-Spouse claimant.
+5. Confirm CHILD (SOCIAL) and ELDERLY homestead behavior unchanged.
+6. Run a full day cycle; confirm the mealtime/eating window still
+   fires (6.8.1 activity-routing fix intact, no longer masked by the
+   nav block).
+
+Build verification deferred (sandbox blocks maven.neoforged.net) —
+manual static review done in its place: nested-class access to the
+enclosing protected hook is valid Java; Profession import present;
+diff confined to AbstractHomesteadGoal.java + TownspersonMob.java
+(comment only) this commit, FarmerBehavior.java in e12367f.

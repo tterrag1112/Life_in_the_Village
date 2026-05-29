@@ -408,9 +408,19 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         // for SPOUSE (any WORK_* phase) and CHILD (SOCIAL phase). The
         // goal is registered for all NPCs; canUse() filters by
         // FamilyRole + DayPhase so HEAD-role NPCs and other phases
-        // skip cleanly. Priority slot lower than profession goals
-        // so HEAD's profession always wins; SPOUSE / CHILD don't
-        // have profession goals competing.
+        // skip cleanly.
+        //
+        // Phase 6.8.3.2 — the priority slot is NOT what arbitrates
+        // homestead-vs-profession. Profession work runs Brain-side
+        // (FarmerBehavior / AbstractProductionBehavior), gated by
+        // BrainNavGuard.canSteerNavigation, which denies steering
+        // whenever a running Goal holds Goal.Flag.MOVE. This homestead
+        // Goal claims MOVE, so while it runs it blocks the NPC's
+        // profession behavior regardless of priority. A SPOUSE who
+        // also holds a profession + assigned building therefore yields
+        // this Goal during WORK (AbstractHomesteadGoal.Spouse
+        // .roleGateAllows) so the profession behavior can steer.
+        // SPOUSE-without-profession and CHILD/ELDERLY are unaffected.
         this.goalSelector.addGoal(15,
                 new tterrag1112.life_in_the_village.Entities.Goals
                         .Homestead.AbstractHomesteadGoal.Spouse(this));
