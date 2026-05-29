@@ -742,3 +742,143 @@ so arithmetic is unchanged.
 5. (Starter treasuries) — N/A this pass: no live creation path; flagged.
 6. Logs: one load line on reload; no per-tick spam; no NPE on first
    access before the first reload (seeded to DEFAULTS).
+
+---
+
+## Phase 2a — Market complex spec + bounded region + prepared pad + V2 hook
+
+**Goal (worldgen only):** make a MARKET generate as a "market complex" —
+a bounded claimed region around the market building, graded to a flat
+prepared pad surfaced with the culture's path palette. **No stalls.**
+Deliverable: generate a village, see a flat market pad around the market.
+
+### What shipped
+
+New, in `Village/Buildings/Complex/` (sibling to the farm spec/registry):
+- `MarketAisleModel` — enum, only `PERIMETER` (typed scaffold for 2b).
+- `MarketComplexSpec` — market-shaped record (padMargin, minPadMargin,
+  aisleModel, nullable padBlockId, stallPool stub). **Not** an extension
+  of the farm-shaped `BuildingComplexSpec`.
+- `MarketComplexRegistry` — culture×BuildingType registry mirroring
+  `BuildingComplexRegistry`; registers `default × MARKET`
+  (padMargin 4, minPadMargin 1, PERIMETER, culture-path surface).
+
+New, in `Village/Markets/Complex/`:
+- `MarketComplexPlanner` — pure planner. Computes a bounded rectangle
+  around the placed MARKET (footprint ± margin), collision-checks against
+  caller-supplied obstacle rects, shrinks uniformly to `minPadMargin`,
+  then skips. Returns region + buildingBounds polygons + padY + margin.
+- `Render/MarketComplexRenderer` — grades the region flat to padY, paints
+  the culture path palette via `PathRenderer.resolveRoadMaterial`, knocks
+  out the building footprint, fully null-defensive.
+
+Wired in `V2VillageSpawnerAdapter`: capture placed MARKETs
+(`PlacedMarket`, mirroring `PlacedFarmhouse`); a post-farm-loop market
+loop builds obstacles (other building AABBs + farm regions), plans,
+renders. Each market in try/catch — one failure logs and continues.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** MARKET is a V2 nucleus building; its placed
+   `PlacedBuilding` (footprint width/length, centre, padY) is captured in
+   the building loop. Footprint dims come from the real placed building
+   (which `StructureSizeCache` ultimately feeds), so the pad scales off
+   the actual NBT — no hardcoded market size. The placed-MARKET set is
+   available at the post-loop point (captured inline, like farmhouses).
+2. **Downstream callers.** Nothing consumes a market complex yet. The pad
+   render only grades terrain around the building and **knocks out the
+   building footprint** — it does not touch the MARKET building, its
+   storage, or its merchant. `MarketChannel` / market lookups resolve the
+   MARKET building unchanged (no building-side change at all).
+3. **Sibling systems — collision (the big risk).** The pad collision-
+   checks against every other placed building's footprint AABB (inflated
+   1 block) **and** existing farm complex regions, and **shrinks uniformly
+   then skips** — a market that can't claim a pad renders no pad (building
+   still works), never stomps a neighbour. Roads are intentionally not
+   collision-checked: the pad uses the same culture path palette, so any
+   overlap is the same block (cosmetically continuous plaza↔road).
+   Frontage strips / adjunct plots are not separately checked — they hug
+   their parent building (covered by the building-AABB + buffer) and are
+   peripheral; low risk, flagged.
+4. **Exhaustive switches.** `MarketAisleModel` added with one value
+   (`PERIMETER`); no `switch` over it exists (the pad render is aisle-
+   agnostic — aisles are 2b). Nothing to maintain.
+
+### Simplification Sweep
+
+- A clean `MarketComplexSpec`/`MarketComplexRegistry` sibling rather than
+  generalizing `BuildingComplexSpec`. Markets are the *second* complex
+  consumer, so the project rule (abstractions only when a second concrete
+  consumer forces it) would now *permit* a shared base — but the two
+  specs share almost no fields (farm: flood-fill/plots/borders; market:
+  bounded margin/aisle), so a forced common base would be hollow.
+  **Flagged, not built**: if a third domain (forge yard, sacred grove)
+  arrives, revisit a per-domain registry abstraction then.
+- Reused `PathRenderer.resolveRoadMaterial` for the palette (same block
+  the roads + farm paths use) rather than a new resolver.
+
+### Deviations from prompt
+
+- **No persistence in 2a.** The prompt says "persist it the way the farm
+  complex persists its envelope/record," but the market region is a
+  **deterministic** rectangle (footprint + spec margin), unlike the
+  farm's terrain-dependent flood-fill which *must* persist to be
+  reproduced. Nothing consumes a market complex in 2a, and the preflight
+  scopes the diff to "the new market-complex spec/registry/planner/
+  renderer + the one adapter loop" — adding a `VillageSavedData` codec
+  slot would exceed that. So 2a renders the pad transiently; 2b will
+  persist a market-complex record (or recompute the region from the spec)
+  when stall allocation becomes a real consumer. Flagged for 2b.
+- **Uniform shrink, not per-side clip.** The pad shrinks symmetrically
+  before skipping. Per-side clipping (clip only the colliding edge) would
+  yield larger pads in tight cores; deferred as a 2b/tuning follow-up.
+  Uniform shrink is the safest "never stomp" rule for 2a.
+- **padY = placed building centre Y** (the V2 ground/pad Y, one below the
+  building floor), so the pad surface sits flush with the building floor.
+
+### Out-of-scope but flagged
+
+- Stall pool / allocator / stall NBTs / signs / occupancy (2b). The
+  `stallPool` field is an empty typed stub; `MarketAisleModel.PERIMETER`
+  is the 2b aisle model.
+- Deleting the old `MarketStallPlacer` / `setupMerchantStalls` /
+  `facingRotation` path — left intact; 2b removes it once the replacement
+  exists.
+- Market-complex persistence (see Deviations) — 2b.
+- Any economy / inventory / settlement change.
+
+### Preflight
+
+- New enum (`MarketAisleModel`, 1 value): no exhaustive switch exists. ✓
+- No new persisted record/field (see Deviations — deterministic, deferred
+  to 2b); no `VillageSavedData` codec change. ✓
+- No per-tick code — runs once at spawn in the post-loop. ✓
+- Diff confined to the new market-complex spec/registry/enum + planner/
+  renderer + the one adapter loop; existing MARKET placement untouched. ✓
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (no cached
+`neoform-runtime`). Static review: planner is pure (no world/persistence);
+`Polygon.AABB` constructor/accessor order verified; `Building.getShape()
+.toAABB()` returns the net AABB (fields floored/ceiled to an inclusive
+int rect); renderer reuses the proven `PathRenderer.resolveRoadMaterial`
++ surface/air/fill column pattern from the road/farm painters;
+`getMinY()` confirmed present (upper-bound guard dropped to avoid an
+unverifiable `getMaxY()` call); adapter loop mirrors the farm loop's
+try/catch-and-continue shape.
+
+### Smoke-test plan (user-executable)
+
+1. Generate a fresh village with a MARKET; locate the market building.
+2. Confirm a flat, path-palette pad is graded around it, knocking out the
+   building's own footprint, sized sensibly off the building.
+3. Confirm the pad didn't clip adjacent buildings (collision works); in a
+   dense core, confirm a smaller pad or none — never a stomped neighbour
+   (log line "market pad skipped … NO_REGION").
+4. Confirm the MARKET building, its storage, and its merchant still work
+   (right-click trade opens) — the building path is untouched.
+5. Generate several cultures; confirm pads appear and the palette matches
+   each culture's roads.
+6. Logs: per-market "market pad rendered (margin=N)" or a clean skip
+   reason; no exception aborts the spawn.

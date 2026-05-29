@@ -332,6 +332,10 @@ public final class V2VillageSpawnerAdapter {
         // because the post-loop iteration over Building alone
         // doesn't retain planning-layer data.
         List<PlacedFarmhouse> placedFarmhouses = new ArrayList<>();
+        // Merchant arc Phase 2a — pair each placed MARKET with its
+        // PlacedBuilding so the post-loop MarketComplexPlanner can read
+        // footprint dims + pad Y, mirroring the farmhouse capture.
+        List<PlacedMarket> placedMarkets = new ArrayList<>();
         // A3 — neighbour-soft-exclude colour planning. Mirrors V1
         // VillageSpawner's per-village NeighborColorIndex usage.
         NeighborColorIndex neighborIndex = new NeighborColorIndex();
@@ -389,6 +393,9 @@ public final class V2VillageSpawnerAdapter {
                         k -> new ArrayList<>()).add(placedBuilding);
                 if (b.type() == BuildingType.FARMHOUSE) {
                     placedFarmhouses.add(new PlacedFarmhouse(placedBuilding, b));
+                }
+                if (b.type() == BuildingType.MARKET) {
+                    placedMarkets.add(new PlacedMarket(placedBuilding, b));
                 }
                 footprint.occupyBuilding(placedBuilding,
                         BuildingFootprint.DEFAULT_BUFFER);
@@ -508,6 +515,57 @@ public final class V2VillageSpawnerAdapter {
             } catch (Exception e) {
                 LOGGER.warn("V2: FarmComplex plan/render failed for {}: {}",
                         fh.building().getName(), e.getMessage());
+            }
+        }
+
+        // Merchant arc Phase 2a — one market complex (bounded prepared
+        // pad) per placed MARKET. Runs after the farm loop so farm
+        // complex regions exist and can be fed as collision obstacles.
+        // Each market is guarded; a failure logs and continues so one bad
+        // market never aborts the spawn. No stalls yet (2b).
+        for (PlacedMarket mk : placedMarkets) {
+            try {
+                int padY = mk.placed().centre().getY();
+                // Obstacles: every other placed building's footprint AABB,
+                // plus existing farm complex regions. The market never
+                // grades over a neighbour — it shrinks or skips.
+                java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB>
+                        obstacles = new ArrayList<>();
+                for (var entry : placedBuildingsAll.entrySet()) {
+                    for (Building other : entry.getValue()) {
+                        if (other.getId().equals(mk.building().getId())) continue;
+                        obstacles.add(toRect(other.getShape().toAABB()));
+                    }
+                }
+                for (var fc : data.getFarmComplexesForVillage(village.getId())) {
+                    if (fc.region() != null) {
+                        obstacles.add(tterrag1112.life_in_the_village.Utilities.Geometry
+                                .Polygon.boundingBox(fc.region()));
+                    }
+                }
+                var planInput = new tterrag1112.life_in_the_village.Village.Markets
+                        .Complex.MarketComplexPlanner.Input(
+                        mk.placed().centre(),
+                        mk.placed().footprint().width(),
+                        mk.placed().footprint().length(),
+                        padY,
+                        culture.id(),
+                        BuildingType.MARKET,
+                        obstacles);
+                var result = tterrag1112.life_in_the_village.Village.Markets
+                        .Complex.MarketComplexPlanner.plan(planInput);
+                if (!result.success()) {
+                    LOGGER.info("V2: market pad skipped for {} ({}): {}",
+                            mk.building().getName(), result.status(), result.detail());
+                    continue;
+                }
+                tterrag1112.life_in_the_village.Village.Markets.Complex.Render
+                        .MarketComplexRenderer.render(result, culture.id(), level);
+                LOGGER.info("V2: market pad rendered for {} (margin={})",
+                        mk.building().getName(), result.chosenMargin());
+            } catch (Exception e) {
+                LOGGER.warn("V2: MarketComplex plan/render failed for {}: {}",
+                        mk.building().getName(), e.getMessage());
             }
         }
 
@@ -828,6 +886,21 @@ public final class V2VillageSpawnerAdapter {
      *  FarmComplexPlanner: the Building for ids, the PlacedBuilding
      *  for geometry. */
     private record PlacedFarmhouse(Building building, PlacedBuilding placed) {}
+
+    /** Merchant arc Phase 2a — placed MARKET paired with its planning
+     *  PlacedBuilding (footprint + centre), mirroring PlacedFarmhouse. */
+    private record PlacedMarket(Building building, PlacedBuilding placed) {}
+
+    /** Merchant arc Phase 2a — convert a building's world AABB to the
+     *  XZ rectangle the MarketComplexPlanner collision-checks against.
+     *  maxX/maxZ are exclusive in {@code net.minecraft...AABB}; floor/
+     *  ceil keeps the integer rect inclusive of every occupied block. */
+    private static tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB toRect(
+            net.minecraft.world.phys.AABB box) {
+        return new tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB(
+                (int) Math.floor(box.minX), (int) Math.floor(box.minZ),
+                (int) Math.ceil(box.maxX), (int) Math.ceil(box.maxZ));
+    }
 
     /** Detour A — Prompt B Stage A. Collect every reserved park in
      *  this village as a polygon for FarmComplexPlanner's exclusion
