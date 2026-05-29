@@ -184,3 +184,185 @@ reconciled, all rewired call sites confirmed in-scope of their variables.
 5. WANDERING_TRADER screen unchanged (base pricing).
 6. Logs: no NPE, no double-applied modifier; prices stable across repeated
    quotes for unchanged supply/demand.
+
+---
+
+## Phase 1b — Unified settlement (one money-movement path, both paths)
+
+**Goal:** consolidate coin settlement into one place. Before 1b the player
+path hand-rolled coin movement in `TradeHandler` (never calling
+`NpcEconomy`, never paying market tax) while the NPC path settled via
+`NpcEconomy.marketPurchase` plus a tax bolted onto `MarketChannel`. Money
+movement only — goods movement (chest take/store, player-inventory
+delivery) stays per-caller until 2c.
+
+### What shipped
+
+New, in `Village/Economy/Currency/`:
+- `SettlementParty` — a sealed interface (transient, no codec) modelling one
+  side of a money transfer: `Player` (physical coins via `CoinHelper`),
+  `Npc` (virtual `NpcWallet`), `StallChest` (player-owned stall chest,
+  receive-only), `None` (mint source / burn sink). Factories
+  `player/npc/stallChest/none`.
+
+Added to `NpcEconomy` (the one money path both callers use):
+- `settlePurchase(buyer, endpoint, amount, village, level, data)` — debits
+  buyer, credits endpoint, applies the village market tax once. Returns
+  false (nothing moved) if the buyer can't pay.
+- `settleSale(payer, receiver, amount, level)` — payer pays receiver, no
+  market tax (preserves: sales were untaxed on both paths).
+- `resolveStallEndpoint(level, stall, merchantFallback)` — stall owner
+  wallet / player-stall chest / merchant fallback / none.
+- private `debit` / `credit` / `depositToStallChest` / `firePaymentVisual`
+  / `applyMarketTax`.
+
+Rewired (convert-then-delete):
+- `TradeHandler` buy branch → take goods, then `settlePurchase`. Sell branch
+  → `settleSale`. Deleted `forwardPaymentToStallOwner` (its NPC-owner arm is
+  now `resolveStallEndpoint`; its player-stall-chest arm is now
+  `NpcEconomy.depositToStallChest`). Added `returnToStallChest` for the
+  settle-failure goods rollback.
+- `MarketChannel.executeBuy` → `settlePurchase` (inline tax block removed).
+  `executeSell` → `settleSale`.
+- Deleted `NpcEconomy.marketPurchase` (its only caller was `executeBuy`).
+
+### Settlement-party abstraction
+
+A buyer/payer or receiver/endpoint is one `SettlementParty`. `debit`
+switches over it (Player→`playerPay`, Npc→wallet `spend`, StallChest→false
+(stalls never pay), None→true (mint)); `credit` switches over it
+(Player→`playerReceive`, Npc→wallet `receive`, StallChest→deposit coins to
+chest, None→burn). Purchase endpoints are resolved by
+`resolveStallEndpoint`; sale payer/receiver are chosen by the caller.
+
+### Current-vs-unified map
+
+| Path / dir | Today | Unified |
+|------------|-------|---------|
+| Player BUY | `playerPay` debit; on take: stall→`forwardPaymentToStallOwner` (NPC owner wallet / player chest) else merchant `getWallet().receive`; **no tax** | take goods → `settlePurchase(Player, resolveStallEndpoint\|merchant, …)` → debit player, credit endpoint, **+market tax** |
+| Player SELL | `merchant.getWallet().spend` + `playerReceive`; no tax | `settleSale(Npc(merchant), Player, …)` → debit merchant, credit player; no tax |
+| NPC BUY | `marketPurchase` (buyer wallet→owner/merchant/void) + inline tax in `MarketChannel` | `settlePurchase(Npc(buyer)\|None, resolveStallEndpoint, …)` → debit, credit, +tax |
+| NPC SELL | `seller.getWallet().receive` (mint) + `postListing` | `settleSale(None, Npc(seller), …)` (mint) ; `postListing` stays in channel |
+
+### Intended behaviour change (for Garrett's approval)
+
+1. **Player BUYS now pay the village market tax (10%, scaled by
+   `LawTaxHooks.marketTaxMultiplier`).** Previously only NPC buys were
+   taxed; the player path skipped it. The tax is minted into the village
+   treasury exactly as the NPC path always did — buyer still pays full
+   price to the merchant/stall; the treasury slice is added on top. Sells
+   remain untaxed on both paths (unchanged). **Tax applies exactly once**:
+   it now lives only in `settlePurchase`; the inline `MarketChannel` tax
+   block was deleted (convert-then-delete, no double-tax). On a failed
+   purchase (buyer can't pay) no tax is taken — `settlePurchase` returns
+   before taxing, matching the old `marketPurchase`-fails path.
+2. **NPC buys from a PLAYER-owned stall now deposit coins into the stall
+   chest** instead of the old no-op that silently fell through to paying
+   the merchant. (Prompt-mandated fix; player-path stalls are always
+   merchant-NPC-owned so this only changes the NPC path.)
+
+Everything else is preserved bit-for-bit (same wallets debited/credited,
+same amounts, same NPC payment visuals for NPC→NPC and NPC→void).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** Price comes from 1a (`MarketPricing`, passed in as
+   `pricePerUnit`/`pricePerItem`); buyer/endpoint identities from the trade
+   context (player + merchant + stall). The market-tax sink is
+   `Village.depositToTreasury` scaled by `LawTaxHooks.marketTaxMultiplier`
+   — the same sink the NPC path already used. **Note:**
+   `VillageTreasury.collectMarketTax` (referenced in the prompt) has **no
+   live callers** — it belongs to the separate `VillageTreasury` ledger
+   used by `VillageSimEngine`/`RequestSettlement`, not the live trade tax.
+   Using it would have *changed* NPC behaviour, so 1b deliberately keeps
+   `Village.depositToTreasury` (see Deviations).
+2. **Downstream callers re-pointed / dispositioned:**
+   - `NpcEconomy.marketPurchase` → **deleted**; sole caller (`executeBuy`)
+     now calls `settlePurchase`.
+   - `TradeHandler.forwardPaymentToStallOwner` → **deleted**; folded into
+     `resolveStallEndpoint` + `depositToStallChest`.
+   - `CoinHelper.playerPay/playerReceive` in `TradeHandler` main branches →
+     now reached only through `settlePurchase`/`settleSale`. The
+     WANDERING_TRADER fast-path keeps its own direct `CoinHelper` calls
+     (out of scope).
+   - `merchant.getWallet().receive/spend` inline in `TradeHandler` →
+     removed (now via the helper).
+   - `MarketChannel` inline tax → removed.
+3. **Sibling systems.** `MarketChannel.executeSell`'s
+   `VillageEconomy.postListing` **stays in the channel** (listing posting,
+   not money) so settle stays money-only — flagged. `BuyGoodsBehavior`
+   (NPC buyer) is unchanged and still works end-to-end (it calls
+   `channel.execute` → `executeBuy` → `settlePurchase`).
+4. **Exhaustive switches.** `SettlementParty` is a new sealed type; the
+   only switches over it are `debit` and `credit` in `NpcEconomy`, both
+   exhaustive over all four permitted records with no `default`.
+   `instanceof` checks in `firePaymentVisual` are not exhaustive switches.
+
+### Simplification Sweep
+
+- One money path: deleted `marketPurchase`, `forwardPaymentToStallOwner`,
+  the inline `MarketChannel` tax, and the hand-rolled `TradeHandler` coin
+  ops — all replaced by `settlePurchase`/`settleSale`.
+- Reused the existing stall-chest deposit logic verbatim (moved, not
+  rewritten). Removed unused `BlockPos` import and unused `level`/`data`
+  params from the settle primitives.
+
+### Deviations from prompt
+
+- **Tax sink:** used `Village.depositToTreasury` + `LawTaxHooks`
+  (the live NPC-path mechanism) rather than the prompt-suggested
+  `VillageTreasury.collectMarketTax`, which has no live callers and feeds a
+  different ledger. This is required to "preserve behaviour exactly" for
+  the NPC path; documented in the Tie-In Audit.
+- **Ordering:** the player buy now takes goods *before* settling (was: pay
+  first, then take). Net-identical because quantity is pre-capped to player
+  wealth so the debit cannot fail; on the (unreachable) failure path goods
+  are restored via `returnToStallChest` / main-chest store. This makes the
+  rollback trivial (no money moved yet) and removes the old
+  pay-then-refund denomination reshuffle on the main-chest-take-fail path.
+
+### Out-of-scope but flagged
+
+- Goods/inventory consolidation → 2c (stays per-caller).
+- `VillageEconomy.postListing` relocation → flagged, kept in channel.
+- WANDERING_TRADER settlement → untouched (still burns coins).
+- 1c (inter-village price differentiation) / 1d (balance externalization).
+- `VillageTreasury.collectMarketTax` vs `Village.depositToTreasury` are two
+  parallel treasury mechanisms; reconciling them is out of scope.
+
+### Preflight
+
+- `SettlementParty` sealed type added; switches (`debit`/`credit`)
+  exhaustive. ✓
+- No new persisted fields; the party type is transient (no codec). ✓
+- No new per-tick logging. ✓
+- Money movement lives in one place (`NpcEconomy`); `TradeHandler` and
+  `MarketChannel` call it; inline tax + hand-rolled coin ops deleted. ✓
+- Tax applied exactly once (only in `settlePurchase`); player coin in/out
+  unchanged except the intended treasury tax slice. ✓
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (no cached
+`neoform-runtime` for offline mode). Static review performed: all
+`settlePurchase`/`settleSale`/`resolveStallEndpoint` call sites checked
+against signatures and variable scope; switch exhaustiveness over the
+sealed `SettlementParty` confirmed; behaviour walked per the current-vs-
+unified map (preserved except the two enumerated changes).
+
+### Smoke-test plan (user-executable)
+
+1. Player buys from a merchant: coins leave player, endpoint credited, and
+   — intended — the village treasury collects the 10% tax (check via
+   economy debug / treasury balance).
+2. Player sells to a merchant: player paid, merchant wallet debited, as
+   before (no sell tax).
+3. Buy from an NPC-owned stall and a PLAYER-owned stall: NPC owner wallet
+   credited; player-owned stall now receives coins in its chest (was a
+   no-op).
+4. NPC-to-NPC market buy (`BuyGoodsBehavior`): settles via the helper, tax
+   applied once (not zero, not twice).
+5. Insufficient funds (player and NPC): graceful — no partial settle, no
+   item granted without payment (purchase aborts before taxing/crediting).
+6. WANDERING_TRADER trade still burns coins as before (untouched).
+7. Logs: no double-tax, no double-spend, no NPE in the stall-chest deposit.
