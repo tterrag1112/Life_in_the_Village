@@ -13,14 +13,14 @@ import tterrag1112.life_in_the_village.Npc.Economy.Channels.EconomicChannel;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeDirection;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult;
-import tterrag1112.life_in_the_village.Npc.Laws.LawPriceHooks;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelper;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPricing;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.SettlementParty;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -29,10 +29,15 @@ import java.util.Optional;
 /**
  * Wraps the existing market-stall + merchant infrastructure. Spec line
  * 108. Available iff the village owns a {@link BuildingType#MARKET}
- * building. Quote price uses {@link MarketPriceHelper#getDynamicSellPrice}
- * (BUY) or {@link MarketPriceHelper#getDynamicBuyPrice} (SELL); execute
- * delegates to the legacy {@link NpcEconomy#marketPurchase} routing so
- * stall payment + merchant fallback continue to work unchanged.
+ * building. Quote price runs the canonical {@link MarketPricing} pipeline
+ * ({@link MarketPricing#sellPrice} for BUY, {@link MarketPricing#buyPrice}
+ * for SELL) — the same function the player trade path uses — so supply/
+ * demand, village law and stall custom prices are applied identically on
+ * both paths. Execute moves goods and then settles money through the
+ * unified {@link NpcEconomy#settlePurchase} / {@link NpcEconomy#settleSale}
+ * helpers — the same money path the player trade path uses — so stall
+ * payment, merchant fallback and the village market tax are applied in one
+ * place.
  *
  * <p>This channel intentionally does NOT short-circuit when the
  * village's market chest is empty — the {@link #quote} method clamps
@@ -73,15 +78,24 @@ public final class MarketChannel implements EconomicChannel {
         if (market == null) return Optional.empty();
 
         BlockPos location = market.getShape().getOrigin();
-        long basePrice;
+        long policied;
         int available;
 
         if (intent.direction() == TradeDirection.BUY) {
-            basePrice = MarketPriceHelper.getDynamicSellPrice(level, village, intent.item());
+            // Buyer pays the sell-side price; honour the sourcing stall's
+            // custom price via the unified pipeline.
+            MarketStall stall = findStallWithItem(market, intent, level, data);
+            policied = MarketPricing.sellPrice(
+                    tterrag1112.life_in_the_village.Village.Economy.Currency.PricingContext
+                            .forNpc(intent.item(), level, village, data, stall));
             available = Math.min(intent.quantity(),
                     BuildingStorageAccess.countItem(level, market, intent.item()));
         } else {
-            basePrice = MarketPriceHelper.getDynamicBuyPrice(level, village, intent.item());
+            // Seller receives the buy-side price. Stalls are sell endpoints,
+            // so no stall override on this side.
+            policied = MarketPricing.buyPrice(
+                    tterrag1112.life_in_the_village.Village.Economy.Currency.PricingContext
+                            .forNpc(intent.item(), level, village, data, null));
             // Selling: market always accepts up to the requested quantity
             // (the merchant chest absorbs surplus). Spec line 217: laws
             // may cap this; not in v1.
@@ -97,12 +111,11 @@ public final class MarketChannel implements EconomicChannel {
             return Optional.empty();
         }
 
-        long policied = applyPolicy(intent, village, basePrice);
         if (intent.direction() == TradeDirection.BUY && policied > intent.maxPrice()) {
             if (!LOGGED_CEILING_BUY) {
                 LOGGER.warn("[MarketChannel] CEILING REJECT item={} quote={}br/unit " +
-                        "EXCEEDS intent.maxPrice={}br/unit (base={}br)",
-                        intent.item(), policied, intent.maxPrice(), basePrice);
+                        "EXCEEDS intent.maxPrice={}br/unit",
+                        intent.item(), policied, intent.maxPrice());
                 LOGGED_CEILING_BUY = true;
             }
             return Optional.empty();
@@ -161,36 +174,29 @@ public final class MarketChannel implements EconomicChannel {
             return TradeResult.fail("take failed");
         }
 
-        // Route payment via the legacy helper — keeps stall/merchant
-        // routing identical to pre-Phase-3 behaviour.
+        // Settle money via the unified helper (debit buyer, credit stall
+        // owner / merchant, collect the village market tax once). Goods
+        // already moved above; the helper is money-only.
         TownspersonMob buyer = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
         MarketStall stall = findStallWithItem(market, intent, level, data);
         TownspersonMob merchant = findMerchant(level, market);
         CurrencyValue cost = CurrencyValue.of(total);
-
-        if (buyer != null) {
-            if (!NpcEconomy.marketPurchase(buyer, merchant, cost, level, data, stall)) {
-                // Couldn't pay — return items.
-                BuildingStorageAccess.storeItem(level, market,
-                        new ItemStack(intent.item(), qty));
-                return TradeResult.fail("buyer cannot pay");
-            }
-        } else {
-            // Player buyer — payment is handled by the existing
-            // TradeHandler invocation upstream (the channel was used as a
-            // pricing/availability lookup; player flow keeps its own UI
-            // path). Keep the items moved for the caller to receive.
-        }
-
-        // Village treasury slice — legacy 10%, scaled by doc 22's
-        // MARKET_TAX_DOUBLE / MARKET_TAX_REDUCED multiplier.
         Village v = data.getVillageById(intent.villageId()).orElse(null);
-        double mult = v == null ? 1.0
-                : tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks.marketTaxMultiplier(v);
-        long tax = Math.round((total / 10.0) * mult);
-        if (tax > 0 && v != null) {
-            v.depositToTreasury(tax);
-            data.markDirty();
+
+        // buyer == null is an unloaded-NPC edge case (never a real player —
+        // every channel caller is an NPC). Mirror the legacy behaviour:
+        // no debit/credit, but the market tax still applies once.
+        SettlementParty buyerParty = buyer != null
+                ? SettlementParty.npc(buyer) : SettlementParty.none();
+        SettlementParty endpoint = buyer != null
+                ? NpcEconomy.resolveStallEndpoint(level, stall, merchant)
+                : SettlementParty.none();
+
+        if (!NpcEconomy.settlePurchase(buyerParty, endpoint, cost, v, level, data)) {
+            // Couldn't pay — return items.
+            BuildingStorageAccess.storeItem(level, market,
+                    new ItemStack(intent.item(), qty));
+            return TradeResult.fail("buyer cannot pay");
         }
         return TradeResult.ok(qty, total);
     }
@@ -202,7 +208,10 @@ public final class MarketChannel implements EconomicChannel {
         BuildingStorageAccess.storeItem(level, market, new ItemStack(intent.item(), qty));
         TownspersonMob seller = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
         if (seller != null) {
-            seller.getWallet().receive(CurrencyValue.of(total));
+            // Money-only settle: the market pays the seller. No payer entity
+            // (the market mints the payment, as before) and no sell-side tax.
+            NpcEconomy.settleSale(SettlementParty.none(),
+                    SettlementParty.npc(seller), CurrencyValue.of(total), level);
         }
         // Listing entry so other NPCs see the new market stock for
         // pricing — matches the legacy SellToMarketGoal path.
@@ -242,24 +251,6 @@ public final class MarketChannel implements EconomicChannel {
                 market.getShape().toAABB().inflate(16),
                 mob -> mob.getProfession() == Profession.MERCHANT
         ).stream().findFirst().orElse(null);
-    }
-
-    private static long applyPolicy(TradeIntent intent, Village village, long base) {
-        // Doc 22 wired: tax multipliers + food price ceiling / floor +
-        // direct subsidies via channel.
-        double mult = intent.direction() == TradeDirection.BUY
-                ? LawPriceHooks.sellMultiplier(village, ChannelType.MARKET, intent.item())
-                : LawPriceHooks.buyMultiplier(village, ChannelType.MARKET, intent.item());
-        long subsidy = intent.direction() == TradeDirection.SELL
-                ? LawPriceHooks.subsidyBonus(village, ChannelType.MARKET, intent.item())
-                : 0L;
-        long policied = Math.round(base * mult) + subsidy;
-        long floor = LawPriceHooks.priceFloor(village, ChannelType.MARKET, intent.item());
-        if (floor > 0) policied = Math.max(floor, policied);
-        long finalPolicied = policied;
-        return LawPriceHooks.priceCeiling(village, ChannelType.MARKET, intent.item())
-                .map(cap -> Math.min(cap, finalPolicied))
-                .orElse(policied);
     }
 
 }

@@ -4,6 +4,7 @@ package tterrag1112.life_in_the_village.Village.Economy;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.EconomyBalanceRegistry;
 
 import java.util.UUID;
 
@@ -47,21 +48,40 @@ public class VillageTreasury {
                             .forGetter(t -> t.lastPayday)
             ).apply(i, VillageTreasury::new));
 
-    // ── Tax rates (in bronze per unit per day) ─────────────────────────
-    /** Bronze per house per day — property tax. */
-    public static final long PROPERTY_TAX_PER_HOUSE = 2L;
-    /** Fraction of market transactions taken as tax (1/DIVISOR). */
-    public static final int  MARKET_TAX_DIVISOR = 10; // 10% tax
-    /** Bronze per NPC per day — simulated baseline income for unloaded. */
-    public static final long BASELINE_INCOME_PER_NPC = 1L;
+    // ── Tax / wage rates ───────────────────────────────────────────────
+    // Phase 1d: externalized to the data-driven economy balance config.
+    // These accessors read live (so /reload takes effect) and default to
+    // the pre-1d values when no config is present. Replaces the old
+    // public static final constants (which the compiler would have inlined).
 
-    // ── Wage rates ─────────────────────────────────────────────────────
+    /** Fraction of market transactions taken as tax (1/DIVISOR). */
+    public static long marketTaxDivisor() {
+        return EconomyBalanceRegistry.balance().treasury().marketTaxDivisor();
+    }
+    /** Bronze per house per day — property tax. */
+    public static long propertyTaxPerHouse() {
+        return EconomyBalanceRegistry.balance().treasury().propertyTaxPerHouse();
+    }
+    /** Bronze per NPC per day — simulated baseline income for unloaded. */
+    public static long baselineIncomePerNpc() {
+        return EconomyBalanceRegistry.balance().treasury().baselineIncomePerNpc();
+    }
     /** Bronze per guard per day. */
-    public static final long GUARD_WAGE = 8L;
+    public static long guardWage() {
+        return EconomyBalanceRegistry.balance().treasury().guardWage();
+    }
     /** Bronze per stockpile keeper per day. */
-    public static final long KEEPER_WAGE = 5L;
+    public static long keeperWage() {
+        return EconomyBalanceRegistry.balance().treasury().keeperWage();
+    }
     /** Bronze per innkeeper per day. */
-    public static final long INNKEEPER_WAGE = 4L;
+    public static long innkeeperWage() {
+        return EconomyBalanceRegistry.balance().treasury().innkeeperWage();
+    }
+    /** Bronze per merchant per day. */
+    public static long merchantWage() {
+        return EconomyBalanceRegistry.balance().treasury().merchantWage();
+    }
 
     // ── Fields ─────────────────────────────────────────────────────────
     private final UUID villageId;
@@ -118,7 +138,7 @@ public class VillageTreasury {
 
     /** Collect market tax from a transaction total. */
     public long collectMarketTax(long transactionTotal) {
-        long tax = transactionTotal / MARKET_TAX_DIVISOR;
+        long tax = transactionTotal / marketTaxDivisor();
         if (tax <= 0) return 0;
         deposit(tax);
         return tax;

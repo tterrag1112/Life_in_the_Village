@@ -115,8 +115,13 @@ public final class DirectBusinessChannel implements EconomicChannel {
         // Stacks with the existing ±5% relationshipModifier.
         double sellerGenerosity = match.producer.getTraitVector()
                 .get(tterrag1112.life_in_the_village.Npc.Traits.TraitAxis.GENEROSITY);
-        double traitMod = 1.0 - (sellerGenerosity * 0.125);
-        long raw = Math.round(base * traitMod * (1.0 + relMod * 0.05)
+        // Phase 1d: ±generosity and ±relationship bands externalized
+        // (defaults 0.125 and 0.05).
+        var channelBalance = tterrag1112.life_in_the_village.Village.Economy.Currency
+                .EconomyBalanceRegistry.balance().channels();
+        double traitMod = 1.0 - (sellerGenerosity * channelBalance.directGenerosityBand());
+        long raw = Math.round(base * traitMod
+                * (1.0 + relMod * channelBalance.directRelationshipBand())
                 * LawPriceHooks.sellMultiplier(village, ChannelType.DIRECT_BUSINESS, intent.item()));
         long floor = LawPriceHooks.priceFloor(village, ChannelType.DIRECT_BUSINESS, intent.item());
         long withFloor = floor > 0 ? Math.max(floor, raw) : raw;

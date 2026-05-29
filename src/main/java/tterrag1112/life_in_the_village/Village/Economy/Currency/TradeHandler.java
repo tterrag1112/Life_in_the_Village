@@ -61,33 +61,19 @@ public class TradeHandler {
         Set<BlockPos> allStallChests = allStallChestPositions(data, market);
 
         List<TradeOffer> offers = new ArrayList<>();
+        Village pricingVillage = village.orElse(null);
 
-        MarketPriceHelper.getAllExplicitPrices().forEach((item, basePrice) -> {
-            long dynSell = village.map(v ->
-                    DynamicPriceCalculator.getSellPrice(
-                            level, v, data, item, basePrice.sellPrice())
-            ).orElse(basePrice.sellPrice());
-
-            long dynBuy = village.map(v ->
-                    DynamicPriceCalculator.getBuyPrice(
-                            level, v, data, item, basePrice.buyPrice())
-            ).orElse(basePrice.buyPrice());
-
-            long discountedSell = village.map(v ->
-                    ReputationManager.applyDiscount(dynSell, player, v.getId(), level)
-            ).orElse(dynSell);
-
-            long boostedBuy = ProfessionPerkManager
-                    .applyMerchantBuyPricePerk(player, dynBuy);
-
-            // Kingdom law: TRADE_TARIFFS — reflect surcharge in displayed prices
-            java.util.UUID vidForTariff = village.map(Village::getId).orElse(null);
-            discountedSell = Math.round(discountedSell
-                    * tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeBuyMultiplier(player, data, vidForTariff));
-            boostedBuy = Math.round(boostedBuy
-                    * tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeSellMultiplier(player, data, vidForTariff));
+        MarketPriceHelper.getAllExplicitPrices().keySet().forEach(item -> {
+            // Canonical pricing — supply/demand, stall custom price, village
+            // law and the player's reputation/perk/tariff in one pipeline.
+            // Pricing stall mirrors the buy-path source (merchant's own stall
+            // only) so the displayed price equals the charged price.
+            MarketStall pricingStall = findOwnedStallWithItem(
+                    data, level, market.getId(), item, merchant.getUUID());
+            long sell = MarketPricing.sellPrice(PricingContext.forPlayer(
+                    item, level, pricingVillage, data, player, pricingStall));
+            long buy = MarketPricing.buyPrice(PricingContext.forPlayer(
+                    item, level, pricingVillage, data, player, null));
 
             // Stock = main chests + merchant's own stall (not other stalls)
             int stock = countMerchantStock(
@@ -97,8 +83,7 @@ public class TradeHandler {
                     .hasAnyMatching(s -> s.is(item));
 
             if (canBuy || canSell) {
-                offers.add(new TradeOffer(item, discountedSell, boostedBuy,
-                        canBuy, canSell, stock));
+                offers.add(new TradeOffer(item, sell, buy, canBuy, canSell, stock));
             }
         });
 
@@ -160,9 +145,6 @@ public class TradeHandler {
             }
         }
 
-        MarketPriceData.ItemPrice basePrice = MarketPriceHelper.getOrDefaultPrice(item);
-
-
         int quantity = packet.quantity();
 
         // =====================================================================
@@ -188,20 +170,10 @@ public class TradeHandler {
                 return;
             }
 
-            // Price
-            long rawPrice = village.map(v ->
-                    DynamicPriceCalculator.getSellPrice(
-                            level, v, data, item, basePrice.sellPrice())
-            ).orElse(basePrice.sellPrice());
-
-            long pricePerItem = villageId != null
-                    ? ReputationManager.applyDiscount(rawPrice, player, villageId, level)
-                    : rawPrice;
-
-            // Kingdom law: TRADE_TARIFFS — outsiders pay a +20% surcharge
-            double tariffBuy = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeBuyMultiplier(player, data, villageId);
-            pricePerItem = Math.round(pricePerItem * tariffBuy);
+            // Price — canonical pipeline. Source stall (if any) lets the
+            // stall's custom price apply, matching the displayed offer.
+            long pricePerItem = MarketPricing.sellPrice(PricingContext.forPlayer(
+                    item, level, village.orElse(null), data, player, sourceStall));
 
             // Afford check — uses getPlayerWealth, no snapshot
             quantity = Math.min(quantity,
@@ -215,32 +187,43 @@ public class TradeHandler {
 
             CurrencyValue totalCost = CurrencyValue.of(pricePerItem * quantity);
 
-            // 1. Player pays — uses playerPay, handles denomination breaking
-            if (!CoinHelper.playerPay(player, totalCost)) {
-                player.displayClientMessage(
-                        Component.literal("Payment failed."), true);
-                return;
-            }
-
-            // 2. Take item from stall or main chest
+            // 1. Take item from stall or main chest (goods movement stays
+            //    in the caller for 1b). The source decides the pay endpoint.
             boolean taken;
             if (sourceStall != null) {
+                // A failed stall-take still proceeds, crediting the merchant
+                // fallback — matches the pre-1b behaviour exactly.
                 taken = takeFromStallChest(level, sourceStall, item, quantity);
-                if (taken) forwardPaymentToStallOwner(level, sourceStall,
-                        totalCost, data);
-                else merchant.getWallet().receive(totalCost); // refund if take failed
             } else {
                 taken = BuildingStorageAccess.takeItem(
                         level, market, item, quantity);
-                if (taken) {
-                    merchant.getWallet().receive(totalCost);
-                } else {
-                    // Refund player if take failed
-                    CoinHelper.playerReceive(player, totalCost);
+                if (!taken) {
+                    // Player not yet charged — abort (net-identical to the
+                    // old pay-then-refund on this branch).
                     player.displayClientMessage(
                             Component.literal("Failed to retrieve item."), true);
                     return;
                 }
+            }
+
+            // 2. Settle money via the unified helper: player pays the stall
+            //    owner / merchant, village collects the market tax once.
+            SettlementParty endpoint = (sourceStall != null && taken)
+                    ? NpcEconomy.resolveStallEndpoint(level, sourceStall, merchant)
+                    : SettlementParty.npc(merchant);
+            if (!NpcEconomy.settlePurchase(SettlementParty.player(player), endpoint,
+                    totalCost, village.orElse(null), level, data)) {
+                // Payment failed (quantity was pre-capped to wealth, so this
+                // is effectively unreachable) — restore the taken goods.
+                if (taken) {
+                    if (sourceStall != null)
+                        returnToStallChest(level, sourceStall, item, quantity);
+                    else BuildingStorageAccess.storeItem(
+                            level, market, new ItemStack(item, quantity));
+                }
+                player.displayClientMessage(
+                        Component.literal("Payment failed."), true);
+                return;
             }
 
             // 3. Give item to player
@@ -281,19 +264,11 @@ public class TradeHandler {
             quantity = Math.min(quantity, playerHas);
             if (quantity <= 0) return;
 
-            // Price merchant pays player
-            long rawBuyPrice = village.map(v ->
-                    DynamicPriceCalculator.getBuyPrice(
-                            level, v, data, item, basePrice.buyPrice())
-            ).orElse(basePrice.buyPrice());
-
-            long pricePerItem = ProfessionPerkManager
-                    .applyMerchantBuyPricePerk(player, rawBuyPrice);
-
-            // Kingdom law: TRADE_TARIFFS — outsiders receive 20% less
-            double tariffSell = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeSellMultiplier(player, data, villageId);
-            pricePerItem = Math.round(pricePerItem * tariffSell);
+            // Price merchant pays player — canonical pipeline (perk + tariff
+            // + village law applied inside). Selling to the market has no
+            // stall override.
+            long pricePerItem = MarketPricing.buyPrice(PricingContext.forPlayer(
+                    item, level, village.orElse(null), data, player, null));
 
             // Cap to merchant wealth
             long merchantWealth = merchant.getTotalWealth(level).toBronze();
@@ -324,9 +299,10 @@ public class TradeHandler {
             storeExcludingStalls(level, market,
                     new ItemStack(item, quantity), data);
 
-            // 3. Merchant spends, player receives — uses playerReceive
-            merchant.getWallet().spend(totalEarned);
-            CoinHelper.playerReceive(player, totalEarned);
+            // 3. Settle money via the unified helper: merchant pays the
+            //    player. No sell-side tax (preserves pre-1b behaviour).
+            NpcEconomy.settleSale(SettlementParty.npc(merchant),
+                    SettlementParty.player(player), totalEarned, level);
 
             // Phase 1: fire Trade event for the sell-side path too.
             tterrag1112.life_in_the_village.Npc.Events.NpcLifeEventBus.fire(
@@ -445,39 +421,6 @@ public class TradeHandler {
     // Stall helpers
     // =========================================================================
 
-    private static void forwardPaymentToStallOwner(ServerLevel level,
-                                                   MarketStall stall,
-                                                   CurrencyValue amount,
-                                                   VillageSavedData data) {
-        if (stall.getOwnerType() == MarketStall.OwnerType.NPC) {
-            level.getEntitiesOfClass(
-                            TownspersonMob.class,
-                            new net.minecraft.world.phys.AABB(
-                                    stall.getChestPos()).inflate(128),
-                            mob -> mob.getUUID().equals(stall.getOwnerUUID()))
-                    .stream().findFirst()
-                    .ifPresent(owner -> owner.getWallet().receive(amount));
-        } else {
-            // Player-owned: deposit coins into stall chest
-            BlockEntity be = level.getBlockEntity(stall.getChestPos());
-            if (be instanceof net.minecraft.world.Container chest) {
-                net.minecraft.world.SimpleContainer temp =
-                        new net.minecraft.world.SimpleContainer(9);
-                CoinHelper.giveCoins(temp, amount);
-                for (int i = 0; i < temp.getContainerSize(); i++) {
-                    ItemStack coin = temp.getItem(i);
-                    if (coin.isEmpty()) continue;
-                    for (int ci = 0; ci < chest.getContainerSize(); ci++) {
-                        if (chest.getItem(ci).isEmpty()) {
-                            chest.setItem(ci, coin.copy());
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     private static MarketStall findOwnedStallWithItem(VillageSavedData data,
                                                       ServerLevel level,
                                                       UUID marketId,
@@ -511,6 +454,28 @@ public class TradeHandler {
             if (s.isEmpty()) chest.setItem(i, ItemStack.EMPTY);
         }
         return remaining == 0;
+    }
+
+    /** Restores goods into a stall chest — used to roll back a failed settle. */
+    private static void returnToStallChest(ServerLevel level, MarketStall stall,
+                                           Item item, int qty) {
+        BlockEntity be = level.getBlockEntity(stall.getChestPos());
+        if (!(be instanceof net.minecraft.world.Container chest)) return;
+        ItemStack stack = new ItemStack(item, qty);
+        for (int i = 0; i < chest.getContainerSize() && !stack.isEmpty(); i++) {
+            ItemStack ex = chest.getItem(i);
+            if (ex.is(item) && ex.getCount() < ex.getMaxStackSize()) {
+                int add = Math.min(ex.getMaxStackSize() - ex.getCount(), stack.getCount());
+                ex.grow(add);
+                stack.shrink(add);
+            }
+        }
+        for (int i = 0; i < chest.getContainerSize() && !stack.isEmpty(); i++) {
+            if (chest.getItem(i).isEmpty()) {
+                chest.setItem(i, stack.copy());
+                stack.setCount(0);
+            }
+        }
     }
 
     private static int countInStallChest(ServerLevel level,
