@@ -76,8 +76,29 @@ public class MarketStall {
             Codec.LONG.optionalFieldOf("totalSales", 0L)
                     .forGetter(MarketStall::getTotalSales),
             CUSTOM_PRICES_CODEC.optionalFieldOf("customPrices", Map.of())
-                    .forGetter(MarketStall::getCustomPricesRaw)
-    ).apply(i, MarketStall::new));
+                    .forGetter(MarketStall::getCustomPricesRaw),
+            // Phase 2d — event-scoped stall marker. "" ⇒ permanent stall.
+            // optionalFieldOf default keeps pre-2d saves loading.
+            Codec.STRING.optionalFieldOf("eventId", "")
+                    .forGetter(MarketStall::getEventIdRaw)
+    ).apply(i, MarketStall::fromCodec));
+
+    /** Codec apply target — restores the event marker after construction
+     *  (kept out of the canonical constructor so create()/legacy callers
+     *  are unchanged). */
+    private static MarketStall fromCodec(UUID stallId, UUID marketBuildingId,
+                                         int slotIndex, BlockPos stallOrigin,
+                                         BlockPos chestPos, UUID ownerUUID,
+                                         String ownerDisplayName, OwnerType ownerType,
+                                         long rentPaidUntilTick, boolean active,
+                                         int reputation, long totalSales,
+                                         Map<String, Long> customPrices, String eventId) {
+        MarketStall s = new MarketStall(stallId, marketBuildingId, slotIndex,
+                stallOrigin, chestPos, ownerUUID, ownerDisplayName, ownerType,
+                rentPaidUntilTick, active, reputation, totalSales, customPrices);
+        if (eventId != null && !eventId.isEmpty()) s.eventId = UUID.fromString(eventId);
+        return s;
+    }
 
     // ── Owner type ─────────────────────────────────────────────────────────────
 
@@ -154,6 +175,12 @@ public class MarketStall {
     private       int      reputation;   // 0..MAX_REPUTATION
     private       long     totalSales;   // all-time bronze earned through this stall
     private final Map<String, Long> customPrices; // itemId → bronze price override
+
+    // Phase 2d — non-null when this stall belongs to a temporary event
+    // (farmer's-market / fair). Null = permanent stall. Not in the
+    // canonical constructor; set post-construction and persisted via the
+    // codec's fromCodec adapter so create()/legacy callers stay unchanged.
+    private UUID eventId;
 
     // ── Canonical constructor (matches codec) ─────────────────────────────────
 
@@ -259,6 +286,19 @@ public class MarketStall {
     public boolean isVacant() {
         return VACANT_UUID.equals(ownerUUID);
     }
+
+    // ── Event scoping (Phase 2d) ─────────────────────────────────────────────
+
+    /** The event this temporary stall belongs to, or null if permanent. */
+    public UUID getEventId() { return eventId; }
+
+    /** Codec getter — event id as a string ("" ⇒ permanent). */
+    public String getEventIdRaw() { return eventId == null ? "" : eventId.toString(); }
+
+    public void setEventId(UUID eventId) { this.eventId = eventId; }
+
+    /** True when this stall is a temporary event stall (2d). */
+    public boolean isEventScoped() { return eventId != null; }
 
     // =========================================================================
     // Custom pricing (±20% band)

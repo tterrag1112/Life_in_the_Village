@@ -44,6 +44,12 @@ public final class MarketRentManager {
         for (MarketStall stall : stalls) {
             if (!stall.isActive()) continue;
 
+            // ── Event (temporary) stalls aren't rented — skip (2d) ───────────
+            if (stall.isEventScoped()) continue;
+
+            // ── Vacant (seeded "for rent") stalls have no tenant to bill ─────
+            if (stall.isVacant()) continue;
+
             // ── Purchased stalls never expire ────────────────────────────────
             if (stall.isPurchased()) continue;
 

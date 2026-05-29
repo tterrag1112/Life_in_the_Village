@@ -1146,3 +1146,136 @@ signature matched; `MarketStall` record/codec unchanged (no field added).
    settle, by design).
 6. `MarketWorkPost.forStall` returns a sane stand + outward facing for a
    stall (Phase 3 input; no standing behaviour yet).
+
+---
+
+## Phase 2d — Temporary / event stalls (farmer's-market connection)
+
+**Goal:** connect market/fair events to real, temporary producer stalls —
+recruit surplus producers into `MarketStall` records for the event window,
+stocked from their goods, torn down cleanly (leak-proof) at event end.
+
+**Sequencing:** infra now, tending follows in Phase 3 (per the prompt's
+recommendation). Stalls appear + are owned + stocked; producers man them
+once Phase 3 occupancy consumes the 2c work-post.
+
+### What shipped
+
+- `MarketStall.eventId` — nullable event marker, persisted via an
+  `optionalFieldOf("eventId","")` + a `fromCodec` adapter (canonical
+  constructor + `create()`/legacy callers unchanged; pre-2d saves load).
+  `isEventScoped()` / `getEventId()` / `setEventId()`.
+- `EventStallManager` (new, `Village/Markets/Complex/`):
+  - `recruit` — on a market/fair start: recompute the 2a pad region
+    (deterministic), pick eligible surplus producers, place stalls via the
+    2b `StallAllocator` up to `MAX_RECRUITS`/pad capacity, tag with
+    `eventId`, owner = producer, stock from the producer's building.
+  - `teardown` — on event end: per event stall, return goods to the
+    owner's building, `reclaimStall` (clear structure to pad), remove
+    record.
+  - `reconcile` — load-time: tear down any event-scoped stall whose event
+    isn't in `EventScheduleData.getActiveEvents` — covers crash/restart/
+    unload orphans.
+- Hooks: `EventEffects.onEventStart` calls `recruit` centrally (after the
+  type switch, so registry-routed `SUMMER_MARKET` is covered too);
+  `onEventEnd` calls `teardown`; `ModModEvents.onServerStarting` calls
+  `reconcile` once.
+- `MarketRentManager` skips `isEventScoped()` (and `isVacant()`) stalls.
+
+### Temporary-stall lifecycle
+
+start → `recruit` (place + tag + stock + owner) → [Phase 3 tend] → end →
+`teardown` (return goods + clear-to-pad + remove). Crash between start and
+end → `reconcile` at next load tears the orphan down. The `eventId` is the
+single source of truth for "is this stall temporary + which event."
+
+### Recruitment policy
+
+Eligible = producer professions (FARMER, BAKER, FISHERMAN, BUTCHER,
+WEAVER, CARPENTER, BLACKSMITH, MINER, MASON, SHEPHERD) assigned to the
+village with non-empty building storage (surplus). Capped at
+`MAX_RECRUITS` (6) and by allocator pad capacity (respects existing
+permanent/seeded occupancy → never evicts them; "market full" simply
+recruits fewer). Each stall stocked with up to `STOCK_PER_STALL` (16)
+items pulled from the producer's building (overflow stays in the
+building — nothing duplicated/lost).
+
+### Teardown robustness (leak-proofing)
+
+- **Normal end:** `teardown(eventId)` removes all matching stalls.
+- **Restart/crash mid-event:** stall persists with `eventId`; `reconcile`
+  at server start removes any whose event is no longer active.
+- **Chunk unload/reload:** the record persists (not block-scanned), so
+  reconciliation/teardown still find it by id.
+- **Clear-to-pad:** reuses `MarketStallPlacer.reclaimStall` (clears the
+  stall structure to air over the 2a pad surface — no per-block snapshot,
+  no holes), then goods are returned first so nothing is destroyed.
+
+### EventType / OwnerType switch audits
+
+- `EventStallManager.wantsProducerStalls` switches `EventType`:
+  `MARKET_DAY, SUMMER_MARKET, VILLAGE_FAIR → true`; `GUILD_FAIR` and all
+  others → `false` (default arm). GUILD_FAIR is guild-scoped, not a
+  producer farmer's-market — keeps its wandering trader + cosmetics only.
+  No new EventType added; the existing `onEventStart`/`onEventEnd` switches
+  are untouched (recruit/teardown are called outside the switch).
+- `OwnerType` — recruited producers are `NPC`-owned; no new arm. The 2c
+  goods/sign paths already handle `NPC` uniformly. WANDERING_TRADER arm
+  untouched (the market-day trader is unchanged).
+
+### Tie-In / Simplification / Deviations
+
+- **Tie-In.** Upstream: event start/end (`EventEffects`), 2b allocator,
+  2a deterministic pad recompute, producer building storage. Downstream:
+  Phase-3 occupancy consumes `MarketWorkPost.forStall` + owner=producer on
+  these stalls; 2c `StallGoods` means event-stall goods live in their own
+  chest. `MarketRentManager` skips them. `EventScheduleData` is the
+  liveness source for reconciliation.
+- **Simplification.** Cosmetic `placeMarketDecorations` (carpet+barrels)
+  is **kept as ambient filler** around the functional stalls rather than
+  deleted — it's cheap visual dressing, not a parallel "stall" system, so
+  it doesn't conflict with the real stalls. (Flagged: drop it later if the
+  real stalls read well enough alone.)
+- **Deviations (flagged):**
+  1. **Tending not implemented** (Phase 3, per the prompt's sequencing
+     recommendation) — stalls are owned + stocked but unmanned until then.
+  2. **Recruitment surplus signal is "building has items"**, not a
+     `VillageSimData.net` threshold — simpler and robust; refine to a
+     true surplus metric in a tuning pass.
+  3. **`existingOccupancy` uses a 3×3×4 origin proxy** for permanent
+     stalls (the exact box needs the loaded template); the allocator's own
+     gap checks prevent overlap among newly placed event stalls. Worst
+     case a slightly conservative pack, never an overlap. Flagged.
+
+### Out-of-scope but flagged
+
+- Producer tending behaviour (Phase 3). Caravans/inter-village (Phase 4).
+- WANDERING_TRADER (market-day trader unchanged). New event types.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (and the session's shell/
+read tooling was intermittently returning empty output, so this phase
+leaned harder on static reasoning). Static review: `EventScheduleData
+.getActiveEvents(UUID)` + `.get(level)` confirmed; producer enum values
+confirmed against `Profession`; `MarketComplexPlanner.Input` /
+`StallAllocator.place` / `StallGoods.store` / `reclaimStall` signatures
+matched; `MarketStall` codec extended with one optional field via
+`fromCodec` (canonical ctor untouched); `server.overworld()` is standard.
+**Caveat:** the no-compile + flaky-tooling combination means residual
+risk is higher than prior phases — a compile pass is the first thing to
+run when maven is reachable.
+
+### Smoke test
+
+1. MARKET_DAY in a village with surplus producers → real temporary stalls
+   on the pad, owned by producers, stocked — not just carpet+barrels.
+2. Event stalls fill only free pad space; never evict permanent/seeded
+   stalls; pad full → fewer producers, no overlap.
+3. Event ends → all temporary stalls removed, pad restored, unsold goods
+   returned to the producer's building.
+4. Restart mid-event → `reconcile` tears down orphans; none leak.
+5. `MarketRentManager` charges no rent on temporary stalls.
+6. Market-day wandering trader still spawns (untouched).
+7. (After Phase 3) producers man their event stalls; before: stocked but
+   unmanned (expected).

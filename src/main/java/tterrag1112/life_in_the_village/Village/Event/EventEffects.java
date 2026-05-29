@@ -46,6 +46,12 @@ public class EventEffects {
             default                 -> EventHandlerRegistry.dispatchStart(
                     event, level, village, data);
         }
+        // 2d — recruit surplus producers into temporary stalls for the
+        // market/fair types (centralised so registry-routed types like
+        // SUMMER_MARKET are covered too; no-op for other types).
+        tterrag1112.life_in_the_village.Village.Markets.Complex.EventStallManager
+                .recruit(level, event, village, data);
+
         // Apply attendance-based eventOverride for Phase-5 types that
         // populate required/invited lists. Phase-3 types apply the
         // override per-NPC inside their dedicated start handlers.
@@ -64,6 +70,11 @@ public class EventEffects {
 
         // Remove decorations
         removeDecorations(level, event);
+
+        // Tear down any temporary producer stalls this event placed (2d):
+        // return goods, clear structures to the pad, remove records.
+        tterrag1112.life_in_the_village.Village.Markets.Complex.EventStallManager
+                .teardown(level, data, village, event.getId());
 
         // Remove NPC effects
         removeNpcEffects(level, village, data);
@@ -147,7 +158,9 @@ public class EventEffects {
             }
         });
 
-        // ── Place market stalls ──────────────────────────────────────────────
+        // ── Cosmetic carpet+barrels, retained as ambient filler around the
+        //    functional 2d producer stalls (recruited centrally in
+        //    onEventStart). ──────────────────────────────────────────────────
         placeMarketDecorations(level, event, village, data);
 
         // ── Spawn one wandering exotic trader near the market building ───────

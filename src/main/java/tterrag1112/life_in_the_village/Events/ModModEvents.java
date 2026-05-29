@@ -133,13 +133,20 @@ public class ModModEvents {
         MarketPriceRegistry.INSTANCE.loadFromServer(server.getResourceManager());
         tterrag1112.life_in_the_village.Village.Economy.Currency
                 .EconomyBalanceRegistry.INSTANCE.loadFromServer(server.getResourceManager());
-        MiningYieldRegistry.INSTANCE.loadFromServer(server.getResourceManager());
-        BlacksmithRecipeRegistry.INSTANCE.loadFromServer(server.getResourceManager());
+        MiningYieldRegistry.INSTANCE.loadFromServer(server.getResourceManager());        BlacksmithRecipeRegistry.INSTANCE.loadFromServer(server.getResourceManager());
         KingdomTitleRegistry.INSTANCE.loadFromServer(server.getResourceManager());
 
-
-
-
+        // Merchant arc 2d — tear down any temporary event stalls orphaned by
+        // a crash/restart mid-event (leak-proofing). Idempotent; runs once.
+        try {
+            ServerLevel overworld = server.overworld();
+            if (overworld != null) {
+                tterrag1112.life_in_the_village.Village.Markets.Complex.EventStallManager
+                        .reconcile(overworld, VillageSavedData.get(overworld));
+            }
+        } catch (Exception e) {
+            System.err.println("[EventStallManager] reconcile failed: " + e.getMessage());
+        }
     }
 
     @SubscribeEvent
