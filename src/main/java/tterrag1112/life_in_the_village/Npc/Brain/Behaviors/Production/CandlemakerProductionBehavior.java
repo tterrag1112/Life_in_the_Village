@@ -77,16 +77,19 @@ public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
         // meetsSkillRequirements helper (base class). CANDLE / TORCH
         // pass the check trivially (no .withSkillRequirement on them);
         // LANTERN's gate is enforced here.
-        if (t == Items.CANDLE && meetsSkillRequirements(MAKE_CANDLE)
-                && hasAllInputs(level, source, MAKE_CANDLE)) {
+        // Phase 6.8.4 — input-availability conjunct dropped (the 6.3.4.6
+        // decoupling principle, matching MILLER/BAKER): a skill-passing
+        // target is returned regardless of current input stock, and the
+        // analyze→executeBuy path procures the inputs. calculateBatchSize
+        // (input-aware, returns 0 when inputs absent) is the gate that
+        // keeps a no-input recipe from producing and routes to the buy.
+        if (t == Items.CANDLE && meetsSkillRequirements(MAKE_CANDLE)) {
             return Optional.of(MAKE_CANDLE);
         }
-        if (t == Items.TORCH && meetsSkillRequirements(MAKE_TORCH)
-                && hasAllInputs(level, source, MAKE_TORCH)) {
+        if (t == Items.TORCH && meetsSkillRequirements(MAKE_TORCH)) {
             return Optional.of(MAKE_TORCH);
         }
-        if (t == Items.LANTERN && meetsSkillRequirements(MAKE_LANTERN)
-                && hasAllInputs(level, source, MAKE_LANTERN)) {
+        if (t == Items.LANTERN && meetsSkillRequirements(MAKE_LANTERN)) {
             return Optional.of(MAKE_LANTERN);
         }
         return Optional.empty();
@@ -154,14 +157,5 @@ public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
                 net.minecraft.core.registries.BuiltInRegistries.ITEM
                         .getKey(recipe.output()).toString(),
                 batchSize * recipe.outputCount());
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private boolean hasAllInputs(ServerLevel level, Building source,
-                                 ProductionRecipe recipe) {
-        return recipe.inputs().entrySet().stream().allMatch(e ->
-                BuildingStorageAccess.countItem(level, source, e.getKey())
-                        >= e.getValue());
     }
 }

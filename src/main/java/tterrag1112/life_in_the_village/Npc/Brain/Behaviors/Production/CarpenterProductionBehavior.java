@@ -193,10 +193,17 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
     private Optional<ProductionRecipe> findRecipeForOutput(ServerLevel level,
                                                            Building source,
                                                            Item output) {
+        // Phase 6.8.4 — input-availability conjunct dropped (6.3.4.6
+        // decoupling, matching MILLER/BAKER): return a skill-passing
+        // recipe for the target regardless of input stock and let the
+        // analyze→executeBuy path source logs. calculateBatchSize
+        // (input-aware) gates production and routes to the buy. The
+        // input-gated findBestAvailableRecipe stays as the opportunistic
+        // no-explicit-target fallback only.
         for (ProductionRecipe r : allRecipes()) {
             if (r.output() != output) continue;
             if (!meetsSkillRequirements(r)) continue;
-            if (hasAllInputs(level, source, r)) return Optional.of(r);
+            return Optional.of(r);
         }
         return Optional.empty();
     }

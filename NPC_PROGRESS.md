@@ -2321,3 +2321,113 @@ manual static review done in its place: nested-class access to the
 enclosing protected hook is valid Java; Profession import present;
 diff confined to AbstractHomesteadGoal.java + TownspersonMob.java
 (comment only) this commit, FarmerBehavior.java in e12367f.
+
+═══════════════════════════════════════════════════════════════
+Phase 6.8.4 — distributed input-availability filter sweep
+  (BLACKSMITH / CARPENTER / STONEMASON / WEAVER / CANDLEMAKER)
+═══════════════════════════════════════════════════════════════
+
+Mechanical sweep making the five 6.6-era production professions
+self-bootstrap their supply chains. Previously each sat dormant when
+its inputs weren't already in storage: chooseRecipe filtered on input
+availability and returned empty, routing past the analyze→executeBuy
+buy path (which lives inside the `if (recipe.isPresent())` block in
+AbstractProductionBehavior.analyze). MILLER + BAKER already followed
+the target pattern — used as references, NOT touched.
+
+Fix per profession (drop the input-availability conjunct in the
+target/recipe-selection path; keep every other gate — demand check,
+skill gate, source!=null, in-stock tiebreaker):
+- CANDLEMAKER: dropped `&& hasAllInputs(...)` from the CANDLE/TORCH/
+  LANTERN branches. Removed the now-orphaned private hasAllInputs
+  helper.
+- BLACKSMITH: target loop returns the first skill-passing recipe for
+  the target regardless of smeltInputsAvailable/hasAllInputs;
+  isSmeltRecipe still set true(smelting)/false(crafting) from the
+  source list so buildSteps/resolveInputSource/fuelPerBatch read it
+  correctly. Opportunistic smelt/craft loops stay input-gated
+  (they're the "use what you have" no-target path).
+- CARPENTER/STONEMASON/WEAVER: findRecipeForOutput returns the
+  target's recipe on skill-gate alone; input-gated findBestAvailable*
+  stays as the opportunistic no-explicit-target fallback only.
+
+resourcesToBuy (the coupling — must return target inputs at zero
+stock or the recipe is chosen but nothing bought): all five were
+ALREADY correct — none gated on current input stock:
+- CANDLEMAKER buys honeycomb/string/stick/coal/iron_nugget on an
+  avail<8 threshold; BLACKSMITH buys ore from ingot-quota shortfall;
+  CARPENTER buys LOG_TYPES when total<MIN_LOGS; STONEMASON buys the
+  stone-input list on avail<8; WEAVER buys string(<8)+white_wool(<4).
+  No resourcesToBuy changes needed.
+
+Tie-In Audit:
+1. Upstream feeders: productionTarget / stockQuotas unchanged;
+   DirectBusinessChannel / MarketChannel (executeBuy backends)
+   unchanged.
+2. Downstream: chooseRecipe called only from
+   AbstractProductionBehavior.analyze(). Each profession's
+   calculateBatchSize stays input-aware (returns 0 when inputs
+   absent) — NOT touched; batchSize=0 is what triggers the buy path.
+   Confirmed for all five.
+3. Sibling: BLACKSMITH isSmeltRecipe set correctly per source list on
+   the returned recipe — verified preserved.
+4. Exhaustive switches: N/A — no enum/sealed edits.
+
+Simplification Sweep:
+- CARPENTER/STONEMASON/WEAVER share a near-identical findRecipeForOutput
+  (RECIPES.stream → output match → skill gate). A base-class
+  chooseTargetRecipeSkillGated(target, recipes) could consolidate
+  those three. CANDLEMAKER (explicit per-item branches) and BLACKSMITH
+  (dual smelting/crafting lists + isSmeltRecipe side-effect) don't fit
+  the same mold. RECOMMENDATION: do NOT build the helper — mild
+  three-way duplication, two outliers wouldn't use it, surgical scope.
+  Flagged for Garrett's green-light as a separate decision (NOT acted
+  on).
+
+Anti-deadlock: no-input recipe → calculateBatchSize=0 → analyze
+BRANCH B → resourcesToBuy non-empty → executeBuy → NO QUOTE when no
+market → goIdle → retry next cycle. Matches the no-market MILLER
+steady-state (acceptable, not a regression). executeBuy's existing
+one-shot diagnostic flags prevent per-cycle spam; no new per-tick
+logs added.
+
+Deviations from prompt: none. Surgical per-profession edits only.
+
+Out-of-scope but flagged:
+- Shared chooseRecipe base helper (proposed above, not built).
+- MINER activation / diamond + netherite_scrap dormant chains (gated
+  on V2 paired workshop+mine).
+- MILLER / BAKER untouched.
+- MarketPriceRegistry vs DirectBusinessChannel reconciliation.
+
+Precondition note: the SPOUSE/profession fix (5c35101) is committed
+but has no in-game smoke confirmation yet. This sweep is committed on
+the branch; per the roadmap, actual ship/merge of both remains gated
+on the SPOUSE fix smoke-testing clean.
+
+Smoke-test plan (user-executable):
+1. Fresh BLACKSMITH with treasury + reachable market/stockpile but no
+   ore. Advance to WORK: confirm it emits a buy intent for ore and,
+   once ore arrives, smelts — instead of sitting dormant.
+2. Repeat for CARPENTER (no logs), STONEMASON (no raw stone), WEAVER
+   (no string), CANDLEMAKER (no sticks/coal): each procures its base
+   input and starts producing rather than idling.
+3. Profession with no market at all: idles and retries quietly, no
+   spin / log spam (matches no-market MILLER).
+4. Dormant skill-gated recipes (CANDLEMAKER LANTERN before the
+   iron_nugget source / skill) stay dormant — skill gate still holds;
+   only the input gate was lifted.
+5. Cross-profession chains light up once inputs flow: BLACKSMITH
+   iron_nugget → CANDLEMAKER LANTERN; SHEPHERD wool → WEAVER carpets;
+   working spouse-baker (post-SPOUSE-fix) buys flour rather than
+   idling.
+6. Watch logs: "analyze: chooseRecipe returned empty" should stop
+   firing for these five when a target exists; if it still fires, the
+   target/quota path (not the input gate) is the remaining blocker.
+
+Build verification deferred (sandbox blocks maven.neoforged.net) —
+manual static review in its place: diff confined to the five behavior
+chooseRecipe paths; calculateBatchSize / resourcesToBuy / MILLER /
+BAKER / AbstractProductionBehavior all untouched; input-helpers
+(hasAllInputs / smeltInputsAvailable) confirmed still referenced by
+the retained opportunistic fallbacks (no orphans).

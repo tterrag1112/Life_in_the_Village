@@ -119,25 +119,28 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
         Optional<Item> target = productionTarget(level, building);
 
         // ── Try to fill the priority target (commission overrides bias) ─────
+        // Phase 6.8.4 — input-availability conjunct dropped (6.3.4.6
+        // decoupling, matching MILLER/BAKER): a skill-passing recipe for
+        // the target is returned regardless of input stock, and the
+        // analyze→executeBuy path procures the inputs. calculateBatchSize
+        // (input-aware) keeps a no-input recipe from producing and routes
+        // to the buy. isSmeltRecipe is still set from the source list so
+        // buildSteps / resolveInputSource / fuelPerBatch read it correctly.
         if (target.isPresent()) {
             Item t = target.get();
 
             for (ProductionRecipe r : allSmelting) {
                 if (r.output() != t) continue;
                 if (!meetsSkillRequirements(r)) continue;
-                if (smeltInputsAvailable(level, r)) {
-                    isSmeltRecipe = true;
-                    return Optional.of(r);
-                }
+                isSmeltRecipe = true;
+                return Optional.of(r);
             }
 
             for (ProductionRecipe r : allCrafting) {
                 if (r.output() != t) continue;
                 if (!meetsSkillRequirements(r)) continue;
-                if (hasAllInputs(level, building, r)) {
-                    isSmeltRecipe = false;
-                    return Optional.of(r);
-                }
+                isSmeltRecipe = false;
+                return Optional.of(r);
             }
         }
 

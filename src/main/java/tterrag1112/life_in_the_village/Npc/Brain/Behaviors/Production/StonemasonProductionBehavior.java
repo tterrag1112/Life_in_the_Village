@@ -158,10 +158,15 @@ public class StonemasonProductionBehavior extends AbstractProductionBehavior {
 
     private Optional<ProductionRecipe> findRecipeForOutput(ServerLevel level,
                                                            Building source, Item output) {
+        // Phase 6.8.4 — input-availability filter dropped (6.3.4.6
+        // decoupling, matching MILLER/BAKER): return a skill-passing
+        // recipe for the target regardless of input stock; the
+        // analyze→executeBuy path procures stone. calculateBatchSize
+        // (input-aware) gates production. The input-gated
+        // findBestAvailable stays as the opportunistic fallback only.
         return RECIPES.stream()
                 .filter(r -> r.output() == output)
                 .filter(this::meetsSkillRequirements)
-                .filter(r -> hasAllInputs(level, source, r))
                 .findFirst();
     }
 
