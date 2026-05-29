@@ -193,45 +193,10 @@ public final class MarketStallPlacer {
         // MerchantBehavior (WORK @1 on MERCHANT brain); no per-stall goal wiring
         // is required here. Kept as a stub so existing call sites compile.
     }
-    /**
-     * Returns the Rotation that makes a stall placed at {@code anchorPos}
-     * face toward the market building's centre.
-     *
-     * <h3>Convention</h3>
-     * The stall NBT is authored facing SOUTH (i.e. Rotation.NONE = facing south,
-     * the "front" of the stall opens toward positive Z). The four rotations map to:
-     * <pre>
-     *   NONE              → faces south  (+Z)
-     *   CLOCKWISE_90      → faces west   (-X)
-     *   CLOCKWISE_180     → faces north  (-Z)
-     *   COUNTERCLOCKWISE_90 → faces east (+X)
-     * </pre>
-     * Adjust the base direction below if your stall NBT is authored facing
-     * a different direction.
-     */
-    private static Rotation facingRotation(BlockPos anchorPos,
-                                           Building marketBuilding) {
-        // Market centre in world space
-        net.minecraft.world.phys.AABB bounds = marketBuilding.getShape().toAABB();
-        double centerX = bounds.getCenter().x;
-        double centerZ = bounds.getCenter().z;
 
-        double dx = centerX - (anchorPos.getX() + 0.5);
-        double dz = centerZ - (anchorPos.getZ() + 0.5);
+    // Phase 2b: facingRotation (dominant-axis snap) deleted — stall
+    // placement + aisle-facing rotation now live in StallAllocator.
 
-        // Dominant axis determines which way to face
-        if (Math.abs(dx) >= Math.abs(dz)) {
-            // Stall is to the east or west of centre
-            return dx > 0
-                    ? Rotation.COUNTERCLOCKWISE_90  // anchor is west  → face east  (+X)
-                    : Rotation.CLOCKWISE_90;         // anchor is east  → face west  (-X)
-        } else {
-            // Stall is to the north or south of centre
-            return dz > 0
-                    ? Rotation.NONE                  // anchor is north → face south (+Z)
-                    : Rotation.CLOCKWISE_180;        // anchor is south → face north (-Z)
-        }
-    }
     /**
      * Writes stall ownership info onto any signs within the stall footprint.
      * If {@code ownerName} is null, writes a "For Rent" message instead.
