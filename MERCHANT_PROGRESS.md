@@ -366,3 +366,193 @@ unified map (preserved except the two enumerated changes).
    item granted without payment (purchase aborts before taxing/crediting).
 6. WANDERING_TRADER trade still burns coins as before (untouched).
 7. Logs: no double-tax, no double-spend, no NPE in the stall-chest deposit.
+
+---
+
+## Phase 1c — Inter-village price differentiation
+
+**Goal:** make the same good cost meaningfully different amounts in
+different villages, driven by each village's structural surplus/deficit,
+so a merchant can buy where a good is abundant and sell where it's scarce
+(arbitrage — the economic reason travelling merchants exist, Phase 4).
+Prerequisite built first: a canonical `Item → ResourceCategory`
+classifier (none existed).
+
+### What shipped
+
+New: `Village/Simulation/ItemResourceClassifier.java` — the single
+`Item → ResourceCategory` source of truth. Code-based for 1c (item tags +
+the FOOD component + path-substring fallbacks, most-specific first),
+returning `null` for the neutral/UNKNOWN case. 1d will swap this static
+surface for data.
+
+Modified:
+- `DynamicPriceCalculator.computeMultiplier` — now classifies the item
+  once, uses the classifier for the FOOD/BUILDING_MATERIALS spot-demand
+  reads (replacing the deleted `isFoodItem`/`isMaterialItem`), and
+  multiplies in a new `perVillageModifier` before the `[0.5,3.0]` clamp.
+  Added named constant `PER_VILLAGE_STRENGTH = 0.4`.
+- `VillageNeedsCalculator` — material membership check now calls the
+  classifier; the private `BUILDING_MATERIAL_ITEMS` set was moved into
+  the classifier verbatim and deleted here.
+
+### Classifier design
+
+`classify(Item) → ResourceCategory|null`, ordered most-specific first:
+SEEDS (path `seed`) → FOOD (`DataComponents.FOOD`) → WEAPONS (SWORDS/
+ARROWS tags, bow/crossbow/trident, armour path) → TOOLS (AXES/PICKAXES/
+SHOVELS/HOES tags, shears, fishing rod, flint&steel) → CLOTH (WOOL/
+WOOL_CARPETS tags, string, leather) → PAPER → LITURGICAL → MEDICINE →
+LUXURY (gem set) → BUILDING_MATERIALS (LOGS/PLANKS tags ∪ legacy item set
+∪ path log/planks/stone/cobblestone/ingot/glass/brick) → `null`.
+
+Two invariants make the consolidation behaviour-preserving:
+- **FOOD ≡ has FOOD component** — exactly the legacy `isFoodItem`, so the
+  food spot-demand read and food needs are unchanged.
+- **BUILDING_MATERIALS ⊇ both legacy heuristics** — superset of the old
+  path heuristic and the old explicit set. `VillageNeedsCalculator` only
+  tallies `available` for items that are in `required` (from
+  `UpgradeRequirements`, all structural blocks), so a superset cannot
+  change which required items are counted → **needs output unchanged**.
+
+It does **not** switch over `ResourceCategory` (it maps items via
+tags/path; the modifier reads `net(cat)` generically), so there is no
+exhaustive-switch obligation. It never returns `COIN_INFLUX`.
+
+### Per-village modifier formula + reconciliation
+
+`perVillageModifier = 1 − PER_VILLAGE_STRENGTH × ratio`, where
+`ratio = (production − consumption) / (production + consumption) ∈ [−1,+1]`
+read from `VillageSimData.getSimData(villageId)` for the item's category.
+Exporter (`ratio > 0`) → modifier `< 1` (cheaper); importer (`ratio < 0`)
+→ `> 1` (dearer). The ratio normalisation makes it scale-independent
+across categories (FOOD net ±40/day vs MEDICINE ±2/day map to the same
+[−1,+1]). At STRENGTH 0.4 the modifier ∈ [0.6, 1.4].
+
+**Reconciliation (no double-count): which signal owns what.**
+- *Spot stockpile count* → immediate physical availability at this market
+  right now.
+- *Spot need level* (FOOD/BUILDING_MATERIALS only) → this-moment urgency.
+- *Sim net (new)* → the village's rolling production-vs-consumption
+  **character** — the structural arbitrage driver, and the only signal
+  covering the other 10 categories that have no spot-need reading.
+These measure different things on different timescales (snapshot vs daily
+rolling), so applying all three is complementary, not a re-measurement of
+one quantity; correlation (an exporter usually also has full stock) is
+intended and bounded by the single `[0.5,3.0]` clamp. The modifier sits
+inside `computeMultiplier` (the dynamic layer of the 1a pipeline) so all
+three fold into one multiplier and one clamp.
+
+### Arbitrage-viability target
+
+Profit needs `importer_buyPrice > exporter_sellPrice`. With the ×0.6 buy
+margin and the combined modifiers reaching the clamp: a strong importer's
+buy ≈ `base × 1.4 × scarcity × 0.6 ≈ 1.26 × base`; a strong exporter's
+sell ≈ `base × 0.6 × oversupply ≈ 0.5 × base`. Gap ≈ `0.75 × base`/unit
+(~+150% markup) — comfortably above plausible transport cost/effort.
+Strength is the named constant `PER_VILLAGE_STRENGTH` (1d externalises).
+
+### Flagged price changes (for Garrett's approval)
+
+1. **All physical goods are now village-specific.** Large, intended
+   change: every classifiable tradeable good is cheaper in villages that
+   structurally produce it and dearer in villages that consume it,
+   visible on both player and NPC trades.
+2. **Minor reclassification side-effects** in the *demand-read* path
+   only: gravel/sand and brick items now count as BUILDING_MATERIALS for
+   the material spot-demand read (they didn't under the old path
+   heuristic), and stone tools that the old path heuristic mis-counted as
+   material now classify as TOOLS. Food classification is byte-identical.
+   Village needs output is unchanged (superset argument above).
+3. Goods of an unclassified/neutral category (`null`) and goods the
+   village neither produces nor consumes get a neutral 1.0 — same price
+   everywhere, as before.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `VillageSimData` (daily-refreshed, O(1) read via
+   `VillageSavedData.getSimData`) + the new classifier. No new persisted
+   state.
+2. **Downstream callers.** The modifier lives in `computeMultiplier`, so
+   it flows through `getDynamicSellPrice`/`getDynamicBuyPrice` and is
+   inherited by **everything**: the 1a `MarketPricing` pipeline (player
+   `TradeHandler` + NPC `MarketChannel`/`BuyGoodsBehavior`), plus the
+   other channels (Caravan/Stockpile/DirectBusiness), `VillageEconomy`
+   listings, and `MerchantBehavior`. All now see per-village prices.
+3. **Sibling systems.** `CultureEconomicNorms.categoryDemandMultiplier`
+   is a per-*culture* skew with **no callers** today — left untouched and
+   not conflated with this per-*village* modifier. `VillageNeedsCalculator`
+   shares the classifier post-consolidation; its output is unchanged.
+4. **Exhaustive switches.** None over `ResourceCategory` exist in the
+   codebase (the `TradeAvailability` switch is over a different Layer3
+   `Category`). The classifier adds none.
+
+### Simplification Sweep
+
+Deleted `DynamicPriceCalculator.isFoodItem`/`isMaterialItem` and
+`VillageNeedsCalculator.BUILDING_MATERIAL_ITEMS`; both call the one
+classifier now. Removed the now-unused `NeedLevel` import.
+
+### Deviations from prompt
+
+- **Modifier placement.** Put it inside `DynamicPriceCalculator.compute
+  Multiplier` (the dynamic layer of the 1a pipeline) rather than as a
+  standalone `MarketPricing` step. It is still "in the unified pipeline"
+  (MarketPricing layers 1–2 *are* `getDynamicSellPrice`), it reconciles
+  with the existing supply/demand signals in one multiplier + one clamp,
+  and it makes *every* pricing caller inherit per-village prices — broader
+  than a MarketPricing-only step and matching the Tie-In intent.
+- **UNKNOWN as `null`.** The classifier returns `null` for the neutral
+  case instead of adding an `UNKNOWN` constant to `ResourceCategory`,
+  avoiding any change to the sim enum / its CODEC and keeping the
+  refactor's blast radius bounded. `null` is treated as neutral
+  everywhere.
+
+### Out-of-scope but flagged
+
+- Data-externalising the classifier + strength constant (1d).
+- Structural wealth (`getTreasuryEstimate`/`getNetIncomePerDay`) and
+  remoteness (kingdom distance) modifiers — future tuning layers, not
+  built.
+- Caravan need-dispatch / arbitrage *behaviour* (Phase 4) — 1c only makes
+  prices differ.
+- WANDERING_TRADER pricing — untouched; its fast-path prices off base
+  only and does not call `getDynamic*`, so it is unaffected by per-village
+  pricing (correctly stays flat).
+
+### Preflight
+
+- Classifier does not switch over `ResourceCategory`; no arms to maintain.
+- No new persisted fields on `VillageSimData` (modifier computed,
+  classifier static). ✓
+- No per-tick code — `getSimData` is an O(1) daily-cached read. ✓
+- Heuristics consolidated into the classifier and deleted from their old
+  homes. ✓
+- Prices vary by village in the intended direction (exporter cheaper,
+  importer dearer) at the flagged arbitrage magnitude. ✓
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (no cached
+`neoform-runtime`). Static review: classifier uses only tags/items/
+components proven present in the codebase (`ItemTags.PLANKS/AXES/...`,
+`item.getDefaultInstance().is(tag)`, `Items.NETHERITE_INGOT` etc.);
+`VillageSimData.production/consumption/getSimData` signatures confirmed;
+superset argument walked for unchanged needs output; imports reconciled.
+
+### Smoke-test plan (user-executable)
+
+1. Find/create two villages where the sim shows one a strong **exporter**
+   (net surplus) and the other a strong **importer** (net deficit) of the
+   same good (economy debug command).
+2. Compare the good's buy/sell price in each: exporter noticeably lower,
+   importer noticeably higher; confirm the gap is worth a trip.
+3. A good neither produced nor consumed (neutral/`null`) prices the same
+   in both villages.
+4. Player and NPC buyers both see the per-village price (shared dynamic
+   layer).
+5. `VillageNeedsCalculator` food/material/seed needs compute as before
+   (classifier consolidation is behaviour-preserving).
+6. No per-tick recompute; no NPE when a village has no sim data yet
+   (fresh village → neutral 1.0); prices stable across repeated quotes
+   within a day.

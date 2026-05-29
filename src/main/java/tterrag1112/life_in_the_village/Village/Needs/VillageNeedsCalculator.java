@@ -11,6 +11,8 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
+import tterrag1112.life_in_the_village.Village.Simulation.ItemResourceClassifier;
+import tterrag1112.life_in_the_village.Village.Simulation.ResourceCategory;
 import tterrag1112.life_in_the_village.Village.UpgradeRequirements;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
@@ -58,15 +60,9 @@ public class VillageNeedsCalculator {
      */
     private static final int SEED_BUFFER_MULTIPLIER = 2;
 
-    // ── Building materials ─────────────────────────────────────────────────────
-    private static final Set<Item> BUILDING_MATERIAL_ITEMS = Set.of(
-            Items.OAK_LOG,     Items.SPRUCE_LOG,    Items.BIRCH_LOG,
-            Items.OAK_PLANKS,  Items.SPRUCE_PLANKS, Items.BIRCH_PLANKS,
-            Items.COBBLESTONE, Items.STONE,          Items.STONE_BRICKS,
-            Items.OAK_SLAB,    Items.SPRUCE_SLAB,
-            Items.GLASS,       Items.GLASS_PANE,
-            Items.IRON_INGOT,  Items.GRAVEL,         Items.SAND
-    );
+    // Building-material item membership is now owned by the canonical
+    // ItemResourceClassifier (Phase 1c) — the legacy private set moved
+    // there verbatim, so this calculator's output is unchanged.
 
     // =========================================================================
     // Entry point
@@ -157,7 +153,8 @@ public class VillageNeedsCalculator {
                 for (int i = 0; i < container.getContainerSize(); i++) {
                     ItemStack stack = container.getItem(i);
                     if (stack.isEmpty()) continue;
-                    if (BUILDING_MATERIAL_ITEMS.contains(stack.getItem())) {
+                    if (ItemResourceClassifier.classify(stack.getItem())
+                            == ResourceCategory.BUILDING_MATERIALS) {
                         available.merge(stack.getItem(), stack.getCount(), Integer::sum);
                     }
                 }
