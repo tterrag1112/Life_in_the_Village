@@ -133,7 +133,8 @@ public class ModModEvents {
         MarketPriceRegistry.INSTANCE.loadFromServer(server.getResourceManager());
         tterrag1112.life_in_the_village.Village.Economy.Currency
                 .EconomyBalanceRegistry.INSTANCE.loadFromServer(server.getResourceManager());
-        MiningYieldRegistry.INSTANCE.loadFromServer(server.getResourceManager());        BlacksmithRecipeRegistry.INSTANCE.loadFromServer(server.getResourceManager());
+        MiningYieldRegistry.INSTANCE.loadFromServer(server.getResourceManager());
+        BlacksmithRecipeRegistry.INSTANCE.loadFromServer(server.getResourceManager());
         KingdomTitleRegistry.INSTANCE.loadFromServer(server.getResourceManager());
 
         // Merchant arc 2d — tear down any temporary event stalls orphaned by

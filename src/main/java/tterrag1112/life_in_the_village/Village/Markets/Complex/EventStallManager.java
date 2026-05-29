@@ -156,10 +156,11 @@ public final class EventStallManager {
      * never ran). Idempotent; safe to call on every server start.
      */
     public static void reconcile(ServerLevel level, VillageSavedData data) {
-        var events = tterrag1112.life_in_the_village.Village.Event.EventScheduleData.get(level);
         Set<UUID> liveEvents = new HashSet<>();
         for (Village v : data.getAllVillages()) {
-            for (VillageEvent e : events.getActiveEvents(v.getId())) liveEvents.add(e.getId());
+            for (VillageEvent e : data.getActiveEventsForVillage(v.getId())) {
+                liveEvents.add(e.getId());
+            }
         }
         int removed = 0;
         for (Village v : data.getAllVillages()) {
