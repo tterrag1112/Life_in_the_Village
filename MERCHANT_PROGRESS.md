@@ -556,3 +556,189 @@ superset argument walked for unchanged needs output; imports reconciled.
 6. No per-tick recompute; no NPE when a village has no sim data yet
    (fresh village → neutral 1.0); prices stable across repeated quotes
    within a day.
+
+---
+
+## Phase 1d — Externalize economy balance knobs to data
+
+**Goal:** move the hardcoded economy/pricing/trade constants (including
+the 1b market-tax divisor and the 1c per-village strength) into a
+data-driven config so tuning needs no recompile — mirroring the
+`MarketPriceRegistry` datapack reload-listener pattern. **Behaviour-
+preserving plumbing only:** baked defaults reproduce today's values
+exactly; with no config file present the game is identical to pre-1d.
+
+### What shipped
+
+New, in `Village/Economy/Currency/`:
+- `EconomyBalance` — immutable config holder, grouped into nested typed
+  sub-records (`Treasury`, `Pricing`, `Markups`, `Channels`), each with a
+  `DEFAULT` and a codec using `optionalFieldOf` per field (so a missing
+  file / section / single field all fall back). `DEFAULTS` = today's
+  values. No sub-record exceeds 7 fields (16-field ceiling respected).
+- `EconomyBalanceRegistry` — `SimplePreparableReloadListener<EconomyBalance>`
+  singleton mirroring `MarketPriceRegistry`: loads `data/<modid>/
+  economy_balance/*.json`, seeds `current` to `DEFAULTS`, exposes
+  `get()` / `balance()`. Registered in `ModModEvents.onAddServerReload
+  Listeners` (so `/reload` re-reads) **and** loaded in `onServerStarting`
+  (early load, like `MarketPriceRegistry`).
+
+### Constant inventory (file:line → config field, default)
+
+**Treasury / tax / wages** (`VillageTreasury`, was `public static final`):
+- `MARKET_TAX_DIVISOR=10` → `treasury.market_tax_divisor`. Also the 1b
+  live tax literal `10.0` in `NpcEconomy.applyMarketTax` now reads it.
+- `PROPERTY_TAX_PER_HOUSE=2` → `treasury.property_tax_per_house`.
+- `BASELINE_INCOME_PER_NPC=1` → `treasury.baseline_income_per_npc`.
+- `GUARD_WAGE=8`, `KEEPER_WAGE=5`, `INNKEEPER_WAGE=4` → `treasury.*_wage`.
+- `TreasuryTickHandler.MERCHANT_WAGE=6` → `treasury.merchant_wage` (the
+  live wage path; had no `VillageTreasury` twin).
+
+**Pricing** (`DynamicPriceCalculator`):
+- `MIN_MULTIPLIER=0.5` → `pricing.min_multiplier`.
+- `MAX_MULTIPLIER=3.0` → `pricing.max_multiplier`.
+- buy margin `0.6` (was an inline literal) → `pricing.buy_margin`.
+- `PER_VILLAGE_STRENGTH=0.4` (1c) → `pricing.per_village_strength`.
+
+**Markups** (`VillageEconomy`):
+- `PRODUCER_MARKUP=0.85`, `MERCHANT_MARKUP=1.20`, `STOCKPILE_MARKUP=1.00`,
+  `COMPANY_MARKUP=1.10` → `markups.{producer,merchant,stockpile,company}`.
+
+**Channels:**
+- `CaravanChannel.CARAVAN_DISCOUNT=0.90` → `channels.caravan_discount`.
+- `DirectBusinessChannel` relationship band `0.05` → `channels.direct_
+  relationship_band`; generosity band `0.125` → `channels.direct_
+  generosity_band`.
+
+### `static final` read-site migration
+
+Every externalized `static final` (which the compiler may inline) was
+converted from a *declaration* to a *live read* through the config:
+- `VillageTreasury` constants → `public static` accessor **methods**
+  (`marketTaxDivisor()`, `guardWage()`, …). Read sites repointed:
+  `VillageTreasury.collectMarketTax`, `NpcEconomy.applyMarketTax`,
+  `VillageSimEngine` (×3), `TreasuryTickHandler` (×4 + the unloaded-village
+  guard-wage drain).
+- `DynamicPriceCalculator` MIN/MAX/buyMargin/perVillageStrength → inline
+  `EconomyBalanceRegistry.balance().pricing()` reads.
+- `VillageEconomy` markups → `getMarkup` + the company-listing path read
+  `markups()` live.
+- `CaravanChannel`/`DirectBusinessChannel` → read `channels()` live.
+
+No externalized value remains as a `static final` that is read anywhere.
+
+### Risky / kept-in-code (flagged for Garrett)
+
+- **Channel `basePriority`** (MARKET 100, DIRECT_BUSINESS 70, CARAVAN 50,
+  VISITOR 45, GUILD_REQUEST 40, STOCKPILE 30) — these change router
+  **tiebreak ordering**, not just magnitudes; externalizing risks subtle
+  routing changes. **Kept in code.**
+- **`DynamicPriceCalculator` supply-band steps** (2.0/1.5/0.85/0.7 at
+  thresholds 16/64/128) and the **NeedLevel demand steps** (food
+  2.5/1.5/1.0/0.8, materials 2.0/1.4/1.0/0.9) — response-curve *shape*,
+  numerous (~16 values); low individual tuning value. **Kept in code**;
+  externalize in a later tuning pass if wanted.
+- **Starter treasury funds** — `VillageTreasury.create(starterFunds)` has
+  **no live callers** (dead factory), so there is no current creation path
+  to wire to a config field. **Not externalized**; flagged (smoke #5
+  cannot be exercised until a creation path exists).
+
+### Config mechanism + schema
+
+Datapack JSON + reload listener (chosen over NeoForge TOML) for
+consistency with `MarketPriceRegistry` and so `/reload` works in-session.
+Kept as a **sibling** of `market_prices/` (prices and tuning knobs stay
+separable). Schema (all fields optional; shown with defaults):
+
+```json
+{
+  "treasury": { "market_tax_divisor": 10, "property_tax_per_house": 2,
+    "baseline_income_per_npc": 1, "guard_wage": 8, "keeper_wage": 5,
+    "innkeeper_wage": 4, "merchant_wage": 6 },
+  "pricing":  { "min_multiplier": 0.5, "max_multiplier": 3.0,
+    "buy_margin": 0.6, "per_village_strength": 0.4 },
+  "markups":  { "producer": 0.85, "merchant": 1.2, "stockpile": 1.0,
+    "company": 1.1 },
+  "channels": { "caravan_discount": 0.9, "direct_relationship_band": 0.05,
+    "direct_generosity_band": 0.125 }
+}
+```
+Place at `data/life_in_the_village/economy_balance/economy_balance.json`.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `EconomyBalanceRegistry` is the single source;
+   datapack reload (`AddServerReloadListenersEvent`) + the ServerStarting
+   early load are the refresh triggers (mirrors `MarketPriceRegistry`).
+2. **Downstream callers.** Every externalized constant's read sites were
+   repointed (enumerated above); each old `static final` declaration is
+   removed. The 1b unified-settle tax read and the 1c per-village modifier
+   read both now read the config.
+3. **Sibling systems.** Item prices stay in `market_prices/*.json`; the
+   balance config is a separate file. No overlap.
+4. **Exhaustive switches.** None added (no config enum).
+
+### Simplification Sweep
+
+- **Unified a duplicate:** `TreasuryTickHandler` had its own private
+  `GUARD_WAGE/KEEPER_WAGE/INNKEEPER_WAGE` (=8/5/4) duplicating
+  `VillageTreasury`'s — the *live* wage path used the local copy while
+  `VillageSimEngine` used `VillageTreasury`'s. Both now read the one
+  config; the duplicates are deleted.
+- Removed all the now-dead `static final` economy constants from their
+  five home classes.
+
+### Deviations from prompt
+
+- **Scope of pricing externalization.** Externalized the four headline
+  pricing knobs (min/max/buyMargin/perVillageStrength) but **kept the
+  supply-band and demand-level step values in code** (flagged) to keep
+  the schema readable and the migration bounded — the prompt's list is a
+  "starting set" and sanctions flagging.
+- **Starter funds not wired** — no live `create(...)` caller exists
+  (flagged), so smoke #5 is not exercisable yet.
+- **`basePriority` kept in code** (routing risk; prompt-sanctioned).
+
+### Out-of-scope but flagged
+
+- Changing any value (defaults equal today's numbers; re-tuning is a
+  later pass now that the knobs exist).
+- Non-economy constants. WANDERING_TRADER coin-burn. The flagged
+  kept-in-code items above.
+
+### Preflight
+
+- Schema grouped/nested (4 sub-records, ≤7 fields each). ✓
+- Reload listener registered like the others (`AddServerReloadListeners
+  Event`); `/reload` re-reads. ✓
+- Every externalized constant: read site moved, not just the declaration;
+  no inlinable `static final` left feeding stale values (grep: 0 refs to
+  all old constant names). ✓
+- Reads are per-trade / per-tick-event (wages, tax, markups), not
+  hot-loop; accessor is a volatile field read — no concern. ✓
+- Defaults match the enumerated current values one-for-one. ✓
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (no cached
+`neoform-runtime`). Static review: codec uses `optionalFieldOf` per field
+against `DEFAULT`s; parse/error handling mirrors `CastleStyleLoader`
+(`resultOrPartial`); reload registration mirrors the existing listeners;
+all old constant names return 0 grep hits (every read site migrated);
+accessor return types match the literal types they replace (long/double),
+so arithmetic is unchanged.
+
+### Smoke-test plan (user-executable)
+
+1. With **no** `economy_balance.json`, confirm prices/taxes/wages/markups/
+   channel behaviour are identical to pre-1d (defaults).
+2. Author the file overriding one knob (e.g. `treasury.market_tax_divisor`
+   or `pricing.per_village_strength`), `/reload`, confirm the change takes
+   effect at the next trade without a restart.
+3. Malformed/partial config: missing fields fall back per-field; a
+   structurally-bad file logs once and keeps defaults (no crash).
+4. Spot-check a wage, a pricing band, and the caravan discount read the
+   configured value, not a stale inlined constant.
+5. (Starter treasuries) — N/A this pass: no live creation path; flagged.
+6. Logs: one load line on reload; no per-tick spam; no NPE on first
+   access before the first reload (seeded to DEFAULTS).

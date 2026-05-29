@@ -216,11 +216,11 @@ public final class VillageSimEngine {
         float finalDays = daysUnloaded;
         data.getTreasury(village.getId()).ifPresent(treasury -> {
             long taxIncome = (long)(sim.getSimulatedPopulation()
-                    * VillageTreasury.BASELINE_INCOME_PER_NPC * finalDays);
+                    * VillageTreasury.baselineIncomePerNpc() * finalDays);
             long wageDrain = (long)(Math.max(1, sim.getSimulatedPopulation() / 5)
-                    * VillageTreasury.GUARD_WAGE * finalDays);
+                    * VillageTreasury.guardWage() * finalDays);
             long propertyTax = (long)(sim.getFarmhouseCount()
-                    * VillageTreasury.PROPERTY_TAX_PER_HOUSE * finalDays);
+                    * VillageTreasury.propertyTaxPerHouse() * finalDays);
             propertyTax = Math.round(propertyTax
                     * tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks
                             .propertyTaxMultiplier(village));

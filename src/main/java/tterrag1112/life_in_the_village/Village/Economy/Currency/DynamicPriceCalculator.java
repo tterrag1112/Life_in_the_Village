@@ -16,22 +16,13 @@ import java.util.Optional;
 
 public class DynamicPriceCalculator {
 
-    // Price multiplier bounds
-    private static final double MIN_MULTIPLIER = 0.5;
-    private static final double MAX_MULTIPLIER = 3.0;
-
-    /**
-     * Strength of the per-village structural surplus/deficit modifier
-     * (economy Phase 1c). The modifier is {@code 1 - STRENGTH * ratio}
-     * where {@code ratio = net / (production + consumption) ∈ [-1,+1]},
-     * so a pure exporter prices a good at {@code 1 - STRENGTH} and a pure
-     * importer at {@code 1 + STRENGTH}. At 0.4 the per-village spread
-     * alone is ~2.3× (0.6 ↔ 1.4); combined with the spot supply/demand
-     * signals it reliably reaches the {@code [0.5, 3.0]} clamp, giving a
-     * cross-village arbitrage gap well above plausible transport cost.
-     * 1d will externalise this to data.
-     */
-    private static final double PER_VILLAGE_STRENGTH = 0.4;
+    // Price multiplier bounds, the buy margin, and the per-village
+    // structural-modifier strength are externalized to the economy balance
+    // config (Phase 1d) — read live via EconomyBalanceRegistry.balance()
+    // .pricing(). Defaults: min 0.5, max 3.0, buy margin 0.6, per-village
+    // strength 0.4. The supply-band steps and the NeedLevel demand steps
+    // below remain in code (response-curve shape; flagged for a later
+    // tuning pass).
 
     /**
      * Returns the dynamic sell price (what player pays) for an item
@@ -53,7 +44,8 @@ public class DynamicPriceCalculator {
                                    long basePrice) {
         // Buy price is always lower than sell — merchant makes margin
         double multiplier = computeMultiplier(level, village, data, item);
-        return Math.max(1, Math.round(basePrice * multiplier * 0.6));
+        double buyMargin = EconomyBalanceRegistry.balance().pricing().buyMargin();
+        return Math.max(1, Math.round(basePrice * multiplier * buyMargin));
     }
 
     private static double computeMultiplier(ServerLevel level, Village village,
@@ -97,7 +89,9 @@ public class DynamicPriceCalculator {
         // The arbitrage driver: exporter villages cheaper, importer dearer.
         multiplier *= perVillageModifier(village, data, category);
 
-        return Math.max(MIN_MULTIPLIER, Math.min(MAX_MULTIPLIER, multiplier));
+        EconomyBalance.Pricing pricing = EconomyBalanceRegistry.balance().pricing();
+        return Math.max(pricing.minMultiplier(),
+                Math.min(pricing.maxMultiplier(), multiplier));
     }
 
     /**
@@ -124,7 +118,8 @@ public class DynamicPriceCalculator {
         float total = prod + cons;
         if (total <= 0f) return 1.0; // neither produced nor consumed → neutral
         float ratio = (prod - cons) / total; // [-1,+1]: + exporter, - importer
-        return 1.0 - PER_VILLAGE_STRENGTH * ratio; // exporter < 1, importer > 1
+        double strength = EconomyBalanceRegistry.balance().pricing().perVillageStrength();
+        return 1.0 - strength * ratio; // exporter < 1, importer > 1
     }
 
     private static int countInStockpile(ServerLevel level, Village village,

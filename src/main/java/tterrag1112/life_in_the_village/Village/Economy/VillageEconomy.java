@@ -12,6 +12,8 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.DynamicPriceCalculator;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.EconomyBalance;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.EconomyBalanceRegistry;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceData;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceRegistry;
@@ -45,12 +47,10 @@ public class VillageEconomy {
     // Default search radius for findCheapestSeller
     private static final double DEFAULT_SEARCH_RADIUS = 256.0;
 
-    // Price multipliers by seller role
-    private static final double PRODUCER_MARKUP   = 0.85;
-    private static final double MERCHANT_MARKUP   = 1.20;
-    private static final double STOCKPILE_MARKUP  = 1.00;
-    private static final double COMPANY_MARKUP    = 1.10; // slight premium for
-    // player-run goods
+    // Price multipliers by seller role are externalized to the economy
+    // balance config (Phase 1d); read live via EconomyBalanceRegistry
+    // .balance().markups(). Defaults: producer 0.85, merchant 1.20,
+    // stockpile 1.00, company 1.10.
 
     // =========================================================================
     // POSTING LISTINGS — NPC overload
@@ -131,7 +131,8 @@ public class VillageEconomy {
                             ? DynamicPriceCalculator.getSellPrice(
                             level, village, vdata, item, base)
                             : base;
-                    return Math.max(1, Math.round(dynamic * COMPANY_MARKUP));
+                    return Math.max(1, Math.round(dynamic
+                            * EconomyBalanceRegistry.balance().markups().company()));
                 });
 
         postListingInternal(villageId, seller.getUUID(), building.getId(),
@@ -515,11 +516,12 @@ public class VillageEconomy {
     }
 
     private static double getMarkup(Profession profession) {
+        EconomyBalance.Markups markups = EconomyBalanceRegistry.balance().markups();
         return switch (profession) {
-            case MERCHANT         -> MERCHANT_MARKUP;
-            case STOCKPILE_KEEPER -> STOCKPILE_MARKUP;
-            case COMPANY_WORKER   -> COMPANY_MARKUP;
-            default               -> PRODUCER_MARKUP;
+            case MERCHANT         -> markups.merchant();
+            case STOCKPILE_KEEPER -> markups.stockpile();
+            case COMPANY_WORKER   -> markups.company();
+            default               -> markups.producer();
         };
     }
 

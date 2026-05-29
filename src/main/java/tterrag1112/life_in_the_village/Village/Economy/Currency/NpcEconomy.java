@@ -272,7 +272,9 @@ public final class NpcEconomy {
                                        VillageSavedData data) {
         if (village == null || total <= 0) return;
         double mult = LawTaxHooks.marketTaxMultiplier(village);
-        long tax = Math.round((total / 10.0) * mult);
+        long tax = Math.round((total
+                / (double) tterrag1112.life_in_the_village.Village.Economy.VillageTreasury
+                        .marketTaxDivisor()) * mult);
         if (tax > 0) {
             village.depositToTreasury(tax);
             data.markDirty();

@@ -42,8 +42,8 @@ import java.util.UUID;
  */
 public final class CaravanChannel implements EconomicChannel {
 
-    /** Spec "Open decisions" #4: 10% discount on caravan items vs market. */
-    private static final double CARAVAN_DISCOUNT = 0.90;
+    // Spec "Open decisions" #4: 10% discount on caravan items vs market.
+    // Phase 1d: externalized to the economy balance config (default 0.90).
 
     @Override public ChannelType type() { return ChannelType.CARAVAN; }
 
@@ -81,7 +81,8 @@ public final class CaravanChannel implements EconomicChannel {
         if (match == null) return Optional.empty();
 
         long base = MarketPriceHelper.getDynamicSellPrice(level, village, intent.item());
-        long price = Math.round(base * CARAVAN_DISCOUNT);
+        long price = Math.round(base * tterrag1112.life_in_the_village.Village.Economy
+                .Currency.EconomyBalanceRegistry.balance().channels().caravanDiscount());
         if (price > intent.maxPrice()) return Optional.empty();
 
         int qty = Math.min(intent.quantity(), matchStock);
