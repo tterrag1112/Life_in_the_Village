@@ -61,33 +61,19 @@ public class TradeHandler {
         Set<BlockPos> allStallChests = allStallChestPositions(data, market);
 
         List<TradeOffer> offers = new ArrayList<>();
+        Village pricingVillage = village.orElse(null);
 
-        MarketPriceHelper.getAllExplicitPrices().forEach((item, basePrice) -> {
-            long dynSell = village.map(v ->
-                    DynamicPriceCalculator.getSellPrice(
-                            level, v, data, item, basePrice.sellPrice())
-            ).orElse(basePrice.sellPrice());
-
-            long dynBuy = village.map(v ->
-                    DynamicPriceCalculator.getBuyPrice(
-                            level, v, data, item, basePrice.buyPrice())
-            ).orElse(basePrice.buyPrice());
-
-            long discountedSell = village.map(v ->
-                    ReputationManager.applyDiscount(dynSell, player, v.getId(), level)
-            ).orElse(dynSell);
-
-            long boostedBuy = ProfessionPerkManager
-                    .applyMerchantBuyPricePerk(player, dynBuy);
-
-            // Kingdom law: TRADE_TARIFFS — reflect surcharge in displayed prices
-            java.util.UUID vidForTariff = village.map(Village::getId).orElse(null);
-            discountedSell = Math.round(discountedSell
-                    * tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeBuyMultiplier(player, data, vidForTariff));
-            boostedBuy = Math.round(boostedBuy
-                    * tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeSellMultiplier(player, data, vidForTariff));
+        MarketPriceHelper.getAllExplicitPrices().keySet().forEach(item -> {
+            // Canonical pricing — supply/demand, stall custom price, village
+            // law and the player's reputation/perk/tariff in one pipeline.
+            // Pricing stall mirrors the buy-path source (merchant's own stall
+            // only) so the displayed price equals the charged price.
+            MarketStall pricingStall = findOwnedStallWithItem(
+                    data, level, market.getId(), item, merchant.getUUID());
+            long sell = MarketPricing.sellPrice(PricingContext.forPlayer(
+                    item, level, pricingVillage, data, player, pricingStall));
+            long buy = MarketPricing.buyPrice(PricingContext.forPlayer(
+                    item, level, pricingVillage, data, player, null));
 
             // Stock = main chests + merchant's own stall (not other stalls)
             int stock = countMerchantStock(
@@ -97,8 +83,7 @@ public class TradeHandler {
                     .hasAnyMatching(s -> s.is(item));
 
             if (canBuy || canSell) {
-                offers.add(new TradeOffer(item, discountedSell, boostedBuy,
-                        canBuy, canSell, stock));
+                offers.add(new TradeOffer(item, sell, buy, canBuy, canSell, stock));
             }
         });
 
@@ -160,9 +145,6 @@ public class TradeHandler {
             }
         }
 
-        MarketPriceData.ItemPrice basePrice = MarketPriceHelper.getOrDefaultPrice(item);
-
-
         int quantity = packet.quantity();
 
         // =====================================================================
@@ -188,20 +170,10 @@ public class TradeHandler {
                 return;
             }
 
-            // Price
-            long rawPrice = village.map(v ->
-                    DynamicPriceCalculator.getSellPrice(
-                            level, v, data, item, basePrice.sellPrice())
-            ).orElse(basePrice.sellPrice());
-
-            long pricePerItem = villageId != null
-                    ? ReputationManager.applyDiscount(rawPrice, player, villageId, level)
-                    : rawPrice;
-
-            // Kingdom law: TRADE_TARIFFS — outsiders pay a +20% surcharge
-            double tariffBuy = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeBuyMultiplier(player, data, villageId);
-            pricePerItem = Math.round(pricePerItem * tariffBuy);
+            // Price — canonical pipeline. Source stall (if any) lets the
+            // stall's custom price apply, matching the displayed offer.
+            long pricePerItem = MarketPricing.sellPrice(PricingContext.forPlayer(
+                    item, level, village.orElse(null), data, player, sourceStall));
 
             // Afford check — uses getPlayerWealth, no snapshot
             quantity = Math.min(quantity,
@@ -281,19 +253,11 @@ public class TradeHandler {
             quantity = Math.min(quantity, playerHas);
             if (quantity <= 0) return;
 
-            // Price merchant pays player
-            long rawBuyPrice = village.map(v ->
-                    DynamicPriceCalculator.getBuyPrice(
-                            level, v, data, item, basePrice.buyPrice())
-            ).orElse(basePrice.buyPrice());
-
-            long pricePerItem = ProfessionPerkManager
-                    .applyMerchantBuyPricePerk(player, rawBuyPrice);
-
-            // Kingdom law: TRADE_TARIFFS — outsiders receive 20% less
-            double tariffSell = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
-                    .tradeSellMultiplier(player, data, villageId);
-            pricePerItem = Math.round(pricePerItem * tariffSell);
+            // Price merchant pays player — canonical pipeline (perk + tariff
+            // + village law applied inside). Selling to the market has no
+            // stall override.
+            long pricePerItem = MarketPricing.buyPrice(PricingContext.forPlayer(
+                    item, level, village.orElse(null), data, player, null));
 
             // Cap to merchant wealth
             long merchantWealth = merchant.getTotalWealth(level).toBronze();
