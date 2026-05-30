@@ -102,6 +102,9 @@ public final class V2VillageSpawnerAdapter {
     // perimeter anchor. Generous enough to clear large farm complexes that
     // extend further from their seed than a market pad does.
     private static final int PERIMETER_OFFSET_CLEARANCE = 64;
+    // Half-width (radians) of the per-complex angular spread band, so farm
+    // + market offset pads fan apart instead of colliding (~±46°).
+    private static final double PERIMETER_OFFSET_SPREAD_RAD = 0.8;
 
     private V2VillageSpawnerAdapter() {}
 
@@ -489,7 +492,8 @@ public final class V2VillageSpawnerAdapter {
                 // complex seed out past every building so it lands clear of
                 // park/building reservations instead of starving in place.
                 BlockPos farmSeed = PERIMETER_OFFSET_COMPLEXES
-                        ? perimeterAnchor(origin, fh.placed().centre(), placedBuildingsAll)
+                        ? perimeterAnchor(origin, fh.placed().centre(),
+                                fh.building().getId(), placedBuildingsAll)
                         : fh.placed().centre();
                 var planInput = new tterrag1112.life_in_the_village.Village.Farms
                         .Complex.FarmComplexPlanner.Input(
@@ -548,7 +552,8 @@ public final class V2VillageSpawnerAdapter {
                 // in open terrain instead of failing NO_REGION in the dense
                 // core. perimeterAnchor keeps the building's Y (= padY).
                 BlockPos marketCentre = PERIMETER_OFFSET_COMPLEXES
-                        ? perimeterAnchor(origin, mk.placed().centre(), placedBuildingsAll)
+                        ? perimeterAnchor(origin, mk.placed().centre(),
+                                mk.building().getId(), placedBuildingsAll)
                         : mk.placed().centre();
                 // Obstacles: every other placed building's footprint AABB,
                 // plus existing farm complex regions. The market never
@@ -927,23 +932,37 @@ public final class V2VillageSpawnerAdapter {
     /**
      * TEST SCAFFOLD (PERIMETER_OFFSET_COMPLEXES) — compute an outward
      * anchor for a complex in open terrain. Direction is village centre →
-     * building; distance is the furthest placed building from the village
-     * centre, plus {@link #PERIMETER_OFFSET_CLEARANCE}, so the anchor sits
-     * clear of every building (and the park reservations, which hug the
-     * buildings). Y is the building's own Y (superflat-safe). Falls back
-     * to the building centre if the building sits exactly on the village
-     * centre (degenerate direction). Remove with the flag when the
-     * ComplexRegion plan-time reservation lands (layout rework).
+     * building, plus a deterministic per-complex angular spread (keyed off
+     * {@code complexId}) so farm + market offset pads fan apart around the
+     * perimeter instead of piling up in the same direction — an offset farm
+     * region landing on the offset market pad was what forced the market to
+     * shrink past the stall depth and seed zero stalls. Distance is the
+     * furthest placed building from the village centre, plus
+     * {@link #PERIMETER_OFFSET_CLEARANCE}, so the anchor sits clear of every
+     * building (and the park reservations, which hug the buildings). Y is
+     * the building's own Y (superflat-safe). Falls back to the building
+     * centre if the building sits exactly on the village centre (degenerate
+     * direction). Remove with the flag when the ComplexRegion plan-time
+     * reservation lands (layout rework).
      */
     private static BlockPos perimeterAnchor(BlockPos villageCentre,
                                             BlockPos buildingCentre,
+                                            java.util.UUID complexId,
                                             Map<BuildingType, List<Building>> placedBuildingsAll) {
         double dx = buildingCentre.getX() - villageCentre.getX();
         double dz = buildingCentre.getZ() - villageCentre.getZ();
         double len = Math.sqrt(dx * dx + dz * dz);
         if (len < 1.0e-3) return buildingCentre; // degenerate: no outward dir
-        double ux = dx / len;
-        double uz = dz / len;
+        double baseAngle = Math.atan2(dz, dx);
+
+        // Per-complex angular spread: map the id hash into a symmetric
+        // [-SPREAD, +SPREAD] band so two complexes pushed the same way
+        // separate. Deterministic (same id → same offset across respawns).
+        double frac = (complexId.hashCode() & 0x7fffffff) / (double) Integer.MAX_VALUE;
+        double spread = PERIMETER_OFFSET_SPREAD_RAD * (2.0 * frac - 1.0);
+        double angle = baseAngle + spread;
+        double ux = Math.cos(angle);
+        double uz = Math.sin(angle);
 
         // Furthest placed building from the village centre (XZ).
         double furthest = 0.0;
