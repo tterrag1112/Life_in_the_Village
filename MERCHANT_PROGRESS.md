@@ -1338,3 +1338,20 @@ audit is high-confidence (scripted, exhaustive). The 3 committed files
 were dependency-checked individually and form a self-consistent unit with
 safe fallback. First action next session: `./gradlew build`, then finish
 the NBT relocation + dead-path deletion above.
+
+### Follow-up (same session, tooling recovered): variant NBT authored
+
+The deferred NBT relocation is now done. Copied (not moved — legacy kept
+as the `directNbt` fallback) the stall template into the variant layout:
+`structures/default/rural/market_stall/stall_1/level_1.nbt` (md5
+`fd038914…`, checksum-verified identical to the source) + the in-folder
+`manifest.json` (`{"id":"stall_1","stylePreference":"RURAL"}`). The
+`MARKET_STALL` variant path is now authored, so `StallAllocator.resolve
+Template` resolves via CultureResolver step-1
+(`default/rural/market_stall/stall_1/level_1`) instead of falling back.
+
+Still outstanding (deferred, behavioral — not pure cleanup): deleting
+`findAnchorSlots` and re-pointing `MarketApproach`/`NpcInteractionHandler`.
+`MarketApproach` uses anchor positions as live NPC standing spots, not
+just a count, so that change needs compile + in-game verification; left
+intact (callers still compile) for a session with maven access.
