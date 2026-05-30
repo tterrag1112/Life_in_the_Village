@@ -474,9 +474,15 @@ public final class V2VillageSpawnerAdapter {
                 long perFhSeed = seed
                         + fh.building().getId().getMostSignificantBits()
                         ^ fh.building().getId().getLeastSignificantBits();
+                // TEST SCAFFOLD (PERIMETER_OFFSET_COMPLEXES): move the
+                // complex seed out past every building so it lands clear of
+                // park/building reservations instead of starving in place.
+                BlockPos farmSeed = PERIMETER_OFFSET_COMPLEXES
+                        ? perimeterAnchor(origin, fh.placed().centre(), placedBuildingsAll)
+                        : fh.placed().centre();
                 var planInput = new tterrag1112.life_in_the_village.Village.Farms
                         .Complex.FarmComplexPlanner.Input(
-                        fh.placed().centre(),
+                        farmSeed,
                         extendsToward,
                         halfX,
                         halfZ,
@@ -526,6 +532,13 @@ public final class V2VillageSpawnerAdapter {
         for (PlacedMarket mk : placedMarkets) {
             try {
                 int padY = mk.placed().centre().getY();
+                // TEST SCAFFOLD (PERIMETER_OFFSET_COMPLEXES): move the pad
+                // centre out past every building so a full-margin pad fits
+                // in open terrain instead of failing NO_REGION in the dense
+                // core. perimeterAnchor keeps the building's Y (= padY).
+                BlockPos marketCentre = PERIMETER_OFFSET_COMPLEXES
+                        ? perimeterAnchor(origin, mk.placed().centre(), placedBuildingsAll)
+                        : mk.placed().centre();
                 // Obstacles: every other placed building's footprint AABB,
                 // plus existing farm complex regions. The market never
                 // grades over a neighbour — it shrinks or skips.
@@ -545,7 +558,7 @@ public final class V2VillageSpawnerAdapter {
                 }
                 var planInput = new tterrag1112.life_in_the_village.Village.Markets
                         .Complex.MarketComplexPlanner.Input(
-                        mk.placed().centre(),
+                        marketCentre,
                         mk.placed().footprint().width(),
                         mk.placed().footprint().length(),
                         padY,
@@ -899,6 +912,43 @@ public final class V2VillageSpawnerAdapter {
     /** Merchant arc Phase 2a — placed MARKET paired with its planning
      *  PlacedBuilding (footprint + centre), mirroring PlacedFarmhouse. */
     private record PlacedMarket(Building building, PlacedBuilding placed) {}
+
+    /**
+     * TEST SCAFFOLD (PERIMETER_OFFSET_COMPLEXES) — compute an outward
+     * anchor for a complex in open terrain. Direction is village centre →
+     * building; distance is the furthest placed building from the village
+     * centre, plus {@link #PERIMETER_OFFSET_CLEARANCE}, so the anchor sits
+     * clear of every building (and the park reservations, which hug the
+     * buildings). Y is the building's own Y (superflat-safe). Falls back
+     * to the building centre if the building sits exactly on the village
+     * centre (degenerate direction). Remove with the flag when the
+     * ComplexRegion plan-time reservation lands (layout rework).
+     */
+    private static BlockPos perimeterAnchor(BlockPos villageCentre,
+                                            BlockPos buildingCentre,
+                                            Map<BuildingType, List<Building>> placedBuildingsAll) {
+        double dx = buildingCentre.getX() - villageCentre.getX();
+        double dz = buildingCentre.getZ() - villageCentre.getZ();
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len < 1.0e-3) return buildingCentre; // degenerate: no outward dir
+        double ux = dx / len;
+        double uz = dz / len;
+
+        // Furthest placed building from the village centre (XZ).
+        double furthest = 0.0;
+        for (List<Building> list : placedBuildingsAll.values()) {
+            for (Building b : list) {
+                BlockPos o = b.getShape().getOrigin();
+                double bx = o.getX() - villageCentre.getX();
+                double bz = o.getZ() - villageCentre.getZ();
+                furthest = Math.max(furthest, Math.sqrt(bx * bx + bz * bz));
+            }
+        }
+        double dist = furthest + PERIMETER_OFFSET_CLEARANCE;
+        int ax = villageCentre.getX() + (int) Math.round(ux * dist);
+        int az = villageCentre.getZ() + (int) Math.round(uz * dist);
+        return new BlockPos(ax, buildingCentre.getY(), az);
+    }
 
     /** Merchant arc Phase 2a — convert a building's world AABB to the
      *  XZ rectangle the MarketComplexPlanner collision-checks against.
