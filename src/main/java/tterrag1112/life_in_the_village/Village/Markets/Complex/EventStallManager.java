@@ -198,8 +198,8 @@ public final class EventStallManager {
 
     private static boolean isProducer(Profession p) {
         return switch (p) {
-            case FARMER, BAKER, FISHERMAN, BUTCHER, WEAVER, CARPENTER,
-                 BLACKSMITH, MINER, MASON, SHEPHERD -> true;
+            case FARMER, BAKER, WEAVER, CARPENTER,
+                 BLACKSMITH, MINER, STONEMASON -> true;
             default -> false;
         };
     }
