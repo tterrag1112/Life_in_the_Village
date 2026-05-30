@@ -1355,3 +1355,75 @@ Still outstanding (deferred, behavioral — not pure cleanup): deleting
 `MarketApproach` uses anchor positions as live NPC standing spots, not
 just a count, so that change needs compile + in-game verification; left
 intact (callers still compile) for a session with maven access.
+
+---
+
+## TEST SCAFFOLD — perimeter-offset farm + market complexes
+
+**Temporary content-testing scaffold, not the real fix.** Lets both
+complexes generate reliably in open terrain so merchant/stall content
+(2a–2d) is actually testable.
+
+### Reservation gap this works around
+
+Farm + market complexes run as a post-placement pass in
+`V2VillageSpawnerAdapter` and only *avoid* existing reservations — nothing
+reserves space *for* them at plan time. In a dense village they starve:
+farms log `SEED_NOT_ADMISSIBLE` (seed lands inside a park/building
+exclusion); markets log `NO_REGION` (pad centre is surrounded by the ~27
+building obstacles, so no full-margin pad fits). The real fix — emit a
+`ComplexRegion` Layer-3 envelope at plan time so buildings/parks route
+around the complex — is queued **layout-rework** and is out of scope here.
+
+### The scaffold
+
+- One gating flag `PERIMETER_OFFSET_COMPLEXES = true` (+ `PERIMETER_
+  OFFSET_CLEARANCE = 64`). Confined to the adapter's two complex loops
+  plus one private helper `perimeterAnchor`.
+- `perimeterAnchor(villageCentre, buildingCentre, placedBuildingsAll)`:
+  direction = village centre → building (unit vector); distance = furthest
+  placed building from the village centre + clearance; Y = building's own
+  Y (superflat-safe). Degenerate (building on centre) → building centre.
+- Farm loop: feeds the anchor as the planner **seed** (was
+  `fh.placed().centre()`), so the seed lands clear of every exclusion
+  polygon → no more `SEED_NOT_ADMISSIBLE`.
+- Market loop: feeds the anchor as the **pad centre** (was
+  `mk.placed().centre()`), far from the building obstacles, so a
+  full-margin pad fits → no more `NO_REGION`. Stall seeding (2b) then runs
+  on the graded pad as before.
+- Planner internals, seed-admissibility gate, obstacle math, shrink logic
+  untouched — purely "move the anchor before calling the planner".
+
+### Flag toggle
+
+`PERIMETER_OFFSET_COMPLEXES = false` restores today's behavior exactly:
+both loops use `placed().centre()` (the flag-off branch is the original
+expression, just held in a local). Clean revert; whole scaffold deletes
+with the flag when the ComplexRegion reservation lands.
+
+### Accepted scaffold limitations (by design, not bugs)
+
+- Complexes detach from their building and ring the village perimeter.
+- Multiple complexes pushed the same direction may sit near/overlap (no
+  angular spread — nice-to-have, not done).
+- May land on bad terrain off superflat (testing on superflat).
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: imports
+present (`BlockPos`, `Map`, `List`); helper signature matches
+`placedBuildingsAll` (`Map<BuildingType,List<Building>>`); `Building
+.getShape().getOrigin()` returns `BlockPos`; `origin`/`placedBuildingsAll`
+in scope in both loops; flag-off branch byte-identical to prior code.
+
+### Smoke test (user-executable, superflat)
+
+1. Regenerate an AGRICULTURAL CITY. Farm complexes now generate out beyond
+   the buildings (no `SEED_NOT_ADMISSIBLE` for every farmhouse).
+2. Market pads now generate (no `NO_REGION`) with seeded stalls, out
+   beyond the buildings.
+3. Merchant/stall content testable: stalls exist; merchant can claim/man
+   one (after 3a); market-day recruits producers (2d).
+4. Flip flag false, regenerate → starved in-place result returns (proves
+   clean toggle).
+5. Logs show complex success, not skip reasons; no exceptions.
