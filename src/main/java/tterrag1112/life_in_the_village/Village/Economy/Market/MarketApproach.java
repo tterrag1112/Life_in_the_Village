@@ -60,15 +60,26 @@ public final class MarketApproach {
                                        VillageSavedData data) {
         if (market == null) return new Spot(BlockPos.ZERO, false);
 
-        // 1) Own active stall at this market
+        // 1) Own active stall at this market — stand at its work-post
+        //    (counter, aisle-facing): the canonical "where the owner
+        //    stands" surface, the same one MerchantBehavior mans (3a).
+        //    Falls back to the stall origin if the post can't be derived.
         MarketStall own = data.getStallByOwner(npc.getUUID()).orElse(null);
         if (own != null && own.isActive()
                 && market.getId().equals(own.getMarketBuildingId())
                 && !own.getStallOrigin().equals(BlockPos.ZERO)) {
-            return new Spot(own.getStallOrigin(), true);
+            BlockPos stand = tterrag1112.life_in_the_village.Village.Markets.Complex
+                    .MarketWorkPost.forStall(market, own)
+                    .map(tterrag1112.life_in_the_village.Village.Markets.Complex
+                            .MarketWorkPost.WorkPost::stand)
+                    .orElse(own.getStallOrigin());
+            return new Spot(stand, true);
         }
 
-        // 2) Free counter / anchor slot — deterministic per-NPC fan-out
+        // 2) Non-owner fan-out across the legacy anchor slots. 3a leaves
+        //    this path intact (full findAnchorSlots retirement needs
+        //    in-game verification — deferred, see 2b/2c); only the
+        //    owned-stall branch above is reconciled onto the work-post.
         List<BlockPos> anchors = MarketStallPlacer.findAnchorSlots(market, data);
         if (!anchors.isEmpty()) {
             int cap = Math.min(SOFT_CAPACITY, anchors.size());

@@ -1427,3 +1427,245 @@ in scope in both loops; flag-off branch byte-identical to prior code.
 4. Flip flag false, regenerate → starved in-place result returns (proves
    clean toggle).
 5. Logs show complex success, not skip reasons; no exceptions.
+
+---
+
+## Phase 3a — Merchant claims and mans a market stall
+
+The keystone: the stationary MERCHANT now owns a market stall and mans it
+during work hours, and selling resolves to that stall — closing the 2c
+"sell goes to the hub" gap automatically.
+
+### Ownership model + rent treatment
+
+On entering work (`start`), the merchant acquires a home stall:
+`VillageSavedData.getStallByOwner(uuid)` if it still owns an active stall
+at this market, else `MarketStallPlacer.claimSlot(level, market, uuid,
+OwnerType.NPC, Long.MAX_VALUE, data)`. **Rent-free**: claiming with
+`rentUntil = Long.MAX_VALUE` makes `MarketStall.isPurchased()` true, and
+`MarketRentManager` skips purchased stalls (line 54) *before* its NPC-rent
+branch — so the resident merchant's workplace is never billed. **No
+MarketRentManager change required** (confirmed against as-built). No new
+codec field — ownership uses the existing `MarketStall` owner record.
+Graceful no-vacant fallback: `acquireStall` returns null → the merchant
+mans the market origin and `StallGoods.store(null stall)` routes deposits
+to the hub (a DEBUG log notes it).
+
+### Standing-surface reconciliation
+
+`MarketWorkPost.forStall(market, stall)` (counter + aisle facing) is now
+the single "where the owner stands" answer. `MerchantBehavior` walks to
+`workPostStand()` (work-post stand, fallback stall/market origin). In
+`MarketApproach.resolveSellSpot`, the **owned-stall branch** is repointed
+from `own.getStallOrigin()` to the work-post stand (fallback origin). The
+**non-owner fan-out** (`findAnchorSlots` over legacy anchors, capped
+`SOFT_CAPACITY`) is left intact — full `findAnchorSlots` retirement needs
+in-game verification (deferred since 2b/2c). Only the owned-stall path is
+reconciled here; flagged the rest.
+
+### Start-gate fix
+
+`checkExtraStartConditions` dropped the `entity.getRandom().nextInt(40)`
+lottery (which left the stall unmanned ~39/40 start checks). Now: nav-guard
++ `isWorkTime()` + `idleCooldown` + `phase == IDLE` → start deterministically.
+`canStillUse` keeps it running until work ends; `manStall` holds position
+at the post for the whole work period (replacing the old fixed
+`TRADE_DURATION` timer). No per-tick log spam (state-unchanged path just
+holds; the one new log is DEBUG).
+
+### Deposit to the stall
+
+`stockMarket` now deposits the merchant's existing personal stock into its
+**owned stall** via `StallGoods.store` (stall-chest first, hub overflow),
+not `BuildingStorageAccess.storeItem` into the market building. 3a only
+moves stock the merchant already has — producer-buying restock is 3b.
+
+### Tie-In Audit
+
+- **Upstream**: assigned MARKET building; 2b-seeded vacant stalls
+  (`MarketStallSeeder`); `MarketWorkPost`; `claimSlot` (assign-vacant).
+- **Downstream**: `TradeHandler` buy/sell + `MarketChannel` now resolve
+  the merchant's owned stall (`findOwnedStallWithItem` /
+  `findStallWithItem`) → 2c hub gap closes. `NpcProfileSnapshotBuilder`
+  still reads `isOpenForTrade()` (kept). Producer sellers still resolve
+  via `MarketApproach` (non-owner path unchanged).
+- **Siblings**: `MarketRentManager` exempts the stall (purchased).
+  `WorkshopStallDecisionGoal` producers still claim *other* vacant stalls
+  — the merchant takes exactly one home stall via the same assign-vacant
+  pool, so it can't starve producers (one claim, the rest stay vacant).
+  `CaravanMerchantBehavior` (WORK pri 0) still pre-empts on caravan duty;
+  3a governs only the stationary WORK pri 1 fallback.
+- **Exhaustive switches**: none — no new enum (the `Phase` enum is
+  unchanged in 3a; `COLLECTING` is 3b).
+
+### Simplification Sweep
+
+Reconciled the two standing surfaces onto `MarketWorkPost` for owners.
+Bounded: the legacy `findAnchorSlots` non-owner fan-out stays (needs
+in-game verification before retirement). The dead `collect()` /
+`productionBuildings` / `regenerateMarketOffers` are left in place for 3b
+to rewire (not deleted here to keep 3a's diff scoped to ownership+manning).
+
+### Deviations from prompt
+
+- The prompt suggested "a sentinel rent-until / a MarketRentManager
+  exemption" — chose `Long.MAX_VALUE` (the existing "purchased" sentinel),
+  which needs **no** MarketRentManager change. Cleaner than a new exemption.
+- Kept `regenerateMarketOffers` (no-op) for now — prompt says leave it for
+  3b/cleanup; the player screen is built by `TradeHandler.openTradeScreen`.
+
+### Out-of-scope but flagged
+
+- 3b: producer-buying, `collect()` revival, COLLECTING phase,
+  `productionBuildings`.
+- Full `findAnchorSlots` deletion (non-owner path) — in-game verification.
+- `regenerateMarketOffers` no-op removal → 3b.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: API
+signatures confirmed via recon against as-built (`getStallByOwner`,
+`claimSlot`, `MarketWorkPost.forStall`, `StallGoods.store`,
+`isPurchased`); imports resolve (price helpers in `Economy.Currency`);
+no new enum/codec; `MarketApproach` owned-stall branch repointed.
+
+### Smoke test
+
+1. Spawn village w/ MARKET + merchant; advance to work hours → merchant
+   claims a seeded vacant stall and stands at its counter (aisle-facing),
+   not flocking to a corner.
+2. Confirm the merchant's stall is not rent-charged (`MarketRentManager`
+   skips purchased).
+3. Buy from + sell to the merchant → goods come from / go to the
+   merchant's stall chest (2c gap closed); money via the 1b endpoint.
+4. Producers still claim other vacant stalls (merchant took one, not all).
+5. Producer sellers still resolve a sane sell spot via `MarketApproach`.
+6. Caravan duty still pre-empts.
+7. Logs: deterministic work-time presence; no per-tick spam; no NPE when
+   no vacant stall (graceful fallback to origin + hub).
+
+---
+
+## Phase 3b — Merchant autonomous restock (buy from producers → stock the stall)
+
+Completes the economic loop: the merchant now buys low-stock goods from
+village producers through the canonical channel path and stocks its own
+stall, so the stall it mans (3a) and sells from (2c) gets replenished.
+
+### Restock trigger + target
+
+Per-item target: keep {@code STALL_TARGET_PER_ITEM = 32} of each sellable
+(explicit-price) item in the stall **(+ hub backstock, via {@code
+StallGoods.available})**. "Low" = available < target. The merchant
+restocks the **most-depleted** item first ({@code mostDepletedSellable}
+scans {@code MarketPriceHelper.getAllExplicitPrices().keySet()} for the
+largest deficit). Demand-driven targets via {@code VillageSimData.net}
+are flagged as later tuning, not v1.
+
+### Channel-procurement design (walk-trip model)
+
+Replaced {@code collect()}'s dead direct-pay body with the
+{@code BuyGoodsBehavior} pattern: build {@code TradeIntent.buy(item, want,
+uuid, marketId, villageId, ceiling, NORMAL, Set.of())} (per-unit ceiling =
+{@code getDynamicBuyPrice}, fallback {@code getBaseBuyPrice}), then
+{@code ChannelRouter.findBestChannel}. The router picks the source
+(DirectBusiness/Market/Stockpile self-select). The merchant **walks** to
+{@code quote.location()} (shopkeeper restocking; reuse the WALK_TARGET
+pattern, {@code COLLECT_REACH_SQ = 6.25}), then {@code quote.channel()
+.execute(intent, quote, level, data)} — which settles via {@code
+NpcEconomy.settlePurchase} and applies the market tax. Obtained goods
+({@code result.quantityFilled()}) are deposited into the **owned stall**
+via {@code StallGoods.store}. No {@code entity.pay} direct-pay remains.
+
+### Man-vs-restock balance (the gate)
+
+Manning is the default. While in {@code OPEN_FOR_TRADE}, a {@code
+restockCooldown} ({@code RESTOCK_COOLDOWN = 2400} ticks) must elapse
+before the merchant scans for low stock; if nothing is low it backs off
+{@code RESTOCK_RECHECK = 600} ticks rather than rescanning every tick.
+Only when something is below target does it enter {@code COLLECTING} for
+one item. Every {@code collect} exit path (no village, no quote, filled
+while walking, executed) calls {@code endRestock} → resets the cooldown
+and returns to {@code OPEN_FOR_TRADE}, so there's no man↔collect thrash
+and no abandoned counter. {@code start} seeds the cooldown so the merchant
+settles in before its first restock.
+
+### productionBuildings population
+
+Dropped. The {@code ChannelRouter} already discovers sources
+({@code DirectBusinessChannel} finds producers via {@code
+ProfessionSupplyChain}; {@code MarketChannel}/{@code StockpileChannel}
+cover the rest), so the hand-maintained {@code productionBuildings} /
+{@code currentBuildingIndex} / {@code findAssignedNpc} machinery is gone —
+the router replaces it.
+
+### Phase switch update
+
+{@code Phase} gains {@code COLLECTING}; the {@code tick} switch adds
+{@code case COLLECTING -> collect(level)}. This is the only switch over
+{@code Phase} (private enum, single consumer) — audited, no others.
+
+### Tie-In Audit
+
+- **Upstream**: owned stall (3a); stall stock ({@code StallGoods
+  .available}); {@code ChannelRouter} + {@code DirectBusinessChannel}
+  (sources from producer building storage); producer storage.
+- **Downstream**: goods land in the owned stall → player + NPC selling
+  already serve from it (2c/3a), closing the restock→sell loop. Settlement
+  debits the merchant wallet and credits the producer with tax applied
+  once, inside {@code channel.execute} ({@code settlePurchase}).
+- **Siblings**: {@code BuyGoodsBehavior} untouched (reused the *pattern*,
+  not the class). {@code CaravanMerchantBehavior} (WORK pri 0) still
+  pre-empts on caravan duty; 3b is in the pri-1 stationary fallback.
+- **Exhaustive switches**: only the {@code tick} Phase switch (updated).
+
+### Simplification Sweep
+
+Deleted {@code regenerateMarketOffers} (no-op; the player screen is built
+by {@code TradeHandler.openTradeScreen}), {@code productionBuildings},
+{@code currentBuildingIndex}, {@code findAssignedNpc}, and the unused
+{@code TRADE_DURATION}/old timer. Replaced {@code collect()}'s body
+wholesale rather than leaving the direct-pay path beside the channel path.
+
+### Deviations from prompt
+
+- Per-unit ceiling uses {@code getDynamicBuyPrice} (the merchant's own buy
+  price) rather than an arbitrary cap — keeps restock at a sane price; the
+  channel still settles the real price.
+- {@code want} is {@code min(RESTOCK_BATCH, target - have)} so a near-full
+  stall tops up exactly, not a fixed 16.
+
+### Out-of-scope but flagged
+
+- Demand-driven restock targets ({@code VillageSimData}) — tuning.
+- Cross-village procurement trips (Phase 4 caravans) — 3b is in-village.
+- {@code WANDERING_TRADER}; player economy UI.
+- Full {@code findAnchorSlots} retirement (3a's deferred non-owner path).
+
+### Build verification
+
+Deferred (sandbox blocks {@code maven.neoforged.net}; tooling also
+glitched mid-session — a path-corrupted Write briefly landed 3b content in
+MarketWorkPost.java; caught via {@code git diff --stat}, hard-restored
+MarketWorkPost from HEAD, re-verified only MerchantBehavior is modified).
+Static review: all channel APIs confirmed against as-built ({@code
+TradeIntent.buy}, {@code ChannelRouter.findBestChannel}, {@code
+ChannelQuote.location/channel/execute}, {@code TradeResult.success/
+quantityFilled}, {@code StallGoods.available/store}, price-helper
+signatures); braces/parens balanced; {@code Phase} switch exhaustive.
+
+### Smoke test
+
+1. Merchant owning a stall (3a) with low stock + producers with surplus;
+   advance work time → merchant enters COLLECTING, buys from a producer
+   via the channel (producer paid, merchant debited, tax once), deposits
+   into its own stall.
+2. Restock→sell loop closes: a player/NPC can then buy those goods.
+3. Merchant mans the stall most of the time; only leaves to restock on
+   cooldown (no constant abandonment).
+4. Buys most-depleted sellable first, up to target, stops when stocked.
+5. Caravan duty pre-empts; no double-pay / no goods without payment.
+6. {@code regenerateMarketOffers} gone; player trade screen still opens
+   correctly ({@code TradeHandler}).
+7. Logs: no per-tick spam; clean COLLECTING enter/exit; graceful (stay
+   manning) when no producer/quote available.

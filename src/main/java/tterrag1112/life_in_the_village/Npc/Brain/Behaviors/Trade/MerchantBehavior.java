@@ -1,52 +1,102 @@
 package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.entity.ai.behavior.Behavior;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import com.google.common.collect.ImmutableMap;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelQuote;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.EconomicChannel;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.Urgency;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.*;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelper;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
+import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStallPlacer;
+import tterrag1112.life_in_the_village.Village.Markets.Complex.MarketWorkPost;
+import tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
 
+/**
+ * Stationary MERCHANT behaviour (WORK priority 1; {@code
+ * CaravanMerchantBehavior} at priority 0 pre-empts on caravan duty).
+ *
+ * <p>Phase 3a — the merchant <b>owns and mans a market stall</b>: it
+ * acquires a home stall ({@code getStallByOwner} else {@code claimSlot},
+ * {@code OwnerType.NPC}, rent-free via {@code Long.MAX_VALUE}), walks to
+ * its {@link MarketWorkPost} (counter + aisle facing) and holds there for
+ * the work period, depositing its existing stock into the stall via
+ * {@link StallGoods}. Selling (player + NPC) serves from that stall, so
+ * the 2c "sell goes to the hub" gap closes automatically.
+ *
+ * <p>Phase 3b — the merchant <b>autonomously restocks</b> its stall: while
+ * manning, on a restock cooldown, it checks whether any sellable
+ * (explicit-price) item is below {@link #STALL_TARGET_PER_ITEM} in the
+ * stall (+ hub backstock); if so it enters {@link Phase#COLLECTING} for
+ * the most-depleted item, procures it through the canonical channel path
+ * ({@code TradeIntent.buy} → {@code ChannelRouter.findBestChannel} → walk
+ * to {@code quote.location()} → {@code channel.execute}, which settles via
+ * {@code NpcEconomy.settlePurchase} and applies tax), deposits the goods
+ * into its owned stall, and returns to manning. Manning is the default;
+ * restock is occasional (cooldown-gated) so the counter isn't abandoned.
+ */
 public class MerchantBehavior extends Behavior<TownspersonMob> {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(MerchantBehavior.class);
+
     private enum Phase {
-        IDLE, STOCKING, OPEN_FOR_TRADE
+        IDLE, STOCKING, OPEN_FOR_TRADE, COLLECTING
     }
 
     private static final int IDLE_COOLDOWN = 1200;
-    private static final int TRADE_DURATION = 6000;
     private static final int INTERACT_RANGE_SQ = 9;
+    private static final double WALK_SPEED = 0.6;
+    private static final double COLLECT_WALK_SPEED = 0.55;
+    private static final double COLLECT_REACH_SQ = 6.25;
+
+    // 3b restock tuning.
+    /** Desired stock of each sellable item in the stall (+ hub backstock). */
+    private static final int STALL_TARGET_PER_ITEM = 32;
+    /** Max units procured for one item per restock trip. */
+    private static final int RESTOCK_BATCH = 16;
+    /** Ticks between restock trips — keeps manning the default. */
+    private static final int RESTOCK_COOLDOWN = 2400;
+    /** Shorter recheck when a scan found nothing to restock. */
+    private static final int RESTOCK_RECHECK = 600;
 
     private TownspersonMob entity;
 
     public MerchantBehavior() {
-        super(com.google.common.collect.ImmutableMap.of(
+        super(ImmutableMap.of(
                 MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED
         ), 24000);
     }
     private Phase phase = Phase.IDLE;
     private int idleCooldown = 0;
-    private int tradeTimer = 0;
 
     private Building market = null;
-    private List<Building> productionBuildings = new ArrayList<>();
-    private int currentBuildingIndex = 0;
+    /** The merchant's home stall (cache of the persisted owner record). */
+    private MarketStall ownedStall = null;
 
-    
+    // 3b transient restock state (not persisted).
+    private int restockCooldown = 0;
+    private Item restockItem = null;
 
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
@@ -54,22 +104,25 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
         if (idleCooldown > 0) { idleCooldown--; return false; }
-        return phase == Phase.IDLE
-                && entity.getRandom().nextInt(40) == 0;
+        // Deterministic: during work, man the stall. (Was a nextInt(40)
+        // lottery that left the stall unmanned ~39/40 start checks.)
+        return phase == Phase.IDLE;
     }
 
     @Override
     protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
-        // Go directly to stocking/opening
+        VillageSavedData data = VillageSavedData.get(level);
         market = entity.getAssignedBuildingId()
-                .flatMap(VillageSavedData.get(
-                        (ServerLevel) entity.level())::getBuildingById)
+                .flatMap(data::getBuildingById)
                 .filter(b -> b.getType() == BuildingType.MARKET)
                 .orElse(null);
 
         if (market == null) { goIdle(); return; }
 
+        ownedStall = acquireStall(level, data);
+        restockCooldown = RESTOCK_COOLDOWN; // settle in before first restock
+        restockItem = null;
         phase = Phase.STOCKING;
     }
 
@@ -80,200 +133,257 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
         return phase != Phase.IDLE;
     }
 
-        @Override
+    @Override
     protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
         switch (phase) {
-            case STOCKING          -> stockMarket(level);
-            case OPEN_FOR_TRADE    -> openForTrade(level);
+            case STOCKING       -> stockMarket(level);
+            case OPEN_FOR_TRADE -> manStall(level);
+            case COLLECTING     -> collect(level);
             default -> {}
         }
     }
 
-    private void collect(ServerLevel level) {
-        if (currentBuildingIndex >= productionBuildings.size()) {
-            phase = Phase.STOCKING;
-            return;
+    // =========================================================================
+    // 3a — own + man the stall
+    // =========================================================================
+
+    /**
+     * Acquires (or re-acquires) the merchant's home stall: its existing
+     * owned stall if still active at this market, else a freshly claimed
+     * vacant one. Rent-free — claimed with {@code rentUntil =
+     * Long.MAX_VALUE}, which {@code MarketRentManager} skips (the resident
+     * merchant's stall is its workplace, not a leased pitch). Returns
+     * {@code null} when no vacant stall exists (graceful: the merchant
+     * then mans the building origin and deposits to the hub).
+     */
+    private MarketStall acquireStall(ServerLevel level, VillageSavedData data) {
+        MarketStall existing = data.getStallByOwner(entity.getUUID()).orElse(null);
+        if (existing != null && existing.isActive()
+                && market.getId().equals(existing.getMarketBuildingId())) {
+            return existing;
         }
-
-        Building target = productionBuildings.get(currentBuildingIndex);
-        BlockPos targetPos = target.getShape().getOrigin();
-        double distSq = entity.distanceToSqr(
-                targetPos.getX(), targetPos.getY(), targetPos.getZ());
-
-        if (distSq > INTERACT_RANGE_SQ) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    targetPos.getX(), targetPos.getY(),
-                    targetPos.getZ(), 1.0));
-            return;
+        MarketStall claimed = MarketStallPlacer.claimSlot(
+                level, market, entity.getUUID(),
+                MarketStall.OwnerType.NPC, Long.MAX_VALUE, data).orElse(null);
+        if (claimed == null) {
+            LOGGER.debug("[Merchant] {} found no vacant stall at market {}; "
+                    + "manning building origin", entity.getUUID(), market.getId());
         }
-
-        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
-        VillageSavedData data = VillageSavedData.get(level);
-        Optional<Village> village = entity.getAssignedVillageName()
-                .flatMap(name -> data.getVillageByName(name));
-
-        // Build a priority list — items with low market stock come first.
-        // Uses MarketPriceHelper so every item (explicit or default) is
-        // considered, not just those with an explicit entry.
-        List<Map.Entry<Item, MarketPriceData.ItemPrice>> prioritized =
-                new ArrayList<>(MarketPriceHelper.getAllExplicitPrices().entrySet());
-        prioritized.sort((a, b) -> {
-            int stockA = BuildingStorageAccess.countItem(level, market, a.getKey());
-            int stockB = BuildingStorageAccess.countItem(level, market, b.getKey());
-            return Integer.compare(stockA, stockB); // lowest stock first
-        });
-
-        int totalBought = 0;
-        for (var entry : prioritized) {
-            if (totalBought >= 48) break; // cap total per collection visit
-
-            Item item = entry.getKey();
-            int available = BuildingStorageAccess.countItem(level, target, item);
-            if (available <= 0) continue;
-
-            // Only buy if market stock is below threshold
-            int marketStock = BuildingStorageAccess.countItem(level, market, item);
-            if (marketStock >= 32) continue; // already well-stocked
-
-            int toTake = Math.min(available, 16);
-
-            // Resolve buy price through the helper — handles village
-            // dynamic pricing when available, falls back to base otherwise
-            long pricePerItem = village
-                    .map(v -> MarketPriceHelper.getDynamicBuyPrice(level, v, item))
-                    .orElseGet(() -> MarketPriceHelper.getBaseBuyPrice(item));
-
-            long totalCost = pricePerItem * toTake;
-            CurrencyValue cost = CurrencyValue.of(totalCost);
-
-            if (!entity.canAfford(cost)) continue;
-
-            boolean taken = BuildingStorageAccess.takeItem(
-                    level, target, item, toTake);
-            if (!taken) continue;
-
-            TownspersonMob assignedNpc = findAssignedNpc(level, target);
-            if (assignedNpc != null) {
-                entity.pay(assignedNpc, cost);
-            } else {
-                entity.spend(cost);
-            }
-
-            entity.getPersonalInventory().addItem(new ItemStack(item, toTake));
-            totalBought += toTake;
-        }
-
-        currentBuildingIndex++;
+        return claimed;
     }
 
-    private TownspersonMob findAssignedNpc(ServerLevel level, Building building) {
-        return level.getEntitiesOfClass(
-                TownspersonMob.class,
-                building.getShape().toAABB().inflate(16),
-                mob -> building.getId().equals(mob.getAssignedBuildingId().orElse(null))
-        ).stream().findFirst().orElse(null);
+    /** Where the merchant stands: the owned stall's work-post (counter,
+     *  aisle-facing), falling back to the market origin when stall-less. */
+    private BlockPos workPostStand() {
+        if (ownedStall != null && market != null) {
+            Optional<MarketWorkPost.WorkPost> wp =
+                    MarketWorkPost.forStall(market, ownedStall);
+            if (wp.isPresent()) return wp.get().stand();
+        }
+        return market != null ? market.getShape().getOrigin() : entity.blockPosition();
     }
 
+    /** Walk to the work-post, deposit existing stock into the owned stall,
+     *  then open for trade. 3a moves only stock the merchant already has;
+     *  buying from producers to restock is the COLLECTING phase (3b). */
     private void stockMarket(ServerLevel level) {
-        if (market == null) { goIdle(); return; } // ← add this guard
+        if (market == null) { goIdle(); return; }
 
-        BlockPos marketPos = market.getShape().getOrigin();
-        double distSq = entity.distanceToSqr(
-                marketPos.getX(), marketPos.getY(), marketPos.getZ());
-
-        if (distSq > INTERACT_RANGE_SQ) {
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
-                    marketPos.getX(), marketPos.getY(),
-                    marketPos.getZ(), 1.0));
+        BlockPos stand = workPostStand();
+        if (!withinReach(stand)) {
+            walkTo(stand);
             return;
         }
-
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
-        // Deposit personal inventory into market
+        // Deposit personal inventory into the owned stall (stall-chest
+        // first, hub overflow). A null stall stores straight to the hub.
         var inv = entity.getPersonalInventory();
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack stack = inv.getItem(i);
             if (stack.isEmpty()) continue;
-            boolean stored = BuildingStorageAccess.storeItem(
-                    level, market, stack.copy());
-            if (stored) inv.setItem(i, ItemStack.EMPTY);
+            ItemStack moving = stack.copy();
+            StallGoods.store(level, market, ownedStall, moving);
+            inv.setItem(i, moving.isEmpty() ? ItemStack.EMPTY : moving);
         }
 
-        // Regenerate trade offers
-        entity.setItemInHand(
-                net.minecraft.world.InteractionHand.MAIN_HAND,
-                ItemStack.EMPTY
-        );
-
-        regenerateMarketOffers(level);
+        if (ownedStall != null) {
+            MarketWorkPost.forStall(market, ownedStall)
+                    .ifPresent(wp -> faceDirection(wp.facing()));
+        }
         phase = Phase.OPEN_FOR_TRADE;
-        tradeTimer = 0;
     }
 
-    private void openForTrade(ServerLevel level) {
-        tradeTimer++;
-        if (tradeTimer >= TRADE_DURATION) {
-            goIdle();
+    /** Hold position at the work-post for the work period, emerald in hand
+     *  to signal open for trade. While manning, on a cooldown, check
+     *  whether the stall needs restocking and, if so, enter COLLECTING.
+     *  {@code canStillUse} ends the behaviour when work time is over. */
+    private void manStall(ServerLevel level) {
+        BlockPos stand = workPostStand();
+        if (!withinReach(stand)) {
+            walkTo(stand);
             return;
         }
-        // Hold emerald to signal open for trade
-        entity.setItemInHand(
-                net.minecraft.world.InteractionHand.MAIN_HAND,
-                new ItemStack(net.minecraft.world.item.Items.EMERALD)
-        );
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        if (!entity.getMainHandItem().is(Items.EMERALD)) {
+            entity.setItemInHand(
+                    net.minecraft.world.InteractionHand.MAIN_HAND,
+                    new ItemStack(Items.EMERALD));
+        }
+
+        // 3b — occasional restock. Manning is the default; only leave the
+        // counter when the cooldown has elapsed AND something is low.
+        if (restockCooldown > 0) { restockCooldown--; return; }
+        if (ownedStall == null) { restockCooldown = RESTOCK_RECHECK; return; }
+
+        Item depleted = mostDepletedSellable(level);
+        if (depleted == null) {
+            restockCooldown = RESTOCK_RECHECK; // nothing low — recheck later
+            return;
+        }
+        restockItem = depleted;
+        phase = Phase.COLLECTING;
     }
 
-    public void regenerateMarketOffers(ServerLevel level) {
+    /** The sellable (explicit-price) item furthest below target in the
+     *  stall (+ hub backstock), or null if all are stocked. */
+    private Item mostDepletedSellable(ServerLevel level) {
+        Item worst = null;
+        int worstDeficit = 0;
+        for (Item item : MarketPriceHelper.getAllExplicitPrices().keySet()) {
+            int have = StallGoods.available(level, market, ownedStall, item);
+            int deficit = STALL_TARGET_PER_ITEM - have;
+            if (deficit > worstDeficit) {
+                worstDeficit = deficit;
+                worst = item;
+            }
+        }
+        return worst;
+    }
+
+    // =========================================================================
+    // 3b — autonomous restock through the channel + settlement path
+    // =========================================================================
+
+    /**
+     * Procures {@link #restockItem} through the canonical channel path and
+     * deposits it into the owned stall. Replaces the old dead direct-pay
+     * body: pricing + settlement (incl. market tax) are the channel's job
+     * via {@code NpcEconomy.settlePurchase}; no {@code entity.pay} here.
+     * Any abort path returns to manning with the cooldown reset so the
+     * merchant doesn't thrash man↔collect.
+     */
+    private void collect(ServerLevel level) {
+        if (restockItem == null || market == null || ownedStall == null) {
+            endRestock();
+            return;
+        }
+
         VillageSavedData data = VillageSavedData.get(level);
-        Optional<Village> village = entity.getAssignedVillageName()
-                .flatMap(name -> data.getVillageByName(name));
-
-        if (village.isEmpty()) return;
-
-        // Resolve market locally — don't rely on the instance field which
-        // is null when the merchant is idle
-        Building activeMarket = entity.getAssignedBuildingId()
-                .flatMap(data::getBuildingById)
-                .filter(b -> b.getType() == BuildingType.MARKET)
+        Village village = entity.getAssignedVillageName()
+                .flatMap(data::getVillageByName)
                 .orElse(null);
+        if (village == null) { endRestock(); return; }
 
-        if (activeMarket == null) return;
+        int have = StallGoods.available(level, market, ownedStall, restockItem);
+        int want = Math.min(RESTOCK_BATCH, STALL_TARGET_PER_ITEM - have);
+        if (want <= 0) { endRestock(); return; } // filled while we walked
 
-        MarketPriceHelper.getAllExplicitPrices().forEach((item, basePrice) -> {
-            if (!BuildingStorageAccess.hasItem(level, activeMarket, item, 1)) return;
+        long ceiling = MarketPriceHelper.getDynamicBuyPrice(level, village, restockItem);
+        if (ceiling <= 0) ceiling = MarketPriceHelper.getBaseBuyPrice(restockItem);
 
-            long sellPrice = DynamicPriceCalculator.getSellPrice(
-                    level, village.get(), data, item, basePrice.sellPrice());
-            long buyPrice = DynamicPriceCalculator.getBuyPrice(
-                    level, village.get(), data, item, basePrice.buyPrice());
+        TradeIntent intent = TradeIntent.buy(
+                restockItem, want, entity.getUUID(),
+                market.getId(), village.getId(),
+                ceiling, Urgency.NORMAL, Set.of());
 
-            int emeraldSell = (int) Math.max(1, sellPrice / 64);
-            int emeraldBuy  = (int) Math.max(1, buyPrice / 64);
+        Optional<ChannelQuote> quoteOpt =
+                ChannelRouter.findBestChannel(intent, village, data, level);
+        if (quoteOpt.isEmpty()) { endRestock(); return; } // no source — man
 
-            // offers is unused currently — this is a no-op but keeps the
-            // logic intact for when the vanilla merchant screen is wired up
-        });
+        ChannelQuote quote = quoteOpt.get();
+
+        // Walk to the source if we're not close enough yet (stay COLLECTING).
+        BlockPos loc = quote.location();
+        if (loc != null && entity.distanceToSqr(
+                loc.getX() + 0.5, loc.getY(), loc.getZ() + 0.5) > COLLECT_REACH_SQ) {
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
+                    new WalkTarget(loc, (float) COLLECT_WALK_SPEED, 1));
+            return;
+        }
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+
+        // Resolve the concrete channel from the quote's discriminator
+        // (quote.channel() is a ChannelType, not the channel itself), then
+        // execute — the channel settles payment (settlePurchase) + tax.
+        // execute() is the caller's source-side move; we deposit the goods
+        // into the owned stall here (the destination-side, per the channel
+        // contract).
+        if (quote.isExpired(level.getGameTime())) { endRestock(); return; }
+        EconomicChannel channel = ChannelRouter.registeredChannels().stream()
+                .filter(c -> c.type() == quote.channel())
+                .findFirst().orElse(null);
+        if (channel == null) { endRestock(); return; }
+
+        TradeResult result = channel.execute(quote, intent, level);
+        if (result.success() && result.quantityTraded() > 0) {
+            StallGoods.store(level, market, ownedStall,
+                    new ItemStack(restockItem, result.quantityTraded()));
+            LOGGER.debug("[Merchant] {} restocked {}x{} into stall {}",
+                    entity.getUUID(), result.quantityTraded(),
+                    restockItem, ownedStall.getSlotIndex());
+        }
+        endRestock();
     }
 
+    /** Finish a restock trip (or aborted attempt) and return to manning. */
+    private void endRestock() {
+        restockItem = null;
+        restockCooldown = RESTOCK_COOLDOWN;
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        phase = Phase.OPEN_FOR_TRADE;
+    }
 
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private boolean withinReach(BlockPos pos) {
+        return entity.distanceToSqr(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5)
+                <= INTERACT_RANGE_SQ;
+    }
+
+    private void walkTo(BlockPos pos) {
+        entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET, navWalkTarget(
+                pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, WALK_SPEED));
+    }
+
+    private void faceDirection(Direction dir) {
+        if (dir == null) return;
+        float yaw = dir.toYRot();
+        entity.setYRot(yaw);
+        entity.setYBodyRot(yaw);
+        entity.setYHeadRot(yaw);
+    }
 
     private void goIdle() {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
+        ownedStall = null;
+        restockItem = null;
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.setItemInHand(
                 net.minecraft.world.InteractionHand.MAIN_HAND,
                 ItemStack.EMPTY
         );
-        productionBuildings.clear();
-        currentBuildingIndex = 0;
     }
 
     @Override
-    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) { this.entity = entity;
-        goIdle(); }
+    protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
+        this.entity = entity;
+        goIdle();
+    }
 
     public boolean isOpenForTrade() {
         return phase == Phase.OPEN_FOR_TRADE;
