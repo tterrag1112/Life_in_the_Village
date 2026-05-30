@@ -70,6 +70,20 @@ public enum BuildingType {
     TREASURY,
 
     // Special — procedurally generated, not a placeable NBT structure
-    TOWN_SQUARE
+    TOWN_SQUARE,
+
+    /**
+     * Merchant arc Phase 2b — a market stall, promoted to a first-class
+     * variant-system type so stalls resolve through {@code CultureResolver}
+     * + manifests at {@code structures/{culture}/{style}/market_stall/…}
+     * (inheriting the 7-step default fallback + "only authored variants"
+     * gate). NOT a normally-placed village building: it is never selected
+     * by the planner, has no BuildingProfile / inhabitant / spawn rule,
+     * and is placed only by {@code StallAllocator} onto a market pad. Its
+     * exhaustiveness was audited — every {@code switch} whose selector is a
+     * {@link BuildingType} has a {@code default} arm, so this addition
+     * compiles cleanly (see {@code MERCHANT_PROGRESS.md} Phase 2b audit).
+     */
+    MARKET_STALL
 
 }

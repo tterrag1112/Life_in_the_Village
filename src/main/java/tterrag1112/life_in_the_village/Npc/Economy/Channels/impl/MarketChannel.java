@@ -163,14 +163,21 @@ public final class MarketChannel implements EconomicChannel {
     private static TradeResult executeBuy(TradeIntent intent, Building market, int qty,
                                           long pricePerUnit, ServerLevel level,
                                           VillageSavedData data) {
-        // Reread stock — quote may have been issued ticks ago.
-        int actuallyAvailable = BuildingStorageAccess.countItem(level, market, intent.item());
+        // Stall is the authoritative goods endpoint (2c); the hub is
+        // backstock. Reread availability across both — the quote may be old.
+        MarketStall stall = findStallWithItem(market, intent, level, data);
+        int actuallyAvailable = tterrag1112.life_in_the_village.Village.Markets.Complex
+                .StallGoods.available(level, market, stall, intent.item());
         qty = Math.min(qty, actuallyAvailable);
         if (qty <= 0) return TradeResult.fail("market sold out");
         long total = pricePerUnit * qty;
 
-        // Move items first; if take fails the trade aborts cleanly.
-        if (!BuildingStorageAccess.takeItem(level, market, intent.item(), qty)) {
+        // Move goods (stall chest first, then hub backstock); all-or-nothing.
+        int taken = tterrag1112.life_in_the_village.Village.Markets.Complex
+                .StallGoods.take(level, market, stall, intent.item(), qty);
+        if (taken < qty) {
+            if (taken > 0) tterrag1112.life_in_the_village.Village.Markets.Complex
+                    .StallGoods.store(level, market, stall, new ItemStack(intent.item(), taken));
             return TradeResult.fail("take failed");
         }
 
@@ -178,7 +185,6 @@ public final class MarketChannel implements EconomicChannel {
         // owner / merchant, collect the village market tax once). Goods
         // already moved above; the helper is money-only.
         TownspersonMob buyer = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
-        MarketStall stall = findStallWithItem(market, intent, level, data);
         TownspersonMob merchant = findMerchant(level, market);
         CurrencyValue cost = CurrencyValue.of(total);
         Village v = data.getVillageById(intent.villageId()).orElse(null);
@@ -193,9 +199,9 @@ public final class MarketChannel implements EconomicChannel {
                 : SettlementParty.none();
 
         if (!NpcEconomy.settlePurchase(buyerParty, endpoint, cost, v, level, data)) {
-            // Couldn't pay — return items.
-            BuildingStorageAccess.storeItem(level, market,
-                    new ItemStack(intent.item(), qty));
+            // Couldn't pay — return goods to the same endpoint.
+            tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods.store(
+                    level, market, stall, new ItemStack(intent.item(), qty));
             return TradeResult.fail("buyer cannot pay");
         }
         return TradeResult.ok(qty, total);
@@ -205,7 +211,9 @@ public final class MarketChannel implements EconomicChannel {
                                            int qty, long pricePerUnit, ServerLevel level,
                                            VillageSavedData data) {
         long total = pricePerUnit * qty;
-        BuildingStorageAccess.storeItem(level, market, new ItemStack(intent.item(), qty));
+        // NPC selling into the market → hub backstock (no stall on this side).
+        tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods.store(
+                level, market, null, new ItemStack(intent.item(), qty));
         TownspersonMob seller = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
         if (seller != null) {
             // Money-only settle: the market pays the seller. No payer entity

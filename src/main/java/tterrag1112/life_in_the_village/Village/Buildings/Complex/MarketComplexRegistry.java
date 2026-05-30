@@ -74,14 +74,23 @@ public final class MarketComplexRegistry {
     // =========================================================================
 
     private static void registerDefaults() {
-        // default × MARKET — conservative bounded pad. padMargin 4 gives
-        // a modest plaza ring; shrinks to 1 in a dense core, else no pad.
+        // default × MARKET. padMargin 6 gives a stall band (margin − aisle)
+        // deep enough to host the perimeter stall pool; shrinks to 2 in a
+        // dense core, else no pad. Stall pool: the one authored stall NBT
+        // (resolved by its real resource path; the broken legacy
+        // STALL_TEMPLATE pointed at a non-existent path).
         MarketComplexSpec market = new MarketComplexSpec(
-                /* padMargin    */ 4,
-                /* minPadMargin */ 1,
+                /* padMargin    */ 6,
+                /* minPadMargin */ 2,
                 /* aisleModel   */ MarketAisleModel.PERIMETER,
                 /* padBlockId   */ null,      // null ⇒ culture path palette
-                /* stallPool    */ List.of()); // 2b populates
+                /* stallPool    */ java.util.List.of(
+                        new tterrag1112.life_in_the_village.Village.Markets.Complex.StallVariant(
+                                "stall_1",
+                                net.minecraft.resources.Identifier.fromNamespaceAndPath(
+                                        tterrag1112.life_in_the_village.Life_in_the_village.MODID,
+                                        "default/rural/market/stall/stall_1"),
+                                1)));
         register(DEFAULT_CULTURE, BuildingType.MARKET, market);
     }
 }

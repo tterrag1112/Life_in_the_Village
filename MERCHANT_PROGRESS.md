@@ -882,3 +882,476 @@ try/catch-and-continue shape.
    each culture's roads.
 6. Logs: per-market "market pad rendered (margin=N)" or a clean skip
    reason; no exception aborts the spawn.
+
+---
+
+## Phase 2b — Stall pool + allocator + aisle-facing rotation (safe core)
+
+**Goal:** make stalls actually appear — a stall pool, a runtime allocator
+that fits them onto the 2a pad, aisle-facing rotation, a few seeded at
+spawn, and removal of the dead fixed-anchor stall path.
+
+**Scope decision (important).** The 2c/2d prompts confirm their only 2b
+dependencies are: stalls *placed* with chests, `MarketStall` records, a
+claim API, and work-post placement geometry — **not** the
+`MARKET_STALL` `BuildingType` promotion or the manifest variant system.
+In a no-compile sandbox, adding `MARKET_STALL` to `BuildingType` means a
+blind exhaustive-switch audit across **60 files** (a single missed arm =
+undetectable broken build), and the variant-system promotion also needs
+binary NBT relocation + `manifest.json` authoring (asset work). Both are
+**deferred** (flagged below); neither blocks 2c/2d. 2b ships the
+allocator + seeding + claim rewire + dead-path removal as the safe,
+additive core.
+
+### What shipped
+
+New, in `Village/Markets/Complex/`:
+- `StallVariant(id, nbt, weight)` — typed pool entry (replaces 2a's
+  `List<String>` stub). Footprint is read from the loaded template at
+  allocation time, never hardcoded.
+- `StallAllocator` — fits a stall onto the pad's perimeter band and
+  places it **facing outward onto the aisle**. Seat search scans the
+  region inset by the aisle, queries the stall's actual placed
+  `BoundingBox` via `StructureTemplate.getBoundingBox(settings, origin)`,
+  and accepts the first seat fully inside the inset region, entirely on
+  one side of the building footprint (+gap), and clear of occupied
+  boxes. First-fit; callers accumulate occupancy → no overlap → "market
+  full" when nothing fits.
+- `MarketStallSeeder` — seeds up to `SEED_COUNT` (4) vacant stalls onto a
+  freshly graded pad in the V2 spawn hook (region geometry in hand → no
+  runtime recompute).
+
+Changed:
+- `MarketComplexSpec.stallPool` → `List<StallVariant>`; registry default
+  `padMargin` 6 / `minPadMargin` 2 (deeper band to host stalls) + the one
+  authored stall NBT resolved by its **real** path
+  (`default/rural/market/stall/stall_1`).
+- `MarketStall` — added `VACANT_UUID` sentinel + `isVacant()` (a seeded,
+  unclaimed "for rent" stall) **without** a new `OwnerType` arm or codec
+  field.
+- `V2VillageSpawnerAdapter` — after rendering the pad, seeds stalls.
+- `MarketStallPlacer.claimSlot` — **rewired** to assign ownership to a
+  vacant seeded stall (signature preserved → callers unchanged); the
+  broken `STALL_TEMPLATE` path corrected (used by `reclaimStall` sizing).
+- `VillageSpawner.setupMerchantStalls` — **deleted** (orphan, broken path).
+
+### Allocator algorithm (pseudocode)
+
+```
+place(level, market, region, footprint, padY, variant, owner…, occupied):
+  template = loadTemplate(variant.nbt)            # else empty
+  seat = findSeat(template, regionAABB, footprintAABB, padY, occupied)
+  if no seat: return empty                         # market full
+  placeInWorld(seat.origin, seat.rotation)
+  stall = MarketStall.create(…, seat.origin, owner…)
+  stall.chestPos = first chest in seat.box
+  occupied += seat.box; return stall
+
+findSeat:
+  inset = region shrunk by AISLE_WIDTH (the walkable perimeter ring)
+  for side in [SOUTH, EAST, NORTH, WEST]:
+    rot = rotationForOutward(side)                 # aisle-facing, below
+    for origin in inset grid at padY+1:
+      box = template.getBoundingBox(settings(rot), origin)
+      accept iff box ⊆ inset AND box on `side` of footprint(+gap)
+             AND box ∩ footprint(+gap) = ∅ AND box ∩ occupied = ∅
+```
+
+### Aisle-facing rotation derivation (replaces dominant-axis snap)
+
+Stall NBT authored facing SOUTH (+Z). A seat on a side faces **outward**
+on that side, so rotation comes from the *side*, never from a vector to
+the building centre (the old `facingRotation` bug):
+`SOUTH→NONE, WEST→CLOCKWISE_90, NORTH→CLOCKWISE_180, EAST→COUNTERCLOCKWISE_90`.
+`onSide` guarantees the stall sits wholly on that side, so its front
+opens onto the perimeter aisle.
+
+### Claim-caller re-point
+
+`claimSlot`'s signature is **unchanged**, so its callers
+(`NpcInteractionHandler` ×2, `WorkshopStallDecisionGoal`,
+`StallLeaseActionPacket`/lease) were **not** re-pointed — they keep
+calling `claimSlot`, which now assigns a vacant seeded stall instead of
+stamping an anchor. `findAnchorSlots` is kept (still read by
+`MarketApproach` + the lease slot-count display); it is now vestigial for
+stall placement and may return 0 if the market NBT has no STALL anchors —
+cosmetic, flagged.
+
+### Delete list
+
+- `VillageSpawner.setupMerchantStalls` — **deleted** (orphan).
+- `MarketStallPlacer.claimSlot` anchor/STALL_TEMPLATE-stamping body —
+  **replaced** with the assign-vacant body.
+- `MarketStallPlacer.findChestInRegion` — **deleted** (chest detection
+  moved to `StallAllocator.findChestInBox`).
+- `MarketStallPlacer.facingRotation` (dominant-axis) — **orphaned**; the
+  Edit tooling couldn't match its unicode-comment body cleanly in this
+  no-compile session, so it is left in place but **unused** (no callers;
+  a warning, not a build error). Flagged for a trivial follow-up delete.
+
+### `MARKET_STALL` enum switch audit
+
+Not performed — `MARKET_STALL` was **not** added to `BuildingType` (see
+Scope decision). No enum/switch surface touched. `OwnerType` unchanged
+(vacancy uses a sentinel UUID, not a new arm).
+
+### Tie-In / Simplification / Deviations
+
+- **Tie-In.** Upstream: 2a region/pad (recomputed in the spawn hook),
+  `StructureSizeCache`-backed footprints (via the loaded template).
+  Downstream: `MarketStall` record shape unchanged → all readers
+  unaffected; `claimSlot` callers unchanged. Sibling: `MarketApproach`/
+  lease slot-count read `findAnchorSlots` (kept); `MarketRentManager`
+  `reclaimStall` kept (STALL_TEMPLATE path now valid).
+- **Simplification.** Placement logic consolidated into `StallAllocator`;
+  the old anchor-claim + dominant-axis path removed from `claimSlot`.
+  `MarketStallPlacer` survives as a thin shell (claim + reclaim + helpers).
+- **Deviations:** (1) `MARKET_STALL` BuildingType + manifest variant
+  system **deferred** (60-switch blind audit + binary asset authoring);
+  the single stall NBT loads by direct path via the pool — the 7-step/
+  manifest fallback isn't wired, acceptable with one variant. (2) Claim
+  uses **assign-vacant** (seed at spawn, assign on claim) rather than
+  runtime allocate-on-claim — simpler, and avoids needing to persist or
+  recompute the pad region at claim time (the 2a region wasn't
+  persisted). Runtime allocation still exists (`StallAllocator.place`)
+  for 2d event stalls. (3) `facingRotation` left orphaned (tooling).
+- **Out-of-scope but flagged:** per-stall inventory authority, sign
+  lifecycle, work-post behaviour, rent/lease money (all 2c); event stalls
+  (2d); WANDERING_TRADER.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review:
+allocator uses `StructureTemplate.getBoundingBox`/`placeInWorld` +
+`BoundingBox` accessors (vanilla); `MarketStall.create`/`addMarketStall`/
+`getStallsForMarket` signatures confirmed; `claimSlot` contract preserved
+for callers; no `BuildingType`/`OwnerType` enum change. Unused imports +
+the orphaned `facingRotation` are warnings, not errors.
+
+### Smoke test
+
+1. Generate a village → a few stalls seeded on the market pad, flat, not
+   overlapping each other or the building, fronts on the perimeter aisle.
+2. Rotation faces the aisle per side (no dominant-axis backwards snap).
+3. One authored NBT places everywhere via the pool (clean "not found"
+   log only if the path is wrong).
+4. NPC (`WorkshopStallDecisionGoal`) + player (lease) claim → a vacant
+   seeded stall becomes owned (old anchor/STALL_TEMPLATE path gone).
+5. Claims past the seeded count → "market full" (empty), no overlap.
+6. No NPE from the deleted `setupMerchantStalls`; non-stall SubBuilding
+   anchors untouched.
+
+---
+
+## Phase 2c — Stall inventory authority + sign funnel + work-post + rent/lease
+
+**Goal:** the economic/lifecycle layer on 2b's stalls — make the per-stall
+chest the authoritative goods endpoint (1b did money, 2c does goods), a
+drift-proof owner-sign funnel, work-post data for Phase 3, and route
+rent/lease money correctly.
+
+### What shipped
+
+New, in `Village/Markets/Complex/`:
+- `StallGoods` — per-stall goods authority. `available` / `take` / `store`
+  with **stall chest first, market hub as overflow/backstock**; a
+  {@code null} stall = stall-less sale → hub. Consolidates chest take/
+  store logic.
+- `MarketWorkPost` — pure `WorkPost(stand, facing)` accessor: the vendor
+  stands at the counter (chest, else origin) and faces **outward onto the
+  perimeter aisle** (matching the 2b allocator's aisle-facing rotation).
+  Data only — Phase 3 occupancy + 2d producers consume it.
+
+New, in `Village/Economy/Market/`:
+- `MarketStallOwnership` — the single funnel for owner changes:
+  `assign` / `vacate` mutate ownership **and** rewrite the sign in the
+  same call, so the sign can't desync.
+
+Routed:
+- `MarketChannel.executeBuy` — availability + take now go through
+  `StallGoods` (stall chest first, then hub); restore-on-fail stores back
+  to the same endpoint. `executeSell` stores via `StallGoods` (hub
+  backstock). The 1b money endpoint (`resolveStallEndpoint`) and the 2c
+  goods endpoint now resolve to the **same stall**.
+- `MarketStallPlacer.claimSlot` — ownership assignment routed through
+  `MarketStallOwnership.assign` (sign rewritten on claim).
+
+### Inventory-authority model
+
+Stall chest = authoritative for goods traded at that stall; market hub =
+overflow/backstock. Buy: draw stall→hub. Sell: fill stall→hub. Stall-less
+sale: hub. `MarketChannel` (was hub-only) now routes through this, closing
+the "goods come from the building, money goes to the stall" disconnect.
+`SellToMarketBehavior`/producer sells deposit to the **hub** (backstock),
+unchanged.
+
+### `OwnerType` switch audit
+
+`OwnerType` (NPC/PLAYER/WANDERING_TRADER) is unchanged. Routing/goods don't
+switch on it (the stall chest is the endpoint regardless of owner type);
+sign text reads the display name, not the type; vacancy uses the
+`VACANT_UUID` sentinel, not a new arm. WANDERING_TRADER arm untouched.
+
+### Tie-In / Simplification / Deviations
+
+- **Tie-In.** Upstream: 2b stall records + chest + placement geometry,
+  1b settle, `BuildingStorageAccess`. Downstream: both trade paths' goods
+  go through `StallGoods` where a stall is the endpoint; `MarketStall`
+  record shape unchanged → readers unaffected. Phase-3 contract:
+  `MarketWorkPost.forStall(market, stall)` → stand + facing; an event
+  stall (2d) exposes the same.
+- **Simplification.** `StallGoods` consolidates chest take/store;
+  `MarketStallOwnership` consolidates the sign write for owner changes.
+- **Deviations (flagged):**
+  1. **Rent/lease NOT re-pointed through `settlePurchase`/`settleSale`.**
+     Those are party↔party *trade* settlements that apply the market-tax/
+     burn rule; rent (NPC wallet → village treasury) and lease (player →
+     treasury) are *treasury fee* flows the 1b model doesn't represent —
+     forcing them through the trade settle would mis-tax/burn the payment.
+     They remain clean treasury transactions (`wallet.spend` +
+     `depositToTreasury`), which is the correct model. The "no bespoke
+     poke" intent is met by their being simple + correct, not by a wrong
+     mapping.
+  2. **`TradeHandler` goods not fully consolidated.** Its buy path is
+     already stall-authoritative (sources from the merchant's stall); its
+     sell goes to the hub because the merchant being traded with isn't a
+     stall owner in the seeded model. Its private chest helpers remain
+     (not migrated to `StallGoods`) to bound risk in the no-compile
+     session. Flagged for a follow-up sweep.
+  3. **Sign funnel covers owner *changes* (claim).** `reclaimStall`
+     (a destroy path, not an owner change) keeps its legacy
+     `updateStallSigns` call; the live owner-change path goes through the
+     funnel. Trivial follow-up to retire `updateStallSigns`.
+- **Out-of-scope but flagged:** merchant standing/tending behaviour
+  (Phase 3, consumes `MarketWorkPost`); temporary/event stalls (2d);
+  pricing/settlement core (1a/1b).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: `StallGoods`
+uses `Container`/`BuildingStorageAccess` (existing APIs); `MarketChannel`
+keeps a single `stall` decl (moved up) and still imports
+`BuildingStorageAccess` (used in `quote`); `DynamicSignUpdater.updateSigns`
+signature matched; `MarketStall` record/codec unchanged (no field added).
+
+### Smoke test
+
+1. Buy at an NPC-owned stall: goods come from the stall chest (then hub
+   backstock), money to the stall owner (1b endpoint) — disconnect gone.
+2. Sell into the market (NPC channel): goods land in the hub backstock.
+3. Stall-less market sale still works via the hub.
+4. Claim a stall: the sign updates in the same call (no drift) for the
+   owned state; vacant stalls read "For Rent".
+5. Rent/lease still move money correctly (treasury flows; not the trade
+   settle, by design).
+6. `MarketWorkPost.forStall` returns a sane stand + outward facing for a
+   stall (Phase 3 input; no standing behaviour yet).
+
+---
+
+## Phase 2d — Temporary / event stalls (farmer's-market connection)
+
+**Goal:** connect market/fair events to real, temporary producer stalls —
+recruit surplus producers into `MarketStall` records for the event window,
+stocked from their goods, torn down cleanly (leak-proof) at event end.
+
+**Sequencing:** infra now, tending follows in Phase 3 (per the prompt's
+recommendation). Stalls appear + are owned + stocked; producers man them
+once Phase 3 occupancy consumes the 2c work-post.
+
+### What shipped
+
+- `MarketStall.eventId` — nullable event marker, persisted via an
+  `optionalFieldOf("eventId","")` + a `fromCodec` adapter (canonical
+  constructor + `create()`/legacy callers unchanged; pre-2d saves load).
+  `isEventScoped()` / `getEventId()` / `setEventId()`.
+- `EventStallManager` (new, `Village/Markets/Complex/`):
+  - `recruit` — on a market/fair start: recompute the 2a pad region
+    (deterministic), pick eligible surplus producers, place stalls via the
+    2b `StallAllocator` up to `MAX_RECRUITS`/pad capacity, tag with
+    `eventId`, owner = producer, stock from the producer's building.
+  - `teardown` — on event end: per event stall, return goods to the
+    owner's building, `reclaimStall` (clear structure to pad), remove
+    record.
+  - `reconcile` — load-time: tear down any event-scoped stall whose event
+    isn't in `EventScheduleData.getActiveEvents` — covers crash/restart/
+    unload orphans.
+- Hooks: `EventEffects.onEventStart` calls `recruit` centrally (after the
+  type switch, so registry-routed `SUMMER_MARKET` is covered too);
+  `onEventEnd` calls `teardown`; `ModModEvents.onServerStarting` calls
+  `reconcile` once.
+- `MarketRentManager` skips `isEventScoped()` (and `isVacant()`) stalls.
+
+### Temporary-stall lifecycle
+
+start → `recruit` (place + tag + stock + owner) → [Phase 3 tend] → end →
+`teardown` (return goods + clear-to-pad + remove). Crash between start and
+end → `reconcile` at next load tears the orphan down. The `eventId` is the
+single source of truth for "is this stall temporary + which event."
+
+### Recruitment policy
+
+Eligible = producer professions (FARMER, BAKER, FISHERMAN, BUTCHER,
+WEAVER, CARPENTER, BLACKSMITH, MINER, MASON, SHEPHERD) assigned to the
+village with non-empty building storage (surplus). Capped at
+`MAX_RECRUITS` (6) and by allocator pad capacity (respects existing
+permanent/seeded occupancy → never evicts them; "market full" simply
+recruits fewer). Each stall stocked with up to `STOCK_PER_STALL` (16)
+items pulled from the producer's building (overflow stays in the
+building — nothing duplicated/lost).
+
+### Teardown robustness (leak-proofing)
+
+- **Normal end:** `teardown(eventId)` removes all matching stalls.
+- **Restart/crash mid-event:** stall persists with `eventId`; `reconcile`
+  at server start removes any whose event is no longer active.
+- **Chunk unload/reload:** the record persists (not block-scanned), so
+  reconciliation/teardown still find it by id.
+- **Clear-to-pad:** reuses `MarketStallPlacer.reclaimStall` (clears the
+  stall structure to air over the 2a pad surface — no per-block snapshot,
+  no holes), then goods are returned first so nothing is destroyed.
+
+### EventType / OwnerType switch audits
+
+- `EventStallManager.wantsProducerStalls` switches `EventType`:
+  `MARKET_DAY, SUMMER_MARKET, VILLAGE_FAIR → true`; `GUILD_FAIR` and all
+  others → `false` (default arm). GUILD_FAIR is guild-scoped, not a
+  producer farmer's-market — keeps its wandering trader + cosmetics only.
+  No new EventType added; the existing `onEventStart`/`onEventEnd` switches
+  are untouched (recruit/teardown are called outside the switch).
+- `OwnerType` — recruited producers are `NPC`-owned; no new arm. The 2c
+  goods/sign paths already handle `NPC` uniformly. WANDERING_TRADER arm
+  untouched (the market-day trader is unchanged).
+
+### Tie-In / Simplification / Deviations
+
+- **Tie-In.** Upstream: event start/end (`EventEffects`), 2b allocator,
+  2a deterministic pad recompute, producer building storage. Downstream:
+  Phase-3 occupancy consumes `MarketWorkPost.forStall` + owner=producer on
+  these stalls; 2c `StallGoods` means event-stall goods live in their own
+  chest. `MarketRentManager` skips them. `EventScheduleData` is the
+  liveness source for reconciliation.
+- **Simplification.** Cosmetic `placeMarketDecorations` (carpet+barrels)
+  is **kept as ambient filler** around the functional stalls rather than
+  deleted — it's cheap visual dressing, not a parallel "stall" system, so
+  it doesn't conflict with the real stalls. (Flagged: drop it later if the
+  real stalls read well enough alone.)
+- **Deviations (flagged):**
+  1. **Tending not implemented** (Phase 3, per the prompt's sequencing
+     recommendation) — stalls are owned + stocked but unmanned until then.
+  2. **Recruitment surplus signal is "building has items"**, not a
+     `VillageSimData.net` threshold — simpler and robust; refine to a
+     true surplus metric in a tuning pass.
+  3. **`existingOccupancy` uses a 3×3×4 origin proxy** for permanent
+     stalls (the exact box needs the loaded template); the allocator's own
+     gap checks prevent overlap among newly placed event stalls. Worst
+     case a slightly conservative pack, never an overlap. Flagged.
+
+### Out-of-scope but flagged
+
+- Producer tending behaviour (Phase 3). Caravans/inter-village (Phase 4).
+- WANDERING_TRADER (market-day trader unchanged). New event types.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (and the session's shell/
+read tooling was intermittently returning empty output, so this phase
+leaned harder on static reasoning). Static review: `EventScheduleData
+.getActiveEvents(UUID)` + `.get(level)` confirmed; producer enum values
+confirmed against `Profession`; `MarketComplexPlanner.Input` /
+`StallAllocator.place` / `StallGoods.store` / `reclaimStall` signatures
+matched; `MarketStall` codec extended with one optional field via
+`fromCodec` (canonical ctor untouched); `server.overworld()` is standard.
+**Caveat:** the no-compile + flaky-tooling combination means residual
+risk is higher than prior phases — a compile pass is the first thing to
+run when maven is reachable.
+
+### Smoke test
+
+1. MARKET_DAY in a village with surplus producers → real temporary stalls
+   on the pad, owned by producers, stocked — not just carpet+barrels.
+2. Event stalls fill only free pad space; never evict permanent/seeded
+   stalls; pad full → fewer producers, no overlap.
+3. Event ends → all temporary stalls removed, pad restored, unsold goods
+   returned to the producer's building.
+4. Restart mid-event → `reconcile` tears down orphans; none leak.
+5. `MarketRentManager` charges no rent on temporary stalls.
+6. Market-day wandering trader still spawns (untouched).
+7. (After Phase 3) producers man their event stalls; before: stocked but
+   unmanned (expected).
+
+---
+
+## Phase 2b (addendum) — MARKET_STALL promotion (partial; tooling-degraded session)
+
+The user opted to attempt 2b's deferred parts in full. This session's
+shell/Read tooling degraded badly mid-way (stdout + file reads returning
+empty), so only the verified, self-consistent, compilable core landed.
+
+### Landed (committed)
+
+1. **`BuildingType.MARKET_STALL`** added (final enum value). Gated on a
+   scripted, brace-matched exhaustive-switch audit of all switch blocks:
+   **every switch whose *case-labels* are BuildingType constants (12) has
+   a `default` arm**, so the addition keeps them exhaustive. Switches that
+   merely *return* BuildingType constants switch over other enums
+   (`ProducerType.requiredBuilding`, `BlacksmithSpecialization`,
+   `VisitorActivity`, `HobbyLocation`, castle sub-pieces, packet actions)
+   and are unaffected. `BuildingType.values()` loops (debug suggestions,
+   `AdjunctPlotRegistry`) and the EnumMap registries use tolerant
+   `.get()`/suggest patterns — an unmapped MARKET_STALL is the normal
+   no-entry path. Conclusion: compile-safe.
+2. **`StallAllocator.resolveTemplate`** — resolves the stall template via
+   `Village.CultureResolver.resolve(culture, Style.RURAL, MARKET_STALL,
+   variantId, 1, level)` first, falling back to the variant's direct NBT
+   path. Culture from `Cultures.CultureResolver.of(level, village)`
+   (null-safe). Added null-safe `marketVillage()` lookup. Verified deps:
+   `getAllVillages()`, `loadTemplate()`, `Culture.id()`, and the correct
+   `Style` FQN (`Village.Decoration.Variants.Style`).
+3. **`StallVariant.nbt` → `directNbt`** (the fallback location); `id`
+   doubles as the variantId path segment. Positional constructor caller
+   (`MarketComplexRegistry`) unaffected; no `.nbt()` callers remain.
+
+Because the variant NBT has NOT yet been relocated (see below), resolution
+falls through to `directNbt` — the original `…/rural/market/stall/
+stall_1.nbt`, which still exists — so stalls keep placing. This is the
+intended graceful-degradation path.
+
+### NOT done (blocked by tooling failure — next session)
+
+- **Relocate the stall NBT** into the variant layout
+  `…/rural/market_stall/stall_1/level_1.nbt` + author the in-folder
+  `manifest.json` (`{"id":"stall_1","stylePreference":"RURAL"}`). The
+  binary `cp` could not be verified this session. Until done, the variant
+  path is unauthored and the direct fallback is used.
+- **Delete `findAnchorSlots`** (both overloads) and re-point its two
+  display callers (`MarketApproach.hasAvailableStall`,
+  `NpcInteractionHandler` slot summary) to the seeded-stall model.
+  `findAnchorSlots` still exists, so current callers still compile — this
+  is optional cleanup, not a correctness blocker.
+- Import cleanup in `MarketStallPlacer`.
+
+### Residual risk
+
+Still **uncompiled** (sandbox blocks maven; tooling degraded). The switch
+audit is high-confidence (scripted, exhaustive). The 3 committed files
+were dependency-checked individually and form a self-consistent unit with
+safe fallback. First action next session: `./gradlew build`, then finish
+the NBT relocation + dead-path deletion above.
+
+### Follow-up (same session, tooling recovered): variant NBT authored
+
+The deferred NBT relocation is now done. Copied (not moved — legacy kept
+as the `directNbt` fallback) the stall template into the variant layout:
+`structures/default/rural/market_stall/stall_1/level_1.nbt` (md5
+`fd038914…`, checksum-verified identical to the source) + the in-folder
+`manifest.json` (`{"id":"stall_1","stylePreference":"RURAL"}`). The
+`MARKET_STALL` variant path is now authored, so `StallAllocator.resolve
+Template` resolves via CultureResolver step-1
+(`default/rural/market_stall/stall_1/level_1`) instead of falling back.
+
+Still outstanding (deferred, behavioral — not pure cleanup): deleting
+`findAnchorSlots` and re-pointing `MarketApproach`/`NpcInteractionHandler`.
+`MarketApproach` uses anchor positions as live NPC standing spots, not
+just a count, so that change needs compile + in-game verification; left
+intact (callers still compile) for a session with maven access.
