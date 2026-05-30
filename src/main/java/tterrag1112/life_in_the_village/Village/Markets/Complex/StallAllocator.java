@@ -84,12 +84,12 @@ public final class StallAllocator {
                                               UUID ownerUUID, MarketStall.OwnerType ownerType,
                                               String displayName, long rentUntil,
                                               int slotIndex, List<BoundingBox> occupied) {
-        Optional<StructureTemplate> tOpt = BuildingPlacer.loadTemplate(level, variant.nbt());
-        if (tOpt.isEmpty()) {
-            LOGGER.warn("[StallAllocator] stall template not found: {}", variant.nbt());
+        StructureTemplate template = resolveTemplate(level, market, variant).orElse(null);
+        if (template == null) {
+            LOGGER.warn("[StallAllocator] stall template not found (variant-system "
+                    + "+ direct fallback both missing): {}", variant.directNbt());
             return Optional.empty();
         }
-        StructureTemplate template = tOpt.get();
 
         Polygon.AABB regionRect = Polygon.boundingBox(region);
         Polygon.AABB footprintRect = Polygon.boundingBox(footprint);
@@ -110,6 +110,44 @@ public final class StallAllocator {
 
         occupied.add(seat.box());
         return Optional.of(stall);
+    }
+
+    /**
+     * Resolves the stall template through the {@code MARKET_STALL} variant
+     * system first (culture-aware, manifest-gated), falling back to the
+     * variant's direct NBT path when the variant-layout template isn't
+     * authored. This is what lets stalls keep placing with the single
+     * existing NBT until it is relocated into the variant layout.
+     */
+    private static Optional<StructureTemplate> resolveTemplate(
+            ServerLevel level, Building market, StallVariant variant) {
+        try {
+            String culture = tterrag1112.life_in_the_village.Cultures.CultureResolver
+                    .of(level, marketVillage(level, market)).id();
+            net.minecraft.resources.Identifier viaVariant =
+                    tterrag1112.life_in_the_village.Village.CultureResolver.resolve(
+                            culture,
+                            tterrag1112.life_in_the_village.Village.Decoration.Variants.Style.RURAL,
+                            tterrag1112.life_in_the_village.Village.Buildings.BuildingType.MARKET_STALL,
+                            variant.id(), 1, level);
+            if (viaVariant != null) {
+                Optional<StructureTemplate> t = BuildingPlacer.loadTemplate(level, viaVariant);
+                if (t.isPresent()) return t;
+            }
+        } catch (Exception ignored) {
+            // variant resolution unavailable — fall through to direct path
+        }
+        return BuildingPlacer.loadTemplate(level, variant.directNbt());
+    }
+
+    /** The village owning this market (for culture resolution); null-safe. */
+    private static tterrag1112.life_in_the_village.Village.Village marketVillage(
+            ServerLevel level, Building market) {
+        var data = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+        for (var v : data.getAllVillages()) {
+            if (v.getBuildingIds().contains(market.getId())) return v;
+        }
+        return null;
     }
 
     // =========================================================================

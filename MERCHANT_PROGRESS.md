@@ -1279,3 +1279,62 @@ run when maven is reachable.
 6. Market-day wandering trader still spawns (untouched).
 7. (After Phase 3) producers man their event stalls; before: stocked but
    unmanned (expected).
+
+---
+
+## Phase 2b (addendum) — MARKET_STALL promotion (partial; tooling-degraded session)
+
+The user opted to attempt 2b's deferred parts in full. This session's
+shell/Read tooling degraded badly mid-way (stdout + file reads returning
+empty), so only the verified, self-consistent, compilable core landed.
+
+### Landed (committed)
+
+1. **`BuildingType.MARKET_STALL`** added (final enum value). Gated on a
+   scripted, brace-matched exhaustive-switch audit of all switch blocks:
+   **every switch whose *case-labels* are BuildingType constants (12) has
+   a `default` arm**, so the addition keeps them exhaustive. Switches that
+   merely *return* BuildingType constants switch over other enums
+   (`ProducerType.requiredBuilding`, `BlacksmithSpecialization`,
+   `VisitorActivity`, `HobbyLocation`, castle sub-pieces, packet actions)
+   and are unaffected. `BuildingType.values()` loops (debug suggestions,
+   `AdjunctPlotRegistry`) and the EnumMap registries use tolerant
+   `.get()`/suggest patterns — an unmapped MARKET_STALL is the normal
+   no-entry path. Conclusion: compile-safe.
+2. **`StallAllocator.resolveTemplate`** — resolves the stall template via
+   `Village.CultureResolver.resolve(culture, Style.RURAL, MARKET_STALL,
+   variantId, 1, level)` first, falling back to the variant's direct NBT
+   path. Culture from `Cultures.CultureResolver.of(level, village)`
+   (null-safe). Added null-safe `marketVillage()` lookup. Verified deps:
+   `getAllVillages()`, `loadTemplate()`, `Culture.id()`, and the correct
+   `Style` FQN (`Village.Decoration.Variants.Style`).
+3. **`StallVariant.nbt` → `directNbt`** (the fallback location); `id`
+   doubles as the variantId path segment. Positional constructor caller
+   (`MarketComplexRegistry`) unaffected; no `.nbt()` callers remain.
+
+Because the variant NBT has NOT yet been relocated (see below), resolution
+falls through to `directNbt` — the original `…/rural/market/stall/
+stall_1.nbt`, which still exists — so stalls keep placing. This is the
+intended graceful-degradation path.
+
+### NOT done (blocked by tooling failure — next session)
+
+- **Relocate the stall NBT** into the variant layout
+  `…/rural/market_stall/stall_1/level_1.nbt` + author the in-folder
+  `manifest.json` (`{"id":"stall_1","stylePreference":"RURAL"}`). The
+  binary `cp` could not be verified this session. Until done, the variant
+  path is unauthored and the direct fallback is used.
+- **Delete `findAnchorSlots`** (both overloads) and re-point its two
+  display callers (`MarketApproach.hasAvailableStall`,
+  `NpcInteractionHandler` slot summary) to the seeded-stall model.
+  `findAnchorSlots` still exists, so current callers still compile — this
+  is optional cleanup, not a correctness blocker.
+- Import cleanup in `MarketStallPlacer`.
+
+### Residual risk
+
+Still **uncompiled** (sandbox blocks maven; tooling degraded). The switch
+audit is high-confidence (scripted, exhaustive). The 3 committed files
+were dependency-checked individually and form a self-consistent unit with
+safe fallback. First action next session: `./gradlew build`, then finish
+the NBT relocation + dead-path deletion above.

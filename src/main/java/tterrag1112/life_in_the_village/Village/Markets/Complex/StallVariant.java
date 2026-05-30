@@ -7,25 +7,33 @@ import net.minecraft.resources.Identifier;
  * (merchant arc Phase 2b). Replaces 2a's opaque {@code List<String>}
  * placeholder with a typed entry the allocator can rank and place.
  *
- * <p>2b ships a single authored stall NBT, resolved by its direct
- * resource path; the {@code weight} + per-variant footprint (read from
- * the loaded template at allocation time, never hardcoded) let the
- * allocator rank/fit multiple variants once more are authored. Promoting
- * stalls to a first-class {@code MARKET_STALL} variant-system type
- * (CultureResolver + manifests) is deferred — see {@code
- * MERCHANT_PROGRESS.md} Phase 2b "Deviations" — because it requires a
- * BuildingType enum addition (60-file switch audit) and binary NBT/
- * manifest asset authoring, neither safe to do without a compiler.
+ * <p>Stalls are a first-class {@code BuildingType.MARKET_STALL} variant-
+ * system type: {@code variantId} resolves through {@code CultureResolver}
+ * at {@code structures/{culture}/{style}/market_stall/{variantId}/} (the
+ * 7-step default fallback + "only authored variants" gate). The allocator
+ * resolves the variant path first and falls back to {@link #directNbt}
+ * (the legacy {@code default/rural/market/stall/stall_1} location) when
+ * the variant template isn't authored yet — so stalls keep placing with
+ * the one existing NBT until it is relocated into the variant layout. The
+ * {@code weight} + per-variant footprint (read from the loaded template at
+ * allocation time, never hardcoded) let the allocator rank/fit multiple
+ * variants once more are authored.
  *
- * @param id     stable variant id (for logs / future manifest keying).
- * @param nbt    resource location of the stall structure template.
- * @param weight selection weight (higher = preferred); ties broken by
- *               pool order.
+ * <p>Culture + style live in the path; profession + size are manifest
+ * axes (free-form tags / optional fields), not path segments. A foreign-
+ * merchant stall is an allocator selection policy that draws a variant
+ * from another culture's folder — not a path-layout change.
+ *
+ * @param id        stable variant id (also the {@code variantId} path
+ *                  segment for {@code CultureResolver}).
+ * @param directNbt fallback resource location of the stall template,
+ *                  used when the variant-system path is unauthored.
+ * @param weight    selection weight (higher = preferred); ties by order.
  */
-public record StallVariant(String id, Identifier nbt, int weight) {
+public record StallVariant(String id, Identifier directNbt, int weight) {
     public StallVariant {
         if (id == null || id.isEmpty()) throw new IllegalArgumentException("StallVariant id required");
-        if (nbt == null) throw new IllegalArgumentException("StallVariant nbt required");
+        if (directNbt == null) throw new IllegalArgumentException("StallVariant directNbt required");
         if (weight <= 0) weight = 1;
     }
 }
