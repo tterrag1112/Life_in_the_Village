@@ -493,10 +493,14 @@ public final class NpcInteractionHandler {
             return true;
         }
 
-        int totalSlots = MarketStallPlacer.findAnchorSlots(level, market).size();
-        int occupied = (int) data.getStallsForMarket(market.getId()).stream()
-                .filter(MarketStall::isActive).count();
-        if (occupied >= totalSlots) {
+        // Phase 2b bug-fix: count seeded stalls, not the dead anchor list.
+        // findAnchorSlots returns the legacy authored STALL anchors, which
+        // the pad-allocator model no longer produces — so it returned 0 and
+        // this flow always reported a false "all stalls are taken". A stall
+        // is available iff some active stall at this market is vacant.
+        boolean anyVacant = data.getStallsForMarket(market.getId()).stream()
+                .anyMatch(s -> s.isActive() && s.isVacant());
+        if (!anyVacant) {
             player.displayClientMessage(Component.literal(
                             "[" + npc.getNpcName() + "] All stalls are taken.")
                     .withStyle(ChatFormatting.RED), false);

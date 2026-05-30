@@ -74,14 +74,30 @@ public final class MarketComplexRegistry {
     // =========================================================================
 
     private static void registerDefaults() {
-        // default × MARKET. padMargin 6 gives a stall band (margin − aisle)
-        // deep enough to host the perimeter stall pool; shrinks to 2 in a
-        // dense core, else no pad. Stall pool: the one authored stall NBT
-        // (resolved by its real resource path; the broken legacy
-        // STALL_TEMPLATE pointed at a non-existent path).
+        // default × MARKET.
+        //
+        // Pad-band fit (Phase 2b bug-fix): the perimeter stall band usable
+        // by StallAllocator.findSeat is (margin − AISLE_WIDTH) deep, and a
+        // stall on a side needs box.minZ ≥ fp.maxZ + GAP. For the authored
+        // 5×5×5 stall (and AISLE_WIDTH = GAP = 1) the band fits iff
+        //     margin ≥ stallDepth + AISLE_WIDTH + GAP − 1  = 5 + 1 + 1 − 1 = 6.
+        // The old padMargin = 6 / minPadMargin = 2 was a zero-slack fit that
+        // any collision shrink dropped below 5 → no seat → MarketStallSeeder
+        // seeded ZERO stalls (silently). Bumped so every accepted pad hosts
+        // the stall pool with slack: minPadMargin = 7 (= min-fit 6 + 1
+        // slack) so a too-small pad is rejected (NO_REGION, clean skip in a
+        // dense core) rather than producing an empty market; padMargin = 10
+        // gives the perimeter room to pack SEED_COUNT stalls.
+        //
+        // NOTE (flagged): these are hand-tuned to the single authored 5-deep
+        // stall. Deriving the band from the stall pool's max footprint would
+        // be knife-edge-proof if stalls are re-authored, but the footprint is
+        // only known once the NBT loads at spawn (no ServerLevel at registry
+        // static-init), so it can't be derived here cheaply — bumped now,
+        // derive-later flagged in MERCHANT_PROGRESS.md.
         MarketComplexSpec market = new MarketComplexSpec(
-                /* padMargin    */ 6,
-                /* minPadMargin */ 2,
+                /* padMargin    */ 10,
+                /* minPadMargin */ 7,
                 /* aisleModel   */ MarketAisleModel.PERIMETER,
                 /* padBlockId   */ null,      // null ⇒ culture path palette
                 /* stallPool    */ java.util.List.of(

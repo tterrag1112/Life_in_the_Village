@@ -1669,3 +1669,106 @@ signatures); braces/parens balanced; {@code Phase} switch exhaustive.
    correctly ({@code TradeHandler}).
 7. Logs: no per-tick spam; clean COLLECTING enter/exit; graceful (stay
    manning) when no producer/quote available.
+
+---
+
+## Fix — market stalls seed zero (band fit + offset spread + dead-anchor trap)
+
+Surgical bug-fix. Symptom: merchants stood at the market building (not a
+stall), and "rent a stall" said "all stalls are taken" — because **zero
+stalls were being seeded**, silently.
+
+### Root cause (band-fit math)
+
+`StallAllocator.findSeat` insets the pad region by `AISLE_WIDTH` (1) and
+requires a stall box on a side to clear the footprint by `GAP` (1). For
+the authored 5×5×5 stall the usable band fits iff
+`margin ≥ stallDepth + AISLE_WIDTH + GAP − 1 = 5 + 1 + 1 − 1 = 6`. The
+registry default was `padMargin = 6 / minPadMargin = 2` — a **zero-slack**
+fit at full margin, and *any* collision shrink dropped it below 5 → no
+seat → `MarketStallSeeder` placed zero and (old code) only logged when
+`placed > 0`, so it failed **silently**. The perimeter-offset scaffold
+made this reliably trigger: the offset farm region is fed as a market
+obstacle, and an offset farm pad landing near the offset market pad forced
+the shrink.
+
+### Fix (bump, not derive — flagged)
+
+`MarketComplexRegistry` default × MARKET: `padMargin 6→10`,
+`minPadMargin 2→7` (= min-fit 6 + 1 slack). Now every *accepted* pad hosts
+the stall pool with slack; a pad that can't reach margin 7 is rejected
+(`NO_REGION`, clean dense-core skip) rather than producing an empty
+market. **Deviation:** the prompt offered derive-from-footprint as the
+robust option, but the stall footprint is only known once the NBT loads at
+spawn (no `ServerLevel` at registry static-init), so deriving isn't cheap
+here — bumped now, **derive-later flagged** (would need the seeder/spec to
+carry a measured max-footprint).
+
+### Zero-placed logging
+
+`MarketStallSeeder.seed` now emits a `LOGGER.warn` on the zero-placed case
+with the region WxH, its x/z bounds, and the variant id — so a too-small
+band can never fail silently again.
+
+### Angular spread (scaffold)
+
+`perimeterAnchor` gains a deterministic per-complex angular offset keyed
+off the building UUID hash, mapped into ±`PERIMETER_OFFSET_SPREAD_RAD`
+(0.8 rad ≈ ±46°). Farm + market offset pads now fan apart around the
+perimeter instead of stacking in the same direction (the collision that
+forced the shrink). Same id → same angle across respawns. Lives entirely
+inside the `PERIMETER_OFFSET_COMPLEXES` scaffold flag — disappears with it.
+
+### Dead-anchor trap retired
+
+`NpcInteractionHandler.tryRentStall` (no live caller — debug/future
+lease-screen only) counted slots via
+`MarketStallPlacer.findAnchorSlots(...).size()`, which returns the legacy
+authored STALL anchors the pad-allocator model no longer produces (so:
+0 → always "all stalls are taken"). Repointed to "any active vacant stall"
+(`getStallsForMarket(...).anyMatch(isActive && isVacant)`), matching the
+live `handleStallLease` semantics. Live `handleStallLease` (uses
+`claimSlot`) untouched.
+
+### Tie-In notes
+
+- `MarketApproach.resolveSellSpot`'s own `findAnchorSlots` (producer
+  standoff) is left as-is per scope — only `tryRentStall`'s count was the
+  trap. `findAnchorSlots` thus still has one live caller (MarketApproach).
+- Bigger margin interacts cleanly with the dense-core path: `minPadMargin`
+  semantics unchanged (still "reject below this"); a core market that
+  can't get margin 7 skips via `NO_REGION` (the known reservation gap, not
+  a regression).
+- 3a/3b consume the now-seeded stalls: merchant claims one and mans it;
+  player rent assigns a vacant seeded stall.
+
+### Out of scope (flagged)
+
+- Plan-time `ComplexRegion` reservation (layout rework) — the scaffold's
+  64-block detachment ("market not part of the village") is by-design here;
+  clearance is tunable if 64 is too far for testing.
+- `MarketComplexPlanner` per-side clipping (separate dense-core fix).
+- No merchant-behavior / pricing / settlement change.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: band math
+re-derived against `findSeat`; `Polygon.AABB(minX,minZ,maxX,maxZ)` log
+arithmetic checked; both `perimeterAnchor` call sites pass the building
+UUID; spread constant declared; `variant.id()` exists; no remaining
+`findAnchorSlots` count in `tryRentStall`; braces/parens balanced in all
+four files.
+
+### Smoke test
+
+1. Regenerate (scaffold on) → market pad has all `SEED_COUNT` seeded
+   stalls, flat, non-overlapping; zero-seed failure gone.
+2. Merchant claims + mans a stall (3a), not the building.
+3. Player can rent a stall — no false "all taken"; rent assigns a vacant
+   seeded stall.
+4. Force a near-collision (offset farm + market close) → spread keeps the
+   market pad full-size and stalls seed; a genuine no-fit fires the new
+   warn (no silent zero).
+5. Scaffold OFF → dense-core markets skip cleanly (no crash); fewer pads
+   = the known reservation gap, not a regression.
+6. Logs: seeder reports placed count or a clear zero reason; no NPE.

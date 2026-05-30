@@ -63,6 +63,21 @@ public final class MarketStallSeeder {
         if (placed > 0) {
             LOGGER.info("[MarketStallSeeder] seeded {} vacant stall(s) at market {}",
                     placed, market.getName());
+        } else {
+            // Phase 2b bug-fix: never fail silently again. Zero placed means
+            // the allocator found no seat on the first try — almost always
+            // the usable perimeter band (margin − aisle) is shallower than
+            // the stall footprint (the pad shrank past the stall depth). Log
+            // the region size + variant so it's diagnosable from the pad.
+            Polygon.AABB r = Polygon.boundingBox(region);
+            LOGGER.warn("[MarketStallSeeder] seeded ZERO stalls at market {} — "
+                    + "no seat fit. Pad region {}x{} (x[{}..{}] z[{}..{}]), "
+                    + "variant '{}'. Likely the pad band is shallower than the "
+                    + "stall footprint; raise padMargin/minPadMargin in "
+                    + "MarketComplexRegistry.",
+                    market.getName(),
+                    (r.maxX() - r.minX() + 1), (r.maxZ() - r.minZ() + 1),
+                    r.minX(), r.maxX(), r.minZ(), r.maxZ(), variant.id());
         }
         return placed;
     }
