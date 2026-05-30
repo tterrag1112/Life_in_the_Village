@@ -10,8 +10,10 @@ import com.google.common.collect.ImmutableMap;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelQuote;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.EconomicChannel;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult;
+import tterrag1112.life_in_the_village.Npc.Economy.Channels.Urgency;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -294,7 +296,7 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
         TradeIntent intent = TradeIntent.buy(
                 restockItem, want, entity.getUUID(),
                 market.getId(), village.getId(),
-                ceiling, TradeIntent.Urgency.NORMAL, Set.of());
+                ceiling, Urgency.NORMAL, Set.of());
 
         Optional<ChannelQuote> quoteOpt =
                 ChannelRouter.findBestChannel(intent, village, data, level);
@@ -312,13 +314,24 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
         }
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
 
-        // Execute — channel settles payment (settlePurchase) + applies tax.
-        TradeResult result = quote.channel().execute(intent, quote, level, data);
-        if (result.success() && result.quantityFilled() > 0) {
+        // Resolve the concrete channel from the quote's discriminator
+        // (quote.channel() is a ChannelType, not the channel itself), then
+        // execute — the channel settles payment (settlePurchase) + tax.
+        // execute() is the caller's source-side move; we deposit the goods
+        // into the owned stall here (the destination-side, per the channel
+        // contract).
+        if (quote.isExpired(level.getGameTime())) { endRestock(); return; }
+        EconomicChannel channel = ChannelRouter.registeredChannels().stream()
+                .filter(c -> c.type() == quote.channel())
+                .findFirst().orElse(null);
+        if (channel == null) { endRestock(); return; }
+
+        TradeResult result = channel.execute(quote, intent, level);
+        if (result.success() && result.quantityTraded() > 0) {
             StallGoods.store(level, market, ownedStall,
-                    new ItemStack(restockItem, result.quantityFilled()));
+                    new ItemStack(restockItem, result.quantityTraded()));
             LOGGER.debug("[Merchant] {} restocked {}x{} into stall {}",
-                    entity.getUUID(), result.quantityFilled(),
+                    entity.getUUID(), result.quantityTraded(),
                     restockItem, ownedStall.getSlotIndex());
         }
         endRestock();
