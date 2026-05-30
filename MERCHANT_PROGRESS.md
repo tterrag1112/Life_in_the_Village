@@ -1427,3 +1427,119 @@ in scope in both loops; flag-off branch byte-identical to prior code.
 4. Flip flag false, regenerate → starved in-place result returns (proves
    clean toggle).
 5. Logs show complex success, not skip reasons; no exceptions.
+
+---
+
+## Phase 3a — Merchant claims and mans a market stall
+
+The keystone: the stationary MERCHANT now owns a market stall and mans it
+during work hours, and selling resolves to that stall — closing the 2c
+"sell goes to the hub" gap automatically.
+
+### Ownership model + rent treatment
+
+On entering work (`start`), the merchant acquires a home stall:
+`VillageSavedData.getStallByOwner(uuid)` if it still owns an active stall
+at this market, else `MarketStallPlacer.claimSlot(level, market, uuid,
+OwnerType.NPC, Long.MAX_VALUE, data)`. **Rent-free**: claiming with
+`rentUntil = Long.MAX_VALUE` makes `MarketStall.isPurchased()` true, and
+`MarketRentManager` skips purchased stalls (line 54) *before* its NPC-rent
+branch — so the resident merchant's workplace is never billed. **No
+MarketRentManager change required** (confirmed against as-built). No new
+codec field — ownership uses the existing `MarketStall` owner record.
+Graceful no-vacant fallback: `acquireStall` returns null → the merchant
+mans the market origin and `StallGoods.store(null stall)` routes deposits
+to the hub (a DEBUG log notes it).
+
+### Standing-surface reconciliation
+
+`MarketWorkPost.forStall(market, stall)` (counter + aisle facing) is now
+the single "where the owner stands" answer. `MerchantBehavior` walks to
+`workPostStand()` (work-post stand, fallback stall/market origin). In
+`MarketApproach.resolveSellSpot`, the **owned-stall branch** is repointed
+from `own.getStallOrigin()` to the work-post stand (fallback origin). The
+**non-owner fan-out** (`findAnchorSlots` over legacy anchors, capped
+`SOFT_CAPACITY`) is left intact — full `findAnchorSlots` retirement needs
+in-game verification (deferred since 2b/2c). Only the owned-stall path is
+reconciled here; flagged the rest.
+
+### Start-gate fix
+
+`checkExtraStartConditions` dropped the `entity.getRandom().nextInt(40)`
+lottery (which left the stall unmanned ~39/40 start checks). Now: nav-guard
++ `isWorkTime()` + `idleCooldown` + `phase == IDLE` → start deterministically.
+`canStillUse` keeps it running until work ends; `manStall` holds position
+at the post for the whole work period (replacing the old fixed
+`TRADE_DURATION` timer). No per-tick log spam (state-unchanged path just
+holds; the one new log is DEBUG).
+
+### Deposit to the stall
+
+`stockMarket` now deposits the merchant's existing personal stock into its
+**owned stall** via `StallGoods.store` (stall-chest first, hub overflow),
+not `BuildingStorageAccess.storeItem` into the market building. 3a only
+moves stock the merchant already has — producer-buying restock is 3b.
+
+### Tie-In Audit
+
+- **Upstream**: assigned MARKET building; 2b-seeded vacant stalls
+  (`MarketStallSeeder`); `MarketWorkPost`; `claimSlot` (assign-vacant).
+- **Downstream**: `TradeHandler` buy/sell + `MarketChannel` now resolve
+  the merchant's owned stall (`findOwnedStallWithItem` /
+  `findStallWithItem`) → 2c hub gap closes. `NpcProfileSnapshotBuilder`
+  still reads `isOpenForTrade()` (kept). Producer sellers still resolve
+  via `MarketApproach` (non-owner path unchanged).
+- **Siblings**: `MarketRentManager` exempts the stall (purchased).
+  `WorkshopStallDecisionGoal` producers still claim *other* vacant stalls
+  — the merchant takes exactly one home stall via the same assign-vacant
+  pool, so it can't starve producers (one claim, the rest stay vacant).
+  `CaravanMerchantBehavior` (WORK pri 0) still pre-empts on caravan duty;
+  3a governs only the stationary WORK pri 1 fallback.
+- **Exhaustive switches**: none — no new enum (the `Phase` enum is
+  unchanged in 3a; `COLLECTING` is 3b).
+
+### Simplification Sweep
+
+Reconciled the two standing surfaces onto `MarketWorkPost` for owners.
+Bounded: the legacy `findAnchorSlots` non-owner fan-out stays (needs
+in-game verification before retirement). The dead `collect()` /
+`productionBuildings` / `regenerateMarketOffers` are left in place for 3b
+to rewire (not deleted here to keep 3a's diff scoped to ownership+manning).
+
+### Deviations from prompt
+
+- The prompt suggested "a sentinel rent-until / a MarketRentManager
+  exemption" — chose `Long.MAX_VALUE` (the existing "purchased" sentinel),
+  which needs **no** MarketRentManager change. Cleaner than a new exemption.
+- Kept `regenerateMarketOffers` (no-op) for now — prompt says leave it for
+  3b/cleanup; the player screen is built by `TradeHandler.openTradeScreen`.
+
+### Out-of-scope but flagged
+
+- 3b: producer-buying, `collect()` revival, COLLECTING phase,
+  `productionBuildings`.
+- Full `findAnchorSlots` deletion (non-owner path) — in-game verification.
+- `regenerateMarketOffers` no-op removal → 3b.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: API
+signatures confirmed via recon against as-built (`getStallByOwner`,
+`claimSlot`, `MarketWorkPost.forStall`, `StallGoods.store`,
+`isPurchased`); imports resolve (price helpers in `Economy.Currency`);
+no new enum/codec; `MarketApproach` owned-stall branch repointed.
+
+### Smoke test
+
+1. Spawn village w/ MARKET + merchant; advance to work hours → merchant
+   claims a seeded vacant stall and stands at its counter (aisle-facing),
+   not flocking to a corner.
+2. Confirm the merchant's stall is not rent-charged (`MarketRentManager`
+   skips purchased).
+3. Buy from + sell to the merchant → goods come from / go to the
+   merchant's stall chest (2c gap closed); money via the 1b endpoint.
+4. Producers still claim other vacant stalls (merchant took one, not all).
+5. Producer sellers still resolve a sane sell spot via `MarketApproach`.
+6. Caravan duty still pre-empts.
+7. Logs: deterministic work-time presence; no per-tick spam; no NPE when
+   no vacant stall (graceful fallback to origin + hub).
