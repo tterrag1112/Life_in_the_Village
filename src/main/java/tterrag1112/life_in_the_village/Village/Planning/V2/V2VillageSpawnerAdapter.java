@@ -92,6 +92,17 @@ public final class V2VillageSpawnerAdapter {
     private static final int ROAD_VEGETATION_BUFFER = 1;
     private static final int FALLBACK_TOWN_SQUARE_RADIUS = 8;
 
+    // TEST SCAFFOLD — offsets farm + market complexes into open terrain
+    // because complex space isn't reserved during V2 planning yet; remove
+    // when the ComplexRegion plan-time reservation lands (layout rework).
+    // When false, both complex loops behave exactly as before (the planner
+    // seed/pad-centre is the building's own centre).
+    private static final boolean PERIMETER_OFFSET_COMPLEXES = true;
+    // Clearance added past the furthest placed building when computing a
+    // perimeter anchor. Generous enough to clear large farm complexes that
+    // extend further from their seed than a market pad does.
+    private static final int PERIMETER_OFFSET_CLEARANCE = 64;
+
     private V2VillageSpawnerAdapter() {}
 
     public static Optional<Village> spawn(ServerLevel level,
