@@ -26,7 +26,6 @@ import tterrag1112.life_in_the_village.Village.Planning.Features.WaterFeature;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.EdgeRole;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.NodeKind;
 import tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph;
-import tterrag1112.life_in_the_village.Village.Planning.Zoning.PlacementSlot;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageTypeData;
 

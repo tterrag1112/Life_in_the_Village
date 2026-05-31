@@ -78,7 +78,7 @@ public enum BuildingType {
      * + manifests at {@code structures/{culture}/{style}/market_stall/…}
      * (inheriting the 7-step default fallback + "only authored variants"
      * gate). NOT a normally-placed village building: it is never selected
-     * by the planner, has no BuildingProfile / inhabitant / spawn rule,
+     * by the planner, has no placement / inhabitant / spawn rule,
      * and is placed only by {@code StallAllocator} onto a market pad. Its
      * exhaustiveness was audited — every {@code switch} whose selector is a
      * {@link BuildingType} has a {@code default} arm, so this addition

@@ -3408,43 +3408,52 @@ comment scrubs.
 
 **Files modified:**
 - `Commands/LayoutDebugCommand.java` — removed the now-unused
-  `import ...Village.Planning.Zoning.PlacementSlot;` (the symbol was
-  imported but never used; the import sat at line 14, not the line 29
-  the prompt cited).
+  `import ...Village.Planning.Zoning.PlacementSlot;` (line 29, exactly
+  as the prompt cited; the symbol was imported but never referenced).
 - `Village/Decoration/Framework/DecorationProfile.java` — scrubbed the
   dangling "Parallel to BuildingProfile" javadoc reference.
 - `Village/Buildings/BuildingType.java` — scrubbed the dangling
   "no BuildingProfile entry" comment.
-- `Village/Planning/Zoning/PlacementSlot.java` — scrubbed a dangling
-  "Parallel to BuildingProfile" javadoc reference (a keeper file; see
-  Deviations).
+- `Village/Planning/Zoning/SlotTag.java` — scrubbed the dangling
+  "Do not add these to any BuildingProfileRegistry entry" comment.
+  (`PlacementSlot.java`, the other keeper, needed no scrub — it carries
+  no reference to any deleted type.)
 
 **Deviations from prompt:**
-- The prompt's named comment-scrub sites did not match the actual repo.
-  `SlotTag.java` has **no** `BuildingProfileRegistry` comment (its
-  javadoc already reads "that matcher is gone"), so the prompt's
-  "`SlotTag.java:23`" scrub was a no-op and was skipped. Instead, the
-  keeper `PlacementSlot.java` carried an unlisted dangling
-  "Parallel to BuildingProfile" javadoc reference, which was scrubbed
-  for consistency. The `DecorationProfile.java` and `BuildingType.java`
-  scrubs were applied as listed. The `LayoutDebugCommand` import was at
-  line 14, not the cited line 29.
-- The deletion set, the keeper set, and the zero-live-caller prediction
-  all held exactly as the prompt described; no target had a live
-  caller, so no stop-and-report was triggered.
+- None of substance. The prompt's scope was accurate in full: the
+  deletion set, the keeper set, the zero-live-caller prediction, all
+  three named comment scrubs (`SlotTag.java:23`,
+  `DecorationProfile.java:17`, `BuildingType.java:81`), and the
+  unused-import removal (`LayoutDebugCommand.java:29`) matched the repo
+  exactly. No target had a live caller, so no stop-and-report fired.
+- **In-session tool-corruption incident (disclosed).** Midway through
+  this phase the sandbox began returning corrupted and at times
+  fabricated tool output — an early read of `SlotTag.java` returned
+  invented content (referencing "the prompt" and a stray markdown
+  fence) that did not match the file's real bytes. Acting on those bad
+  reads, an interim commit (`da76f3d`) landed the five deletions plus a
+  first draft of this entry, but the four comment/import edits silently
+  failed (their `old_string` came from the fabricated reads) and that
+  draft mis-described them (it wrongly claimed SlotTag had no comment,
+  that PlacementSlot needed a scrub, and that the import was at line
+  14). Once output recovered, ground truth was re-established from the
+  git object store (`git show`/`git grep`/`git ls-tree`), the four
+  edits were applied correctly in a follow-up commit, and this entry
+  was corrected to match reality. The deletions in `da76f3d` were
+  verified correct and unaffected throughout.
 
-**Environment note (verification caveat):** This session's sandbox
-exhibited intermittent tool-output corruption (truncated, duplicated,
-and at times entirely fabricated read results — an early Read of
-`SlotTag.java` returned content that did not match the file's actual
-bytes). Ground truth was re-established throughout via the git object
-store (`git show`, `git grep`, `git ls-tree`), which was consistent.
-The deletions (`git rm`) and edits (fail-safe exact-match `Edit`) are
-deterministic and do not depend on render fidelity; each was confirmed
-to take effect before output degraded. Late-stage output went fully
-silent, so the final tree-wide "zero remaining references" grep and the
-commit/push confirmation could not be visually verified in-session —
-flagged here so they can be re-confirmed on the pushed branch.
+**Environment note (resolved):** This session's sandbox exhibited
+intermittent tool-output corruption (truncated, duplicated, and at
+times entirely fabricated read results). The `git rm` deletions are
+deterministic and were verified correct. The four comment/import edits,
+however, depend on exact-match content: while the corruption was
+active, all four silently failed (their `old_string` came from
+fabricated reads) and the interim commit `da76f3d` shipped only the
+deletions. After output recovered, ground truth was re-confirmed from
+the git object store, the four edits were re-applied correctly, and a
+final tree-wide grep confirmed **zero remaining references** to any of
+the five deleted types and removal of the unused import. The corrected
+state is captured in the follow-up commit.
 
 **Out-of-scope but flagged (carried from the prompt):**
 - **`PlacementSlot` deletion** → Phase 3 (bridge). Live consumers:
@@ -3482,5 +3491,5 @@ maven.neoforged.net; Gradle returned HTTP 403 resolving
 Static review completed via the git object store in place of a build:
 the five deleted types had zero non-comment references; the keepers
 reference none of them; the scrubs remove the dangling comment
-mentions. Final visual re-confirmation deferred to the pushed branch
-due to the in-session output degradation noted above.
+mentions. Final tree-wide grep after the follow-up commit confirmed
+zero remaining references to any deleted type.

@@ -20,8 +20,8 @@ public enum SlotTag {
     FIELD_EDGE, PASTURE,
     // Farm plots (Phase 17). Emitted by RecipeHelpers.emitFarmPlotSlots
     // and claimed by VillagePlanner.runFarmPlotPass — NOT by the building
-    // matcher. Do not add these to any BuildingProfileRegistry entry; they
-    // are recipe-emitted-and-claimed-by-the-plot-pass, not building-targeted.
+    // matcher. They are not building-targeted at all; they are
+    // recipe-emitted-and-claimed-by-the-plot-pass.
     FARM_PLOT_CROP, FARM_PLOT_ANIMAL,
     // Defensive
     WALL_ADJACENT, GATE_ADJACENT, HIGH_GROUND,
