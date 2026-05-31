@@ -14,7 +14,7 @@ import java.util.Set;
  * Doc 01 §"DecorationProfile" — declares everything the matcher
  * needs to score and place one decoration piece.
  *
- * <p>Parallel to {@code BuildingProfile} (building placement) but
+ * <p>Parallel to the building-placement profile system but
  * intentionally separate. Registered in
  * {@link DecorationProfileRegistry} keyed by {@link #pieceId} —
  * doc 01 §"DecorationProfile": "Piece ID is
