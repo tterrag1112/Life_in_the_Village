@@ -2880,3 +2880,145 @@ data)`, `BASE_PROGRESS_PER_TICK`); layer registered; switch arms + default.
 5. Layer toggle off/on (if exposed) → icons hide/show; base map unaffected.
 6. No caravans → map renders normally, no icons, no errors.
 7. Several caravans → smooth motion, no per-tick server packet, no hitch.
+
+---
+
+## Merchant arc — cleanup-debt sweep
+
+Verify-first simplification sweep run last in the arc. Several flagged items
+were already resolved by later phases; confirmed each before acting.
+
+### Per-item verified disposition
+
+1. **`MarketStallPlacer.facingRotation`** — ALREADY DELETED by a later
+   phase; only a tombstone comment remains (`MarketStallPlacer:193`).
+   **Skipped (already fixed).**
+
+2. **`NpcProfileHub.openStallLeaseScreen`** — confirmed zero callers
+   (private, no internal call; the live lease-open path is
+   `RentStallVerb`/`handleStallLease` → `OpenStallLeasePacket`).
+   **Deleted.** `PacketDistributor`/`OpenStallLeasePacket` still used
+   elsewhere in the file (no orphaned imports).
+
+3. **`Caravan`/`BoatCaravan` dead fields** — split decision:
+   - **`guardCount` is NOT dead** — read meaningfully in
+     `CaravanSavedData:213-229` (spawns `guardCount` guard entities in a
+     ring) and `calculateGuardCount`. **Kept** (the flag was stale).
+   - **`dispatchTick` is dead** (only the codec getter + field assignment;
+     no logic reads it) in both classes. **Removal DEFERRED / flagged**:
+     it threads through two public positional constructors, `fromCodec`,
+     two factories (`create`/`createProcurement`, each taking
+     `currentTick`), the codec, the getter, and every positional call site
+     in `CaravanSavedData` — a high arg-shift risk on public constructors
+     for a core feature, with zero behavioural payoff, and unverifiable
+     here (sandbox can't compile). Best done mechanically with a compiler
+     in the loop — flagged for Garrett.
+
+4. **Leftover dead helpers** —
+   - **`TradeScreen.formatPrice` duplicate** — does not exist;
+     `formatPrice` lives only in `TradeHandler` and is heavily used.
+     **Skipped (not present).**
+   - **`CaravanGoodsSelector` orphans** — `selectGoods`,
+     `buildShoppingList`, `deliverGoods` all have live callers
+     (`CaravanSavedData`/`BoatCaravanSavedData`). No orphans. **Skipped.**
+
+5. **Retire `updateStallSigns` (sign-funnel completion)** — DONE. The only
+   caller was `reclaimStall`, and it was already a **no-op**: `reclaimStall`
+   clears the entire stall footprint to AIR (signs included) in the loop
+   *above* the call, so `updateStallSigns` wrote to blocks that were already
+   gone. Removed the no-op call and deleted the `updateStallSigns` method.
+   Sign writes now flow through exactly one path — the
+   `MarketStallOwnership` funnel (`assign`/`vacate`/`refreshSign` →
+   `DynamicSignUpdater.updateSignsReturningFirst`). `DynamicSignUpdater`
+   left intact (its `updateSigns` is still used by `clearSigns`). Removed
+   the six now-orphaned imports from `MarketStallPlacer`
+   (`ChatFormatting`, `Component`, `DynamicSignUpdater`, `Collectors`,
+   `SubBuilding`, `SubBuildingType`) and converted the two surviving
+   `SubBuilding*` javadoc `{@link}`s to `{@code}` (no unused-import or
+   broken-link warnings). `RENT_PER_DAY` kept (11 other callers).
+
+6. **`TradeHandler` goods → `StallGoods`** — re-verified against as-built
+   5a; **NOT consolidated, flagged** (not a clean drop-in). `TradeHandler`'s
+   four private helpers (`countInStallChest`, `takeFromStallChest`,
+   `returnToStallChest`, `allStallChestPositions`) are **stall-chest-only**;
+   `StallGoods` is **stall-first + hub-overflow**. A naive swap would:
+   (a) **double-count** at `countMerchantStock` (it already counts the hub
+   separately); (b) change player-stall stock display/checks (lines 154,
+   197) to include communal hub stock — a semantic change needing a
+   product decision; (c) need `market` extracted at `openStallManagement`
+   (line 260). This is behavioural and unverifiable here — flagged for
+   Garrett rather than risk a core-trade regression. (5a reworked the
+   trade *screen*, not `TradeHandler` goods routing, so it didn't subsume
+   this.)
+
+7. **`MarketApproach` / `findAnchorSlots`** — verify-first flipped this
+   from risky to safe. **`MarketApproach` is fully dead** — zero references
+   outside its own file; `resolveSellSpot` (the feared live producer-seller
+   standing path) has **no callers**, and the slot-count caller was already
+   re-pointed to `getStallsForMarket(...).size()` (`NpcInteractionHandler`,
+   the comment documents it). **Deleted `MarketApproach.java` entirely** and
+   **both `findAnchorSlots` overloads** (its only non-comment callers). No
+   behavioural change (all dead). Tidied the stale `findAnchorSlots`
+   reference in the `NpcInteractionHandler` comment.
+
+### Tie-In Audit
+
+- Every deletion re-grepped for inbound callers: `findAnchorSlots`,
+  `updateStallSigns`, `MarketApproach`/`resolveSellSpot`,
+  `openStallLeaseScreen` → all clear (only a now-tidied comment remained).
+- Sign path: one writer (the `MarketStallOwnership` funnel); the legacy
+  `updateStallSigns` is gone. Merchant man/restock, claim/transfer/vacate
+  still route through the funnel; reclaim destroys the structure (no sign).
+- `RENT_PER_DAY`, `resolveOwnerName`, `DynamicSignUpdater.updateSigns`,
+  `CaravanGoodsSelector.*`, `guardCount` all confirmed still-live — kept.
+
+### Simplification Sweep result
+
+Net: 1 dead method (`openStallLeaseScreen`), 1 dead method
+(`updateStallSigns`) + its no-op call, 2 dead methods (`findAnchorSlots`
+×2), 1 dead class (`MarketApproach`), 6 orphaned imports removed. One sign
+path. No behaviour change (all removed members were dead or no-ops).
+
+### Still-open (flagged, not done here)
+
+- **Item 3 `dispatchTick`** removal — dead but invasive across public
+  positional constructors/factories in two classes; do with a compiler.
+- **Item 6 `TradeHandler` → `StallGoods`** — needs a product decision
+  (should player-rented stalls draw from the communal market hub?) + the
+  double-count fix at `countMerchantStock`; behavioural, verify in-game.
+- **Item 7 producer-seller standing** — `resolveSellSpot` was already dead,
+  so producer-sellers currently have *no* market-approach standing logic
+  wired. If that behaviour is actually wanted, it's new work (round-robin
+  over occupied stalls / explicit work-posts), not cleanup.
+- Larger deferred design items (unchanged, per prompt out-of-scope):
+  `VillageEconomy` markups vs unified pricing (1a); non-MARKET channels
+  onto unified pricing; `MarketComplexPlanner` per-side clipping; 2d
+  surplus-signal/occupancy-proxy tuning; perimeter-offset scaffold.
+
+### Deviations
+
+- Items 3 & 6 flagged rather than executed (unverifiable + risk), per the
+  prompt's "flag what needs in-game testing / do the safe parts" guidance.
+- Item 5 implemented as call-removal (the call was a no-op post-footprint-
+  clear) rather than re-routing reclaim through the funnel — the funnel
+  call would be an equal no-op on an air footprint. Same end state: one
+  sign path, `updateStallSigns` gone.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (offline gradle can't
+resolve neoform-runtime). Static review: touched files brace/paren-balanced;
+all deleted members re-grepped to zero callers; orphaned imports removed;
+no dangling references.
+
+### Smoke test
+
+1. Stalls still seed; merchant mans/restocks a stall; players rent/manage;
+   player + NPC trades move goods through the stall chest (unchanged —
+   `TradeHandler` goods routing untouched).
+2. Claim/transfer/vacate/reclaim a stall → owner sign updates every time
+   through the one funnel; reclaim clears the structure (no stale sign).
+3. Caravans (export/procurement) still dispatch/travel/settle — `guardCount`
+   guards still spawn; `dispatchTick` untouched.
+4. Nothing regressed vs pre-sweep (only dead code/no-ops removed).
+5. Build clean; no unused-member/import warnings for the removed members.
