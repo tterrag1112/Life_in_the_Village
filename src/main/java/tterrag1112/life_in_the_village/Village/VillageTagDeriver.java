@@ -1,35 +1,32 @@
 // src/main/java/tterrag1112/life_in_the_village/Village/VillageTagDeriver.java
 package tterrag1112.life_in_the_village.Village;
 
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
-
 import java.util.EnumSet;
 import java.util.Set;
 
 /**
  * Infers tags for a {@link VillageTypeData} from its other declared
- * properties. Lets village type JSON declare its terrain, layout, and
- * starter buildings once and have tags fall out automatically.
+ * properties. Lets village type JSON declare its layout and starter
+ * buildings once and have tags fall out automatically.
  *
  * <h3>Derivation rules</h3>
  * <table>
  *   <tr><th>Source property</th><th>Derived tag</th></tr>
- *   <tr><td>terrain_strategy: WATERFRONT</td><td>COASTAL, RIVERSIDE</td></tr>
- *   <tr><td>terrain_strategy: MOUNTAIN</td><td>MOUNTAIN</td></tr>
  *   <tr><td>shape_type: CROSSROADS</td><td>TRADE</td></tr>
  *   <tr><td>shape_type: RIVERINE or DOCKSIDE</td><td>RIVERSIDE</td></tr>
  *   <tr><td>shape_type: HILLTOP</td><td>MOUNTAIN, DEFENSIVE</td></tr>
  *   <tr><td>shape_type: OUTPOST</td><td>REMOTE, DEFENSIVE</td></tr>
+ *   <tr><td>shape_type: DOCKSIDE</td><td>COASTAL</td></tr>
  *   <tr><td>Has a DOCKS starter building</td><td>COASTAL</td></tr>
  *   <tr><td>≥ 2 FARMHOUSE buildings</td><td>AGRICULTURAL</td></tr>
  *   <tr><td>Has a CHURCH/TEMPLE/SHRINE</td><td>RELIGIOUS</td></tr>
  *   <tr><td>Has a MINE/FORGE/SMELTER/WORKSHOP</td><td>INDUSTRIAL</td></tr>
  * </table>
  *
- * <p>WATERFRONT implies both COASTAL and RIVERSIDE because the strategy
- * itself doesn't distinguish — individual types should narrow this by
- * adding a manual tag if they only want one (e.g. a fishing village
- * declares {@code "tags": ["COASTAL"]} to exclude inland river sites).
+ * <p>Tags that a shape/building signal cannot express (e.g. a
+ * MOUNTAIN sited on a non-HILLTOP shape, or a COASTAL river town on a
+ * RIVERINE shape) are declared manually via the type's {@code "tags"}
+ * array. Manual + derived tags are unioned in {@link VillageTypeData}.
  */
 public final class VillageTagDeriver {
 
@@ -47,20 +44,10 @@ public final class VillageTagDeriver {
 
     /** Computes the full derived tag set for a village type. */
     public static Set<VillageTag> derive(
-            TerrainStrategy strategy,
             VillageTypeData.ShapeType shapeType,
             java.util.List<VillageTypeData.StarterBuilding> buildings) {
 
         Set<VillageTag> tags = EnumSet.noneOf(VillageTag.class);
-
-        // ── From terrain strategy ──
-        if (strategy != null) {
-            switch (strategy) {
-                case WATERFRONT -> { tags.add(VillageTag.COASTAL); tags.add(VillageTag.RIVERSIDE); }
-                case MOUNTAIN   -> tags.add(VillageTag.MOUNTAIN);
-                default         -> {}
-            }
-        }
 
         // ── From shape type ──
         if (shapeType != null) {

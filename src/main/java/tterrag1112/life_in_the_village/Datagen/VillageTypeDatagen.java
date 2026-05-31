@@ -8,8 +8,8 @@ import net.minecraft.data.DataProvider;
 import net.minecraft.data.PackOutput;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 import tterrag1112.life_in_the_village.Village.SettlementTier;
+import tterrag1112.life_in_the_village.Village.VillageTag;
 import tterrag1112.life_in_the_village.Village.VillageTypeBuilder;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
@@ -80,7 +80,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildDefaultVillage() {
         return VillageTypeBuilder.create("default_village", "default")
                 .shape(ShapeType.RADIAL)
-                .terrainStrategy(TerrainStrategy.FLAT)
                 .settlementTier(SettlementTier.VILLAGE)
                 .townSquareCapacity(5)
                 .building(BuildingType.TOWN_HALL,   "town_hall/level_1")
@@ -107,7 +106,6 @@ public class VillageTypeDatagen implements DataProvider {
                 .shape(ShapeType.LINEAR)
                 .fallbackChain(ShapeType.RADIAL)
                 .forcedAxis(true)
-                .terrainStrategy(TerrainStrategy.FLAT)
                 .townSquareCapacity(3)
                 .building(BuildingType.TOWN_HALL, "town_hall/level_1")
                 .building(BuildingType.STOCKPILE, "stockpile/level_1")
@@ -126,7 +124,6 @@ public class VillageTypeDatagen implements DataProvider {
         return VillageTypeBuilder.create("trade_city", "default")
                 .shape(ShapeType.PLAZA)
                 .fallbackChain(ShapeType.RADIAL)
-                .terrainStrategy(TerrainStrategy.FLAT)
                 .settlementTier(SettlementTier.CITY)
                 .canBeCapital(true)
                 .kingdomRoles("trade_hub")
@@ -156,7 +153,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildCrossroadsTown() {
         return VillageTypeBuilder.create("crossroads_town", "default")
                 .shape(ShapeType.CROSSROADS)
-                .terrainStrategy(TerrainStrategy.FLAT)
                 .settlementTier(SettlementTier.TOWN)
                 .canBeCapital(true)
                 .kingdomRoles("trade_hub")
@@ -183,7 +179,6 @@ public class VillageTypeDatagen implements DataProvider {
         return VillageTypeBuilder.create("twin_village", "default")
                 .shape(ShapeType.DUAL_PLAZA)
                 .fallbackChain(ShapeType.RADIAL)
-                .terrainStrategy(TerrainStrategy.FLAT)
                 .settlementTier(SettlementTier.TOWN)
                 .canBeCapital(true)
                 .townSquareCapacity(5)
@@ -206,7 +201,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildSparseHolding() {
         return VillageTypeBuilder.create("sparse_holding", "default")
                 .shape(ShapeType.SPRAWL)
-                .terrainStrategy(TerrainStrategy.FLAT)
                 .settlementTier(SettlementTier.OUTPOST)
                 .townSquareCapacity(2)
                 .streetDensity(0.6f)
@@ -226,7 +220,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildMiningCamp() {
         return VillageTypeBuilder.create("mining_camp", "default")
                 .shape(ShapeType.CLUSTERED)
-                .terrainStrategy(TerrainStrategy.SLOPE_AWARE)
                 .settlementTier(SettlementTier.OUTPOST)
                 .kingdomRoles("industrial")
                 .biomeAffinity("mountain")
@@ -248,7 +241,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildSacredGrove() {
         return VillageTypeBuilder.create("sacred_grove", "default")
                 .shape(ShapeType.GROVE)
-                .terrainStrategy(TerrainStrategy.SLOPE_AWARE)
                 .settlementTier(SettlementTier.VILLAGE)
                 .kingdomRoles("religious_center")
                 .biomeAffinity("forest")
@@ -271,7 +263,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildFrontierOutpost() {
         return VillageTypeBuilder.create("frontier_outpost", "default")
                 .shape(ShapeType.OUTPOST)
-                .terrainStrategy(TerrainStrategy.SLOPE_AWARE)
                 .settlementTier(SettlementTier.OUTPOST)
                 .kingdomRoles("frontier")
                 .biomeAffinity("forest")
@@ -292,7 +283,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildBendHamlet() {
         return VillageTypeBuilder.create("bend_hamlet", "default")
                 .shape(ShapeType.CHAIN)
-                .terrainStrategy(TerrainStrategy.SLOPE_AWARE)
                 .biomeAffinity("forest")
                 .townSquareCapacity(3)
                 .building(BuildingType.TOWN_HALL,  "town_hall/level_1")
@@ -310,7 +300,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildBorderKeep() {
         return VillageTypeBuilder.create("border_keep", "default")
                 .shape(ShapeType.ENCLAVE)
-                .terrainStrategy(TerrainStrategy.SLOPE_AWARE)
                 .settlementTier(SettlementTier.TOWN)
                 .canBeCapital(true)
                 .kingdomRoles("frontier", "military")
@@ -338,7 +327,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildMountainKeep() {
         return VillageTypeBuilder.create("mountain_keep", "default")
                 .shape(ShapeType.HILLTOP)
-                .terrainStrategy(TerrainStrategy.MOUNTAIN)
                 .settlementTier(SettlementTier.TOWN)
                 .canBeCapital(true)
                 .kingdomRoles("military")
@@ -364,7 +352,7 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildVineyardTerrace() {
         return VillageTypeBuilder.create("vineyard_terrace", "default")
                 .shape(ShapeType.TERRACED)
-                .terrainStrategy(TerrainStrategy.MOUNTAIN)
+                .tags(VillageTag.MOUNTAIN)
                 .biomeAffinity("mountain")
                 .townSquareCapacity(3)
                 .building(BuildingType.TOWN_HALL,   "town_hall/level_1")
@@ -383,7 +371,7 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildCliffHamlet() {
         return VillageTypeBuilder.create("cliff_hamlet", "default")
                 .shape(ShapeType.ROADSIDE)
-                .terrainStrategy(TerrainStrategy.MOUNTAIN)
+                .tags(VillageTag.MOUNTAIN)
                 .settlementTier(SettlementTier.OUTPOST)
                 .biomeAffinity("mountain")
                 .townSquareCapacity(2)
@@ -406,7 +394,7 @@ public class VillageTypeDatagen implements DataProvider {
         return VillageTypeBuilder.create("riverside_town", "default")
                 .shape(ShapeType.RIVERINE)
                 .forcedAxis(true)
-                .terrainStrategy(TerrainStrategy.WATERFRONT)
+                .tags(VillageTag.COASTAL)
                 .settlementTier(SettlementTier.VILLAGE)
                 .biomeAffinity("river")
                 .townSquareCapacity(4)
@@ -427,7 +415,6 @@ public class VillageTypeDatagen implements DataProvider {
     private JsonObject buildPierVillage() {
         return VillageTypeBuilder.create("pier_village", "default")
                 .shape(ShapeType.DOCKSIDE)
-                .terrainStrategy(TerrainStrategy.WATERFRONT)
                 .settlementTier(SettlementTier.VILLAGE)
                 .kingdomRoles("trade_hub")
                 .tradePriority(3)

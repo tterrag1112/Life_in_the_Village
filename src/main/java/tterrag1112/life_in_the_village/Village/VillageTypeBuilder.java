@@ -4,7 +4,6 @@ package tterrag1112.life_in_the_village.Village;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
 
 /**
@@ -16,7 +15,6 @@ import tterrag1112.life_in_the_village.Village.VillageTypeData.ShapeType;
  * <pre>{@code
  * VillageTypeBuilder.create("default_village", "default")
  *     .shape(ShapeType.RADIAL)
- *     .terrainStrategy(TerrainStrategy.FLAT)
  *     .townSquareCapacity(5)
  *     .building(BuildingType.TOWN_HALL, "town_hall/level_1")
  *     .building(BuildingType.MARKET, "market/level_1")
@@ -104,8 +102,12 @@ public final class VillageTypeBuilder {
 
     // ─── Top-level fields ──────────────────────────────────────────────────
 
-    public VillageTypeBuilder terrainStrategy(TerrainStrategy strategy) {
-        root.addProperty("terrain_strategy", strategy.name());
+    /** Declares one or more village tags directly. Unioned with the
+     *  tags {@code VillageTagDeriver} derives from shape + buildings. */
+    public VillageTypeBuilder tags(VillageTag... tags) {
+        JsonArray arr = new JsonArray();
+        for (VillageTag t : tags) arr.add(t.name());
+        root.add("tags", arr);
         return this;
     }
 

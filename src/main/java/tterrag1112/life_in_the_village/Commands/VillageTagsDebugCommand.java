@@ -31,7 +31,6 @@ public class VillageTagsDebugCommand {
         }
         String msg = "Village type '" + type + "'\n"
                 + "  shape:    " + data.getShapeProfile().shapeType() + "\n"
-                + "  terrain:  " + data.getTerrainStrategy() + "\n"
                 + "  tags:     " + data.getTags();
         ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
         return 1;

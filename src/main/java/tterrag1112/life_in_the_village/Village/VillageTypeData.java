@@ -4,7 +4,6 @@ package tterrag1112.life_in_the_village.Village;
 import net.minecraft.world.item.DyeColor;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.ColorPalette;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -111,7 +110,6 @@ public class VillageTypeData {
     private final List<StarterBuilding> starterBuildings;
     private final FarmPlotConfig farmPlotConfig;
     private final VillageShapeProfile shapeProfile;
-    private final TerrainStrategy terrainStrategy;
     private final int townSquareCapacity;
     private final Set<VillageTag> tags;
     /**
@@ -154,7 +152,6 @@ public class VillageTypeData {
                            List<StarterBuilding> starterBuildings,
                            VillageShapeProfile shapeProfile,
                            FarmPlotConfig farmPlotConfig,
-                           TerrainStrategy terrainStrategy,
                            int townSquareCapacity,
                            Set<VillageTag> manualTags) {
         this.type = type;
@@ -164,29 +161,25 @@ public class VillageTypeData {
                 ? shapeProfile : VillageShapeProfile.defaultProfile();
         this.farmPlotConfig = farmPlotConfig != null
                 ? farmPlotConfig : FarmPlotConfig.defaultConfig();
-        this.terrainStrategy = terrainStrategy != null
-                ? terrainStrategy : TerrainStrategy.FLAT;
         this.townSquareCapacity = townSquareCapacity > 0 ? townSquareCapacity : 6;
 
         // Union manual + derived tags
         Set<VillageTag> combined = EnumSet.noneOf(VillageTag.class);
         if (manualTags != null) combined.addAll(manualTags);
         combined.addAll(VillageTagDeriver.derive(
-                this.terrainStrategy, this.shapeProfile.shapeType(),
-                this.starterBuildings));
+                this.shapeProfile.shapeType(), this.starterBuildings));
         this.tags = java.util.Collections.unmodifiableSet(combined);
     }
 
-    // Keep the old canonical constructor as a deprecated overload that delegates
-// with empty manual tags — avoids breaking existing call sites:
+    // Keep the old canonical constructor as an overload that delegates
+    // with empty manual tags — avoids breaking existing call sites:
     public VillageTypeData(String type, String culture,
                            List<StarterBuilding> starterBuildings,
                            VillageShapeProfile shapeProfile,
                            FarmPlotConfig farmPlotConfig,
-                           TerrainStrategy terrainStrategy,
                            int townSquareCapacity) {
         this(type, culture, starterBuildings, shapeProfile, farmPlotConfig,
-                terrainStrategy, townSquareCapacity, EnumSet.noneOf(VillageTag.class));
+                townSquareCapacity, EnumSet.noneOf(VillageTag.class));
     }
 
     // Also update the test-convenience constructor — just add empty tags:
@@ -195,7 +188,6 @@ public class VillageTypeData {
         this(type, culture, starterBuildings,
                 VillageShapeProfile.defaultProfile(),
                 FarmPlotConfig.defaultConfig(),
-                TerrainStrategy.FLAT,
                 4,
                 EnumSet.noneOf(VillageTag.class));
     }
@@ -209,7 +201,6 @@ public class VillageTypeData {
     public List<StarterBuilding> getStarterBuildings() { return starterBuildings; }
     public VillageShapeProfile getShapeProfile() { return shapeProfile; }
     public FarmPlotConfig getFarmPlotConfig() { return farmPlotConfig; }
-    public TerrainStrategy getTerrainStrategy() { return terrainStrategy; }
     public int getTownSquareCapacity() { return townSquareCapacity; }
 
     public Set<VillageTag> getTags() { return tags;}

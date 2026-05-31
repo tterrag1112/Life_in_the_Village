@@ -3493,3 +3493,149 @@ the five deleted types had zero non-comment references; the keepers
 reference none of them; the scrubs remove the dangling comment
 mentions. Final tree-wide grep after the follow-up commit confirmed
 zero remaining references to any deleted type.
+
+### 2026-05-31 — Layout Rework Phase 2b landed (TerrainStrategy enum removed)
+
+**What shipped:** Removed the `TerrainStrategy` enum entirely from the
+village-type data model. Its execution machinery (the `TerrainStep`
+pipeline) was deleted in Phase 1, leaving four inert constants
+(`FLAT`/`SLOPE_AWARE`/`MOUNTAIN`/`WATERFRONT`) that no V2 code consults
+— the live planner derives terrain handling from actual terrain
+(`TerrainAdapter`/`PadBuilder`), not this static per-type field. Deleted
+the enum file, its `VillageTypeData` field + getter + both constructor
+params + `FLAT` defaulting, the `VillageTypeBuilder.terrainStrategy(...)`
+method, all 17 `VillageTypeDatagen` calls, the `VillageTypeRegistry`
+parse + JSON-field read, the `VillageTagsDebugCommand` display line, and
+the `strategy` parameter + derivation branch on `VillageTagDeriver`.
+
+**The `VillageTagDeriver` decision — Per user direction.** The enum's
+derivation produced three `VillageTag`s: `MOUNTAIN` (from `MOUNTAIN`),
+`COASTAL` + `RIVERSIDE` (from `WATERFRONT`). The consumer audit
+(`git grep` over the tag names) found these tags **are consumed by live
+V2 code** — not V1 residue:
+- `Kingdom/Placement/VillageTypeMatcher` — hard placement gates:
+  `COASTAL && !cell.isCoast() → reject`; `cell.isSteep() && !MOUNTAIN →
+  reject`.
+- `Kingdom/Placement/VillagePlacementScorer` — scoring on
+  `COASTAL`/`RIVERSIDE`.
+- `Village/Planning/Terrain/TerrainProfile` — water-proximity handling
+  keyed on `RIVERSIDE`/`COASTAL`.
+
+Per the prompt's rule (live consumer → don't silently drop) and
+Garrett's direction ("if there is any V2 code using them, then add the
+manual tags"), I **preserved the tags via manual `.tags(...)`** rather
+than default-dropping. A per-type redundancy check determined which
+types actually lose a tag once the strategy branch is gone (the rest
+already get the same tag from their `shape_type` or starter buildings
+via the surviving derivation rules):
+
+| Type | strategy tag(s) | already derived from shape/buildings? | manual tag added |
+|---|---|---|---|
+| `mountain_keep` | MOUNTAIN | HILLTOP shape → MOUNTAIN ✓ | none needed |
+| `vineyard_terrace` | MOUNTAIN | TERRACED → none | **+MOUNTAIN** |
+| `cliff_hamlet` | MOUNTAIN | ROADSIDE → none | **+MOUNTAIN** |
+| `riverside_town` | COASTAL, RIVERSIDE | RIVERINE → RIVERSIDE only | **+COASTAL** |
+| `pier_village` | COASTAL, RIVERSIDE | DOCKSIDE → both ✓ | none needed |
+| all FLAT / SLOPE_AWARE types | none (default `{}`) | — | none needed |
+
+So three types gained an explicit `.tags(...)`; the resulting tag set
+for every type is identical to before this phase. Added a
+`VillageTypeBuilder.tags(VillageTag...)` method (writes the existing
+`"tags"` JSON array the registry already parses via
+`VillageTag.fromName`) to express them.
+
+**Surface area:** 1 enum file deleted + 6 files edited.
+
+**Files deleted:**
+- `src/main/java/.../Village/Planning/Terrain/TerrainStrategy.java`
+
+**Files modified:**
+- `Village/VillageTagDeriver.java` — dropped the `TerrainStrategy
+  strategy` param, the import, and the terrain-strategy `switch`;
+  updated the class javadoc derivation table.
+- `Village/VillageTypeData.java` — removed the import, the
+  `terrainStrategy` field, the getter, the `FLAT` defaulting, and the
+  param from all three constructors; the 2-arg `VillageTagDeriver.derive`
+  call.
+- `Village/VillageTypeRegistry.java` — removed the import, the
+  `terrain_strategy` parse, the `strategy` ctor arg, and the `strategy=`
+  log token; added a comment noting the JSON key is now ignored.
+- `Village/VillageTypeBuilder.java` — removed the import, the
+  `terrainStrategy(...)` method, and the javadoc example line; added a
+  `tags(VillageTag...)` method.
+- `Datagen/VillageTypeDatagen.java` — removed the import and all 17
+  `.terrainStrategy(...)` calls; added `.tags(...)` to the three types
+  above.
+- `Commands/VillageTagsDebugCommand.java` — removed the `terrain:`
+  display line.
+
+**Exhaustive-switch check:** `git grep` for `case MOUNTAIN|WATERFRONT|
+SLOPE_AWARE|FLAT` confirmed the only switch over `TerrainStrategy` was
+the one inside `VillageTagDeriver` (now removed). All other
+`case FLAT`/`case MOUNTAIN` hits are over unrelated enums
+(`CastleRoofType`, `EdgeTier`, `AnchorType`, GUI terrain colors, etc.)
+and are untouched.
+
+**Deviations from prompt:**
+- **Generated JSONs not regenerated (sandbox cannot run datagen).** The
+  prompt's deliverable 3 ("regenerate the village-type datagen output")
+  and its rule "no manual JSON edits" both assume datagen can run.
+  Datagen requires the NeoForge toolchain, which needs
+  `maven.neoforged.net` — blocked in this sandbox (same HTTP 403 as the
+  build). I deliberately did **not** hand-edit the 16 committed JSONs
+  under `src/generated/resources/.../village_types/`, because
+  `DataProvider.saveStable` applies a specific Gson formatting + key
+  ordering that is error-prone to reproduce by hand. The committed JSONs
+  therefore still carry the now-ignored `terrain_strategy` key and do
+  **not** yet carry the three new `"tags"` arrays.
+  - **Consequence to action (important):** the runtime loads the
+    committed JSONs, not the builder. Until datagen is re-run, the
+    `terrain_strategy` key is harmlessly ignored by the updated loader,
+    **but the three preserved tags (`vineyard_terrace`/`cliff_hamlet`
+    +MOUNTAIN, `riverside_town` +COASTAL) will not reach runtime.**
+    Re-running datagen (`runData`/the project's datagen task) regenerates
+    all 16 JSONs without `terrain_strategy` and with the three `"tags"`
+    arrays, closing the gap. This is smoke-test step 2 below and is the
+    one required follow-up to fully realise the phase.
+
+**Out-of-scope but flagged:**
+- The richer terrain-adaptation rework (retaining walls, terracing,
+  excavation) remains a separate future effort — this phase only removes
+  the dead enum.
+- `CLAUDE.md` / `LAYOUT_OVERVIEW.md` stale lines (flagged in Phase 1)
+  remain human-managed and still stale.
+- Other cleanup phases (synth bridge, complex reservation, `PlacementSlot`
+  removal in Phase 3) are tracked separately.
+
+**Cumulative pending verification:** Detour A (Prompt A + Prompt B),
+Layout Rework Phase 1, Phase 2, and this Phase 2b remain pending in-world
+smoke test. Phase 2b additionally requires a datagen re-run (above)
+before the preserved tags take effect at runtime.
+
+**Smoke test plan (user-executable):**
+1. Build the mod (deferred in sandbox — see Build verification).
+2. **Re-run datagen** (the project's `runData` task). Confirm the 16
+   `village_types/*.json` regenerate with **no** `terrain_strategy`
+   field, and that `vineyard_terrace.json` + `cliff_hamlet.json` gain
+   `"tags": ["MOUNTAIN"]` and `riverside_town.json` gains
+   `"tags": ["COASTAL"]`. Confirm the registry loads all types without
+   error (watch the log line — it no longer prints `strategy=`).
+3. In-world: spawn a former-`MOUNTAIN` type (`mountain_keep`,
+   `vineyard_terrace`, `cliff_hamlet`) and a former-`WATERFRONT` type
+   (`riverside_town`, `pier_village`); confirm they still spawn. Run
+   `/liv villagetype tags <type>` and confirm: the `terrain:` line is
+   gone; the `tags:` set is unchanged from before (MOUNTAIN present for
+   all three mountain types, COASTAL+RIVERSIDE for both water types).
+4. Sanity: confirm kingdom placement still gates these types the same
+   way (MOUNTAIN types admitted on steep cells; COASTAL types still
+   require a coast) — this is the behaviour the manual tags preserve.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net). Full manual static review completed in its place:
+tree-wide `grep`/`git grep` confirms zero remaining references to
+`TerrainStrategy`/`getTerrainStrategy`/`terrainStrategy` in `src/`
+(the sole match is an explanatory comment in `VillageTypeRegistry`); no
+stray `import` of the enum anywhere; the single `new VillageTypeData(`
+call site and the single `VillageTagDeriver.derive(` call site both
+updated to the new arity; `VillageTag` retains `COASTAL`/`RIVERSIDE`/
+`MOUNTAIN`; no test source references the removed symbols.

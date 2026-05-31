@@ -8,7 +8,6 @@ import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
 import net.minecraft.util.profiling.ProfilerFiller;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainStrategy;
 
 import java.io.InputStreamReader;
 import java.util.*;
@@ -79,12 +78,9 @@ public class VillageTypeRegistry
 
                 // Track A1b — shape_rules removed alongside the V1
                 // Rules package; surviving JSONs that still carry the
-                // key are silently ignored.
-
-                // Terrain strategy
-                String strategyName = json.has("terrain_strategy")
-                        ? json.get("terrain_strategy").getAsString() : null;
-                TerrainStrategy strategy = TerrainStrategy.fromName(strategyName);
+                // key are silently ignored. Layout Rework Phase 2b —
+                // terrain_strategy removed alongside the TerrainStrategy
+                // enum; surviving JSONs carrying the key are ignored too.
 
                 // Farm plot config
                 VillageTypeData.FarmPlotConfig farmPlotConfig =
@@ -124,7 +120,7 @@ public class VillageTypeRegistry
 
                 VillageTypeData typeData = new VillageTypeData(
                         type, culture, buildings,
-                        shapeProfile, farmPlotConfig, strategy, townSquareCapacity,
+                        shapeProfile, farmPlotConfig, townSquareCapacity,
                         manualTags);
 
                 // Phase 22: optional fallback_chain. JSON: an array of
@@ -183,8 +179,8 @@ public class VillageTypeRegistry
                 }
 
                 loaded.put(type, typeData);
-                LOGGER.info("Loaded village type '{}' ({} buildings, shape={}, strategy={}, tags={})",
-                        type, buildings.size(), shapeProfile.shapeType(), strategy, typeData.getTags());
+                LOGGER.info("Loaded village type '{}' ({} buildings, shape={}, tags={})",
+                        type, buildings.size(), shapeProfile.shapeType(), typeData.getTags());
 
             } catch (Exception e) {
                 LOGGER.error("Failed to load village type from {}: {}",
