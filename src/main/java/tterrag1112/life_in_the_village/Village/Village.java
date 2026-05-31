@@ -783,45 +783,31 @@ public class Village {
      * tterrag1112.life_in_the_village.Village.VillageSpawner} after planning.
      */
     public void applyLayout(
-            tterrag1112.life_in_the_village.Village.Planning.VillageLayout layout,
+            tterrag1112.life_in_the_village.Village.Planning.V2.RealizedLayout layout,
             int villageLevel) {
-        this.villageCentre = layout.getCenter();
-        this.townSquarePos = layout.getTownSquarePos();
-        this.pathHubPos    = layout.getTownSquarePos() != null
-                ? layout.getTownSquarePos()
-                : layout.getCenter();
-        this.ring1Radius   = layout.getDensity().getRing1Radius();
-        this.ring2Radius   = layout.getDensity().getRing2Radius();
+        this.villageCentre = layout.center();
+        this.townSquarePos = layout.townSquarePos();
+        this.pathHubPos    = layout.townSquarePos() != null
+                ? layout.townSquarePos()
+                : layout.center();
+        this.ring1Radius   = layout.ring1Radius();
+        this.ring2Radius   = layout.ring2Radius();
         this.currentLevel  = villageLevel;
-        this.mainGateEndpoint = layout.getMainGateEndpoint();
+        this.mainGateEndpoint = layout.mainGateEndpoint();
         // Doc 04 §"Tier scaling" — carry the layout-time plaza
         // half-extent onto the persisted Village so DecorationPass
-        // can size sub-slots without round-tripping through
-        // VillageLayout.
-        this.townSquareRadius = layout.getTownSquareRadius();
-        // Phase 17 doc 04 — carry plaza polygons + village center
-        // marker from the layout to the persisted village.
-        if (!layout.getPlazaRegions().isEmpty()) {
-            this.plazaRegions.clear();
-            this.plazaRegions.addAll(layout.getPlazaRegions());
-        }
-        this.villageCenterMarker = layout.getVillageCenterMarker();
-        // Phase 18 doc 04 — gathering points moved from TownSquareComposer
-        // (deleted) onto VillageLayout. Carry them onto the persisted
-        // Village the same way plazaRegions / villageCenterMarker do.
-        if (!layout.getGatheringPoints().isEmpty()) {
-            this.gatheringPoints.clear();
-            this.gatheringPoints.addAll(layout.getGatheringPoints());
-        }
-        for (BlockPos gp : layout.getGatePositions()) {
+        // can size sub-slots.
+        this.townSquareRadius = layout.townSquareRadius();
+        // Layout rework Phase 3a — V2 never produced plaza polygons,
+        // a village-center marker, gathering points, or a LayoutPlan
+        // (the synth VillageLayout left them empty/null), so the old
+        // copies were always no-ops. They are dropped here; the
+        // corresponding fields retain their (empty/null) defaults.
+        for (BlockPos gp : layout.gatePositions()) {
             if (!capitalGatePositions.contains(gp)) {
                 capitalGatePositions.add(gp);
             }
         }
-        // Phase 20a — persist the LayoutPlan attached during planning.
-        // Null for villages whose plan-build failed (markUnplannable path);
-        // BuildSiteFinder falls back to legacy spiral search when plan is null.
-        this.plan = layout.getPlan();
     }
 
     /**

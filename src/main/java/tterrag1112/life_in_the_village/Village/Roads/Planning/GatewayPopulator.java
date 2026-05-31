@@ -5,7 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Networking.VillageRoadsSavedData;
 import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
-import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
+import tterrag1112.life_in_the_village.Village.Planning.V2.RealizedLayout;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.RoadNode;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadGraph;
 import tterrag1112.life_in_the_village.Village.Roads.Graph.VillageRoadNode;
@@ -59,7 +59,7 @@ public final class GatewayPopulator {
      * @param village the newly-spawned village
      * @param layout  the layout produced by the village planner
      */
-    public static void populate(ServerLevel level, Village village, VillageLayout layout) {
+    public static void populate(ServerLevel level, Village village, RealizedLayout layout) {
         UUID villageId = village.getId();
         VillageRoadsSavedData roadsSaved = VillageRoadsSavedData.get(level);
         VillageRoadGraph graph = roadsSaved.getOrCreate(villageId);
@@ -112,11 +112,11 @@ public final class GatewayPopulator {
     // =========================================================================
 
     private static List<GatewayDescriptor> deriveDescriptors(Village village,
-                                                              VillageLayout layout) {
-        List<BlockPos> gates = layout.getGatePositions();
-        BlockPos mainGate = layout.getMainGateEndpoint();
+                                                              RealizedLayout layout) {
+        List<BlockPos> gates = layout.gatePositions();
+        BlockPos mainGate = layout.mainGateEndpoint();
         BlockPos center = village.getAnchorPos();
-        if (center == null) center = layout.getCenter();
+        if (center == null) center = layout.center();
         if (center == null) return List.of();
 
         if (gates.isEmpty()) {

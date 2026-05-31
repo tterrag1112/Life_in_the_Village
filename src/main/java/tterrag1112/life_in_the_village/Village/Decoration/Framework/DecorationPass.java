@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
+import tterrag1112.life_in_the_village.Village.Planning.V2.RealizedLayout;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
@@ -54,15 +54,15 @@ public final class DecorationPass {
      * @param level    server level the village lives in
      * @param village  village to decorate
      * @param data     saved data — placements are persisted here
-     * @param layout   planning-time layout (carries the road
-     *                 centerlines the emitter walks); may be null
-     *                 for runtime expansion paths that don't have
-     *                 a planning context, in which case road-side
-     *                 slots are skipped
+     * @param layout   V2 realisation record (carries the road network
+     *                 that is the future centerline source for the
+     *                 emitter); may be null for runtime expansion /
+     *                 debug paths that don't have a planning context,
+     *                 in which case road-side slots are skipped
      */
     public static void run(ServerLevel level, Village village,
                            VillageSavedData data,
-                           @Nullable VillageLayout layout) {
+                           @Nullable RealizedLayout layout) {
         if (level == null || village == null || data == null) return;
 
         long started = System.nanoTime();

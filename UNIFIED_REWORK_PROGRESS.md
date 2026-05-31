@@ -3639,3 +3639,153 @@ stray `import` of the enum anywhere; the single `new VillageTypeData(`
 call site and the single `VillageTagDeriver.derive(` call site both
 updated to the new arity; `VillageTag` retains `COASTAL`/`RIVERSIDE`/
 `MOUNTAIN`; no test source references the removed symbols.
+
+### 2026-05-31 — Layout Rework Phase 3a landed (RealizedLayout; synth bridge migration)
+
+**What shipped:** Replaced the synthetic V1 `VillageLayout` the V2
+spawner built for its post-placement consumers with a small V2-native
+record, `RealizedLayout`, and migrated the four live consumers onto it.
+This is a pure plumbing swap — **behaviour-preserving**: a spawned
+village renders identically before and after. `RealizedLayout` carries
+exactly the live consumer surface established by the read-only audit —
+`center`, `townSquarePos`, `townSquareRadius`, `mainGateEndpoint`
+(nullable), `gatePositions`, `ring1Radius`, `ring2Radius`, plus the V2
+`RoadNetwork` (D1(b), the future road-side-decoration centerline
+source). The adapter now builds it in `buildRealizedLayout(siteCtx,
+roads)` with field sources that mirror the deleted `buildSynthLayout`
+one-for-one (anchor → center/townSquarePos; `FALLBACK_TOWN_SQUARE_RADIUS`
+→ townSquareRadius; spineEnd → mainGateEndpoint; spineEnd + spineStart +
+cross-street endpoints → gatePositions; `LayoutDensityProfile
+.forLevel(1)` → ring radii).
+
+The per-building `LayoutSlot` synthesis (`synthSlot` + `addForced`) was
+confirmed dead (nothing reads `getAllSlots()` under V2) and is deleted,
+along with the synth's now-dead `setDebugRoadGraph(synth.getRoadGraph())`
+hand-off (the synth road graph was always empty) and the redundant
+`setMainGateEndpoint(synth.getMainGateEndpoint())` call (`applyLayout`
+already sets the same value). `VillageLayout`/`LayoutSlot`/`PlacementSlot`
+are NOT deleted — after this phase they are simply unreferenced by live
+spawn code; Phase 3b removes them.
+
+Road-side decoration stays dormant exactly as today. `DecorationPass.run`
+keeps its `@Nullable` layout param (the second caller,
+`DecorationDebugCommand`, still passes `null`), and
+`DecorationSlotEmitter.emitRoadSide` keeps its `if (layout == null)
+return;` guard, then returns dormant with a `TODO` pointing at
+`RealizedLayout.roadNetwork()` as the future centerline source — parity
+with the pre-3a synth, whose centerlines were always empty.
+
+**Surface area:** 1 new file in `Village/Planning/V2/` + 6 edits to
+existing files + 0 file deletions (orphan deletions are method-level,
+listed below).
+
+**Files added:**
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/RealizedLayout.java`
+
+**Files modified:**
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` — build
+  `RealizedLayout`; delete `buildSynthLayout` + `synthSlot` + the
+  `addForced` loop writes; drop `setDebugRoadGraph` + redundant
+  `setMainGateEndpoint`; route the four consumers + `runDownstream` to
+  `RealizedLayout`; prune now-unused imports (`VillageLayout`,
+  `LayoutSlot`, `TerrainAnalyzer`, `TerrainProfile`).
+- `.../Village/Village.java` — `applyLayout(VillageLayout, int)` →
+  `applyLayout(RealizedLayout, int)`; drop the always-empty/null
+  plaza/marker/gathering/plan copies.
+- `.../Village/Roads/Planning/GatewayPopulator.java` — `populate` +
+  `deriveDescriptors` take `RealizedLayout`.
+- `.../Village/Decoration/VillageDecorator.java` — live 5-arg
+  `decorateVillage` + `resolveSquareCenter` take `RealizedLayout`;
+  **deleted** the orphaned 4-arg `decorateVillage` overload (confirmed
+  no callers).
+- `.../Village/Decoration/Framework/DecorationPass.java` — `run`'s
+  `@Nullable VillageLayout` param → `@Nullable RealizedLayout`.
+- `.../Village/Decoration/Framework/DecorationSlotEmitter.java` —
+  `Context.layout` → `@Nullable RealizedLayout` (both constructors);
+  `emitRoadSide` neutralised to dormant + TODO; **deleted** the
+  orphaned `contextWindow` helper (only the removed road-side body
+  used it).
+
+**Files deleted:** None (deletions are method-level: `buildSynthLayout`,
+`synthSlot`, the 4-arg `decorateVillage`, `contextWindow`).
+
+**Deviations from prompt:**
+- **Kept the `int villageLevel` parameter on `applyLayout`.** The prompt
+  wrote `applyLayout(RealizedLayout)`, but `RealizedLayout`'s field list
+  (deliberately) has no village-level field, and `applyLayout` must keep
+  setting `currentLevel = villageLevel` (= `BUILDING_LEVEL`/1) for
+  parity. Read the prompt's `applyLayout(RealizedLayout)` as "swap the
+  layout type"; the orthogonal `int` stays. Signature is now
+  `applyLayout(RealizedLayout, int)`.
+- **Deviation 1 (debug caller) needed no code change.** Retyping
+  `DecorationPass.run`'s param to `@Nullable RealizedLayout` was enough;
+  `DecorationDebugCommand:272` (and its `Context(village, data, null)` at
+  `:171`) pass `null` literals that fit the new type unchanged.
+- **Deviation 2 (4-arg overload) resolved as deletion.** Grep confirmed
+  the 4-arg `decorateVillage` has zero callers (only the 5-arg is called
+  live, from the adapter), so it was deleted in the simplification sweep
+  per the prompt's instruction.
+- **Removed an extra orphan beyond the prompt:** `contextWindow` in
+  `DecorationSlotEmitter` became unreferenced once `emitRoadSide` went
+  dormant (it was the only caller), so it was deleted in the same sweep.
+
+**Simplification sweep (acted-on orphans):** 4-arg `decorateVillage`
+(deleted), `contextWindow` (deleted), `buildSynthLayout`/`synthSlot`
+(deleted with the migration). Two Village setters are now unreferenced
+by live code but **left in place** as they belong to the Phase 3b
+deletion pass: `Village.setDebugRoadGraph` (its `RoadGraph`/debug-field
+disposition is explicitly Phase 3b) and `Village.setMainGateEndpoint`
+(public setter; left for the 3b sweep).
+
+**Out-of-scope but flagged:**
+- `VillageLayout` / `LayoutSlot` / `PlacementSlot` deletion, the
+  `Plaza.civicSlots` strip, and the dead-V1 sweep
+  (`VillageRoadNetwork.buildInitialNetwork`, V1
+  `InternalRoadCommitter.commit` + helpers) → **Phase 3b** (now fully
+  unreferenced by live spawn code; `VillageRoadNetwork:128` still reads
+  `layout.getRoadGraph()` on the V1 type, untouched here).
+- Turning road-side decoration on under V2 (walking
+  `RealizedLayout.roadNetwork()` centerlines) → the separate decoration
+  effort; `emitRoadSide` carries the TODO.
+- Populating a real `LayoutPlan` from V2 → future decision; `applyLayout`
+  simply stops copying the always-null `getPlan()`.
+- `Village.setDebugRoadGraph` / `setMainGateEndpoint` now-unused public
+  methods → Phase 3b (see sweep above).
+
+**Cumulative pending verification:** Detour A (Prompt A + Prompt B),
+Layout Rework Phase 1, Phase 2, Phase 2b (which additionally needs a
+datagen re-run before its preserved tags take effect), and this Phase 3a
+remain pending in-world smoke test.
+
+**Smoke test plan (user-executable):**
+1. Build the mod (deferred in sandbox — see Build verification).
+2. In-world, spawn a village of each inclination/tier you normally test
+   (e.g. `/building village spawn AGRICULTURAL CITY`, a CIVIC type, a
+   HAMLET). For each, confirm — **identical to before 3a** — the town
+   square location, the gateways (count + positions), the internal
+   roads, and the decoration. Nothing should look different; this is a
+   pure plumbing swap.
+3. Confirm `GatewayPopulator` still produces one PRIMARY gateway at the
+   spine end plus SIDE gateways at each cross-street end (watch the
+   `[GatewayPopulator] village '...' got N gateway(s)` log line — N
+   should match pre-3a for the same seed/site).
+4. Confirm no `ROAD_SIDE` decorations appear (road-side stays dormant,
+   same as today) and that the `DecorationPass: village ... — N slots
+   emitted` count is unchanged from before.
+5. Reload the world and confirm the village still loads (no codec/field
+   regression — `RealizedLayout` is transient; nothing new persists).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — confirmed HTTP 403 on
+`net/neoforged/neoform-runtime/2.0.18/neoform-runtime-2.0.18.pom`). Full
+manual static review completed in its place: tree-wide `grep` confirms
+zero live references to `buildSynthLayout`/`synthSlot`/`contextWindow`/
+the synth `VillageLayout` outside explanatory comments; all four consumer
+entry points + `runDownstream` route `RealizedLayout`; the only remaining
+`VillageLayout` mentions in the four migrated consumers are a TODO
+comment and a `Planning.*` wildcard import; `RealizedLayout`'s 8-arg
+constructor call in the adapter matches the record's component order and
+types; pruned adapter imports are confirmed unused elsewhere in the file
+(`TerrainAnalyzer`/`TerrainProfile`/`LayoutSlot`/`VillageLayout`), while
+`Identifier`/`Footprint`/`Rotation`/`Style`/`LayoutDensityProfile` are
+retained because live code still uses them.

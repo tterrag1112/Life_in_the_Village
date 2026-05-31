@@ -6,7 +6,7 @@ import org.jetbrains.annotations.Nullable;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
-import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
+import tterrag1112.life_in_the_village.Village.Planning.V2.RealizedLayout;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.ArrayList;
@@ -77,13 +77,13 @@ public final class DecorationSlotEmitter {
      *  overrides the legacy hardcoded density constants; passing
      *  {@code null} leaves emission at {@link DecorationDensityProfile#LEGACY_DEFAULT}. */
     public record Context(Village village, VillageSavedData data,
-                          @Nullable VillageLayout layout,
+                          @Nullable RealizedLayout layout,
                           @Nullable DecorationDensityProfile density) {
 
         /** Backwards-compat constructor — keeps pre-B2.2 callers
          *  (debug commands, tests) compiling with the legacy density. */
         public Context(Village village, VillageSavedData data,
-                       @Nullable VillageLayout layout) {
+                       @Nullable RealizedLayout layout) {
             this(village, data, layout, null);
         }
 
@@ -131,61 +131,17 @@ public final class DecorationSlotEmitter {
 
     private static void emitRoadSide(Context ctx, @Nullable BlockPos centre,
                                      List<DecorationSlot> out) {
-        if (ctx.layout() == null) return; // no road centerlines reachable
-        DecorationDensityProfile density = ctx.densityOrDefault();
-        int sampleStep = Math.max(1, density.roadSideSampleStep());
-        int sideOffset = density.roadSideOffset();
-        boolean alternate = false;
-        // VillageLayout backs centerlines with an IdentityHashMap whose
-        // iteration order is JVM-dependent. Sort by the first point of
-        // each centerline so cross-session determinism holds (doc 01
-        // §"Behavior contract": "same seed → same decorations").
-        List<List<BlockPos>> centerlines = new ArrayList<>(
-                ctx.layout().getAllCenterlines());
-        centerlines.sort((a, b) -> {
-            if (a == null || a.isEmpty()) return b == null || b.isEmpty() ? 0 : -1;
-            if (b == null || b.isEmpty()) return 1;
-            BlockPos pa = a.get(0);
-            BlockPos pb = b.get(0);
-            int dx = Integer.compare(pa.getX(), pb.getX());
-            if (dx != 0) return dx;
-            int dz = Integer.compare(pa.getZ(), pb.getZ());
-            if (dz != 0) return dz;
-            return Integer.compare(pa.getY(), pb.getY());
-        });
-        for (List<BlockPos> centerline : centerlines) {
-            if (centerline == null || centerline.size() < 2) continue;
-            for (int i = sampleStep;
-                 i < centerline.size() - 1;
-                 i += sampleStep) {
-                BlockPos on = centerline.get(i);
-                BlockPos prev = centerline.get(Math.max(0, i - 1));
-                BlockPos next = centerline.get(Math.min(centerline.size() - 1, i + 1));
-                int headX = Integer.signum(next.getX() - prev.getX());
-                int headZ = Integer.signum(next.getZ() - prev.getZ());
-                if (headX == 0 && headZ == 0) { headX = 1; headZ = 0; }
-                int perpX = -headZ, perpZ = headX;
-
-                for (int side : new int[]{+1, -1}) {
-                    BlockPos pos = on.offset(perpX * sideOffset * side, 0,
-                            perpZ * sideOffset * side);
-                    DecorationTag tag = alternate
-                            ? DecorationTag.ROAD_SIDE_LARGE
-                            : DecorationTag.ROAD_SIDE_SMALL;
-                    Direction facing = directionFromOffset(perpX * side, perpZ * side);
-                    int budget = tag == DecorationTag.ROAD_SIDE_LARGE ? 3 : 1;
-                    out.add(new DecorationSlot(
-                            slotIdFor(ctx, "ROAD_SIDE", tag.name(), pos, side),
-                            pos, facing,
-                            EnumSet.of(tag),
-                            budget,
-                            qualityFromDistance(pos, centre),
-                            null,
-                            contextWindow(centerline, i, 4)));
-                    alternate = !alternate;
-                }
-            }
-        }
+        if (ctx.layout() == null) return; // no road network reachable (debug / expansion path)
+        // Layout rework Phase 3a (D1(b)): road-side decoration is dormant
+        // under V2 — parity with the pre-3a synth bridge, whose centerlines
+        // were always empty, so this algorithm emitted nothing. RealizedLayout
+        // now carries the V2 RoadNetwork; ctx.layout().roadNetwork() is the
+        // future centerline source. The separate decoration effort wires
+        // RoadNetwork centerline walking here to turn road-side slots on;
+        // until then this stays dormant so spawned villages render identically.
+        // TODO(decoration effort): walk ctx.layout().roadNetwork() centerlines
+        // and emit ROAD_SIDE_SMALL / ROAD_SIDE_LARGE slots (see git history of
+        // this method for the prior VillageLayout-centerline implementation).
     }
 
     // ── A.2 Building gaps ────────────────────────────────────────────────
@@ -423,13 +379,6 @@ public final class DecorationSlotEmitter {
         double t = Math.min(1.0, d / QUALITY_DECAY_RANGE);
         return Math.max(QUALITY_MIN,
                 (int) Math.round(QUALITY_MAX - (QUALITY_MAX - QUALITY_MIN) * t));
-    }
-
-    private static List<BlockPos> contextWindow(List<BlockPos> centerline,
-                                                int i, int radius) {
-        int from = Math.max(0, i - radius);
-        int to = Math.min(centerline.size(), i + radius + 1);
-        return List.copyOf(centerline.subList(from, to));
     }
 
     private static Direction directionFromOffset(int dx, int dz) {

@@ -25,9 +25,6 @@ import tterrag1112.life_in_the_village.Village.VillageTypeRegistry;
 import net.minecraft.world.item.DyeColor;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
 import tterrag1112.life_in_the_village.Village.Planning.LayoutDensityProfile;
-import tterrag1112.life_in_the_village.Village.Planning.LayoutSlot;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainAnalyzer;
-import tterrag1112.life_in_the_village.Village.Planning.Terrain.TerrainProfile;
 import tterrag1112.life_in_the_village.Cultures.Culture;
 import tterrag1112.life_in_the_village.Cultures.CultureRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
@@ -57,7 +54,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.RoadPainter;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.TerrainAdapter;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.VegetationClearer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.ViabilityValidator;
-import tterrag1112.life_in_the_village.Village.Planning.VillageLayout;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.Village.VillageSpawner;
 
@@ -66,17 +62,16 @@ import java.util.*;
 /**
  * Track A1a — V2 branch of {@link VillageSpawner#spawnVillage}. Runs
  * the full V2 planner stack (Layers 1-4), executes the V2 Layer-5
- * sub-components inline so building references can be captured,
- * synthesizes a minimal {@link VillageLayout} compatible with the V1
- * downstream chain, and runs the V1 post-placement pipeline
- * (inhabitant population, decoration, trade routes, sim baseline,
- * guild bootstrap, history, initial laws).
+ * sub-components inline so building references can be captured, builds
+ * a V2-native {@link RealizedLayout} for the post-placement consumers,
+ * and runs the post-placement pipeline (inhabitant population,
+ * decoration, trade routes, sim baseline, guild bootstrap, history,
+ * initial laws).
  *
- * <p>The synthesized {@link VillageLayout} is intentionally sparse:
- * V2 doesn't produce plazas, sectors, farm plots, road graphs, or
- * gate positions, and downstream consumers must tolerate the absence.
- * Each downstream call is wrapped so a single failure does not abort
- * the whole spawn.
+ * <p>The {@link RealizedLayout} carries exactly the live consumer
+ * surface (center / town square / gate positions / ring radii / road
+ * network). Each downstream call is wrapped so a single failure does
+ * not abort the whole spawn.
  *
  * <p>The {@code villageType} argument from the V1 entry point is
  * recorded on the resulting {@link Village} but is otherwise ignored
@@ -273,12 +268,12 @@ public final class V2VillageSpawnerAdapter {
             PadBuilder.buildPad(level, d);
         }
 
-        // ── Build synth VillageLayout + Village + register ──────────────
-        VillageLayout synth = buildSynthLayout(level, origin, siteCtx, roads);
+        // ── Build RealizedLayout + Village + register ───────────────────
+        RealizedLayout realized = buildRealizedLayout(siteCtx, roads);
         Village village = new Village(villageName, villageType);
-        village.applyLayout(synth, BUILDING_LEVEL);
-        village.setDebugRoadGraph(synth.getRoadGraph());
-        village.setMainGateEndpoint(synth.getMainGateEndpoint());
+        // applyLayout sets center / town square / ring radii / gate
+        // positions and the main-gate endpoint from the realised layout.
+        village.applyLayout(realized, BUILDING_LEVEL);
         // B2.8 — persist the V2-derived inclination so post-spawn
         // commands and reload-time reads can branch on it without
         // re-running SiteAnalyzer.
@@ -295,15 +290,15 @@ public final class V2VillageSpawnerAdapter {
         data.addVillage(village);
         VillageRoadsSavedData.get(level).getOrCreate(village.getId());
 
-        // Track C2: register multi-gateway dock nodes. Reads gate
-        // positions populated above by buildSynthLayout (spine
-        // endpoints + cross-street outer endpoints) and creates a
-        // GATEWAY node + linked TERMINUS in the world graph for each.
-        // Existing single-dock saves and pre-C2 villages stay
-        // single-gateway because their gatePositions are empty.
+        // Track C2: register multi-gateway dock nodes. Reads the gate
+        // positions built into the RealizedLayout (spine endpoints +
+        // cross-street outer endpoints) and creates a GATEWAY node +
+        // linked TERMINUS in the world graph for each. Existing
+        // single-dock saves and pre-C2 villages stay single-gateway
+        // because their gatePositions are empty.
         guard("GatewayPopulator", () ->
                 tterrag1112.life_in_the_village.Village.Roads.Planning
-                        .GatewayPopulator.populate(level, village, synth));
+                        .GatewayPopulator.populate(level, village, realized));
         guard("InternalRoadCommitter", () ->
                 tterrag1112.life_in_the_village.Village.Roads.Planning
                         .InternalRoadCommitter.commitFromV2(
@@ -435,9 +430,6 @@ public final class V2VillageSpawnerAdapter {
                                     placedBuilding.getRotation());
                     data.addAdjunctPlot(plot);
                 }
-
-                LayoutSlot slot = synthSlot(b, structureId);
-                synth.addForced(slot);
 
                 placedOk++;
             } catch (Exception e) {
@@ -607,8 +599,8 @@ public final class V2VillageSpawnerAdapter {
             }
         }
 
-        // ── V1 downstream, each section guarded ─────────────────────────
-        runDownstream(level, village, data, synth, footprint,
+        // ── Post-placement downstream, each section guarded ─────────────
+        runDownstream(level, village, data, realized, footprint,
                 placedBuildingsAll, rng);
 
         long elapsed = System.currentTimeMillis() - t0;
@@ -721,25 +713,21 @@ public final class V2VillageSpawnerAdapter {
     }
 
     /**
-     * Builds the synthesized {@link VillageLayout} V1 downstream
+     * Builds the V2-native {@link RealizedLayout} the post-placement
      * consumers see. Center / town-square position is the V2 anchor;
-     * main-gate endpoint is the V2 spine end. Plaza, sectors, farm
-     * plots, gate positions, and the V1 RoadGraph stay at their
-     * defaults (empty / null) — downstream calls are guarded
-     * individually below.
+     * main-gate endpoint is the V2 spine end (nullable); gate positions
+     * are the spine endpoints + cross-street outer endpoints; ring
+     * radii come from {@link LayoutDensityProfile}; the road network is
+     * carried through for the future road-side decoration source.
+     *
+     * <p>Field sources mirror the former synth {@code VillageLayout}
+     * exactly, so a spawned village renders identically.</p>
      */
-    private static VillageLayout buildSynthLayout(ServerLevel level,
-                                                  BlockPos origin,
-                                                  SiteContext siteCtx,
-                                                  RoadNetwork roads) {
-        TerrainProfile terrain = TerrainAnalyzer.analyze(level, origin);
+    private static RealizedLayout buildRealizedLayout(SiteContext siteCtx,
+                                                      RoadNetwork roads) {
         LayoutDensityProfile density = LayoutDensityProfile.forLevel(BUILDING_LEVEL);
-        VillageLayout layout = new VillageLayout(terrain, density);
-        layout.setCenter(siteCtx.anchor());
-        layout.setTownSquarePos(siteCtx.anchor());
-        layout.setTownSquareRadius(FALLBACK_TOWN_SQUARE_RADIUS);
+        BlockPos anchor = siteCtx.anchor();
         BlockPos gate = roads.skeleton().spineEnd();
-        if (gate != null) layout.setMainGateEndpoint(gate);
 
         // Track C2: expose the V2 spine endpoints + cross-street outer
         // endpoints as gate positions so GatewayPopulator can register
@@ -751,47 +739,28 @@ public final class V2VillageSpawnerAdapter {
         // empty), so spineEnd is added here too even though it's also
         // the mainGateEndpoint — equality with mainGate flags it
         // PRIMARY inside the loop.
-        if (gate != null) layout.addGatePosition(gate);
+        List<BlockPos> gates = new ArrayList<>();
+        if (gate != null) gates.add(gate);
         BlockPos spineStart = roads.skeleton().spineStart();
         if (spineStart != null && !spineStart.equals(gate)) {
-            layout.addGatePosition(spineStart);
+            gates.add(spineStart);
         }
         for (var cs : roads.skeleton().crossStreets()) {
             // Each cross street contributes its two outer endpoints
             // (the spine junction is interior, not a gateway).
-            if (cs.start() != null) layout.addGatePosition(cs.start());
-            if (cs.end()   != null) layout.addGatePosition(cs.end());
+            if (cs.start() != null) gates.add(cs.start());
+            if (cs.end()   != null) gates.add(cs.end());
         }
-        return layout;
-    }
 
-    /**
-     * Synthesizes a {@link LayoutSlot} from a V2 {@link
-     * PlacedBuilding}. Footprint dimensions come from the V2 record;
-     * structure path is null because V2 doesn't produce one (V1
-     * downstream tolerates null via {@code CultureResolver
-     * .parseLegacyTypeLevel} returning null and defaulting to
-     * level=1).
-     */
-    private static LayoutSlot synthSlot(PlacedBuilding b, Identifier structureId) {
-        Footprint fp = b.footprint();
-        int rawW = fp.width();
-        int rawL = fp.length();
-        int rotW = rawW, rotL = rawL;
-        Rotation rot = b.rotation();
-        if (rot == Rotation.CLOCKWISE_90 || rot == Rotation.COUNTERCLOCKWISE_90) {
-            rotW = rawL;
-            rotL = rawW;
-        }
-        int radius = Math.max(rotW, rotL) / 2;
-        LayoutSlot slot = new LayoutSlot(b.centre(), b.type(),
-                structureId != null ? structureId.toString() : null,
-                radius, rot);
-        slot.setFootprint(rotW, rotL);
-        slot.setVariantId(b.variantId());
-        slot.setStyle(Style.RURAL);
-        slot.setPadY(b.centre().getY());
-        return slot;
+        return new RealizedLayout(
+                anchor,                      // center
+                anchor,                      // townSquarePos
+                FALLBACK_TOWN_SQUARE_RADIUS, // townSquareRadius
+                gate,                        // mainGateEndpoint (nullable)
+                gates,                       // gatePositions
+                density.getRing1Radius(),
+                density.getRing2Radius(),
+                roads);                      // roadNetwork (D1(b))
     }
 
     /**
@@ -823,17 +792,16 @@ public final class V2VillageSpawnerAdapter {
     }
 
     /**
-     * Runs the V1 post-placement pipeline. Each section is wrapped
-     * because the synth {@link VillageLayout} omits state (plazas,
-     * V1 road graph, sectors, farm plots, features) that some
-     * consumers expect. Failure of one section logs and continues;
-     * the goal is "downstream runs without aborting the spawn,"
-     * not feature parity.
+     * Runs the post-placement pipeline. Each section is wrapped
+     * because the {@link RealizedLayout} omits state (plazas, sectors,
+     * farm plots, features) that some consumers expect. Failure of one
+     * section logs and continues; the goal is "downstream runs without
+     * aborting the spawn," not feature parity.
      */
     private static void runDownstream(ServerLevel level,
                                       Village village,
                                       VillageSavedData data,
-                                      VillageLayout synth,
+                                      RealizedLayout realized,
                                       BuildingFootprint footprint,
                                       Map<BuildingType, List<Building>> placedBuildingsAll,
                                       Random rng) {
@@ -849,13 +817,13 @@ public final class V2VillageSpawnerAdapter {
         guard("VillageDecorator", () ->
                 tterrag1112.life_in_the_village.Village.Decoration
                         .VillageDecorator.decorateVillage(level, village, data,
-                                synth, footprint));
+                                realized, footprint));
         guard("AdjunctPlotRealiser", () ->
                 tterrag1112.life_in_the_village.Village.Decoration.Adjunct
                         .AdjunctPlotRealiser.run(level, village, data));
         guard("DecorationPass", () ->
                 tterrag1112.life_in_the_village.Village.Decoration.Framework
-                        .DecorationPass.run(level, village, data, synth));
+                        .DecorationPass.run(level, village, data, realized));
         guard("ParkRenderer", () ->
                 tterrag1112.life_in_the_village.Village.Decoration.Parks
                         .ParkRenderer.run(level, village, data));

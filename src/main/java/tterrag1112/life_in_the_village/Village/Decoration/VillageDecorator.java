@@ -12,6 +12,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.*;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.RoadRouter;
 import tterrag1112.life_in_the_village.Village.Planning.*;
+import tterrag1112.life_in_the_village.Village.Planning.V2.RealizedLayout;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -34,7 +35,7 @@ public class VillageDecorator {
     public static void decorateVillage(ServerLevel level,
                                        Village village,
                                        VillageSavedData data,
-                                       VillageLayout layout,
+                                       RealizedLayout layout,
                                        BuildingFootprint footprint) {
         List<Building> buildings = village.getBuildingIds().stream()
                 .map(data::getBuildingById)
@@ -176,19 +177,6 @@ public class VillageDecorator {
 
         // ── Step 13: Guard patrol route ────────────────────────────────────────
         VillagePatrolRouteBuilder.build(level, village, data);
-    }
-
-    /**
-     * Legacy overload — builds footprint from village data.
-     * Used by callers that don't have a pre-built footprint.
-     */
-    public static void decorateVillage(ServerLevel level,
-                                       Village village,
-                                       VillageSavedData data,
-                                       VillageLayout layout) {
-        BuildingFootprint footprint =
-                BuildingFootprint.fromVillage(village, data);
-        decorateVillage(level, village, data, layout, footprint);
     }
 
     // =========================================================================
@@ -468,13 +456,13 @@ public class VillageDecorator {
     // =========================================================================
 
     private static BlockPos resolveSquareCenter(ServerLevel level,
-                                                VillageLayout layout,
+                                                RealizedLayout layout,
                                                 List<Building> buildings) {
-        if (layout != null && layout.getTownSquarePos() != null) {
-            return layout.getTownSquarePos();
+        if (layout != null && layout.townSquarePos() != null) {
+            return layout.townSquarePos();
         }
-        if (layout != null && layout.getCenter() != null) {
-            return layout.getCenter();
+        if (layout != null && layout.center() != null) {
+            return layout.center();
         }
         // Fallback: centroid of all buildings
         int cx = 0, cz = 0;
