@@ -15,6 +15,9 @@ import java.util.stream.Collectors;
 
 public class CaravanGoodsSelector {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger(CaravanGoodsSelector.class);
+
     // Minimum stack size to be considered surplus
     private static final int SURPLUS_THRESHOLD = 32;
     // Maximum number of different goods a caravan carries
@@ -158,37 +161,9 @@ public class CaravanGoodsSelector {
                         Map.Entry::getValue));
     }
 
-    private static Set<net.minecraft.world.item.Item>
-    getVillageNeeds(ServerLevel level,
-                    Village village,
-                    VillageSavedData data) {
-        Map<net.minecraft.world.item.Item, Integer> totals =
-                new HashMap<>();
-
-        village.getBuildingIds().stream()
-                .map(data::getBuildingById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .forEach(building -> {
-                    for (var inv : BuildingStorageAccess
-                            .findInventories(level, building)) {
-                        for (int i = 0; i < inv
-                                .getContainerSize(); i++) {
-                            ItemStack stack = inv.getItem(i);
-                            if (stack.isEmpty()) continue;
-                            totals.merge(stack.getItem(),
-                                    stack.getCount(),
-                                    Integer::sum);
-                        }
-                    }
-                });
-
-        // Items below threshold are considered needs
-        return totals.entrySet().stream()
-                .filter(e -> e.getValue() < SURPLUS_THRESHOLD)
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
-    }
+    // Phase 4b — getVillageNeeds (a dead inventory-scan twin of
+    // getVillageSurpluses) deleted: zero callers; the live need read is
+    // buildDestinationDeficits / buildShoppingList off VillageNeed.
 
     private static List<ItemStack> fallbackGoods() {
         // Default goods if no surplus found
@@ -237,10 +212,7 @@ public class CaravanGoodsSelector {
                     level, stockpile, delivery);
         }
 
-        System.out.println("CaravanGoodsSelector: delivered "
-                + goods.size() + " item types to "
-                + dest.getName()
-                + " at " + (int)(efficiency * 100)
-                + "% efficiency");
+        LOGGER.debug("[Caravan] delivered {} item type(s) to {} at {}% efficiency",
+                goods.size(), dest.getName(), (int) (efficiency * 100));
     }
 }

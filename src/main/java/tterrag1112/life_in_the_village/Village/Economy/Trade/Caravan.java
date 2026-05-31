@@ -199,63 +199,10 @@ public class Caravan implements TravellingGroup {
                 shoppingList);
     }
 
-    // -------------------------------------------------------------------------
-    // Simulation tick
-    // -------------------------------------------------------------------------
-
-    /**
-     * Advances caravan progress when unobserved.
-     * Returns true if dirty.
-     */
-    public boolean tick(long currentTick,
-                        double speedMultiplier) {
-        if (isSpawned) return false;
-        if (state == CaravanState.FAILED) return false;
-        if (state == CaravanState.DELIVERING) return false;
-
-        // speedMultiplier is now a bonus — 1.0 minimum
-        double increment = BASE_PROGRESS_PER_TICK
-                * Math.max(1.0, speedMultiplier);
-        progress = Math.min(1.0, progress + increment);
-
-        if (progress >= 1.0) {
-            if (state == CaravanState.OUTBOUND) {
-                state    = CaravanState.DELIVERING;
-                progress = 1.0;
-            } else if (state == CaravanState.RETURNING) {
-                progress = 1.0;
-            }
-            return true;
-        }
-
-        return true;
-    }
-
-    private static final double BASE_PROGRESS_PER_TICK = 0.002;
-
-    /**
-     * Gets the current world position based on progress
-     * along the road path.
-     */
-    public BlockPos getWorldPosition(
-            List<BlockPos> roadBlocks) {
-        if (roadBlocks.isEmpty()) return null;
-
-        if (state == CaravanState.RETURNING) {
-            // Returning — traverse road in reverse
-            int index = (int)((1.0 - progress)
-                    * (roadBlocks.size() - 1));
-            index = Math.max(0, Math.min(
-                    roadBlocks.size() - 1, index));
-            return roadBlocks.get(index);
-        }
-
-        int index = (int)(progress
-                * (roadBlocks.size() - 1));
-        index = Math.max(0, Math.min(
-                roadBlocks.size() - 1, index));
-        return roadBlocks.get(index);
-    }
+    // Phase 4b — the simulation-tick + world-position duplicates that
+    // lived here were dead: the live path is TravellingGroupEngine.tick /
+    // computePosition, and BASE_PROGRESS_PER_TICK is the engine's constant.
+    // Deleted (zero callers; not part of the TravellingGroup contract).
 
     // -------------------------------------------------------------------------
     // Getters / setters

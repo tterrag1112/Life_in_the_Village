@@ -5,7 +5,6 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
@@ -177,8 +176,8 @@ public class CaravanSavedData extends SavedData {
         // fresh merchant and log the issue. This keeps caravans working
         // even if pooling fails; Phase 7d will make the pool more robust.
         if (merchant == null) {
-            System.out.println("CaravanSavedData: pooled merchant " + principalId
-                    + " unavailable — spawning fresh merchant");
+            LOGGER.warn("[Caravan] pooled merchant {} unavailable — spawning fresh merchant",
+                    principalId);
             merchant = ModEntities.TOWNSPERSON.get()
                     .create(level, EntitySpawnReason.NATURAL);
             if (merchant != null) {
@@ -348,10 +347,7 @@ public class CaravanSavedData extends SavedData {
         caravan.setProgress(0.0);
         caravan.setState(Caravan.CaravanState.RETURNING);
 
-        System.out.println("CaravanSavedData: caravan "
-                + caravan.getCaravanId().toString()
-                .substring(0, 8)
-                + " delivered goods, now returning");
+        LOGGER.debug("[Caravan] {} delivered goods, now returning", shortId(caravan));
     }
 
     // -------------------------------------------------------------------------
@@ -442,10 +438,9 @@ public class CaravanSavedData extends SavedData {
                         });
             }
 
-            System.out.println("CaravanSavedData: dispatched caravan from "
-                    + originVillage.getName() + " to " + destVillage.getName()
-                    + " with principal " + principalId.toString().substring(0, 8)
-                    + ", " + goods.size() + " goods, " + guardCount + " guards");
+            LOGGER.debug("[Caravan] export dispatched: {} -> {} (principal {}, {} goods, {} guards)",
+                    originVillage.getName(), destVillage.getName(),
+                    principalId.toString().substring(0, 8), goods.size(), guardCount);
         }
     }
 
@@ -594,15 +589,7 @@ public class CaravanSavedData extends SavedData {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private static boolean isPlayerNearby(ServerLevel level,
-                                          BlockPos pos,
-                                          int radius) {
-        for (ServerPlayer player : level.players()) {
-            if (player.blockPosition().closerThan(pos, radius))
-                return true;
-        }
-        return false;
-    }
+    // Phase 4b — isPlayerNearby deleted (zero callers; dead private).
 
     public void addCaravan(Caravan caravan) {
         caravans.put(caravan.getCaravanId(), caravan);
@@ -627,11 +614,17 @@ public class CaravanSavedData extends SavedData {
         setDirty();
     }
     /**
-     * Pays the caravan merchant a profit based on the trade efficiency and
-     * the approximate value of goods delivered.
+     * Phase 4b — pays the export merchant for the surplus delivered to the
+     * destination, settled through the same per-village / taxed path as 4a.
      *
-     * Profit = sum(item base prices) * efficiency * PROFIT_MARGIN
-     * Paid directly into the merchant entity's coin inventory.
+     * <p>The export sells its cargo where it's needed (dear): the merchant
+     * is paid the <b>destination's</b> per-village sell price
+     * ({@code getDynamicSellPrice}) for the quantity that actually arrived
+     * (cargo × efficiency, matching {@link CaravanGoodsSelector#deliverGoods}),
+     * via {@code settlePurchase(buyer = none /*destination demand*&#47;,
+     * endpoint = merchant, village = dest)} so the destination's 1b market
+     * tax applies and the merchant is credited the proceeds. Replaces the
+     * pre-1b flat base-price × 0.15 treasury-withdraw + raw mint.
      */
     private void payMerchantProfit(Caravan caravan, ServerLevel level,
                                    VillageSavedData villageData,
@@ -641,28 +634,32 @@ public class CaravanSavedData extends SavedData {
         var entity = level.getEntity(caravan.getRoster().getPrincipalId());
         if (!(entity instanceof TownspersonMob merchant)) return;
 
-        long totalValue = caravan.getGoods().stream()
-                .mapToLong(stack -> {
-                    long base = tterrag1112.life_in_the_village
-                            .Village.Economy.VillageEconomy
-                            .getBasePrice(stack.getItem());
-                    return base * stack.getCount();
-                })
-                .sum();
+        Village dest = villageData.getVillageById(caravan.getDestVillageId()).orElse(null);
+        if (dest == null) return;
 
-        if (totalValue <= 0) return;
+        long proceeds = 0;
+        for (ItemStack stack : caravan.getGoods()) {
+            if (stack.isEmpty()) continue;
+            int deliveredQty = (int) (stack.getCount() * efficiency);
+            if (deliveredQty <= 0) continue;
+            long unit = tterrag1112.life_in_the_village.Village.Economy.Currency
+                    .MarketPriceHelper.getDynamicSellPrice(level, dest, stack.getItem());
+            proceeds += unit * deliveredQty;
+        }
+        if (proceeds <= 0) return;
 
-        long profit = Math.max(1L, Math.round(totalValue * 0.15 * efficiency));
+        // Destination "buys" the surplus: tax credits the dest treasury, the
+        // merchant is credited the sale proceeds. (Goods themselves are
+        // deposited separately by deliverGoods.)
+        tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy.settlePurchase(
+                tterrag1112.life_in_the_village.Village.Economy.Currency
+                        .SettlementParty.none(),
+                tterrag1112.life_in_the_village.Village.Economy.Currency
+                        .SettlementParty.npc(merchant),
+                CurrencyValue.of(proceeds), dest, level, villageData);
 
-        // Withdraw from destination village treasury
-        villageData.getVillageById(caravan.getDestVillageId())
-                .ifPresent(v -> v.withdrawFromTreasury(profit));
-
-        merchant.receive(CurrencyValue.of(profit));
-
-        System.out.println("CaravanSavedData: merchant "
-                + merchant.getNpcName() + " earned " + profit
-                + " bronze profit from delivery");
+        LOGGER.debug("[Caravan] export {} paid merchant {} {} bronze (dest price, taxed)",
+                shortId(caravan), merchant.getNpcName(), proceeds);
     }
 
     // =========================================================================

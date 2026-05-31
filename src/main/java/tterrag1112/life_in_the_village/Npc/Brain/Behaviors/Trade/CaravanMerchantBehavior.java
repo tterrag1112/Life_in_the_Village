@@ -22,6 +22,9 @@ import java.util.UUID;
 
 public class CaravanMerchantBehavior extends Behavior<TownspersonMob> {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger(CaravanMerchantBehavior.class);
+
     // How close the merchant needs to get to a waypoint
     // before moving to the next one
     private static final double WAYPOINT_REACH    = 2.5;
@@ -96,9 +99,9 @@ public class CaravanMerchantBehavior extends Behavior<TownspersonMob> {
         List<BlockPos> blocks = resolveBlocks(caravan, level);
         if (blocks.isEmpty()) return;
         if (!hasLoggedPath) {
-            System.out.println("[CaravanGoal] Caravan " + caravanId.toString().substring(0, 8)
-                    + ": path=" + blocks.size() + " blocks"
-                    + " (graphRoute=" + isGraphRoute(caravan, level) + ")");
+            LOGGER.debug("[Caravan] {} path={} blocks (graphRoute={})",
+                    caravanId.toString().substring(0, 8), blocks.size(),
+                    isGraphRoute(caravan, level));
             hasLoggedPath = true;
         }
         boolean returning = caravan.getState()

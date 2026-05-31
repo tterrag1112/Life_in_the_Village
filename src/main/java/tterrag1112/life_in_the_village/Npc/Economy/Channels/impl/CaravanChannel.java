@@ -112,21 +112,29 @@ public final class CaravanChannel implements EconomicChannel {
         if (qty <= 0) return TradeResult.fail("caravan sold out");
         long total = quote.pricePerUnit() * qty;
 
-        // Buyer pays.
+        // Phase 4b — settle through NpcEconomy so the buyer→principal
+        // transfer applies the village's 1b market tax (was a raw wallet
+        // mint to the principal with no tax). The caravan principal is the
+        // sale endpoint; the buyer is the paying party.
         TownspersonMob buyer = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
-        if (buyer != null) {
-            CurrencyValue cost = CurrencyValue.of(total);
-            if (!buyer.getWallet().canAfford(cost)) return TradeResult.fail("buyer cannot pay");
-            buyer.getWallet().spend(cost);
-        }
-
-        // Decrement caravan stock + credit caravan principal.
-        decrementGoods(caravan.getGoods(), intent.item(), qty);
         UUID principalId = caravan.getRoster().getPrincipalId();
-        if (principalId != null) {
-            TownspersonMob principal = TownspersonMob.findByUUID(level, principalId).orElse(null);
-            if (principal != null) principal.getWallet().receive(CurrencyValue.of(total));
-        }
+        TownspersonMob principal = principalId == null ? null
+                : TownspersonMob.findByUUID(level, principalId).orElse(null);
+
+        var buyerParty = buyer != null
+                ? tterrag1112.life_in_the_village.Village.Economy.Currency.SettlementParty.npc(buyer)
+                : tterrag1112.life_in_the_village.Village.Economy.Currency.SettlementParty.none();
+        var endpoint = principal != null
+                ? tterrag1112.life_in_the_village.Village.Economy.Currency.SettlementParty.npc(principal)
+                : tterrag1112.life_in_the_village.Village.Economy.Currency.SettlementParty.none();
+
+        boolean paid = tterrag1112.life_in_the_village.Village.Economy.Currency.NpcEconomy
+                .settlePurchase(buyerParty, endpoint, CurrencyValue.of(total),
+                        village, level, data);
+        if (!paid) return TradeResult.fail("buyer cannot pay");
+
+        // Decrement caravan stock only after payment settled.
+        decrementGoods(caravan.getGoods(), intent.item(), qty);
         cdata.setDirty();
         return TradeResult.ok(qty, total);
     }
