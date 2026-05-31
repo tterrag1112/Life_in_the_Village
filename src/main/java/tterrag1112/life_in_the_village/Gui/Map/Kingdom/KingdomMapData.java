@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Gui.Map.Kingdom;
 
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Village.Travel.TravellerSnapshot;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 
 import java.util.*;
@@ -41,6 +42,13 @@ public final class KingdomMapData {
     /** Track D3.3 — provinces of the focus kingdom (empty list when UNITARY or pre-D3.3). */
     public final List<ProvinceMarker> provinces;
 
+    /** Phase 5e — in-transit travellers (caravans), interpolated client-side. */
+    public final List<TravellerSnapshot> travellers;
+
+    /** Phase 5e — wall-clock ms at build; the traveller layer advances each
+     *  traveller's progress from here so icons move between syncs. */
+    public final long buildTimeMs;
+
     public KingdomMapData(UUID focusKingdomId, String focusKingdomName,
                           int minCellX, int minCellZ, int maxCellX, int maxCellZ,
                           Map<Long, AtlasCell> terrainGrid,
@@ -49,7 +57,8 @@ public final class KingdomMapData {
                           List<VillageMarker> villages,
                           List<RoutePath> landRoutes,
                           List<RoutePath> seaRoutes,
-                          List<ProvinceMarker> provinces) {
+                          List<ProvinceMarker> provinces,
+                          List<TravellerSnapshot> travellers) {
         this.focusKingdomId  = focusKingdomId;
         this.focusKingdomName = focusKingdomName;
         this.minCellX = minCellX; this.minCellZ = minCellZ;
@@ -61,6 +70,8 @@ public final class KingdomMapData {
         this.landRoutes  = List.copyOf(landRoutes);
         this.seaRoutes   = List.copyOf(seaRoutes);
         this.provinces   = List.copyOf(provinces);
+        this.travellers  = List.copyOf(travellers);
+        this.buildTimeMs = System.currentTimeMillis();
     }
 
     // =========================================================================

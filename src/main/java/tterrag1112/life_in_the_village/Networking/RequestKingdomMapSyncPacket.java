@@ -51,7 +51,8 @@ public record RequestKingdomMapSyncPacket(UUID kingdomId)
                     pkt.kingdomId(),
                     result.cells(),
                     result.roads(),
-                    result.seaRoutes()));
+                    result.seaRoutes(),
+                    result.travellers()));
         });
     }
 }

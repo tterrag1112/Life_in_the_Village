@@ -2,9 +2,12 @@ package tterrag1112.life_in_the_village.Gui.Map.Kingdom;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.*;
+import tterrag1112.life_in_the_village.Village.Travel.TravellerSnapshot;
+import tterrag1112.life_in_the_village.Village.Travel.TravellerType;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
@@ -35,7 +38,8 @@ public final class KingdomMapScope {
     public record Result(
             List<AtlasCell> cells,
             List<MapRoadSnapshot> roads,
-            List<MapSeaRouteSnapshot> seaRoutes
+            List<MapSeaRouteSnapshot> seaRoutes,
+            List<TravellerSnapshot> travellers   // Phase 5e
     ) {}
 
     /**
@@ -104,12 +108,83 @@ public final class KingdomMapScope {
             }
         }
 
-        return new Result(cells, roads, seaRoutes);
+        // Phase 5e — in-transit travellers (land + boat caravans) whose
+        // origin or destination is a viewable village. Matched client-side to
+        // a route by the village pair, so only ids/progress/names are sent.
+        List<TravellerSnapshot> travellers = gatherTravellers(level, data, viewable);
+
+        return new Result(cells, roads, seaRoutes, travellers);
     }
 
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /**
+     * Phase 5e — snapshots every land/boat caravan touching the viewport.
+     * Generic intent: any future {@code TravellingGroup} source plugs in
+     * here with its own {@link TravellerType} mapping.
+     */
+    private static List<TravellerSnapshot> gatherTravellers(
+            ServerLevel level, VillageSavedData data, Set<UUID> viewable) {
+        List<TravellerSnapshot> out = new ArrayList<>();
+
+        for (Caravan c : CaravanSavedData.get(level).getAllCaravans()) {
+            if (!viewable.contains(c.getOriginVillageId())
+                    && !viewable.contains(c.getDestVillageId())) continue;
+            TravellerType type = c.getKind() == Caravan.CaravanKind.PROCUREMENT
+                    ? TravellerType.CARAVAN_PROCUREMENT : TravellerType.CARAVAN_EXPORT;
+            // Procurement runs out empty and shop on arrival, so the
+            // shopping list is the meaningful cargo there; goods otherwise.
+            List<ItemStack> cargo = c.getKind() == Caravan.CaravanKind.PROCUREMENT
+                    ? c.getShoppingList() : c.getGoods();
+            out.add(new TravellerSnapshot(
+                    c.groupId(), type.ordinal(),
+                    c.getOriginVillageId(), c.getDestVillageId(),
+                    false,
+                    (float) c.getProgress(), c.isReversed(),
+                    (float) c.getSpeedMultiplier(level, data),
+                    villageName(data, c.getOriginVillageId()),
+                    villageName(data, c.getDestVillageId()),
+                    summarizeCargo(cargo)));
+        }
+
+        for (BoatCaravan b : BoatCaravanSavedData.get(level).getAllBoatCaravans()) {
+            if (!viewable.contains(b.getOriginVillageId())
+                    && !viewable.contains(b.getDestVillageId())) continue;
+            out.add(new TravellerSnapshot(
+                    b.groupId(), TravellerType.BOAT.ordinal(),
+                    b.getOriginVillageId(), b.getDestVillageId(),
+                    true,
+                    (float) b.getProgress(), b.isReversed(),
+                    (float) b.getSpeedMultiplier(level, data),
+                    villageName(data, b.getOriginVillageId()),
+                    villageName(data, b.getDestVillageId()),
+                    summarizeCargo(b.getGoods())));
+        }
+        return out;
+    }
+
+    private static String villageName(VillageSavedData data, UUID villageId) {
+        return data.getVillageById(villageId).map(Village::getName).orElse("Unknown");
+    }
+
+    /** Short cargo summary for the tooltip: top items + overflow count. */
+    private static String summarizeCargo(List<ItemStack> goods) {
+        if (goods == null || goods.isEmpty()) return "Empty";
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (ItemStack st : goods) {
+            if (st == null || st.isEmpty()) continue;
+            if (shown > 0) sb.append(", ");
+            sb.append(st.getCount()).append("× ").append(st.getHoverName().getString());
+            if (++shown >= 3) break;
+        }
+        if (shown == 0) return "Empty";
+        int remaining = goods.size() - shown;
+        if (remaining > 0) sb.append(" +").append(remaining);
+        return sb.toString();
+    }
 
     /**
      * Server-side version of the fallback bounds provider. Uses the
@@ -163,6 +238,6 @@ public final class KingdomMapScope {
     }
 
     private static Result empty() {
-        return new Result(List.of(), List.of(), List.of());
+        return new Result(List.of(), List.of(), List.of(), List.of());
     }
 }

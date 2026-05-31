@@ -56,6 +56,8 @@ public final class KingdomMapPanel {
         layers.add(new RouteLayer(true));    // sea routes
         layers.add(new VillageLayer());
         layers.add(new LabelLayer());
+        // Phase 5e — moving caravan icons, on top of everything.
+        layers.add(new TravellerLayer());
     }
 
     /** Rebuild the snapshot from current client caches. */

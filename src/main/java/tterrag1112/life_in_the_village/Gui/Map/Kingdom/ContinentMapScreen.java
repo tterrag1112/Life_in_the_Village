@@ -139,7 +139,9 @@ public class ContinentMapScreen extends Screen {
                 java.util.Collections.<Long>emptySet(),                              // focus cells
                 java.util.Collections.<KingdomMapData.ForeignKingdom>emptyList(),    // foreign
                 data.villages, data.landRoutes, data.seaRoutes,
-                java.util.Collections.<KingdomMapData.ProvinceMarker>emptyList());   // D3.3 provinces
+                java.util.Collections.<KingdomMapData.ProvinceMarker>emptyList(),    // D3.3 provinces
+                java.util.Collections.<tterrag1112.life_in_the_village.Village.Travel
+                        .TravellerSnapshot>emptyList());                             // 5e — no travellers here
 
         new TerrainLayer().draw(g, adapter, projection, layerState, mouseX, mouseY);
         ContinentTerritoryLayer.draw(g, data, projection);

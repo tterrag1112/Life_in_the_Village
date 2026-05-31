@@ -2754,3 +2754,129 @@ touched files brace/paren-balanced; ScrollList/StyledEditBox/Font APIs
 matched against existing call sites (TradeScreen, CommissionBoardPanel,
 buildDecreeWidgets); `mouseScrolled` signature matches TradeScreen's;
 footprint AABB matches `reclaimStall`'s clear bounds.
+
+---
+
+## Phase 5e — Caravan / traveller map layer
+
+A moving-icon layer on the kingdom map for in-transit caravans, built
+generically against `TravellingGroup` + a server-side `TravellerType` so
+future travellers (pilgrims, armies) reuse it.
+
+### Disposition — two corrections to the prompt's premises
+
+The prompt assumed (1) `KingdomMapSyncPacket` carries `RoutePath` directly
+and (2) `Caravan.getRouteId() == TradeRoute.getConnectionId()` (a shared
+route key). As-built, **both are false**:
+
+- The sync carries `MapRoadSnapshot`/`MapSeaRouteSnapshot` (cell paths);
+  `KingdomMapData` (with `RoutePath`) is built **client-side** by
+  `KingdomMapDataBuilder` from the client caches. So I extended the sync
+  with a traveller list, cached it (`ClientTravellerCache`), and the
+  builder folds it into `KingdomMapData`.
+- `getRouteId` and `getConnectionId` are different fields; `connectionId`
+  is `optionalFieldOf` and **null for graph (modern land) routes**, and
+  `MapRoadSnapshot` is keyed by `getRouteId()` while the builder looks it
+  up by `getConnectionId()`. The route key is unreliable. **So travellers
+  are matched to their `RoutePath` by the unordered village pair
+  (`{origin,dest}` == `{villageA,villageB}`) + sea/land split** — both
+  sides carry the village pair; it works identically for land + boat and
+  needs no route id. This is *simpler* than threading `routeConnId`.
+
+### Cadence — (c) client interpolation (confirmed)
+
+Sync each traveller ONCE in the existing map sync; the client advances
+`progress` per frame and indexes the synced polyline. **No new periodic
+packet.** Rejected (a) push-per-tick and (b) periodic position packets:
+no precedent, pure server→client traffic for a cosmetic overlay.
+Tradeoff: icons drift between syncs; the existing **Refresh**/reopen
+resyncs (snaps to true position).
+
+The per-frame clock: `KingdomMapPanel` has no `tick()`/partialTick, so the
+layer derives elapsed ticks from `System.currentTimeMillis() -
+data.buildTimeMs` (50 ms/tick), captured when `KingdomMapData` is built on
+refresh. `prog = clamp01(syncedProgress + elapsedTicks ·
+BASE_PROGRESS_PER_TICK · max(1, speed))` — mirrors the server advance.
+
+### Server build site
+
+`KingdomMapScope.gather` now enumerates `CaravanSavedData.getAllCaravans()`
++ `BoatCaravanSavedData.getAllBoatCaravans()`, filters to caravans
+touching a viewable village, and builds `TravellerSnapshot{groupId, type,
+origin/destVillageId, isSea, progress, reversed, speed, originName,
+destName, cargo}`. Names via `getVillageById(...).getName()`; cargo
+pre-summarised server-side (top-3 items + overflow) so the client tooltip
+needs no lookups. `TravellerType` from `Caravan.getKind()` (EXPORT/
+PROCUREMENT) or the `BoatCaravan` class. No full path resolve per
+traveller (only ids/progress).
+
+### TravellerLayer + TravellerType
+
+`TravellerLayer implements MapLayer` (drawn **last**, above routes/
+villages; registered in `KingdomMapPanel` ctor). Per traveller: find the
+RoutePath by village pair, advance progress, map progress→fraction (mirror
+of `TravellingGroupEngine.computePosition`, direction-aligned by village
+identity), **fractionally interpolate between waypoints** for smooth
+motion, project via `MapProjection.blockToScreenX/Z`, draw a per-type icon
+(amber export / cyan procurement / blue boat) and a hover tooltip (type,
+origin→dest, cargo) via `setComponentTooltipForNextFrame` (the LabelLayer
+pattern). `LayerState` toggle honoured (`isVisible(id())`).
+
+### Tie-In Audit
+
+- **Upstream:** `CaravanSavedData`/`BoatCaravanSavedData`, `Caravan.getKind/
+  getOrigin|DestVillageId/getGoods/getShoppingList`, `BoatCaravan` equiv,
+  `TravellingGroup.getProgress/isReversed/getSpeedMultiplier` (both
+  caravans implement it). The synced `RoutePath` (village pair).
+- **Downstream:** the new layer + the extended sync (encode+decode both
+  ends, registration unchanged — same TYPE/STREAM_CODEC/handle refs);
+  `KingdomMapData` constructor arity changed → updated both call sites
+  (`KingdomMapDataBuilder` + `ContinentMapScreen` adapter, empty list).
+  Empty traveller list ⇒ base map renders unchanged (early return).
+- **Siblings:** generic over `TravellingGroup` + `TravellerType`; a new
+  traveller plugs in via an enum value + a gather case + an icon arm.
+- **Exhaustive switches:** `TravellerType` switches (icon colour + label)
+  handle all three arms + a `default` (forward-compat for PILGRIM/ARMY).
+
+### Simplification Sweep
+
+Reused `RouteLayer`'s projection pattern, `VillageLayer`'s marker style,
+`LabelLayer`'s tooltip call, and mirrored `computePosition` index math.
+Only new logic: per-traveller interpolation + icon + village-pair match.
+
+### Deviations
+
+1. **Village-pair matching, not routeConnId** — forced by the null route
+   key for graph routes (the prompt's shared-key premise was wrong). More
+   robust; disambiguated by sea/land.
+2. **Waypoint direction** assumed `villageA→villageB`; aligned by village
+   identity. If a road's stored cellPath ran dest→origin the icon would
+   travel the correct *line* but the wrong *direction* — the smoke test
+   (does it move toward the destination?) catches this; trivially flippable
+   if observed.
+3. **Real-time interpolation baseline** (`buildTimeMs`) rather than a tick
+   hook (the panel has none) — and a fractional waypoint lerp for smooth
+   motion (prompt said "interpolated BlockPos").
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (offline gradle can't
+resolve neoform-runtime). Static review: all 11 touched/new files
+brace/paren-balanced; both changed-arity constructors' call sites updated;
+5-component `StreamCodec.composite` confirmed supported (ContinentMap uses
+7); codec encode/decode symmetric; APIs matched to call sites
+(`blockToScreenX/Y(double)`, `setComponentTooltipForNextFrame`,
+`getAllCaravans/getAllBoatCaravans`, `CaravanKind`, `getSpeedMultiplier(level,
+data)`, `BASE_PROGRESS_PER_TICK`); layer registered; switch arms + default.
+
+### Smoke test
+
+1. Caravan in transit (Phase 4) → open kingdom map: an icon sits on the
+   route between origin and dest and **moves** over time.
+2. Icon type reads correctly (export amber / procurement cyan / boat blue
+   on a sea route).
+3. Hover → tooltip: type, origin→dest, cargo.
+4. Refresh/reopen → icon snaps to current true position (resync).
+5. Layer toggle off/on (if exposed) → icons hide/show; base map unaffected.
+6. No caravans → map renders normally, no icons, no errors.
+7. Several caravans → smooth motion, no per-tick server packet, no hitch.
