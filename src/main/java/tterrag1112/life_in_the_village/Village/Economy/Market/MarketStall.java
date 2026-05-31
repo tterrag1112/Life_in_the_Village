@@ -156,6 +156,10 @@ public class MarketStall {
     public static final double PRICE_BAND = 0.20;
     public static final int    MAX_REPUTATION = 100;
 
+    /** Side length (blocks) of the stall structure template ({@code stall_1}
+     *  is 5×5×5). Used for whole-stall right-click footprint detection. */
+    public static final int FOOTPRINT_SIZE = 5;
+
     /**
      * Sentinel owner for a placed-but-unclaimed ("for rent") stall
      * (merchant arc Phase 2b). Lets a stall be seeded on the pad with no

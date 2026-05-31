@@ -2693,3 +2693,64 @@ NeedMeter` via `Framework.*`); both items registered in `ModItems`.
 5. Single-village kingdom → zero spread, no NPE.
 6. Board prices == trade-screen prices (same `MarketPriceHelper`).
 7. Ruler kingdom book still opens.
+
+---
+
+## Playtest fixes (5a/5b/5d) — testing feedback round 1
+
+User compiled and tested. Three fixes:
+
+### 1. Trade screen — name/price overlap (TradeScreen)
+
+`CoinRow.draw` renders 16px-tall coin *item-icons*; the row drew the price
+coins at `ry+2` and the name at `ry+12` in a 22px row, so the coins
+overprinted the name. Fix: `ROW_HEIGHT` 22 → 30, reordered to **name on
+top** (`ry+3`, truncated via `font.plainSubstrByWidth` so it can't run into
+the stock count) and **price coins below** (`ry+13`); icon vertically
+centred; stock top-right, custom-price pill bottom-right. No overlap.
+
+### 2. Kingdom price board — too many entries + no icons/search (KingdomBookScreen, Phase 5d)
+
+The PRICES section was a manual fixed-height draw loop that overflowed the
+page. Reworked into:
+- A **scrollable `ScrollList`** (item rows 28px) — both the summary and the
+  per-village drill-in are now scrollable (`mouseScrolled` override added,
+  routed to the price lists; `mouseClicked` delegates row clicks).
+- **Item icons** per row (`BuiltInRegistries.ITEM.get(Identifier.parse(id))`
+  → `g.renderItem`, the CommissionBoardPanel pattern), Items.BARRIER fallback.
+- A **search box** (`StyledEditBox`) filtering by item name/id via a
+  responder → `priceList.setItems(filteredSpreads())`.
+- Built in a new `buildPricesWidgets` (wired into the `buildWidgets` switch;
+  requests prices idempotently so the page arrows path works too).
+  `applyPrices` now rebuilds widgets if the section is open so the async
+  sync populates the list. Removed the old manual `handlePricesClick`.
+
+### 3. Stall management — right-click intercept not firing (StallSignInteractionHandler)
+
+Root cause (confirmed with user): the stall template switched to a **hanging
+sign**, whose right-click is captured by the vanilla sign editor; the
+sign-pos lookup was missing so we early-returned and vanilla edit proceeded.
+Per user's choice ("whole stall, for now"): reworked the intercept from
+sign-only to **whole-footprint**:
+- New `VillageSavedData.getStallContaining(BlockPos)` — AABB test against the
+  active stall's `MarketStall.FOOTPRINT_SIZE` (5×5×5, matching the template
+  + `reclaimStall`'s clear loop; origin is the min corner).
+- Handler now intercepts a right-click on **any block of a stall footprint**,
+  cancels the vanilla interaction, and routes (owner→manage, visitor→trade,
+  NPC→merchant trade, vacant→for-rent hint).
+- **Sneak-right-click bypasses** the intercept (so the owner can open the
+  stall chest to stock it, edit the sign, or place blocks inside the
+  footprint). Removed the now-dead sign-only `getStallBySignPos`.
+- Note: stocking is still via the physical stall chest → sneak-click the
+  chest to open it. User mentioned a possible future custom stall block;
+  this footprint approach is the interim. `signPos`/`refreshSign` retained
+  (the hanging sign still shows live owner/for-rent text).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (offline gradle can't
+resolve neoform-runtime). User's environment compiles. Static review: all 5
+touched files brace/paren-balanced; ScrollList/StyledEditBox/Font APIs
+matched against existing call sites (TradeScreen, CommissionBoardPanel,
+buildDecreeWidgets); `mouseScrolled` signature matches TradeScreen's;
+footprint AABB matches `reclaimStall`'s clear bounds.

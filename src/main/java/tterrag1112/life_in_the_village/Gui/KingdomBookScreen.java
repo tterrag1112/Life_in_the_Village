@@ -66,6 +66,11 @@ public class KingdomBookScreen extends Screen {
             .KingdomPriceAggregator.ItemSpread> priceSpreads = null;
     private boolean pricesRequested = false;
     private String selectedPriceItem = null; // drill-in: item id, or null
+    private ScrollList<tterrag1112.life_in_the_village.Village.Economy.Currency
+            .KingdomPriceAggregator.ItemSpread> priceList;
+    private ScrollList<tterrag1112.life_in_the_village.Village.Economy.Currency
+            .KingdomPriceAggregator.VillagePrice> priceDetailList;
+    private StyledEditBox priceSearchBox;
 
     private KingdomMapPanel mapPanel;
     private Sidebar<SectionType> sidebar;
@@ -180,6 +185,9 @@ public class KingdomBookScreen extends Screen {
         decreeBox = null;
         grievanceBox = null;
         charterParamBox = null;
+        priceList = null;
+        priceDetailList = null;
+        priceSearchBox = null;
 
         sidebar = new Sidebar<>(bookX + 2, bookY + 28, SIDEBAR_W - 2, 18,
                 List.of(
@@ -228,6 +236,7 @@ public class KingdomBookScreen extends Screen {
             case DECREES   -> buildDecreeWidgets(px, py, pw);
             case AUDIENCE  -> buildAudienceWidgets(px, py, pw);
             case CHARTER_REQUEST -> buildCharterRequestWidgets(px, py, pw);
+            case PRICES    -> buildPricesWidgets(px, py, pw);
             case NEWSFEED  -> {}
             default        -> {}
         }
@@ -453,7 +462,7 @@ public class KingdomBookScreen extends Screen {
             case HISTORY      -> drawHistory(g, px, py, pw, maxY);
             case LAWS         -> drawLaws(g, px, py, pw, maxY);
             case ECONOMY      -> drawEconomy(g, px, py, pw, maxY);
-            case PRICES       -> drawPrices(g, px, py, pw, maxY);
+            case PRICES       -> drawPrices(g, px, py, pw, maxY, mx, my);
             case APPOINTMENTS -> drawAppointments(g, px, py, pw, maxY);
             case DIPLOMACY    -> drawDiplomacy(g, px, py, pw, maxY);
             case DECREES      -> drawDecrees(g, px, py, pw, maxY);
@@ -627,78 +636,134 @@ public class KingdomBookScreen extends Screen {
     public void applyPrices(List<tterrag1112.life_in_the_village.Village.Economy
             .Currency.KingdomPriceAggregator.ItemSpread> spreads) {
         this.priceSpreads = spreads;
+        // Data may arrive after the section was opened — rebuild so the list
+        // populates (and the "Loading…" placeholder is replaced).
+        if (currentSection() == SectionType.PRICES) buildWidgets();
+    }
+
+    private tterrag1112.life_in_the_village.Village.Economy.Currency
+            .KingdomPriceAggregator.ItemSpread findSpread(String itemId) {
+        if (priceSpreads == null) return null;
+        return priceSpreads.stream()
+                .filter(s -> s.itemId().equals(itemId)).findFirst().orElse(null);
+    }
+
+    /** Spreads filtered by the search box (by item name or id), biggest-spread first. */
+    private List<tterrag1112.life_in_the_village.Village.Economy.Currency
+            .KingdomPriceAggregator.ItemSpread> filteredSpreads() {
+        if (priceSpreads == null) return List.of();
+        String q = priceSearchBox == null ? "" : priceSearchBox.getValue().trim().toLowerCase();
+        if (q.isEmpty()) return priceSpreads;
+        return priceSpreads.stream()
+                .filter(s -> s.itemName().toLowerCase().contains(q)
+                        || s.itemId().toLowerCase().contains(q))
+                .toList();
     }
 
     /**
-     * Phase 5d — cross-village price board: each row shows an item, where
-     * it's cheapest, where it's dearest, and the spread. Clicking a row
-     * drills into per-village prices. Read-only.
+     * Phase 5d — builds the price-board widgets: a search box + a scrollable
+     * item list (summary view), or a back button + scrollable per-village
+     * list (drill-in view). Lists are {@link ScrollList} helpers rendered/
+     * routed manually (see {@link #drawPrices}, {@link #mouseScrolled}).
      */
-    private void drawPrices(GuiGraphics g, int px, int py, int pw, int maxY) {
-        g.drawString(font, "Cross-village prices", px, py, BookScreenColors.DARK, false);
-        int y = py + 14;
+    private void buildPricesWidgets(int px, int py, int pw) {
+        requestPricesOnce(); // idempotent — also covers reaching PRICES via the page arrows
+        if (priceSpreads == null || priceSpreads.isEmpty()) return; // draw shows the state
+        int maxY = bookY + BOOK_H - 34;
 
+        // Drill-in: back button + per-village list.
+        if (selectedPriceItem != null) {
+            var sel = findSpread(selectedPriceItem);
+            if (sel != null) {
+                addRenderableWidget(StyledButton.builder(Component.literal("‹ Back"),
+                                b -> { selectedPriceItem = null; buildWidgets(); })
+                        .pos(px, py).size(60, 16).build());
+                int listY = py + 22;
+                priceDetailList = new ScrollList<>(px, listY, pw, maxY - listY, 14,
+                        sel.perVillage(), this::drawVillagePriceRow,
+                        (row, btn, rx, ry) -> false);
+                return;
+            }
+            selectedPriceItem = null;
+        }
+
+        // Summary: search box + item list.
+        priceSearchBox = new StyledEditBox(font, px, py + 14, pw, 14,
+                Component.literal("Search items…"));
+        priceSearchBox.setMaxLength(48);
+        priceSearchBox.setResponder(s -> {
+            if (priceList != null) priceList.setItems(filteredSpreads());
+        });
+        addRenderableWidget(priceSearchBox);
+
+        int listY = py + 32;
+        priceList = new ScrollList<>(px, listY, pw, maxY - listY, 28,
+                filteredSpreads(), this::drawPriceRow,
+                (row, btn, rx, ry) -> {
+                    selectedPriceItem = row.itemId();
+                    buildWidgets();
+                    return true;
+                });
+    }
+
+    private static net.minecraft.world.item.Item resolveItem(String itemId) {
+        return net.minecraft.core.registries.BuiltInRegistries.ITEM
+                .get(net.minecraft.resources.Identifier.parse(itemId))
+                .map(h -> h.value()).orElse(net.minecraft.world.item.Items.BARRIER);
+    }
+
+    private void drawPriceRow(GuiGraphics g, int rowX, int rowY, int rowW, int rowH,
+                              tterrag1112.life_in_the_village.Village.Economy.Currency
+                                      .KingdomPriceAggregator.ItemSpread s, boolean hovered) {
+        if (hovered) g.fill(rowX, rowY, rowX + rowW, rowY + rowH, 0x22000000);
+        g.renderItem(new net.minecraft.world.item.ItemStack(resolveItem(s.itemId())),
+                rowX + 2, rowY + (rowH - 16) / 2);
+        String spread = "Δ" + CoinRenderer.format(s.spread());
+        int sc = s.spread() > 0 ? 0xFF2A7A2A : BookScreenColors.LIGHT;
+        g.drawString(font, spread, rowX + rowW - font.width(spread) - 4, rowY + 3, sc, false);
+        int nameMaxW = rowW - 22 - font.width(spread) - 8;
+        g.drawString(font, font.plainSubstrByWidth(s.itemName(), Math.max(0, nameMaxW)),
+                rowX + 22, rowY + 3, BookScreenColors.DARK, false);
+        String detail = "low " + s.cheapestPrice() + " @ " + s.cheapestVillage()
+                + "  ·  high " + s.dearestPrice() + " @ " + s.dearestVillage();
+        g.drawString(font, font.plainSubstrByWidth(detail, rowW - 24),
+                rowX + 22, rowY + 14, BookScreenColors.MID, false);
+    }
+
+    private void drawVillagePriceRow(GuiGraphics g, int rowX, int rowY, int rowW, int rowH,
+                                     tterrag1112.life_in_the_village.Village.Economy.Currency
+                                             .KingdomPriceAggregator.VillagePrice vp, boolean hovered) {
+        g.drawString(font, vp.villageName(), rowX + 4, rowY + 3, BookScreenColors.DARK, false);
+        String p = CoinRenderer.format(vp.sellPrice());
+        g.drawString(font, p, rowX + rowW - font.width(p) - 4, rowY + 3,
+                BookScreenColors.MID, false);
+    }
+
+    /**
+     * Phase 5d — cross-village price board. Draws the header + state text;
+     * the search box is a widget, the item/per-village lists are
+     * {@link ScrollList} helpers rendered here.
+     */
+    private void drawPrices(GuiGraphics g, int px, int py, int pw, int maxY, int mx, int my) {
+        g.drawString(font, "Cross-village prices", px, py, BookScreenColors.DARK, false);
         if (priceSpreads == null) {
-            g.drawString(font, "Loading…", px, y, BookScreenColors.LIGHT, false);
+            g.drawString(font, "Loading…", px, py + 14, BookScreenColors.LIGHT, false);
             return;
         }
         if (priceSpreads.isEmpty()) {
             g.drawString(font, "No priced markets in this kingdom yet.",
-                    px, y, BookScreenColors.LIGHT, false);
+                    px, py + 14, BookScreenColors.LIGHT, false);
             return;
         }
-
-        // Drill-in view for a selected item.
         if (selectedPriceItem != null) {
-            var sel = priceSpreads.stream()
-                    .filter(s -> s.itemId().equals(selectedPriceItem))
-                    .findFirst().orElse(null);
+            var sel = findSpread(selectedPriceItem);
             if (sel != null) {
-                g.drawString(font, "‹ " + sel.itemName(), px, y, BookScreenColors.GOLD, false);
-                y += 14;
-                for (var vp : sel.perVillage()) {
-                    if (y + 11 > maxY) break;
-                    g.drawString(font, vp.villageName(), px + 4, y, BookScreenColors.DARK, false);
-                    String p = CoinRenderer.format(vp.sellPrice());
-                    g.drawString(font, p, px + pw - font.width(p) - 4, y,
-                            BookScreenColors.MID, false);
-                    y += 11;
-                }
-                return;
+                g.drawString(font, sel.itemName(), px + 66, py + 4, BookScreenColors.GOLD, false);
             }
-            selectedPriceItem = null; // stale — fall through to the list
+            if (priceDetailList != null) priceDetailList.render(g, mx, my);
+            return;
         }
-
-        // Summary list: item — cheapest@village / dearest@village / spread.
-        for (var s : priceSpreads) {
-            if (y + 12 > maxY) break;
-            g.drawString(font, s.itemName(), px, y, BookScreenColors.DARK, false);
-            String spread = "Δ" + CoinRenderer.format(s.spread());
-            int sc = s.spread() > 0 ? 0xFF2A7A2A : BookScreenColors.LIGHT;
-            g.drawString(font, spread, px + pw - font.width(spread) - 4, y, sc, false);
-            g.drawString(font, "low " + s.cheapestPrice() + " @ " + s.cheapestVillage()
-                            + "  ·  high " + s.dearestPrice() + " @ " + s.dearestVillage(),
-                    px + 4, y + 10, BookScreenColors.MID, false);
-            y += 22;
-        }
-        g.drawString(font, "Click an item for per-village prices.",
-                px, Math.min(y, maxY - 10), BookScreenColors.LIGHT, false);
-    }
-
-    /** Phase 5d — price-board row click → toggle drill-in. */
-    private boolean handlePricesClick(double mx, double my) {
-        if (currentSection() != SectionType.PRICES || priceSpreads == null) return false;
-        int px = bookX + SIDEBAR_W + PAGE_PAD;
-        int py = bookY + 36;
-        int pw = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
-        if (mx < px || mx > px + pw) return false;
-        if (selectedPriceItem != null) { selectedPriceItem = null; return true; } // back
-        int y = py + 14;
-        for (var s : priceSpreads) {
-            if (my >= y && my < y + 22) { selectedPriceItem = s.itemId(); return true; }
-            y += 22;
-        }
-        return false;
+        if (priceList != null) priceList.render(g, mx, my);
     }
 
     private void drawEconomy(GuiGraphics g, int px, int py, int pw, int maxY) {
@@ -1333,8 +1398,10 @@ public class KingdomBookScreen extends Screen {
 
         if (sidebar.mouseClicked(mx, my)) return true;
 
-        // Phase 5d — price-board row drill-in / back.
-        if (handlePricesClick(mx, my)) return true;
+        // Phase 5d — price-board lists (row drill-in / scroll).
+        if (priceList != null && priceList.mouseClicked(mx, my, event.button())) return true;
+        if (priceDetailList != null
+                && priceDetailList.mouseClicked(mx, my, event.button())) return true;
 
         if (currentSection() == SectionType.KINGDOM_MAP && mapPanel != null) {
             int px = bookX + SIDEBAR_W + PAGE_PAD, py = bookY + 36;
@@ -1345,6 +1412,14 @@ public class KingdomBookScreen extends Screen {
         }
 
         return super.mouseClicked(event, consumed);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mx, double my, double dx, double dy) {
+        // Phase 5d — scroll the price-board lists.
+        if (priceList != null && priceList.mouseScrolled(mx, my, dy)) return true;
+        if (priceDetailList != null && priceDetailList.mouseScrolled(mx, my, dy)) return true;
+        return super.mouseScrolled(mx, my, dx, dy);
     }
 
     private void sendAction(KingdomActionPacket.ActionType type,

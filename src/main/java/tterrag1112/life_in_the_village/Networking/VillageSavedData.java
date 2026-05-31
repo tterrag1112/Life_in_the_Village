@@ -1878,24 +1878,28 @@ public class VillageSavedData extends SavedData implements
     }
 
     /**
-     * Phase 5b — resolves a right-clicked sign block pos to its stall.
-     * Prefers the stall's captured {@code signPos}; falls back to a small
-     * proximity check against the stall origin for stalls placed before the
-     * sign-pos field existed (within ~4 blocks).
+     * Phase 5b (whole-stall interaction) — resolves a right-clicked block to
+     * the active stall whose footprint contains it. The footprint is the
+     * stall template's {@link MarketStall#FOOTPRINT_SIZE} cube measured from
+     * the origin (the min corner, matching {@code reclaimStall}'s clear
+     * loop). Used by the right-click handler so clicking any part of a stall
+     * — not just its (hanging) sign — opens it.
      */
-    public Optional<MarketStall> getStallBySignPos(BlockPos signPos) {
-        if (signPos == null) return Optional.empty();
+    public Optional<MarketStall> getStallContaining(BlockPos pos) {
+        if (pos == null) return Optional.empty();
+        int f = MarketStall.FOOTPRINT_SIZE;
         for (MarketStall s : marketStalls) {
-            if (s.isActive() && s.hasSignPos() && s.getSignPos().equals(signPos)) {
+            if (!s.isActive()) continue;
+            BlockPos o = s.getStallOrigin();
+            if (o == null) continue;
+            int dx = pos.getX() - o.getX();
+            int dy = pos.getY() - o.getY();
+            int dz = pos.getZ() - o.getZ();
+            if (dx >= 0 && dx < f && dy >= 0 && dy < f && dz >= 0 && dz < f) {
                 return Optional.of(s);
             }
         }
-        // Fallback: nearest active stall whose origin is within 4 blocks.
-        return marketStalls.stream()
-                .filter(MarketStall::isActive)
-                .filter(s -> s.getStallOrigin() != null
-                        && s.getStallOrigin().closerThan(signPos, 4.0))
-                .findFirst();
+        return Optional.empty();
     }
 
     public List<HouseholdData> getHouseholdsForVillage(UUID villageId) {
