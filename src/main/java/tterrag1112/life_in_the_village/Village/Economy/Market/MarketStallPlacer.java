@@ -1,8 +1,6 @@
 package tterrag1112.life_in_the_village.Village.Economy.Market;
 
-import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
@@ -12,21 +10,17 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingPlacer;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Village.Buildings.DynamicSignUpdater;
-import tterrag1112.life_in_the_village.Village.Decoration.Subbuilding.SubBuilding;
-import tterrag1112.life_in_the_village.Village.Decoration.Subbuilding.SubBuildingType;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Manages the physical placement of market stall NBT structures.
  *
  * <h3>Anchor convention (Track B1, P0d-04)</h3>
  * Market NBTs author {@code SubBuildingAnchorBlock} instances tagged
- * {@link SubBuildingType#STALL} at each stall position. The
+ * {@code SubBuildingType.STALL} at each stall position. The
  * {@code SubBuildingScanner} runs at building-placement time, replaces
- * each anchor with air, and registers a {@link SubBuilding} record on
+ * each anchor with air, and registers a {@code SubBuilding} record on
  * {@code VillageSavedData}. This class then queries those records;
  * the runtime scan for chiseled stone bricks that the legacy P0d-04-pre
  * code used has been removed.
@@ -73,40 +67,6 @@ public final class MarketStallPlacer {
     // =========================================================================
 
     /**
-     * Returns the anchor positions of every {@link SubBuildingType#STALL}
-     * subbuilding registered against this market, sorted by (Z, X) for
-     * consistent slot numbering. P0d-04: queries {@code VillageSavedData}
-     * for scanner output rather than walking blocks at runtime.
-     *
-     * <p>Call this once after a market is placed to know how many slots
-     * are available, or to display slot availability to a player.</p>
-     */
-    public static List<BlockPos> findAnchorSlots(ServerLevel level,
-                                                 Building marketBuilding) {
-        return findAnchorSlots(marketBuilding,
-                VillageSavedData.get(level));
-    }
-
-    /**
-     * Overload that takes an explicit {@link VillageSavedData}, for
-     * callers (V2 spawn adapter, NPC interaction handlers) that already
-     * have one.
-     */
-    public static List<BlockPos> findAnchorSlots(Building marketBuilding,
-                                                 VillageSavedData data) {
-        if (marketBuilding == null || data == null) return List.of();
-        return data.getSubBuildingsForBuilding(marketBuilding.getId()).stream()
-                .filter(sb -> sb.type() == SubBuildingType.STALL)
-                .map(SubBuilding::origin)
-                // Witness <BlockPos> on the first comparator —
-                // chain inference trips on Vec3i bridge methods
-                // otherwise.
-                .sorted(Comparator.<BlockPos>comparingInt(BlockPos::getZ)
-                        .thenComparingInt(BlockPos::getX))
-                .collect(Collectors.toList());
-    }
-
-    /**
      * Claims a free stall in the market. Phase 2b: stalls are seeded onto
      * the market pad as vacant records by {@code MarketStallSeeder}; a
      * claim assigns ownership to the first vacant one. This replaces the
@@ -147,7 +107,7 @@ public final class MarketStallPlacer {
     /**
      * Reclaims a stall: clears the stall structure from the world and
      * marks the {@link MarketStall} record inactive. P0d-04: the stall
-     * slot's {@link SubBuilding} record persists on
+     * slot's {@code SubBuilding} record persists on
      * {@code VillageSavedData} unchanged — the slot becomes available
      * again because no active {@link MarketStall} references its
      * slot index. No anchor block needs to be restored (the legacy
@@ -172,10 +132,9 @@ public final class MarketStallPlacer {
                 }
             }
         }
-        // Reset signs to "For Rent"
-        updateStallSigns(level, stall.getStallOrigin(),
-                size, stall.getSlotIndex(), stall, 0L);
-
+        // No sign reset needed — the footprint clear above already removed
+        // the stall's signs. (Live owner-change sign writes go through the
+        // MarketStallOwnership funnel; reclaim destroys the structure.)
         stall.setActive(false);
     }
 
@@ -192,49 +151,6 @@ public final class MarketStallPlacer {
 
     // Phase 2b: facingRotation (dominant-axis snap) deleted — stall
     // placement + aisle-facing rotation now live in StallAllocator.
-
-    /**
-     * Writes stall ownership info onto any signs within the stall footprint.
-     * If {@code ownerName} is null, writes a "For Rent" message instead.
-     */
-    private static void updateStallSigns(ServerLevel level,
-                                         BlockPos origin,
-                                         net.minecraft.core.Vec3i size,
-                                         int slotIndex,
-                                         MarketStall stall,
-                                         long rentUntilTick) {
-        List<Component> lines;
-        String ownerName = (stall != null && !stall.getOwnerDisplayName().isEmpty())
-                ? stall.getOwnerDisplayName()
-                : null;
-
-        if (ownerName != null) {
-            String rentLabel = rentUntilTick == Long.MAX_VALUE
-                    ? "Purchased"
-                    : "Rented";
-            lines = List.of(
-                    Component.literal("Stall #" + (slotIndex + 1))
-                            .withStyle(ChatFormatting.DARK_GREEN),
-                    Component.literal(ownerName)
-                            .withStyle(ChatFormatting.WHITE),
-                    Component.literal(rentLabel)
-                            .withStyle(ChatFormatting.GRAY),
-                    Component.empty()
-            );
-        } else {
-            lines = List.of(
-                    Component.literal("Stall #" + (slotIndex + 1))
-                            .withStyle(ChatFormatting.DARK_GREEN),
-                    Component.literal("For Rent")
-                            .withStyle(ChatFormatting.YELLOW),
-                    Component.literal(RENT_PER_DAY + "b/day")
-                            .withStyle(ChatFormatting.GRAY),
-                    Component.empty()
-            );
-        }
-
-        DynamicSignUpdater.updateSigns(level, origin, size, lines);
-    }
 
     /**
      * Resolves a display name for the stall owner.

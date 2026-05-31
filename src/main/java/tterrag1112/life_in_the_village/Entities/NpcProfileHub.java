@@ -179,16 +179,6 @@ public final class NpcProfileHub {
                         npc.getUUID(), npc.getNpcName(), lib, entries));
     }
 
-    /** Track 5a.2 — open the StallLease screen at a market merchant. */
-    private static void openStallLeaseScreen(TownspersonMob npc, ServerPlayer player,
-                                             ServerLevel level) {
-        UUID market = npc.getAssignedBuildingId().orElse(new UUID(0L, 0L));
-        npc.unlockConversation(player.getUUID());
-        PacketDistributor.sendToPlayer(player,
-                new tterrag1112.life_in_the_village.Networking.OpenStallLeasePacket(
-                        npc.getUUID(), npc.getNpcName(), market));
-    }
-
     private static void invokeVerb(String verbId, TownspersonMob npc,
                                    ServerPlayer player, ServerLevel level) {
         tterrag1112.life_in_the_village.Npc.Verbs.PlayerVerbRegistry.get(verbId)
