@@ -2138,3 +2138,119 @@ deleted methods zero-caller-proven and not interface members; orphaned
 4. Caravans still travel/spawn/despawn (dead `Caravan.tick`/position
    removal didn't disturb the live `TravellingGroupEngine` path).
 5. Logs: no `System.out` from caravan code; diagnostics at DEBUG.
+
+---
+
+## Phase 4c — Export buy-at-origin leg (merchant keeps the spread, not the gross)
+
+Small follow-up to 4b, the principled fix Garrett chose over a flat margin
+factor. 4b rewired the export SELL leg to the dest's per-village price, but
+the export still **took the origin's goods for free** — so the merchant
+pocketed the entire gross. 4c makes export **symmetric with 4a import**:
+the merchant BUYS the origin surplus at the origin's (low) per-village
+price + tax at dispatch, then sells at the dest price (4b) — keeping only
+the spread, with the origin compensated.
+
+### Finding: it was worse than "free"
+
+`CaravanGoodsSelector.selectGoods` only *reads* origin surplus (scans
+inventories via `getVillageSurpluses`); it never called `takeItem`. So
+export cargo was **duplicated** — the origin kept its surplus AND the
+caravan carried a copy, conjured from nothing. 4c replaces that with a
+real paid take (remove from origin + pay), closing both the free-money and
+the item-duplication holes at once.
+
+### Insertion point + endpoint/price/tax
+
+At **dispatch/load time** (export starts at the origin, vs 4a import which
+buys on arrival). `selectGoods` is now the **shopping list** (origin
+surplus the dest needs); the new paid buy removes it from origin storage
+and settles. Pays the origin at its `getDynamicSellPrice` (1c makes a
+surplus good cheap), endpoint `SettlementParty.none()` (origin storage
+isn't a party — the 1b **origin market tax credits the origin treasury**,
+mirroring 4a exactly), merchant = buyer/payer. Goods are added to the
+caravan only after payment settles (refunded if the debit fails).
+
+### Shared buy-leg helper (Simplification Sweep done)
+
+Factored 4a's buy-at-source loop into `buyGoodsFromVillage(merchant,
+village, wants, level, data) → List<ItemStack>`: funds-gated, reserve-
+buffered, per-village-priced, taxed, take-coupled-with-pay, refund-on-fail.
+Now called by **both** `handleProcurementBuy` (4a import, on arrival) and
+the export dispatch (4c, at load). One buy-leg for both trade directions;
+the duplication 4a/4c would have had is gone.
+
+### Funds gate
+
+Dispatch now resolves the merchant and skips if `wallet.toBronze() <= 0`
+(up front, mirroring 4a). `buyGoodsFromVillage` further clamps each item
+to `wallet / unitPrice`, so an under-funded merchant **loads fewer goods**;
+if nothing is affordably bought, `goods` is empty and the dispatch is
+**skipped** (no caravan, no free goods, no negative wallet). Also dropped a
+redundant second `level.getEntity(principalId)` lookup (reused the resolved
+`exportMerchant`).
+
+### Spread confirmation (no cost-basis tracking needed)
+
+Money moves at dispatch (origin buy) and at arrival (dest sell), both
+through `settlePurchase`. The merchant's net = dest proceeds − origin cost
+− origin tax − dest tax. No cost basis is stored on the caravan because
+the wallet already reflects both legs as they happen — the caravan only
+carries goods, not a ledger. Positive on a real surplus→deficit trade
+(origin surplus price < dest deficit price); a low-quality road (delivered
+qty = cargo × efficiency on the sell leg, full qty paid on the buy leg) can
+erode or invert it — acceptable realism (bad roads eat profit).
+
+### Before/after payout
+
+| | 4b (pre-4c) | 4c |
+| --- | --- | --- |
+| Origin goods | taken free (in fact duplicated) | bought at origin price + origin tax |
+| Merchant net | **gross** dest sale value − dest tax | **spread**: dest proceeds − origin cost − both taxes |
+| Origin | uncompensated | paid (tax to origin treasury; goods actually removed) |
+| Item conservation | duplicated out of origin | conserved (removed from origin, delivered to dest) |
+
+### Tie-In Audit
+
+- **Upstream:** `CaravanGoodsSelector.selectGoods` (now the want-list),
+  `MarketPriceHelper` origin price, merchant wallet/funds.
+- **Downstream:** 4b dest-sell leg **unchanged** — `payMerchantProfit`
+  still reads `caravan.getGoods()`, which now holds exactly what was
+  bought. Together they yield the spread. Origin storage/treasury credited
+  (no more free take).
+- **Siblings:** 4a import path unchanged except sharing the extracted
+  helper (behaviour identical). `reserveIdleMerchant` (by-id, 4a) still
+  gates dispatch.
+- **Switches/codec:** none — settlement at dispatch, no new persisted
+  field, no enum/state change.
+
+### Deviations from prompt
+
+- Discovered the "free take" was actually item duplication (selectGoods
+  never removed goods) — the fix (paid take) corrects both; noted above.
+- `fallbackGoods()` (hardcoded wheat/log/cobble) is now effectively dead
+  for export: if the origin has no real surplus, the paid take finds
+  nothing to buy and the dispatch skips. Left in place (still referenced
+  by selectGoods' own return); flagged as now-vestigial for export.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review:
+`buyGoodsFromVillage` defined once / called from 4a + export; merchant
+funds gate + per-item affordability clamp; take-coupled-with-pay +
+refund-on-fail; 4b sell leg reads the bought goods unchanged; redundant
+entity lookup removed; braces/parens balanced; single-file diff.
+
+### Smoke test
+
+1. Export caravan (origin surplus → dest deficit): at dispatch the merchant
+   **pays the origin** at the origin's low per-village price + tax; origin
+   storage loses the goods and the origin treasury gains the tax — no free
+   take, no duplication.
+2. At the dest, sells at the high per-village price (4b); merchant **net =
+   spread**, noticeably less than 4b's pre-fix gross.
+3. Under-funded merchant: loads fewer goods, or doesn't dispatch — never a
+   negative wallet or unpaid cargo.
+4. 4a import caravans unchanged.
+5. A genuine surplus→deficit trade nets the merchant a positive spread
+   after both taxes (assuming a decent road).

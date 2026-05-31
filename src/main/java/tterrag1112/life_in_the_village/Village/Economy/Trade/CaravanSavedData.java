@@ -395,8 +395,24 @@ public class CaravanSavedData extends SavedData {
             UUID originMarketId = findFirstBuildingOfType(
                     originVillage, BuildingType.MARKET, villageData);
 
-            List<ItemStack> goods = CaravanGoodsSelector.selectGoods(
+            // Phase 4c — the export merchant BUYS the origin's surplus at
+            // the origin's (low) per-village price + tax at dispatch,
+            // mirroring 4a's buy-at-source. selectGoods is now the shopping
+            // list (what the origin can spare that the dest needs); the
+            // paid take removes it from origin storage and credits the
+            // origin (tax to its treasury). Goods are never loaded without
+            // payment, and the merchant keeps only the spread (dest sell −
+            // origin cost − taxes), not the gross.
+            var exportMob = level.getEntity(principalId);
+            if (!(exportMob instanceof TownspersonMob exportMerchant)
+                    || exportMerchant.getWallet().toBronze() <= 0) {
+                continue; // under-funded — don't dispatch an unpaid export
+            }
+            List<ItemStack> wantList = CaravanGoodsSelector.selectGoods(
                     level, originVillage, destVillage, villageData);
+            List<ItemStack> goods = buyGoodsFromVillage(
+                    exportMerchant, originVillage, wantList, level, villageData);
+            if (goods.isEmpty()) continue; // nothing affordably bought — skip
             int guardCount = calculateGuardCount(goods);
 
             Caravan caravan = Caravan.create(
@@ -409,12 +425,8 @@ public class CaravanSavedData extends SavedData {
                     guardCount,
                     currentTick);
 
-            // After Caravan.create:
-            var mob = level.getEntity(principalId);
-            if (mob instanceof TownspersonMob m) {
-                assignCaravanRole(m, caravan, tterrag1112.life_in_the_village
-                        .Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL);
-            }
+            assignCaravanRole(exportMerchant, caravan, tterrag1112.life_in_the_village
+                    .Npc.Roles.NpcRoleTypes.CARAVAN_PRINCIPAL);
 
             caravans.put(caravan.getCaravanId(), caravan);
             route.setLastCaravanTick(currentTick);
@@ -686,22 +698,50 @@ public class CaravanSavedData extends SavedData {
         Village source = villageData.getVillageById(caravan.getDestVillageId()).orElse(null);
         if (source == null) return;
 
-        UUID sourceStockpile = findFirstBuildingOfType(
-                source, BuildingType.STOCKPILE, villageData);
+        List<ItemStack> bought = buyGoodsFromVillage(
+                merchant, source, caravan.getShoppingList(), level, villageData);
+        caravan.getGoods().addAll(bought);
+        LOGGER.debug("[Caravan] procurement {} bought {} item-type(s) at {}",
+                shortId(caravan), bought.size(), source.getName());
+    }
 
-        for (ItemStack want : caravan.getShoppingList()) {
-            if (want.isEmpty()) continue;
+    /**
+     * Shared buy-leg (Phase 4a/4c): the {@code merchant} buys each wanted
+     * item from {@code village} at the village's per-village price
+     * ({@code getDynamicSellPrice}, what a buyer pays — surplus goods are
+     * cheap per 1c), funded from the merchant's wallet, taking the goods
+     * from the village's storage and settling through {@code
+     * settlePurchase} so the village's 1b market tax applies. Quantity is
+     * clamped to the village's sparable stock (above {@link #SOURCE_RESERVE})
+     * and to the merchant's funds; goods are never removed without payment
+     * (refunded if the debit fails). Returns the stacks actually bought.
+     *
+     * <p>Used by both the import buy-at-source (4a, on arrival) and the
+     * export buy-at-origin (4c, at dispatch) — one funds-gated, taxed,
+     * per-village buy for both trade directions.
+     */
+    private List<ItemStack> buyGoodsFromVillage(TownspersonMob merchant,
+                                                Village village,
+                                                List<ItemStack> wants,
+                                                ServerLevel level,
+                                                VillageSavedData villageData) {
+        List<ItemStack> bought = new ArrayList<>();
+        UUID stockpile = findFirstBuildingOfType(
+                village, BuildingType.STOCKPILE, villageData);
+
+        for (ItemStack want : wants) {
+            if (want == null || want.isEmpty()) continue;
             net.minecraft.world.item.Item item = want.getItem();
 
-            int spare = countAcrossVillage(level, source, item, villageData);
+            int spare = countAcrossVillage(level, village, item, villageData);
             if (spare <= 0) continue;
-            // Leave the source a buffer so we don't drain it below its own use.
+            // Leave the village a buffer so we don't drain it below its use.
             int sparable = Math.max(0, spare - SOURCE_RESERVE);
             int qty = Math.min(want.getCount(), sparable);
             if (qty <= 0) continue;
 
             long unit = tterrag1112.life_in_the_village.Village.Economy.Currency
-                    .MarketPriceHelper.getDynamicSellPrice(level, source, item);
+                    .MarketPriceHelper.getDynamicSellPrice(level, village, item);
             if (unit <= 0) continue;
 
             // Clamp to what the merchant can afford.
@@ -710,7 +750,7 @@ public class CaravanSavedData extends SavedData {
             if (affordable <= 0) continue;
 
             long cost = unit * affordable;
-            boolean taken = takeFromVillage(level, source, item, affordable, villageData);
+            boolean taken = takeFromVillage(level, village, item, affordable, villageData);
             if (!taken) continue;
 
             boolean paid = tterrag1112.life_in_the_village.Village.Economy.Currency
@@ -718,21 +758,20 @@ public class CaravanSavedData extends SavedData {
                             tterrag1112.life_in_the_village.Village.Economy.Currency
                                     .SettlementParty.npc(merchant),
                             tterrag1112.life_in_the_village.Village.Economy.Currency
-                                    .SettlementParty.none(), // source stockpile isn't a party; tax credits its treasury
-                            CurrencyValue.of(cost), source, level, villageData);
+                                    .SettlementParty.none(), // village storage isn't a party; tax credits its treasury
+                            CurrencyValue.of(cost), village, level, villageData);
             if (!paid) {
                 // Refund the goods if the debit somehow failed.
-                if (sourceStockpile != null) {
+                if (stockpile != null) {
                     tterrag1112.life_in_the_village.Village.BuildingStorageAccess.storeItem(
-                            level, villageData.getBuildingById(sourceStockpile).orElse(null),
+                            level, villageData.getBuildingById(stockpile).orElse(null),
                             new ItemStack(item, affordable));
                 }
                 continue;
             }
-            caravan.getGoods().add(new ItemStack(item, affordable));
+            bought.add(new ItemStack(item, affordable));
         }
-        LOGGER.debug("[Caravan] procurement {} bought {} item-type(s) at {}",
-                shortId(caravan), caravan.getGoods().size(), source.getName());
+        return bought;
     }
 
     /**
