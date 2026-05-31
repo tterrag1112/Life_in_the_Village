@@ -2538,3 +2538,158 @@ verified offline — first thing to check on `./gradlew build`.
 6. Non-stall sign → vanilla editing still works.
 7. NPC-owned stall sign → trade, not player management.
 8. No render/packet glitch.
+
+---
+
+## Phase 5c — Village economy view
+
+Built via the `litv-gui-screen` skill. **Decision: extend `VillageBook
+Screen` with a new ECONOMY section** (the Simplification Sweep choice)
+rather than a parallel screen — it reuses the sidebar/chrome and the
+existing leader→book route.
+
+### View content + layout
+
+New ECONOMY section: a **Treasury** + **Net income/day** `StatBox` row, a
+**Needs** `NeedMeter.dots` row (reusing the overview's `needs` map), and a
+per-`ResourceCategory` **surplus/deficit** list — each category labelled
+with a green "Exporter +N" / red "Importer N" / neutral "Balanced" `Pill`,
+driven by `VillageSimData.net(cat)`. Graceful empty state ("No economic
+activity recorded yet") when the village has no sim data.
+
+### Thickened packet (minimal-churn)
+
+Rather than scatter ~6 scalars into the 28-field manual `OpenVillageBook
+Packet` codec, added **one** nested `EconomyData` record (hasSim, treasury,
+tax, wages, netIncomePerDay, List<CategoryNet>) as a single new field —
+one append to the record/encode/decode/construct. `EconomyData.empty(...)`
+is the no-sim fallback. Built server-side in `sendOpenPacket` via a new
+`buildEconomyData` helper over `VillageSavedData.getSimData` +
+`ResourceCategory.values()` (skips dead-neutral categories). Tax/wages are
+0 for now (the per-day treasury-flow stats live on a `VillageTreasury`
+object not directly reachable from `Village`, which only exposes
+`treasuryBronze`) — flagged.
+
+### Access routes
+
+- **Office (primary, mostly wired):** the existing `VILLAGE_LEADER` →
+  `VillageBookScreen` nav route is unchanged (Economy is a tab on it). The
+  **village treasurer** (an *office* held by a MERCHANT/SCHOLAR, not a
+  profession) now also opens the book straight to ECONOMY — detected via
+  `OfficeRegistry.findOfficesHeldBy(...).officeId() == VILLAGE_TREASURER`,
+  wired in `NpcProfileHub.openNavTarget` + surfaced as an `OFFICE_SCREEN`
+  nav button in `resolveNavKind`.
+- **Scroll (non-office):** new `VillageEconomyScrollItem` (`village_
+  economy_scroll`, in `ModItems`) — right-click opens the standing
+  village's economy view (`getVillageAt(player.pos)` → `sendOpenPacket(...,
+  "ECONOMY")`). Mirrors `KingdomBookItem`. **Deviation:** bound to "where
+  you stand" rather than a data-component-bound village (simpler; avoids a
+  component registration) — flagged. The buy-from-treasurer mint wasn't
+  added; the item is the access primitive and can be sold via the existing
+  lease-mint pattern in a follow-up.
+
+### Switch audit
+
+`VillageBookScreen.Section` gained `ECONOMY`. The `drawPageContent` switch
+(exhaustive, 8 arms now) got `case ECONOMY ->`; `buildWidgets` has a
+`default -> {}` so the no-widget section is covered; `drawPageChrome` and
+the sidebar `currentSection` supplier are arm-agnostic.
+
+### Tie-In / Out-of-scope
+
+Read-only — never mutates treasury/needs/sim. Existing leader→book route +
+all other book sections untouched. Distinct from the kingdom book's
+ECONOMY (tax/upkeep) and the 5d PRICES board. Treasury *management*,
+guild-treasurer-NPC route, and the scroll's buy-mint are out of scope /
+flagged.
+
+---
+
+## Phase 5d — Kingdom-wide price board
+
+A `PRICES` section in `KingdomBookScreen` + a purchasable item, backed by a
+net-new server-side aggregator. Makes the 1c cross-village arbitrage
+legible.
+
+### Aggregator (net-new) + cost
+
+`KingdomPriceAggregator.aggregate(level, kingdom, data)`: for each
+explicit-price item, loops the kingdom's villages × `MarketPriceHelper
+.getDynamicSellPrice` and emits an `ItemSpread` (cheapest village+price,
+dearest village+price, per-village drill-in), sorted by spread (biggest
+arbitrage first). **Cost: O(villages × items) on the daily-cached
+`VillageSimData` multiplier** — no per-tick or live-entity scan. Bounded by
+`MAX_VILLAGES = 24` so a huge kingdom can't blow the loop/packet.
+
+### Data flow (request/sync, matching the book's idiom)
+
+The client book lazy-loads via request/response (like its map). On first
+PRICES view: `RequestKingdomPricesPacket` (C→S) → server aggregates →
+`KingdomPricesSyncPacket` (S→C) → `KingdomBookScreen.applyPrices`. Both
+registered in `ModModEvents`. The board renders cheapest@village /
+dearest@village / Δspread per row; clicking a row drills into per-village
+prices (`handlePricesClick` toggles `selectedPriceItem`); clicking again
+goes back.
+
+### PRICES SectionType + switch audit
+
+`SectionType` gained `PRICES` (after ECONOMY). Wired: one `navEntries.add`,
+one `Sidebar.Entry`, and `case PRICES -> drawPrices` in the **draw** switch
+(now 15 arms, exhaustive). The `buildWidgets` switch has `default -> {}`
+(PRICES needs no widgets — it's draw-only + click-handled). The two `switch
+(currentSection())` sites are the only ones; both handle PRICES.
+
+### Purchasable item (non-ruler access)
+
+`PriceBoardItem` (`price_board`, in `ModItems`) — mirrors `KingdomBookItem`
+but **not ruler-gated**: opens the kingdom book for the kingdom of the
+village the holder stands in (else the kingdom they rule). Sends
+`SyncKingdomPacket` then `OpenKingdomBookPacket`; the Prices tab
+lazy-loads. **Deviation:** opens the book (Prices one click away) rather
+than jumping straight to the section — `OpenKingdomBookPacket` carries only
+`kingdomId` and extending it for an initial-section was more churn than
+warranted; flagged.
+
+### Tie-In / Simplification
+
+Read-only — no economy mutation. Reuses the book's tab machinery + the same
+`MarketPriceHelper` a player pays through (so board == trade-screen
+prices). The aggregator is the only new logic, callable from both the
+section's request handler and (transitively) the item. `KingdomBookItem`/
+ruler book untouched. Single-village kingdom → one price, zero spread, no
+NPE (the cheapest==dearest case).
+
+### Build verification (5c + 5d)
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: all 12
+touched files brace/paren-balanced; both new packet pairs encode/decode
+symmetric + registered; `OpenVillageBookPacket` codec append matched in
+header/encode/decode/construct; `SectionType.PRICES` + `Section.ECONOMY`
+added to every exhaustive switch (draw) with `default` covering the widget
+switches; APIs confirmed (`getSimData`, `VillageSimData.net/production/
+consumption/getNetIncomePerDay`, `ResourceCategory.values`, `getKingdomById/
+ForVillage` → `Optional<Kingdom>`, `Kingdom.getVillageIds/getId`,
+`getDynamicSellPrice`, `findOfficesHeldBy().holding().officeId()`,
+`sendOpenPacket(...,section)`, `CoinRenderer.format`, `StatBox/Pill/
+NeedMeter` via `Framework.*`); both items registered in `ModItems`.
+
+### Smoke test (5c)
+
+1. Right-click a VILLAGE_LEADER (or treasurer) → book opens; Economy tab
+   shows needs, per-category surplus/deficit (exporter/importer), treasury.
+2. A wheat-producing village reads FOOD = Exporter.
+3. Village without sim data → neutral display, no NPE.
+4. Read-only — no economy state changes.
+5. The economy scroll opens the standing village's Economy view.
+
+### Smoke test (5d)
+
+1. Kingdom book → Prices: cross-village list, cheapest/dearest + spread
+   per item.
+2. Two villages with a real 1c gap → the board shows it (cheap in the
+   exporter, dear in the importer).
+3. Click an item → per-village prices; click again → back.
+4. `price_board` item as a non-ruler → opens the kingdom book.
+5. Single-village kingdom → zero spread, no NPE.
+6. Board prices == trade-screen prices (same `MarketPriceHelper`).
+7. Ruler kingdom book still opens.

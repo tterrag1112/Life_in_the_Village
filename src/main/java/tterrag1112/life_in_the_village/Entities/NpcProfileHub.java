@@ -211,6 +211,14 @@ public final class NpcProfileHub {
      *   <li>Profession default → profession-specific screen if one exists.</li>
      * </ol>
      */
+    /** Phase 5c — true if this NPC holds the village-treasurer office. */
+    private static boolean holdsVillageTreasurerOffice(TownspersonMob npc, ServerLevel level) {
+        return tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry
+                .findOfficesHeldBy(npc.getUUID(), level).stream()
+                .anyMatch(m -> tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry
+                        .VILLAGE_TREASURER.equals(m.holding().officeId()));
+    }
+
     private static void openNavTarget(TownspersonMob npc, ServerPlayer player, ServerLevel level) {
         Profession prof = npc.getProfession();
         VillageSavedData data = VillageSavedData.get(level);
@@ -222,6 +230,18 @@ public final class NpcProfileHub {
                 npc.unlockConversation(player.getUUID());
                 tterrag1112.life_in_the_village.Gui.VillageBookScreen
                         .sendOpenPacket(player, v.getId(), level, data);
+                return;
+            }
+        }
+        // Phase 5c — the village treasurer (an office held by a MERCHANT/
+        // SCHOLAR, not a profession) opens the book straight to the Economy
+        // section. Detected via the office registry.
+        if (holdsVillageTreasurerOffice(npc, level)) {
+            Village v = npc.getAssignedVillageName().flatMap(data::getVillageByName).orElse(null);
+            if (v != null) {
+                npc.unlockConversation(player.getUUID());
+                tterrag1112.life_in_the_village.Gui.VillageBookScreen
+                        .sendOpenPacket(player, v.getId(), level, data, "ECONOMY");
                 return;
             }
         }
