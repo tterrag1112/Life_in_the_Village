@@ -1772,3 +1772,63 @@ four files.
 5. Scaffold OFF → dense-core markets skip cleanly (no crash); fewer pads
    = the known reservation gap, not a regression.
 6. Logs: seeder reports placed count or a clear zero reason; no NPE.
+
+---
+
+## Fix — stalls used the old NBT instead of the authored variant pool
+
+Symptom: after authoring new stall variants under
+`default/rural/market_stall/{id}`, seeded stalls still used the old
+`default/rural/market/stall/stall_1` model.
+
+### Root cause
+
+`MarketStallSeeder.seed` hardcoded `spec.stallPool().get(0)` — the
+registry's single `stall_1` entry — for every seeded stall. It never
+consulted the variant registry, so authored `MARKET_STALL` manifests
+(`stall_red/blue/green/purple`) loaded into `VariantRegistry` but were
+never selected; every stall resolved `stall_1`'s legacy `directNbt`.
+(Path resolution in `StallAllocator.resolveTemplate` was already correct —
+the seeder just never handed it a real variant id.)
+
+### Fix
+
+`MarketStallSeeder.resolveStallPool(spec)` builds the seed pool from
+`VariantRegistry.INSTANCE.all(MARKET_STALL)` (RURAL variants), one
+`StallVariant` per authored variant carrying its `id` (so
+`StallAllocator` resolves `default/rural/market_stall/{id}/level_1`
+through `CultureResolver`). `seed` round-robins across the pool so a
+market shows a mix, not four identical stalls. Falls back to the spec's
+`stallPool` when no `MARKET_STALL` variants are registered (preserves 2b
+behaviour). The per-variant `directNbt` fallback is pointed at the
+spec's legacy known-good NBT (not each variant's own path) so a
+manifest-only variant can't seed zero — though with NBTs now authored the
+variant path resolves directly and the fallback is just a safety net.
+
+### Tie-In / notes
+
+- The `weight` carried from the manifest (`Math.round(v.weight())`, min 1)
+  feeds `StallVariant`; selection is round-robin v1 (weighted random is a
+  later tuning knob — flagged).
+- Variant assets live on `main` (`stall_red/blue/green/purple`, manifest +
+  `level_1.nbt`); this code change is on the working branch and meets them
+  when the branch merges to `main` (the established flow).
+- Deviation: the prompt mental-model was "wrong path" — the path logic was
+  fine; the seeder selection was the bug. Fixed at the selection site.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review:
+`VariantRegistry.all`, `BuildingVariant.style()/id()/weight()`,
+`Style.RURAL`, `BuildingType.MARKET_STALL` all confirmed against as-built;
+imports added; braces/parens balanced; `variant` is loop-scoped; the
+zero-placed log reads `pool.get(0).id()`.
+
+### Smoke test
+
+1. Regenerate a market (on a branch with both this code and the variant
+   assets). Confirm seeded stalls now use the authored colored variants
+   (a mix across the pad), not the old `market/stall/stall_1` model.
+2. Confirm stalls still seed if a variant's NBT is missing (falls back to
+   the legacy NBT, no zero-seed).
+3. Confirm a player can still rent/purchase a seeded stall.

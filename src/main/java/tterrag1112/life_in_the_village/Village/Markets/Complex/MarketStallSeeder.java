@@ -7,7 +7,11 @@ import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.Complex.MarketComplexSpec;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
+import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantRegistry;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 
 import java.util.ArrayList;
@@ -46,12 +50,23 @@ public final class MarketStallSeeder {
                            MarketComplexSpec spec) {
         if (spec == null || spec.stallPool().isEmpty()) return 0;
         if (region == null || footprint == null) return 0;
-        StallVariant variant = spec.stallPool().get(0); // 2b: single authored variant
+
+        // Pull the seed pool from the authored MARKET_STALL variant
+        // registry (default/rural/market_stall/{id}) so newly-authored
+        // stall variants are actually used. The spec's stallPool is the
+        // fallback when no variants are registered (keeps 2b behaviour).
+        // Each entry's directNbt is the variant-layout path; StallAllocator
+        // resolves it through CultureResolver first and only drops to the
+        // legacy direct path if a variant's NBT is missing.
+        List<StallVariant> pool = resolveStallPool(spec);
 
         List<BoundingBox> occupied = new ArrayList<>();
         int baseSlot = data.getStallsForMarket(market.getId()).size();
         int placed = 0;
         for (int i = 0; i < SEED_COUNT; i++) {
+            // Round-robin across the pool so a market shows a mix of
+            // variants rather than four identical stalls.
+            StallVariant variant = pool.get(i % pool.size());
             Optional<MarketStall> s = StallAllocator.place(
                     level, market, region, footprint, padY, variant,
                     MarketStall.VACANT_UUID, MarketStall.OwnerType.NPC, "",
@@ -72,13 +87,51 @@ public final class MarketStallSeeder {
             Polygon.AABB r = Polygon.boundingBox(region);
             LOGGER.warn("[MarketStallSeeder] seeded ZERO stalls at market {} — "
                     + "no seat fit. Pad region {}x{} (x[{}..{}] z[{}..{}]), "
-                    + "variant '{}'. Likely the pad band is shallower than the "
-                    + "stall footprint; raise padMargin/minPadMargin in "
+                    + "first variant '{}'. Likely the pad band is shallower than "
+                    + "the stall footprint; raise padMargin/minPadMargin in "
                     + "MarketComplexRegistry.",
                     market.getName(),
                     (r.maxX() - r.minX() + 1), (r.maxZ() - r.minZ() + 1),
-                    r.minX(), r.maxX(), r.minZ(), r.maxZ(), variant.id());
+                    r.minX(), r.maxX(), r.minZ(), r.maxZ(), pool.get(0).id());
         }
         return placed;
+    }
+
+    /**
+     * Builds the seed pool from the authored {@code MARKET_STALL} variant
+     * manifests (RURAL) — one {@link StallVariant} per registered variant,
+     * carrying the variant {@code id} (so {@code StallAllocator} resolves
+     * {@code default/rural/market_stall/{id}/level_1} through
+     * {@code CultureResolver}) and a shared legacy fallback NBT for the
+     * not-yet-authored case. Falls back to the spec's {@code stallPool}
+     * when the registry has no MARKET_STALL variants (preserves the 2b
+     * single-authored-stall behaviour). Never returns empty (callers guard
+     * {@code stallPool} for emptiness upstream).
+     */
+    private static List<StallVariant> resolveStallPool(MarketComplexSpec spec) {
+        List<BuildingVariant> registered =
+                VariantRegistry.INSTANCE.all(BuildingType.MARKET_STALL);
+        // directNbt is the FALLBACK used only when a variant's own
+        // variant-layout NBT (default/rural/market_stall/{id}/level_1) is
+        // missing — StallAllocator.resolveTemplate tries the variant path
+        // (by id) first. So point the fallback at the legacy known-good
+        // stall NBT, never the variant's own (possibly-unauthored) path,
+        // or a manifest-only variant would seed nothing. Take it from the
+        // spec's first pool entry so the legacy location stays in one place.
+        net.minecraft.resources.Identifier fallbackNbt =
+                spec.stallPool().get(0).directNbt();
+        List<StallVariant> pool = new ArrayList<>();
+        for (BuildingVariant v : registered) {
+            if (v.style() != Style.RURAL) continue;
+            int weight = Math.max(1, Math.round(v.weight()));
+            pool.add(new StallVariant(v.id(), fallbackNbt, weight));
+        }
+        if (pool.isEmpty()) {
+            LOGGER.debug("[MarketStallSeeder] no MARKET_STALL variants registered; "
+                    + "falling back to spec stallPool ({} entries)",
+                    spec.stallPool().size());
+            return spec.stallPool();
+        }
+        return pool;
     }
 }
