@@ -3378,3 +3378,109 @@ place: grepped the whole `src/` tree for `MinimalSpawner`,
 `FarmPlotPlacer`, `TerrainStep`, `getSteps`, and the `Terrain.Steps`
 import path — zero remaining references after the scrubs. The stripped
 `TerrainStrategy` keeps only members its readers actually use.
+
+### 2026-05-31 — Layout Rework Phase 2 landed (V1 Zoning matcher cluster deleted)
+
+**What shipped:** Second phase of the dead-V1 layout cleanup. Deleted
+the V1 building-placement matcher cluster under
+`Village/Planning/Zoning/` — five types that were the V1 matcher's
+per-building scoring registry. V2 places buildings by frontage
+adjacency in `PhasedPlanner` and never consults them. Pure deletion;
+no new behaviour. `SlotTag` and `PlacementSlot` were kept (both have
+live consumers and belong to a later phase).
+
+A `git grep` over the object store confirmed the audit's core
+prediction: the five targets have **zero live code callers** — every
+inbound reference outside the `Zoning/` package is a comment (4 such
+comments total). No `switch`/`case` exists over these types (records/
+registry, not enums). The keepers `SlotTag` and `PlacementSlot`
+reference none of the five in code.
+
+**Surface area:** 5 source deletions + 1 unused-import removal + 3
+comment scrubs.
+
+**Files deleted:**
+- `src/main/java/.../Village/Planning/Zoning/BuildingProfileRegistry.java`
+- `src/main/java/.../Village/Planning/Zoning/BuildingProfile.java`
+- `src/main/java/.../Village/Planning/Zoning/SlotPreference.java`
+- `src/main/java/.../Village/Planning/Zoning/AnchorPolicy.java`
+- `src/main/java/.../Village/Planning/Zoning/AvoidanceRule.java`
+
+**Files modified:**
+- `Commands/LayoutDebugCommand.java` — removed the now-unused
+  `import ...Village.Planning.Zoning.PlacementSlot;` (the symbol was
+  imported but never used; the import sat at line 14, not the line 29
+  the prompt cited).
+- `Village/Decoration/Framework/DecorationProfile.java` — scrubbed the
+  dangling "Parallel to BuildingProfile" javadoc reference.
+- `Village/Buildings/BuildingType.java` — scrubbed the dangling
+  "no BuildingProfile entry" comment.
+- `Village/Planning/Zoning/PlacementSlot.java` — scrubbed a dangling
+  "Parallel to BuildingProfile" javadoc reference (a keeper file; see
+  Deviations).
+
+**Deviations from prompt:**
+- The prompt's named comment-scrub sites did not match the actual repo.
+  `SlotTag.java` has **no** `BuildingProfileRegistry` comment (its
+  javadoc already reads "that matcher is gone"), so the prompt's
+  "`SlotTag.java:23`" scrub was a no-op and was skipped. Instead, the
+  keeper `PlacementSlot.java` carried an unlisted dangling
+  "Parallel to BuildingProfile" javadoc reference, which was scrubbed
+  for consistency. The `DecorationProfile.java` and `BuildingType.java`
+  scrubs were applied as listed. The `LayoutDebugCommand` import was at
+  line 14, not the cited line 29.
+- The deletion set, the keeper set, and the zero-live-caller prediction
+  all held exactly as the prompt described; no target had a live
+  caller, so no stop-and-report was triggered.
+
+**Environment note (verification caveat):** This session's sandbox
+exhibited intermittent tool-output corruption (truncated, duplicated,
+and at times entirely fabricated read results — an early Read of
+`SlotTag.java` returned content that did not match the file's actual
+bytes). Ground truth was re-established throughout via the git object
+store (`git show`, `git grep`, `git ls-tree`), which was consistent.
+The deletions (`git rm`) and edits (fail-safe exact-match `Edit`) are
+deterministic and do not depend on render fidelity; each was confirmed
+to take effect before output degraded. Late-stage output went fully
+silent, so the final tree-wide "zero remaining references" grep and the
+commit/push confirmation could not be visually verified in-session —
+flagged here so they can be re-confirmed on the pushed branch.
+
+**Out-of-scope but flagged (carried from the prompt):**
+- **`PlacementSlot` deletion** → Phase 3 (bridge). Live consumers:
+  `VillageLayout` (`plotSlots`/`plotSpecs`) and `Plaza.civicSlots` (a
+  vestigial, never-populated field). Cannot be removed until
+  `VillageLayout` is replaced.
+- **`SlotTag`** → kept; live in `VariantManifest`/`VariantSelector`/
+  decoration.
+- **`TerrainStrategy` enum removal** → separate Phase-2b prompt.
+- **`Plaza.civicSlots` strip** → Phase 3, with the `PlacementSlot`
+  removal.
+- **`CLAUDE.md` / `LAYOUT_OVERVIEW.md` stale lines** (flagged in the
+  Phase 1 entry) remain human-managed and still stale.
+
+**Cumulative pending verification:** Detour A (Prompt A + Prompt B),
+Layout Rework Phase 1, and this Layout Rework Phase 2 remain pending
+in-world smoke test. Phase 2 is not user-visible (deletes only dead
+code that never ran in the spawn path), so its verification is a
+compile + spawn sanity check.
+
+**Smoke test plan (user-executable):**
+1. Build the mod (deferred in sandbox — see Build verification).
+2. Tree-wide grep: confirm zero remaining references to
+   `BuildingProfileRegistry`, `BuildingProfile`, `SlotPreference`,
+   `AnchorPolicy`, `AvoidanceRule`, and that `SlotTag` /
+   `PlacementSlot` still compile. (Re-confirm on the pushed branch per
+   the environment note above.)
+3. In-world: `/litv spawn` a village of any type and confirm it
+   generates exactly as before — the deleted matcher never ran on the
+   V2 frontage-adjacency path (`PhasedPlanner`).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net; Gradle returned HTTP 403 resolving
+`net.neoforged:neoform-runtime` in the Phase 1 run, unchanged here).
+Static review completed via the git object store in place of a build:
+the five deleted types had zero non-comment references; the keepers
+reference none of them; the scrubs remove the dangling comment
+mentions. Final visual re-confirmation deferred to the pushed branch
+due to the in-session output degradation noted above.
