@@ -47,6 +47,8 @@ public class TradeScreen extends Screen {
     private record TradeRow(TradeOffer offer, boolean buySide) {}
 
     private final UUID merchantId;
+    private final UUID stallId;
+    private final boolean stallKeyed;
     private final String merchantName;
     private final String npcRole;
     private final String villageName;
@@ -67,6 +69,8 @@ public class TradeScreen extends Screen {
     public TradeScreen(OpenTradeScreenPacket pkt) {
         super(Component.literal(pkt.merchantName()));
         this.merchantId     = pkt.merchantId();
+        this.stallId        = pkt.stallId();
+        this.stallKeyed     = !OpenTradeScreenPacket.NO_STALL.equals(pkt.stallId());
         this.merchantName   = pkt.merchantName();
         this.npcRole        = pkt.npcRole();
         this.villageName    = pkt.villageName();
@@ -139,8 +143,12 @@ public class TradeScreen extends Screen {
         Identifier itemId = BuiltInRegistries.ITEM.getKey(offer.item());
         if (itemId == null) return false;
         int quantity = shiftHeld ? 64 : 1;
-        ClientPacketDistributor.sendToServer(
-                new TradeActionPacket(merchantId, itemId, row.buySide(), quantity));
+        // Phase 5b — a stall-keyed screen sends the stall id so the server
+        // routes to the no-NPC stall trade; an NPC screen omits it.
+        TradeActionPacket action = stallKeyed
+                ? new TradeActionPacket(merchantId, stallId, itemId, row.buySide(), quantity)
+                : new TradeActionPacket(merchantId, itemId, row.buySide(), quantity);
+        ClientPacketDistributor.sendToServer(action);
         return true;
     }
 

@@ -2393,3 +2393,148 @@ gone; braces/parens balanced across all 6 files.
    a plain NPC with nothing to sell shows no trade action.
 6. Wandering trader screen still opens + trades (buy-only list).
 7. No missing buttons / unhandled packet / render-order glitch.
+
+---
+
+## Phase 5b — Player-owned-stall management + unified sign right-click
+
+Built via the `litv-gui-screen` skill (Path B — new screen, block-
+interaction launch). The stall sign is now the single entry point.
+
+### Sign → stall resolution + the stored sign pos
+
+Added a `signPos` field to `MarketStall` (codec field 15 of 16 — within the
+cap) + `getSignPos/setSignPos/hasSignPos`. The 2c sign funnel
+(`MarketStallOwnership.refreshSign`) now captures the first sign it writes
+via a new `DynamicSignUpdater.updateSignsReturningFirst` and records it on
+the stall. `VillageSavedData.getStallBySignPos` resolves a clicked sign:
+exact `signPos` match first, then a ≤4-block proximity fallback to the
+stall origin (covers stalls placed before the field existed).
+
+### Sign interception + routing
+
+New `StallSignInteractionHandler` (`@EventBusSubscriber`, server-side) on
+`PlayerInteractEvent.RightClickBlock`: if the clicked block is a
+`SignBlockEntity` AND resolves to a stall, it cancels the event
+(`setCanceled(true)` + `setCancellationResult(SUCCESS)`) so vanilla
+sign-edit never opens, and routes by `OwnerType`:
+- **PLAYER + owner UUID** → `TradeHandler.openStallManagement` (manage).
+- **PLAYER + other player** → `TradeHandler.openTradeScreenForStall` (trade
+  from the chest, no NPC).
+- **NPC / WANDERING_TRADER** → the manning merchant's `openTradeScreen`
+  (existing 5a path); "stallholder isn't here" if unloaded.
+- **Vacant** → "for rent, speak to the merchant" hint.
+Non-stall signs return early → vanilla editing untouched.
+
+### Management screen (owner)
+
+`StallManagementScreen` — parchment book chrome (360×260), single page:
+- **Stats row** (`StatBox`): total sales, reputation tier, tenure
+  (Owned / Rented Nd).
+- **Item list** (`ScrollList`): each stocked-or-custom-priced item shows
+  name, effective price (`CoinRow`), stock `xN`, and a "custom" `Pill`.
+  Click selects → fills the editor.
+- **Editor column**: `StyledEditBox` (price) + "Set Price" / "Clear"
+  `StyledButton`s; the ±20% band is shown for the selection.
+- **"Open Stall Chest"** button → `OPEN_CHEST` action → server
+  `player.openMenu` on the chest at `chestPos` (manual stocking; no custom
+  stock UI, per scope).
+
+### Packets
+
+- `OpenStallManagementPacket` (S→C): stall id, label, sales, rep tier,
+  purchased/rent-until/current-tick, + per-item rows (id, name, base,
+  effective, min, max, hasCustom, stock).
+- `StallManagementActionPacket` (C→S): `SET_PRICE` / `CLEAR_PRICE` /
+  `OPEN_CHEST`. **Server-validated**: owner gate (PLAYER + matching UUID);
+  `SET_PRICE` re-clamps to the ±20% band via `MarketStall.setCustomPrice`
+  (client value never trusted); refreshes the screen after a change.
+- Both registered in `ModModEvents.registerPayloads`.
+
+### Stall-keyed trade (non-owner of a player stall — full scope per request)
+
+The existing trade action is NPC-keyed (`level.getEntity(merchantId)`); a
+player stall has no entity. So:
+- `OpenTradeScreenPacket` + `TradeActionPacket` gained an optional
+  `stallId` (zero UUID = NPC path, unchanged; non-zero = stall path). The
+  5a `TradeScreen` records it and tags outgoing actions when stall-keyed.
+- `TradeHandler.openTradeScreenForStall` builds a buy-only offer list from
+  the stall chest at the owner's effective price (the SELL list is empty —
+  a player stall has no wallet to pay sellers, so visitors buy but can't
+  sell to it; stated honestly).
+- `TradeHandler.handleStallTrade` (routed from `TradeActionPacket.handle`
+  when `hasStall()`): draws from the chest, the player pays into the stall
+  chest via 1b `settlePurchase(player → stallChest)` (the `resolveStall
+  Endpoint` primitive already supports crediting a player stall chest),
+  records the sale, refreshes.
+
+### Tie-In Audit
+
+- **Upstream:** `MarketStall` (owner/prices/stats/signPos), `StallGoods`/
+  chest stock, `MarketPricing`/`getEffectivePrice` (the ±20% band centre).
+- **Downstream:** the owner's `SET_PRICE` writes `customPrices` →
+  `getEffectivePrice` → already consulted by 5a's screen + `MarketPricing`
+  (1a), so the loop closes (owner sets price → buyers see it). Non-owner
+  trade reuses 1b settlement (stall chest endpoint) — no new settlement.
+- **Siblings:** the 2c sign funnel writes the text; 5b reads the same
+  sign's pos (captured in the same call). `RentStallVerb`/lease flow still
+  acquires stalls (5b only manages an owned one). NPC-owned stalls open
+  trade, never the player management screen (gated on PLAYER + UUID).
+- **Switches:** `OwnerType` routing handles all three arms (PLAYER →
+  manage/trade; NPC/WANDERING_TRADER → NPC trade). No new enum.
+
+### Simplification Sweep
+
+The sign is the one stall entry point. The non-owner branch reuses the 5a
+`TradeScreen` (stall-keyed) rather than a parallel screen. `updateSigns`
+now delegates to `updateSignsReturningFirst` (one impl).
+
+### Deviations from prompt
+
+- **Player stalls are buy-only for visitors** (no SELL list): a player
+  stall has no wallet/owner present to fund buying from a seller, and
+  `SettlementParty.StallChest` can be credited but not debited. Stated
+  rather than faked.
+- **Sign type:** only standard `SignBlockEntity` is handled (what
+  `DynamicSignUpdater` writes). Hanging signs aren't used by the stall
+  NBTs, so hanging-sign interception is omitted (flag: add a
+  `HangingSignBlockEntity` arm if stall NBTs ever use them).
+- Custom-price detection uses `getCustomPricesRaw().containsKey` (exact),
+  not effective-vs-base comparison.
+
+### Out-of-scope but flagged
+
+- Automated stocking / stock-transfer UI (manual chest only). Lease
+  acquisition/renewal redesign (existing flow stands; "renew" could be a
+  follow-up button). NPC-stall management by players. 5c/5d/5e.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`; `compileJava` aborts at
+dependency resolution so no javac ran). Static review: all 14 files brace/
+paren-balanced; codec field count 15 ≤ 16; packet encode/decode symmetric
+(both new packets + the two extended ones); enum encoded as
+`writeUtf(name())`/`valueOf` (codebase convention, not `writeEnum`);
+`StyledEditBox extends EditBox`, `StyledButton extends Button` (so
+`addRenderableWidget` + `getValue/setValue` valid); `StyledButton.builder()
+.pos().size().build()` matches; `Identifier.parse` + `player.openMenu
+(MenuProvider)` (ChestBlockEntity is a MenuProvider) confirmed; all three
+`OpenTradeScreenPacket` sites + the `TradeScreen` constructor use the new
+shape. **Highest residual risk:** `PlayerInteractEvent.RightClickBlock`
+cancellation API (`setCancellationResult(InteractionResult)`) couldn't be
+verified offline — first thing to check on `./gradlew build`.
+
+### Smoke test
+
+1. Rent/buy a stall, right-click its sign → management screen (NOT vanilla
+   sign-edit).
+2. Set a custom price within ±20% → sticks; out-of-band → server rejects;
+   a buyer then sees the price in the 5a trade screen.
+3. "Open Stall Chest" → vanilla chest opens; stocking makes the item
+   buyable.
+4. Sales/reputation/rent display; sales updates after a buy.
+5. A DIFFERENT player right-clicks the sign → trade screen for the stall
+   (buys from the chest, pays the owner via 1b) — not management.
+6. Non-stall sign → vanilla editing still works.
+7. NPC-owned stall sign → trade, not player management.
+8. No render/packet glitch.
