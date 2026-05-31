@@ -2,7 +2,6 @@ package tterrag1112.life_in_the_village.Entities;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.MerchantBehavior;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Traits.DisplayedTrait;
 import tterrag1112.life_in_the_village.Npc.Traits.TraitIntensity;
@@ -96,9 +95,21 @@ public final class NpcProfileSnapshotBuilder {
 
         // ── Action bar gating ────────────────────────────────────────────────
         Profession prof = npc.getProfession();
-        boolean canTrade = prof == Profession.MERCHANT
-                && Optional.ofNullable(npc.getBehavior(MerchantBehavior.class))
-                .map(MerchantBehavior::isOpenForTrade).orElse(false);
+        // Phase 5a — the trade screen opens for ANY NPC selling wares, not
+        // merchant-only: a merchant open for trade, a producer profession
+        // (the profile hub already routes these to openTradeScreen), or any
+        // NPC owning an active market stall.
+        boolean isProducer = switch (prof) {
+            case MERCHANT, BLACKSMITH, CARPENTER, MILLER, BAKER, STONEMASON,
+                 WEAVER, CANDLEMAKER, MINER -> true;
+            default -> false;
+        };
+        boolean ownsStall = villageOpt
+                .map(v -> data.getStallsForVillage(v.getId()).stream()
+                        .anyMatch(s -> s.isActive()
+                                && s.getOwnerUUID().equals(npc.getUUID())))
+                .orElse(false);
+        boolean canTrade = isProducer || ownsStall;
         boolean canOpenGuild = prof == Profession.GUILDWORKER
                 && villageOpt.flatMap(v -> data.getGuildForVillage(v.getId())).isPresent();
         boolean canAssignWork = switch (prof) {

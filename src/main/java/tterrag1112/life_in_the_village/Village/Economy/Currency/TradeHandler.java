@@ -60,39 +60,70 @@ public class TradeHandler {
         // Collect stall chest positions so stock counts exclude other stalls
         Set<BlockPos> allStallChests = allStallChestPositions(data, market);
 
-        List<TradeOffer> offers = new ArrayList<>();
         Village pricingVillage = village.orElse(null);
+        String villageName = pricingVillage != null ? pricingVillage.getName() : "";
+
+        // Header provenance — stall owner + reputation tier/discount (5a).
+        MarketStall headerStall = firstOwnedStall(data, market, merchant.getUUID());
+        String stallOwner = headerStall != null ? headerStall.getOwnerDisplayName() : "";
+        String repTierName = "";
+        int repDiscountPct = 0;
+        if (pricingVillage != null) {
+            VillageReputation.Tier tier = ReputationManager.getTier(
+                    player, pricingVillage.getId(), level);
+            repTierName = tier.displayName;
+            repDiscountPct = (int) Math.round(tier.getPriceDiscount() * 100);
+        }
+
+        // Two INDEPENDENT lists (5a — fixes the "same item in both columns"
+        // bug). BUY = what the NPC stocks to sell; SELL = what the NPC will
+        // buy that the player actually holds. An item can be in one, both,
+        // or neither — each list is populated by its own predicate.
+        List<TradeOffer> buyOffers = new ArrayList<>();
+        List<TradeOffer> sellOffers = new ArrayList<>();
 
         MarketPriceHelper.getAllExplicitPrices().keySet().forEach(item -> {
-            // Canonical pricing — supply/demand, stall custom price, village
-            // law and the player's reputation/perk/tariff in one pipeline.
             // Pricing stall mirrors the buy-path source (merchant's own stall
             // only) so the displayed price equals the charged price.
             MarketStall pricingStall = findOwnedStallWithItem(
                     data, level, market.getId(), item, merchant.getUUID());
-            long sell = MarketPricing.sellPrice(PricingContext.forPlayer(
-                    item, level, pricingVillage, data, player, pricingStall));
-            long buy = MarketPricing.buyPrice(PricingContext.forPlayer(
-                    item, level, pricingVillage, data, player, null));
 
-            // Stock = main chests + merchant's own stall (not other stalls)
+            // ── BUY list: only items the NPC actually stocks ──────────────
             int stock = countMerchantStock(
                     level, market, item, merchant.getUUID(), data, allStallChests);
-            boolean canBuy  = stock > 0;
-            boolean canSell = player.getInventory()
-                    .hasAnyMatching(s -> s.is(item));
+            if (stock > 0) {
+                long sell = MarketPricing.sellPrice(PricingContext.forPlayer(
+                        item, level, pricingVillage, data, player, pricingStall));
+                boolean customPriced = pricingStall != null
+                        && pricingStall.getCustomPricesRaw().containsKey(
+                                BuiltInRegistries.ITEM.getKey(item).toString());
+                buyOffers.add(new TradeOffer(
+                        item, sell, 0, true, false, stock, customPriced));
+            }
 
-            if (canBuy || canSell) {
-                offers.add(new TradeOffer(item, sell, buy, canBuy, canSell, stock));
+            // ── SELL list: only items the NPC will buy AND the player holds ─
+            boolean playerHas = player.getInventory()
+                    .hasAnyMatching(s -> s.is(item));
+            if (playerHas) {
+                long buy = MarketPricing.buyPrice(PricingContext.forPlayer(
+                        item, level, pricingVillage, data, player, null));
+                sellOffers.add(new TradeOffer(
+                        item, 0, buy, false, true, 0, false));
             }
         });
 
         // Use CoinHelper.getPlayerWealth — no snapshot needed
         long playerWealth = CoinHelper.getPlayerWealth(player).toBronze();
 
+        String role = merchant.getProfession().name().charAt(0)
+                + merchant.getProfession().name().substring(1).toLowerCase()
+                        .replace('_', ' ');
+
         PacketDistributor.sendToPlayer(player,
                 new OpenTradeScreenPacket(merchant.getUUID(),
-                        merchant.getNpcName(), offers, playerWealth));
+                        merchant.getNpcName(), role, villageName, stallOwner,
+                        repTierName, repDiscountPct, buyOffers, sellOffers,
+                        playerWealth));
     }
 
     // =========================================================================
@@ -420,6 +451,18 @@ public class TradeHandler {
     // =========================================================================
     // Stall helpers
     // =========================================================================
+
+    /** First active stall this merchant owns at the market (for the trade
+     *  header's stall-owner line), or null if it owns none. */
+    private static MarketStall firstOwnedStall(VillageSavedData data,
+                                               Building market, UUID ownerUUID) {
+        for (MarketStall stall : data.getStallsForMarket(market.getId())) {
+            if (stall.isActive() && stall.getOwnerUUID().equals(ownerUUID)) {
+                return stall;
+            }
+        }
+        return null;
+    }
 
     private static MarketStall findOwnedStallWithItem(VillageSavedData data,
                                                       ServerLevel level,

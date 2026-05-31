@@ -224,17 +224,17 @@ public class WanderingTraderBehavior extends Behavior<TownspersonMob> {
             return;
         }
 
-        List<TradeOffer> offers = new ArrayList<>();
+        // Wandering trader only sells (he doesn't buy back) — all wares go
+        // in the BUY list; the SELL list is empty (5a two-list payload).
+        List<TradeOffer> buyOffers = new ArrayList<>();
         for (int i = 0; i < trades.size(); i++) {
             WanderTrade t = trades.get(i);
             if (stock[i] <= 0) continue;
-            // Wandering trader only sells (canSell = false here means player
-            // cannot sell TO the trader — he doesn't buy back)
-            offers.add(new TradeOffer(t.item(), t.price(), 0L,
+            buyOffers.add(new TradeOffer(t.item(), t.price(), 0L,
                     true, false, stock[i]));
         }
 
-        if (offers.isEmpty()) {
+        if (buyOffers.isEmpty()) {
             player.displayClientMessage(
                     net.minecraft.network.chat.Component.literal(
                             "[" + entity.getNpcName()
@@ -247,9 +247,12 @@ public class WanderingTraderBehavior extends Behavior<TownspersonMob> {
                 ? CoinHelper.getPlayerWealth(player).toBronze()
                 : 0L;
 
+        // Plain travelling merchant: no village/stall/reputation context.
         PacketDistributor.sendToPlayer(player,
                 new OpenTradeScreenPacket(entity.getUUID(),
-                        entity.getNpcName(), offers, playerWealth));
+                        entity.getNpcName(), "Travelling Merchant",
+                        "", "", "", 0,
+                        buyOffers, java.util.List.of(), playerWealth));
     }
 
     /**
