@@ -1,18 +1,31 @@
 package tterrag1112.life_in_the_village.Gui;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.phys.AABB;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
+import net.neoforged.neoforge.network.PacketDistributor;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.Commissions.CommissionBoardPanel;
 import tterrag1112.life_in_the_village.Gui.Framework.*;
-import tterrag1112.life_in_the_village.Networking.BusinessActionPacket;
-import tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket;
-import tterrag1112.life_in_the_village.Networking.VillageActionPacket;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
+import tterrag1112.life_in_the_village.Networking.*;
+import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
+import tterrag1112.life_in_the_village.Village.Economy.Trade.TradeRoute;
+import tterrag1112.life_in_the_village.Village.Simulation.ResourceCategory;
+import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
 
 import java.util.*;
@@ -774,6 +787,7 @@ public class VillageBookScreen extends Screen {
     private String sectionLabel(Section s) {
         return switch (s) {
             case OVERVIEW          -> "Overview";
+            case ECONOMY           -> "Economy";
             case HOUSING           -> "Housing";
             case COMPANY_BUILDINGS -> "Buy Building";
             case STATISTICS        -> "Statistics";
@@ -784,11 +798,11 @@ public class VillageBookScreen extends Screen {
     }
 
     private void startMapBake() {
-        var buildings = net.minecraft.client.Minecraft.getInstance().level != null
-                ? tterrag1112.life_in_the_village.Village.Building
+        var buildings = Minecraft.getInstance().level != null
+                ? Building
                 .ClientBuildingCache.getBuildings()
-                : List.<tterrag1112.life_in_the_village.Village.Building>of();
-        var matchedVillage = tterrag1112.life_in_the_village.Village.Building
+                : List.<Building>of();
+        var matchedVillage = Building
                 .ClientBuildingCache.getVillages().stream()
                 .filter(v -> v.getId().equals(data.villageId()))
                 .findFirst().orElse(null);
@@ -802,83 +816,78 @@ public class VillageBookScreen extends Screen {
     }
 
     public static void sendOpenPacket(
-            net.minecraft.server.level.ServerPlayer player,
+            ServerPlayer player,
             UUID villageId,
-            net.minecraft.server.level.ServerLevel level,
-            tterrag1112.life_in_the_village.Networking.VillageSavedData vdata) {
+            ServerLevel level,
+            VillageSavedData vdata) {
         sendOpenPacket(player, villageId, level, vdata, "");
     }
 
     public static void sendOpenPacket(
-            net.minecraft.server.level.ServerPlayer player,
+            ServerPlayer player,
             UUID villageId,
-            net.minecraft.server.level.ServerLevel level,
-            tterrag1112.life_in_the_village.Networking.VillageSavedData vdata,
+            ServerLevel level,
+            VillageSavedData vdata,
             String openSection) {
 
         var village = vdata.getVillageById(villageId).orElse(null);
         if (village == null) return;
 
         int buildingCount = village.getBuildingIds().size();
-        String tier = tterrag1112.life_in_the_village.Village.Decoration
-                .VillageSizeTier.fromBuildingCount(buildingCount).displayName;
+        String tier = VillageSizeTier.fromBuildingCount(buildingCount).displayName;
 
-        net.minecraft.world.phys.AABB villageBounds = village.getBounds(vdata)
+        AABB villageBounds = village.getBounds(vdata)
                 .map(b -> b.inflate(32))
-                .orElse(new net.minecraft.world.phys.AABB(0, 0, 0, 0, 0, 0));
+                .orElse(new AABB(0, 0, 0, 0, 0, 0));
 
         int pop = (int) level.getEntitiesOfClass(
-                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
+                TownspersonMob.class,
                 villageBounds,
                 npc -> npc.getAssignedVillageName()
                         .map(n -> n.equals(village.getName())).orElse(false)
         ).size();
 
         String leaderName = level.getEntitiesOfClass(
-                        tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
+                        TownspersonMob.class,
                         villageBounds,
                         npc -> npc.getProfession()
-                                == tterrag1112.life_in_the_village.Profession.Profession.VILLAGE_LEADER
+                                == Profession.VILLAGE_LEADER
                                 && npc.getAssignedVillageName()
                                 .map(n -> n.equals(village.getName())).orElse(false)
                 ).stream().findFirst()
                 .map(npc -> npc.getNpcName()).orElse("None");
 
-        java.util.List<tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.HouseEntry>
-                houses = new java.util.ArrayList<>();
+        List<OpenVillageBookPacket.HouseEntry>
+                houses = new ArrayList<>();
         for (UUID bid : village.getBuildingIds()) {
             vdata.getBuildingById(bid).ifPresent(b -> {
-                if (b.getType() != tterrag1112.life_in_the_village.Village.Buildings
-                        .BuildingType.HOUSE) return;
-                long price = tterrag1112.life_in_the_village.Village.Buildings
-                        .HousePurchaseManager.calculatePrice(b, village, vdata);
-                long tax = tterrag1112.life_in_the_village.Village.Buildings
-                        .HousePurchaseManager.calculateWeeklyTax(b, village, vdata);
+                if (b.getType() != BuildingType.HOUSE) return;
+                long price = HousePurchaseManager.calculatePrice(b, village, vdata);
+                long tax = HousePurchaseManager.calculateWeeklyTax(b, village, vdata);
                 boolean mine = vdata.getPropertyForBuilding(bid)
                         .map(p -> p.playerId().equals(player.getUUID())).orElse(false);
                 boolean others = vdata.isPlayerOwned(bid) && !mine;
                 boolean npcHere = !level.getEntitiesOfClass(
-                        tterrag1112.life_in_the_village.Entities.custom.TownspersonMob.class,
+                        TownspersonMob.class,
                         b.getShape().toAABB().inflate(16),
                         npc -> npc.getHouseId().map(id -> id.equals(bid)).orElse(false)
                 ).isEmpty();
-                houses.add(new tterrag1112.life_in_the_village.Networking
-                        .OpenVillageBookPacket.HouseEntry(
+                houses.add(new OpenVillageBookPacket.HouseEntry(
                         bid, b.getName(), price, tax, mine, others, npcHere));
             });
         }
 
-        java.util.Map<String, String> needs = new java.util.LinkedHashMap<>();
+        Map<String, String> needs = new LinkedHashMap<>();
         village.getNeeds().forEach((cat, need) ->
                 needs.put(formatEnum(cat.name()), formatEnum(need.getLevel().name())));
 
         String expansion = vdata.getPendingExpansionForVillage(villageId)
                 .map(r -> formatEnum(r.getBuildingType().name())).orElse("");
 
-        java.util.List<String> btypes = village.getBuildingIds().stream()
+        List<String> btypes = village.getBuildingIds().stream()
                 .map(vdata::getBuildingById)
-                .filter(java.util.Optional::isPresent)
-                .map(java.util.Optional::get)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
                 .map(b -> formatEnum(b.getType().name()))
                 .distinct().sorted().toList();
 
@@ -897,14 +906,13 @@ public class VillageBookScreen extends Screen {
                 .filter(r -> r.getVillageA().equals(villageId)
                         || r.getVillageB().equals(villageId))
                 .filter(r -> r.getStatus()
-                        == tterrag1112.life_in_the_village.Village.Economy.Trade
-                        .TradeRoute.RouteStatus.ACTIVE)
+                        == TradeRoute.RouteStatus.ACTIVE)
                 .count();
 
-        tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData businessData =
-                tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData.get(level);
+        BusinessSavedData businessData =
+                BusinessSavedData.get(level);
 
-        tterrag1112.life_in_the_village.Guilds.Companies.Business playerCompany =
+        Business playerCompany =
                 businessData.getByOwner(player.getUUID()).stream()
                         .filter(c -> c.getHomeVillageId().equals(villageId))
                         .findFirst().orElse(null);
@@ -914,7 +922,7 @@ public class VillageBookScreen extends Screen {
         String  businessName        = hasCompanyHere ? playerCompany.getName() : "";
         int     companyWorkerCount = hasCompanyHere ? playerCompany.getWorkers().size() : 0;
 
-        java.util.List<String> companyBuildingNames = new java.util.ArrayList<>();
+        List<String> companyBuildingNames = new ArrayList<>();
         if (hasCompanyHere) {
             for (UUID bid : playerCompany.getBuildingIds()) {
                 vdata.getBuildingById(bid)
@@ -922,30 +930,27 @@ public class VillageBookScreen extends Screen {
             }
         }
 
-        java.util.Set<String> nonPurchasable = java.util.Set.of(
+        Set<String> nonPurchasable = Set.of(
                 "HOUSE", "TOWN_HALL", "GUARD_TOWER", "GUILD_HALL",
                 "WELL", "BELL_TOWER", "PRISON");
 
-        java.util.Set<UUID> allCompanyBuildingIds  = new java.util.HashSet<>();
-        java.util.Set<UUID> playerCompanyBuildingIds = new java.util.HashSet<>();
+        Set<UUID> allCompanyBuildingIds  = new HashSet<>();
+        Set<UUID> playerCompanyBuildingIds = new HashSet<>();
         businessData.getAllBusinesses().forEach(c -> {
             c.getBuildingIds().forEach(allCompanyBuildingIds::add);
             if (c.getOwnerPlayerId().equals(player.getUUID()))
                 c.getBuildingIds().forEach(playerCompanyBuildingIds::add);
         });
 
-        java.util.List<tterrag1112.life_in_the_village.Networking
-                .OpenVillageBookPacket.PurchasableBuildingEntry> purchasable =
-                new java.util.ArrayList<>();
+        List<OpenVillageBookPacket.PurchasableBuildingEntry> purchasable =
+                new ArrayList<>();
         for (UUID bid : village.getBuildingIds()) {
             vdata.getBuildingById(bid).ifPresent(b -> {
                 if (nonPurchasable.contains(b.getType().name())) return;
-                long price = tterrag1112.life_in_the_village.Village.Buildings
-                        .HousePurchaseManager.calculatePrice(b, village, vdata);
+                long price = HousePurchaseManager.calculatePrice(b, village, vdata);
                 boolean inPlayerCompany = playerCompanyBuildingIds.contains(bid);
                 boolean inOtherCompany  = !inPlayerCompany && allCompanyBuildingIds.contains(bid);
-                purchasable.add(new tterrag1112.life_in_the_village.Networking
-                        .OpenVillageBookPacket.PurchasableBuildingEntry(
+                purchasable.add(new OpenVillageBookPacket.PurchasableBuildingEntry(
                         bid, b.getName(), b.getType().name(),
                         price, inPlayerCompany, inOtherCompany));
             });
@@ -955,18 +960,18 @@ public class VillageBookScreen extends Screen {
         int openOrderCount   = (int) vdata.getOrdersForVillage(village.getId())
                 .stream().filter(CraftingOrder::isOpen).count();
 
-        java.util.List<tterrag1112.life_in_the_village.Networking.CommissionEntry> commissions =
+        List<CommissionEntry> commissions =
                 vdata.getOrdersForVillage(villageId).stream()
-                        .filter(tterrag1112.life_in_the_village.Village.Economy.CraftingOrder::isActive)
-                        .map(order -> tterrag1112.life_in_the_village.Networking.CommissionEntry
+                        .filter(CraftingOrder::isActive)
+                        .map(order -> CommissionEntry
                                 .fromOrder(order, level, player))
                         .toList();
 
         // Phase 5c — economy snapshot (per-category surplus/deficit + treasury).
         var economy = buildEconomyData(vdata, village);
 
-        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
-                new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket(
+        PacketDistributor.sendToPlayer(player,
+                new OpenVillageBookPacket(
                         villageId, village.getName(), leaderName, tier,
                         pop, village.getTreasuryBronze(),
                         houses, needs, expansion, btypes,
@@ -983,27 +988,26 @@ public class VillageBookScreen extends Screen {
      * (per-{@code ResourceCategory} net) + the village treasury. Returns a
      * neutral empty snapshot when no sim data exists yet.
      */
-    private static tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.EconomyData
+    private static OpenVillageBookPacket.EconomyData
             buildEconomyData(VillageSavedData vdata,
-                             tterrag1112.life_in_the_village.Village.Village village) {
+                             Village village) {
         long treasury = village.getTreasuryBronze();
         var simOpt = vdata.getSimData(village.getId());
         if (simOpt.isEmpty()) {
-            return tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket
+            return OpenVillageBookPacket
                     .EconomyData.empty(treasury);
         }
         var sim = simOpt.get();
-        java.util.List<tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.CategoryNet>
-                cats = new java.util.ArrayList<>();
-        for (var cat : tterrag1112.life_in_the_village.Village.Simulation
-                .ResourceCategory.values()) {
+        List<OpenVillageBookPacket.CategoryNet>
+                cats = new ArrayList<>();
+        for (var cat : ResourceCategory.values()) {
             float net = sim.net(cat);
             // Skip dead-neutral categories the village never touches.
             if (net == 0f && sim.production(cat) == 0f && sim.consumption(cat) == 0f) continue;
-            cats.add(new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket
+            cats.add(new OpenVillageBookPacket
                     .CategoryNet(cat.name(), net));
         }
-        return new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.EconomyData(
+        return new OpenVillageBookPacket.EconomyData(
                 true, treasury, 0L, 0L, sim.getNetIncomePerDay(), cats);
     }
 }

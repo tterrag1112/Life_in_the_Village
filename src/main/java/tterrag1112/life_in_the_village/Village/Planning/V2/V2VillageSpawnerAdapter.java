@@ -101,7 +101,7 @@ public final class V2VillageSpawnerAdapter {
     // Clearance added past the furthest placed building when computing a
     // perimeter anchor. Generous enough to clear large farm complexes that
     // extend further from their seed than a market pad does.
-    private static final int PERIMETER_OFFSET_CLEARANCE = 64;
+    private static final int PERIMETER_OFFSET_CLEARANCE = 48;
     // Half-width (radians) of the per-complex angular spread band, so farm
     // + market offset pads fan apart instead of colliding (~±46°).
     private static final double PERIMETER_OFFSET_SPREAD_RAD = 0.8;
