@@ -33,7 +33,9 @@ public class TradeScreen extends Screen {
 
     private static final int PANEL_WIDTH  = 340;
     private static final int PANEL_HEIGHT = 240;
-    private static final int ROW_HEIGHT   = 22;
+    // Two stacked 16px-tall elements per row (name line + coin row), so the
+    // row must clear ~30px or the coins overprint the name (Phase 5a fix).
+    private static final int ROW_HEIGHT   = 30;
     private static final int HEADER_H     = 40;
     private static final int COL_GAP      = 8;
 
@@ -113,27 +115,31 @@ public class TradeScreen extends Screen {
         if (hovered) g.fill(rx, ry, rx + rw, ry + rh, 0x44FFFFFF);
 
         ItemStack icon = offer.getIcon();
-        g.renderItem(icon, rx + 2, ry + 2);
-        g.renderItemDecorations(font, icon, rx + 2, ry + 2, null);
+        int iconY = ry + (rh - 16) / 2;
+        g.renderItem(icon, rx + 2, iconY);
+        g.renderItemDecorations(font, icon, rx + 2, iconY, null);
 
-        // Price for this side (buy rows show buyPrice; sell rows sellPrice).
-        long price = row.buySide() ? offer.buyPrice() : offer.sellPrice();
-        CoinRow.draw(g, price, rx + 22, ry + 2);
-
-        // Second line: item name + provenance.
+        int textX = rx + 22;
+        // Top line: item name, truncated so it can't run into the stock count.
         String name = offer.item().getName().getString();
-        g.drawString(font, name, rx + 22, ry + 12, 0xFFCCCCCC, false);
-
-        if (row.buySide()) {
-            // Stock count, right-aligned.
-            String stock = "x" + offer.stockCount();
-            g.drawString(font, stock, rx + rw - font.width(stock) - 4, ry + 2,
+        String stock = row.buySide() ? "x" + offer.stockCount() : "";
+        int stockW = stock.isEmpty() ? 0 : font.width(stock) + 6;
+        int nameMaxW = rx + rw - 4 - stockW - textX;
+        g.drawString(font, font.plainSubstrByWidth(name, Math.max(0, nameMaxW)),
+                textX, ry + 3, 0xFFE8E8E8, false);
+        if (!stock.isEmpty()) {
+            g.drawString(font, stock, rx + rw - font.width(stock) - 4, ry + 3,
                     0xFF88CC88, false);
-            // Custom-price flag.
-            if (offer.customPriced()) {
-                Pill.draw(g, font, rx + rw - Pill.width(font, "set price") - 4,
-                        ry + 11, "set price", CUSTOM_PILL_BG, CUSTOM_PILL_TXT);
-            }
+        }
+
+        // Bottom line: price coins (buy rows show buyPrice; sell rows sellPrice).
+        long price = row.buySide() ? offer.buyPrice() : offer.sellPrice();
+        CoinRow.draw(g, price, textX, ry + 13);
+
+        // Custom-price flag, bottom-right on the coin line.
+        if (row.buySide() && offer.customPriced()) {
+            Pill.draw(g, font, rx + rw - Pill.width(font, "set price") - 4,
+                    ry + 15, "set price", CUSTOM_PILL_BG, CUSTOM_PILL_TXT);
         }
     }
 
