@@ -2254,3 +2254,142 @@ entity lookup removed; braces/parens balanced; single-file diff.
 4. 4a import caravans unchanged.
 5. A genuine surplus→deficit trade nets the merchant a positive spread
    after both taxes (assuming a decent road).
+
+---
+
+## Phase 5a — Trade screen redesign (lists + header + provenance + access)
+
+Rebuilt the mod's oldest screen via the `litv-gui-screen` skill (Path A,
+but feature-adding — see deviation). Fixes the buy/sell list bug, surfaces
+the rich pricing context the backend computes, and broadens access.
+
+### Corrected buy/sell list logic (the core fix)
+
+Was: `TradeHandler.openTradeScreen` added one `TradeOffer` per explicit-
+price item if `canBuy || canSell`, so an item the player held AND the NPC
+stocked appeared in **both** columns (wheat under buy and sell). Now two
+**independent** lists built by separate predicates:
+- **BUY list** = items the NPC actually stocks: `countMerchantStock > 0`
+  (merchant's own stall chest via the existing stall-aware count + main
+  chests, excluding other stalls). Carries the sell price + stock + the
+  custom-price flag.
+- **SELL list** = items the NPC will buy ∩ the player holds: an
+  explicit-price item with `player.getInventory().hasAnyMatching`. Carries
+  the buy price.
+
+An item can be in one, both, or neither — each list is populated on its
+own. The packet now carries `buyOffers` and `sellOffers` as separate
+lists; the screen renders two independent `ScrollList`s ("Buy from …" /
+"Sell to …").
+
+### Adaptive header
+
+NPC name + role line (`role · village`); when the wares come from a stall,
+a right-aligned "Stall: {owner}" line; a reputation line "{tier} (-N%)"
+showing the discount effect. Degrades gracefully: a wandering trader shows
+"Travelling Merchant" with no village/stall/rep; a plain producer shows
+role + village with no stall line.
+
+### Thickened payload
+
+`TradeOffer` gains `customPriced` (stall custom-price override in effect,
+detected by the item id being a key in the stall's `getCustomPricesRaw`).
+`OpenTradeScreenPacket` replaces `(id, name, offers, wealth)` with
+`(id, name, role, village, stallOwner, repTier, repDiscountPct, buyOffers,
+sellOffers, wealth)`. Encode + decode both updated; network-only (no saved
+codec). Per-row provenance rendered: price reads as the village's
+per-village price (already applied by `MarketPricing`, now labelled by the
+header village line), custom-priced rows get a "set price" `Pill`, buy
+rows show `xN` stock right-aligned.
+
+### Access predicate (broadened)
+
+`NpcProfileSnapshotBuilder.canTrade` was MERCHANT-only (and gated on
+`isOpenForTrade`). Now true for any NPC selling wares: a producer
+profession (MERCHANT/BLACKSMITH/CARPENTER/MILLER/BAKER/STONEMASON/WEAVER/
+CANDLEMAKER/MINER — the same set `NpcProfileHub.openBusinessFrontPrimary`
+already routes to `openTradeScreen`) OR any NPC owning an active stall
+(`getStallsForVillage … ownerUUID == npc`). The open path in the hub was
+already broad; this aligns the action-bar gate so the button actually
+shows. Wandering-trader path unchanged (direct, via
+`NpcInteractionHandler`). Reputation hostility gate in `openTradeScreen`
+stays.
+
+### Styling target
+
+`Chrome.DARK_TRADE` (the vendor dark panel, the screen's existing palette)
+on `Gui.Framework` primitives — `ScrollList`, `CoinRow`, `Pill`,
+`TooltipLayer`. `super.render` + tooltip flush last (the framework render-
+order pitfall). 340×240, no sidebar.
+
+### Tie-In Audit
+
+- **Upstream:** `openTradeScreen` builds both lists + provenance;
+  `MarketPricing` (prices, unchanged); `countMerchantStock` (buy
+  membership); `ReputationManager.getTier` (header tier + discount);
+  `MarketStall.getCustomPricesRaw` (custom-price flag).
+- **Downstream:** `TradeActionPacket` settlement (1b) unchanged — the rows
+  now carry a `buySide` tag so the click sends the correct action; you can
+  only click-buy a stocked item (buy list) and click-sell an item the NPC
+  wants (sell list), matching `handleTrade`'s own caps. Packet encode
+  (server) + decode (client) both updated.
+- **Siblings:** every open site rebuilt for the new payload —
+  `TradeHandler.openTradeScreen` (merchant/producer), `WanderingTrader
+  Behavior.openTradeScreen` (buy-only list, empty sell list, minimal
+  header). `NpcProfileHub`/`NpcInteractionHandler` call paths unchanged
+  (they call `openTradeScreen`, which builds the new packet).
+- **Switches:** none added.
+
+### Simplification Sweep
+
+Deleted the dead `TradeScreen.formatPrice` (duplicated
+`TradeHandler.formatPrice`; the screen uses `CoinRow.draw` for all coin
+display). Removed the old shared-row-set + centre-divider two-column hack.
+
+### Deviations from prompt / skill
+
+- **Not a size-reducing migration.** The skill expects a migrated screen
+  ≥30% smaller; this is a feature-adding redesign (199→248 lines) — the
+  original was already on framework primitives, and the growth is the two
+  independent lists + adaptive header + provenance the prompt required.
+  Noted explicitly per the skill's "behaviour must stay identical" caveat
+  (behaviour intentionally changed here).
+- Custom-price detection uses `getCustomPricesRaw().containsKey(itemId)`
+  rather than comparing effective vs base price (cheaper, exact).
+- Reputation discount shown as a header summary (tier + %), not re-derived
+  per row — the per-row price already includes it (via `MarketPricing`).
+
+### Out-of-scope but flagged
+
+- 5b player-owned-stall management, 5c/5d economy/kingdom views, 5e caravan
+  map. Pricing/settlement (1a/1b/1c) untouched — display + list membership
+  only. Company management screens (separate system).
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net` — `./gradlew compileJava`
+fails fetching neoform). Static review: packet encode/decode symmetric
+(10 fields both ways); all three `new OpenTradeScreenPacket` sites use the
+new shape; `new TradeScreen(packet)` matches the new constructor;
+`Chrome.DARK_TRADE`/`Dims.of`, `ScrollList.mouseClicked(double,double,int)`
+/`mouseScrolled`, `Pill.draw`, `CoinRow.draw` signatures confirmed;
+NeoForge 1.21.x event signatures (`MouseButtonEvent`/`KeyEvent`); all
+TradeScreen imports used; orphaned `MerchantBehavior` import removed from
+the snapshot builder; render order (widgets/super last); dead `formatPrice`
+gone; braces/parens balanced across all 6 files.
+
+### Smoke test
+
+1. Right-click a market merchant manning a stall → redesigned dark-trade
+   screen, header shows NPC + role/village + "Stall: {owner}" +
+   reputation tier/discount.
+2. Buy list = only stocked items; Sell list = only items the NPC buys that
+   you hold — wheat no longer in both unless both hold.
+3. Per-row: price is the village price, custom-priced item shows the "set
+   price" pill, buy rows show stock, header shows the rep discount.
+4. Buy + sell click each settle via 1b; can't buy out-of-stock, can't sell
+   an unwanted item.
+5. Open for a non-merchant producer / stall-owning NPC (broadened access);
+   a plain NPC with nothing to sell shows no trade action.
+6. Wandering trader screen still opens + trades (buy-only list).
+7. No missing buttons / unhandled packet / render-order glitch.

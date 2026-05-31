@@ -13,10 +13,24 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Opens the redesigned trade screen (merchant arc Phase 5a). Carries two
+ * <b>independent</b> lists — {@code buyOffers} (what the NPC stocks to
+ * sell) and {@code sellOffers} (what the NPC will buy that the player
+ * holds) — plus the adaptive-header provenance: the village whose
+ * per-village price is shown, the stall owner (empty for a plain
+ * producer/wandering trader), and the player's reputation tier + discount.
+ */
 public record OpenTradeScreenPacket(
         UUID merchantId,
         String merchantName,
-        List<TradeOffer> offers,
+        String npcRole,
+        String villageName,
+        String stallOwner,
+        String repTier,
+        int repDiscountPct,
+        List<TradeOffer> buyOffers,
+        List<TradeOffer> sellOffers,
         long playerWealth
 ) implements CustomPacketPayload {
 
@@ -29,24 +43,46 @@ public record OpenTradeScreenPacket(
                     (buf, packet) -> {
                         buf.writeUUID(packet.merchantId());
                         buf.writeUtf(packet.merchantName());
-                        buf.writeVarInt(packet.offers().size());
-                        for (TradeOffer offer : packet.offers()) {
-                            TradeOffer.STREAM_CODEC.encode(buf, offer);
-                        }
+                        buf.writeUtf(packet.npcRole());
+                        buf.writeUtf(packet.villageName());
+                        buf.writeUtf(packet.stallOwner());
+                        buf.writeUtf(packet.repTier());
+                        buf.writeVarInt(packet.repDiscountPct());
+                        writeOffers(buf, packet.buyOffers());
+                        writeOffers(buf, packet.sellOffers());
                         buf.writeVarLong(packet.playerWealth());
                     },
                     buf -> {
                         UUID id = buf.readUUID();
                         String name = buf.readUtf();
-                        int count = buf.readVarInt();
-                        List<TradeOffer> offers = new ArrayList<>();
-                        for (int i = 0; i < count; i++) {
-                            offers.add(TradeOffer.STREAM_CODEC.decode(buf));
-                        }
+                        String role = buf.readUtf();
+                        String village = buf.readUtf();
+                        String stallOwner = buf.readUtf();
+                        String repTier = buf.readUtf();
+                        int repPct = buf.readVarInt();
+                        List<TradeOffer> buys = readOffers(buf);
+                        List<TradeOffer> sells = readOffers(buf);
                         long wealth = buf.readVarLong();
-                        return new OpenTradeScreenPacket(id, name, offers, wealth);
+                        return new OpenTradeScreenPacket(id, name, role, village,
+                                stallOwner, repTier, repPct, buys, sells, wealth);
                     }
             );
+
+    private static void writeOffers(RegistryFriendlyByteBuf buf, List<TradeOffer> offers) {
+        buf.writeVarInt(offers.size());
+        for (TradeOffer offer : offers) {
+            TradeOffer.STREAM_CODEC.encode(buf, offer);
+        }
+    }
+
+    private static List<TradeOffer> readOffers(RegistryFriendlyByteBuf buf) {
+        int count = buf.readVarInt();
+        List<TradeOffer> offers = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            offers.add(TradeOffer.STREAM_CODEC.decode(buf));
+        }
+        return offers;
+    }
 
     @Override
     public Type<? extends CustomPacketPayload> type() { return TYPE; }
@@ -54,8 +90,7 @@ public record OpenTradeScreenPacket(
     public static void handle(OpenTradeScreenPacket packet, IPayloadContext ctx) {
         ctx.enqueueWork(() ->
                 net.minecraft.client.Minecraft.getInstance().setScreen(
-                        new TradeScreen(packet.merchantId(), packet.merchantName(),
-                                packet.offers(), packet.playerWealth())
+                        new TradeScreen(packet)
                 )
         );
     }
