@@ -271,8 +271,8 @@ public final class FarmComplexPlanner {
         // ── 6. Mint FarmPlot records, paired with BSP plotIndex ────────
         // E.bug.3 — origin Y comes from the V2FeatureMap's per-cell
         // elevation at the plot centroid (+ 1 to land at the "surface
-        // where you stand", matching the legacy FarmPlotPlacer's
-        // medianFootprintY convention). The pre-fix code used
+        // where you stand", matching the legacy
+        // median-footprint-Y convention). The pre-fix code used
         // pp.centroid().getY() which inherits from the polygon's
         // first-vertex Y == farmhouseOrigin.Y == pad Y == one BELOW
         // the building's floor; that put plot.origin.Y one below
@@ -506,9 +506,8 @@ public final class FarmComplexPlanner {
      *  feature-map's cell elevation at the centroid XZ.
      *
      *  <p>Returns {@code elevationY + 1} — the "surface where you
-     *  stand" Y, matching the legacy
-     *  {@code FarmPlotPlacer.medianFootprintY} convention used for
-     *  the legacy {@code flatCentre} origin. This Y lands inside
+     *  stand" Y, matching the legacy median-footprint-Y convention
+     *  used for the legacy {@code flatCentre} origin. This Y lands inside
      *  the village's building-AABB (whose minY is the building
      *  floor block, also at {@code groundY + 1}), so
      *  {@code /farmplot list} returns complex plots.

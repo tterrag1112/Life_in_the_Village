@@ -193,7 +193,7 @@ public record LayoutPlan(
     }
 
     /**
-     * One planned farm plot. Carries everything FarmPlotPlacer needs
+     * One planned farm plot. Carries everything the farm realiser needs
      * to regenerate the plot's deterministic shape and place it on
      * the planned position.
      */

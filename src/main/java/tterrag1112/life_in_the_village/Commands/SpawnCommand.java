@@ -22,7 +22,7 @@ import java.util.Optional;
  * initial laws).
  *
  * <p><b>B2.7 fix:</b> previously this command duplicated Layers
- * 1–4 manually and called {@code MinimalSpawner} directly,
+ * 1–4 manually and called the Layer 5 spawner directly,
  * skipping every Layer 4 post-pass that B2.1–B2.6 wired into
  * {@link V2VillageSpawnerAdapter}. The duplication is gone; the
  * command is now a thin wrapper that delegates to the canonical

@@ -9,8 +9,8 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
  * <p>Emitted alongside a {@link tterrag1112.life_in_the_village.Village
  * .Planning.Zoning.PlacementSlot} by
  * {@code RecipeHelpers.emitFarmPlotSlots}, validated and claimed by
- * {@code VillagePlanner.runFarmPlotPass}, then consumed by
- * {@code FarmPlotPlacer.placeAll} at realisation. The realiser
+ * {@code VillagePlanner.runFarmPlotPass}, then consumed by the
+ * legacy farm realiser at realisation. The realiser
  * regenerates the plot's organic shape from {@link #edgeJitterSeed}
  * so plot boundaries are reproducible across save/reload — only the
  * planning-time half-dimensions and a deterministic seed are stored.

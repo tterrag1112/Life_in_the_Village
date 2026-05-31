@@ -3258,3 +3258,123 @@ Logged here so a future pass can pick them up:
 retirement) + Prompt B (rendering + integration + harness). 13
 commits on `claude/headless-layout-harness-AOPQG`. Ready for
 in-world smoke test + per-culture authoring as time permits.
+
+### 2026-05-31 — Layout Rework Phase 1 landed (dead-code deletes)
+
+**What shipped:** First phase of the dead-V1 layout cleanup that
+precedes the upcoming complex-reservation feature. Pure deletion — no
+new behaviour, no refactors beyond what deletion forced. Three pieces
+of dead/V1 layout machinery with zero live callers were removed, the
+`TerrainStrategy` execution machinery was stripped (enum constants
+kept inert), and the five stale layout-authoring skills whose subject
+matter dies in this phase were deleted.
+
+Pre-deletion grep confirmed the audit's predictions exactly: every
+inbound reference to `MinimalSpawner`, `FarmPlotPlacer`, and
+`TerrainStep` across the whole `src/` tree was a comment or javadoc
+mention — no live caller anywhere. `TerrainStrategy`'s readers
+(`VillageTypeData`, `VillageTypeBuilder`, `VillageTypeRegistry`,
+`VillageTagDeriver`, `VillageTypeDatagen`, `VillageTagsDebugCommand`)
+touch only the enum constants, the `fromName(String)` parser, and the
+`getTerrainStrategy()` field/getter — none call `getSteps()` or
+`execute()`, so the enum reduces cleanly to inert constants and
+`fromName`. No `switch`/`case` over `TerrainStrategy` exists. The
+surviving `Terrain/` neighbours `TerrainProfile` and `TerrainAnalyzer`
+remain live (used by `VillageSpawner`, `V2VillageSpawnerAdapter`, and
+Kingdom placement) — the strip orphaned nothing.
+
+**Surface area:** 10 source deletions + 1 source strip + 7 comment/
+javadoc scrubs + 5 skill-directory deletions.
+
+**Files deleted:**
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/Layer5/MinimalSpawner.java`
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/FarmPlotPlacer.java`
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/Terrain/TerrainStep.java`
+- `src/main/java/.../Village/Planning/Terrain/Steps/ClearTreesStep.java`
+- `src/main/java/.../Village/Planning/Terrain/Steps/DetectShorelineStep.java`
+- `src/main/java/.../Village/Planning/Terrain/Steps/FillHolesStep.java`
+- `src/main/java/.../Village/Planning/Terrain/Steps/FoundationStep.java`
+- `src/main/java/.../Village/Planning/Terrain/Steps/LevelBuildingPadsStep.java`
+- `src/main/java/.../Village/Planning/Terrain/Steps/LightSmoothStep.java`
+- `src/main/java/.../Village/Planning/Terrain/Steps/RetainingWallStep.java`
+  (the now-empty `Terrain/Steps/` directory is gone)
+- `.claude/skills/litv-layout-recipe/`, `litv-layout-primitive/`,
+  `litv-shape-rule/`, `litv-village-type-datagen/`,
+  `litv-terrain-step/` (skill directories)
+
+**Files modified:**
+- `src/main/java/.../Village/Planning/Terrain/TerrainStrategy.java` —
+  stripped `execute(...)`, `getSteps()`, the `List<TerrainStep> steps`
+  field and the step-list constructor; enum reduced to the four inert
+  constants `FLAT`/`SLOPE_AWARE`/`MOUNTAIN`/`WATERFRONT` + the
+  surviving `fromName(String)` parser. Class javadoc trimmed to drop
+  the deleted `{@link TerrainStep}` link and the step-composition
+  mechanics.
+- Comment/javadoc scrubs (no code change) removing dangling references
+  to the deleted types:
+  `Commands/SpawnCommand.java`,
+  `Village/Planning/V2/V2VillageSpawnerAdapter.java`,
+  `Village/Farms/Complex/FarmComplexPlanner.java` (two sites),
+  `Village/Planning/VillageLayout.java`,
+  `Village/Planning/FarmPlotSpec.java`,
+  `Village/Planning/LayoutPlan.java`,
+  `src/test/java/.../V2/Harness/RunExecutor.java`.
+
+**Deviations from prompt:**
+- The prompt's disposition pointed at `.claude/layout_rework/01-AUDIT.md`
+  as a required read; that file does not exist in the repo. Proceeded
+  on the prompt's own Scope/Tie-In Audit sections, which are
+  self-contained and fully specify the deletion set. No behavioural
+  impact.
+- The prompt's scrub list named six sites for the deleted-type
+  references; grep surfaced one additional dangling mention not in the
+  list — `RunExecutor.java:37` (a test-harness javadoc listing
+  `MinimalSpawner`). Scrubbed it too for consistency, since leaving it
+  would be the same class of dangling reference the phase is removing.
+- Otherwise none. `MinimalSpawner`, `FarmPlotPlacer`, `TerrainStep`,
+  and all seven `Steps/*` deleted as specified; enum constants kept.
+
+**Out-of-scope but flagged (carried from the prompt):**
+- **`CLAUDE.md` stale line** ("MinimalSpawner.spawn is the only
+  spawner path") and **`LAYOUT_OVERVIEW.md`** (describes the deleted V1
+  pipeline) — both human-managed; **Garrett edits these**, not this
+  phase. Still stale after this commit.
+- **`TerrainStrategy` enum full deletion** (codec + datagen migration)
+  → Phase 2. The constants are still persisted on `VillageTypeData`.
+- **`LayoutPlan` / `FarmPlotSpec` / `Village.getPlan()` plumbing** →
+  Phase 3 (bridge replacement). `FarmPlotSpec` stays for now even
+  though its only remaining referent is `LayoutPlan`.
+- **`Zoning` matcher cluster + `PlacementSlot` + `SlotTag`
+  back-reference** → Phase 2.
+- **`litv-building-profile` skill** — its `BuildingProfileRegistry`
+  half goes stale in Phase 2; its `BuildingInhabitantRegistry` half is
+  live. Trim in Phase 2, not here.
+- Garrett will recreate V2 authoring skills in the Step-4 expansion
+  phase (the five deleted skills are not replaced in this phase).
+
+**Cumulative pending verification:** Detour A (Prompt A + Prompt B) and
+this Layout Rework Phase 1 remain pending in-world smoke test. This
+phase is not user-visible — it deletes only dead code that never ran in
+the spawn path — so its verification is a compile + spawn sanity check
+(below) rather than a behavioural test.
+
+**Smoke test plan (user-executable):**
+1. Build the mod (see Build verification below — deferred in sandbox).
+2. In-world: `/litv spawn` a village of any type and confirm it spawns
+   exactly as before — terrain adaptation, farm complex, and market
+   complex behaviour unchanged (none of these ran through the deleted
+   code; the live terrain path is `TerrainAdapter` + `PadBuilder` in
+   `V2VillageSpawnerAdapter`, and the live farm path is
+   `FarmComplexPlanner`).
+3. Run `/litv` layout/tags debug (e.g. the village-tags debug command)
+   and confirm it still prints the terrain strategy — it reads the
+   `TerrainStrategy` enum, which still exists as inert constants.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net). Gradle failed to resolve
+`net.neoforged:neoform-runtime:2.0.18` (HTTP 403 from
+maven.neoforged.net). Full manual static review completed in its
+place: grepped the whole `src/` tree for `MinimalSpawner`,
+`FarmPlotPlacer`, `TerrainStep`, `getSteps`, and the `Terrain.Steps`
+import path — zero remaining references after the scrubs. The stripped
+`TerrainStrategy` keeps only members its readers actually use.

@@ -795,8 +795,7 @@ public final class V2VillageSpawnerAdapter {
     }
 
     /**
-     * Mirrors {@code MinimalSpawner.centreToPlaceArg}: convert V2's
-     * centre-based placement to the pivot {@link
+     * Convert V2's centre-based placement to the pivot {@link
      * BuildingPlacer#placeAndRegister} expects, with +1 Y so the
      * structure sits on the ground rather than replacing it.
      */

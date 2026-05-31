@@ -109,7 +109,7 @@ public class VillageLayout {
     // VillagePlanner.runFarmPlotPass live here, separate from the building
     // matcher's slot pool. The parallel map carries the FarmPlotSpec for each
     // claimed slot — kept off PlacementSlot/LayoutSlot to avoid changes to
-    // the matcher's tag-based logic. FarmPlotPlacer reads both at realisation.
+    // the matcher's tag-based logic. The legacy farm realiser read both.
     private final List<tterrag1112.life_in_the_village.Village.Planning.Zoning
             .PlacementSlot> plotSlots = new ArrayList<>();
     private final java.util.Map<tterrag1112.life_in_the_village.Village.Planning

@@ -34,8 +34,8 @@ import java.util.Set;
  * Layer 1 scan, Layer 2 site analysis, Layer 3 selection +
  * reconciliation + topo-sort, Layer 4 phased placement, Layer 5
  * terrain adaptation. Skips every Layer 5 step that mutates the world
- * (VegetationClearer, PadBuilder, RoadPainter, MinimalSpawner) —
- * those are realiser concerns and not part of the harness contract.
+ * (VegetationClearer, PadBuilder, RoadPainter) — those are
+ * realiser concerns and not part of the harness contract.
  *
  * <p>The synthetic terrain source and footprint provider are
  * deterministic — the same {@code (shape, config)} produces the same
