@@ -38,6 +38,7 @@ public record OpenVillageBookPacket(
         String seasonName,          // e.g. "Autumn" or "Winter"
         int    openOrderCount,      // number of unclaimed crafting orders
         List<CommissionEntry>        commissions,
+        EconomyData economy,        // Phase 5c — per-category surplus/deficit + treasury stats
         String openSection          // "" = OVERVIEW, else Section enum name to open
 ) implements CustomPacketPayload {
 
@@ -77,6 +78,29 @@ public record OpenVillageBookPacket(
             boolean inCompany,
             boolean ownedByOtherCompany
     ) {}
+
+    /**
+     * Phase 5c — the village economy snapshot for the ECONOMY section:
+     * per-{@code ResourceCategory} net (production − consumption) surplus/
+     * deficit rows + treasury stats. Read-only; computed server-side from
+     * {@code VillageSimData} + the village treasury. {@code hasSim} is false
+     * when the village has no sim data yet (neutral display).
+     */
+    public record EconomyData(
+            boolean hasSim,
+            long treasuryBronze,
+            long totalTaxCollected,
+            long totalWagesPaid,
+            float netIncomePerDay,
+            List<CategoryNet> categories
+    ) {
+        public static EconomyData empty(long treasury) {
+            return new EconomyData(false, treasury, 0L, 0L, 0f, List.of());
+        }
+    }
+
+    /** One per-category surplus/deficit row (net &gt; 0 = exporter). */
+    public record CategoryNet(String category, float net) {}
 
     // =========================================================================
     // PACKET TYPE
@@ -160,6 +184,18 @@ public record OpenVillageBookPacket(
                 buf.writeVarInt(pkt.commissions().size());
                 for (CommissionEntry ce : pkt.commissions())
                     CommissionEntry.STREAM_CODEC.encode(buf, ce);
+                // Phase 5c — economy snapshot.
+                EconomyData econ = pkt.economy();
+                buf.writeBoolean(econ.hasSim());
+                buf.writeVarLong(econ.treasuryBronze());
+                buf.writeVarLong(econ.totalTaxCollected());
+                buf.writeVarLong(econ.totalWagesPaid());
+                buf.writeFloat(econ.netIncomePerDay());
+                buf.writeVarInt(econ.categories().size());
+                for (CategoryNet cn : econ.categories()) {
+                    buf.writeUtf(cn.category());
+                    buf.writeFloat(cn.net());
+                }
                 buf.writeUtf(pkt.openSection());
             },
 
@@ -230,8 +266,21 @@ public record OpenVillageBookPacket(
                 int     openOrderCount = buf.readVarInt();
                 int     cCount = buf.readVarInt();
                 List<CommissionEntry> commissions = new ArrayList<>();
+                // (commissions filled below; economy read after)
                 for (int i = 0; i < cCount; i++)
                     commissions.add(CommissionEntry.STREAM_CODEC.decode(buf));
+                // Phase 5c — economy snapshot.
+                boolean econHasSim = buf.readBoolean();
+                long econTreasury  = buf.readVarLong();
+                long econTax       = buf.readVarLong();
+                long econWages     = buf.readVarLong();
+                float econNet      = buf.readFloat();
+                int   econCatCount = buf.readVarInt();
+                List<CategoryNet> econCats = new ArrayList<>();
+                for (int i = 0; i < econCatCount; i++)
+                    econCats.add(new CategoryNet(buf.readUtf(), buf.readFloat()));
+                EconomyData economy = new EconomyData(econHasSim, econTreasury,
+                        econTax, econWages, econNet, econCats);
                 String openSection = buf.readUtf();
 
                 return new OpenVillageBookPacket(
@@ -243,7 +292,7 @@ public record OpenVillageBookPacket(
                         hasCompany, businessId, businessName,
                         workerCount, companyBuildings,
                         purchasable, seasonName, openOrderCount,
-                        commissions, openSection);
+                        commissions, economy, openSection);
             }
     );
 

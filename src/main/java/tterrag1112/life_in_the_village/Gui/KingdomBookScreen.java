@@ -23,6 +23,8 @@ public class KingdomBookScreen extends Screen {
 
     private enum SectionType {
         FRONTISPIECE, STATUS, HISTORY, LAWS, ECONOMY,
+        // Phase 5d — cross-village price board (arbitrage view).
+        PRICES,
         APPOINTMENTS, DIPLOMACY, DECREES, KINGDOM_MAP, ROYAL_BUILDS,
         // Track D3.2b — noble dynasties owned by this kingdom.
         DYNASTY_TREE,
@@ -59,6 +61,11 @@ public class KingdomBookScreen extends Screen {
     private final List<NavEntry> navEntries                = new ArrayList<>();
     // Track D3.2b — synced from Kingdom.governance.houses.
     private final List<House> houses                       = new ArrayList<>();
+    // Phase 5d — cross-village price board (request/sync; null = not loaded).
+    private List<tterrag1112.life_in_the_village.Village.Economy.Currency
+            .KingdomPriceAggregator.ItemSpread> priceSpreads = null;
+    private boolean pricesRequested = false;
+    private String selectedPriceItem = null; // drill-in: item id, or null
 
     private KingdomMapPanel mapPanel;
     private Sidebar<SectionType> sidebar;
@@ -153,6 +160,7 @@ public class KingdomBookScreen extends Screen {
         navEntries.add(new NavEntry("History",      SectionType.HISTORY,       0));
         navEntries.add(new NavEntry("Laws",         SectionType.LAWS,         -1));
         navEntries.add(new NavEntry("Economy",      SectionType.ECONOMY,      -1));
+        navEntries.add(new NavEntry("Prices",        SectionType.PRICES,       -1));
         navEntries.add(new NavEntry("Appointments", SectionType.APPOINTMENTS, -1));
         navEntries.add(new NavEntry("Diplomacy",    SectionType.DIPLOMACY,    -1));
         navEntries.add(new NavEntry("Decrees",      SectionType.DECREES,      -1));
@@ -180,6 +188,7 @@ public class KingdomBookScreen extends Screen {
                         new Sidebar.Entry<>(SectionType.HISTORY,      "History",      true),
                         new Sidebar.Entry<>(SectionType.LAWS,         "Laws",         true),
                         new Sidebar.Entry<>(SectionType.ECONOMY,      "Economy",      true),
+                        new Sidebar.Entry<>(SectionType.PRICES,       "Prices",       true),
                         new Sidebar.Entry<>(SectionType.APPOINTMENTS, "Appointments", true),
                         new Sidebar.Entry<>(SectionType.DIPLOMACY,    "Diplomacy",    true),
                         new Sidebar.Entry<>(SectionType.DECREES,      "Decrees",      true),
@@ -194,6 +203,8 @@ public class KingdomBookScreen extends Screen {
                 ),
                 this::currentSection,
                 section -> {
+                    // Phase 5d — lazy-load the price board on first PRICES view.
+                    if (section == SectionType.PRICES) requestPricesOnce();
                     for (int i = 0; i < navEntries.size(); i++) {
                         if (navEntries.get(i).section() == section) {
                             page = i; buildWidgets(); return;
@@ -442,6 +453,7 @@ public class KingdomBookScreen extends Screen {
             case HISTORY      -> drawHistory(g, px, py, pw, maxY);
             case LAWS         -> drawLaws(g, px, py, pw, maxY);
             case ECONOMY      -> drawEconomy(g, px, py, pw, maxY);
+            case PRICES       -> drawPrices(g, px, py, pw, maxY);
             case APPOINTMENTS -> drawAppointments(g, px, py, pw, maxY);
             case DIPLOMACY    -> drawDiplomacy(g, px, py, pw, maxY);
             case DECREES      -> drawDecrees(g, px, py, pw, maxY);
@@ -600,6 +612,93 @@ public class KingdomBookScreen extends Screen {
             g.fill(px, y + 21, px + pw, y + 22, BookScreenColors.HIGHLIGHT);
             y += 28;
         }
+    }
+
+    /** Phase 5d — request the price board once per screen open. */
+    private void requestPricesOnce() {
+        if (pricesRequested) return;
+        pricesRequested = true;
+        ClientPacketDistributor.sendToServer(
+                new tterrag1112.life_in_the_village.Networking
+                        .RequestKingdomPricesPacket(kingdomId));
+    }
+
+    /** Phase 5d — server reply from {@code KingdomPricesSyncPacket}. */
+    public void applyPrices(List<tterrag1112.life_in_the_village.Village.Economy
+            .Currency.KingdomPriceAggregator.ItemSpread> spreads) {
+        this.priceSpreads = spreads;
+    }
+
+    /**
+     * Phase 5d — cross-village price board: each row shows an item, where
+     * it's cheapest, where it's dearest, and the spread. Clicking a row
+     * drills into per-village prices. Read-only.
+     */
+    private void drawPrices(GuiGraphics g, int px, int py, int pw, int maxY) {
+        g.drawString(font, "Cross-village prices", px, py, BookScreenColors.DARK, false);
+        int y = py + 14;
+
+        if (priceSpreads == null) {
+            g.drawString(font, "Loading…", px, y, BookScreenColors.LIGHT, false);
+            return;
+        }
+        if (priceSpreads.isEmpty()) {
+            g.drawString(font, "No priced markets in this kingdom yet.",
+                    px, y, BookScreenColors.LIGHT, false);
+            return;
+        }
+
+        // Drill-in view for a selected item.
+        if (selectedPriceItem != null) {
+            var sel = priceSpreads.stream()
+                    .filter(s -> s.itemId().equals(selectedPriceItem))
+                    .findFirst().orElse(null);
+            if (sel != null) {
+                g.drawString(font, "‹ " + sel.itemName(), px, y, BookScreenColors.GOLD, false);
+                y += 14;
+                for (var vp : sel.perVillage()) {
+                    if (y + 11 > maxY) break;
+                    g.drawString(font, vp.villageName(), px + 4, y, BookScreenColors.DARK, false);
+                    String p = CoinRenderer.format(vp.sellPrice());
+                    g.drawString(font, p, px + pw - font.width(p) - 4, y,
+                            BookScreenColors.MID, false);
+                    y += 11;
+                }
+                return;
+            }
+            selectedPriceItem = null; // stale — fall through to the list
+        }
+
+        // Summary list: item — cheapest@village / dearest@village / spread.
+        for (var s : priceSpreads) {
+            if (y + 12 > maxY) break;
+            g.drawString(font, s.itemName(), px, y, BookScreenColors.DARK, false);
+            String spread = "Δ" + CoinRenderer.format(s.spread());
+            int sc = s.spread() > 0 ? 0xFF2A7A2A : BookScreenColors.LIGHT;
+            g.drawString(font, spread, px + pw - font.width(spread) - 4, y, sc, false);
+            g.drawString(font, "low " + s.cheapestPrice() + " @ " + s.cheapestVillage()
+                            + "  ·  high " + s.dearestPrice() + " @ " + s.dearestVillage(),
+                    px + 4, y + 10, BookScreenColors.MID, false);
+            y += 22;
+        }
+        g.drawString(font, "Click an item for per-village prices.",
+                px, Math.min(y, maxY - 10), BookScreenColors.LIGHT, false);
+    }
+
+    /** Phase 5d — price-board row click → toggle drill-in. */
+    private boolean handlePricesClick(double mx, double my) {
+        if (currentSection() != SectionType.PRICES || priceSpreads == null) return false;
+        int px = bookX + SIDEBAR_W + PAGE_PAD;
+        int py = bookY + 36;
+        int pw = BOOK_W - SIDEBAR_W - PAGE_PAD * 2;
+        if (mx < px || mx > px + pw) return false;
+        if (selectedPriceItem != null) { selectedPriceItem = null; return true; } // back
+        int y = py + 14;
+        for (var s : priceSpreads) {
+            if (my >= y && my < y + 22) { selectedPriceItem = s.itemId(); return true; }
+            y += 22;
+        }
+        return false;
     }
 
     private void drawEconomy(GuiGraphics g, int px, int py, int pw, int maxY) {
@@ -1233,6 +1332,9 @@ public class KingdomBookScreen extends Screen {
         double mx = event.x(), my = event.y();
 
         if (sidebar.mouseClicked(mx, my)) return true;
+
+        // Phase 5d — price-board row drill-in / back.
+        if (handlePricesClick(mx, my)) return true;
 
         if (currentSection() == SectionType.KINGDOM_MAP && mapPanel != null) {
             int px = bookX + SIDEBAR_W + PAGE_PAD, py = bookY + 36;

@@ -172,6 +172,12 @@ public class ModModEvents {
         registrar.playToClient(BuilderInventoryPacket.TYPE, BuilderInventoryPacket.CODEC, BuilderInventoryPacket::handle);
         registrar.playToClient(OpenTradeScreenPacket.TYPE, OpenTradeScreenPacket.CODEC, OpenTradeScreenPacket::handle);
         registrar.playToServer(TradeActionPacket.TYPE, TradeActionPacket.CODEC, TradeActionPacket::handle);
+        // Phase 5b — player-owned-stall management.
+        registrar.playToClient(OpenStallManagementPacket.TYPE, OpenStallManagementPacket.CODEC, OpenStallManagementPacket::handle);
+        registrar.playToServer(StallManagementActionPacket.TYPE, StallManagementActionPacket.CODEC, StallManagementActionPacket::handle);
+        // Phase 5d — kingdom price board (request/sync).
+        registrar.playToServer(RequestKingdomPricesPacket.TYPE, RequestKingdomPricesPacket.CODEC, RequestKingdomPricesPacket::handle);
+        registrar.playToClient(KingdomPricesSyncPacket.TYPE, KingdomPricesSyncPacket.CODEC, KingdomPricesSyncPacket::handle);
         registrar.playToServer(
                 KingdomActionPacket.TYPE,
                 KingdomActionPacket.CODEC,

@@ -50,14 +50,30 @@ public final class DynamicSignUpdater {
                                    BlockPos origin,
                                    net.minecraft.core.Vec3i size,
                                    List<Component> lines) {
+        updateSignsReturningFirst(level, origin, size, lines);
+    }
+
+    /**
+     * As {@link #updateSigns}, but returns the position of the first sign
+     * written (or {@code null} if the region held none). Phase 5b uses this
+     * so the stall sign-funnel can record the sign's pos on the stall for
+     * right-click routing.
+     */
+    public static BlockPos updateSignsReturningFirst(ServerLevel level,
+                                                     BlockPos origin,
+                                                     net.minecraft.core.Vec3i size,
+                                                     List<Component> lines) {
         BlockPos max = origin.offset(size.getX(), size.getY(), size.getZ());
+        BlockPos first = null;
 
         for (BlockPos pos : BlockPos.betweenClosed(origin, max)) {
             BlockEntity be = level.getBlockEntity(pos);
             if (!(be instanceof SignBlockEntity sign)) continue;
 
             writeLines(level, sign, pos, lines);
+            if (first == null) first = pos.immutable();
         }
+        return first;
     }
 
     /**

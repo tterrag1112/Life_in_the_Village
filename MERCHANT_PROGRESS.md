@@ -2393,3 +2393,303 @@ gone; braces/parens balanced across all 6 files.
    a plain NPC with nothing to sell shows no trade action.
 6. Wandering trader screen still opens + trades (buy-only list).
 7. No missing buttons / unhandled packet / render-order glitch.
+
+---
+
+## Phase 5b — Player-owned-stall management + unified sign right-click
+
+Built via the `litv-gui-screen` skill (Path B — new screen, block-
+interaction launch). The stall sign is now the single entry point.
+
+### Sign → stall resolution + the stored sign pos
+
+Added a `signPos` field to `MarketStall` (codec field 15 of 16 — within the
+cap) + `getSignPos/setSignPos/hasSignPos`. The 2c sign funnel
+(`MarketStallOwnership.refreshSign`) now captures the first sign it writes
+via a new `DynamicSignUpdater.updateSignsReturningFirst` and records it on
+the stall. `VillageSavedData.getStallBySignPos` resolves a clicked sign:
+exact `signPos` match first, then a ≤4-block proximity fallback to the
+stall origin (covers stalls placed before the field existed).
+
+### Sign interception + routing
+
+New `StallSignInteractionHandler` (`@EventBusSubscriber`, server-side) on
+`PlayerInteractEvent.RightClickBlock`: if the clicked block is a
+`SignBlockEntity` AND resolves to a stall, it cancels the event
+(`setCanceled(true)` + `setCancellationResult(SUCCESS)`) so vanilla
+sign-edit never opens, and routes by `OwnerType`:
+- **PLAYER + owner UUID** → `TradeHandler.openStallManagement` (manage).
+- **PLAYER + other player** → `TradeHandler.openTradeScreenForStall` (trade
+  from the chest, no NPC).
+- **NPC / WANDERING_TRADER** → the manning merchant's `openTradeScreen`
+  (existing 5a path); "stallholder isn't here" if unloaded.
+- **Vacant** → "for rent, speak to the merchant" hint.
+Non-stall signs return early → vanilla editing untouched.
+
+### Management screen (owner)
+
+`StallManagementScreen` — parchment book chrome (360×260), single page:
+- **Stats row** (`StatBox`): total sales, reputation tier, tenure
+  (Owned / Rented Nd).
+- **Item list** (`ScrollList`): each stocked-or-custom-priced item shows
+  name, effective price (`CoinRow`), stock `xN`, and a "custom" `Pill`.
+  Click selects → fills the editor.
+- **Editor column**: `StyledEditBox` (price) + "Set Price" / "Clear"
+  `StyledButton`s; the ±20% band is shown for the selection.
+- **"Open Stall Chest"** button → `OPEN_CHEST` action → server
+  `player.openMenu` on the chest at `chestPos` (manual stocking; no custom
+  stock UI, per scope).
+
+### Packets
+
+- `OpenStallManagementPacket` (S→C): stall id, label, sales, rep tier,
+  purchased/rent-until/current-tick, + per-item rows (id, name, base,
+  effective, min, max, hasCustom, stock).
+- `StallManagementActionPacket` (C→S): `SET_PRICE` / `CLEAR_PRICE` /
+  `OPEN_CHEST`. **Server-validated**: owner gate (PLAYER + matching UUID);
+  `SET_PRICE` re-clamps to the ±20% band via `MarketStall.setCustomPrice`
+  (client value never trusted); refreshes the screen after a change.
+- Both registered in `ModModEvents.registerPayloads`.
+
+### Stall-keyed trade (non-owner of a player stall — full scope per request)
+
+The existing trade action is NPC-keyed (`level.getEntity(merchantId)`); a
+player stall has no entity. So:
+- `OpenTradeScreenPacket` + `TradeActionPacket` gained an optional
+  `stallId` (zero UUID = NPC path, unchanged; non-zero = stall path). The
+  5a `TradeScreen` records it and tags outgoing actions when stall-keyed.
+- `TradeHandler.openTradeScreenForStall` builds a buy-only offer list from
+  the stall chest at the owner's effective price (the SELL list is empty —
+  a player stall has no wallet to pay sellers, so visitors buy but can't
+  sell to it; stated honestly).
+- `TradeHandler.handleStallTrade` (routed from `TradeActionPacket.handle`
+  when `hasStall()`): draws from the chest, the player pays into the stall
+  chest via 1b `settlePurchase(player → stallChest)` (the `resolveStall
+  Endpoint` primitive already supports crediting a player stall chest),
+  records the sale, refreshes.
+
+### Tie-In Audit
+
+- **Upstream:** `MarketStall` (owner/prices/stats/signPos), `StallGoods`/
+  chest stock, `MarketPricing`/`getEffectivePrice` (the ±20% band centre).
+- **Downstream:** the owner's `SET_PRICE` writes `customPrices` →
+  `getEffectivePrice` → already consulted by 5a's screen + `MarketPricing`
+  (1a), so the loop closes (owner sets price → buyers see it). Non-owner
+  trade reuses 1b settlement (stall chest endpoint) — no new settlement.
+- **Siblings:** the 2c sign funnel writes the text; 5b reads the same
+  sign's pos (captured in the same call). `RentStallVerb`/lease flow still
+  acquires stalls (5b only manages an owned one). NPC-owned stalls open
+  trade, never the player management screen (gated on PLAYER + UUID).
+- **Switches:** `OwnerType` routing handles all three arms (PLAYER →
+  manage/trade; NPC/WANDERING_TRADER → NPC trade). No new enum.
+
+### Simplification Sweep
+
+The sign is the one stall entry point. The non-owner branch reuses the 5a
+`TradeScreen` (stall-keyed) rather than a parallel screen. `updateSigns`
+now delegates to `updateSignsReturningFirst` (one impl).
+
+### Deviations from prompt
+
+- **Player stalls are buy-only for visitors** (no SELL list): a player
+  stall has no wallet/owner present to fund buying from a seller, and
+  `SettlementParty.StallChest` can be credited but not debited. Stated
+  rather than faked.
+- **Sign type:** only standard `SignBlockEntity` is handled (what
+  `DynamicSignUpdater` writes). Hanging signs aren't used by the stall
+  NBTs, so hanging-sign interception is omitted (flag: add a
+  `HangingSignBlockEntity` arm if stall NBTs ever use them).
+- Custom-price detection uses `getCustomPricesRaw().containsKey` (exact),
+  not effective-vs-base comparison.
+
+### Out-of-scope but flagged
+
+- Automated stocking / stock-transfer UI (manual chest only). Lease
+  acquisition/renewal redesign (existing flow stands; "renew" could be a
+  follow-up button). NPC-stall management by players. 5c/5d/5e.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`; `compileJava` aborts at
+dependency resolution so no javac ran). Static review: all 14 files brace/
+paren-balanced; codec field count 15 ≤ 16; packet encode/decode symmetric
+(both new packets + the two extended ones); enum encoded as
+`writeUtf(name())`/`valueOf` (codebase convention, not `writeEnum`);
+`StyledEditBox extends EditBox`, `StyledButton extends Button` (so
+`addRenderableWidget` + `getValue/setValue` valid); `StyledButton.builder()
+.pos().size().build()` matches; `Identifier.parse` + `player.openMenu
+(MenuProvider)` (ChestBlockEntity is a MenuProvider) confirmed; all three
+`OpenTradeScreenPacket` sites + the `TradeScreen` constructor use the new
+shape. **Highest residual risk:** `PlayerInteractEvent.RightClickBlock`
+cancellation API (`setCancellationResult(InteractionResult)`) couldn't be
+verified offline — first thing to check on `./gradlew build`.
+
+### Smoke test
+
+1. Rent/buy a stall, right-click its sign → management screen (NOT vanilla
+   sign-edit).
+2. Set a custom price within ±20% → sticks; out-of-band → server rejects;
+   a buyer then sees the price in the 5a trade screen.
+3. "Open Stall Chest" → vanilla chest opens; stocking makes the item
+   buyable.
+4. Sales/reputation/rent display; sales updates after a buy.
+5. A DIFFERENT player right-clicks the sign → trade screen for the stall
+   (buys from the chest, pays the owner via 1b) — not management.
+6. Non-stall sign → vanilla editing still works.
+7. NPC-owned stall sign → trade, not player management.
+8. No render/packet glitch.
+
+---
+
+## Phase 5c — Village economy view
+
+Built via the `litv-gui-screen` skill. **Decision: extend `VillageBook
+Screen` with a new ECONOMY section** (the Simplification Sweep choice)
+rather than a parallel screen — it reuses the sidebar/chrome and the
+existing leader→book route.
+
+### View content + layout
+
+New ECONOMY section: a **Treasury** + **Net income/day** `StatBox` row, a
+**Needs** `NeedMeter.dots` row (reusing the overview's `needs` map), and a
+per-`ResourceCategory` **surplus/deficit** list — each category labelled
+with a green "Exporter +N" / red "Importer N" / neutral "Balanced" `Pill`,
+driven by `VillageSimData.net(cat)`. Graceful empty state ("No economic
+activity recorded yet") when the village has no sim data.
+
+### Thickened packet (minimal-churn)
+
+Rather than scatter ~6 scalars into the 28-field manual `OpenVillageBook
+Packet` codec, added **one** nested `EconomyData` record (hasSim, treasury,
+tax, wages, netIncomePerDay, List<CategoryNet>) as a single new field —
+one append to the record/encode/decode/construct. `EconomyData.empty(...)`
+is the no-sim fallback. Built server-side in `sendOpenPacket` via a new
+`buildEconomyData` helper over `VillageSavedData.getSimData` +
+`ResourceCategory.values()` (skips dead-neutral categories). Tax/wages are
+0 for now (the per-day treasury-flow stats live on a `VillageTreasury`
+object not directly reachable from `Village`, which only exposes
+`treasuryBronze`) — flagged.
+
+### Access routes
+
+- **Office (primary, mostly wired):** the existing `VILLAGE_LEADER` →
+  `VillageBookScreen` nav route is unchanged (Economy is a tab on it). The
+  **village treasurer** (an *office* held by a MERCHANT/SCHOLAR, not a
+  profession) now also opens the book straight to ECONOMY — detected via
+  `OfficeRegistry.findOfficesHeldBy(...).officeId() == VILLAGE_TREASURER`,
+  wired in `NpcProfileHub.openNavTarget` + surfaced as an `OFFICE_SCREEN`
+  nav button in `resolveNavKind`.
+- **Scroll (non-office):** new `VillageEconomyScrollItem` (`village_
+  economy_scroll`, in `ModItems`) — right-click opens the standing
+  village's economy view (`getVillageAt(player.pos)` → `sendOpenPacket(...,
+  "ECONOMY")`). Mirrors `KingdomBookItem`. **Deviation:** bound to "where
+  you stand" rather than a data-component-bound village (simpler; avoids a
+  component registration) — flagged. The buy-from-treasurer mint wasn't
+  added; the item is the access primitive and can be sold via the existing
+  lease-mint pattern in a follow-up.
+
+### Switch audit
+
+`VillageBookScreen.Section` gained `ECONOMY`. The `drawPageContent` switch
+(exhaustive, 8 arms now) got `case ECONOMY ->`; `buildWidgets` has a
+`default -> {}` so the no-widget section is covered; `drawPageChrome` and
+the sidebar `currentSection` supplier are arm-agnostic.
+
+### Tie-In / Out-of-scope
+
+Read-only — never mutates treasury/needs/sim. Existing leader→book route +
+all other book sections untouched. Distinct from the kingdom book's
+ECONOMY (tax/upkeep) and the 5d PRICES board. Treasury *management*,
+guild-treasurer-NPC route, and the scroll's buy-mint are out of scope /
+flagged.
+
+---
+
+## Phase 5d — Kingdom-wide price board
+
+A `PRICES` section in `KingdomBookScreen` + a purchasable item, backed by a
+net-new server-side aggregator. Makes the 1c cross-village arbitrage
+legible.
+
+### Aggregator (net-new) + cost
+
+`KingdomPriceAggregator.aggregate(level, kingdom, data)`: for each
+explicit-price item, loops the kingdom's villages × `MarketPriceHelper
+.getDynamicSellPrice` and emits an `ItemSpread` (cheapest village+price,
+dearest village+price, per-village drill-in), sorted by spread (biggest
+arbitrage first). **Cost: O(villages × items) on the daily-cached
+`VillageSimData` multiplier** — no per-tick or live-entity scan. Bounded by
+`MAX_VILLAGES = 24` so a huge kingdom can't blow the loop/packet.
+
+### Data flow (request/sync, matching the book's idiom)
+
+The client book lazy-loads via request/response (like its map). On first
+PRICES view: `RequestKingdomPricesPacket` (C→S) → server aggregates →
+`KingdomPricesSyncPacket` (S→C) → `KingdomBookScreen.applyPrices`. Both
+registered in `ModModEvents`. The board renders cheapest@village /
+dearest@village / Δspread per row; clicking a row drills into per-village
+prices (`handlePricesClick` toggles `selectedPriceItem`); clicking again
+goes back.
+
+### PRICES SectionType + switch audit
+
+`SectionType` gained `PRICES` (after ECONOMY). Wired: one `navEntries.add`,
+one `Sidebar.Entry`, and `case PRICES -> drawPrices` in the **draw** switch
+(now 15 arms, exhaustive). The `buildWidgets` switch has `default -> {}`
+(PRICES needs no widgets — it's draw-only + click-handled). The two `switch
+(currentSection())` sites are the only ones; both handle PRICES.
+
+### Purchasable item (non-ruler access)
+
+`PriceBoardItem` (`price_board`, in `ModItems`) — mirrors `KingdomBookItem`
+but **not ruler-gated**: opens the kingdom book for the kingdom of the
+village the holder stands in (else the kingdom they rule). Sends
+`SyncKingdomPacket` then `OpenKingdomBookPacket`; the Prices tab
+lazy-loads. **Deviation:** opens the book (Prices one click away) rather
+than jumping straight to the section — `OpenKingdomBookPacket` carries only
+`kingdomId` and extending it for an initial-section was more churn than
+warranted; flagged.
+
+### Tie-In / Simplification
+
+Read-only — no economy mutation. Reuses the book's tab machinery + the same
+`MarketPriceHelper` a player pays through (so board == trade-screen
+prices). The aggregator is the only new logic, callable from both the
+section's request handler and (transitively) the item. `KingdomBookItem`/
+ruler book untouched. Single-village kingdom → one price, zero spread, no
+NPE (the cheapest==dearest case).
+
+### Build verification (5c + 5d)
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: all 12
+touched files brace/paren-balanced; both new packet pairs encode/decode
+symmetric + registered; `OpenVillageBookPacket` codec append matched in
+header/encode/decode/construct; `SectionType.PRICES` + `Section.ECONOMY`
+added to every exhaustive switch (draw) with `default` covering the widget
+switches; APIs confirmed (`getSimData`, `VillageSimData.net/production/
+consumption/getNetIncomePerDay`, `ResourceCategory.values`, `getKingdomById/
+ForVillage` → `Optional<Kingdom>`, `Kingdom.getVillageIds/getId`,
+`getDynamicSellPrice`, `findOfficesHeldBy().holding().officeId()`,
+`sendOpenPacket(...,section)`, `CoinRenderer.format`, `StatBox/Pill/
+NeedMeter` via `Framework.*`); both items registered in `ModItems`.
+
+### Smoke test (5c)
+
+1. Right-click a VILLAGE_LEADER (or treasurer) → book opens; Economy tab
+   shows needs, per-category surplus/deficit (exporter/importer), treasury.
+2. A wheat-producing village reads FOOD = Exporter.
+3. Village without sim data → neutral display, no NPE.
+4. Read-only — no economy state changes.
+5. The economy scroll opens the standing village's Economy view.
+
+### Smoke test (5d)
+
+1. Kingdom book → Prices: cross-village list, cheapest/dearest + spread
+   per item.
+2. Two villages with a real 1c gap → the board shows it (cheap in the
+   exporter, dear in the importer).
+3. Click an item → per-village prices; click again → back.
+4. `price_board` item as a non-ruler → opens the kingdom book.
+5. Single-village kingdom → zero spread, no NPE.
+6. Board prices == trade-screen prices (same `MarketPriceHelper`).
+7. Ruler kingdom book still opens.

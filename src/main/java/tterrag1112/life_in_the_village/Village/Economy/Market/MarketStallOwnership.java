@@ -49,13 +49,16 @@ public final class MarketStallOwnership {
         refreshSign(level, stall);
     }
 
-    /** Rewrites the stall's sign(s) from its current state. */
+    /** Rewrites the stall's sign(s) from its current state, and (Phase 5b)
+     *  records the first sign's pos on the stall for right-click routing. */
     public static void refreshSign(ServerLevel level, MarketStall stall) {
         if (level == null || stall == null) return;
         BlockPos origin = stall.getStallOrigin();
         if (origin == null) return;
         Vec3i size = new Vec3i(SIGN_SCAN, SIGN_SCAN, SIGN_SCAN);
-        DynamicSignUpdater.updateSigns(level, origin, size, signLines(stall));
+        BlockPos signPos = DynamicSignUpdater.updateSignsReturningFirst(
+                level, origin, size, signLines(stall));
+        if (signPos != null) stall.setSignPos(signPos);
     }
 
     private static List<Component> signLines(MarketStall stall) {

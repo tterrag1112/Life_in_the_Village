@@ -1877,6 +1877,27 @@ public class VillageSavedData extends SavedData implements
                 .findFirst();
     }
 
+    /**
+     * Phase 5b — resolves a right-clicked sign block pos to its stall.
+     * Prefers the stall's captured {@code signPos}; falls back to a small
+     * proximity check against the stall origin for stalls placed before the
+     * sign-pos field existed (within ~4 blocks).
+     */
+    public Optional<MarketStall> getStallBySignPos(BlockPos signPos) {
+        if (signPos == null) return Optional.empty();
+        for (MarketStall s : marketStalls) {
+            if (s.isActive() && s.hasSignPos() && s.getSignPos().equals(signPos)) {
+                return Optional.of(s);
+            }
+        }
+        // Fallback: nearest active stall whose origin is within 4 blocks.
+        return marketStalls.stream()
+                .filter(MarketStall::isActive)
+                .filter(s -> s.getStallOrigin() != null
+                        && s.getStallOrigin().closerThan(signPos, 4.0))
+                .findFirst();
+    }
+
     public List<HouseholdData> getHouseholdsForVillage(UUID villageId) {
         return getVillageById(villageId)
                 .map(v -> v.getBuildingIds().stream()

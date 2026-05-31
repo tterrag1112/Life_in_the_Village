@@ -250,6 +250,7 @@ public class WanderingTraderBehavior extends Behavior<TownspersonMob> {
         // Plain travelling merchant: no village/stall/reputation context.
         PacketDistributor.sendToPlayer(player,
                 new OpenTradeScreenPacket(entity.getUUID(),
+                        OpenTradeScreenPacket.NO_STALL,
                         entity.getNpcName(), "Travelling Merchant",
                         "", "", "", 0,
                         buyOffers, java.util.List.of(), playerWealth));

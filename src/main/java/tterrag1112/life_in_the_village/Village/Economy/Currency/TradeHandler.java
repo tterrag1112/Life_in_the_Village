@@ -121,9 +121,160 @@ public class TradeHandler {
 
         PacketDistributor.sendToPlayer(player,
                 new OpenTradeScreenPacket(merchant.getUUID(),
+                        OpenTradeScreenPacket.NO_STALL,
                         merchant.getNpcName(), role, villageName, stallOwner,
                         repTierName, repDiscountPct, buyOffers, sellOffers,
                         playerWealth));
+    }
+
+    // =========================================================================
+    // Phase 5b — stall-keyed trade (player-owned stall, no NPC manning it)
+    // =========================================================================
+
+    /**
+     * Opens the trade screen keyed to a player-owned {@code stall} that has
+     * no NPC. The BUY list = the stall chest's stock at the owner's
+     * effective (custom or village) price. The SELL list is empty: a
+     * player stall has no wallet to pay the seller (the owner isn't there),
+     * so visitors can buy from it but not sell to it.
+     */
+    public static void openTradeScreenForStall(ServerPlayer player,
+                                               MarketStall stall) {
+        if (!(player.level() instanceof ServerLevel level)) return;
+        VillageSavedData data = VillageSavedData.get(level);
+        Building market = data.getBuildingById(stall.getMarketBuildingId()).orElse(null);
+        if (market == null) return;
+
+        Optional<Village> village = data.getVillageAt(stall.getStallOrigin());
+        Village pricingVillage = village.orElse(null);
+        String villageName = pricingVillage != null ? pricingVillage.getName() : "";
+
+        List<TradeOffer> buyOffers = new ArrayList<>();
+        MarketPriceHelper.getAllExplicitPrices().keySet().forEach(item -> {
+            int stock = countInStallChest(level, stall, item);
+            if (stock <= 0) return;
+            long sell = MarketPricing.sellPrice(PricingContext.forPlayer(
+                    item, level, pricingVillage, data, player, stall));
+            boolean customPriced = stall.getCustomPricesRaw().containsKey(
+                    BuiltInRegistries.ITEM.getKey(item).toString());
+            buyOffers.add(new TradeOffer(item, sell, 0, true, false, stock, customPriced));
+        });
+
+        long playerWealth = CoinHelper.getPlayerWealth(player).toBronze();
+        PacketDistributor.sendToPlayer(player,
+                new OpenTradeScreenPacket(stall.getOwnerUUID(), stall.getStallId(),
+                        stall.getOwnerDisplayName() + "'s Stall", "Stall",
+                        villageName, stall.getOwnerDisplayName(),
+                        stall.getReputationTier().displayName, 0,
+                        buyOffers, List.of(), playerWealth));
+    }
+
+    /**
+     * Handles a buy against a player-owned stall (no NPC). Draws from the
+     * stall chest at the owner's effective price; the player pays into the
+     * stall chest (the owner collects it) via 1b {@code settlePurchase} with
+     * the stall chest as endpoint. Sell-to-stall is not offered (no wallet).
+     */
+    public static void handleStallTrade(ServerPlayer player,
+                                        TradeActionPacket packet) {
+        if (!(player.level() instanceof ServerLevel level)) return;
+        if (!packet.isBuying()) return; // player stalls don't buy from visitors
+
+        Item item = BuiltInRegistries.ITEM.get(packet.itemId())
+                .map(h -> h.value()).orElse(null);
+        if (item == null) return;
+
+        VillageSavedData data = VillageSavedData.get(level);
+        MarketStall stall = data.getStallById(packet.stallId()).orElse(null);
+        if (stall == null || !stall.isActive()
+                || stall.getOwnerType() != MarketStall.OwnerType.PLAYER) {
+            return;
+        }
+        Building market = data.getBuildingById(stall.getMarketBuildingId()).orElse(null);
+        if (market == null) return;
+        Optional<Village> village = data.getVillageAt(stall.getStallOrigin());
+
+        int stock = countInStallChest(level, stall, item);
+        int quantity = Math.min(packet.quantity(), stock);
+        if (quantity <= 0) {
+            player.displayClientMessage(Component.literal("Out of stock."), true);
+            return;
+        }
+
+        long pricePerItem = MarketPricing.sellPrice(PricingContext.forPlayer(
+                item, level, village.orElse(null), data, player, stall));
+        quantity = Math.min(quantity,
+                (int) (CoinHelper.getPlayerWealth(player).toBronze()
+                        / Math.max(1, pricePerItem)));
+        if (quantity <= 0) {
+            player.displayClientMessage(Component.literal("Not enough coins."), true);
+            return;
+        }
+
+        CurrencyValue totalCost = CurrencyValue.of(pricePerItem * quantity);
+        if (!takeFromStallChest(level, stall, item, quantity)) {
+            player.displayClientMessage(Component.literal("Failed to retrieve item."), true);
+            return;
+        }
+        // Player pays the stall owner — coins land in the stall chest (1b).
+        if (!NpcEconomy.settlePurchase(SettlementParty.player(player),
+                SettlementParty.stallChest(stall),
+                totalCost, village.orElse(null), level, data)) {
+            returnToStallChest(level, stall, item, quantity);
+            player.displayClientMessage(Component.literal("Payment failed."), true);
+            return;
+        }
+        stall.recordSale(totalCost.toBronze());
+        data.setDirty();
+
+        ItemStack toGive = new ItemStack(item, quantity);
+        if (!player.addItem(toGive)) player.drop(toGive, false);
+        player.displayClientMessage(Component.literal("Bought " + quantity + "x "
+                + item.getName().getString() + " for " + formatPrice(totalCost)), true);
+
+        openTradeScreenForStall(player, stall); // refresh
+    }
+
+    /**
+     * Phase 5b — builds + sends the owner's stall-management snapshot: stats
+     * (sales, reputation, rent) + a per-item row (effective price, ±20%
+     * band, custom flag, stock) for every explicit-price item, so the owner
+     * can set custom prices and view stock.
+     */
+    public static void openStallManagement(ServerPlayer player, MarketStall stall) {
+        if (!(player.level() instanceof ServerLevel level)) return;
+        VillageSavedData data = VillageSavedData.get(level);
+        Optional<Village> village = data.getVillageAt(stall.getStallOrigin());
+        Village v = village.orElse(null);
+
+        List<tterrag1112.life_in_the_village.Networking.OpenStallManagementPacket.ItemRow> rows =
+                new ArrayList<>();
+        MarketPriceHelper.getAllExplicitPrices().keySet().forEach(item -> {
+            long base = MarketPriceHelper.getDynamicSellPrice(level, v, item);
+            if (base <= 0) return;
+            long min = (long) Math.floor(base * (1.0 - MarketStall.PRICE_BAND));
+            long max = (long) Math.ceil(base * (1.0 + MarketStall.PRICE_BAND));
+            long eff = stall.getEffectivePrice(item, base);
+            boolean custom = stall.getCustomPricesRaw().containsKey(
+                    BuiltInRegistries.ITEM.getKey(item).toString());
+            int stock = countInStallChest(level, stall, item);
+            // Show items that are stocked OR already custom-priced (so the
+            // owner can manage a price even before stocking).
+            if (stock > 0 || custom) {
+                rows.add(new tterrag1112.life_in_the_village.Networking
+                        .OpenStallManagementPacket.ItemRow(
+                        BuiltInRegistries.ITEM.getKey(item).toString(),
+                        item.getName().getString(), base, eff, min, max, custom, stock));
+            }
+        });
+
+        String label = stall.getOwnerDisplayName().isEmpty()
+                ? "Your Stall" : stall.getOwnerDisplayName() + "'s Stall";
+        PacketDistributor.sendToPlayer(player,
+                new tterrag1112.life_in_the_village.Networking.OpenStallManagementPacket(
+                        stall.getStallId(), label, stall.getTotalSales(),
+                        stall.getReputationTier().displayName, stall.isPurchased(),
+                        stall.getRentPaidUntilTick(), level.getGameTime(), rows));
     }
 
     // =========================================================================

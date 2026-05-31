@@ -28,7 +28,7 @@ public class VillageBookScreen extends Screen {
     private static final int MAP_H     = 180;
 
     private enum Section {
-        OVERVIEW, HOUSING, COMPANY_BUILDINGS, STATISTICS, COMMISSIONS, MAP, STANDINGS
+        OVERVIEW, ECONOMY, HOUSING, COMPANY_BUILDINGS, STATISTICS, COMMISSIONS, MAP, STANDINGS
     }
 
     private enum PurchaseAction { BUY_HOUSE, BUY_COMPANY_BUILDING }
@@ -131,6 +131,7 @@ public class VillageBookScreen extends Screen {
         sidebar = new Sidebar<>(bookX + 2, bookY + 30, SIDEBAR_W - 2, 18,
                 List.of(
                         new Sidebar.Entry<>(Section.OVERVIEW,     "Overview",     true),
+                        new Sidebar.Entry<>(Section.ECONOMY,      "Economy",      true),
                         new Sidebar.Entry<>(Section.HOUSING,      "Housing",      true),
                         new Sidebar.Entry<>(Section.STATISTICS,   "Statistics",   true),
                         new Sidebar.Entry<>(Section.COMMISSIONS,  "Commissions",  true),
@@ -223,6 +224,7 @@ public class VillageBookScreen extends Screen {
         int maxY = bookY + BOOK_H - 34;
         switch (currentSection) {
             case OVERVIEW          -> drawOverview(g, px, py, pw, maxY);
+            case ECONOMY           -> drawEconomy(g, px, py, pw, maxY);
             case HOUSING           -> drawPurchaseSectionHeader(g, px, py, pw, "Your wallet:", true);
             case COMPANY_BUILDINGS -> drawCompanyBuildingsPage(g, px, py, pw, maxY);
             case STATISTICS        -> drawStatistics(g, px, py, pw, maxY);
@@ -303,6 +305,58 @@ public class VillageBookScreen extends Screen {
             g.renderOutline(px, y, pw, 12, BookScreenColors.BORDER);
             g.drawString(font, "→ Expanding: " + data.pendingExpansion(),
                     px + 3, y + 2, 0xFF2255AA, false);
+        }
+    }
+
+    /**
+     * Phase 5c — village economy: treasury + net income (StatBox), needs
+     * (NeedMeter dots), and per-{@code ResourceCategory} surplus/deficit
+     * rows (green "Exporter" / red "Importer" pills). Read-only.
+     */
+    private void drawEconomy(GuiGraphics g, int px, int py, int pw, int maxY) {
+        var econ = data.economy();
+        int y = py;
+
+        g.drawString(font, "Economy", px, y, BookScreenColors.DARK, false);
+        y += 14;
+
+        // Treasury + net income/day tiles.
+        int boxW = pw / 2 - 4;
+        StatBox.draw(g, font, px, y, boxW, 22, "Treasury",
+                CoinRenderer.format(econ.treasuryBronze()));
+        String income = econ.hasSim()
+                ? String.format("%+.0f/day", econ.netIncomePerDay())
+                : "—";
+        StatBox.draw(g, font, px + boxW + 8, y, boxW, 22, "Net income", income);
+        y += 28;
+
+        // Needs row.
+        g.drawString(font, "Needs:", px, y, BookScreenColors.MID, false);
+        NeedMeter.dots(g, px + 44, y + 2, data.needs());
+        y += 16;
+
+        // Per-category surplus / deficit.
+        g.drawString(font, "Surplus / Deficit", px, y, BookScreenColors.MID, false);
+        y += 12;
+        if (!econ.hasSim() || econ.categories().isEmpty()) {
+            g.drawString(font, "No economic activity recorded yet.",
+                    px + 2, y, BookScreenColors.LIGHT, false);
+            return;
+        }
+        for (var cn : econ.categories()) {
+            if (y + 14 > maxY) break;
+            String label = cn.category().charAt(0)
+                    + cn.category().substring(1).toLowerCase().replace('_', ' ');
+            g.drawString(font, label, px + 2, y + 2, BookScreenColors.DARK, false);
+            boolean exporter = cn.net() > 0f;
+            boolean neutral = cn.net() == 0f;
+            String tag = neutral ? "Balanced"
+                    : (exporter ? "Exporter +" : "Importer ")
+                            + String.format("%.0f", cn.net());
+            int bg = neutral ? 0xFF555540 : (exporter ? 0xFF1A4A1A : 0xFF4A1A1A);
+            int tx = neutral ? 0xFFCCCCCC : (exporter ? 0xFF90E090 : 0xFFE09090);
+            Pill.draw(g, font, px + pw - Pill.width(font, tag) - 2, y, tag, bg, tx);
+            y += 14;
         }
     }
 
@@ -908,6 +962,9 @@ public class VillageBookScreen extends Screen {
                                 .fromOrder(order, level, player))
                         .toList();
 
+        // Phase 5c — economy snapshot (per-category surplus/deficit + treasury).
+        var economy = buildEconomyData(vdata, village);
+
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
                 new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket(
                         villageId, village.getName(), leaderName, tier,
@@ -918,6 +975,35 @@ public class VillageBookScreen extends Screen {
                         hasCompanyHere, businessId, businessName,
                         companyWorkerCount, companyBuildingNames,
                         purchasable, seasonName, openOrderCount,
-                        commissions, openSection));
+                        commissions, economy, openSection));
+    }
+
+    /**
+     * Phase 5c — builds the economy snapshot from {@code VillageSimData}
+     * (per-{@code ResourceCategory} net) + the village treasury. Returns a
+     * neutral empty snapshot when no sim data exists yet.
+     */
+    private static tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.EconomyData
+            buildEconomyData(VillageSavedData vdata,
+                             tterrag1112.life_in_the_village.Village.Village village) {
+        long treasury = village.getTreasuryBronze();
+        var simOpt = vdata.getSimData(village.getId());
+        if (simOpt.isEmpty()) {
+            return tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket
+                    .EconomyData.empty(treasury);
+        }
+        var sim = simOpt.get();
+        java.util.List<tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.CategoryNet>
+                cats = new java.util.ArrayList<>();
+        for (var cat : tterrag1112.life_in_the_village.Village.Simulation
+                .ResourceCategory.values()) {
+            float net = sim.net(cat);
+            // Skip dead-neutral categories the village never touches.
+            if (net == 0f && sim.production(cat) == 0f && sim.consumption(cat) == 0f) continue;
+            cats.add(new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket
+                    .CategoryNet(cat.name(), net));
+        }
+        return new tterrag1112.life_in_the_village.Networking.OpenVillageBookPacket.EconomyData(
+                true, treasury, 0L, 0L, sim.getNetIncomePerDay(), cats);
     }
 }

@@ -80,7 +80,13 @@ public class MarketStall {
             // Phase 2d — event-scoped stall marker. "" ⇒ permanent stall.
             // optionalFieldOf default keeps pre-2d saves loading.
             Codec.STRING.optionalFieldOf("eventId", "")
-                    .forGetter(MarketStall::getEventIdRaw)
+                    .forGetter(MarketStall::getEventIdRaw),
+            // Phase 5b — the stall's sign block pos, captured by the sign
+            // funnel, so a right-click on the sign resolves to this stall
+            // (owner → management, non-owner → trade). BlockPos.ZERO ⇒ not
+            // yet captured (falls back to a scan around the origin).
+            BlockPos.CODEC.optionalFieldOf("signPos", BlockPos.ZERO)
+                    .forGetter(MarketStall::getSignPos)
     ).apply(i, MarketStall::fromCodec));
 
     /** Codec apply target — restores the event marker after construction
@@ -92,11 +98,13 @@ public class MarketStall {
                                          String ownerDisplayName, OwnerType ownerType,
                                          long rentPaidUntilTick, boolean active,
                                          int reputation, long totalSales,
-                                         Map<String, Long> customPrices, String eventId) {
+                                         Map<String, Long> customPrices, String eventId,
+                                         BlockPos signPos) {
         MarketStall s = new MarketStall(stallId, marketBuildingId, slotIndex,
                 stallOrigin, chestPos, ownerUUID, ownerDisplayName, ownerType,
                 rentPaidUntilTick, active, reputation, totalSales, customPrices);
         if (eventId != null && !eventId.isEmpty()) s.eventId = UUID.fromString(eventId);
+        if (signPos != null && !signPos.equals(BlockPos.ZERO)) s.signPos = signPos;
         return s;
     }
 
@@ -181,6 +189,11 @@ public class MarketStall {
     // canonical constructor; set post-construction and persisted via the
     // codec's fromCodec adapter so create()/legacy callers stay unchanged.
     private UUID eventId;
+
+    // Phase 5b — the stall's sign block pos (for right-click routing).
+    // BlockPos.ZERO = not yet captured. Set post-construction by the sign
+    // funnel; persisted via the codec adapter.
+    private BlockPos signPos = BlockPos.ZERO;
 
     // ── Canonical constructor (matches codec) ─────────────────────────────────
 
@@ -299,6 +312,15 @@ public class MarketStall {
 
     /** True when this stall is a temporary event stall (2d). */
     public boolean isEventScoped() { return eventId != null; }
+
+    // ── Sign position (Phase 5b) ─────────────────────────────────────────────
+
+    /** The stall's sign block pos, or {@link BlockPos#ZERO} if uncaptured. */
+    public BlockPos getSignPos() { return signPos == null ? BlockPos.ZERO : signPos; }
+
+    public void setSignPos(BlockPos pos) { this.signPos = pos == null ? BlockPos.ZERO : pos; }
+
+    public boolean hasSignPos() { return signPos != null && !signPos.equals(BlockPos.ZERO); }
 
     // =========================================================================
     // Custom pricing (±20% band)

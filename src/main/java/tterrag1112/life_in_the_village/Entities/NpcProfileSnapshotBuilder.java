@@ -231,6 +231,15 @@ public final class NpcProfileSnapshotBuilder {
         if (prof == Profession.VILLAGE_LEADER) {
             return NpcProfileSnapshot.NavTargetKind.OFFICE_SCREEN;
         }
+        // Phase 5c — the village treasurer opens the economy view (office,
+        // not profession; reuses the same OFFICE_SCREEN nav button).
+        boolean isTreasurer = tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry
+                .findOfficesHeldBy(npc.getUUID(), level).stream()
+                .anyMatch(m -> tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry
+                        .VILLAGE_TREASURER.equals(m.holding().officeId()));
+        if (isTreasurer) {
+            return NpcProfileSnapshot.NavTargetKind.OFFICE_SCREEN;
+        }
 
         // Owned business worker — hide if a contextual route reaches
         // BusinessWorkerScreen here too (today: no contextual route,

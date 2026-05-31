@@ -21,6 +21,10 @@ public class ModItems {
     public static final DeferredItem<Item> MONEYBIN = ITEMS.registerItem("moneybin", PurseItem::new, props -> new Item.Properties().stacksTo(1).component(DataComponents.BUNDLE_CONTENTS, BundleContents.EMPTY));
     public static final DeferredItem<Item> VILLAGE_MAP = ITEMS.registerItem("village_map", VillageMapItem::new, props -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<Item> KINGDOM_BOOK = ITEMS.registerItem("kingdom_book", KingdomBookItem::new, props -> new Item.Properties().stacksTo(1));
+    /** Phase 5c — village economy scroll: opens the standing village's economy view. */
+    public static final DeferredItem<Item> VILLAGE_ECONOMY_SCROLL = ITEMS.registerItem("village_economy_scroll", VillageEconomyScrollItem::new, props -> new Item.Properties().stacksTo(1));
+    /** Phase 5d — kingdom price board: opens the cross-village price comparison. */
+    public static final DeferredItem<Item> PRICE_BOARD = ITEMS.registerItem("price_board", PriceBoardItem::new, props -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<Item> COMPANY_LEDGER = ITEMS.registerItem("company_ledger", BusinessLedgerItem::new, props -> new Item.Properties().stacksTo(1));
     /** Track C3.1 — Road Engineer's Plans. Right-click to view road-proposal status. */
     public static final DeferredItem<Item> ROAD_ENGINEER_PLANS = ITEMS.registerItem("road_engineer_plans", RoadEngineerPlansItem::new, props -> new Item.Properties().stacksTo(1));

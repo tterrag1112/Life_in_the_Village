@@ -23,6 +23,7 @@ import java.util.UUID;
  */
 public record OpenTradeScreenPacket(
         UUID merchantId,
+        UUID stallId,            // Phase 5b: zero UUID for NPC trade; stall id for a player-stall trade
         String merchantName,
         String npcRole,
         String villageName,
@@ -34,6 +35,8 @@ public record OpenTradeScreenPacket(
         long playerWealth
 ) implements CustomPacketPayload {
 
+    public static final UUID NO_STALL = new UUID(0L, 0L);
+
     public static final Type<OpenTradeScreenPacket> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(Life_in_the_village.MODID, "open_trade_screen")
     );
@@ -42,6 +45,7 @@ public record OpenTradeScreenPacket(
             StreamCodec.of(
                     (buf, packet) -> {
                         buf.writeUUID(packet.merchantId());
+                        buf.writeUUID(packet.stallId());
                         buf.writeUtf(packet.merchantName());
                         buf.writeUtf(packet.npcRole());
                         buf.writeUtf(packet.villageName());
@@ -54,6 +58,7 @@ public record OpenTradeScreenPacket(
                     },
                     buf -> {
                         UUID id = buf.readUUID();
+                        UUID stallId = buf.readUUID();
                         String name = buf.readUtf();
                         String role = buf.readUtf();
                         String village = buf.readUtf();
@@ -63,8 +68,8 @@ public record OpenTradeScreenPacket(
                         List<TradeOffer> buys = readOffers(buf);
                         List<TradeOffer> sells = readOffers(buf);
                         long wealth = buf.readVarLong();
-                        return new OpenTradeScreenPacket(id, name, role, village,
-                                stallOwner, repTier, repPct, buys, sells, wealth);
+                        return new OpenTradeScreenPacket(id, stallId, name, role,
+                                village, stallOwner, repTier, repPct, buys, sells, wealth);
                     }
             );
 
