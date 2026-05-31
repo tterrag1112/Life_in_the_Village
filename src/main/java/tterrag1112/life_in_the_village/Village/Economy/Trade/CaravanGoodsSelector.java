@@ -79,6 +79,30 @@ public class CaravanGoodsSelector {
     }
 
     /**
+     * Phase 4a — the home village's deficit shopping list: items it needs
+     * (need level below SATISFIED), capped per type, as a procurement
+     * caravan's buy order. Public wrapper over {@link
+     * #buildDestinationDeficits} (the same per-category itemBreakdown read
+     * the export selector uses for its destination-priority pass).
+     */
+    public static List<ItemStack> buildShoppingList(Village home) {
+        Map<Item, Integer> deficits = buildDestinationDeficits(home);
+        List<ItemStack> list = new ArrayList<>();
+        int slots = MAX_GOODS_TYPES;
+        // Highest deficit first, capped to MAX_GOODS_TYPES item types.
+        for (var e : deficits.entrySet().stream()
+                .sorted((a, b) -> b.getValue() - a.getValue())
+                .collect(Collectors.toList())) {
+            if (slots <= 0) break;
+            int qty = Math.min(e.getValue(), 64);
+            if (qty <= 0) continue;
+            list.add(new ItemStack(e.getKey(), qty));
+            slots--;
+        }
+        return list;
+    }
+
+    /**
      * Builds a map of item → deficit quantity from the destination village's
      * computed needs. Reads itemBreakdown from each VillageNeed category.
      */
