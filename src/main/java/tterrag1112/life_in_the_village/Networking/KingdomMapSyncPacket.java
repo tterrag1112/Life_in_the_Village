@@ -13,6 +13,8 @@ import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.ClientTradeConnectionCache;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.MapRoadSnapshot;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.MapSeaRouteSnapshot;
+import tterrag1112.life_in_the_village.Village.Travel.ClientTravellerCache;
+import tterrag1112.life_in_the_village.Village.Travel.TravellerSnapshot;
 import tterrag1112.life_in_the_village.World.Atlas.AtlasCell;
 import tterrag1112.life_in_the_village.World.Atlas.ClientAtlasCache;
 
@@ -31,7 +33,8 @@ public record KingdomMapSyncPacket(
         UUID kingdomId,
         List<AtlasCell> cells,
         List<MapRoadSnapshot> roads,
-        List<MapSeaRouteSnapshot> seaRoutes
+        List<MapSeaRouteSnapshot> seaRoutes,
+        List<TravellerSnapshot> travellers   // Phase 5e — in-transit caravans
 ) implements CustomPacketPayload {
 
     public static final Type<KingdomMapSyncPacket> TYPE = new Type<>(
@@ -48,6 +51,8 @@ public record KingdomMapSyncPacket(
                     KingdomMapSyncPacket::roads,
                     ByteBufCodecs.collection(ArrayList::new, MapSeaRouteSnapshot.STREAM_CODEC),
                     KingdomMapSyncPacket::seaRoutes,
+                    ByteBufCodecs.collection(ArrayList::new, TravellerSnapshot.STREAM_CODEC),
+                    KingdomMapSyncPacket::travellers,
                     KingdomMapSyncPacket::new
             );
 
@@ -59,6 +64,7 @@ public record KingdomMapSyncPacket(
             ClientAtlasCache.setCells(pkt.cells());
             ClientTradeConnectionCache.setRoads(pkt.roads());
             ClientTradeConnectionCache.setSeaRoutes(pkt.seaRoutes());
+            ClientTravellerCache.setTravellers(pkt.travellers());
 
             var mc = net.minecraft.client.Minecraft.getInstance();
             if (mc.screen instanceof KingdomBookScreen book

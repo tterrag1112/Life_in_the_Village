@@ -141,7 +141,10 @@ public final class KingdomMapDataBuilder {
                 focusKingdomId, focus.getName(),
                 minCX, minCZ, maxCX, maxCZ,
                 terrain, focusCells, foreign, villages, landRoutes, seaRoutes,
-                provinces));
+                provinces,
+                // Phase 5e — travellers from the last map sync.
+                tterrag1112.life_in_the_village.Village.Travel
+                        .ClientTravellerCache.getTravellers()));
     }
 
     /**
