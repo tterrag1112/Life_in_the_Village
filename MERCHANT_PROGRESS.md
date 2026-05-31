@@ -1832,3 +1832,425 @@ zero-placed log reads `pool.get(0).id()`.
 2. Confirm stalls still seed if a variant's NBT is missing (falls back to
    the legacy NBT, no zero-seed).
 3. Confirm a player can still rent/purchase a seeded stall.
+
+---
+
+## Phase 4a — Need-driven procurement caravan (buy cheap abroad, sell dear at home)
+
+The marquee mechanic: a village with an unmet deficit dispatches a
+merchant caravan to a reachable surplus source, **buys** the needed goods
+there at the source's per-village price (cheap, 1c), returns, and **sells**
+them at home's per-village price (dear, 1c) — filling the deficit and
+keeping the inter-village spread.
+
+### Procurement identity (no new state; reuse DELIVERING)
+
+Added `Caravan.CaravanKind {EXPORT, PROCUREMENT}` + a `shoppingList`
+(`List<ItemStack>` deficit items), **both `optionalFieldOf`** with
+EXPORT/empty defaults so pre-4a saves load. Codec 10→12 fields (within
+the 16-arg RecordCodecBuilder limit; `fromCodec` arity matched).
+`createProcurement(...)` starts the caravan with **empty `goods`** + the
+shopping list. **Deliberately did NOT add a `BUYING` CaravanState**: the
+Simplification Sweep favours the bounded option, and reusing `DELIVERING`
+with an `isProcurement()` branch means zero edits to `Caravan.tick`,
+`CaravanMerchantBehavior`, or `CaravanChannel`. A procurement caravan
+carries empty goods outbound, so `CaravanChannel`'s sell-from-DELIVERING
+filter finds no stock and won't mis-sell from it, and `handleDelivery`
+flips it to RETURNING the same tick.
+
+### CaravanState switch audit
+
+Grepped every `CaravanState` usage: **all are `==`/`if` comparisons, no
+exhaustive switch exists** — so even though I added no state, this
+confirms the reuse-DELIVERING choice touches nothing fragile.
+
+### Dispatch trigger + source selection (route-dependent)
+
+New `dispatchProcurementCaravans` (daily, alongside the export dispatch).
+For each village with a non-empty `CaravanGoodsSelector.buildShoppingList`
+(new public wrapper over the existing per-category `itemBreakdown` deficit
+read), it finds a **reachable surplus source over an existing land
+`TradeRoute`** (never an unpathable ad-hoc journey — no route ⇒ skip),
+whose inventory can spare a needed item above a `SOURCE_RESERVE` buffer.
+Capped at `MAX_PROCUREMENT_DISPATCH_PER_DAY = 2` so deficits don't spam.
+**Kingdom scope:** intra- AND inter-kingdom sources allowed (a sister
+village's surplus is a valid import) — unlike `findExportPartner`'s
+non-kingdom filter, which this deliberately doesn't reuse.
+
+**Path-orientation constraint (important):** `Caravan.getPath` resolves
+from the route's fixed `routeStartNodeId` (= villageA), independent of
+origin/dest — OUTBOUND always physically ends at villageB, RETURNING at
+villageA. The buy leg fires at the OUTBOUND end and the sell leg at the
+RETURNING end, so dispatch only uses routes where **home == villageA and
+source == villageB**; home-as-B routes are skipped (the reverse pair can
+carry its own procurement). This guarantees buy-at-source / sell-at-home
+geography is correct.
+
+### Buy + sell legs (net-new, both settle per-village)
+
+- **Buy (`handleProcurementBuy`, at OUTBOUND→DELIVERING):** for each
+  shopping-list item, qty = min(want, source-spare − reserve, merchant
+  affordability at the source's `getDynamicSellPrice`). Pulls the goods
+  from the source's buildings (`takeFromVillage`) and settles via
+  `NpcEconomy.settlePurchase(buyer = merchant npc, endpoint = none,
+  amount, village = source)` — the source's **1b market tax** credits the
+  source treasury; merchant wallet debited. Goods loaded into caravan.
+  Refunds the goods if the debit unexpectedly fails.
+- **Sell (`handleProcurementSell`, at RETURNING arrival):** deposits the
+  bought goods into the **home stockpile** (filling the deficit) and
+  settles via `settlePurchase(buyer = none /*village-funded import*/,
+  endpoint = merchant npc, amount = home `getDynamicSellPrice` × qty,
+  village = home)` — the home **1b market tax** credits the home treasury;
+  merchant credited the proceeds. The merchant keeps `homeSell − sourceSell`
+  per unit (the 1c spread), minus the two taxes.
+
+### Funding decision
+
+**Merchant wallet** fronts the purchase (debited on the buy leg); the home
+sale credits the merchant. Dispatch gates on `wallet.toBronze() > 0`
+(insufficient funds ⇒ no dispatch). A treasury backstop was considered but
+not needed for the loop to net positive; flagged as later tuning.
+
+### reserveIdleMerchant (by-id)
+
+The prompt's "by-name" fix: as-built it already had a by-building fallback
+alongside the by-name match. **Deferred the deeper rewrite** — the method
+matches by village name OR by assigned-building-in-village, and the new
+dispatch passes the village **id** to it (the building-set check is
+id-based). A true `assignedVillageId` field on `TownspersonMob` is the
+clean fix but touches the entity codec + save migration; flagged for a
+focused follow-up rather than bundled into 4a. (Note: it still doesn't
+*reserve* — two same-tick dispatches could pick the same merchant; the
+per-route active-caravan guard + the daily cap make collisions unlikely,
+flagged.)
+
+### Tie-In Audit
+
+- **Upstream:** `VillageSimData`/needs (`buildShoppingList`),
+  `MarketPriceHelper` per-village prices, the merchant pool, existing
+  `TradeRoute`s + `WorldRoadGraph`.
+- **Downstream:** imported goods land in the **home stockpile** so the
+  deficit/consumers see them; the home-sell settlement mirrors the
+  1c-aware `CaravanChannel` sell side.
+- **Siblings:** the existing **export** caravan is untouched (still
+  `selectGoods`/`deliverGoods`/`payMerchantProfit` — its rewire is 4b);
+  procurement reuses the same engine, dispatch tick, goods list, and
+  `CaravanMerchantBehavior` driver (which carries any caravan by id).
+- **Switches:** none (no enum value added).
+
+### Simplification Sweep
+
+Reused `DELIVERING` + the engine/behaviour driver instead of forking a
+parallel caravan type or adding a state. `buildShoppingList` shares the
+export selector's deficit read. Noted: `payMerchantProfit`'s base-price
+path is now legacy for trade settlement (export rewire = 4b).
+
+### Deviations from prompt
+
+- No `BUYING` state (reused DELIVERING) — bounded, per Simplification Sweep.
+- `reserveIdleMerchant` by-id: minimally satisfied (id-based building
+  check) rather than a new entity field — full fix flagged for follow-up.
+- Source selection requires home == route.villageA (path-orientation
+  constraint above) — a real correctness requirement, not arbitrary.
+
+### Out-of-scope but flagged (mostly 4b)
+
+- Hardening / dead code (`Caravan.tick`/`getWorldPosition`,
+  `getVillageNeeds`, `isPlayerNearby`, `System.out`→logger), export
+  settlement rewire onto 1b/1c, `Roster` escorts/carriers pooling.
+- New road/route creation (reuse existing; skip if unreachable).
+- A true `assignedVillageId` on TownspersonMob; real merchant reservation.
+- WANDERING_TRADER; player UI.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: codec 12
+fields ↔ `fromCodec` 12 params; `NpcWallet.toBronze`, `settlePurchase`,
+`SettlementParty.npc/none`, `getDynamicSellPrice`, `BuildingStorageAccess
+.countItem/takeItem/storeItem`, `getRoutesForVillage`, `RoadEdge.EdgeTier
+.SEA` all confirmed against as-built; empty-goods llama-spawn loop safe
+(`Math.min(0,…)`); braces/parens balanced in all three files; no new
+`System.out`.
+
+### Smoke test
+
+1. Two villages in range with a road/route, home with a DEFICIT, source
+   with a matching SURPLUS (check `VillageSimData.net` / needs). Ensure
+   the route has home as villageA.
+2. Advance a day → a **procurement caravan** dispatches home→source
+   (targeted at the deficit, not a random roll), reliable merchant.
+3. It **buys at the source** (source paid at source price + tax; merchant
+   debited) and loads the goods.
+4. It **returns and sells at home** — goods land in the home stockpile
+   filling the deficit; merchant credited at the home price; home market
+   tax taken once.
+5. Realized spread positive (logged buy vs sell). If negative, legs aren't
+   pricing per-village.
+6. Existing **export** caravan still works unchanged.
+7. Graceful no-op when no reachable source / merchant / funds (no
+   unpathable caravan, no NPE, no spam — daily cap honoured).
+
+---
+
+## Phase 4b — Traveller hardening + export/channel settlement rewire
+
+Two cohesive things: remove confirmed dead caravan code + fix logging, and
+converge the **export** caravan and the **buy-from-caravan** channel onto
+the same `settle*` + per-village (1c) + 1b-tax path 4a established for the
+import legs — so both trade directions price consistently.
+
+### Dead-code deletion (zero-caller proof)
+
+Re-grepped inbound callers before each delete:
+- `Caravan.tick(long,double)` — the `.tick(` hits are `CaravanSavedData
+  .tick` and `AdventurerGroup.tick`; none call `Caravan.tick`. Not in the
+  `TravellingGroup` interface (which needs `onTickSpawned/Simulated`, kept).
+  **Deleted.** The live path is `TravellingGroupEngine.tick`.
+- `Caravan.getWorldPosition` — definition only. **Deleted.** Live path:
+  `TravellingGroupEngine.computePosition`.
+- `Caravan.BASE_PROGRESS_PER_TICK` — only read inside the dead `tick`; the
+  live constant is `TravellingGroupEngine.BASE_PROGRESS_PER_TICK`.
+  **Deleted** with `tick`.
+- `CaravanGoodsSelector.getVillageNeeds` — definition only (dead inventory
+  twin of `getVillageSurpluses`). **Deleted.**
+- `CaravanSavedData.isPlayerNearby` — definition only (the Adventurer
+  `isPlayerNearby` is a separate class). **Deleted** + dropped the orphaned
+  `ServerPlayer` import.
+
+**Persisted fields:** `dispatchTick` has no external reader but is woven
+through the constructor / `create` / `createProcurement` / `fromCodec` /
+codec; removing it is invasive churn for a harmless field, so **kept +
+flagged** (save-safety wasn't required this stage, but the churn-vs-benefit
+didn't favour removal). `guardCount` is **read at spawn** (guard loop) —
+kept. No codec field removed.
+
+### Logging
+
+All six `System.out.println` sites → SLF4J logger (diagnostics at DEBUG,
+the pooled-merchant-fallback at WARN): `CaravanSavedData` ×3 (+ the
+rewritten payMerchantProfit/procurement legs already use LOGGER),
+`CaravanGoodsSelector` ×1 (added a logger), `CaravanMerchantBehavior` ×1
+(added a logger). Zero `System.out` left in caravan code.
+
+### Settlement rewire (export + channel) — mirrors 4a
+
+- **`payMerchantProfit` (export):** was `VillageEconomy.getBasePrice ×
+  count × 0.15 × efficiency`, **withdrawn from the dest treasury** and
+  **minted** to the merchant (pre-1b/1c, untaxed). Now: the merchant is
+  paid the **destination's** `getDynamicSellPrice` × delivered-qty
+  (cargo × efficiency, matching `deliverGoods`) via
+  `settlePurchase(buyer = none /*dest demand*/, endpoint = merchant,
+  village = dest)` — the dest's **1b market tax** applies, merchant
+  credited the proceeds. Goods still deposited by `deliverGoods` (only the
+  payment changed).
+- **`CaravanChannel.execute` (NPC buys from a present caravan):** was a
+  buyer `wallet.spend` + raw `wallet.receive` **mint** to the principal,
+  untaxed. Now: `settlePurchase(buyer = buyer npc, endpoint = principal
+  npc, village)` — the village **1b market tax** applies; goods are
+  decremented only after payment settles. Pricing was already
+  `getDynamicSellPrice × caravanDiscount` (1c-aware) — unchanged.
+
+### ⚠️ Intended behavior change (flag for Garrett's approval)
+
+Export caravans and caravan purchases now use **1c per-village prices and
+pay the 1b market tax**, instead of the old flat 15%-off-base treasury
+withdrawal / untaxed mint. Before/after:
+
+| Aspect | Before (export) | After (export) |
+| --- | --- | --- |
+| Merchant payout | `Σ basePrice × count × 0.15 × efficiency` | `Σ destSellPrice × (count × efficiency)` |
+| Price basis | flat base price, all villages equal | destination's per-village dynamic price (dear where needed) |
+| Funding source | **withdrawn from dest treasury** | minted by dest demand (None payer) + **dest market tax credited to dest treasury** |
+| Tax | none | 1b market tax applied once |
+| Magnitude | ~15% of base value | full sale value at dest price (typically **much higher** gross, minus tax) |
+
+| Aspect | Before (CaravanChannel buy) | After |
+| --- | --- | --- |
+| Principal credit | raw `wallet.receive(total)` mint | `settlePurchase` → principal, **taxed** |
+| Tax | none | 1b market tax once |
+| Buyer debit | `wallet.spend` | `settlePurchase` debit (same) |
+
+Net: caravan trade is now consistent with the stationary merchant + 4a,
+but **export payouts rise substantially** (full dest price vs 15% of base)
+and the dest treasury is no longer drained (it now *gains* the tax). If
+that payout jump is too generous, the lever is a margin factor on the
+export proceeds — flagged as tuning, not applied (the prompt said rewire,
+not re-balance).
+
+### Roster decision
+
+**Deferred** escorts/carriers pooling (Phase 7c/7d feature, not
+hardening). 4b leaves guards/llama spawn-fresh; no tidy was trivially safe
+so none made.
+
+### Tie-In Audit
+
+- **Upstream:** `MarketPriceHelper` per-village price, the dest
+  treasury/merchant wallet (export), the village + buyer/principal wallets
+  (channel).
+- **Downstream:** `CaravanChannel.execute` callers (`BuyGoodsBehavior`
+  buying from a present caravan) still get a `TradeResult.ok/fail` — the
+  failure mode is now "buyer cannot pay" from `settlePurchase` returning
+  false (was a pre-check); behaviour equivalent. `handleDelivery` still
+  deposits export goods via `deliverGoods`; only payment changed.
+- **Siblings:** 4a import legs untouched (this aligns export to match
+  them). `TravellingGroupEngine` is the sole live tick/position path now
+  (the dead `Caravan` duplicates are gone); nothing depended on them.
+- **Switches:** none (no enum change).
+
+### Simplification Sweep
+
+One caravan settlement path (`settlePurchase`) instead of two
+(`payMerchantProfit` mint + raw channel mint); one tick/position source
+(the engine) instead of the dead `Caravan` duplicates; logger instead of
+`System.out`. No parallel copies remain.
+
+### Deviations from prompt
+
+- `dispatchTick` field kept (churn-vs-benefit), not removed — flagged.
+- Pre-existing orphaned `Ingredient` import in Caravan.java left as-is (not
+  introduced or named by this phase).
+
+### Out-of-scope but flagged
+
+- `Roster` pooling (7c/7d). `reserveIdleMerchant` by-id (done in 4a).
+- New procurement/dispatch logic (4a). WANDERING_TRADER; player UI.
+- An export-proceeds margin factor if the payout jump is too generous.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review: zero
+`System.out` in caravan code; zero raw wallet mints on export/channel;
+`settlePurchase`/`SettlementParty.npc/none`/`getDynamicSellPrice` confirmed
+against as-built; `data`+`village` in scope at the channel settle;
+deleted methods zero-caller-proven and not interface members; orphaned
+`ServerPlayer` import removed; braces/parens balanced in all 5 files.
+
+### Smoke test
+
+1. **Export** caravan (surplus → needy dest): still delivers goods, but
+   the merchant is paid via dest per-village price + 1b tax — payout
+   differs from old flat-15% per the table above; dest treasury gains tax
+   (no longer drained).
+2. NPC **buys from a caravan** (`CaravanChannel`): settles via
+   `settlePurchase` (tax applied, no mint); goods decrement correctly.
+3. 4a **import** procurement caravan still works unchanged.
+4. Caravans still travel/spawn/despawn (dead `Caravan.tick`/position
+   removal didn't disturb the live `TravellingGroupEngine` path).
+5. Logs: no `System.out` from caravan code; diagnostics at DEBUG.
+
+---
+
+## Phase 4c — Export buy-at-origin leg (merchant keeps the spread, not the gross)
+
+Small follow-up to 4b, the principled fix Garrett chose over a flat margin
+factor. 4b rewired the export SELL leg to the dest's per-village price, but
+the export still **took the origin's goods for free** — so the merchant
+pocketed the entire gross. 4c makes export **symmetric with 4a import**:
+the merchant BUYS the origin surplus at the origin's (low) per-village
+price + tax at dispatch, then sells at the dest price (4b) — keeping only
+the spread, with the origin compensated.
+
+### Finding: it was worse than "free"
+
+`CaravanGoodsSelector.selectGoods` only *reads* origin surplus (scans
+inventories via `getVillageSurpluses`); it never called `takeItem`. So
+export cargo was **duplicated** — the origin kept its surplus AND the
+caravan carried a copy, conjured from nothing. 4c replaces that with a
+real paid take (remove from origin + pay), closing both the free-money and
+the item-duplication holes at once.
+
+### Insertion point + endpoint/price/tax
+
+At **dispatch/load time** (export starts at the origin, vs 4a import which
+buys on arrival). `selectGoods` is now the **shopping list** (origin
+surplus the dest needs); the new paid buy removes it from origin storage
+and settles. Pays the origin at its `getDynamicSellPrice` (1c makes a
+surplus good cheap), endpoint `SettlementParty.none()` (origin storage
+isn't a party — the 1b **origin market tax credits the origin treasury**,
+mirroring 4a exactly), merchant = buyer/payer. Goods are added to the
+caravan only after payment settles (refunded if the debit fails).
+
+### Shared buy-leg helper (Simplification Sweep done)
+
+Factored 4a's buy-at-source loop into `buyGoodsFromVillage(merchant,
+village, wants, level, data) → List<ItemStack>`: funds-gated, reserve-
+buffered, per-village-priced, taxed, take-coupled-with-pay, refund-on-fail.
+Now called by **both** `handleProcurementBuy` (4a import, on arrival) and
+the export dispatch (4c, at load). One buy-leg for both trade directions;
+the duplication 4a/4c would have had is gone.
+
+### Funds gate
+
+Dispatch now resolves the merchant and skips if `wallet.toBronze() <= 0`
+(up front, mirroring 4a). `buyGoodsFromVillage` further clamps each item
+to `wallet / unitPrice`, so an under-funded merchant **loads fewer goods**;
+if nothing is affordably bought, `goods` is empty and the dispatch is
+**skipped** (no caravan, no free goods, no negative wallet). Also dropped a
+redundant second `level.getEntity(principalId)` lookup (reused the resolved
+`exportMerchant`).
+
+### Spread confirmation (no cost-basis tracking needed)
+
+Money moves at dispatch (origin buy) and at arrival (dest sell), both
+through `settlePurchase`. The merchant's net = dest proceeds − origin cost
+− origin tax − dest tax. No cost basis is stored on the caravan because
+the wallet already reflects both legs as they happen — the caravan only
+carries goods, not a ledger. Positive on a real surplus→deficit trade
+(origin surplus price < dest deficit price); a low-quality road (delivered
+qty = cargo × efficiency on the sell leg, full qty paid on the buy leg) can
+erode or invert it — acceptable realism (bad roads eat profit).
+
+### Before/after payout
+
+| | 4b (pre-4c) | 4c |
+| --- | --- | --- |
+| Origin goods | taken free (in fact duplicated) | bought at origin price + origin tax |
+| Merchant net | **gross** dest sale value − dest tax | **spread**: dest proceeds − origin cost − both taxes |
+| Origin | uncompensated | paid (tax to origin treasury; goods actually removed) |
+| Item conservation | duplicated out of origin | conserved (removed from origin, delivered to dest) |
+
+### Tie-In Audit
+
+- **Upstream:** `CaravanGoodsSelector.selectGoods` (now the want-list),
+  `MarketPriceHelper` origin price, merchant wallet/funds.
+- **Downstream:** 4b dest-sell leg **unchanged** — `payMerchantProfit`
+  still reads `caravan.getGoods()`, which now holds exactly what was
+  bought. Together they yield the spread. Origin storage/treasury credited
+  (no more free take).
+- **Siblings:** 4a import path unchanged except sharing the extracted
+  helper (behaviour identical). `reserveIdleMerchant` (by-id, 4a) still
+  gates dispatch.
+- **Switches/codec:** none — settlement at dispatch, no new persisted
+  field, no enum/state change.
+
+### Deviations from prompt
+
+- Discovered the "free take" was actually item duplication (selectGoods
+  never removed goods) — the fix (paid take) corrects both; noted above.
+- `fallbackGoods()` (hardcoded wheat/log/cobble) is now effectively dead
+  for export: if the origin has no real surplus, the paid take finds
+  nothing to buy and the dispatch skips. Left in place (still referenced
+  by selectGoods' own return); flagged as now-vestigial for export.
+
+### Build verification
+
+Deferred (sandbox blocks `maven.neoforged.net`). Static review:
+`buyGoodsFromVillage` defined once / called from 4a + export; merchant
+funds gate + per-item affordability clamp; take-coupled-with-pay +
+refund-on-fail; 4b sell leg reads the bought goods unchanged; redundant
+entity lookup removed; braces/parens balanced; single-file diff.
+
+### Smoke test
+
+1. Export caravan (origin surplus → dest deficit): at dispatch the merchant
+   **pays the origin** at the origin's low per-village price + tax; origin
+   storage loses the goods and the origin treasury gains the tax — no free
+   take, no duplication.
+2. At the dest, sells at the high per-village price (4b); merchant **net =
+   spread**, noticeably less than 4b's pre-fix gross.
+3. Under-funded merchant: loads fewer goods, or doesn't dispatch — never a
+   negative wallet or unpaid cargo.
+4. 4a import caravans unchanged.
+5. A genuine surplus→deficit trade nets the merchant a positive spread
+   after both taxes (assuming a decent road).

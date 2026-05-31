@@ -28,6 +28,23 @@ public class Caravan implements TravellingGroup {
                         CaravanState::name);
     }
 
+    /**
+     * What a caravan is for (merchant arc Phase 4a). EXPORT is the legacy
+     * behaviour: loaded at origin, deposits its cargo into the destination
+     * stockpile on arrival. PROCUREMENT is the import counterpart: starts
+     * <b>empty</b> carrying a {@code shoppingList}, buys those goods at the
+     * destination (the surplus source) at the source's per-village price,
+     * and sells them back home — both legs settled through {@code
+     * NpcEconomy} so the merchant keeps the inter-village spread.
+     */
+    public enum CaravanKind {
+        EXPORT,
+        PROCUREMENT;
+
+        public static final Codec<CaravanKind> CODEC =
+                Codec.STRING.xmap(CaravanKind::valueOf, CaravanKind::name);
+    }
+
     public static final Codec<Caravan> CODEC =
             RecordCodecBuilder.create(instance -> instance.group(
                     Codec.STRING.xmap(UUID::fromString, UUID::toString)
@@ -53,7 +70,13 @@ public class Caravan implements TravellingGroup {
                     Codec.INT.fieldOf("guardCount")
                             .forGetter(Caravan::getGuardCount),
                     Roster.CODEC.fieldOf("roster")
-                            .forGetter(Caravan::getRoster)
+                            .forGetter(Caravan::getRoster),
+                    // Phase 4a — both optional so pre-4a saves load as
+                    // EXPORT with an empty shopping list.
+                    CaravanKind.CODEC.optionalFieldOf("kind", CaravanKind.EXPORT)
+                            .forGetter(Caravan::getKind),
+                    ItemStack.CODEC.listOf().optionalFieldOf("shoppingList", List.of())
+                            .forGetter(Caravan::getShoppingList)
             ).apply(instance, Caravan::fromCodec));
 
     // -------------------------------------------------------------------------
@@ -70,6 +93,10 @@ public class Caravan implements TravellingGroup {
     private final List<ItemStack> goods;
     private final int guardCount;
     private final Roster roster;
+    private final CaravanKind kind;
+    /** Phase 4a — items a PROCUREMENT caravan intends to buy at its
+     *  destination. Empty for EXPORT caravans. */
+    private final List<ItemStack> shoppingList;
 
     // Transient — never persisted directly; rebuilt at spawn
     private transient boolean isSpawned = false;
@@ -79,6 +106,17 @@ public class Caravan implements TravellingGroup {
                    CaravanState state, double progress,
                    long dispatchTick, List<ItemStack> goods,
                    int guardCount, Roster roster) {
+        this(caravanId, routeId, originVillageId, destVillageId, state, progress,
+                dispatchTick, goods, guardCount, roster,
+                CaravanKind.EXPORT, List.of());
+    }
+
+    public Caravan(UUID caravanId, UUID routeId,
+                   UUID originVillageId, UUID destVillageId,
+                   CaravanState state, double progress,
+                   long dispatchTick, List<ItemStack> goods,
+                   int guardCount, Roster roster,
+                   CaravanKind kind, List<ItemStack> shoppingList) {
         this.caravanId       = caravanId;
         this.routeId         = routeId;
         this.originVillageId = originVillageId;
@@ -89,6 +127,8 @@ public class Caravan implements TravellingGroup {
         this.goods           = new ArrayList<>(goods);
         this.guardCount      = guardCount;
         this.roster          = roster != null ? roster : new Roster();
+        this.kind            = kind != null ? kind : CaravanKind.EXPORT;
+        this.shoppingList    = new ArrayList<>(shoppingList == null ? List.of() : shoppingList);
     }
 
     public static Caravan fromCodec(
@@ -96,11 +136,12 @@ public class Caravan implements TravellingGroup {
             UUID originVillageId, UUID destVillageId,
             CaravanState state, double progress,
             long dispatchTick, List<ItemStack> goods,
-            int guardCount, Roster roster) {
+            int guardCount, Roster roster,
+            CaravanKind kind, List<ItemStack> shoppingList) {
         return new Caravan(caravanId, routeId,
                 originVillageId, destVillageId,
                 state, progress, dispatchTick,
-                goods, guardCount, roster);
+                goods, guardCount, roster, kind, shoppingList);
     }
 
     public static Caravan create(UUID routeId,
@@ -127,63 +168,41 @@ public class Caravan implements TravellingGroup {
                 r);
     }
 
-    // -------------------------------------------------------------------------
-    // Simulation tick
-    // -------------------------------------------------------------------------
-
     /**
-     * Advances caravan progress when unobserved.
-     * Returns true if dirty.
+     * Phase 4a — creates a PROCUREMENT caravan: starts <b>empty</b>
+     * (goods loaded by the buy-at-source leg), carrying {@code shoppingList}
+     * (the home deficit items to buy at the destination source).
      */
-    public boolean tick(long currentTick,
-                        double speedMultiplier) {
-        if (isSpawned) return false;
-        if (state == CaravanState.FAILED) return false;
-        if (state == CaravanState.DELIVERING) return false;
-
-        // speedMultiplier is now a bonus — 1.0 minimum
-        double increment = BASE_PROGRESS_PER_TICK
-                * Math.max(1.0, speedMultiplier);
-        progress = Math.min(1.0, progress + increment);
-
-        if (progress >= 1.0) {
-            if (state == CaravanState.OUTBOUND) {
-                state    = CaravanState.DELIVERING;
-                progress = 1.0;
-            } else if (state == CaravanState.RETURNING) {
-                progress = 1.0;
-            }
-            return true;
-        }
-
-        return true;
+    public static Caravan createProcurement(UUID routeId,
+                                            UUID originVillageId,
+                                            UUID destVillageId,
+                                            UUID principalId,
+                                            UUID originMarketId,
+                                            List<ItemStack> shoppingList,
+                                            int guardCount,
+                                            long currentTick) {
+        Roster r = new Roster();
+        r.setPrincipalId(principalId);
+        r.setOriginBuildingId(originMarketId);
+        return new Caravan(
+                UUID.randomUUID(),
+                routeId,
+                originVillageId,
+                destVillageId,
+                CaravanState.OUTBOUND,
+                0.0,
+                currentTick,
+                new ArrayList<>(),   // empty cargo outbound
+                guardCount,
+                r,
+                CaravanKind.PROCUREMENT,
+                shoppingList);
     }
 
-    private static final double BASE_PROGRESS_PER_TICK = 0.002;
-
-    /**
-     * Gets the current world position based on progress
-     * along the road path.
-     */
-    public BlockPos getWorldPosition(
-            List<BlockPos> roadBlocks) {
-        if (roadBlocks.isEmpty()) return null;
-
-        if (state == CaravanState.RETURNING) {
-            // Returning — traverse road in reverse
-            int index = (int)((1.0 - progress)
-                    * (roadBlocks.size() - 1));
-            index = Math.max(0, Math.min(
-                    roadBlocks.size() - 1, index));
-            return roadBlocks.get(index);
-        }
-
-        int index = (int)(progress
-                * (roadBlocks.size() - 1));
-        index = Math.max(0, Math.min(
-                roadBlocks.size() - 1, index));
-        return roadBlocks.get(index);
-    }
+    // Phase 4b — the simulation-tick + world-position duplicates that
+    // lived here were dead: the live path is TravellingGroupEngine.tick /
+    // computePosition, and BASE_PROGRESS_PER_TICK is the engine's constant.
+    // Deleted (zero callers; not part of the TravellingGroup contract).
 
     // -------------------------------------------------------------------------
     // Getters / setters
@@ -199,6 +218,9 @@ public class Caravan implements TravellingGroup {
     public List<ItemStack> getGoods()    { return goods; }
     public int getGuardCount()           { return guardCount; }
     public boolean isSpawned()           { return isSpawned; }
+    public CaravanKind getKind()         { return kind; }
+    public List<ItemStack> getShoppingList() { return shoppingList; }
+    public boolean isProcurement()       { return kind == CaravanKind.PROCUREMENT; }
 
     public Roster getRoster() { return roster; }
 
