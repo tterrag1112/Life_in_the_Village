@@ -23,9 +23,7 @@ public final class RoadGraph {
 
     // ── Mutators ────────────────────────────────────────────────────────
 
-    /** Phase 22: clears all nodes / edges / adjacency / gate IDs. Used
-     *  by {@code VillageLayout.resetForFallback()} on cascade chain
-     *  advance. */
+    /** Phase 22: clears all nodes / edges / adjacency / gate IDs. */
     public void clear() {
         nodes.clear();
         edges.clear();

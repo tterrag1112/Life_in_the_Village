@@ -9,7 +9,6 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
-import tterrag1112.life_in_the_village.Village.Planning.Graph.RoadGraph;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
@@ -87,91 +86,6 @@ public class VillageRoadNetwork {
 
     public BlockPos getHub() { return hub; }
     public void setHub(BlockPos hub) { this.hub = hub; }
-
-    // =========================================================================
-    // Initial build — called during village spawn
-    // =========================================================================
-
-    /**
-     * Builds the complete road network for a freshly spawned village.
-     * Routes a road from the hub to each building entrance.
-     *
-     * @param level     server level
-     * @param village   the village
-     * @param data      saved data (for building lookup)
-     * @param material  path material for this village's tier
-     * @param tier      road width tier
-     * @param footprint building collision grid
-     * @param random    random source
-     * @return set of all XZ positions where road blocks were placed
-     */
-    /**
-     * Builds the road network for a freshly planned village by painting
-     * every road primitive the layout contains. Each primitive's cached
-     * centerline is already in the layout — we just render it.
-     *
-     * <p>No "spur to nearest trunk" fallback pass: the layout primitives
-     * guaranteed every building is already adjacent to a road during
-     * planning, so painting the roads is enough.
-     */
-    public Set<Long> buildInitialNetwork(ServerLevel level,
-                                         Village village,
-                                         VillageSavedData data,
-                                         tterrag1112.life_in_the_village.Village
-                                                 .Planning.VillageLayout layout,
-                                         PathMaterial material,
-                                         RoadShape.RoadTier tier,
-                                         BuildingFootprint footprint,
-                                         RandomSource random) {
-        Set<Long> placedXZ = new HashSet<>();
-
-        for (RoadGraph.Edge edge : layout.getRoadGraph().allEdges()) {
-            List<BlockPos> centerline = edge.centerline();
-            if (centerline.isEmpty()) continue;
-
-            RoadShape.RoadTier roadTier = edge.primitive().tier();
-
-            OrganicRoadPlacer.PlacementResult result =
-                    OrganicRoadPlacer.place(level, centerline, material,
-                            roadTier, footprint, random);
-
-            Segment seg = new Segment(
-                    UUID.randomUUID(),
-                    centerline.get(0),
-                    centerline.get(centerline.size() - 1),
-                    null, null,
-                    centerline,
-                    result.placedBlocks(),
-                    roadTier);
-            segments.add(seg);
-
-            for (BlockPos pos : result.placedBlocks()) {
-                long key = packXZ(pos.getX(), pos.getZ());
-                activeRoadXZ.add(key);
-                placedXZ.add(key);
-            }
-
-            footprint.reserveRoad(centerline, roadTier.reservedHalfWidth());
-
-            data.addVillagePath(new VillagePath(
-                    seg.segmentId(), village.getId(),
-                    result.placedBlocks(), centerline,
-                    toPathTier(roadTier)));
-        }
-
-        // Record building entrances for expansion queries
-        List<Building> buildings = village.getBuildingIds().stream()
-                .map(data::getBuildingById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .toList();
-        for (Building building : buildings) {
-            buildingEntrances.put(building.getId(),
-                    PathRouter.getBuildingEntrance(building));
-        }
-
-        return placedXZ;
-    }
 
     // =========================================================================
     // Expansion — connect a new building to existing network

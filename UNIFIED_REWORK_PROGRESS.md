@@ -3789,3 +3789,140 @@ types; pruned adapter imports are confirmed unused elsewhere in the file
 (`TerrainAnalyzer`/`TerrainProfile`/`LayoutSlot`/`VillageLayout`), while
 `Identifier`/`Footprint`/`Rotation`/`Style`/`LayoutDensityProfile` are
 retained because live code still uses them.
+
+### 2026-05-31 — Layout Rework Phase 3b landed (delete VillageLayout/LayoutSlot/PlacementSlot + dead-V1 sweep)
+
+**What shipped:** Pure-deletion close-out of the Phase 3a synth-bridge
+replacement. After 3a moved the live V2 spawn path onto `RealizedLayout`, the
+V1 `VillageLayout`/`LayoutSlot`/`PlacementSlot` types were referenced only by
+their own files, a small amount of dead V1 code, and javadoc. This phase
+deletes them, strips the vestigial `Plaza.civicSlots`, sweeps the adjacent
+dead V1, and scrubs the residual javadoc. **No behaviour change** — the live
+path stopped touching any of it in 3a. **This completes the removal of V1
+layout vocabulary (`VillageLayout`/`LayoutSlot`/`PlacementSlot`) from the live
+spawn path.**
+
+A fresh tree-wide grep confirmed there were no live consumers before
+deleting: every `VillageLayout` reference was its own file, the two dead-V1
+methods deleted here (`InternalRoadCommitter.commit`,
+`VillageRoadNetwork.buildInitialNetwork`), or javadoc — so Phase 3a was
+verified complete.
+
+**RoadGraph / debug-field disposition (decision — show-your-work):** **KEPT,
+not deleted.** The grep surfaced a fourth, unanticipated live user beyond the
+prompt's enumerated set (`VillageLayout` + `buildInitialNetwork` + the debug
+field): `LayoutDebugCommand.showGraph` (the `/...show_graph` subcommand) reads
+`village.getDebugRoadGraph()` and iterates `RoadGraph.Edge`/`RoadGraph.Node`.
+Since Phase 3a removed the adapter's `setDebugRoadGraph` call, the field is
+never populated, so that subcommand is now a dormant no-op (always 0 edges/0
+nodes) — but deleting `RoadGraph` + the `Village.debugRoadGraph` field +
+`get/setDebugRoadGraph` would require gutting a registered debug command,
+which is a behaviour change beyond a pure-deletion phase. Per the prompt's
+"if anything else live uses it, keep it and flag" branch, `RoadGraph`, the
+debug field, and `LayoutDebugCommand` are left untouched and flagged below.
+
+**Surface area:** 0 new files + 14 edits + 4 deletions.
+
+**Files deleted:**
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/VillageLayout.java`
+- `.../Village/Planning/LayoutSlot.java`
+- `.../Village/Planning/Zoning/PlacementSlot.java`
+- `.../Village/Roads/Planning/VillageEdgeDescriptor.java` (orphan — see
+  Deviations)
+
+**Files modified:**
+- `.../Village/Roads/Planning/InternalRoadCommitter.java` — deleted the V1
+  `commit(VillageLayout)` + `deriveEdgeDescriptors` + `findConnectingCenterline`;
+  kept `commitFromV2`, `findGatewayAt`, `sampleStraight`, and the shared
+  `findOrCreateNode` (used by `commitFromV2`); pruned `VillageLayout` +
+  `java.util.Collection` imports; rewrote the class + method javadoc off
+  `{@link #commit}`/`{@link VillageLayout}`.
+- `.../Village/Decoration/Roads/VillageRoadNetwork.java` — deleted the dead
+  `buildInitialNetwork` method (no live caller) + the now-unused `RoadGraph`
+  import. **Class kept** (live: `VillageDecorator` instantiates it,
+  `RoadWeatheringSystem` calls `weatherBlock`).
+- `.../Village/Planning/Plaza.java` — stripped `civicSlots` (field,
+  constructor param + assignment, `civicSlots()`, `civicSlotsView()`,
+  `withCivicSlots`) and the `PlacementSlot`/`ArrayList`/`Collections` imports;
+  updated the 3 internal `new Plaza(...)` sites (`withCivicRingRadius`, the
+  codec lambda) to the 4-arg constructor; scrubbed civic-slot javadoc.
+- Javadoc/comment scrubs (deleted-type references): `Village.java`
+  (`applyLayout` javadoc + the `plan`-field comment), `RoadGraph.java`,
+  `BuildingFootprint.java`, `LayoutPlan.java`, `AnchorKind.java`,
+  `StructureSizeCache.java`, `FarmPlotSpec.java`, `DecorationSlot.java`,
+  `SlotTag.java`, `PlazaPaver.java`, `VillageDecorator.java`.
+
+**Deviations from prompt:**
+- **`RoadGraph` + debug field KEPT (not deleted).** The prompt allowed
+  deletion only if the sole users were `VillageLayout` / `buildInitialNetwork`
+  / the debug field; a fourth live user (`LayoutDebugCommand.showGraph`)
+  exists, so the "keep + flag" branch applies (full reasoning above).
+- **Deleted `VillageEdgeDescriptor` (not in the prompt's explicit file list).**
+  It was the descriptor record produced solely by the V1
+  `InternalRoadCommitter.commit`/`deriveEdgeDescriptors` path deleted here
+  (its own javadoc even referenced the V1 `ShapeRecipe`), so removing that
+  path orphaned it. Deleted in the same simplification sweep per the
+  "act on confirmed orphans" convention.
+- Three of my own Phase-3a explanatory comments still name `{@code
+  VillageLayout}` as historical context (`RealizedLayout` header, the adapter
+  `buildRealizedLayout` javadoc, the `DecorationSlotEmitter.emitRoadSide`
+  TODO). These are prose `{@code}`/line comments, not `{@link}` references, so
+  they don't break javadoc; left intact because they accurately explain what
+  the V2 record replaced.
+
+**Simplification sweep (acted-on orphans):** deleted `VillageLayout`,
+`LayoutSlot`, `PlacementSlot`, `VillageEdgeDescriptor`, the V1
+`InternalRoadCommitter` methods, and `VillageRoadNetwork.buildInitialNetwork`.
+`SlotTag.SlotType`-style exhaustive switches: `LayoutSlot.SlotType` had zero
+external `switch` sites (all internal to the deleted `VillageLayout`), so it
+died cleanly with `LayoutSlot`. `SlotTag` retained (still referenced by the
+Variants + Decoration framework files; the prompt mandates keeping it).
+
+**Out-of-scope but flagged:**
+- `RoadGraph` + `Village.debugRoadGraph`/`get`/`setDebugRoadGraph` +
+  `LayoutDebugCommand.showGraph` — now a dormant no-op (field never
+  populated post-3a). Retiring the whole debug-graph path is a separate
+  behaviour-changing debug-command edit; flagged for a future cleanup.
+- `Zoning/` package now contains only `SlotTag.java` (kept). No action.
+- Road-side decoration under V2 (`RealizedLayout.roadNetwork()` →
+  centerlines) → separate decoration effort.
+- Populating `LayoutPlan` from V2 for graph-aware expansion → future
+  decision; `LayoutPlan`/`FarmPlotSpec`/`AnchorKind` retained for the codec +
+  `BuildSiteFinder`.
+
+**Cumulative pending verification:** Detour A (Prompt A + Prompt B), Layout
+Rework Phase 1, Phase 2, Phase 2b (still needs a datagen re-run for its
+preserved tags), Phase 3a, and this Phase 3b remain pending in-world smoke
+test.
+
+**Smoke test plan (user-executable):**
+1. Build the mod (deferred in sandbox — see Build verification).
+2. Tree-wide grep (already run): zero remaining references to `VillageLayout`
+   (class), `LayoutSlot`, `PlacementSlot`, `VillageEdgeDescriptor` outside
+   explanatory prose; `SlotTag` / `LayoutPlan` / `FarmPlotSpec` / `Plaza` /
+   `RoadGraph` still present.
+3. In-world: spawn villages of each inclination/tier you normally test;
+   confirm **identical** generation to Phase 3a — town square, gateways
+   (count + positions), internal roads, decoration. This phase deletes only
+   code the live path stopped using in 3a.
+4. Reload the world: confirm villages still load (the `Plaza` codec dropped
+   the never-persisted `civicSlots` constructor arg only — the 4 persisted
+   fields `region`/`townSquarePos`/`townSquareRadius`/`civicRingRadius` are
+   unchanged, so old saves round-trip cleanly).
+5. Optional: run `/...show_graph` near a village and confirm it reports
+   "0 edges and 0 nodes" (the debug-graph path is dormant post-3a, as flagged).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — confirmed HTTP 403 on
+`net/neoforged/neoform-runtime/2.0.18/neoform-runtime-2.0.18.pom`). Full
+manual static review completed in its place: tree-wide `grep` shows zero
+code/`{@link}` references to the four deleted types and the deleted V1
+methods (only three intentional `{@code}`/comment prose mentions of
+`VillageLayout` remain as migration history); `InternalRoadCommitter` retains
+`commitFromV2` + its helpers with `commit(` fully removed; `VillageRoadNetwork`
+keeps its live methods (`connectExpansionBuilding`, `weatherBlock`, etc.)
+with only `buildInitialNetwork` + the `RoadGraph` import gone; `Plaza`'s 3
+construction sites all updated to the 4-arg constructor and the codec reads
+the same 4 persisted fields; the kept types (`SlotTag`, `LayoutPlan`,
+`FarmPlotSpec`, `Plaza`, `RoadGraph`, `AnchorKind`, `StructureSizeCache`) all
+still resolve.

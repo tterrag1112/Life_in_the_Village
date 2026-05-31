@@ -6,11 +6,8 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 /**
  * Phase 17: planning-time farm plot specification.
  *
- * <p>Emitted alongside a {@link tterrag1112.life_in_the_village.Village
- * .Planning.Zoning.PlacementSlot} by
- * {@code RecipeHelpers.emitFarmPlotSlots}, validated and claimed by
- * {@code VillagePlanner.runFarmPlotPass}, then consumed by the
- * legacy farm realiser at realisation. The realiser
+ * <p>Emitted by the planner's farm-plot pass and consumed by the
+ * farm realiser at realisation. The realiser
  * regenerates the plot's organic shape from {@link #edgeJitterSeed}
  * so plot boundaries are reproducible across save/reload — only the
  * planning-time half-dimensions and a deterministic seed are stored.
@@ -21,7 +18,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
  * looking up the farmhouse whose origin is closest to
  * {@code ownerFarmhousePos}.
  *
- * @param ownerFarmhousePos position of the FARMHOUSE LayoutSlot the
+ * @param ownerFarmhousePos position of the FARMHOUSE the
  *                          plot was claimed under; the realiser
  *                          maps this to a Building UUID
  * @param subtype           CROP_FIELD or ANIMAL_PEN

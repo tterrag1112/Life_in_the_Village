@@ -79,12 +79,9 @@ public class VillageDecorator {
         }
 
         // ── Step 2: Plaza polygon paving (B2.8 — V1 road network removed) ─────
-        // The V1 VillageRoadNetwork.buildInitialNetwork pass + its
-        // VillagePath bookkeeping has been removed. V2 spawns paint
-        // roads via the road graph (EdgeRealizer / RoadPainter); the
-        // V1 path system was producing 0 paths against the V2 layout
-        // (causing the "0 VillagePaths" log + a downstream
-        // TerrainSmoother no-op). Plaza polygon paving stays — it's
+        // The V1 village road-network pass + its VillagePath bookkeeping
+        // has been removed. V2 spawns paint roads via the road graph
+        // (EdgeRealizer / RoadPainter). Plaza polygon paving stays — it's
         // a separate decoration concern unrelated to road graph
         // realization.
         if (footprint == null) {

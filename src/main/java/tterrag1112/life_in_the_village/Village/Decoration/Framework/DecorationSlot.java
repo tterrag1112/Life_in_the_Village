@@ -18,8 +18,7 @@ import java.util.UUID;
  * by the (eventual) {@code DecorationSlotEmitter} and consumed by
  * the {@code DecorationMatcher}.
  *
- * <p>Parallel to {@link tterrag1112.life_in_the_village.Village
- * .Planning.Zoning.PlacementSlot} (building placement) but
+ * <p>Parallel to the building-placement slot model but
  * intentionally <em>separate</em>: no shared {@code SlotTag} enum,
  * no shared registry, and no shared matcher path. The two
  * subsystems should never accidentally route slots through each

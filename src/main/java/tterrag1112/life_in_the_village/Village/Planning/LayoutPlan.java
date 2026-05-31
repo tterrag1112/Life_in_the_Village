@@ -22,12 +22,9 @@ import java.util.UUID;
  * Phase 19: immutable plan-as-contract handoff between the planner
  * and downstream consumers (spawner, decorator, expansion).
  *
- * <p>Built ONCE at the end of {@code VillagePlanner.plan()} from the
- * fully-composed {@link VillageLayout} state. {@link VillageLayout}
- * remains as planning-time scratch — recipes still build into it,
- * the matcher still consumes from it. Only the consumption boundary
- * moves: spawner and decorator read this record instead of the
- * mutable layout fields.
+ * <p>Built ONCE at the end of planning from the fully-composed
+ * planning state. Spawner and decorator read this record instead of
+ * mutable planning-time scratch fields.
  *
  * <p>The arrow is one-way. There is no {@code toLayout()} accessor;
  * downstream code that wants to mutate state has to do so against

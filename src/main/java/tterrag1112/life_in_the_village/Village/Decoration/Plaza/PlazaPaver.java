@@ -24,11 +24,10 @@ import java.util.Set;
  *
  * <p>Insertion point: {@link tterrag1112.life_in_the_village.Village
  * .Decoration.VillageDecorator#decorateVillage} — runs <em>after</em>
- * {@code VillageRoadNetwork.buildInitialNetwork} so any road
- * centerline that crosses the plaza interior is overwritten by the
- * plaza palette (same source via {@link
- * PathMaterial#forBiomeAndTier}, so the overwrite is visually
- * benign — see prompt 17 audit summary).</p>
+ * the village roads are painted so any road centerline that crosses
+ * the plaza interior is overwritten by the plaza palette (same source
+ * via {@link PathMaterial#forBiomeAndTier}, so the overwrite is
+ * visually benign — see prompt 17 audit summary).</p>
  *
  * <h3>Why a separate paver vs. modifying {@code OrganicRoadPlacer}</h3>
  * The prompt-15 audit categorized "extend the road realiser to accept

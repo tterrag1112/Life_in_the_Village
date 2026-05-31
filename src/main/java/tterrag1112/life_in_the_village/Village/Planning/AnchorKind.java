@@ -7,7 +7,7 @@ package tterrag1112.life_in_the_village.Village.Planning;
  * a {@code BlockPos}. Anchors are the recipe-set "named points" that
  * downstream consumers (spawner, decorator, expansion, post-rework
  * strategy composition) need to reference without scraping mutable
- * {@link VillageLayout} fields.
+ * planning-time scratch fields.
  *
  * <p>The enum is the vocabulary; not every village populates every
  * kind, and not every consumer reads every kind. Reserved values

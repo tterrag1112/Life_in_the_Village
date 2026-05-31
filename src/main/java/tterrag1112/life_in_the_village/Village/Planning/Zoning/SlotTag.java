@@ -2,7 +2,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.Zoning;
 
 /**
- * Descriptive tags a {@link PlacementSlot} carries to advertise what it
+ * Descriptive tags a placement slot carries to advertise what it
  * offers. A single slot typically carries several tags (e.g. a plaza-
  * tangent slot is both {@code PRIME_CIVIC} and {@code ROAD_ADJACENT}).
  *

@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * The "radius" stored per structure is the half-diagonal of the
  * rotated XZ footprint — the worst-case distance from centre to
  * any corner — plus a 2-block clearance gap. This is the value
- * used in {@link LayoutSlot#overlaps} Chebyshev distance check.
+ * used in the slot-overlap Chebyshev distance check.
  *
  * <h3>Keying — P0a-05</h3>
  * Cache entries are keyed by {@code (culture, style, type, variantId,
@@ -223,8 +223,8 @@ public class StructureSizeCache implements FootprintProvider {
      *
      * @param width         X dimension after rotation
      * @param length        Z dimension after rotation
-     * @param overlapRadius half-diagonal + MIN_GAP — use in
-     *                      {@link LayoutSlot#overlaps}
+     * @param overlapRadius half-diagonal + MIN_GAP — used in the
+     *                      slot-overlap check
      */
     public record FootprintInfo(int width, int length, int overlapRadius) {}
 }

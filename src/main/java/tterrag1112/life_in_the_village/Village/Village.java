@@ -86,10 +86,10 @@ public class Village {
     // persisted FeatureMap. For now this is for debug visualization only.
     @Nullable private transient tterrag1112.life_in_the_village.Village.Planning.Features.FeatureMap debugFeatureMap;
 
-    // Phase 20a — persisted LayoutPlan. Set by applyLayout from the
-    // composed VillageLayout's getPlan(); round-trips through Village.CODEC.
-    // BuildSiteFinder (Phase 20) reads via getPlan(); falls back to legacy
-    // spiral when null (old saves predating this phase).
+    // Phase 20a — persisted LayoutPlan. Round-trips through Village.CODEC;
+    // V2 never populates it (applyLayout stopped copying it in Phase 3a), so
+    // it is null for V2-spawned villages. BuildSiteFinder (Phase 20) reads
+    // via getPlan(); falls back to legacy spiral when null.
     @Nullable private tterrag1112.life_in_the_village.Village.Planning
             .LayoutPlan plan;
 
@@ -778,9 +778,8 @@ public class Village {
 
     /**
      * Convenience: set all layout fields from a completed
-     * {@link tterrag1112.life_in_the_village.Village.Planning.VillageLayout}.
-     * Called by {@link
-     * tterrag1112.life_in_the_village.Village.VillageSpawner} after planning.
+     * {@link tterrag1112.life_in_the_village.Village.Planning.V2.RealizedLayout}.
+     * Called by the V2 spawn adapter after planning.
      */
     public void applyLayout(
             tterrag1112.life_in_the_village.Village.Planning.V2.RealizedLayout layout,
@@ -800,9 +799,9 @@ public class Village {
         this.townSquareRadius = layout.townSquareRadius();
         // Layout rework Phase 3a — V2 never produced plaza polygons,
         // a village-center marker, gathering points, or a LayoutPlan
-        // (the synth VillageLayout left them empty/null), so the old
-        // copies were always no-ops. They are dropped here; the
-        // corresponding fields retain their (empty/null) defaults.
+        // (the synth bridge left them empty/null), so the old copies
+        // were always no-ops. They are dropped here; the corresponding
+        // fields retain their (empty/null) defaults.
         for (BlockPos gp : layout.gatePositions()) {
             if (!capitalGatePositions.contains(gp)) {
                 capitalGatePositions.add(gp);
