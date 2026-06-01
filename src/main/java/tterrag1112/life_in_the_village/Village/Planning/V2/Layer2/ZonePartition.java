@@ -79,6 +79,17 @@ public final class ZonePartition {
      *  villages get larger minimum zones. */
     private static final int MIN_ZONE_CELLS_BASE = 8;
 
+    /** Stage 3 fix-up #3 — the zoned region is bounded to
+     *  {@code VillageExtent.radiusFor(tier) × this factor} from the anchor
+     *  (clamped to the scan grid). Cells beyond stay unzoned ({@code -1}):
+     *  available for farm fields + outward expansion, but no buildings
+     *  place there, so the settlement is compact and farm-field seeds land
+     *  inside the scan grid. <b>This is the key compactness/breathing-room
+     *  tuning knob.</b> 1.25× gives the dense civic core (TOWN_HALL +
+     *  MARKET + CHAPEL) a little room past the bare tier radius while still
+     *  cutting the ~3× sprawl; raise toward 1.5 if cores stay cramped. */
+    private static final double ZONE_RADIUS_FACTOR = 1.25;
+
     private final int gridSize;
     private final int cellSize;
     private final int anchorI;
@@ -128,11 +139,27 @@ public final class ZonePartition {
 
         List<NucleusKind> rolesCenterOut = presentRolesCenterOut(rules);
 
-        // Reachable buildable cells, ascending cost-distance.
+        // Stage 3 fix-up #3 — bound the zoned region to the village radius
+        // so the settlement is compact (not sprawled to the scan-grid
+        // corners) and farm fields radiate into the still-open fringe.
+        // Cap = VillageExtent.radiusFor(tier) × factor, clamped to the
+        // scan radius so it never silently no-ops at CITY.
+        int radiusCap = Math.min(
+                (int) Math.round(VillageExtent.radiusFor(tier) * ZONE_RADIUS_FACTOR),
+                fmap.radius());
+        long radiusCapSq = (long) radiusCap * radiusCap;
+
+        // Reachable buildable cells within the village radius, ascending
+        // cost-distance. Cells beyond the cap stay unzoned (zoneId = -1).
         List<int[]> ordered = new ArrayList<>();
         for (int i = 0; i < g; i++) {
             for (int j = 0; j < g; j++) {
-                if (cost[i][j] != UNREACHED) ordered.add(new int[]{i, j});
+                if (cost[i][j] == UNREACHED) continue;
+                BlockPos wp = fmap.cellWorldPos(i, j);
+                long dx = wp.getX() - anchor.getX();
+                long dz = wp.getZ() - anchor.getZ();
+                if (dx * dx + dz * dz > radiusCapSq) continue;   // outside village radius
+                ordered.add(new int[]{i, j});
             }
         }
         ordered.sort(Comparator.comparingInt(c -> cost[c[0]][c[1]]));

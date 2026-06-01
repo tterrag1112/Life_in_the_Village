@@ -1982,12 +1982,11 @@ public final class PhasedPlanner {
     private static final long PHASED_PLANNER_SALT = 0x504C_414E_4E45_5200L;
 
     public static int villageRadiusFor(ViabilityTier tier) {
-        return switch (tier) {
-            case CITY -> 80;
-            case TOWN -> 40;
-            case HAMLET -> 20;
-            case OUTPOST, UNVIABLE -> 10;
-        };
+        // Stage 3 fix-up #3 — hoisted to Layer 2's VillageExtent so the
+        // ZonePartition can bound the zoned region to the village radius
+        // without a Layer4 dependency. Delegates to keep existing callers.
+        return tterrag1112.life_in_the_village.Village.Planning.V2.Layer2
+                .VillageExtent.radiusFor(tier);
     }
 
     // ----------------------------------- Diagnostics + result types -----------

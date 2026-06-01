@@ -5053,3 +5053,96 @@ corridor checks inset the AABB (per-segment `corridorHalf + 1`) and are
 non-fatal; `insetAabb` null-guards degenerate boxes; the spawner's sole abort
 path keys on `report.fatal()`; the dump serializer's `Conflict`/`OverlapReport`
 reads are unchanged. No public signature changed.
+
+### 2026-06-01 — Layout Rework Stage 3 fix-up #3 (compact the village — bound the partition to the village radius)
+
+**Diagnosis (from the successful TOWN dump + log):** the village spawned but was
+~3× too large. Root cause: `ZonePartition` banded the **entire scan grid**
+(gridSize 100 × cellSize 2 = radius ~100), so the RURAL zone spanned cost
+58→100 to the grid edge and RURAL buildings (farmhouses) placed **86–141 blocks**
+from the anchor while `villageRadiusFor(TOWN)=40`. Cascade failures from the same
+sprawl: **all 6 farm complexes skipped** `SEED_NOT_ADMISSIBLE` (a farmhouse at
+x=90 seeds its field at x=102, past the grid edge → an agricultural village with
+no fields), and the long lonely spoke-roads were just the router faithfully
+connecting buildings that were too far apart.
+
+**The fix (`ZonePartition`):** bound the zoned region to the tier village radius.
+Only reachable buildable cells **within `VillageExtent.radiusFor(tier) ×
+ZONE_RADIUS_FACTOR`** (Euclidean, from the anchor; clamped to the scan radius)
+enter the banding pool; cells beyond stay **unzoned (`zoneId = -1`)** — available
+for farm fields + outward expansion, but no buildings place there. The CIVIC core
+and RURAL fringe both slice within the compact footprint, so farmhouses cluster at
+the village edge (~radius for the tier) and their fields radiate *outward* into
+the still-open fringe (now in-grid).
+
+**`villageRadiusFor` hoisted** to a new `Layer2/VillageExtent.radiusFor(tier)` so
+the Layer-2 partition can read it without a Layer-4 dependency;
+`PhasedPlanner.villageRadiusFor` delegates (all existing callers unchanged —
+verified they route through that method).
+
+**Chosen baseline (the tuning knob):** `ZONE_RADIUS_FACTOR = 1.25`. Per tier the
+zoned cap (clamped to the ~96-block scan radius) is: **TOWN 50, CITY ~96
+(80×1.25=100→clamped; CITY was already near grid-bound, so minimal compaction is
+expected for the largest tier), HAMLET 25, OUTPOST 13.** 1.25× gives the dense
+TOWN civic core (TOWN_HALL 29×29 + MARKET 21×42 + CHAPEL 18×38) a little breathing
+room past the bare radius (40) while still cutting the ~3× sprawl (TOWN 50 vs the
+old ~120+). Dial toward 1.5 if cores stay cramped; this single constant in
+`ZonePartition` is the dial. Capacity check: TOWN cap 50 → ~1900 zoned cells,
+ample for the tier's ~18-building budget (placement isn't starved).
+
+**Deviations from prompt:** none material. Used a **Euclidean distance** cap
+(predictable "within ~radius blocks") rather than the cost-distance alternative —
+the prompt allowed either; distance is the more legible knob, and the cost field
+already excludes unreachable-across-water cells from the pool, so the
+terrain-hugging benefit of a cost cap is largely already present. Chose
+`VillageExtent` (hoist) over passing the radius into `compute` — keeps
+`compute`'s signature stable and gives both layers one source of truth.
+
+**Tie-In Audit:**
+- *Touched:* `ZonePartition.compute` (radius cap on the banding pool); new
+  `Layer2/VillageExtent`; `PhasedPlanner.villageRadiusFor` delegates. No
+  signature changes (`compute` still 4-arg; `villageRadiusFor` unchanged).
+- *Downstream:* placement (3c) reads the partition — a smaller zoned region means
+  a smaller candidate set per building (also a perf win) and compact placement.
+  Farm-complex seeding (`V2VillageSpawnerAdapter`) benefits indirectly (compact
+  farmhouses → in-grid field seeds); **no code change there.** The dump's
+  `zonePartition` shows the smaller zoned area + unzoned (−1) outskirts.
+- *Siblings:* the router serves whatever is placed — fewer, closer buildings →
+  shorter roads automatically; no router change.
+- *Exhaustive switches:* `VillageExtent.radiusFor` is exhaustive over
+  `ViabilityTier` (mirrors the old `villageRadiusFor`).
+
+**Out-of-scope but flagged (next tuning passes):**
+- **MARKET complex `NO_REGION`** (no collision-free pad ≥7, 17 obstacles): the
+  stall pad can't find clear space in the dense centre. Likely the Stage-2
+  complex-parcel reservation needs to actually fire for MARKET so pad space is
+  reserved at plan time — re-check after compactness; if it still fails, separate
+  fix.
+- **Only 2 zones (CIVIC, RURAL)** — houses share the RURAL fringe with farmhouses
+  (no residential band). Design choice: keep mixed (farm-village flavour) or add a
+  RESIDENTIAL band between core and fringe. Garrett's call.
+- **CITY drops 1 of 2 MARKETs** — CITY-scale civic footprint budget; folds into
+  Stage 4's designed civic core.
+- Stale "no admissible candidate position on any network edge" drop wording.
+
+**Cumulative pending verification:** the rework spawns; this fix-up makes it
+compact + revives farms. Smoke test below.
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Re-spawn TOWN AGRICULTURAL (seed `-7816748743282030101`). Confirm: buildings
+   cluster within ~the tier radius (TOWN ≈ 50, no ±90–108 outliers) — a compact
+   settlement, not hub-and-spokes; **farm complexes now generate** (no
+   `SEED_NOT_ADMISSIBLE`) with fields radiating outward into the open fringe;
+   roads are short streets between close buildings; still spawns cleanly, NPCs
+   path through.
+3. Spawn CITY + HAMLET to confirm the radius scales per tier (HAMLET ≈ 25, CITY
+   ≈ grid).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `VillageExtent.radiusFor`
+is exhaustive over `ViabilityTier`; `PhasedPlanner.villageRadiusFor` delegates
+(callers unaffected); the cap filters the banding pool by squared Euclidean
+distance (clamped to `fmap.radius()` so it never no-ops at CITY), leaving capped
+cells at the default `zoneId = -1`; `compute` signature unchanged; `fmap.radius()`/
+`cellWorldPos` accessors confirmed present.
