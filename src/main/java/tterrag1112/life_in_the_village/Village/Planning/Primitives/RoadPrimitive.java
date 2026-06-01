@@ -503,6 +503,22 @@ public sealed interface RoadPrimitive
 
         @Override public String typeKey() { return "SmoothedPath"; }
 
+        /** Layout Rework Stage 3 fix-up — polyline length over the
+         *  waypoints (summed Euclidean, matching the other primitives'
+         *  {@code Math.round(sqrt(distSqr))} convention). The router emits
+         *  {@code SmoothedPath} for every edge, so this must be real — the
+         *  throwing default would crash any consumer that reads edge length
+         *  (the auto-dump, {@code deriveSpinePath}, realiser length reads). */
+        @Override
+        public int intendedLength() {
+            if (waypoints.size() < 2) return 0;
+            double total = 0;
+            for (int i = 1; i < waypoints.size(); i++) {
+                total += Math.sqrt(waypoints.get(i - 1).distSqr(waypoints.get(i)));
+            }
+            return (int) Math.round(total);
+        }
+
         @Override
         public CenterlineResult computeCenterline(PrimitiveContext ctx) {
             ServerLevel level = ctx.level();

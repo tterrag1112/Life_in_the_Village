@@ -4863,3 +4863,101 @@ imports updated (added NetworkSpec/Node/Edge/NodeKind + RoadPrimitive + HashMap/
 removed CrossStreet/Comparator/ArrayList); `commitFromV2`'s signature is unchanged
 so its single caller is unaffected; no `spineEnd`/`spineStart`/`crossStreets` reads
 remain in either touched path.
+
+### 2026-06-01 — Layout Rework Stage 3 fix-up #1 (SmoothedPath length + router avoids footprints)
+
+**Context:** The first in-world test of the roads-last rework (CITY AGRICULTURAL,
+seed `-7816748743282029526`) ran the whole pipeline end-to-end — partition,
+population roster, placement (60 placed / 2 dropped), routing (62 nodes / 61
+edges → 545 segments) — then aborted at the Layer-5 overlap audit, and the
+auto-dump that would have shown the conflict itself crashed. Two surgical bugs,
+one masking the other. Targeted fix-up, not a redesign.
+
+**Bug 1 — `SmoothedPath.intendedLength()` threw (masked the diagnosis).**
+`RoadPrimitive.intendedLength()` is a default that throws
+`UnsupportedOperationException`; every other primitive overrides it but
+`SmoothedPath` didn't. The router emits `SmoothedPath` for every edge, so the
+auto-dump (which reads edge length on abort) crashed.
+- **Fix:** added the override — summed Euclidean polyline length over
+  `waypoints()` (`Math.round(Σ sqrt(distSqr))`), matching the other primitives'
+  `Math.round(sqrt(distSqr))` convention. Unblocks the dump and any length reader
+  (`deriveSpinePath`, realiser).
+
+**Bug 2 — the router routed roads through building footprints (the abort).**
+`BlockServingRouter`'s A* costed cells by terrain only, never treating placed
+footprints as obstacles, so roads cut across them. The fatal trigger:
+`TOWN_HALL` (29×29) is placed exactly on the anchor, and the router used the
+**anchor as a routing terminal** — so every edge converged straight into the
+TOWN_HALL footprint, and `OverlapAuditor` marks any TOWN_HALL building×corridor
+conflict fatal.
+- **Fix part 1 — footprints are A* obstacles.** `footprintMask(placed, fmap, g)`
+  marks every cell inside a placed building's rotated footprint AABB (the same
+  rect `OverlapAuditor` checks). The A* enter-cost adds `FOOTPRINT_PENALTY = 2000`
+  (≈100× the ~2–20 terrain cost) for masked cells. **Strong finite penalty, not a
+  hard block** — so a degenerate dense site can still connect (the penalty never
+  makes a goal unreachable, preserving the nav-graph connectivity invariant that
+  caravan routing depends on); being forced through a footprint as a last resort
+  is a spacing signal the auditor can surface, not a crash. The penalty is added
+  to the actual cost only (not the heuristic), so A* stays admissible/optimal.
+- **Fix part 2 — no terminal inside a footprint.** The standalone `core:anchor`
+  terminal is dropped when its cell is masked (the covering building's own
+  front-cell terminal already serves that area). Front-cell terminals sit
+  `½footprint+1` outside their own footprint, so they remain un-masked and
+  reachable without penalty; gateways are at the village edge. Result: no edge
+  targets a cell inside a footprint, and no edge passes through one.
+
+`OverlapAuditor` is unchanged (not weakened) — roads crossing buildings is a real
+defect; the auditor stays strict and should now pass.
+
+**Tie-In Audit:**
+- *Touched:* `SmoothedPath.intendedLength` (new override); `BlockServingRouter`
+  A* obstacle cost + anchor-terminal selection (threaded a `footprint` mask
+  through `route → buildTerminals / candidateEdges / ensureConnected →
+  routeEdge`). No signature changes on public types; the router output shape is
+  unchanged (still a `NetworkSpec` of `SmoothedPath` edges).
+- *Downstream:* `Skeleton`/`RoadPainter`/`InternalRoadCommitter` consume the same
+  shape, now with footprint-avoiding geometry. `deriveSpinePath`'s defensive
+  `catch (UnsupportedOperationException)` simply never fires for SmoothedPath now
+  (it sums real lengths instead of the +10 fallback). `VillageRoadEdge.length()` /
+  `GraphTradeRouteEstablisher.villageHopCost` read `cellPath` length, not
+  `intendedLength` — unaffected. No other caller relied on the throwing default.
+- *Exhaustive switches:* none.
+
+**Deviations from prompt:** none material. (Anchor terminal: chose **drop** over
+relocate, per the prompt's stated preference — the covering building's front-cell
+serves the core.)
+
+**Out-of-scope but flagged (separate follow-ups):**
+- **MILLER / WELL / WAREHOUSE dropped "no NBT".** Content gap — these types have
+  no structure files, so they can't place. MILLER is added to the roster (Stage 1)
+  but un-authored. Garrett's call: author the structures or exclude the types.
+- **BAKERY ×2 dropped `NO_VIABLE_CANDIDATE`; CIVIC zone crowded** (TOWN_HALL 29×29
+  + 2×MARKET 21×42 + 2×CHAPEL 18×38 in ~⅓ of cells). After this router fix,
+  re-check: if civic buildings still drop, the CIVIC zone needs to scale with the
+  civic footprint budget (a 3a sizing tune). The drop message also still says "no
+  admissible candidate position on any network edge" — stale roads-first wording;
+  update to zone language.
+- **Only 2 zones (CIVIC, RURAL) for AGRICULTURAL** — houses share the RURAL fringe
+  with farmhouses (no residential ring). Design choice to confirm with Garrett,
+  not a bug.
+
+**Cumulative pending verification:** unchanged from Stage 3d — the whole 2.x/3.x
+rework is exercised by the smoke test below (now expected to complete).
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Re-spawn the same CITY AGRICULTURAL seed (`-7816748743282029526`) + a few
+   others. Confirm: spawn completes (no fatal overlap abort); auto-dump succeeds;
+   routed roads visibly go around buildings (none cross a footprint, especially
+   the central TOWN_HALL); the nav graph still connects both gateways (caravan can
+   path through).
+3. Note remaining drops / crowding for the follow-up tuning above.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the `intendedLength`
+override matches the sibling-primitive convention and returns 0 for <2 waypoints;
+the `footprint` mask is threaded through all four router helpers (every
+`routeEdge` call updated); the penalty is finite (goal stays reachable — no
+disconnection), added to actual cost only (heuristic stays admissible), and can't
+overflow int (≤ ~96·2000); the anchor-terminal drop is null-guarded; `Rotation`
+imported; no public signature changed so all external consumers are unaffected.

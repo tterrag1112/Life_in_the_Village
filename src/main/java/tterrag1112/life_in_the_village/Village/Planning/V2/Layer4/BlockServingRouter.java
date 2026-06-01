@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer4;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Rotation;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Cell;
@@ -78,6 +79,14 @@ public final class BlockServingRouter {
     private static final int BRANCH_WIDTH = 2;
     private static final RoadShape.RoadTier BRANCH_TIER = RoadShape.RoadTier.VILLAGE_PATH;
 
+    /** Stage 3 fix-up — enter-cost added to a cell that lies inside a
+     *  placed building footprint. A strong FINITE penalty (not a hard
+     *  block) so a degenerate dense site can still connect — being forced
+     *  through a footprint as a last resort is a spacing signal, not a
+     *  crash. It dominates terrain cost (~2..20/cell) by ~100×, so A*
+     *  routes around footprints whenever any detour exists. */
+    private static final int FOOTPRINT_PENALTY = 2000;
+
     private BlockServingRouter() {}
 
     /**
@@ -94,7 +103,12 @@ public final class BlockServingRouter {
     public static NetworkSpec route(List<PlacedBuilding> placed, Gateways gateways,
                                     V2FeatureMap fmap, BlockPos anchor) {
         int g = fmap.gridSize();
-        List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g);
+        // Stage 3 fix-up — placed building footprints are obstacles for
+        // routing: roads must thread BETWEEN buildings to reach their
+        // front-cells, not cut across footprints (which tripped the
+        // OverlapAuditor's building×corridor check, fatally for TOWN_HALL).
+        boolean[][] footprint = footprintMask(placed, fmap, g);
+        List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g, footprint);
 
         List<NetworkNode> nodes = new ArrayList<>(terms.size());
         for (Terminal t : terms) {
@@ -105,7 +119,7 @@ public final class BlockServingRouter {
         }
 
         // Candidate edges (k-nearest) routed with A*.
-        List<RoutedEdge> candidates = candidateEdges(terms, fmap, g);
+        List<RoutedEdge> candidates = candidateEdges(terms, fmap, g, footprint);
 
         // Kruskal MST by routed terrain cost.
         candidates.sort(Comparator.comparingInt(e -> e.cost));
@@ -117,7 +131,7 @@ public final class BlockServingRouter {
         // Connectivity sweep — if the sparse candidate graph left the
         // tree disconnected, route the cheapest cross-component pairs.
         if (uf.components() > 1) {
-            ensureConnected(terms, fmap, g, uf, tree);
+            ensureConnected(terms, fmap, g, uf, tree, footprint);
         }
 
         // Trunk = the tree path between the two gateway terminals.
@@ -147,13 +161,21 @@ public final class BlockServingRouter {
 
     private static List<Terminal> buildTerminals(List<PlacedBuilding> placed,
                                                  Gateways gateways, V2FeatureMap fmap,
-                                                 BlockPos anchor, int g) {
+                                                 BlockPos anchor, int g,
+                                                 boolean[][] footprint) {
         List<Terminal> terms = new ArrayList<>();
         Set<Long> usedCells = new HashSet<>();
 
-        // Anchor core first.
-        addTerminal(terms, usedCells, "core:anchor", NodeKind.ANCHOR,
-                nearestBuildableCell(fmap, anchor.getX(), anchor.getZ()), g);
+        // Anchor core first — but ONLY if it isn't inside a placed
+        // footprint. Stage 3 fix-up: TOWN_HALL is commonly placed exactly
+        // on the anchor, so a "core:anchor" terminal there would make every
+        // edge route straight INTO the TOWN_HALL footprint (the fatal
+        // overlap). When the anchor is covered, the covering building's own
+        // front-cell terminal already serves that area, so we just drop it.
+        int[] anchorCell = nearestBuildableCell(fmap, anchor.getX(), anchor.getZ());
+        if (anchorCell != null && !footprint[anchorCell[0]][anchorCell[1]]) {
+            addTerminal(terms, usedCells, "core:anchor", NodeKind.ANCHOR, anchorCell, g);
+        }
 
         // Gateways.
         if (gateways != null) {
@@ -221,6 +243,33 @@ public final class BlockServingRouter {
         return null;
     }
 
+    /** Stage 3 fix-up — cell mask of every placed building's rotated
+     *  footprint AABB (the same rect {@code OverlapAuditor} checks). A*
+     *  pays {@link #FOOTPRINT_PENALTY} to enter these cells. Front-cell
+     *  terminals sit {@code ½footprint+1} outside, so they stay
+     *  un-masked and reachable without penalty. */
+    private static boolean[][] footprintMask(List<PlacedBuilding> placed,
+                                             V2FeatureMap fmap, int g) {
+        boolean[][] mask = new boolean[g][g];
+        for (PlacedBuilding pb : placed) {
+            boolean swap = pb.rotation() == Rotation.CLOCKWISE_90
+                    || pb.rotation() == Rotation.COUNTERCLOCKWISE_90;
+            int halfW = (swap ? pb.footprint().length() : pb.footprint().width()) / 2;
+            int halfL = (swap ? pb.footprint().width() : pb.footprint().length()) / 2;
+            BlockPos c = pb.centre();
+            int minI = fmap.worldXToCellI(c.getX() - halfW);   // clamped
+            int maxI = fmap.worldXToCellI(c.getX() + halfW);
+            int minJ = fmap.worldZToCellJ(c.getZ() - halfL);
+            int maxJ = fmap.worldZToCellJ(c.getZ() + halfL);
+            for (int i = minI; i <= maxI; i++) {
+                for (int j = minJ; j <= maxJ; j++) {
+                    if (i >= 0 && j >= 0 && i < g && j < g) mask[i][j] = true;
+                }
+            }
+        }
+        return mask;
+    }
+
     // =========================================================================
     // Candidate edges + connectivity
     // =========================================================================
@@ -228,7 +277,8 @@ public final class BlockServingRouter {
     private record RoutedEdge(int a, int b, int cost, List<int[]> path) {}
 
     private static List<RoutedEdge> candidateEdges(List<Terminal> terms,
-                                                   V2FeatureMap fmap, int g) {
+                                                   V2FeatureMap fmap, int g,
+                                                   boolean[][] footprint) {
         int n = terms.size();
         List<RoutedEdge> out = new ArrayList<>();
         Set<Long> seen = new HashSet<>();
@@ -237,7 +287,7 @@ public final class BlockServingRouter {
             for (int j : nearestNeighbours(terms, i, k)) {
                 long key = edgeKey(i, j);
                 if (!seen.add(key)) continue;
-                RoutedEdge e = routeEdge(terms, i, j, fmap, g);
+                RoutedEdge e = routeEdge(terms, i, j, fmap, g, footprint);
                 if (e != null) out.add(e);
             }
         }
@@ -267,7 +317,8 @@ public final class BlockServingRouter {
      *  component terminal pairs (Euclidean-ordered), A*-routing each;
      *  unreachable pairs (water-split, no buildable bridge) are skipped. */
     private static void ensureConnected(List<Terminal> terms, V2FeatureMap fmap,
-                                        int g, UnionFind uf, List<RoutedEdge> tree) {
+                                        int g, UnionFind uf, List<RoutedEdge> tree,
+                                        boolean[][] footprint) {
         int n = terms.size();
         record Pair(int a, int b, long d) {}
         List<Pair> pairs = new ArrayList<>();
@@ -280,7 +331,7 @@ public final class BlockServingRouter {
         for (Pair pr : pairs) {
             if (uf.components() <= 1) break;
             if (uf.find(pr.a) == uf.find(pr.b)) continue;
-            RoutedEdge e = routeEdge(terms, pr.a, pr.b, fmap, g);
+            RoutedEdge e = routeEdge(terms, pr.a, pr.b, fmap, g, footprint);
             if (e != null && uf.union(e.a, e.b)) tree.add(e);
         }
     }
@@ -290,7 +341,8 @@ public final class BlockServingRouter {
     // =========================================================================
 
     private static RoutedEdge routeEdge(List<Terminal> terms, int a, int b,
-                                        V2FeatureMap fmap, int g) {
+                                        V2FeatureMap fmap, int g,
+                                        boolean[][] footprint) {
         Terminal ta = terms.get(a), tb = terms.get(b);
         int start = ta.ci * g + ta.cj;
         int goal = tb.ci * g + tb.cj;
@@ -320,7 +372,10 @@ public final class BlockServingRouter {
                     if (closed[nIdx]) continue;
                     Cell nc = fmap.cell(ni, nj);
                     if (!ZonePartition.isBuildable(nc)) continue;
-                    int tentative = gScore[cur] + ZonePartition.enterCost(nc);
+                    // Stage 3 fix-up — strongly avoid building footprints
+                    // (finite penalty, so a dense site can still connect).
+                    int tentative = gScore[cur] + ZonePartition.enterCost(nc)
+                            + (footprint[ni][nj] ? FOOTPRINT_PENALTY : 0);
                     if (tentative < gScore[nIdx]) {
                         gScore[nIdx] = tentative;
                         came[nIdx] = cur;
