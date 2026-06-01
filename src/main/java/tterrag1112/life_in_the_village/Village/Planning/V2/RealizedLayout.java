@@ -43,11 +43,17 @@ public record RealizedLayout(
         List<BlockPos> gatePositions,
         int ring1Radius,
         int ring2Radius,
-        RoadNetwork roadNetwork) {
+        RoadNetwork roadNetwork,
+        List<tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion>
+                plazaRegions) {
 
     public RealizedLayout {
         gatePositions = gatePositions == null
                 ? List.of()
                 : List.copyOf(gatePositions);
+        // Layout Rework Stage 4a — designed civic + market squares. Empty
+        // until the planner reserves them; Village.applyLayout registers
+        // each via addPlazaRegion so PlazaPaver paves them in the decorator.
+        plazaRegions = plazaRegions == null ? List.of() : List.copyOf(plazaRegions);
     }
 }

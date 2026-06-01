@@ -259,7 +259,8 @@ public final class V2VillageSpawnerAdapter {
         }
 
         // ── Build RealizedLayout + Village + register ───────────────────
-        RealizedLayout realized = buildRealizedLayout(siteCtx, roads);
+        RealizedLayout realized = buildRealizedLayout(siteCtx, roads,
+                phased.civicSquare(), phased.marketSquare());
         Village village = new Village(villageName, villageType);
         // applyLayout sets center / town square / ring radii / gate
         // positions and the main-gate endpoint from the realised layout.
@@ -515,16 +516,19 @@ public final class V2VillageSpawnerAdapter {
         for (PlacedMarket mk : placedMarkets) {
             try {
                 int padY = mk.placed().centre().getY();
-                // Stage 2b — pad the market inside its reserved interior
-                // parcel (centre = parcel centroid; the parcel was sized
-                // and reserved clear at planning time, so the pad fits
-                // without the perimeter offset). Graceful fallback to the
-                // building centre when no parcel was reserved.
+                // Stage 4a — seed the market pad from the reserved MARKET
+                // plaza square (centre = its centroid). The square was
+                // reserved clear AND ringed by the router, so the pad finally
+                // has guaranteed space (closes the NO_REGION gap). Falls back
+                // to the Stage-2b parcel centroid, then the building centre.
                 var parcel = mk.placed().parcel();
-                BlockPos marketCentre = parcel != null
-                        ? tterrag1112.life_in_the_village.Utilities.Geometry.Polygon
-                                .centroid(parcel.budget())
-                        : mk.placed().centre();
+                BlockPos marketPlazaCentre = marketPlazaCentroid(village);
+                BlockPos marketCentre = marketPlazaCentre != null
+                        ? marketPlazaCentre
+                        : parcel != null
+                                ? tterrag1112.life_in_the_village.Utilities.Geometry.Polygon
+                                        .centroid(parcel.budget())
+                                : mk.placed().centre();
                 // Obstacles backstop (kept even with the parcel clearance):
                 // every other placed building's footprint AABB,
                 // plus existing farm complex regions. The market never
@@ -702,10 +706,28 @@ public final class V2VillageSpawnerAdapter {
      * <p>Field sources mirror the former synth {@code VillageLayout}
      * exactly, so a spawned village renders identically.</p>
      */
-    private static RealizedLayout buildRealizedLayout(SiteContext siteCtx,
-                                                      RoadNetwork roads) {
+    private static RealizedLayout buildRealizedLayout(
+            SiteContext siteCtx, RoadNetwork roads,
+            tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB civicSquare,
+            tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB marketSquare) {
         LayoutDensityProfile density = LayoutDensityProfile.forLevel(BUILDING_LEVEL);
         BlockPos anchor = siteCtx.anchor();
+
+        // Layout Rework Stage 4a — turn the planner's reserved squares into
+        // CIVIC / MARKET PlazaRegions. Village.applyLayout registers them via
+        // addPlazaRegion, and the VillageDecorator's PlazaPaver paves them.
+        List<tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion>
+                plazas = new ArrayList<>();
+        if (civicSquare != null) {
+            plazas.add(squarePlaza(civicSquare, anchor.getY(),
+                    tterrag1112.life_in_the_village.Village.Decoration.Plaza
+                            .PlazaPurpose.CIVIC));
+        }
+        if (marketSquare != null) {
+            plazas.add(squarePlaza(marketSquare, anchor.getY(),
+                    tterrag1112.life_in_the_village.Village.Decoration.Plaza
+                            .PlazaPurpose.MARKET));
+        }
 
         // Layout Rework Stage 3d — gates come from the routed network's
         // GATEWAY nodes (the gateways-first derivation from 3b, snapped
@@ -754,7 +776,69 @@ public final class V2VillageSpawnerAdapter {
                 gates,                       // gatePositions
                 density.getRing1Radius(),
                 density.getRing2Radius(),
-                roads);                      // roadNetwork (D1(b))
+                roads,                       // roadNetwork (D1(b))
+                plazas);                     // Stage 4a — civic + market plazas
+    }
+
+    /** Stage 4a — a square {@link tterrag1112.life_in_the_village.Village
+     *  .Decoration.Plaza.PlazaRegion} from a reserved void AABB. */
+    private static tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion
+            squarePlaza(tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB a,
+                        int floorY,
+                        tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose
+                                purpose) {
+        var poly = new tterrag1112.life_in_the_village.Utilities.Geometry.Polygon(List.of(
+                new BlockPos(a.minX(), floorY, a.minZ()),
+                new BlockPos(a.maxX(), floorY, a.minZ()),
+                new BlockPos(a.maxX(), floorY, a.maxZ()),
+                new BlockPos(a.minX(), floorY, a.maxZ())));
+        BlockPos centroid = new BlockPos((a.minX() + a.maxX()) / 2, floorY,
+                (a.minZ() + a.maxZ()) / 2);
+        return new tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion(
+                java.util.UUID.randomUUID(), purpose,
+                tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaShape.SQUARE,
+                poly, centroid, floorY, java.util.Set.of(), 0f);
+    }
+
+    /** Stage 4a — centroid of the registered MARKET plaza, or null. */
+    private static BlockPos marketPlazaCentroid(Village village) {
+        for (var r : village.getPlazaRegions()) {
+            if (r.purpose() == tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.PlazaPurpose.MARKET) {
+                return r.centroid();
+            }
+        }
+        return null;
+    }
+
+    /** Stage 4a — the civic-square centerpiece: a small procedural well at
+     *  the CIVIC plaza centroid. Runs AFTER plaza paving (the decorator) so
+     *  the floor doesn't overwrite it. A 3×3 stone-brick rim (two high) ring
+     *  a central water source at the plaza floor. Guarded + defensive. */
+    private static void placeCivicWell(ServerLevel level, Village village) {
+        tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion civic = null;
+        for (var r : village.getPlazaRegions()) {
+            if (r.purpose() == tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.PlazaPurpose.CIVIC) { civic = r; break; }
+        }
+        if (civic == null) return;
+        BlockPos c = civic.centroid();
+        int y = civic.floorY();
+        net.minecraft.world.level.block.state.BlockState rim =
+                net.minecraft.world.level.block.Blocks.STONE_BRICKS.defaultBlockState();
+        net.minecraft.world.level.block.state.BlockState water =
+                net.minecraft.world.level.block.Blocks.WATER.defaultBlockState();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                BlockPos p = new BlockPos(c.getX() + dx, y, c.getZ() + dz);
+                if (dx == 0 && dz == 0) {
+                    level.setBlockAndUpdate(p, water);
+                } else {
+                    level.setBlockAndUpdate(p, rim);
+                    level.setBlockAndUpdate(p.above(), rim);
+                }
+            }
+        }
     }
 
     /**
@@ -818,6 +902,9 @@ public final class V2VillageSpawnerAdapter {
         guard("ParkRenderer", () ->
                 tterrag1112.life_in_the_village.Village.Decoration.Parks
                         .ParkRenderer.run(level, village, data));
+        // Stage 4a — civic-square centerpiece. After plaza paving so the
+        // floor doesn't overwrite the well.
+        guard("CivicCenterpiece", () -> placeCivicWell(level, village));
         guard("TradeRouteManager", () ->
                 tterrag1112.life_in_the_village.Village.Economy.Trade
                         .TradeRouteManager.establishRoutes(level, village, data));

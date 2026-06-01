@@ -14,6 +14,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Cell;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Anchor;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.CardinalAxis;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Gateways;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
@@ -204,6 +205,12 @@ public final class PhasedPlanner {
         // purposes so they can land off-road if a strong nucleus pull
         // exists. Batch 7 runs post-spawn in Layer 5 and isn't a
         // PhasedPlanner concern.
+        // Layout Rework Stage 4a — reserve the designed central town
+        // square (+ adjacent market square) as building-less voids BEFORE
+        // any building places, so the civic batch (incl. TOWN_HALL) rings
+        // and fronts the square rather than landing on the anchor.
+        reserveCivicSquare(state);
+
         int[] perBatchCounts = new int[8];
         for (int batch = 1; batch <= 6; batch++) {
             for (BuildingType type : sortedSelection) {
@@ -225,7 +232,7 @@ public final class PhasedPlanner {
         // skeleton. NetworkPlanner's network stays on the SiteContext for
         // bindings/batches; only its road GEOMETRY is superseded here.
         NetworkSpec routed = BlockServingRouter.route(
-                state.placed, ctx.gateways(), fmap, ctx.anchor());
+                state.placed, ctx.gateways(), fmap, ctx.anchor(), state.voids());
         state.skeleton = new Skeleton(routed, ctx.primaryAxis(),
                 ctx.anchor(), SPINE_WIDTH);
         LOGGER.info("routed network: {} nodes, {} edges → {} road segments",
@@ -267,7 +274,8 @@ public final class PhasedPlanner {
 
         return new Result(placement, network, List.copyOf(state.events),
                 java.util.Map.copyOf(state.nucleusContexts),
-                java.util.Set.copyOf(state.droppedBindings));
+                java.util.Set.copyOf(state.droppedBindings),
+                state.civicSquare, state.marketSquare);
     }
 
     // =========================================================================
@@ -1381,6 +1389,87 @@ public final class PhasedPlanner {
     /** Max-min elevation drop tolerated across a reserved parcel box. */
     private static final int COMPLEX_SLOPE_TOLERANCE = 12;
 
+    // =========================================================================
+    // Stage 4a — designed civic core: reserve the town square + market square
+    // =========================================================================
+
+    /** Gap (blocks) between the civic square and the adjacent market square. */
+    private static final int CIVIC_SQUARE_GAP = 4;
+
+    /** Town-square half-extent (blocks) per tier — the central void the
+     *  civic buildings ring/front. Tuning baseline. */
+    private static int civicSquareHalf(ViabilityTier tier) {
+        return switch (tier) {
+            case CITY -> 16;
+            case TOWN -> 12;
+            case HAMLET -> 9;
+            case OUTPOST, UNVIABLE -> 7;
+        };
+    }
+
+    /** Market-square half-extent (blocks) per tier — the adjacent void
+     *  the market stall pad seeds into. Tuning baseline. */
+    private static int marketSquareHalf(ViabilityTier tier) {
+        return switch (tier) {
+            case CITY -> 14;
+            case TOWN -> 10;
+            case HAMLET -> 8;
+            case OUTPOST, UNVIABLE -> 6;
+        };
+    }
+
+    /**
+     * Stage 4a — reserve the central town square (a building-less void
+     * centred on the anchor) and an adjacent market square, as
+     * {@link Reservation}s, BEFORE any building places. The reservation
+     * gate ({@code overlapsAnyReservation}) then keeps civic footprints
+     * out of the voids, so the town hall / chapel / inn ring and front the
+     * square (TOWN_HALL pushed off the centre — authentic market-square
+     * layout). The squares are stored on {@code state} for the router
+     * (obstacle mask) and for emission as CIVIC / MARKET plazas.
+     *
+     * <p>The market square is offset along the axis perpendicular to the
+     * primary axis (so it sits beside the civic square, off the gateway
+     * line), and is only reserved when its centre is admissible terrain
+     * (else the market falls back to its prior seeding).
+     */
+    private static void reserveCivicSquare(State state) {
+        BlockPos anchor = state.ctx.anchor();
+        int ch = civicSquareHalf(state.ctx.tier());
+        Polygon.AABB civic = new Polygon.AABB(
+                anchor.getX() - ch, anchor.getZ() - ch,
+                anchor.getX() + ch, anchor.getZ() + ch);
+        state.civicSquare = civic;
+        // Void reservation: footprint == frontage == the square; type null
+        // (a void has no building — type is never dereferenced).
+        state.reservations.add(new Reservation(toAabb(civic), toAabb(civic), null));
+
+        int mh = marketSquareHalf(state.ctx.tier());
+        int offset = ch + CIVIC_SQUARE_GAP + mh;
+        boolean axisX = state.ctx.primaryAxis() == CardinalAxis.X;
+        int mx = anchor.getX() + (axisX ? 0 : offset);  // perpendicular to primary axis
+        int mz = anchor.getZ() + (axisX ? offset : 0);
+        if (state.fmap.inBounds(mx, mz)) {
+            Cell c = state.fmap.cellAt(mx, mz);
+            BlockCategory cat = c.category();
+            boolean buildable = (cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
+                    && c.localSlope() <= MAX_SLOPE;
+            if (buildable) {
+                Polygon.AABB market = new Polygon.AABB(mx - mh, mz - mh, mx + mh, mz + mh);
+                state.marketSquare = market;
+                state.reservations.add(
+                        new Reservation(toAabb(market), toAabb(market), null));
+            }
+        }
+        LOGGER.info("civic square: centre=({},{}) half={}; market square: {}",
+                anchor.getX(), anchor.getZ(), ch,
+                state.marketSquare != null ? "reserved" : "skipped (terrain)");
+    }
+
+    private static Aabb toAabb(Polygon.AABB a) {
+        return new Aabb(a.minX(), a.minZ(), a.maxX(), a.maxZ());
+    }
+
     /** Result of a successful parcel reservation: the {@link Parcel} to
      *  attach to the {@link PlacedBuilding} plus its AABB for the
      *  reservation set. */
@@ -1627,6 +1716,20 @@ public final class PhasedPlanner {
          *  skips DEPENDENCY_MISSING drops for these. Set by
          *  {@code run} after construction. */
         Set<BuildingType> tradeFulfilledTypes = Set.of();
+        /** Stage 4a — the designed central town square + adjacent market
+         *  square (nullable). Reserved as building-less voids before
+         *  placement; passed to the router as obstacles and emitted as
+         *  CIVIC / MARKET plazas. */
+        Polygon.AABB civicSquare;
+        Polygon.AABB marketSquare;
+
+        /** The reserved square voids, for the router's obstacle mask. */
+        List<Polygon.AABB> voids() {
+            List<Polygon.AABB> out = new ArrayList<>(2);
+            if (civicSquare != null) out.add(civicSquare);
+            if (marketSquare != null) out.add(marketSquare);
+            return out;
+        }
 
         State(SiteContext ctx, V2FeatureMap fmap,
               tterrag1112.life_in_the_village.Village.Planning.FootprintProvider sizes,
@@ -1662,7 +1765,11 @@ public final class PhasedPlanner {
     public record Result(PlacementResult placement, RoadNetwork network,
                          List<PhaseEvent> events,
                          java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
-                         java.util.Set<BuildingType> droppedBindings) {
+                         java.util.Set<BuildingType> droppedBindings,
+                         /* Stage 4a — designed-core squares (nullable); the
+                          * adapter turns these into CIVIC / MARKET PlazaRegions. */
+                         Polygon.AABB civicSquare,
+                         Polygon.AABB marketSquare) {
         /** Backwards-compat 3-arg constructor for callers that don't
          *  care about the nucleus attribution. */
         public Result(PlacementResult placement, RoadNetwork network,
@@ -1677,6 +1784,15 @@ public final class PhasedPlanner {
                       java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts) {
             this(placement, network, events, nucleusContexts,
                     java.util.Set.of());
+        }
+
+        /** Pre-Stage-4a 5-arg constructor (no designed-core squares). */
+        public Result(PlacementResult placement, RoadNetwork network,
+                      List<PhaseEvent> events,
+                      java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
+                      java.util.Set<BuildingType> droppedBindings) {
+            this(placement, network, events, nucleusContexts, droppedBindings,
+                    null, null);
         }
     }
 

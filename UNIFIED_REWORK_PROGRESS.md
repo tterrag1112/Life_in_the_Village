@@ -5341,3 +5341,108 @@ after; the deletion is confined to `PhasedPlanner`; `Optional`/`CrossStreet`/
 `RoadSegment` imports remain legitimately used; `PhaseEvent.Kind` values retained
 so `LayoutCommand`'s switch is unaffected; the live reassessment/hub methods are
 intact.
+
+### 2026-06-01 — Layout Rework Stage 4a (designed civic core + adjacent market square)
+
+The keystone of Stage 4: the village centre is now *designed*. A central **town
+square** (a void) is reserved before the civic buildings place, so the town
+hall / chapel / inn ring and front it; the square is paved by the existing
+`PlazaPaver`; a well sits at its centre; and an adjacent **market square** gives
+the market stall pad guaranteed clear space (closes the `NO_REGION` gap). Five
+coordinated pieces over the already-complete plaza render path.
+
+**1. Reserve the squares (`PhasedPlanner.reserveCivicSquare`, before placement).**
+A building-less `Reservation` for a civic square AABB centred on `ctx.anchor()`
+(tier half-extent **CITY 16 / TOWN 12 / HAMLET 9 / OUTPOST 7**), added to
+`state.reservations` BEFORE the batch loop — so the reservation gate keeps civic
+footprints out of the void and they ring/front it (TOWN_HALL pushed off the
+centre — intended). A second AABB for the MARKET square (half **14/10/8/6**),
+offset along the axis perpendicular to the primary axis by
+`civicHalf + GAP(4) + marketHalf`, reserved only when its centre is admissible
+terrain (else the market falls back to its prior seeding). Both squares are
+stored on `state` (as `Polygon.AABB`) and returned on `PhasedPlanner.Result`.
+
+**2. Router void-awareness (the MANDATORY item).** `BlockServingRouter.route`
+now takes the plaza void AABBs and folds them into the A* obstacle mask
+(`footprintMask` → `obstacleMask` = footprints ∪ voids), so no routed edge
+crosses a square (`FOOTPRINT_PENALTY`). The **anchor "core" terminal is dropped
+for free**: the civic void is centred on the anchor, so the existing
+"anchor cell masked → drop it" check fires — trunk edges never home onto the
+square centre. Building front-cells that step toward the anchor INTO the civic
+void are relocated to the nearest non-obstacle cell (a new void-aware
+`nearestUnobstructedCell`), pinning them on the square's **perimeter** — so the
+ringing buildings + obstacle-avoidance produce a de-facto road skirt around the
+square, with buildings fronting it.
+
+**3. PlazaRegion producer (the missing link).** `RealizedLayout` gains a
+`List<PlazaRegion> plazaRegions` field. The adapter's `buildRealizedLayout` turns
+the two square AABBs into a CIVIC and a MARKET `PlazaRegion` (square `Polygon`,
+`centroid`, `floorY = anchor.getY()`); `Village.applyLayout` registers them via
+`addPlazaRegion` (it used to drop plazas), and the `VillageDecorator`'s existing
+`PlazaPaver` loop paves them automatically. No codec change — `plazaRegions` was
+already a field on the `VillagePlazaMeta` overflow record.
+
+**4. Centerpiece.** A small procedural well — a 3×3 stone-brick rim (two high)
+around a central water source at the plaza floor — placed at the CIVIC plaza
+centroid by a new guarded `CivicCenterpiece` pass that runs AFTER `ParkRenderer`
+(so paving doesn't overwrite it). No `GatheringPoint` renderer exists (they're
+NPC-activity markers — "decoration only writes"), so the well IS the visual.
+
+**5. Market complex seeded from the MARKET plaza.** The adapter's market block
+now seeds `marketCentre` from the registered MARKET plaza centroid first (ahead
+of the Stage-2b parcel centroid, then the building centre). The reserved,
+router-ringed market square gives the pad guaranteed clear space.
+
+**Square-size baselines (the tuning knobs):** civic half 16/12/9/7, market half
+14/10/8/6 (CITY/TOWN/HAMLET/OUTPOST), inter-square gap 4. Recorded for in-world
+tuning.
+
+**Deviations from prompt:**
+- **Plaza regions are built in the adapter, not PhasedPlanner** — keeps Layer 4
+  free of a Decoration dependency; `PhasedPlanner.Result` carries the two
+  `Polygon.AABB` squares (a Utilities type) and the adapter constructs the
+  `PlazaRegion`s.
+- **Square framing via void-mask + terminal relocation, not a synthesized
+  perimeter ring.** The prompt offered either; the relocate-front-cells-to-the-
+  void-perimeter + obstacle-avoidance approach yields a road that skirts the
+  square without risking a disconnected ring edge in the nav graph. An explicit
+  perimeter ring is flagged as a later framing-quality knob.
+- **Centerpiece is a direct block stamp** (no gathering-point renderer exists);
+  registered as a guarded pass, not a persisted `GatheringPoint`.
+
+**Tie-In Audit:** `BlockServingRouter.route` — both callers updated (PhasedPlanner
++ the dump's candidate-network, which passes no voids). `RealizedLayout` — its one
+constructor (buildRealizedLayout) updated to 9-arg; compact ctor copies the new
+list. `PhasedPlanner.Result` — gains 2 fields + a 5-arg back-compat ctor (the
+delegation chain 3→5→7-arg verified); run() emits 7-arg; no external
+`PhasedPlanner.Result` constructor exists. `VillageDecorator`/`PlazaPaver` consume
+`getPlazaRegions()` unchanged. Reservation sentinel: the void reservation passes
+`type = null` (the `type` field is never dereferenced — overlap checks read
+footprint/frontage/parcel only); no switch over it. Codec: none changed.
+
+**Out-of-scope but flagged:** residential zone + block recipe → 4b; "no stray
+farmhouses" → 4b; chapel graveyard; green/worksite parcels; the merged
+civic+market square option. **Tuning risk to watch:** the civic void consumes the
+inner CIVIC zone band — if the square is large relative to the CIVIC band, civic
+buildings may have few clear cells and drop. Square size + CIVIC band size are
+the dials (smoke test step 2).
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Spawn TOWN AGRICULTURAL. Confirm: a paved central **town square** with
+   buildings ringing/fronting it (TOWN_HALL on an edge, not the centre); a well
+   at the square centre; **no road cuts across the square** (roads skirt it); an
+   adjacent **market square** with the stall pad now generating (no `NO_REGION`);
+   the village still spawns with working roads + NPC nav. If civic buildings
+   drop, dial the square half-extent down (or the CIVIC band up).
+3. A few seeds/tiers to confirm the square scales + frames reliably.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: all changed
+signatures' callers updated (`route` ×2, `RealizedLayout` ×1, `Result` emit + the
+back-compat delegation chain); the void mask folds into the existing
+`FOOTPRINT_PENALTY` A* + anchor-drop; the reservation gate (unchanged) keeps
+civic footprints out of the void; `PlazaRegion`/`PlazaPaver`/`addPlazaRegion`
+consumed on their existing contracts; the centerpiece uses `ServerLevel
+.setBlockAndUpdate` after paving; `CardinalAxis`/`Polygon.AABB` imports present;
+no codec field added.

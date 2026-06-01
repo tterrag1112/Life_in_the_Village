@@ -99,16 +99,24 @@ public final class BlockServingRouter {
      * @param gateways the gateway pair (terminals); may be null
      * @param fmap     terrain map (routing space + cost model)
      * @param anchor   the village core (an additional terminal)
+     * @param voids    Stage 4a — reserved plaza voids (civic/market squares);
+     *                 treated as obstacles so no road crosses or terminates in
+     *                 a square. The anchor "core" terminal lands inside the
+     *                 civic void and is therefore dropped (the same masked-cell
+     *                 logic as footprints); building front-cells that fall in a
+     *                 void relocate to its perimeter.
      */
     public static NetworkSpec route(List<PlacedBuilding> placed, Gateways gateways,
-                                    V2FeatureMap fmap, BlockPos anchor) {
+                                    V2FeatureMap fmap, BlockPos anchor,
+                                    List<tterrag1112.life_in_the_village.Utilities
+                                            .Geometry.Polygon.AABB> voids) {
         int g = fmap.gridSize();
-        // Stage 3 fix-up — placed building footprints are obstacles for
-        // routing: roads must thread BETWEEN buildings to reach their
-        // front-cells, not cut across footprints (which tripped the
-        // OverlapAuditor's building×corridor check, fatally for TOWN_HALL).
-        boolean[][] footprint = footprintMask(placed, fmap, g);
-        List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g, footprint);
+        // Stage 3 fix-up + Stage 4a — placed building footprints AND reserved
+        // plaza voids are obstacles for routing: roads thread BETWEEN buildings
+        // to reach their front-cells and SKIRT the squares, never cutting
+        // across a footprint (OverlapAuditor) or a designed plaza.
+        boolean[][] obstacle = obstacleMask(placed, voids, fmap, g);
+        List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g, obstacle);
 
         List<NetworkNode> nodes = new ArrayList<>(terms.size());
         for (Terminal t : terms) {
@@ -119,7 +127,7 @@ public final class BlockServingRouter {
         }
 
         // Candidate edges (k-nearest) routed with A*.
-        List<RoutedEdge> candidates = candidateEdges(terms, fmap, g, footprint);
+        List<RoutedEdge> candidates = candidateEdges(terms, fmap, g, obstacle);
 
         // Kruskal MST by routed terrain cost.
         candidates.sort(Comparator.comparingInt(e -> e.cost));
@@ -131,7 +139,7 @@ public final class BlockServingRouter {
         // Connectivity sweep — if the sparse candidate graph left the
         // tree disconnected, route the cheapest cross-component pairs.
         if (uf.components() > 1) {
-            ensureConnected(terms, fmap, g, uf, tree, footprint);
+            ensureConnected(terms, fmap, g, uf, tree, obstacle);
         }
 
         // Trunk = the tree path between the two gateway terminals.
@@ -162,35 +170,40 @@ public final class BlockServingRouter {
     private static List<Terminal> buildTerminals(List<PlacedBuilding> placed,
                                                  Gateways gateways, V2FeatureMap fmap,
                                                  BlockPos anchor, int g,
-                                                 boolean[][] footprint) {
+                                                 boolean[][] obstacle) {
         List<Terminal> terms = new ArrayList<>();
         Set<Long> usedCells = new HashSet<>();
 
-        // Anchor core first — but ONLY if it isn't inside a placed
-        // footprint. Stage 3 fix-up: TOWN_HALL is commonly placed exactly
-        // on the anchor, so a "core:anchor" terminal there would make every
-        // edge route straight INTO the TOWN_HALL footprint (the fatal
-        // overlap). When the anchor is covered, the covering building's own
-        // front-cell terminal already serves that area, so we just drop it.
+        // Anchor core first — but ONLY if it isn't inside an obstacle
+        // (a placed footprint OR a reserved plaza void). Stage 3: TOWN_HALL
+        // is commonly placed on the anchor → a "core:anchor" terminal would
+        // route every edge into its footprint. Stage 4a: the civic square
+        // void is centred on the anchor → same drop fires, so trunk edges
+        // never home onto the square centre. The covering building's /
+        // perimeter front-cells serve that area, so dropping it is safe.
         int[] anchorCell = nearestBuildableCell(fmap, anchor.getX(), anchor.getZ());
-        if (anchorCell != null && !footprint[anchorCell[0]][anchorCell[1]]) {
+        if (anchorCell != null && !obstacle[anchorCell[0]][anchorCell[1]]) {
             addTerminal(terms, usedCells, "core:anchor", NodeKind.ANCHOR, anchorCell, g);
         }
 
-        // Gateways.
+        // Gateways — relocate out of any obstacle (rare at the village edge).
         if (gateways != null) {
             addTerminal(terms, usedCells, "gateway:PRIMARY", NodeKind.GATEWAY,
-                    nearestBuildableCell(fmap, gateways.primary().getX(),
-                            gateways.primary().getZ()), g);
+                    nearestUnobstructedCell(fmap, gateways.primary().getX(),
+                            gateways.primary().getZ(), obstacle), g);
             addTerminal(terms, usedCells, "gateway:SECONDARY", NodeKind.GATEWAY,
-                    nearestBuildableCell(fmap, gateways.secondary().getX(),
-                            gateways.secondary().getZ()), g);
+                    nearestUnobstructedCell(fmap, gateways.secondary().getX(),
+                            gateways.secondary().getZ(), obstacle), g);
         }
 
-        // Buildings — front-point proxy.
+        // Buildings — front-point proxy, relocated out of obstacles. Stage 4a:
+        // a square-fronting building's front-cell steps toward the anchor,
+        // INTO the civic void; relocating it to the nearest non-obstacle cell
+        // pins the terminal on the square's perimeter so the road skirts the
+        // plaza instead of entering it.
         int bi = 0;
         for (PlacedBuilding pb : placed) {
-            int[] cell = frontCell(pb, anchor, fmap);
+            int[] cell = frontCell(pb, anchor, fmap, obstacle);
             addTerminal(terms, usedCells,
                     "bldg:" + pb.type().name() + ":" + bi++, NodeKind.JUNCTION, cell, g);
         }
@@ -206,9 +219,11 @@ public final class BlockServingRouter {
     }
 
     /** Front-point proxy: building centre stepped toward the anchor by
-     *  {@code ½footprint+1}, snapped to the nearest buildable cell. A
-     *  stable pre-orientation terminal (orientation is set in 3c). */
-    private static int[] frontCell(PlacedBuilding pb, BlockPos anchor, V2FeatureMap fmap) {
+     *  {@code ½footprint+1}, then relocated to the nearest buildable cell
+     *  that is NOT an obstacle (a footprint or plaza void). A stable
+     *  pre-orientation terminal that sits just outside footprints/squares. */
+    private static int[] frontCell(PlacedBuilding pb, BlockPos anchor,
+                                   V2FeatureMap fmap, boolean[][] obstacle) {
         BlockPos c = pb.centre();
         int half = Math.max(pb.footprint().width(), pb.footprint().length()) / 2 + 1;
         double dx = anchor.getX() - c.getX();
@@ -220,36 +235,59 @@ public final class BlockServingRouter {
             fx += (int) Math.round(dx / len * half);
             fz += (int) Math.round(dz / len * half);
         }
-        return nearestBuildableCell(fmap, fx, fz);
+        return nearestUnobstructedCell(fmap, fx, fz, obstacle);
     }
 
     /** Nearest buildable cell to a world position, searching outward up
      *  to {@link #SNAP_SEARCH_RADIUS} chebyshev cells. Null if none. */
     private static int[] nearestBuildableCell(V2FeatureMap fmap, int wx, int wz) {
+        return nearestCell(fmap, wx, wz, null);
+    }
+
+    /** Nearest cell that is buildable AND not an obstacle (footprint /
+     *  plaza void). Used for the terminals that must sit OUTSIDE squares
+     *  and footprints (gateways, building front-cells). Null if none. */
+    private static int[] nearestUnobstructedCell(V2FeatureMap fmap, int wx, int wz,
+                                                 boolean[][] obstacle) {
+        return nearestCell(fmap, wx, wz, obstacle);
+    }
+
+    /** Shared spiral search: nearest buildable cell, optionally also
+     *  requiring it be un-masked by {@code obstacle} (null = no mask). */
+    private static int[] nearestCell(V2FeatureMap fmap, int wx, int wz,
+                                     boolean[][] obstacle) {
         int g = fmap.gridSize();
         int ci = fmap.worldXToCellI(wx);   // clamped to grid
         int cj = fmap.worldZToCellJ(wz);
-        if (ZonePartition.isBuildable(fmap.cell(ci, cj))) return new int[]{ci, cj};
+        if (ok(fmap, obstacle, ci, cj)) return new int[]{ci, cj};
         for (int r = 1; r <= SNAP_SEARCH_RADIUS; r++) {
             for (int di = -r; di <= r; di++) {
                 for (int dj = -r; dj <= r; dj++) {
                     if (Math.max(Math.abs(di), Math.abs(dj)) != r) continue; // ring only
                     int ni = ci + di, nj = cj + dj;
                     if (ni < 0 || nj < 0 || ni >= g || nj >= g) continue;
-                    if (ZonePartition.isBuildable(fmap.cell(ni, nj))) return new int[]{ni, nj};
+                    if (ok(fmap, obstacle, ni, nj)) return new int[]{ni, nj};
                 }
             }
         }
         return null;
     }
 
-    /** Stage 3 fix-up — cell mask of every placed building's rotated
-     *  footprint AABB (the same rect {@code OverlapAuditor} checks). A*
-     *  pays {@link #FOOTPRINT_PENALTY} to enter these cells. Front-cell
-     *  terminals sit {@code ½footprint+1} outside, so they stay
-     *  un-masked and reachable without penalty. */
-    private static boolean[][] footprintMask(List<PlacedBuilding> placed,
-                                             V2FeatureMap fmap, int g) {
+    private static boolean ok(V2FeatureMap fmap, boolean[][] obstacle, int i, int j) {
+        return ZonePartition.isBuildable(fmap.cell(i, j))
+                && (obstacle == null || !obstacle[i][j]);
+    }
+
+    /** Stage 3 fix-up + Stage 4a — cell mask of every routing obstacle: each
+     *  placed building's rotated footprint AABB (the rect {@code OverlapAuditor}
+     *  checks) PLUS each reserved plaza void AABB. A* pays
+     *  {@link #FOOTPRINT_PENALTY} to enter these cells, so roads thread between
+     *  buildings and skirt the squares. Front-cell terminals sit just outside
+     *  footprints; void-adjacent ones are relocated to the void perimeter. */
+    private static boolean[][] obstacleMask(List<PlacedBuilding> placed,
+                                            List<tterrag1112.life_in_the_village.Utilities
+                                                    .Geometry.Polygon.AABB> voids,
+                                            V2FeatureMap fmap, int g) {
         boolean[][] mask = new boolean[g][g];
         for (PlacedBuilding pb : placed) {
             boolean swap = pb.rotation() == Rotation.CLOCKWISE_90
@@ -257,17 +295,30 @@ public final class BlockServingRouter {
             int halfW = (swap ? pb.footprint().length() : pb.footprint().width()) / 2;
             int halfL = (swap ? pb.footprint().width() : pb.footprint().length()) / 2;
             BlockPos c = pb.centre();
-            int minI = fmap.worldXToCellI(c.getX() - halfW);   // clamped
-            int maxI = fmap.worldXToCellI(c.getX() + halfW);
-            int minJ = fmap.worldZToCellJ(c.getZ() - halfL);
-            int maxJ = fmap.worldZToCellJ(c.getZ() + halfL);
-            for (int i = minI; i <= maxI; i++) {
-                for (int j = minJ; j <= maxJ; j++) {
-                    if (i >= 0 && j >= 0 && i < g && j < g) mask[i][j] = true;
-                }
+            markRect(mask, fmap, g, c.getX() - halfW, c.getZ() - halfL,
+                    c.getX() + halfW, c.getZ() + halfL);
+        }
+        if (voids != null) {
+            for (var v : voids) {
+                markRect(mask, fmap, g, v.minX(), v.minZ(), v.maxX(), v.maxZ());
             }
         }
         return mask;
+    }
+
+    /** Mark every cell whose index range covers world rect [minX,maxX]×
+     *  [minZ,maxZ] (clamped). */
+    private static void markRect(boolean[][] mask, V2FeatureMap fmap, int g,
+                                 int minX, int minZ, int maxX, int maxZ) {
+        int minI = fmap.worldXToCellI(minX);
+        int maxI = fmap.worldXToCellI(maxX);
+        int minJ = fmap.worldZToCellJ(minZ);
+        int maxJ = fmap.worldZToCellJ(maxZ);
+        for (int i = minI; i <= maxI; i++) {
+            for (int j = minJ; j <= maxJ; j++) {
+                if (i >= 0 && j >= 0 && i < g && j < g) mask[i][j] = true;
+            }
+        }
     }
 
     // =========================================================================

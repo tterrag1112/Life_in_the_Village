@@ -807,6 +807,12 @@ public class Village {
                 capitalGatePositions.add(gp);
             }
         }
+        // Layout Rework Stage 4a — register the designed civic + market
+        // squares so PlazaPaver paves them in the decorator. (V2 finally
+        // produces plaza regions; previously applyLayout dropped them.)
+        for (var region : layout.plazaRegions()) {
+            addPlazaRegion(region);
+        }
     }
 
     /**

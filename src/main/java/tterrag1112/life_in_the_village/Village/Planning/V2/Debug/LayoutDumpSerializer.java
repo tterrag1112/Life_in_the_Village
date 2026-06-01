@@ -284,8 +284,12 @@ public final class LayoutDumpSerializer {
         if (fmap != null && siteCtx != null && siteCtx.gateways() != null
                 && placement != null && !placement.placed().isEmpty()) {
             try {
+                // Stage 4a — the dump's candidate network has no plaza voids
+                // to hand the router (they live on the planner's Result, not
+                // the SiteContext); pass none. Illustrative comparison only.
                 NetworkSpec candidate = BlockServingRouter.route(
-                        placement.placed(), siteCtx.gateways(), fmap, siteCtx.anchor());
+                        placement.placed(), siteCtx.gateways(), fmap, siteCtx.anchor(),
+                        java.util.List.of());
                 root.add("candidateNetwork",
                         networkSpecJson(candidate, level, worldSeed, null));
             } catch (RuntimeException e) {
