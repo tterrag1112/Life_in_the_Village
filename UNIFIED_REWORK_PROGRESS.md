@@ -4171,3 +4171,90 @@ review: only `placeOne` constructs the 5-field `Reservation` and the 10-field
 registries return `Optional` with sane defaults; zero remaining type references
 to the deleted `ComplexRegion`/`PlanningPhase` (only adapter scaffold comments +
 one `{@code}` mention remain).
+
+### 2026-05-31 — Layout Rework Stage 2b landed (seed complexes from the parcel, delete the scaffold)
+
+**What shipped:** Wired the farm/market complex planners to the interior
+`Parcel` reserved in Stage 2a and **deleted the `PERIMETER_OFFSET` scaffold**.
+This is the visible flip — complexes now generate **inside** the village
+(in their reserved parcels) instead of being flung 48+ blocks past the
+furthest building. **This completes the original complex-reservation goal.**
+
+**How each planner is seeded:**
+- **FARM** (`FarmComplexPlanner` flood-fill): seeded from the parcel —
+  `farmhouseOrigin = parcel.anchor()`, `complexExtendsToward =
+  parcel.growthDirection()`, and **hard-bounded to the parcel budget box**.
+  The flood-fill runs post-spawn on a *pre-spawn* FeatureMap (which still reads
+  OPEN where buildings now stand), so without a hard boundary an interior claim
+  would spill onto neighbours. The minimal change: a nullable `boundary`
+  `Polygon` on `FloodFillRegionClaim.Input` — BFS rejects cells outside it —
+  threaded through a new nullable `parcelBoundary` on `FarmComplexPlanner.Input`.
+- **MARKET** (`MarketComplexPlanner` pad): `marketCentre = centroid(parcel
+  budget)`, `padY = lead building centre Y`. The parcel was sized
+  (footprint + padMargin) and reserved clear at planning time, so the pad fits
+  without the perimeter offset. The obstacle list (other buildings' AABBs +
+  existing farm regions) is **kept as a backstop** even though the parcel
+  already guarantees clearance.
+
+**Graceful fallback (no parcel reserved in 2a):** farm → in-place flood-fill
+behind the farmhouse (unbounded, `frontage.opposite` direction); market → pad
+at the building centre. **No perimeter offset is ever re-introduced.**
+
+**Surface area:** 4 edits, 0 new files, 0 deletions (the scaffold removal is
+method/constant-level).
+
+**Files modified:**
+- `.../Farms/Complex/FloodFillRegionClaim.java` — nullable `boundary` polygon
+  on `Input` + a BFS containment check; backward-compat ctors default null.
+- `.../Farms/Complex/FarmComplexPlanner.java` — nullable `parcelBoundary` on
+  `Input`, threaded into the flood-fill; backward-compat ctors default null
+  (so `FarmDebugCommand`'s 14-arg call still resolves).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` — farm + market blocks
+  seed from `placed.parcel()`; deleted `perimeterAnchor` and the
+  `PERIMETER_OFFSET_COMPLEXES` / `_CLEARANCE` / `_SPREAD_RAD` constants + the
+  scaffold comments.
+
+**Deviations from prompt:**
+- Added a `boundary` parameter to `FloodFillRegionClaim` (not just
+  `FarmComplexPlanner`) — that's where the per-cell containment check has to
+  live; it was the smallest change that actually bounds the claim (vs. trying
+  to express "everything outside the box" as an exclusion polygon, which the
+  exclusion model can't do).
+- **Market pad sits in the reserved parcel (behind the building), per the
+  prompt's "centre = parcel centre".** Because the 2a market parcel grows away
+  from the road (to clear the road corridor), the pad forms behind the building
+  with a footprint-sized knockout where no building stands — a minor appearance
+  artifact. Flagged for tuning; the success criterion (pad inside the village,
+  no collision, deterministic fit in a guaranteed-clear box) is met.
+
+**Out-of-scope but flagged:**
+- Adjunct retirement → Stage 2.5.
+- Districts / new parcel recipes → Stages 3–4.
+- Complex **appearance** tuning — attaching the market pad flush to the
+  building, farm shape/edge polish, parcel sizing refinement → later.
+
+**Cumulative pending verification:** Detour A, Layout Rework Phases 1/2/2b/3a/3b,
+Step 3 Stage 1, Stage 2a, and this Stage 2b remain pending the single
+comprehensive in-world smoke test Garrett runs after Stages 2a/2b/2.5.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred in sandbox — see Build verification).
+2. Spawn agricultural villages of a few sizes; confirm farm complexes now
+   generate inside/adjacent to the village footprint (not flung 48+ blocks
+   out), sitting in their reserved parcels, and market pads form inside their
+   parcel without colliding with buildings.
+3. Confirm no building overlaps a complex and the village still spawns when a
+   complex can't be reserved (graceful in-place fallback, no perimeter offset).
+4. `/litv layout debug dump` — the reserved parcel and the realized complex
+   region should coincide.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403 on neoform-runtime-2.0.18.pom). Full static
+review: the single `FloodFillRegionClaim.Input` construction (FarmComplexPlanner)
+and the single `FarmComplexPlanner.Input` adapter construction pass the new
+trailing args; `FarmDebugCommand`'s 14-arg call binds to the new 14-field
+backward-compat ctor; `parcel.anchor()/growthDirection()/budget()` resolve on
+`PlacedBuilding.parcel()`; `Polygon.centroid`/`Polygon.contains` exist; zero
+remaining references to `PERIMETER_OFFSET*` / `perimeterAnchor` (the only
+`PERIMETER_OFFSET` left is an unrelated decoration constant in
+`VillagePerimeter`).

@@ -66,7 +66,15 @@ public final class FloodFillRegionClaim {
              *  the cell category, slope, water/forest distances,
              *  computed arable score, and which gate rejected.
              *  Off in production; on for the test_spawn harness. */
-            boolean verbose) {
+            boolean verbose,
+            /** Layout Rework Stage 2b — hard containment boundary. When
+             *  non-null, cells whose centre falls OUTSIDE this polygon
+             *  are rejected during BFS, bounding the claim to the
+             *  reserved {@code Parcel} budget box. (The FeatureMap is
+             *  scanned pre-spawn, so without this the flood-fill could
+             *  spill onto cells now occupied by other buildings.) Null ⇒
+             *  unbounded (only maxRadius + budget cap apply). */
+            Polygon boundary) {
 
         /** Backward-compat for callers that don't yet pass an
          *  exclusion list (test command, future call sites that
@@ -76,7 +84,7 @@ public final class FloodFillRegionClaim {
                      V2FeatureMap fmap, BiomeBlockedPredicate biomeBlocked) {
             this(seed, maxRadiusBlocks, blockBudget, slopeLimit,
                     scoreThreshold, fmap, biomeBlocked,
-                    java.util.List.of(), false);
+                    java.util.List.of(), false, null);
         }
 
         /** Backward-compat for callers that pass exclusion polygons
@@ -87,7 +95,18 @@ public final class FloodFillRegionClaim {
                      java.util.List<Polygon> excludedPolygons) {
             this(seed, maxRadiusBlocks, blockBudget, slopeLimit,
                     scoreThreshold, fmap, biomeBlocked,
-                    excludedPolygons, false);
+                    excludedPolygons, false, null);
+        }
+
+        /** Backward-compat for callers that pass exclusion + verbosity
+         *  but no containment boundary. */
+        public Input(BlockPos seed, int maxRadiusBlocks, int blockBudget,
+                     int slopeLimit, double scoreThreshold,
+                     V2FeatureMap fmap, BiomeBlockedPredicate biomeBlocked,
+                     java.util.List<Polygon> excludedPolygons, boolean verbose) {
+            this(seed, maxRadiusBlocks, blockBudget, slopeLimit,
+                    scoreThreshold, fmap, biomeBlocked,
+                    excludedPolygons, verbose, null);
         }
     }
 
@@ -199,6 +218,14 @@ public final class FloodFillRegionClaim {
                     continue;
                 }
                 if (insideAnyExcluded(worldPos.getX(), worldPos.getZ(), in)) {
+                    continue;
+                }
+                // Stage 2b — hard parcel containment: stay inside the
+                // reserved budget box (the FeatureMap is pre-spawn, so
+                // unbounded claims could spill onto now-built cells).
+                if (in.boundary() != null
+                        && !Polygon.contains(in.boundary(),
+                                worldPos.getX(), worldPos.getZ())) {
                     continue;
                 }
                 Cell c = fmap.cellAt(worldPos.getX(), worldPos.getZ());

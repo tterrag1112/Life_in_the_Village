@@ -105,7 +105,12 @@ public final class FarmComplexPlanner {
              *  {@code "test_complex"} for the debug harness). Null is
              *  treated as {@code "complex"} — fallback used by
              *  backward-compat ctors. */
-            String namePrefix) {
+            String namePrefix,
+            /** Layout Rework Stage 2b — hard containment boundary (the
+             *  reserved {@code Parcel} budget box). When non-null the
+             *  flood-fill claim stays inside it. Null ⇒ unbounded
+             *  (test harness / no-parcel graceful fallback). */
+            tterrag1112.life_in_the_village.Utilities.Geometry.Polygon parcelBoundary) {
 
         /** Backward-compat ctor for callers that don't yet pass an
          *  exclusion list, verbosity flag, or naming prefix. */
@@ -118,7 +123,7 @@ public final class FarmComplexPlanner {
             this(farmhouseOrigin, complexExtendsToward,
                     footprintHalfX, footprintHalfZ,
                     villageId, farmhouseId, culture, buildingType,
-                    fmap, biomeCheck, seed, java.util.List.of(), false, null);
+                    fmap, biomeCheck, seed, java.util.List.of(), false, null, null);
         }
 
         /** Backward-compat ctor for callers passing exclusion but no
@@ -134,7 +139,25 @@ public final class FarmComplexPlanner {
             this(farmhouseOrigin, complexExtendsToward,
                     footprintHalfX, footprintHalfZ,
                     villageId, farmhouseId, culture, buildingType,
-                    fmap, biomeCheck, seed, excludedPolygons, false, null);
+                    fmap, biomeCheck, seed, excludedPolygons, false, null, null);
+        }
+
+        /** Backward-compat ctor for callers passing exclusion + verbosity
+         *  + naming prefix but no parcel boundary (the spawn adapter's
+         *  Stage-2a form, and any no-parcel fallback). */
+        public Input(BlockPos farmhouseOrigin, Direction complexExtendsToward,
+                     int footprintHalfX, int footprintHalfZ,
+                     UUID villageId, UUID farmhouseId, String culture,
+                     BuildingType buildingType, V2FeatureMap fmap,
+                     FloodFillRegionClaim.BiomeBlockedPredicate biomeCheck,
+                     long seed,
+                     java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon>
+                             excludedPolygons,
+                     boolean verbose, String namePrefix) {
+            this(farmhouseOrigin, complexExtendsToward,
+                    footprintHalfX, footprintHalfZ,
+                    villageId, farmhouseId, culture, buildingType,
+                    fmap, biomeCheck, seed, excludedPolygons, verbose, namePrefix, null);
         }
     }
 
@@ -213,7 +236,8 @@ public final class FarmComplexPlanner {
                         in.fmap(),
                         in.biomeCheck(),
                         floodExclusions,
-                        in.verbose()));
+                        in.verbose(),
+                        in.parcelBoundary()));
         if (fill.failure() != null) {
             return switch (fill.failure()) {
                 case INSUFFICIENT_AREA -> PlanResult.fail(
