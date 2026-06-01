@@ -5234,3 +5234,110 @@ apron/footprint exclusion polygons are unaffected; `Polygon.centroid` is a stati
 method already used by the market block and `Polygon` is imported; the parcel
 budget box is a rectangle so its centroid is interior + buildable (the box was
 validated `aabbTerrainOk` at reservation time); no signatures changed.
+
+### 2026-06-01 — Layout Rework Stage 3e (dead-code teardown — partial; candidates 2/3/4 kept-and-flagged with evidence)
+
+Behaviour-neutral deletion sweep. The work was *verifying* each candidate dead
+before deleting. Outcome: **candidate 1 deleted** (the genuinely-dead, self-
+contained cross-street pre-pass cluster); **candidates 2, 3, 4 kept-and-flagged**
+— 3 because it is **not** behaviour-neutral (a real finding), 4 because it is
+still consumed, 2 because removal is broad/sealed-interface and low-value
+(harmless empty-list machinery) better done with a compiler.
+
+**DELETED — candidate 1: the cross-street pre-pass cluster in `PhasedPlanner`
+(−370/+5 lines).** Each verified to have **0 live callers** (its `planCrossStreets`
+call site was removed in the 3c flip; the rest form a closed dead subgraph):
+- `planCrossStreetsProactively` (0 callers), `estimatedFpAlongRoad`,
+  `estimatedFpMaxAlongRoad`, `findBestJunctionInWindow`,
+  `generateCrossStreetAtJunction`, `minUsefulLength`, `junctionTooClose`,
+  `walkPerp`, `endpoint` — each called only from within the cluster.
+- Constants `CROSS_STREET_CAP`, `CROSS_STREET_STEP`, `MIN_SPINE_LENGTH`,
+  `JUNCTION_DEDUP_DISTANCE`, `JUNCTION_SEARCH_WINDOW`, `JUNCTION_SAMPLES` —
+  0 uses after the methods went.
+- `PhaseEvent` factories `capacityPlan`, `proactiveInsertedAt`,
+  `proactiveSkippedAtParam` — 0 callers. Their `Kind` enum values
+  (`CAPACITY_PLAN` / `PROACTIVE_CROSS_STREET` / `PROACTIVE_SKIPPED`) are **kept** —
+  `LayoutCommand` still switches over `PhaseEvent.Kind` — they simply have no
+  producer now.
+- Tree-wide grep confirms zero remaining references to every deleted symbol.
+
+**KEPT-AND-FLAGGED — candidate 3 (`NetworkPlanner` recipe reduction): NOT
+behaviour-neutral — do not reduce.** The prompt's premise ("only nodes +
+primaryBindings are consumed, the recipe edge geometry is dead") is incomplete:
+placement's **GATEWAY nucleus** (`enumerateNuclei`, `PhasedPlanner` GATEWAY case)
+reads `ctx.network().nodes()` for `GATEWAY`-kind nodes, and those GATEWAY nodes
+are emitted **inside the recipes at topology-specific positions** —
+`recipeReihendorf` relabels the spine endpoints, `recipeEinzelhof` places its
+gateway at a projected `target`, neither equal to `ctx.gateways()`. Reducing
+`plan` to a node-only spec with gateways at `ctx.gateways()` would shift the
+GATEWAY-nucleus pull → **change DEFENSIVE / EINZELHOF / REIHENDORF placement**.
+So the recipe bodies are still (indirectly) consumed. A future reduction must
+either reproduce each recipe's exact gateway node positions, or migrate the
+GATEWAY nucleus to read `ctx.gateways()` — that's a behaviour change, not a
+teardown, and belongs with the Stage-4 nucleus/civic work, not here.
+
+**KEPT-AND-FLAGGED — candidate 4 (`SpinePath` / `deriveSpinePath` /
+`Skeleton.spinePath()`/`spineStart()`/`spineEnd()`): still consumed.** Live
+readers confirmed: `PhasedPlanner.designateHubs` (reads
+`state.skeleton.spinePath()` — runs every spawn), `SiteCommand`
+(`spinePath().segments()`), `LayoutCommand` (`skeleton.spinePath()`),
+`LayoutDumpSerializer` (`ctx.spinePath()` + `skeleton.spinePath/Start/End`);
+`SiteContext` stores it and `SiteAnalyzer` derives it. 3d did **not** remove the
+last spine reader (designateHubs still uses it), so per the prompt's "only if
+consumers are gone" gate, `SpinePath` stays.
+
+**KEPT-AND-FLAGGED — candidate 2 (`CrossStreet` type + `crossStreets()` /
+`addCrossStreet` / `removeCrossStreet` + the no-op iterators in `RoadPainter`,
+`LayoutCommand`, `LayoutDumpSerializer`, `PhasedPlanner.trimUnusedSegments` /
+`markJunctions`, and the `RoadSegment` sealed `permits`).** On the routed CLUSTER
+skeleton `crossStreets()` is always empty, so every iterator is a confirmed
+no-op and removal *would* be behaviour-neutral — but it spans 8 files including a
+sealed interface and 3 `instanceof CrossStreet` sites; the payoff is removing
+harmless empty-list machinery, and a single missed edit is a silent compile
+break. Given the sandbox can't compile (403), this broad sealed-interface
+deletion is deferred to a focused follow-up done against a working build.
+(`addCrossStreet` is now orphaned — only the deleted cluster called it — and
+travels with this group.)
+
+**Tie-In Audit:** touched `PhasedPlanner` only (cluster + constants + 3 PhaseEvent
+factories). No signature changes. `reassess`/`trimUnusedSegments`/`markJunctions`/
+`designateHubs` left intact (live; no-op over the empty `crossStreets()`).
+`NetworkPlanner` nodes()+primaryBindings() consumers unaffected (untouched).
+Exhaustive switches: `PhaseEvent.Kind` switch in `LayoutCommand` unaffected (Kind
+values retained).
+
+**Simplification Sweep:** deleted 9 methods + 6 constants + 3 event factories
+(all 0 live callers, verified by grep), −365 net lines in `PhasedPlanner`.
+Flagged orphans deferred: `CrossStreet` machinery (8-file/sealed removal,
+low-value, needs a compiler), `NetworkPlanner` recipe bodies (NOT dead —
+GATEWAY-node consumer), `SpinePath` (live consumers).
+
+**Deviations from prompt:** the prompt expected all four candidates deleted and
+the entry tagged "Stage 3 complete." Candidate 3 turned out **not** behaviour-
+neutral (GATEWAY-node dependency — kept-and-flagged per the prompt's own "keep
+and flag rather than force" instruction); candidate 4's consumers are not gone
+(kept per the prompt's explicit gate); candidate 2 is deferred on
+compile-safety grounds. So this is a **partial** teardown — I am **not** tagging
+Stage 3 complete. Stage 3's functional work is done (the village spawns through
+fix-ups #1–#4); the residual dead/near-dead road-first machinery (candidate 2)
+plus the not-actually-dead recipe/spine machinery (3/4) remain, documented.
+
+**Out-of-scope but flagged (unchanged):** Stage 4 designed civic core / market
+square; the 2-zone residential-band question; CITY 2nd-MARKET drop; stale "no
+admissible candidate position on any network edge" drop wording.
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Tree-wide grep: zero references to each deleted symbol (done — clean).
+3. Spawn a TOWN AGRICULTURAL village and confirm it generates **identically** to
+   before 3e — same buildings, roads, farms, gateways, NPC nav (pure dead-code
+   deletion; the deleted cluster had no live caller, so output must be
+   byte-for-byte unchanged).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: every deleted symbol
+was confirmed 0-live-caller by grep before deletion and 0-reference tree-wide
+after; the deletion is confined to `PhasedPlanner`; `Optional`/`CrossStreet`/
+`RoadSegment` imports remain legitimately used; `PhaseEvent.Kind` values retained
+so `LayoutCommand`'s switch is unaffected; the live reassessment/hub methods are
+intact.
