@@ -4628,3 +4628,128 @@ components are accessed within the enclosing class (legal nestmate access),
 dump hook is wrapped so a router fault can't break dumping. The router runs only
 when a dump is produced (auto-dump is gated behind `AutoDumpConfig.isEnabled()`),
 never on the normal spawn path.
+
+### 2026-06-01 — Layout Rework Stage 3c landed (the flip: place into zones, route, orient)
+
+**What shipped:** `PhasedPlanner` is inverted from roads-first to **roads-last**.
+Buildings are now placed into the 3a zones **position-only**, then the shipped
+`BlockServingRouter` builds the real road network from the as-placed buildings +
+gateways, then a **post-routing orientation pass** attaches each building to its
+road. The village now spawns from the routed network instead of `NetworkPlanner`'s
+anchor recipes. Per the prompt, the **fully-testable result is after Stage 3d**
+(gates/NPC-nav correctness + dead-code teardown), not 3c.
+
+**Migration checklist — every item done:**
+| Item | Status |
+|---|---|
+| `State` Skeleton from `ctx.network()` | **Moved post-placement**: `skeleton` is now a mutable field, null through the loop, assigned `new Skeleton(BlockServingRouter.route(...), axis, anchor, SPINE_WIDTH)` after placement |
+| Frontage band gate | **Deleted**; replaced with the zone-membership gate (`zoneIdAt(i,j)` ∈ building's target-kind zone) |
+| Candidate road source (`primarySegments`/`allSegments`) | **Removed** from `findBestCandidate` |
+| Facing/rotation derivation | Placement sets **provisional anchor-ward rotation** (`chooseFacing(pos, anchor)`); facing/frontage **moved to the orientation pass** |
+| `scorePosition` road terms | **Dropped**: `NEAR_MAIN_ROAD` adjacency skipped + road-bonus removed from `computeSpatialFit`; scores on nucleus/zone + terrain + penalty + binding |
+| `planCrossStreetsProactively` | **Call removed** (method left dead for 3d teardown — see Deviations) |
+| `intersectsAnyCorridor` in candidate loop | **Removed** (no roads at placement) |
+| Build the routed network | **Added** after the loop |
+| Orientation pass | **Added** (`orientToRoads`): `nearestRoadOf(centre, routedSkeleton.allSegments())` → `computeFrontageStrip` → `withOrientation`; re-keys `nucleusContexts` onto the new instances |
+| `connectivityAudit` | **Repurposed post-routing**: null `facingRoad` is no longer treated as isolated; runs against the routed skeleton |
+| `trimUnusedSegments` | Kept (router emits no cross-streets → safe no-op) |
+| `frontageOwners` build | **Runs after orientation**; null-guarded |
+| `designateHubs` | Runs against the routed skeleton |
+
+**Decisions applied (from the prompt's "made" list):**
+- **Rotation is fixed at placement, anchor-ward; orientation only sets
+  `frontage`/`facingRoad`** — `orientToRoads` never changes `rotation` (would move
+  the footprint AABB and risk overlaps). Provisional rotation faces the **anchor**
+  (not the zone centroid) for consistency with `BlockServingRouter.frontCell`,
+  which steps toward the anchor — keeping the routed road on the building front.
+- **`NetworkPlanner` kept running** — `ctx.network()` still supplies
+  `primaryBindings` + the batch classification (`getBatch`,
+  `findPrimaryBindingPosition`, binding affinity in `scorePosition`). Only its
+  road *geometry* is superseded.
+- **`PlacedBuilding.frontage`/`facingRoad` are now nullable + `withOrientation`
+  wither**; placement constructs both null; orientation replaces each entry and
+  re-keys `nucleusContexts`.
+
+**Zone-cell enumeration:** used the grid-scan-filter form (`zoneIdAt(i,j)` in the
+candidate loop) the prompt allowed instead of adding a `cellsOf(zoneId)` API — no
+new unused surface. The building's target zone kind = its nucleus-affinity
+`preferred()` (with single fallback), resolved by `targetZoneKind`.
+
+**Deviations from prompt:**
+- **`planCrossStreetsProactively` + the cross-street/frontage helpers were
+  neutralised (call removed; now dead) rather than physically deleted.** The
+  prompt's checklist says "Delete," but it also scopes "deleting … dead frontage
+  helpers → Stage 3d." Physically excising a 130-line method + its ~10 orphaned
+  helpers is the higher-risk edit; removing the *call* achieves the behavioural
+  flip, and the dead subgraph compiles (it references only still-present symbols).
+  Deferring the physical deletion to 3d's teardown keeps this diff focused. Newly
+  orphaned (flagged for 3d): `planCrossStreetsProactively` + helpers,
+  `intersectsAnyCorridor`, `computeRoadBonus` (already removed), and the now-unused
+  constants `FRONTAGE_BAND_WIDTH`/`_4B`, `ROAD_BONUS_WEIGHT`/`_RADIUS`.
+- **The orientation pass does not call `chooseFacing`** (the checklist's
+  orientation row mentions it). Decision 1 ("must not change rotation") is
+  authoritative and supersedes it — `orientToRoads` derives the frontage strip
+  from the existing rotation's `cardinalFrontDir` and only fills frontage +
+  facingRoad.
+- **Zone gate has two safety valves** (to avoid wholesale drops): bound types
+  (primary bindings) bypass the zone gate (binding cutoff dictates location); and
+  when no zone of the building's preferred/fallback kind exists, the gate falls
+  back to "any in-village zone."
+- **`reserveComplexParcel` decoupled from frontage**: grows the parcel away from
+  the **anchor** (no frontage exists at placement) and drops its corridor check
+  (no roads at placement).
+
+**Tie-In Audit:**
+- *Touched:* `PhasedPlanner.run` reorder; `findBestCandidate` (zone-based);
+  `scorePosition`/`computeSpatialFit` (road terms dropped); `reserveComplexParcel`
+  (anchor-grown, no corridor); `connectivityAudit` (null-safe); new `orientToRoads`
+  + `targetZoneKind`; `State.skeleton` mutable; `PlacedBuilding` nullable + wither.
+- *Downstream readers made null-safe:* `LayoutCommand` (frontage guard +
+  **`segLabel(null)` NPE fixed** — it called `null.getClass()`), `PlaceCommand`
+  (frontage guard; `facingRoad` via null-safe `instanceof`), `LayoutDumpSerializer`
+  (already guarded — confirmed), `V2VillageSpawnerAdapter:457` (relies on the
+  orientation guarantee — frontage is always non-null on placed buildings).
+- *Sibling:* placement no longer reads a pre-built network for frontage; every
+  live placement-time `state.skeleton` read was removed (verified by grep — the
+  remaining `skeleton` reads are either post-routing or in the dead cross-street
+  subgraph). `NetworkPlanner` road network still drives nothing visible until 3c
+  installs the router — wait: 3c **does** install it; `RoadNetwork` now wraps the
+  routed skeleton.
+- *Exhaustive switches:* none added.
+- *Preflight:* planning-layer, not per-tick; `PlacedBuilding` is transient (no
+  codec) so nullable fields are free.
+
+**Out-of-scope (Stage 3d):** `RealizedLayout` gate derivation + `GatewayPopulator`;
+`InternalRoadCommitter.commitFromV2` (NPC nav graph); physically deleting
+`NetworkPlanner`'s road recipes + the dead PhasedPlanner cross-street/frontage
+helpers. After 3c these may produce **degenerate (but non-crashing)** gates/nav
+from the router's derived spine — 3d makes them correct. This is why the
+fully-testable point is after 3d.
+
+**Cumulative pending verification:** Detour A, Layout Rework Phases 1/2/2b/3a/3b/3c,
+Step 3 Stage 1, Stages 2a/2b/2.5 — all pending the in-world smoke test after 3d.
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done (below).
+2. *(After 3d — the real in-world test)* Spawn agricultural villages on varied
+   terrain: buildings cluster in center-out zones (civic core → residential →
+   farm fringe), **not** strung along roads; the routed roads reach every building
+   and bend around terrain; no wholesale drops; the village spawns without NPE.
+3. Confirm the candidate→real flip in the dump: `roads`/`network` now reflect the
+   router's `SmoothedPath` edges; buildings have `frontage` set, `facingRoad`
+   possibly null on the fringe.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted, targeting the prompt's
+four silent-break traps: (1) frontage gate + road source **removed**, zone gate +
+fallbacks in place → buildings won't all drop; (2) every `frontage()`/`facingRoad()`
+reader is null-safe — including the `LayoutCommand.segLabel(null)` NPE that the old
+`getClass()` path would have hit; (3) the `Skeleton` is built from the router
+**after** placement (`State.skeleton` starts null; assigned in `run` post-loop) —
+verified no live placement-time skeleton read remains; (4) `orientToRoads`
+**re-keys** `nucleusContexts` onto the withered instances. Also verified: removed
+methods (`growthDirectionAwayFromRoad`, `computeRoadBonus`) have zero callers; the
+dead cross-street subgraph references only still-present symbols; `run()` ordering
+is loop → route → skeleton → orient → reassess → designateHubs → emit; the
+`Best`/`Reservation`/`PlacedBuilding` constructions match their (now-nullable)
+shapes.

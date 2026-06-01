@@ -126,6 +126,7 @@ public final class PlaceCommand {
     }
 
     private static String facingDir(PlacedBuilding pb) {
+        if (pb.frontage() == null) return "?";
         var d = pb.frontage().frontDirection();
         if (Math.abs(d.x) > Math.abs(d.z)) return d.x > 0 ? "E" : "W";
         return d.z > 0 ? "S" : "N";

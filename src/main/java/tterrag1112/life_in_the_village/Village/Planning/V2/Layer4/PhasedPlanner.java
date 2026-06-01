@@ -14,7 +14,11 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.BlockCategory;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Cell;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Anchor;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Gateways;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Zone;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ZonePartition;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkNode;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NodeKind;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusAffinity;
@@ -190,12 +194,13 @@ public final class PhasedPlanner {
                     unavailable.stream().map(u -> u.type().name()).toList());
         }
 
-        // Phase 4a — proactive cross-street planning.
-        // Runs BEFORE Phase 3 so foundation buildings (TOWN_HALL etc.)
-        // can avoid junctions during candidate scoring. Spine_consumed
-        // is estimated from foundation types' frontage rather than read
-        // from state.placed (Phase 3 hasn't run yet).
-        planCrossStreetsProactively(state, sortedSelection, foundationTypes);
+        // Layout Rework Stage 3c — proactive cross-street planning is
+        // GONE. The block-serving router builds the whole road network
+        // after placement, so there are no roads (and no cross-streets
+        // to pre-plan) during the placement loop. planCrossStreetsProactively
+        // is now dead (left for Stage 3d teardown alongside NetworkPlanner's
+        // road recipes); the placement loop scores cells by zone, not road
+        // frontage.
 
         // Track E1 prompt-4 — seven-batch placement order. The seven
         // batches run in sequence so each subsequent pass can read the
@@ -231,6 +236,24 @@ public final class PhasedPlanner {
                 perBatchCounts[4], perBatchCounts[5], perBatchCounts[6],
                 state.dropped.size());
 
+        // Layout Rework Stage 3c — roads-last. Now that the buildings
+        // are placed (position-only, into their zones), route the real
+        // road network to serve them + the gateways, and wrap it as the
+        // skeleton. NetworkPlanner's network stays on the SiteContext for
+        // bindings/batches; only its road GEOMETRY is superseded here.
+        NetworkSpec routed = BlockServingRouter.route(
+                state.placed, ctx.gateways(), fmap, ctx.anchor());
+        state.skeleton = new Skeleton(routed, ctx.primaryAxis(),
+                ctx.anchor(), SPINE_WIDTH);
+        LOGGER.info("routed network: {} nodes, {} edges → {} road segments",
+                routed.nodes().size(), routed.edges().size(),
+                state.skeleton.allSegments().size());
+
+        // Orientation pass — attach each placed building to its nearest
+        // routed road (fills frontage + facingRoad). Rotation is NOT
+        // changed (that would move the footprint AABB).
+        orientToRoads(state);
+
         // Phase 5.
         reassess(state);
 
@@ -246,7 +269,12 @@ public final class PhasedPlanner {
 
         Map<BlockPos, BuildingType> frontageOwners = new HashMap<>();
         for (PlacedBuilding pb : state.placed) {
-            frontageOwners.put(pb.frontage().buildingFront(), pb.type());
+            // Stage 3c — frontage is set by the orientation pass above;
+            // null-guard defensively in case a building was left
+            // unoriented (no routed road at all on a degenerate site).
+            if (pb.frontage() != null) {
+                frontageOwners.put(pb.frontage().buildingFront(), pb.type());
+            }
         }
         RoadNetwork network = new RoadNetwork(state.skeleton, Map.copyOf(frontageOwners));
 
@@ -699,49 +727,54 @@ public final class PhasedPlanner {
     private static Best findBestCandidate(State state, BuildingType type,
                                           PlacementProfile profile, boolean foundation,
                                           BlockPos boundPos) {
-        List<RoadSegment> roads = foundation
-                ? new java.util.ArrayList<>(state.skeleton.primarySegments())
-                : state.skeleton.allSegments();
-        // Track E1 prompt 5 — squared radius for the strict bound
-        // cutoff; computed once outside the inner loop.
+        // Layout Rework Stage 3c (the roads-last flip): place into the
+        // building's target ZONE, position-only. No roads exist yet, so
+        // there is no frontage gate and no nearest-road geometry — the
+        // candidate cell IS the building centre. Rotation is provisional,
+        // fixed anchor-ward (the router brings the road to the anchor-
+        // facing side; the post-routing orientation pass fills frontage /
+        // facingRoad). The returned Best has null frontage / facingRoad.
         final double bindRadiusSq = BINDING_AFFINITY_RADIUS * BINDING_AFFINITY_RADIUS;
-        // Track E1 — debug-only per-call rejection histogram. Gated by
-        // {@code -Dharness.debug.candidates=true}; counters are always
-        // incremented (int adds are free) but only logged when the
-        // property is set. Used to attribute NO_VIABLE_CANDIDATE drops
-        // to the specific filter that rejected them. Behavior-neutral.
         final boolean debugCands = DEBUG_CANDIDATES;
-        int cellsScanned = 0, rejReservation = 0, rejCorridor = 0,
-                rejScore = 0, accepted = 0;
+        int cellsScanned = 0, rejZone = 0, rejReservation = 0, rejScore = 0, accepted = 0;
+
+        ZonePartition zp = state.ctx.zonePartition();
+        // The zone role this building wants (its nucleus-affinity kind);
+        // null when un-affined, bound, or when no zone of that kind
+        // exists — in which case the gate is "any zoned (in-village) cell".
+        NucleusKind targetKind = (boundPos == null) ? targetZoneKind(state, type, zp) : null;
+
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
             for (int j = 0; j < state.fmap.gridSize(); j++) {
                 cellsScanned++;
                 Cell cell = state.fmap.cell(i, j);
-                BlockCategory cat = cell.category();
-                if (cat != BlockCategory.OPEN && cat != BlockCategory.SHORE) continue;
-                if (cell.localSlope() > MAX_SLOPE) continue;
+                if (!ZonePartition.isBuildable(cell)) continue;
 
                 BlockPos pos = state.fmap.cellWorldPos(i, j);
 
-                // Track E1 prompt 5 — strict bound-position cutoff.
-                // When {@code boundPos} is non-null, the building
-                // has a primary binding and pos must lie within the
-                // binding radius. The caller wraps this with a
-                // retry-unrestricted on failure (placeOne), so this
-                // is purely the strict pass.
+                // Primary-binding strict cutoff (unchanged): bound types
+                // restrict to within the binding radius; the binding —
+                // not the zone — dictates location, so the zone gate is
+                // skipped when boundPos != null.
                 if (boundPos != null) {
                     double bdx = pos.getX() - boundPos.getX();
                     double bdz = pos.getZ() - boundPos.getZ();
                     if (bdx * bdx + bdz * bdz > bindRadiusSq) continue;
+                } else if (zp != null) {
+                    // Zone gate — the heart of the flip. The cell must
+                    // lie in a village zone, and (when the building has a
+                    // resolvable target kind) a zone of that kind.
+                    int zid = zp.zoneIdAt(i, j);
+                    if (zid < 0) { rejZone++; continue; }
+                    if (targetKind != null
+                            && zp.zones().get(zid).kind() != targetKind) {
+                        rejZone++;
+                        continue;
+                    }
                 }
 
-                // Variant + footprint + rotation against the nearest road.
-                // Track E1 — variant-id seam. Reads availability from
-                // State so the harness can substitute a synthetic
-                // provider; the live `run(... ServerLevel ...)` overload
-                // defaults this to `StructureAvailabilityRegistry.INSTANCE`
-                // so the live spawn path stays byte-identical.
+                // Variant + footprint (unchanged resolution).
                 String variantId = state.variantResolver.pickVariantIdForV2(
                         type, pos, state.ctx.anchor(), state.villageRadius,
                         state.culture, Style.RURAL, state.rng,
@@ -750,137 +783,25 @@ public final class PhasedPlanner {
                         Style.RURAL, type, variantId, LEVEL, Rotation.NONE);
                 Footprint fp = new Footprint(info.width(), info.length());
 
-                NearestRoad nr = nearestRoadOf(pos, roads);
-                if (nr == null) continue;
-                // Cells exactly on the road centerline can't determine
-                // a side reliably; skip.
-                if (nr.distance < 1) continue;
+                // Provisional rotation: face the anchor (anchor-ward).
+                // Chosen over the zone centroid so it aligns with
+                // BlockServingRouter.frontCell, which steps toward the
+                // anchor — keeping the routed road on the building front.
+                Rotation rotation = chooseFacing(pos, state.ctx.anchor());
 
-                // Track E1 prompt 3 fix-up 3 — frontage-zone band.
-                // pos is now treated as the BUILDING'S FRONT-EDGE
-                // CELL, not a generic sample probe. Restricting pos
-                // to the canonical frontage strip (just outside the
-                // road) means {@code pos} and the derived building
-                // centre are within one footprint-depth/2 of each
-                // other, so the centre-side admissibility re-check
-                // becomes one terrain roll instead of two.
-                //
-                // Pre-fix-up the soft cap was {@code villageRadius
-                // * 2.0} — cells hundreds of blocks from any road
-                // were eligible, and their derived centre was
-                // snapped back to the canonical setback near the
-                // road. On rough terrain (Ring crossing varied
-                // relief) the centre cell was different terrain
-                // from the pos cell; demanding both to pass
-                // {@code slope ≤ MAX_SLOPE = 3} doubled the
-                // rejection probability and produced the wholesale
-                // Phase-4 NO_VIABLE_CANDIDATE failures the sacred
-                // TOWN dump showed.
-                int idealFrontage = nr.segment.width() / 2 + 1;
-                // Track E1 Phase A — phase-4b (foundation=false) widens
-                // the admissible band so the ~620-cell pool isn't
-                // saturated by the foundation pass. Phase-3 keeps the
-                // conservative 2-block band; phase-4b runs after
-                // reservation pressure has built and needs a deeper
-                // band to keep candidate generation above zero.
-                int bandWidth = foundation
-                        ? FRONTAGE_BAND_WIDTH
-                        : FRONTAGE_BAND_WIDTH_4B;
-                int maxFrontage = idealFrontage + bandWidth;
-                if (nr.distance < idealFrontage) continue;
-                if (nr.distance > maxFrontage) continue;
-
-                Rotation rotation = chooseFacing(pos, nr.point);
-                Vec3 frontDir = cardinalFrontDir(rotation);
-
-                // Local edge perpendicular. The cardinal-snapped
-                // {@code frontDir} (above, driving NBT rotation)
-                // isn't a valid basis for geometric offset on
-                // diagonal spines — it can decompose mostly
-                // along-spine. Use the segment's TRUE perpendicular
-                // so the away-from-road direction is correct
-                // regardless of chord angle.
-                double sdx = nr.segment.end().getX() - nr.segment.start().getX();
-                double sdz = nr.segment.end().getZ() - nr.segment.start().getZ();
-                double slen = Math.sqrt(sdx * sdx + sdz * sdz);
-                if (slen < 1e-9) continue;  // degenerate segment
-                double pX = -sdz / slen;
-                double pZ = sdx / slen;
-
-                // Side: which sign of perpendicular is the cell on?
-                double cellPerp = (pos.getX() - nr.point.getX()) * pX
-                        + (pos.getZ() - nr.point.getZ()) * pZ;
-                int side = cellPerp >= 0 ? +1 : -1;
-
-                // Track E1 prompt 3 fix-up 3 — centre is now a
-                // small setback from {@code pos} along the local
-                // edge normal, not anchored to {@code nr.point}.
-                // {@code pos} is the building's front-edge cell;
-                // centre sits {@code fp.length / 2} blocks deeper
-                // into the lot along the same perpendicular line.
-                //
-                // Pre-fix-up: {@code centre = nr.point + side *
-                // requiredOffset * perp}, which placed the centre
-                // at the canonical road setback regardless of where
-                // {@code pos} was sampled. For sample cells far
-                // from the road, {@code |pos - centre|} reached 25+
-                // blocks (the "diagonal spine 25-block gap" the
-                // user spotted). The frontage-zone constraint above
-                // already bounds {@code pos} to road-adjacent
-                // cells, so the centre lands one footprint-depth
-                // back from the road regardless — same canonical
-                // setback semantics, just expressed honestly.
-                double setback = fp.length() / 2.0;
-                int centreX = pos.getX()
-                        + (int) Math.round(pX * side * setback);
-                int centreZ = pos.getZ()
-                        + (int) Math.round(pZ * side * setback);
-
-                // Verify the computed centre is in scan bounds and
-                // on admissible terrain. Post-fix-up the centre is
-                // one footprint-depth/2 from pos along the local
-                // perpendicular — same cell or one of its immediate
-                // neighbours, not the multi-block jump the
-                // pre-fix-up code could produce on diagonal spines.
-                // The check stays in place to catch the rare cell
-                // where the half-setback lands in a different
-                // terrain class (water edge, forest seam).
-                if (!state.fmap.inBounds(centreX, centreZ)) continue;
-                Cell centreCell = state.fmap.cellAt(centreX, centreZ);
-                BlockCategory centreCat = centreCell.category();
-                if (centreCat != BlockCategory.OPEN
-                        && centreCat != BlockCategory.SHORE) continue;
-                if (centreCell.localSlope() > MAX_SLOPE) continue;
-
-                BlockPos centre = new BlockPos(centreX,
-                        centreCell.elevationY(), centreZ);
-
+                // The candidate cell IS the building centre (no road
+                // setback). Snap Y to the cell surface.
+                BlockPos centre = new BlockPos(pos.getX(), cell.elevationY(), pos.getZ());
                 Aabb fpAabb = footprintAabb(centre, fp, rotation);
-                FrontageStrip strip = computeFrontageStrip(centre, fp, rotation,
-                        frontDir, nr.segment.width());
-                Aabb stripAabb = frontageAabb(strip);
 
-                if (overlapsAnyReservation(fpAabb, stripAabb, state.reservations)) {
+                // Overlap against prior reservations. No frontage strip
+                // exists yet, so the footprint AABB fills both slots.
+                if (overlapsAnyReservation(fpAabb, fpAabb, state.reservations)) {
                     rejReservation++;
                     continue;
                 }
+                // No corridor check — there are no roads at placement.
 
-                // Reject candidates whose AABB intersects ANY road
-                // corridor in the skeleton (not just the segment the
-                // building is facing). Prevents foundation buildings
-                // at the anchor when the anchor is also a junction
-                // — TOWN_HALL gets pushed slightly along the spine
-                // away from the cross-street. Uses the same shared
-                // RoadCorridors utility as OverlapAuditor.
-                if (intersectsAnyCorridor(fpAabb, state.skeleton.allSegments())) {
-                    rejCorridor++;
-                    continue;
-                }
-
-                // Score uses the cell's position (the original sampling
-                // point). Cell and computed centre are within the same
-                // scoring band so the difference is negligible at V1
-                // thresholds.
                 ScoreBreakdown score = scorePosition(pos, type, profile, state);
                 if (score.total() <= 0) {
                     rejScore++;
@@ -889,20 +810,43 @@ public final class PhasedPlanner {
 
                 accepted++;
                 if (best == null || score.total() > best.score.total()) {
-                    best = new Best(centre, fp, rotation, variantId, strip,
-                            nr.segment, fpAabb, stripAabb, score);
+                    best = new Best(centre, fp, rotation, variantId,
+                            /*frontage*/ null, /*facingRoad*/ null,
+                            fpAabb, /*frontageAabb*/ fpAabb, score);
                 }
             }
         }
         if (debugCands) {
             LOGGER.info("candidates type={} foundation={} cellsScanned={} "
-                    + "rejected[reservation={} corridor={} score={}] "
+                    + "rejected[zone={} reservation={} score={}] "
                     + "accepted={} reservations={}",
                     type, foundation, cellsScanned,
-                    rejReservation, rejCorridor, rejScore,
+                    rejZone, rejReservation, rejScore,
                     accepted, state.reservations.size());
         }
         return best;
+    }
+
+    /** Layout Rework Stage 3c — the zone role a building should be placed
+     *  into: its nucleus-affinity preferred kind (CIVIC for TOWN_HALL,
+     *  RURAL for HOUSE in AGRICULTURAL, …). Returns null when the building
+     *  has no affinity, or when the partition has no zone of the preferred
+     *  (or fallback) kind — in which case the caller gates on "any
+     *  in-village zone" instead, so the building still places rather than
+     *  being dropped wholesale. */
+    private static NucleusKind targetZoneKind(State state, BuildingType type,
+                                              ZonePartition zp) {
+        NucleusRules rules = nucleusRulesOf(state);
+        if (rules == null) return null;
+        NucleusAffinity aff = rules.affinities().get(type);
+        if (aff == null) return null;
+        if (zp == null) return aff.preferred();
+        for (Zone z : zp.zones()) if (z.kind() == aff.preferred()) return aff.preferred();
+        if (aff.fallback() != null) {
+            NucleusKind fk = aff.fallback().preferred();
+            for (Zone z : zp.zones()) if (z.kind() == fk) return fk;
+        }
+        return null;
     }
 
     // =========================================================================
@@ -1105,6 +1049,50 @@ public final class PhasedPlanner {
         markJunctions(state);
     }
 
+    /**
+     * Layout Rework Stage 3c — post-routing orientation pass. For each
+     * placed building, attach it to the nearest routed road by filling
+     * {@code frontage} + {@code facingRoad}; the placement {@code rotation}
+     * is preserved (changing it would move the footprint AABB and risk
+     * overlaps — re-rotating to the true nearest road, with footprint
+     * re-validation, is a deferred polish). The frontage strip is built
+     * from the existing rotation's cardinal front direction (the router
+     * brought the road to that anchor-facing side). Buildings with no
+     * routed road nearby still get a non-null frontage (anchor-ward) so
+     * downstream frontage readers are null-safe; their {@code facingRoad}
+     * stays null. The wither mints new {@link PlacedBuilding} instances,
+     * so {@code nucleusContexts} is re-keyed onto the new instances.
+     */
+    private static void orientToRoads(State state) {
+        List<RoadSegment> segs = state.skeleton != null
+                ? state.skeleton.allSegments() : List.of();
+        List<PlacedBuilding> reoriented = new ArrayList<>(state.placed.size());
+        java.util.Map<PlacedBuilding, NucleusContext> rekeyed =
+                new java.util.LinkedHashMap<>();
+        for (PlacedBuilding pb : state.placed) {
+            NucleusContext nc = state.nucleusContexts.get(pb);
+            Vec3 frontDir = cardinalFrontDir(pb.rotation());
+            RoadSegment facing = null;
+            int roadWidth = SPINE_WIDTH;
+            if (!segs.isEmpty()) {
+                NearestRoad nr = nearestRoadOf(pb.centre(), segs);
+                if (nr != null) {
+                    facing = nr.segment;
+                    roadWidth = nr.segment.width();
+                }
+            }
+            FrontageStrip strip = computeFrontageStrip(
+                    pb.centre(), pb.footprint(), pb.rotation(), frontDir, roadWidth);
+            PlacedBuilding oriented = pb.withOrientation(strip, facing);
+            reoriented.add(oriented);
+            if (nc != null) rekeyed.put(oriented, nc);
+        }
+        state.placed.clear();
+        state.placed.addAll(reoriented);
+        state.nucleusContexts.clear();
+        state.nucleusContexts.putAll(rekeyed);
+    }
+
     /** Drop placed buildings whose frontage strip doesn't overlap any
      *  road segment in the connected component of the anchor. Try a
      *  short straight-connector rescue first. */
@@ -1119,7 +1107,13 @@ public final class PhasedPlanner {
         Set<RoadSegment> connectedSet = new HashSet<>(segments);
         List<PlacedBuilding> isolated = new ArrayList<>();
         for (PlacedBuilding pb : state.placed) {
-            if (!connectedSet.contains(pb.facingRoad())) isolated.add(pb);
+            // Stage 3c — a null facingRoad means the orientation pass
+            // found no routed road near this building (degenerate site);
+            // that is NOT an isolation failure, so don't drop it. Only a
+            // non-null facingRoad that isn't in the skeleton is isolated.
+            if (pb.facingRoad() != null && !connectedSet.contains(pb.facingRoad())) {
+                isolated.add(pb);
+            }
         }
         if (isolated.isEmpty()) return;
         for (PlacedBuilding pb : isolated) {
@@ -1205,8 +1199,13 @@ public final class PhasedPlanner {
         }
         double adjacency = 0;
         for (Map.Entry<AdjacencyFactor, Double> e : profile.adjacencyWeights().entrySet()) {
+            // Stage 3c — NEAR_MAIN_ROAD is dropped: roads don't exist
+            // during placement (roads-last), so a road-proximity term
+            // would NPE on the null skeleton and is meaningless here.
+            // The remaining adjacency factors are anchor/same-type based.
+            if (e.getKey() == AdjacencyFactor.NEAR_MAIN_ROAD) continue;
             adjacency += e.getValue() * Scoring.adjacencyFactor(e.getKey(), pos, type,
-                    state.ctx, state.placed, state.skeleton.primarySegments(),
+                    state.ctx, state.placed, java.util.List.of(),
                     state.villageRadius);
         }
         // Track E1 prompt-4 — replace the old radial-centrality with
@@ -1341,11 +1340,13 @@ public final class PhasedPlanner {
             nucleus = Math.max(0, 1 - Math.abs(profile.centrality() - radial)) * 0.3;
         }
 
-        double roadBonus = computeRoadBonus(pos, state);
+        // Stage 3c — the road-frontage bonus is dropped: no roads exist
+        // during placement. Spatial fit is now nucleus/zone + terrain
+        // (added by the caller) − proximity penalty (+ binding affinity,
+        // also caller-side).
         double penalty = computePenalty(pos, type, state);
 
         double score = nucleus * NUCLEUS_SCORE_WEIGHT
-                + roadBonus * ROAD_BONUS_WEIGHT
                 - penalty * PENALTY_WEIGHT;
         return new SpatialFit(score, context);
     }
@@ -1462,14 +1463,8 @@ public final class PhasedPlanner {
         }
     }
 
-    /** Tight road-frontage bonus: linear ramp from 1 (at d=0) to 0
-     *  (at d=ROAD_BONUS_RADIUS). Bigger than the strict frontage
-     *  cutoff so cells one block off-road still register. */
-    private static double computeRoadBonus(BlockPos pos, State state) {
-        NearestRoad nr = nearestRoadOf(pos, state.skeleton.allSegments());
-        if (nr == null) return 0;
-        return Math.max(0, 1 - nr.distance / ROAD_BONUS_RADIUS);
-    }
+    // Stage 3c — computeRoadBonus removed (roads-last; no road at
+    // placement to score frontage against).
 
     /** Sum of penalty contributions from already-placed buildings
      *  that fall under a {@link ProximityPenalty} rule with {@code type}.
@@ -1739,7 +1734,11 @@ public final class PhasedPlanner {
         else if (type == BuildingType.MARKET) kind = Parcel.Kind.MARKET;
         else return null;
 
-        Direction grow = growthDirectionAwayFromRoad(best.frontage);
+        // Stage 3c — no frontage exists at placement (roads-last), so
+        // grow the parcel away from the ANCHOR (the building's front is
+        // rotated anchor-ward, so "away from anchor" is the building's
+        // back = the interior the complex fills).
+        Direction grow = growthDirectionAwayFromAnchor(best.pos, state.ctx.anchor());
         int[] ext = complexBudgetHalfExtents(kind, best.footprintAabb, grow,
                 state.culture, type);
         int fullPerp = ext[0], fullDepth = ext[1], minPerp = ext[2], minDepth = ext[3];
@@ -1753,7 +1752,10 @@ public final class PhasedPlanner {
             int hd = (int) Math.round(minDepth + (fullDepth - minDepth) * t);
             Aabb box = budgetBox(best.pos, best.footprintAabb, grow, hp, hd);
             if (aabbOverlapsAnyReservation(box, state.reservations)) continue;
-            if (intersectsAnyCorridor(box, state.skeleton.allSegments())) continue;
+            // Stage 3c — no corridor check: roads don't exist at
+            // placement (roads-last). The router routes around reserved
+            // parcels' buildings; the building footprint reservation
+            // already keeps the parcel off other buildings.
             if (!aabbTerrainOk(state.fmap, box, COMPLEX_SLOPE_TOLERANCE)) continue;
             Polygon budget = aabbToPolygon(box, best.pos.getY());
             Polygon bounds = aabbToPolygon(best.footprintAabb, best.pos.getY());
@@ -1763,13 +1765,19 @@ public final class PhasedPlanner {
         return null;
     }
 
-    /** Cardinal direction the complex grows — opposite the building's
-     *  road frontage (into the interior, away from the street). */
-    private static Direction growthDirectionAwayFromRoad(FrontageStrip strip) {
-        Vec3 f = strip.frontDirection();
-        Direction toward = Direction.getNearest(
-                (int) Math.signum(f.x), 0, (int) Math.signum(f.z), Direction.SOUTH);
-        return toward.getOpposite();
+    /** Layout Rework Stage 3c — cardinal direction the complex grows.
+     *  No frontage exists at placement (roads-last), so grow away from
+     *  the anchor: the building is rotated anchor-ward, so the anchor-
+     *  facing side is its front and the opposite side (away from anchor)
+     *  is the interior the complex fills. Defaults to SOUTH when the
+     *  building sits on the anchor. */
+    private static Direction growthDirectionAwayFromAnchor(BlockPos centre,
+                                                           BlockPos anchor) {
+        int dx = centre.getX() - anchor.getX();   // points away from anchor
+        int dz = centre.getZ() - anchor.getZ();
+        if (dx == 0 && dz == 0) return Direction.SOUTH;
+        return Direction.getNearest(
+                (int) Math.signum(dx), 0, (int) Math.signum(dz), Direction.SOUTH);
     }
 
     /** Full + minimum parcel half-extents {@code [fullPerp, fullDepth,
@@ -1918,7 +1926,12 @@ public final class PhasedPlanner {
         final tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability availability;
         final int villageRadius;
         final String culture;
-        final Skeleton skeleton;
+        /** Layout Rework Stage 3c — the skeleton is no longer built up
+         *  front from {@code ctx.network()}. It is built AFTER placement
+         *  from {@link BlockServingRouter}'s routed network (roads-last),
+         *  so it is null throughout the placement loop and assigned by
+         *  {@code run} before the orientation/reassess passes. */
+        Skeleton skeleton;
         final java.util.Random rng;
         final VariantResolver variantResolver = new VariantResolver();
         final List<PlacedBuilding> placed = new ArrayList<>();
@@ -1956,15 +1969,9 @@ public final class PhasedPlanner {
             this.availability = availability;
             this.villageRadius = villageRadiusFor(ctx.tier());
             this.culture = ctx.culture().id();
-            // Track E1 prompt 3 fix-up — Skeleton is now built from
-            // the network directly. The pre-fix-up path
-            // (network → deriveSpinePath → Skeleton) made it look
-            // like the SpinePath was the planner's source of truth;
-            // really it was a thin sequential wrapper over the same
-            // edges. Constructing from ctx.network() removes the
-            // intermediate and makes the data flow honest.
-            this.skeleton = new Skeleton(ctx.network(), ctx.primaryAxis(),
-                    ctx.anchor(), SPINE_WIDTH);
+            // Layout Rework Stage 3c — skeleton is built post-placement
+            // from the routed network (see run); left null here.
+            this.skeleton = null;
             // Salted with PHASED_PLANNER_SALT so cross-street decisions
             // don't share Random state with SiteAnalyzer's inclination
             // sampler (which uses a different salt off the same seed).

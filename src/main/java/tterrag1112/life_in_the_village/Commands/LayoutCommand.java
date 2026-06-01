@@ -172,7 +172,9 @@ public final class LayoutCommand {
             send(src, "  " + pb.type().name() + " at " + posStr(pb.centre())
                     + " variant=" + pb.variantId()
                     + " fp=" + pb.footprint().width() + "x" + pb.footprint().length()
-                    + " frontage=" + pb.frontage().length() + "x" + pb.frontage().width()
+                    + " frontage=" + (pb.frontage() != null
+                            ? pb.frontage().length() + "x" + pb.frontage().width()
+                            : "none")
                     + " facing " + segLabel(pb.facingRoad()));
         }
 
@@ -263,6 +265,7 @@ public final class LayoutCommand {
     }
 
     private static String segLabel(Object segment) {
+        if (segment == null) return "none";   // Stage 3c — facingRoad is nullable
         return segment instanceof SpineSegment ? "spine"
                 : segment instanceof CrossStreet ? "cross-street"
                 : segment.getClass().getSimpleName();
