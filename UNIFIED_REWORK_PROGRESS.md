@@ -4961,3 +4961,95 @@ the `footprint` mask is threaded through all four router helpers (every
 disconnection), added to actual cost only (heuristic stays admissible), and can't
 overflow int (≤ ~96·2000); the anchor-terminal drop is null-guarded; `Rotation`
 imported; no public signature changed so all external consumers are unaffected.
+
+### 2026-06-01 — Layout Rework Stage 3 fix-up #2 (OverlapAuditor for roads-last)
+
+**The last blocker.** With fix-up #1 landed (dump works; the router avoids
+footprint interiors), the spawn still aborted at `V2: overlap audit fatal` — but
+the now-working auto-dump showed it is **not a real defect**.
+
+**Diagnosis (from the auto-dump):** `realization.overlapConflicts` = **140
+conflicts, ALL "building footprint inside road corridor," across 17 buildings;
+zero building×building overlaps.** Geometry check (FARMHOUSE@(90,101), fp 20×16):
+its serving road runs up to the building edge and stops; with corridor
+half-width 2 the corridor pokes ~2 cells into the front. That is a road
+**reaching a building to serve it** — correct roads-last behaviour. `OverlapAuditor`
+was written for roads-first (roads planned to AVOID buildings, so any
+footprint-in-corridor overlap was a defect and TOWN_HALL involvement was fatal).
+Under roads-last the router routes roads TO building fronts by construction, so
+the check produced only false positives and aborted every spawn.
+
+**The fix (`OverlapAuditor`, roads-last rework):**
+1. **Building × road corridor** — test against an **inset footprint** (shrunk by
+   `corridorHalf + 1`) before `RoadCorridors.intersects`, so an edge/front touch
+   no longer registers; only a road crossing **deep into the interior** does.
+   The conflict (renamed "road corridor crosses building interior") is now
+   **non-fatal** — recorded for diagnostics, never aborts. (Fix-up #1 already
+   keeps roads out of footprint interiors, so this is defense-in-depth.)
+2. **Complex parcel × road corridor** — same treatment: inset + non-fatal
+   ("road corridor crosses complex parcel interior"). A road reaching a complex
+   is expected.
+3. **Building × building** — **unchanged, still recorded.** The real overlap
+   invariant; the dump shows zero of these, so it correctly isn't firing.
+4. **Fatal determination** — restricted to building×building
+   (`description == "building footprints intersect"`). A TOWN_HALL-corridor touch
+   no longer aborts; a genuine building-on-building overlap still does.
+
+Added `insetAabb(aabb, inset)` — shrinks the box on every side, returning `null`
+when nothing's left (so small buildings that are all-edge produce no conflict;
+only a building large enough to have an interior, genuinely crossed, registers).
+
+**Why building×building stays fatal:** two structures physically occupying the
+same blocks is a never-acceptable defect (corrupt build, lost building), unlike a
+road corridor grazing a front, which is the intended roads-last geometry. The
+reservation/overlap logic in Layer 3/4 should prevent it; this is the last-line
+guarantee, kept strict.
+
+**Tie-In Audit:**
+- *Touched:* `OverlapAuditor` corridor-conflict logic (inset + rename) + fatal
+  determination. No signature change; `OverlapReport`/`Conflict` shapes unchanged.
+- *Downstream:* `V2VillageSpawnerAdapter` aborts only on `report.fatal()`
+  (verified, `:203`) — now true only for building×building, so the spawn proceeds.
+  The conflict list still populates the dump (`LayoutDumpSerializer` reads
+  `description`/`aDesc`/`bDesc`/`fatal`, all unchanged accessors) — the smaller
+  list serializes fine.
+- *Siblings:* `PhasedPlanner` placement dropped its corridor reference in 3c, so
+  this auditor is the only remaining corridor-overlap consumer.
+- *Exhaustive switches:* none.
+
+**Deviations from prompt:** none. (Renamed the two corridor conflict descriptions
+to "road corridor crosses … interior" so the diagnostic reads honestly post-inset;
+the fatal match keys on the building×building description, not a renamed one.)
+
+**Out-of-scope but flagged (after the village spawns):**
+- **CITY drops 1 of 2 MARKETs** (`NO_VIABLE_CANDIDATE`); CIVIC zone crowded at
+  CITY (TOWN_HALL 29×29 + 2×MARKET 21×42 + 2×CHAPEL 18×38 in ~⅓ of cells). TOWN
+  placed cleanly (18/18, 0 drops), so this is CITY-scale civic-zone sizing —
+  scale the CIVIC band with the civic footprint budget, naturally folded into
+  Stage 4's designed civic core.
+- Drop log still says "no admissible candidate position on any network edge" —
+  stale roads-first wording; update to "zone" language when convenient.
+- `MILLER`/`WELL`/`WAREHOUSE` still "no NBT" (content gap, Garrett's call).
+
+**Cumulative pending verification:** the whole 2.x/3.x rework should now spawn
+end-to-end (this was the final abort). The smoke test below is the first
+full visual inspection.
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Re-spawn TOWN and CITY AGRICULTURAL — expect the village to actually
+   generate (no fatal abort). Then the real visual check: buildings cluster in
+   center-out zones (civic core → residential/farm fringe), not strung along
+   roads; roads thread between buildings and reach every building, bending
+   around terrain; a caravan/NPC paths through (trade route established); no
+   building physically overlaps another (the kept fatal check guarantees this).
+3. Note crowding/aesthetic issues (CITY civic zone, zone count, spacing) for the
+   next tuning pass.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: only the
+building×building "building footprints intersect" conflict is fatal now; the two
+corridor checks inset the AABB (per-segment `corridorHalf + 1`) and are
+non-fatal; `insetAabb` null-guards degenerate boxes; the spawner's sole abort
+path keys on `report.fatal()`; the dump serializer's `Conflict`/`OverlapReport`
+reads are unchanged. No public signature changed.

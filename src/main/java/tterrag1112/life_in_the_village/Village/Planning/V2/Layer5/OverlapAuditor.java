@@ -32,9 +32,13 @@ import java.util.List;
  *       implementation.</li>
  * </ul>
  *
- * <p>If any conflict involves a {@code required:true} type
- * (TOWN_HALL in V1) the report is {@code fatal} and the spawner
- * aborts.
+ * <p>Layout Rework Stage 3 fix-up #2 (roads-last): only a
+ * building×building footprint overlap is {@code fatal} (the spawner
+ * aborts). Building×road-corridor and parcel×road-corridor findings are
+ * diagnostic-only — under roads-last the router routes roads TO REACH
+ * building fronts, so a corridor touching a building's edge is expected;
+ * these checks test against an inset footprint so only a deep interior
+ * crossing is recorded, and never abort.
  */
 public final class OverlapAuditor {
 
@@ -62,17 +66,25 @@ public final class OverlapAuditor {
             }
         }
 
-        // Building × Road corridor (shared with candidate-rejection
-        // in PhasedPlanner.findBestCandidate via RoadCorridors).
+        // Building × Road corridor. Layout Rework Stage 3 fix-up #2 —
+        // roads-last: the router generates roads TO REACH building fronts,
+        // so a corridor grazing a building's edge/front is expected by
+        // construction, not a defect. Test against an INSET footprint
+        // (shrunk by corridorHalf + 1) so only a road crossing DEEP into
+        // the interior registers; such a conflict is recorded for
+        // diagnostics but is NON-FATAL (the router already avoids footprint
+        // interiors — this is defense-in-depth, not a gate).
         Skeleton skeleton = roads.skeleton();
         for (RoadSegment seg : skeleton.allSegments()) {
             int corridorHalf = (seg.width() + 1) / 2;
+            int inset = corridorHalf + 1;
             for (PlacedBuilding b : placed) {
-                int[] aabb = footprintAabb(b);
+                int[] inner = insetAabb(footprintAabb(b), inset);
+                if (inner == null) continue;   // too small to have a reachable interior
                 if (RoadCorridors.intersects(seg.start(), seg.end(), corridorHalf,
-                        aabb[0], aabb[1], aabb[2], aabb[3])) {
+                        inner[0], inner[1], inner[2], inner[3])) {
                     conflicts.add(new Conflict(
-                            "building footprint inside road corridor",
+                            "road corridor crosses building interior",
                             b.centre(),
                             label(b),
                             seg instanceof tterrag1112.life_in_the_village.Village
@@ -97,10 +109,15 @@ public final class OverlapAuditor {
             }
             for (RoadSegment seg : skeleton.allSegments()) {
                 int corridorHalf = (seg.width() + 1) / 2;
+                // Same roads-last treatment: a road reaching a complex is
+                // expected; only a deep interior crossing is recorded, and
+                // it is non-fatal.
+                int[] innerParcel = insetAabb(parcel, corridorHalf + 1);
+                if (innerParcel == null) continue;
                 if (RoadCorridors.intersects(seg.start(), seg.end(), corridorHalf,
-                        parcel[0], parcel[1], parcel[2], parcel[3])) {
+                        innerParcel[0], innerParcel[1], innerParcel[2], innerParcel[3])) {
                     conflicts.add(new Conflict(
-                            "complex parcel inside road corridor",
+                            "road corridor crosses complex parcel interior",
                             owner.centre(), label(owner) + " parcel",
                             seg instanceof tterrag1112.life_in_the_village.Village
                                     .Planning.V2.Layer4.SpineSegment ? "spine" : "cross-street"));
@@ -108,9 +125,27 @@ public final class OverlapAuditor {
             }
         }
 
+        // Layout Rework Stage 3 fix-up #2 — fatal is restricted to
+        // building×building overlaps (the real, can-never-happen invariant).
+        // Under roads-last, road corridors legitimately reach building
+        // fronts, so building×corridor / parcel×corridor conflicts are
+        // diagnostic-only and never abort the spawn (a TOWN_HALL-corridor
+        // touch is expected, not fatal).
         boolean fatal = conflicts.stream().anyMatch(c ->
-                c.aDesc().contains("TOWN_HALL") || c.bDesc().contains("TOWN_HALL"));
+                c.description().equals("building footprints intersect"));
         return new OverlapReport(conflicts, fatal);
+    }
+
+    /** Shrinks an {@code [minX, minZ, maxX, maxZ]} AABB inward by
+     *  {@code inset} on every side. Returns {@code null} when the box is
+     *  too small to have any interior left (so an edge/front touch — the
+     *  expected roads-last case — produces no conflict; only a genuine
+     *  deep crossing of a building large enough to have an interior does). */
+    private static int[] insetAabb(int[] a, int inset) {
+        int minX = a[0] + inset, minZ = a[1] + inset;
+        int maxX = a[2] - inset, maxZ = a[3] - inset;
+        if (minX > maxX || minZ > maxZ) return null;
+        return new int[]{minX, minZ, maxX, maxZ};
     }
 
     private static String label(PlacedBuilding b) {
