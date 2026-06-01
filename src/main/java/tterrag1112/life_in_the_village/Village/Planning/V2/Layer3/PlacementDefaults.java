@@ -173,24 +173,34 @@ public final class PlacementDefaults {
                         new Provides(Category.EMPLOYMENT, 2)),
                 List.of()));
 
-        // MILLER needs a river — no river → not selected.
+        // MILLER — Layout Rework Step 3: no terrain requirement. The
+        // default miller is a worker with a grindstone; river/water is a
+        // soft NEAR_WATER scoring preference only (future windmill /
+        // watermill variants carry their own terrain prefs via the
+        // variant manifest). Pre-Step-3 this carried
+        // requiresAggregates={RIVER}, which filtered MILLER out before
+        // selection on river-less sites and (with BAKERY's old hard
+        // dependency below) dropped the bakery too.
         m.put(BuildingType.MILLER, new PlacementProfile(
                 false, Priority.PRODUCTION, SizeClass.MEDIUM, 0.5,
                 List.of(),
                 terrain(Map.of(TerrainFactor.NEAR_WATER, 3.0,
                         TerrainFactor.FLAT, 1.0)),
                 adj(Map.of()),
-                Set.of(TerrainAggregate.RIVER),
+                Set.of(),
                 List.of(new Provides(Category.FLOUR, 3),
                         new Provides(Category.EMPLOYMENT, 1)),
                 List.of(new Requires(Category.HOUSING, 1, false))));
 
-        // BAKERY depends on MILLER being present (legacy
-        // requires_present); categorical FLOUR demand is tradeable
-        // so HAMLET+ stays viable even without a local MILLER.
+        // BAKERY — Layout Rework Step 3: no hard MILLER dependency. The
+        // bakery prefers a miller (the tradeable FLOUR demand below still
+        // co-locates them via the roster's MILLER co-selection) but must
+        // never be dropped for a missing miller. Pre-Step-3 this carried
+        // requiresPresent=[MILLER], which dropped the bakery at placement
+        // on any site where MILLER wasn't placed.
         m.put(BuildingType.BAKERY, new PlacementProfile(
                 false, Priority.PRODUCTION, SizeClass.SMALL, 0.4,
-                List.of(BuildingType.MILLER),
+                List.of(),
                 terrain(Map.of(TerrainFactor.FLAT, 1.0)),
                 adj(Map.of(AdjacencyFactor.NEAR_MAIN_ROAD, 1.0)),
                 Set.of(),

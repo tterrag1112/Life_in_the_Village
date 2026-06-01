@@ -208,10 +208,13 @@ public final class BuildingInhabitantRegistry {
 
         // ── Building-intrinsic adjacency ────────────────────────────────────
 
-        registerAdjacency(BuildingType.MILLER,
-                BuildingAdjacencySpec.builder()
-                        .requires("river", 24)
-                        .build());
+        // Layout Rework Step 3: MILLER no longer carries a river adjacency
+        // requirement. The default miller is a worker with a grindstone —
+        // no terrain requirement (matching the PlacementProfile change).
+        // This registration was dead anyway (no live placement code reads
+        // getAdjacency), but it contradicted the decoupling decision, so
+        // it is removed. Future windmill/watermill variants reintroduce a
+        // water preference via the variant manifest.
 
         // FISHERMAN doesn't have a building yet, but if/when it does:
         // registerAdjacency(BuildingType.FISHERMAN,

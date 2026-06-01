@@ -3926,3 +3926,146 @@ construction sites all updated to the 4-arg constructor and the codec reads
 the same 4 persisted fields; the kept types (`SlotTag`, `LayoutPlan`,
 `FarmPlotSpec`, `Plaza`, `RoadGraph`, `AnchorKind`, `StructureSizeCache`) all
 still resolve.
+
+### 2026-05-31 — Layout Rework Step 3 / Stage 1 landed (population-first building roster)
+
+**What shipped:** Replaced the per-tier fixed building-count tables with a
+**population-first roster**. Building counts are now derived from a target NPC
+population (mapped from `ViabilityTier`) using a per-building expected-headcount
+EV, inclination housing split, per-role ratios + **hard caps**, terrain
+viability gating, and dependency-safe food-chain co-selection. This fixes the
+"AGRICULTURAL CITY with 3 chapels / 2 shrines / 2 markets and no bakery"
+failure. **Composition only** — placement geometry, roads, and decoration are
+untouched. External APIs (`InclinationProfile.forInclination`,
+`BuildingSelector.select`) keep their signatures, so the commands and the
+layout dump are unaffected and the dump auto-reflects the new counts.
+
+**Root-cause fix (the bug):** two decouplings in `PlacementDefaults` —
+- BAKERY: removed `requiresPresent=[MILLER]` (the hard placement-time drop).
+  The bakery keeps its tradeable FLOUR demand and the roster co-locates a
+  miller, but it is never dropped for a missing miller.
+- MILLER: removed `requiresAggregates={RIVER}` (the pre-selection filter that
+  removed millers on river-less sites). NEAR_WATER remains a soft scoring
+  preference only.
+Together these make a bakery present even on a river-less site. The capped
+religious/market roles fix the "3 churches" half of the bug.
+
+**The model (`PopulationRoster.build`):**
+1. **Tier → population band** (on `ViabilityTier`, sampled deterministically
+   from the site seed): OUTPOST 5–12, HAMLET 12–30, TOWN 30–55, CITY 70–150.
+2. **Per-building headcount EV** = Σ `chance × (1 + spouseChance +
+   maxChildren×childChanceEach)` over the building's `BuildingInhabitantSpec`
+   — single source of truth with `VillageInhabitantPopulator` (e.g. HOUSE 2.9,
+   FARMHOUSE 2.8, MARKET 2.0, INN 1.0).
+3. **Services/civic/production/religious** by `ServiceRule(minPop, perN, cap)`:
+   count `= pop<minPop ? 0 : clamp(1 + (pop-minPop)/perN, 1, cap)`, cap from the
+   inclination override else the rule default; gated by the inclination's
+   building set and FeatureMap terrain viability (reusing the selector's
+   aggregate gate). MILLER is co-selected as a preference wherever BAKERY lands.
+4. **Housing fill**: remaining population (target − service headcount) split by
+   the inclination `farmhouseShare` into FARMHOUSE/HOUSE counts via their EV.
+
+**Starting parameters (baseline for in-world tuning):**
+- `farmhouseShare`: AGRICULTURAL 0.65, DEFENSIVE 0.30, SACRED 0.22, INDUSTRIAL
+  0.20, CIVIC 0.18, RESIDENTIAL 0.12.
+- Religious/market caps (the fix): AGRICULTURAL/RESIDENTIAL/CIVIC chapel 2 /
+  shrine 1; INDUSTRIAL/DEFENSIVE chapel 1 / shrine 1; **SACRED chapel 3 /
+  shrine 3** (the one inclination allowed real religious mass). Market cap 2
+  (CIVIC 3).
+- Key rules: CHAPEL (min 12, +1 per 68, cap≤profile), SHRINE (min 50, cap≤
+  profile), MARKET (min 25, +1 per 95), INN (min 35), BAKERY (min 15, +1 per
+  35, cap 2), BLACKSMITH (min 20, +1 per 60, cap 2), WELL (1 per 60, cap 3).
+- Worked check — AGRICULTURAL TOWN, sampled pop ~35: TOWN_HALL 1, WELL 1,
+  MARKET 1, CHAPEL 1, SHRINE 0 (pop<50), BAKERY 1 (+MILLER 1), BLACKSMITH 1,
+  CARPENTRY 1, STABLE 1, STOCKPILE 1, ~6 FARMHOUSE, ~3 HOUSE — never 3 chapels
+  / 2 shrines / 2 markets, bakery present with no river.
+
+**Surface area:** 1 new file + 5 edits.
+
+**Files added:**
+- `.../Village/Planning/V2/Layer3/PopulationRoster.java`
+
+**Files modified:**
+- `.../Layer3/InclinationProfile.java` — repurposed from per-tier count tables
+  (`Map<BuildingType,int[]>`) to per-inclination config (farmhouseShare,
+  building set, cap overrides). `forInclination` signature unchanged.
+- `.../Layer3/BuildingSelector.java` — `select` now builds the roster and
+  expands its counts (no per-type triangular re-sampling — population sampling
+  + housing rounding is the variance source); kept the strategy/aggregate/
+  availability filters; logs the roster once per spawn; `aggregatesPresent`
+  made package-visible for roster reuse; removed the now-dead `sampleCount`
+  + `SELECTION_SALT`.
+- `.../Layer3/PlacementDefaults.java` — BAKERY `requiresPresent` MILLER removed;
+  MILLER `requiresAggregates` RIVER removed.
+- `.../Layer2/ViabilityTier.java` — added `minPopulation`/`maxPopulation` band
+  fields (kept `targetBuildingCount` — still read by `StrategyConditions`).
+- `.../Village/Buildings/Inhabitants/BuildingInhabitantRegistry.java` — removed
+  the dead `MILLER → requires("river")` adjacency registration (see Deviations).
+
+**Deviations from prompt:**
+- **Removed a third, dead miller→river coupling beyond the prompt's two.** The
+  tie-in audit's "grep both" turned up `BuildingInhabitantRegistry` registering
+  `MILLER → BuildingAdjacencySpec.requires("river", 24)`. Grep confirmed
+  `getAdjacency`/`BuildingAdjacencySpec` is **not read by any live placement
+  code** (dead config), so it wasn't a second active gate — but it directly
+  contradicted the "miller needs no river" decision, so it was removed for
+  consistency and flagged here.
+- **Population band lives on `ViabilityTier`** (per the prompt's pointer), as
+  new enum fields; `targetBuildingCount` was NOT repurposed/removed because
+  `StrategyConditions` still reads it for strategy tier-gating (the
+  simplification-sweep question — it is not dead).
+- **`InclinationProfile` external API preserved.** The prompt said "repurpose";
+  rather than change `forInclination`/`select` signatures (which 4 callers use:
+  the adapter, PlaceCommand, LayoutCommand, LayoutDumpSerializer), only the
+  *contents* of `InclinationProfile` and the *internals* of `BuildingSelector`
+  changed. Net: zero downstream signature churn.
+- The roster keys caps by `BuildingType` (CHAPEL/SHRINE/MARKET) rather than by
+  `Provides(RELIGIOUS/COMMERCE)` role. No new role enum was added (invariant
+  honoured); per-type caps map the bug's worked example directly.
+
+**Out-of-scope but flagged:**
+- **BLACKSMITH `requiresPresent=[MINE]` is the identical anti-pattern** to the
+  BAKERY→MILLER bug just fixed: on a stone-less site MINE is filtered pre-
+  selection (`requiresAggregates={STONE_REGION}`) and the smith is then dropped
+  `DEPENDENCY_MISSING` at placement regardless of tradeable METAL_ORE/FUEL.
+  Left untouched (prompt scoped to BAKERY/MILLER only); recommend the same
+  decoupling in a follow-up so the roster's smithy survives everywhere.
+- Some inclination-set entries (VINEYARD, GUARD_TOWER, TEMPLE, guild halls, …)
+  have no `PlacementDefaults` entry, so the selector skips them today (as it
+  did pre-Step-3). The roster now also skips no-profile types when budgeting
+  population, so they cost nothing; they remain in the sets aspirationally for
+  when profiles are authored.
+- Explicit `targetPopulation` override / atlas-derived population, windmill/
+  watermill MILLER variants, and the district/parcel placement rework remain
+  future stages.
+- Population bands / ratios / caps are starting values; expect in-world tuning.
+
+**Cumulative pending verification:** Detour A (Prompt A + B), Layout Rework
+Phase 1, Phase 2, Phase 2b (needs datagen re-run), Phase 3a, Phase 3b, and this
+Step 3 / Stage 1 remain pending in-world smoke test.
+
+**Smoke test plan (user-executable):**
+1. Build the mod (deferred in sandbox — see Build verification).
+2. Spawn an AGRICULTURAL TOWN (force the tier if needed). Watch the new
+   `population roster tier=TOWN inclination=AGRICULTURAL: {...}` log line, then
+   confirm in-world: total NPC population roughly in band (~30–55); **1 chapel,
+   ≤1 shrine, 1 market**; a **bakery present even on a river-less site**; mostly
+   farmhouses + houses; optionally a mill. No 3-chapels / 2-shrines / 2-markets.
+3. Spawn other inclinations/tiers (SACRED should legitimately get more chapels/
+   shrines; CITY more of everything but still capped). Confirm counts scale with
+   the population band and nothing explodes or vanishes pathologically.
+4. `/litv layout debug dump` (or the layout dump): confirm the composition
+   counts match the logged roster.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — confirmed HTTP 403 on
+`net/neoforged/neoform-runtime/2.0.18/neoform-runtime-2.0.18.pom`). Full manual
+static review completed: tree-wide grep shows zero remaining references to the
+removed `InclinationProfile.countFor`/`baseCounts`/`BuildingSelector.sampleCount`/
+`SELECTION_SALT`; `forInclination`/`select` signatures unchanged so the 4
+external callers compile untouched; `PopulationRoster` types resolve
+(`SiteContext.seed()`/`profile.inclination()` exist, `BuildingInhabitantSpec
+.Inhabitant` accessors match, `aggregatesPresent` is reused package-visibly);
+`ViabilityTier`'s new fields don't disturb the `StrategyConditions
+.targetBuildingCount` reader; `TerrainAggregate` stays referenced by MINE/
+WOODCUTTER after the MILLER RIVER removal.
