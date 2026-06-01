@@ -38,6 +38,12 @@ import java.util.List;
  * <p>If {@code tier == UNVIABLE}, the other fields are populated
  * for debug-output convenience but the planner should bail before
  * Layer 3.
+ *
+ * <p>Layout Rework Stage 3a — {@code zonePartition} carries the
+ * terrain-warped, center-out land-use partition. Populated by
+ * {@link SiteAnalyzer} after network planning; {@code null} until then.
+ * Inspectable infrastructure only in Stage 3a — no placement or road
+ * code reads it yet (Stage 3c wires placement to it).
  */
 public record SiteContext(
         BlockPos anchor,
@@ -51,7 +57,8 @@ public record SiteContext(
         List<Hub> hubs,
         List<Anchor> anchors,
         StrategySelectionResult strategy,
-        NetworkSpec network) {
+        NetworkSpec network,
+        ZonePartition zonePartition) {
 
     public SiteContext {
         anchors = anchors == null ? List.of() : List.copyOf(anchors);
@@ -69,19 +76,21 @@ public record SiteContext(
                                             Culture culture, long seed) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
                 tier, inclination, culture, seed, new ArrayList<>(), List.of(),
-                null, null);
+                null, null, null);
     }
 
     /** Track E1 — copy-with anchors. */
     public SiteContext withAnchors(List<Anchor> newAnchors) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
-                tier, inclination, culture, seed, hubs, newAnchors, strategy, network);
+                tier, inclination, culture, seed, hubs, newAnchors, strategy, network,
+                zonePartition);
     }
 
     /** Track E1B — copy-with strategy selection result. */
     public SiteContext withStrategy(StrategySelectionResult newStrategy) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
-                tier, inclination, culture, seed, hubs, anchors, newStrategy, network);
+                tier, inclination, culture, seed, hubs, anchors, newStrategy, network,
+                zonePartition);
     }
 
     /** Track E1 prompt-3 — copy-with the planned road network and
@@ -91,7 +100,16 @@ public record SiteContext(
     public SiteContext withNetwork(NetworkSpec newNetwork, SpinePath derivedSpine) {
         return new SiteContext(anchor, originalAnchor, primaryAxis,
                 derivedSpine != null ? derivedSpine : spinePath,
-                tier, inclination, culture, seed, hubs, anchors, strategy, newNetwork);
+                tier, inclination, culture, seed, hubs, anchors, strategy, newNetwork,
+                zonePartition);
+    }
+
+    /** Layout Rework Stage 3a — copy-with the computed land-use
+     *  partition. */
+    public SiteContext withZonePartition(ZonePartition newPartition) {
+        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+                tier, inclination, culture, seed, hubs, anchors, strategy, network,
+                newPartition);
     }
 
     /** B2.8 — copy-with overrides for /building village spawn's
@@ -103,6 +121,6 @@ public record SiteContext(
                 anchor, originalAnchor, primaryAxis, spinePath,
                 newTier        != null ? newTier        : tier,
                 newInclination != null ? newInclination : inclination,
-                culture, seed, hubs, anchors, strategy, network);
+                culture, seed, hubs, anchors, strategy, network, zonePartition);
     }
 }

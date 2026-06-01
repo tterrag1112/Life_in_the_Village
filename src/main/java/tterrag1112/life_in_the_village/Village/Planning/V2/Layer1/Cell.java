@@ -19,6 +19,12 @@ public final class Cell {
     private int distToWater = UNREACHED;
     private int distToForest = UNREACHED;
     private int distToStone = UNREACHED;
+    /** Layout Rework Stage 3a — terrain-warped cost-distance from the
+     *  village anchor, filled by Layer 2's ZonePartition after the scan
+     *  (mirrors the BFS dist fields, but the cost-distance flows around
+     *  water/cliffs). {@link #UNREACHED} when the cell is non-buildable
+     *  or unreachable from the anchor. */
+    private int distToAnchor = UNREACHED;
 
     public Cell(int elevationY, int localSlope, BlockCategory category, int waterY) {
         this.elevationY = elevationY;
@@ -35,8 +41,10 @@ public final class Cell {
     public int distToWater()  { return distToWater; }
     public int distToForest() { return distToForest; }
     public int distToStone()  { return distToStone; }
+    public int distToAnchor() { return distToAnchor; }
 
     void setDistToWater(int d)  { this.distToWater = d; }
     void setDistToForest(int d) { this.distToForest = d; }
     void setDistToStone(int d)  { this.distToStone = d; }
+    void setDistToAnchor(int d) { this.distToAnchor = d; }
 }

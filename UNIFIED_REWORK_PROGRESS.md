@@ -4375,3 +4375,126 @@ two `{@link}`-to-deleted-type javadocs were scrubbed; the codec arities were
 re-checked (VillageContentData 5 fields/5 codec entries/5-arg build; HouseholdData
 6-arg `::new`; CulturePlanningBias `::new`); only explanatory prose comments
 mention "adjunct".
+
+### 2026-05-31 — Layout Rework Stage 3a landed (terrain-warped zone partition)
+
+**What shipped:** The terrain-warped, center-out land-use partition the Path-A
+placement rework is built on. **Purely additive** — it computes a per-cell zone
+map over the FeatureMap and surfaces it in the layout dump, but **nothing
+consumes it yet**; village spawning is byte-for-byte unchanged (placement and
+roads don't read the partition). New files: `Layer2/Zone`, `Layer2/ZonePartition`.
+Touched: `Layer1/Cell` (+`distToAnchor`), `Layer1/V2FeatureMap` (bulk setter),
+`Layer2/SiteContext` (+field), `Layer2/SiteAnalyzer` (partition pass), and the
+`Debug/LayoutDumpSerializer` (zone-map serialization).
+
+**The model + starting numbers (baseline for in-world tuning):**
+- **Cost-distance field** (`ZonePartition.costDistance`): a weighted Dijkstra
+  from the anchor cell, 8-connected, over **buildable cells only**
+  (`category ∈ {OPEN,SHORE} && localSlope ≤ 3`); non-buildable cells are
+  **blocked**, so the field flows *around* water and cliffs — the source of the
+  warp. Enter-cost per cell = `BASE_STEP(2) + SLOPE_WEIGHT(2)·localSlope +
+  waterProx + forestProx`, where `waterProx = (3 − distToWater)·6` when
+  `distToWater < 3` and `forestProx = (2 − distToForest)·3` when
+  `distToForest < 2` (`distToWater/Forest` are the existing BFS cell-distance
+  fields). `BASE_STEP = cellSize` so unobstructed cost-distance tracks world
+  block distance. Stored onto each `Cell.distToAnchor` via a single bulk
+  `V2FeatureMap.setDistToAnchorField(int[][])` (keeps the per-cell setter
+  package-private; the partition owns the policy + algorithm).
+- **Center-out bands → zones** (`ZonePartition.banding`): the `NucleusKind`
+  roles the inclination actually uses — read from
+  `NucleusRules.forInclination(inc, topology).affinities()` target kinds (+
+  fallbacks, + the resource/sacred/rural nucleus declarations), always including
+  CIVIC — ordered center-out by a fixed rank (`CIVIC 0, SACRED 1, GATEWAY 2,
+  RESOURCE 3, RURAL 4`). Reachable buildable cells are sorted by cost-distance
+  and sliced into contiguous bands, one per role, sized by a per-role weight
+  (`CIVIC/SACRED 1.0, GATEWAY 1.3, RESOURCE 1.6, RURAL 2.0` — fringe roles claim
+  more land) with a **tier-scaled cell floor** (`MIN_ZONE_CELLS_BASE = 8`, ×2
+  CITY / ×1.5 TOWN / ×1 HAMLET / ×0.5 OUTPOST). Oversubscription on small sites
+  trims the largest band first (never below 1, so every role keeps a toe-hold);
+  the outermost band absorbs the remainder. Each `Zone` carries id, kind, world
+  centroid, cell count, and its band's `[minBandCost, maxBandCost]`.
+- **Feature affinity (light):** inherent — blocking non-buildable cells plus the
+  water/forest proximity penalty already push the fringe toward flat-open ground
+  ("farms tend toward the open flats"). Richer RESOURCE-edge biasing is a
+  placement concern, flagged for 3c.
+- **Reused `NucleusKind` as the zone-role enum** (no new enum) per the firm
+  "new primitives only when a concrete consumer needs the distinction"
+  constraint — the partition's named consumer is 3c.
+
+**Where it runs:** `SiteAnalyzer.analyzeWithDiagnostics`, immediately **after**
+`ctx.withNetwork(...)`, so it's unambiguously downstream of and independent from
+network generation. Result stored on `SiteContext.zonePartition` (new 13th field,
+nullable; `withZonePartition` copy-with; all 6 in-file constructors threaded).
+A one-line `zone partition: N zones [KIND:cells, …]` INFO log mirrors the other
+site logs.
+
+**Dump:** `siteContext.zonePartition` — `gridSize`, `cellSize`, `anchorCell`,
+`zones[]` (id/kind/centroid/cellCount/min+maxBandCost), plus a **downsampled**
+(`downsampleFactor = max(1, gridSize/48)`) per-cell `zoneIdGrid` and `costGrid`
+for the heatmap visualizer (UNREACHED → −1). Schema bump deferred (additive
+field; v-N readers ignoring unknown keys still parse).
+
+**Deviations from prompt:**
+- `ZonePartition.compute(fmap, anchor, tier, rules)` **drops the prompt's
+  `seed` and `inclination` params.** The partition is fully terrain-deterministic
+  (seed already entered upstream via anchor + inclination selection), and the
+  role set is read from `rules` (which `forInclination` already derived from the
+  inclination) — carrying either separately would be a dead parameter (a review
+  smell here). `tier` **is** used (zone-floor scaling). Re-add `seed` when
+  seed-jitter on band boundaries is introduced.
+- Per-role **building budget** band-sizing is approximated by per-role *weights*
+  + a tier-scaled floor rather than the roster's concrete per-role building
+  counts (the roster budget integration lands with the consumer in 3c). Band
+  sizes still scale with extent via the reachable-cell count `n`.
+
+**Tie-In Audit:**
+- *Upstream feeders:* `V2FeatureMap` (terrain + BFS dist fields), `SiteContext`
+  (anchor/tier/inclination), `NucleusRules` (role set). All read-only; no new
+  external inputs.
+- *Downstream callers:* **none in 3a.** `SiteContext` gained a field + accessor
+  (additive — no existing reader breaks); grep confirms Layers 3/4/5 read
+  `anchor()/tier()/inclination()/network()/strategy()`, never `zonePartition()`.
+  The cost field is written to a brand-new `Cell.distToAnchor` that no existing
+  code reads.
+- *Sibling systems:* `NetworkPlanner` runs **unchanged** — the partition pass is
+  inserted after `withNetwork` and never touches the network.
+- *Exhaustive switches:* two **new** switches over existing enums, both
+  exhaustive — `NucleusKind` (center-out rank, band weight; all 5 arms) and
+  `ViabilityTier` (zone floor; all 5 arms). No existing switch touched.
+
+**Simplification sweep:** `Zone` + `ZonePartition` are new with a named near-term
+consumer (3c); no orphans created, no overlapping pairs. `Cell.distToAnchor`
+follows the established mutable-`Cell` + `bfsFill` precedent.
+
+**Out-of-scope but flagged:** gateways-first extraction + the block-serving road
+router → 3b; placing buildings into zones / frontage demotion / orientation →
+3c; downstream consumer migration (InternalRoadCommitter, RealizedLayout gates)
+→ 3d; the designed civic-core recipe → Stage 4; richer RESOURCE/feature-edge
+zone biasing → 3c.
+
+**Cumulative pending verification:** Detour A, Layout Rework Phases 1/2/2b/3a(old)/
+3b, Step 3 Stage 1, Stages 2a/2b/2.5, and this Stage 3a remain pending the
+in-world smoke test Garrett runs after the 2.x/3.x batch.
+
+**Smoke-test plan (user-executable):**
+1. Build (deferred in sandbox — see Build verification).
+2. Spawn villages on varied terrain — flat, near-river, near-mountain — and run
+   `/litv layout debug dump`. Confirm in the dump's `siteContext.zonePartition`:
+   a sensible center-out zone map (an inner CIVIC core around the anchor, then
+   the middle band, then the RURAL/RESOURCE fringe); the `costGrid` warp **flows
+   around** water/cliffs (cost rises sharply near water, blocked cells read −1);
+   the fringe zone biases toward flat-open ground.
+3. Confirm the village otherwise spawns **identically** to before — same
+   buildings, same roads (the partition adds inspectable data only; no
+   placement/road code reads it).
+4. Check the `zone partition: N zones […]` INFO line matches the dump's zones[].
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403 on neoform-runtime-2.0.18.pom). Static review
+substituted: all six `new SiteContext(` sites (in-file only — grep-confirmed no
+external constructors or record deconstruction) updated to the 13-field shape;
+the two new enum switches are exhaustive; `ZonePartition` carries no unused
+imports; `Zone`/`ZonePartition` accessors match the serializer; `compute` has no
+throwing path on the live spawn route (anchor cell indices are clamped, the bulk
+setter's gridSize guard cannot trigger for the same fmap, banding handles the
+empty-site case).

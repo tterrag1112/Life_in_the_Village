@@ -28,6 +28,8 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.StrategySelectionResult;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Zone;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ZonePartition;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingSelector;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DependencyResolver;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;
@@ -379,6 +381,14 @@ public final class LayoutDumpSerializer {
             o.add("network", networkSpecJson(ctx.network(), level, seed, droppedBindings));
         }
 
+        // Layout Rework Stage 3a — terrain-warped land-use partition
+        // (schema additive). Per-zone metadata plus a downsampled
+        // per-cell zoneId + cost-distance grid for the heatmap viz.
+        // Nothing consumes the partition yet; this is inspection only.
+        if (ctx.zonePartition() != null) {
+            o.add("zonePartition", zonePartitionJson(ctx.zonePartition()));
+        }
+
         // Track E1 prompt 5 — siteContext.composition. Per-building
         // counts after BuildingSelector ran (which already applied
         // the per-strategy exclusion filter). Visibility for the
@@ -453,6 +463,58 @@ public final class LayoutDumpSerializer {
             bindings.add(jb);
         }
         o.add("primaryBindings", bindings);
+        return o;
+    }
+
+    /**
+     * Layout Rework Stage 3a — serialize the land-use partition: per-zone
+     * metadata plus a downsampled per-cell {@code zoneId} + cost-distance
+     * grid for the heatmap visualizer. The grids are downsampled so the
+     * dump stays a reasonable size at radius-96 (96×96 cells); the
+     * {@code downsampleFactor} lets the visualizer map sample (i, j) back
+     * to a cell index, and from there to world coords via the dump's
+     * {@code origin} + {@code cellSize}.
+     */
+    private static JsonObject zonePartitionJson(ZonePartition partition) {
+        JsonObject o = new JsonObject();
+        o.addProperty("gridSize", partition.gridSize());
+        o.addProperty("cellSize", partition.cellSize());
+        JsonObject anchorCell = new JsonObject();
+        anchorCell.addProperty("i", partition.anchorI());
+        anchorCell.addProperty("j", partition.anchorJ());
+        o.add("anchorCell", anchorCell);
+
+        JsonArray zones = new JsonArray();
+        for (Zone z : partition.zones()) {
+            JsonObject jz = new JsonObject();
+            jz.addProperty("id", z.id());
+            jz.addProperty("kind", z.kind().name());
+            jz.add("centroid", posJson(z.centroid()));
+            jz.addProperty("cellCount", z.cellCount());
+            jz.addProperty("minBandCost", z.minBandCost());
+            jz.addProperty("maxBandCost", z.maxBandCost());
+            zones.add(jz);
+        }
+        o.add("zones", zones);
+
+        int g = partition.gridSize();
+        int factor = Math.max(1, g / 48);
+        o.addProperty("downsampleFactor", factor);
+        JsonArray zoneIdRows = new JsonArray();
+        JsonArray costRows = new JsonArray();
+        for (int i = 0; i < g; i += factor) {
+            JsonArray zr = new JsonArray();
+            JsonArray cr = new JsonArray();
+            for (int j = 0; j < g; j += factor) {
+                zr.add(partition.zoneIdAt(i, j));
+                int c = partition.costAt(i, j);
+                cr.add(c == ZonePartition.UNREACHED ? -1 : c);
+            }
+            zoneIdRows.add(zr);
+            costRows.add(cr);
+        }
+        o.add("zoneIdGrid", zoneIdRows);
+        o.add("costGrid", costRows);
         return o;
     }
 

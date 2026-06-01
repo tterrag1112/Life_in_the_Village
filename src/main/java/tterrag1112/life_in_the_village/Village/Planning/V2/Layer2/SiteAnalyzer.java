@@ -198,6 +198,19 @@ public final class SiteAnalyzer {
         SpinePath derivedSpine = NetworkPlanner.deriveSpinePath(network,
                 axisDec.axis, finalAnchor);
         ctx = ctx.withNetwork(network, derivedSpine);
+
+        // Layout Rework Stage 3a — terrain-warped land-use partition.
+        // Purely additive: computed onto the context (and the cells'
+        // distToAnchor field) for inspection; nothing in Layers 3-5
+        // reads it yet (Stage 3c wires placement to it), so spawning is
+        // unchanged. Roles come from the inclination's nucleus rules so
+        // the partition produces exactly the zones the roster needs.
+        NucleusRules zoneRules = NucleusRules.forInclination(
+                effectiveInclination, network.topology());
+        ZonePartition partition = ZonePartition.compute(
+                fmap, finalAnchor, effectiveTier, zoneRules);
+        ctx = ctx.withZonePartition(partition);
+
         Diagnostics diag = new Diagnostics(tier, inc, anchorDec, axisDec, adj);
 
         LOGGER.info("variation: seed={} (drives inclination sampling, network"
@@ -212,6 +225,8 @@ public final class SiteAnalyzer {
         LOGGER.info("primary axis: {} ({})", axisDec.axis, axisDec.reason);
         LOGGER.info("derived spine path: {} segments, totalLength={}",
                 derivedSpine.segments().size(), derivedSpine.totalLength());
+        LOGGER.info("zone partition: {} zones [{}] (terrain-warped, center-out)",
+                partition.zones().size(), zoneSummary(partition));
 
         return new Result(ctx, diag);
     }
@@ -592,6 +607,18 @@ public final class SiteAnalyzer {
     private static BlockPos withSurfaceY(V2FeatureMap fmap, BlockPos pos) {
         return new BlockPos(pos.getX(),
                 fmap.surfaceYAt(pos.getX(), pos.getZ()), pos.getZ());
+    }
+
+    /** One-line "KIND:cells, …" summary for the zone-partition log. */
+    private static String zoneSummary(ZonePartition partition) {
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (Zone z : partition.zones()) {
+            if (!first) sb.append(", ");
+            sb.append(z.kind().name()).append(':').append(z.cellCount());
+            first = false;
+        }
+        return sb.toString();
     }
 
     // =========================================================================

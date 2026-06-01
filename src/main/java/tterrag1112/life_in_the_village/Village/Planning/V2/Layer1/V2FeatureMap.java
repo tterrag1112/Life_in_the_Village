@@ -381,6 +381,29 @@ public final class V2FeatureMap {
         return cellAt(worldX, worldZ).elevationY();
     }
 
+    /**
+     * Layout Rework Stage 3a — store the terrain-warped cost-distance
+     * field computed by Layer 2's {@code ZonePartition} onto the cells
+     * (the {@link Cell#distToAnchor()} field), so the warp is
+     * inspectable and available to later placement scoring. The
+     * partition owns the cost policy + Dijkstra; this is the bulk write
+     * sink, keeping the per-cell setter package-private.
+     *
+     * @param field {@code gridSize × gridSize} cost-distance values
+     *              ({@link Cell#UNREACHED} for blocked/unreachable cells)
+     */
+    public void setDistToAnchorField(int[][] field) {
+        if (field.length != gridSize) {
+            throw new IllegalArgumentException("distToAnchor field gridSize "
+                    + field.length + " != " + gridSize);
+        }
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                cells[i][j].setDistToAnchor(field[i][j]);
+            }
+        }
+    }
+
     /** Returns counts of cells per category, in declaration order. */
     public int[] categoryCounts() {
         int[] counts = new int[BlockCategory.values().length];
