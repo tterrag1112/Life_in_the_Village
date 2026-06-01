@@ -43,6 +43,10 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Reconciliation
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Gateways;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkNode;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NodeKind;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Debug.AutoDumpConfig;
@@ -701,36 +705,51 @@ public final class V2VillageSpawnerAdapter {
                                                       RoadNetwork roads) {
         LayoutDensityProfile density = LayoutDensityProfile.forLevel(BUILDING_LEVEL);
         BlockPos anchor = siteCtx.anchor();
-        BlockPos gate = roads.skeleton().spineEnd();
 
-        // Track C2: expose the V2 spine endpoints + cross-street outer
-        // endpoints as gate positions so GatewayPopulator can register
-        // multiple GATEWAY nodes (one per arm) per village. The PRIMARY
-        // role goes to mainGateEndpoint (= spineEnd) per Slice 2's
-        // convention; remaining gate positions become SIDE.
-        // GatewayPopulator's deriveDescriptors only scans gatePositions
-        // (it falls back to mainGateEndpoint only when that list is
-        // empty), so spineEnd is added here too even though it's also
-        // the mainGateEndpoint — equality with mainGate flags it
-        // PRIMARY inside the loop.
+        // Layout Rework Stage 3d — gates come from the routed network's
+        // GATEWAY nodes (the gateways-first derivation from 3b, snapped
+        // to buildable cells by BlockServingRouter). On the CLUSTER routed
+        // network the legacy spine is a fiction, so spineEnd/spineStart +
+        // cross-streets are meaningless. Reading the GATEWAY node positions
+        // here — rather than the raw ctx.gateways() — is deliberate: it
+        // guarantees GatewayPopulator creates the gateway graph nodes at
+        // the EXACT positions InternalRoadCommitter.commitFromV2 matches
+        // against, keeping the village nav graph connected (a position
+        // mismatch would leave the gateways unreachable and silently break
+        // caravan routing through the village).
+        //
+        // mainGateEndpoint = the PRIMARY gateway node; gatePositions = both
+        // gateway nodes (the intended CLUSTER shape: exactly two). Falls
+        // back to the raw ctx.gateways(), then the anchor, on a degenerate
+        // site with no GATEWAY nodes (GatewayPopulator tolerates an empty
+        // list).
         List<BlockPos> gates = new ArrayList<>();
-        if (gate != null) gates.add(gate);
-        BlockPos spineStart = roads.skeleton().spineStart();
-        if (spineStart != null && !spineStart.equals(gate)) {
-            gates.add(spineStart);
+        BlockPos mainGate = null;
+        NetworkSpec spec = roads.skeleton().network();
+        if (spec != null) {
+            for (NetworkNode n : spec.nodes()) {
+                if (n.kind() != NodeKind.GATEWAY) continue;
+                gates.add(n.pos());
+                if (mainGate == null || "gateway:PRIMARY".equals(n.id())) {
+                    mainGate = n.pos();
+                }
+            }
         }
-        for (var cs : roads.skeleton().crossStreets()) {
-            // Each cross street contributes its two outer endpoints
-            // (the spine junction is interior, not a gateway).
-            if (cs.start() != null) gates.add(cs.start());
-            if (cs.end()   != null) gates.add(cs.end());
+        if (gates.isEmpty()) {
+            Gateways gw = siteCtx.gateways();
+            if (gw != null) {
+                gates.add(gw.primary());
+                gates.add(gw.secondary());
+                mainGate = gw.primary();
+            }
         }
+        if (mainGate == null) mainGate = anchor;
 
         return new RealizedLayout(
                 anchor,                      // center
                 anchor,                      // townSquarePos
                 FALLBACK_TOWN_SQUARE_RADIUS, // townSquareRadius
-                gate,                        // mainGateEndpoint (nullable)
+                mainGate,                    // mainGateEndpoint (nullable)
                 gates,                       // gatePositions
                 density.getRing1Radius(),
                 density.getRing2Radius(),

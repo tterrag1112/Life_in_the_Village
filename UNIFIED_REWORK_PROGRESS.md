@@ -4753,3 +4753,113 @@ dead cross-street subgraph references only still-present symbols; `run()` orderi
 is loop → route → skeleton → orient → reassess → designateHubs → emit; the
 `Best`/`Reservation`/`PlacedBuilding` constructions match their (now-nullable)
 shapes.
+
+### 2026-06-01 — Layout Rework Stage 3d landed (gates + NPC nav-graph from the routed network)
+
+**What shipped:** The roads-last village is now **fully functional**. The two
+downstream consumers that still assumed the old linear spine + cross-streets are
+migrated to the routed `BlockServingRouter` network: village gates derive from
+the gateways-first derivation, and the NPC/caravan nav-graph commit walks the
+routed node+edge graph. **This makes the whole 2.x/3.x rework testable in-world.**
+Touched: `V2VillageSpawnerAdapter.buildRealizedLayout`,
+`Village/Roads/Planning/InternalRoadCommitter.commitFromV2`. `GatewayPopulator`
+unchanged (confirmed).
+
+**Part 1 — gates.** `buildRealizedLayout` no longer reads `spineEnd`/`spineStart`
++ `crossStreets()` (meaningless on a CLUSTER routed network — the spine is a
+legacy derived fiction). It now reads the routed network's **GATEWAY nodes**:
+`mainGateEndpoint` = the `gateway:PRIMARY` node, `gatePositions` = both gateway
+nodes (the intended two). Degenerate fallback: raw `ctx.gateways()`, then the
+anchor (GatewayPopulator tolerates an empty list).
+
+**Part 2 — nav graph.** `commitFromV2` is rewritten to faithfully reproduce
+`roads.skeleton().network()` (the router's CLUSTER graph) — **no re-routing**, so
+the nav graph matches exactly what `RoadPainter` painted:
+- Each `NetworkNode` → `VillageRoadNode`: `GATEWAY` nodes map to the EXISTING
+  gateway nodes (created by `GatewayPopulator`) matched by position via the reused
+  `findGatewayAt`; `ANCHOR`/`JUNCTION`/`SYNTHETIC` become interior nodes via
+  `findOrCreateNode`.
+- Each `NetworkEdge` → `VillageRoadEdge` between the mapped nodes, with
+  `cellPath = ((SmoothedPath) edge.primitive()).waypoints()` (the routed
+  centerline — never `sampleStraight`, never empty), `EdgeCharacter` =
+  `THROUGH_VILLAGE` for trunk-width edges (`width ≥ 3`) else `SIDE_PATH`.
+- Bail replaced: "spineStart/End null ⇒ bail" → "fewer than 2 nodes / no
+  resolvable gateways ⇒ bail." Reload no-op guard kept. `sampleStraight` + the
+  spine/cross-street projection deleted.
+
+**The three nav-graph failure modes — how each is avoided:**
+1. *Disconnected gateways* — the commit reproduces the router's graph exactly
+   (the router's own `ensureConnected` sweep determines connectivity); no edges
+   are synthesised or dropped that would split components.
+2. *Missing gateway entry nodes* — GATEWAY `NetworkNode`s map to the EXISTING
+   gateway nodes by position. The match is exact **because Part 1 derives
+   `gatePositions` from these same routed GATEWAY node positions** (see Deviation),
+   and `GatewayPopulator.deriveDescriptors` preserves each gate position verbatim
+   on the node it creates.
+3. *Empty cellPath* — every edge's `cellPath` is the `SmoothedPath.waypoints()`
+   (≥2 points between distinct, cell-deduped terminals), so `edge.length()` is
+   non-zero and entities have a walk path.
+
+**Deviations from prompt:**
+- **Part 1 derives gates from the routed network's GATEWAY nodes, not the raw
+  `ctx.gateways()`** the prompt literally specified. Reason: `BlockServingRouter`
+  *snaps* each gateway to the nearest buildable cell, so its GATEWAY node
+  positions differ from the raw `ctx.gateways()`. If `gatePositions` were the raw
+  values, `GatewayPopulator` would create gateway graph-nodes at the raw
+  positions while `commitFromV2` matches against the router's snapped node
+  positions → exact-match miss → failure mode 2 (un-enterable village, broken
+  trade routing). Feeding the routed GATEWAY node positions makes both agree
+  exactly. They are still "the two gateways" (the snapped `ctx.gateways()`),
+  positioned sensibly; the raw `ctx.gateways()` remains the degenerate fallback.
+  This is the prompt's intent (gates from the gateways + exact position match)
+  made internally consistent.
+
+**Tie-In Audit:**
+- *Touched:* `buildRealizedLayout` gate derivation; `commitFromV2` rewrite.
+  `GatewayPopulator` unchanged (verified — creates one gateway node per
+  `gatePositions` entry at the exact position).
+- *Downstream:* `GatewayPopulator.deriveDescriptors` reads the two `RealizedLayout`
+  gate fields — now exactly two gateways (CLUSTER shape); `Village.applyLayout`
+  copies the gate fields (unaffected); `VillageRoadGraph.findPath` /
+  `GraphTradeRouteEstablisher.villageHopCost` — the load-bearing consumer — now
+  gets both gateways present + connected through building junctions with
+  non-empty `cellPath`s, so caravan hop cost is finite.
+- *Siblings:* `RoadProximityCache`/`PoiDiscovery` use the world road graph, not
+  the village graph — unaffected. The world-side TERMINUS nodes + gateway
+  backlinks `GatewayPopulator` builds are unchanged.
+- *Exhaustive switches:* none.
+
+**Out-of-scope (Stage 3e — dead-code teardown):** delete
+`planCrossStreetsProactively` + its helpers and the `Skeleton.crossStreets` /
+`CrossStreet` machinery (now that no live iterator reads them); reduce
+`NetworkPlanner.plan` to node placement + `primaryBindings` (delete the six recipe
+bodies + edge helpers + `deriveSpinePath`/`SpinePath`). Leaving them is fine for
+the 3d test — they're dead, not wrong.
+
+**Cumulative pending verification → now testable:** Detour A, Layout Rework Phases
+1/2/2b/3a/3b/3c/3d, Step 3 Stage 1, Stages 2a/2b/2.5 all become exercisable by the
+in-world smoke test below (the first end-to-end test of the roads-last flip).
+
+**Smoke-test plan (the real in-world validation):**
+1. Build (deferred — sandbox 403). Static review done (below).
+2. Spawn agricultural villages on varied terrain (flat / near-river /
+   near-mountain). Confirm: buildings cluster in center-out zones (civic core →
+   residential → farm fringe), NOT strung along roads; routed roads reach every
+   building and bend around terrain; no wholesale building drops; no NPE.
+3. Confirm exactly two gateways, positioned sensibly, with outward arms.
+4. **Navigation:** confirm a caravan/NPC paths through the village between its
+   gateways (trade route established), and `/litv layout debug dump` shows the
+   nav graph connecting both gateways through the building junctions with
+   non-empty edge paths. Cross-check the `candidateNetwork` (3b) now equals the
+   live `network`/`roads` (the router is the village's roads post-3c).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: gate derivation reads
+the routed GATEWAY nodes with raw-gateway/anchor fallbacks; `commitFromV2` maps
+nodes by id, GATEWAY-by-position to existing nodes (positions provably equal —
+`deriveDescriptors` preserves them), edges from `SmoothedPath.waypoints()` with a
+trunk-width `EdgeCharacter` split, and bails only on <2 nodes / no gateways;
+imports updated (added NetworkSpec/Node/Edge/NodeKind + RoadPrimitive + HashMap/Map;
+removed CrossStreet/Comparator/ArrayList); `commitFromV2`'s signature is unchanged
+so its single caller is unaffected; no `spineEnd`/`spineStart`/`crossStreets` reads
+remain in either touched path.
