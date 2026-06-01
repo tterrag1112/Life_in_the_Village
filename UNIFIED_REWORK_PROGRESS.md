@@ -5146,3 +5146,91 @@ is exhaustive over `ViabilityTier`; `PhasedPlanner.villageRadiusFor` delegates
 distance (clamped to `fmap.radius()` so it never no-ops at CITY), leaving capped
 cells at the default `zoneId = -1`; `compute` signature unchanged; `fmap.radius()`/
 `cellWorldPos` accessors confirmed present.
+
+### 2026-06-01 — Layout Rework Stage 3 fix-up #4 (farms seed from their parcel)
+
+**Diagnosis (from the successful TOWN dump `Farmcit-23286`):** the compacted
+village looked right, but 4 of 6 farm complexes failed `SEED_NOT_ADMISSIBLE:
+Seed lies inside a reserved exclusion polygon`. Not a space problem — a
+seed-point bug. The Stage-2 parcels are reserved correctly (each farmhouse's
+FARM budget box sits beside it in the growth direction; **0 parcel-vs-parcel
+overlaps**). But `FarmComplexPlanner` seeded the flood-fill from
+`farmhouseOrigin + complexExtendsToward × (footprint-half + 2)` — a heuristic
+that assumes the origin is the farmhouse and the seed should sit "just past its
+footprint." In a compact village that offset lands on the footprint or a
+neighbour's reservation/apron → seed rejected → no field. (The MARKET block
+already seeded correctly, from `Polygon.centroid(parcel.budget())`; the farm
+just wasn't updated when Stage 2 added parcels.)
+
+**The fix (farms — revives them):** in `FarmComplexPlanner.plan`, when an
+interior parcel was reserved (`in.parcelBoundary() != null`), **seed from the
+parcel centroid** (`Polygon.centroid(in.parcelBoundary())`) — guaranteed inside
+the box that was reserved clear for the field. The no-parcel fallback keeps the
+legacy `farmhouseOrigin + offset` heuristic. The flood-fill is still bounded by
+`parcelBoundary` (Stage 2b containment), so a farm can't overflow into a
+neighbour. Expected: the 5 farmhouses with parcels generate fields; only the 1
+without a parcel falls back/skips.
+
+**Deviation from prompt (location of the fix):** the prompt placed the change in
+`V2VillageSpawnerAdapter` (pass the parcel centroid as `farmhouseOrigin`). I put
+it in `FarmComplexPlanner` instead, because `farmhouseOrigin` is **also** used to
+build the apron + footprint **exclusion polygons** (the notch that keeps plots
+off the building wall). Passing the centroid as `farmhouseOrigin` would draw
+those exclusions in the middle of the field (carving a hole in the parcel) and
+stop excluding the actual farmhouse. Seeding from `parcelBoundary` centroid in
+the planner — while keeping `farmhouseOrigin` = the farmhouse centre — achieves
+the prompt's goal (seed inside the parcel) without that side effect, and is the
+"small `FarmComplexPlanner` change" the prompt's tie-in anticipated. The adapter
+is unchanged (it already passes the farmhouse centre as origin + `parcel.budget()`
+as `parcelBoundary`); only its comment was updated.
+
+**The market (secondary — diagnosed, scoped to Stage 4, no code change):** the
+MARKET got **no parcel** in the dump, so its complex seeded from the building
+centre with no boundary and failed `NO_REGION` (no collision-free stall pad ≥7
+among 17 obstacles). This is not a seed bug: the market's pad (21×42 + margin)
+genuinely doesn't fit in the dense civic core, and fix-up #3's compaction makes
+the core *denser*, so it's even less likely now. `reserveComplexParcel` already
+shrinks the market parcel to `minPadMargin` and still found no clear box — so a
+"smaller pad" is already attempted; reducing `minPadMargin` further is
+market-spec tuning whose real home is **Stage 4's designed civic core** (a
+civic-parcel recipe that reserves the market-square space up front, rather than
+hoping a pad fits among already-placed buildings). The market *building* places
+fine today; only its stall pad is deferred. No hack bolted in here.
+
+**Tie-In Audit:**
+- *Touched:* `FarmComplexPlanner.plan` seed position (parcel-centroid when a
+  parcel exists). No record/signature change. Adapter comment only.
+- *Downstream:* `FarmComplexRenderer` renders whatever region the planner
+  produces — now inside the parcel. `FloodFillRegionClaim` still receives the
+  same `parcelBoundary` containment + exclusions; only the seed moved.
+- *Siblings:* Stage-2 parcel reservation (`PhasedPlanner`) unchanged — this is
+  purely how the post-spawn planner *consumes* the parcel. Market path unchanged.
+- *Exhaustive switches:* none.
+
+**Out-of-scope but flagged:**
+- Designed civic core / market square (the market's real home) → Stage 4.
+- 2-zone (no residential band) question; CITY 2nd-MARKET drop; stale "no
+  admissible candidate position on any network edge" drop wording — open.
+- Stage 3e dead-code teardown — still queued, behaviour-neutral.
+
+**Cumulative pending verification:** the rework spawns + is compact (fix-up #3);
+this revives the farms. Smoke test below.
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Re-spawn TOWN AGRICULTURAL (seed `-7816748743282030101`). Confirm: **farm
+   fields now generate** for farmhouses with parcels (no `seed inside exclusion
+   polygon`), each field sitting in its reserved box radiating outward; no farm
+   overflows into another (parcel containment holds); village still compact and
+   spawning cleanly; market either pads or is cleanly skipped with the Stage-4
+   note — no crash.
+3. A couple more TOWN seeds to confirm farms reliably generate.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the parcel-centroid
+seed path is guarded by `in.parcelBoundary() != null` (the parcel case); the
+no-parcel branch keeps the legacy offset; `farmhouseOrigin` is unchanged so the
+apron/footprint exclusion polygons are unaffected; `Polygon.centroid` is a static
+method already used by the market block and `Polygon` is imported; the parcel
+budget box is a rectangle so its centroid is interior + buildable (the box was
+validated `aabbTerrainOk` at reservation time); no signatures changed.

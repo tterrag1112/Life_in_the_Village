@@ -447,12 +447,13 @@ public final class V2VillageSpawnerAdapter {
                 long perFhSeed = seed
                         + fh.building().getId().getMostSignificantBits()
                         ^ fh.building().getId().getLeastSignificantBits();
-                // Stage 2b — seed the flood-fill from the interior parcel
-                // reserved at planning time (anchor + growth direction),
-                // bounded to the parcel budget box so the claim stays
-                // inside the village. Graceful fallback when no parcel was
-                // reserved: an in-place complex behind the farmhouse (NO
-                // perimeter offset).
+                // Stage 2b / 3 fix-up #4 — the FarmComplexPlanner seeds the
+                // flood-fill from the centre of the reserved interior parcel
+                // (bounded to the parcel budget box so the claim stays inside
+                // the village). farmhouseOrigin stays the farmhouse centre so
+                // the planner's apron/footprint exclusions are placed right.
+                // Graceful fallback when no parcel was reserved: an in-place
+                // complex behind the farmhouse (NO perimeter offset).
                 var parcel = fh.placed().parcel();
                 BlockPos farmOrigin = parcel != null
                         ? parcel.anchor() : fh.placed().centre();

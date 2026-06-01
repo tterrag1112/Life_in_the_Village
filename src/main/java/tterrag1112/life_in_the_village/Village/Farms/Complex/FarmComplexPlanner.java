@@ -204,15 +204,28 @@ public final class FarmComplexPlanner {
         BuildingComplexSpec spec = maybeSpec.get();
 
         // ── 2. Seed position ────────────────────────────────────────────
-        // Just past the road-facing edge of the farmhouse, outside the
-        // footprint. The flood-fill expands outward; the farmhouse's
-        // own cells (BUILT category once placed) won't be admitted.
+        // Layout Rework Stage 3 fix-up #4 — when an interior parcel was
+        // reserved (Stage 2), seed from the CENTRE OF THE PARCEL, which was
+        // reserved clear specifically for the field. The legacy heuristic
+        // (farmhouseOrigin + extendsToward × footprint-half) seeds "just
+        // past the farmhouse footprint" assuming the origin is the
+        // farmhouse — but in a compact village that lands on the footprint
+        // or a neighbour's reservation ("seed inside exclusion polygon"),
+        // killing most farms. The parcel centroid is guaranteed inside the
+        // clear box. {@code farmhouseOrigin} stays the farmhouse centre so
+        // the apron / footprint exclusion polygons below are still placed
+        // correctly. No-parcel fallback keeps the legacy offset heuristic.
         int longestHalf = Math.max(in.footprintHalfX(), in.footprintHalfZ());
-        int seedOffset = longestHalf + 2;
-        BlockPos seed = in.farmhouseOrigin().offset(
-                in.complexExtendsToward().getStepX() * seedOffset,
-                0,
-                in.complexExtendsToward().getStepZ() * seedOffset);
+        BlockPos seed;
+        if (in.parcelBoundary() != null) {
+            seed = Polygon.centroid(in.parcelBoundary());
+        } else {
+            int seedOffset = longestHalf + 2;
+            seed = in.farmhouseOrigin().offset(
+                    in.complexExtendsToward().getStepX() * seedOffset,
+                    0,
+                    in.complexExtendsToward().getStepZ() * seedOffset);
+        }
         int maxRadius = Math.round(longestHalf * 2 * spec.radiusMultiplier());
 
         // ── 3. Flood-fill ───────────────────────────────────────────────
