@@ -407,22 +407,10 @@ public final class CultureBundles {
                     0.7, 0.2, defaultCropPreferenceWeights());
         }
 
-        /** B2.5-shape backwards-compat constructor — kept so call
-         *  sites authored between B2.5 and B2.6 don't break. */
-        public CulturePlanningBias(String roadMaterial,
-                                   Curvature preferredCurvature,
-                                   PlazaShape preferredPlazaShape,
-                                   Map<Inclination, Double> inclinationBias,
-                                   double parkPriority,
-                                   Map<String, Double> parkPreferenceWeight,
-                                   double farmPriority,
-                                   double pastureRatio,
-                                   Map<String, Double> cropPreference) {
-            this(roadMaterial, preferredCurvature, preferredPlazaShape,
-                    inclinationBias,
-                    parkPriority, parkPreferenceWeight,
-                    farmPriority, pastureRatio, cropPreference);
-        }
+        // B2.5-shape backwards-compat constructor removed in Stage 2.5:
+        // dropping the homesteadPlotWeights field made the canonical
+        // record constructor exactly this 9-arg signature, so callers
+        // that used it now resolve to the canonical constructor directly.
 
         public static final CulturePlanningBias DEFAULT =
                 new CulturePlanningBias(
