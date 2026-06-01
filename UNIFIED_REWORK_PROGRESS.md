@@ -4498,3 +4498,133 @@ imports; `Zone`/`ZonePartition` accessors match the serializer; `compute` has no
 throwing path on the live spawn route (anchor cell indices are clamped, the bulk
 setter's gridSize guard cannot trigger for the same fmap, banding handles the
 empty-site case).
+
+### 2026-06-01 — Layout Rework Stage 3b landed (gateways-first + block-serving router)
+
+**What shipped:** The two engine pieces the Path-A flip needs, **additively** —
+(1) gateway derivation extracted into a pre-placement step, and (2) a
+terrain-aware **block-serving road router** that turns placed buildings +
+gateways into a `NetworkSpec`. **Neither is wired into spawning.** The live
+`NetworkPlanner` still drives the real network unchanged; the router is exercised
+only via a dump-only "candidate network" comparison section. New files:
+`Layer2/Gateways`, `Layer2/GatewayPlanner`, `Layer4/BlockServingRouter`. Touched:
+`Layer2/NetworkPlanner` (consumes the extracted gateways), `Layer2/SiteContext`
+(+`gateways` field), `Layer2/SiteAnalyzer` (derives gateways pre-network),
+`Layer2/ZonePartition` (exposed its cost model), `Debug/LayoutDumpSerializer`
+(candidate-network + derived-gateways output).
+
+**1. Gateways-first extraction (behaviour-preserving).** `GatewayPlanner.derive(
+primaryPos, axis, tier)` returns the symmetric `Gateways(primary, secondary)`
+pair using the *exact* pre-existing math (the `gatewayDistance` table — CITY 80
+/ TOWN 50 / HAMLET 24 / OUTPOST 12 — + `step` along the primary axis ±).
+`SiteAnalyzer` derives it right after strategy selection (mirroring
+`NetworkPlanner`'s `primaryPos` = primary anchor centre, else site anchor) and
+stores it on `SiteContext`. `NetworkPlanner` now reads `ctx.gateways()` (with an
+inline-derive fallback for any caller that didn't pre-populate) instead of
+deriving inline — **byte-identical gateway positions**, verified in the dump via
+the new `siteContext.derivedGateways` (compared against the top-level road-derived
+`gateways`).
+
+**2. Block-serving router** — `BlockServingRouter.route(placed, gateways, fmap,
+anchor) → NetworkSpec`:
+- **Terminals:** one per building (front-point proxy = centre stepped toward the
+  anchor by `½footprint+1`, snapped to the nearest buildable cell — a stable
+  pre-orientation proxy, since orientation isn't set until 3c), one per gateway,
+  plus the anchor (core). Deduped by cell.
+- **Candidate edges:** each terminal → its `NEIGHBOUR_K=6` Euclidean-nearest
+  (`HUB_NEIGHBOUR_K=10` for gateways/anchor), routed with **grid A\* over the
+  FeatureMap** reusing Stage-3a `ZonePartition.enterCost`/`isBuildable`/
+  `BASE_STEP_COST` (now public) — so roads seek valleys and bend around
+  water/cliffs with the same cost model the zone partition uses. Heuristic =
+  chebyshev cell-steps × `BASE_STEP_COST` (admissible).
+- **Spanning tree:** Kruskal by routed terrain cost; a connectivity sweep adds
+  the cheapest cross-component edges if the sparse candidate graph left it
+  disconnected. Truly water-split terminals (no buildable bridge) stay
+  unconnected — honest, and bridges are out of scope.
+- **Tiered widths:** edges on the gateway→gateway tree path (BFS) are the trunk
+  (`TRUNK_WIDTH=3`, `VILLAGE_ROAD`); the rest are branches (`BRANCH_WIDTH=2`,
+  `VILLAGE_PATH`).
+- **Emit:** one `NetworkEdge` per tree edge as a `SmoothedPath` over the routed
+  cell path (tension 0.5, the existing A\*-polyline primitive); nodes are the
+  terminals (`GATEWAY`/`ANCHOR`/`JUNCTION`). Topology labelled `CLUSTER` (it's a
+  generic MST, not a recipe). Always returns a non-null spec; degenerate inputs
+  yield a node-only spec.
+
+**3. Comparison dump.** `LayoutDumpSerializer.assemble` now threads the
+`V2FeatureMap` and, when buildings + gateways exist, runs the router and
+serializes the result as a top-level `candidateNetwork` (reusing the existing
+`networkSpecJson`, so its `SmoothedPath` centerlines render like any edge). A
+`try/catch` wraps it so a router fault can never break a dump. **Spawning is
+untouched** — `candidateNetwork` is output-only.
+
+**Deviations from prompt:**
+- `BlockServingRouter.route` **omits a `tier` param** — band/width tiering here
+  is structural (trunk vs branch from the gateway path), not tier-scaled, and
+  terminal density already scales with the building count. No dead param.
+- MST edge weights use **k-nearest candidate A\* routes** (terrain cost on the
+  candidates), not full all-pairs terrain cost-distance — bounded at ~T·k A\*
+  runs while still terrain-weighted, with the connectivity sweep guaranteeing a
+  connected result. Full all-pairs would be O(T²) A\*; unnecessary for a
+  dump-only path.
+- A loop-edges-in-the-core knob was **not added** (the prompt flagged it as
+  optional/off-by-default and "not visible until 3c") — deferred to 3c tuning.
+
+**Tie-In Audit:**
+- *Upstream feeders:* `SiteContext` (anchor/axis/tier → gateways), `ZonePartition`
+  cost model + `Cell`/`V2FeatureMap` (routing), the as-placed `PlacedBuilding`
+  list (dump only). No new external inputs.
+- *Downstream callers:* **none consume the router** — confirmed placement + the
+  live road network are unchanged (`NetworkPlanner` still spawns). The router
+  output is dump-only. `SiteContext` gained a field + accessor (additive); all 6
+  in-file constructors threaded; grep confirms no external `new SiteContext(`.
+- *Sibling systems:* the extracted gateway step is behaviour-preserving —
+  `NetworkPlanner` consumes the same positions it used to derive inline (same
+  `primaryPos`/axis/tier), verifiable via `derivedGateways` vs `gateways` in the
+  dump. `gatewayDistance` moved (not copied) out of `NetworkPlanner`.
+- *Exhaustive switches:* none added. (`GatewayPlanner.gatewayDistance` is the
+  moved switch over `ViabilityTier`, still exhaustive.)
+
+**Simplification sweep:** `Gateways`/`GatewayPlanner`/`BlockServingRouter` are new
+with named near-term consumers (3c installs the router; 3d uses gateways for
+gate positions). The extraction *removed* the inline gateway block from
+`NetworkPlanner` (net simplification there). No orphans.
+
+**Out-of-scope but flagged:** installing the router / placing into zones /
+post-routing orientation / demoting frontage → 3c; `InternalRoadCommitter`
+rewrite, `RealizedLayout`/hub gate derivation from terminals, deleting dead
+frontage code → 3d; loop edges + width/look tuning → after 3c when visible;
+palettes → Stage 6.
+
+**Cumulative pending verification:** Detour A, Layout Rework Phases 1/2/2b/3a/3b,
+Step 3 Stage 1, Stages 2a/2b/2.5/3a, and this Stage 3b remain pending the in-world
+smoke test Garrett runs after the 2.x/3.x batch.
+
+**Smoke-test plan (user-executable):**
+1. Build (deferred in sandbox — see Build verification).
+2. Spawn villages on varied terrain (flat, near-river, near-mountain). For the
+   candidate router to appear in auto-dumps, enable auto-dump (`AutoDumpConfig`);
+   otherwise use `/litv layout debug dump`.
+3. In the dump confirm: the **real** village is unchanged (same buildings, same
+   `roads`/`network`); `siteContext.derivedGateways` matches the top-level
+   `gateways` (and pre-refactor positions); and the new `candidateNetwork` shows
+   a connected tree reaching every building + both gateways, with edges that
+   **bend around water/steep ground** (the `SmoothedPath` centerlines follow
+   valleys, not straight lines through lakes), and a wider trunk between the two
+   gateways.
+4. Confirm no crash on degenerate inputs (1 building / no secondaries / a
+   water-split site) — the router returns a node-only or partial spec and the
+   dump still writes (`candidateNetwork` falls back to an `{error}` object only
+   if the router throws, which it shouldn't).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403 on neoform-runtime-2.0.18.pom). Static review
+substituted: the gateway extraction is behaviour-preserving (identical
+`primaryPos`/axis/tier inputs → identical `step` math); all 6 `new SiteContext(`
+sites (in-file only) updated to the 14-field shape; `gatewayDistance` moved (one
+definition, in `GatewayPlanner`); `BlockServingRouter` reuses the now-public
+`ZonePartition` cost methods, its grid A\* indices are bounded by `g²`, record
+components are accessed within the enclosing class (legal nestmate access),
+`NetworkSpec` tolerates the empty/minimal specs the router can emit, and the
+dump hook is wrapped so a router fault can't break dumping. The router runs only
+when a dump is produced (auto-dump is gated behind `AutoDumpConfig.isEnabled()`),
+never on the normal spawn path.

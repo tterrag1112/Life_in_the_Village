@@ -190,6 +190,18 @@ public final class SiteAnalyzer {
         StrategySelectionResult strategy = StrategySelector.select(ctx, anchors);
         ctx = ctx.withStrategy(strategy);
 
+        // Layout Rework Stage 3b — gateways-first. Derive the gateway
+        // pair before the network so NetworkPlanner consumes it (giving
+        // byte-identical gateway positions to the old inline derivation)
+        // and the Stage 3b router has its terminals. The primary
+        // position mirrors NetworkPlanner's: the primary anchor centre,
+        // else the (final) site anchor.
+        BlockPos gatewayPrimaryPos =
+                strategy != null && strategy.primaryAnchor() != null
+                        ? strategy.primaryAnchor().centre() : finalAnchor;
+        ctx = ctx.withGateways(GatewayPlanner.derive(
+                gatewayPrimaryPos, axisDec.axis, effectiveTier));
+
         // Track E1 prompt-3 — grow the network from the selected
         // strategy + anchors. The spine path is now a derived view of
         // the network's edges so existing consumers (PhasedPlanner,

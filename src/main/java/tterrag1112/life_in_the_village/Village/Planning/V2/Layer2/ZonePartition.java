@@ -58,8 +58,11 @@ public final class ZonePartition {
 
     // ── Cost metric (starting baselines — tune in-world) ───────────────────────
     /** Flat-open cost to step into a cell, in cost units (≈ cellSize so
-     *  unobstructed cost-distance tracks world block distance). */
-    private static final int BASE_STEP_COST = 2;
+     *  unobstructed cost-distance tracks world block distance). Also the
+     *  minimum possible {@link #enterCost}, so an A* heuristic of
+     *  {@code chebyshevSteps · BASE_STEP_COST} stays admissible. Public
+     *  so Stage 3b's block-serving router reuses the same cost model. */
+    public static final int BASE_STEP_COST = 2;
     /** Added cost per unit of {@code localSlope}. */
     private static final int SLOPE_WEIGHT = 2;
     /** Within this many cells of water, entering costs extra (steer
@@ -165,7 +168,7 @@ public final class ZonePartition {
                     int ni = i + di, nj = j + dj;
                     if (ni < 0 || nj < 0 || ni >= g || nj >= g) continue;
                     Cell nc = fmap.cell(ni, nj);
-                    if (!buildable(nc)) continue;            // blocked
+                    if (!isBuildable(nc)) continue;          // blocked
                     int nd = d + enterCost(nc);
                     if (nd < dist[ni][nj]) {
                         dist[ni][nj] = nd;
@@ -178,18 +181,24 @@ public final class ZonePartition {
         // The anchor cell itself: keep a real cost only if it is buildable;
         // otherwise it was just a seed and should read UNREACHED so it
         // isn't banded as a (non-buildable) civic cell.
-        if (!buildable(fmap.cell(ai, aj))) dist[ai][aj] = UNREACHED;
+        if (!isBuildable(fmap.cell(ai, aj))) dist[ai][aj] = UNREACHED;
         return dist;
     }
 
-    private static boolean buildable(Cell c) {
+    /** Whether a cell can host buildings / carry roads — the shared
+     *  buildable predicate ({@code OPEN/SHORE && slope ≤ MAX_SLOPE}).
+     *  Public so Stage 3b's router blocks the same cells. */
+    public static boolean isBuildable(Cell c) {
         BlockCategory cat = c.category();
         return (cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
                 && c.localSlope() <= MAX_SLOPE;
     }
 
-    /** Cost to enter {@code c} (always buildable here). */
-    private static int enterCost(Cell c) {
+    /** Cost to enter {@code c} (slope- and water/forest-proximity
+     *  weighted). Caller must ensure {@code c} is buildable. Public so
+     *  Stage 3b's router routes roads with the same valley-seeking,
+     *  water-avoiding terrain logic the partition uses. */
+    public static int enterCost(Cell c) {
         int s = BASE_STEP_COST + SLOPE_WEIGHT * c.localSlope();
         int dw = c.distToWater();
         if (dw < WATER_NEAR_CELLS) s += (WATER_NEAR_CELLS - dw) * WATER_WEIGHT;

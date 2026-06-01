@@ -44,6 +44,12 @@ import java.util.List;
  * {@link SiteAnalyzer} after network planning; {@code null} until then.
  * Inspectable infrastructure only in Stage 3a — no placement or road
  * code reads it yet (Stage 3c wires placement to it).
+ *
+ * <p>Layout Rework Stage 3b — {@code gateways} carries the gateways-first
+ * derivation ({@link GatewayPlanner}), populated by {@link SiteAnalyzer}
+ * before network planning. {@code NetworkPlanner} consumes it (identical
+ * gateway positions to the pre-extraction inline derivation); the Stage 3b
+ * router uses the gateways as terminals. {@code null} until derived.
  */
 public record SiteContext(
         BlockPos anchor,
@@ -58,7 +64,8 @@ public record SiteContext(
         List<Anchor> anchors,
         StrategySelectionResult strategy,
         NetworkSpec network,
-        ZonePartition zonePartition) {
+        ZonePartition zonePartition,
+        Gateways gateways) {
 
     public SiteContext {
         anchors = anchors == null ? List.of() : List.copyOf(anchors);
@@ -76,21 +83,21 @@ public record SiteContext(
                                             Culture culture, long seed) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
                 tier, inclination, culture, seed, new ArrayList<>(), List.of(),
-                null, null, null);
+                null, null, null, null);
     }
 
     /** Track E1 — copy-with anchors. */
     public SiteContext withAnchors(List<Anchor> newAnchors) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
                 tier, inclination, culture, seed, hubs, newAnchors, strategy, network,
-                zonePartition);
+                zonePartition, gateways);
     }
 
     /** Track E1B — copy-with strategy selection result. */
     public SiteContext withStrategy(StrategySelectionResult newStrategy) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
                 tier, inclination, culture, seed, hubs, anchors, newStrategy, network,
-                zonePartition);
+                zonePartition, gateways);
     }
 
     /** Track E1 prompt-3 — copy-with the planned road network and
@@ -101,7 +108,7 @@ public record SiteContext(
         return new SiteContext(anchor, originalAnchor, primaryAxis,
                 derivedSpine != null ? derivedSpine : spinePath,
                 tier, inclination, culture, seed, hubs, anchors, strategy, newNetwork,
-                zonePartition);
+                zonePartition, gateways);
     }
 
     /** Layout Rework Stage 3a — copy-with the computed land-use
@@ -109,7 +116,14 @@ public record SiteContext(
     public SiteContext withZonePartition(ZonePartition newPartition) {
         return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
                 tier, inclination, culture, seed, hubs, anchors, strategy, network,
-                newPartition);
+                newPartition, gateways);
+    }
+
+    /** Layout Rework Stage 3b — copy-with the derived gateways. */
+    public SiteContext withGateways(Gateways newGateways) {
+        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+                tier, inclination, culture, seed, hubs, anchors, strategy, network,
+                zonePartition, newGateways);
     }
 
     /** B2.8 — copy-with overrides for /building village spawn's
@@ -121,6 +135,6 @@ public record SiteContext(
                 anchor, originalAnchor, primaryAxis, spinePath,
                 newTier        != null ? newTier        : tier,
                 newInclination != null ? newInclination : inclination,
-                culture, seed, hubs, anchors, strategy, network, zonePartition);
+                culture, seed, hubs, anchors, strategy, network, zonePartition, gateways);
     }
 }

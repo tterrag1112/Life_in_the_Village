@@ -102,21 +102,18 @@ public final class NetworkPlanner {
         List<Anchor> secondaries = selection != null
                 ? selection.secondaryAnchors() : List.of();
 
-        // Gateways: project from the primary along the site's
-        // primary axis ± villageRadius. Recipes that don't need
-        // gateways simply ignore them. The pair is symmetric so
-        // both axis-aligned and feature-aligned spines have well-
-        // defined endpoints to attach trade roads to.
-        int gatewayDist = gatewayDistance(ctx.tier());
-        CardinalAxis axis = ctx.primaryAxis();
-        BlockPos primaryGateway = step(primaryPos,
-                axis == CardinalAxis.X ? +1 : 0,
-                axis == CardinalAxis.X ? 0 : +1,
-                gatewayDist);
-        BlockPos secondaryGateway = step(primaryPos,
-                axis == CardinalAxis.X ? -1 : 0,
-                axis == CardinalAxis.X ? 0 : -1,
-                gatewayDist);
+        // Gateways: consume the gateways-first derivation (Stage 3b —
+        // GatewayPlanner) carried on the SiteContext. Recipes that
+        // don't need gateways simply ignore them. The pair is symmetric
+        // so both axis-aligned and feature-aligned spines have well-
+        // defined endpoints to attach trade roads to. The fallback
+        // (derive inline) keeps any caller that didn't pre-populate the
+        // gateways working with byte-identical positions.
+        Gateways gateways = ctx.gateways() != null
+                ? ctx.gateways()
+                : GatewayPlanner.derive(primaryPos, ctx.primaryAxis(), ctx.tier());
+        BlockPos primaryGateway = gateways.primary();
+        BlockPos secondaryGateway = gateways.secondary();
 
         Builder b = new Builder(topology);
         switch (topology) {
@@ -886,14 +883,7 @@ public final class NetworkPlanner {
         };
     }
 
-    private static int gatewayDistance(ViabilityTier tier) {
-        return switch (tier) {
-            case CITY    -> 80;
-            case TOWN    -> 50;
-            case HAMLET  -> 24;
-            case OUTPOST, UNVIABLE -> 12;
-        };
-    }
+    // gatewayDistance moved to GatewayPlanner (Stage 3b extraction).
 
     // =========================================================================
     // Track E1 prompt 6 — tier-keyed secondary edge counts.

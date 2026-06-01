@@ -40,6 +40,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResul
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.ReconciliationEngine;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.BlockServingRouter;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
@@ -160,7 +161,7 @@ public final class LayoutDumpSerializer {
 
         return assemble(
                 commandKind, tick, worldSeed, planSeed, level, origin,
-                villageName, villageId, culture,
+                villageName, villageId, culture, fmap,
                 siteCtx, sel, recon, phased.placement(), phased.network(),
                 phased.events(), phased.nucleusContexts(),
                 phased.droppedBindings(),
@@ -194,6 +195,7 @@ public final class LayoutDumpSerializer {
                 villageName, villageId,
                 culture != null ? culture
                         : CultureRegistry.getOrDefault(CultureRegistry.DEFAULT_ID),
+                fmap,
                 siteCtx, sel, recon, placement, roads, events, nucleusContexts,
                 droppedBindings, log);
     }
@@ -243,6 +245,7 @@ public final class LayoutDumpSerializer {
                                        ServerLevel level, BlockPos origin,
                                        String villageName, String villageId,
                                        Culture culture,
+                                       V2FeatureMap fmap,
                                        SiteContext siteCtx,
                                        BuildingSelector.SelectionResult sel,
                                        ReconciliationEngine.ReconciliationResult recon,
@@ -272,6 +275,25 @@ public final class LayoutDumpSerializer {
         if (roads != null) {
             root.add("roads", roadsJson(roads, level, worldSeed));
             root.add("gateways", gatewaysJson(roads));
+        }
+        // Layout Rework Stage 3b — candidate block-serving network.
+        // Dump-only comparison: run the terrain-aware router on the
+        // as-placed buildings + the derived gateways and serialize it
+        // alongside the real network. NOTHING consumes it — spawning
+        // still uses the NetworkPlanner network above.
+        if (fmap != null && siteCtx != null && siteCtx.gateways() != null
+                && placement != null && !placement.placed().isEmpty()) {
+            try {
+                NetworkSpec candidate = BlockServingRouter.route(
+                        placement.placed(), siteCtx.gateways(), fmap, siteCtx.anchor());
+                root.add("candidateNetwork",
+                        networkSpecJson(candidate, level, worldSeed, null));
+            } catch (RuntimeException e) {
+                JsonObject err = new JsonObject();
+                err.addProperty("error", e.getClass().getSimpleName()
+                        + ": " + e.getMessage());
+                root.add("candidateNetwork", err);
+            }
         }
         if (events != null) {
             root.add("phaseEvents", phaseEventsJson(events));
@@ -387,6 +409,18 @@ public final class LayoutDumpSerializer {
         // Nothing consumes the partition yet; this is inspection only.
         if (ctx.zonePartition() != null) {
             o.add("zonePartition", zonePartitionJson(ctx.zonePartition()));
+        }
+
+        // Layout Rework Stage 3b — the gateways-first derivation
+        // (GatewayPlanner). Distinct from the top-level "gateways"
+        // (read off the realized road skeleton): this is the extracted
+        // pre-network derivation. They should match the pre-refactor
+        // positions — emit both for that comparison.
+        if (ctx.gateways() != null) {
+            JsonObject gw = new JsonObject();
+            gw.add("primary", posJson(ctx.gateways().primary()));
+            gw.add("secondary", posJson(ctx.gateways().secondary()));
+            o.add("derivedGateways", gw);
         }
 
         // Track E1 prompt 5 — siteContext.composition. Per-building
