@@ -14,9 +14,8 @@ import java.util.UUID;
  *
  * <p>Owned by a single farmhouse (1:1 today; a future "shared
  * complex" use-case would relax that to N:1). Wraps the
- * planning-layer {@link
- * tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.ComplexRegion}
- * envelope's polygon, the BSP-subdivided plot references (the
+ * planning-layer reserved-region polygon (the {@code Parcel} budget
+ * box, Layout Rework Stage 2a), the BSP-subdivided plot references (the
  * plot data lives in {@code FarmPlot} records — single source of
  * truth for plot geometry + crop), the path graph, the optional
  * tool shed location, the per-plot border styles, and the

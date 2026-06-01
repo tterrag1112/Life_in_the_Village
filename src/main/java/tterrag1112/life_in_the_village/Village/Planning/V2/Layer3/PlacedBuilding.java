@@ -23,6 +23,10 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
  * materialises a persisted
  * {@link tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlot}
  * once the parent building's UUID is known.
+ *
+ * <p>{@code parcel} (Layout Rework Stage 2a) is non-null for FARMHOUSE
+ * / MARKET lead buildings when the planner reserved an interior complex
+ * budget box. Stage 2b seeds the farm/market complex planners from it.
  */
 public record PlacedBuilding(
         BuildingType type,
@@ -33,16 +37,28 @@ public record PlacedBuilding(
         String variantId,
         FrontageStrip frontage,
         RoadSegment facingRoad,
-        PlannedAdjunct adjunct) {
+        PlannedAdjunct adjunct,
+        Parcel parcel) {
 
-    /** Convenience overload that defaults {@code adjunct} to null —
-     *  preserves callers that don't plan adjuncts (foundation phase,
-     *  iterative phase fallbacks). */
+    /** Convenience overload that defaults {@code adjunct} + {@code parcel}
+     *  to null — preserves callers that don't plan adjuncts (foundation
+     *  phase, iterative phase fallbacks). */
     public PlacedBuilding(BuildingType type, BlockPos centre,
                           Footprint footprint, Rotation rotation,
                           Priority priority, String variantId,
                           FrontageStrip frontage, RoadSegment facingRoad) {
         this(type, centre, footprint, rotation, priority, variantId,
-                frontage, facingRoad, null);
+                frontage, facingRoad, null, null);
+    }
+
+    /** Convenience overload that defaults {@code parcel} to null —
+     *  preserves callers that plan an adjunct but no complex parcel. */
+    public PlacedBuilding(BuildingType type, BlockPos centre,
+                          Footprint footprint, Rotation rotation,
+                          Priority priority, String variantId,
+                          FrontageStrip frontage, RoadSegment facingRoad,
+                          PlannedAdjunct adjunct) {
+        this(type, centre, footprint, rotation, priority, variantId,
+                frontage, facingRoad, adjunct, null);
     }
 }

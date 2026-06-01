@@ -81,6 +81,33 @@ public final class OverlapAuditor {
             }
         }
 
+        // Stage 2a — complex parcel × another building's footprint, and
+        // parcel × road corridor. Insurance only: the planner already
+        // validates parcels against reservations + corridors.
+        for (PlacedBuilding owner : placed) {
+            int[] parcel = parcelAabb(owner);
+            if (parcel == null) continue;
+            for (PlacedBuilding other : placed) {
+                if (other == owner) continue;
+                if (aabbsOverlap(parcel, footprintAabb(other))) {
+                    conflicts.add(new Conflict(
+                            "complex parcel overlaps building footprint",
+                            owner.centre(), label(owner) + " parcel", label(other)));
+                }
+            }
+            for (RoadSegment seg : skeleton.allSegments()) {
+                int corridorHalf = (seg.width() + 1) / 2;
+                if (RoadCorridors.intersects(seg.start(), seg.end(), corridorHalf,
+                        parcel[0], parcel[1], parcel[2], parcel[3])) {
+                    conflicts.add(new Conflict(
+                            "complex parcel inside road corridor",
+                            owner.centre(), label(owner) + " parcel",
+                            seg instanceof tterrag1112.life_in_the_village.Village
+                                    .Planning.V2.Layer4.SpineSegment ? "spine" : "cross-street"));
+                }
+            }
+        }
+
         boolean fatal = conflicts.stream().anyMatch(c ->
                 c.aDesc().contains("TOWN_HALL") || c.bDesc().contains("TOWN_HALL"));
         return new OverlapReport(conflicts, fatal);
@@ -106,6 +133,14 @@ public final class OverlapAuditor {
 
     private static boolean aabbsOverlap(int[] a, int[] b) {
         return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+    }
+
+    /** Stage 2a — {@code [minX, minZ, maxX, maxZ]} of the building's
+     *  reserved complex parcel budget box, or {@code null} if none. */
+    private static int[] parcelAabb(PlacedBuilding b) {
+        if (b.parcel() == null) return null;
+        var bb = b.parcel().budgetBounds();
+        return new int[]{bb.minX(), bb.minZ(), bb.maxX(), bb.maxZ()};
     }
 
     public record OverlapReport(List<Conflict> conflicts, boolean fatal) {}

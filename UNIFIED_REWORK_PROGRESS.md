@@ -4069,3 +4069,105 @@ external callers compile untouched; `PopulationRoster` types resolve
 `ViabilityTier`'s new fields don't disturb the `StrategyConditions
 .targetBuildingCount` reader; `TerrainAggregate` stays referenced by MINE/
 WOODCUTTER after the MILLER RIVER removal.
+
+### 2026-05-31 — Layout Rework Stage 2a landed (Parcel primitive + reserve complexes)
+
+**What shipped:** Introduced the **`Parcel`** primitive — a building-owned
+reserved region — and used it to reserve interior space for farm/market
+complexes **during** planning, replacing the dead `ComplexRegion`/`PlanningPhase`
+socket. `PhasedPlanner` now sizes a budget AABB next to each placed
+FARMHOUSE/MARKET, validates it like an adjunct (overlap / corridor / terrain),
+folds it into the building's `Reservation` so later buildings avoid it, and
+attaches a `Parcel` to the `PlacedBuilding`. **Infrastructure only** — complexes
+still render post-spawn via the existing `PERIMETER_OFFSET` scaffold (no visible
+change yet); Stage 2b seeds the planners from the parcel and deletes the
+scaffold.
+
+**Budget-box sizing rule (the contract Stage 2b consumes):** reserved by
+bounding-box AABB (the reservation system is AABB-only), growing in the
+**direction away from the lead building's road frontage** (opposite
+`frontage.frontDirection()`, cardinal-snapped). Half-extents `[perp, depth]`
+(perp ⟂ growth, depth ∥ growth):
+- **FARM:** square-ish box from the flood-fill `blockBudget`
+  (`BuildingComplexRegistry`, default 600): `side = ceil(sqrt(max(64,budget)·1.4))`,
+  fullPerp `= max(8, side/2)`, fullDepth `= max(10, side/2 + 2)`; minimum
+  `[6, 8]`. At budget 600 → ~14×16 half-extents (≈29×33 box).
+- **MARKET:** footprint + pad margin (`MarketComplexRegistry`, default
+  `padMargin=10`/`minPadMargin=7`): fullPerp `= footHalfPerp + padMargin`,
+  fullDepth `= footHalfAlong + padMargin`; minimum uses `minPadMargin`.
+- The box starts one block past the building's back edge
+  (`COMPLEX_PARCEL_BUFFER=1`). **Graceful fallback:** the planner tries the full
+  box, shrinks toward the minimum in 4 steps, and if even the minimum fails
+  overlap/corridor/terrain (`COMPLEX_SLOPE_TOLERANCE=12`, all cells OPEN/SHORE),
+  it places the building with **no parcel** (best-effort). 2b must handle a
+  null parcel.
+
+`Parcel` fields: `kind` (FARM/MARKET), `budget` (rectangular `Polygon`),
+`anchor` (lead building centre — the seed + pad Y), `growthDirection`, plus
+nullable `realizedRegion` (2b fills the organic shape) and `buildingBounds`
+(knockout). `withRealized(region)` returns the 2b-populated copy.
+
+**Surface area:** 1 new file + 5 edits + 2 deletions.
+
+**Files added:**
+- `.../Village/Planning/V2/Layer3/Parcel.java`
+
+**Files modified:**
+- `.../Layer4/PhasedPlanner.java` — `reserveComplexParcel` + sizing/validation
+  helpers (`growthDirectionAwayFromRoad`, `complexBudgetHalfExtents`,
+  `budgetBox`, `aabbToPolygon`); `Reservation` gains a nullable `parcel` AABB
+  slot; `overlapsAnyReservation` + `adjunctOverlapsAnyReservation` now test it;
+  `placeOne` reserves the parcel and attaches it to the `PlacedBuilding`.
+- `.../Layer3/PlacedBuilding.java` — new nullable `parcel` field + two
+  convenience constructors (existing 8-/9-arg call sites unaffected).
+- `.../Layer5/OverlapAuditor.java` — parcel × building-footprint and parcel ×
+  road-corridor relations (insurance audit).
+- `.../Debug/LayoutDumpSerializer.java` — per-building `parcel` JSON (kind,
+  growthDirection, bbox, realized flag).
+- `.../Village/Farms/Complex/FarmComplex.java` — scrubbed the `{@link
+  ComplexRegion}` javadoc to reference the `Parcel` budget box.
+
+**Files deleted:**
+- `.../Layer3/ComplexRegion.java`, `.../Layer3/PlanningPhase.java` (the dead
+  socket — only javadoc/comment refs existed).
+
+**Deviations from prompt:**
+- `Parcel` carries the budget box as a rectangular `Polygon` (not the private
+  `PhasedPlanner.Aabb`, which isn't visible outside the planner). Same
+  AABB-reservation decision; `Polygon` is directly usable by 2b's
+  FarmComplexPlanner exclusions and the dump.
+- `MARKET` parcels grow in the same back direction as farms (away from road),
+  rather than a symmetric pad around the building — a centred pad would
+  intersect the road corridor and shrink/skip constantly. 2a only reserves; 2b
+  feeds the parcel centre to `MarketComplexPlanner`, so appearance is a 2b
+  concern.
+
+**Out-of-scope but flagged:**
+- Seeding the complex planners from the parcel + deleting the `PERIMETER_OFFSET`
+  scaffold → Stage 2b (the adapter's two scaffold comments at lines ~92/~912
+  still reference the old plan; 2b removes them).
+- Adjunct retirement → Stage 2.5 (untouched here; runs in parallel).
+- Districts / nesting parcels, new parcel recipes → Stages 3–4.
+- True polygon-level collision → not now (bbox by decision).
+
+**Cumulative pending verification:** Detour A, Layout Rework Phases 1/2/2b/3a/3b,
+Step 3 Stage 1, and this Stage 2a remain pending in-world smoke test (Garrett
+is running one comprehensive test after Stages 2a/2b/2.5).
+
+**Smoke test plan (user-executable):**
+1. Build (deferred in sandbox — see Build verification).
+2. Spawn a village with farms/markets; `/litv layout debug dump` — each
+   FARMHOUSE/MARKET shows a `parcel` AABB of sensible size in its
+   growthDirection, and no other building's footprint overlaps it.
+3. Confirm no visible in-world change yet (complexes still render via the
+   scaffold) and the village still spawns (graceful fallback when a parcel
+   can't fit — some lead buildings may show no parcel).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403 on neoform-runtime-2.0.18.pom). Full static
+review: only `placeOne` constructs the 5-field `Reservation` and the 10-field
+`PlacedBuilding`; all overlap checks include the nullable parcel; `Parcel`'s
+`Polygon` budget resolves against `Utilities.Geometry.Polygon`; the complex
+registries return `Optional` with sane defaults; zero remaining type references
+to the deleted `ComplexRegion`/`PlanningPhase` (only adapter scaffold comments +
+one `{@code}` mention remain).

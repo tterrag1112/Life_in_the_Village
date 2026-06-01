@@ -637,6 +637,23 @@ public final class LayoutDumpSerializer {
             if (pb.adjunct() != null) {
                 b.addProperty("hasAdjunct", true);
             }
+            // Stage 2a — reserved complex parcel (budget box) for
+            // farm/market lead buildings.
+            if (pb.parcel() != null) {
+                var parcel = pb.parcel();
+                var bb = parcel.budgetBounds();
+                JsonObject jp = new JsonObject();
+                jp.addProperty("kind", parcel.kind().name());
+                jp.addProperty("growthDirection", parcel.growthDirection().name());
+                jp.addProperty("minX", bb.minX());
+                jp.addProperty("minZ", bb.minZ());
+                jp.addProperty("maxX", bb.maxX());
+                jp.addProperty("maxZ", bb.maxZ());
+                jp.addProperty("width", bb.width());
+                jp.addProperty("length", bb.length());
+                jp.addProperty("realized", parcel.realizedRegion() != null);
+                b.add("parcel", jp);
+            }
             // Track E1 prompt-4 — nucleus attribution for the dump
             // visualizer. Map lookup: absent entry means the building
             // had no matching nucleus rule (placed by base terrain

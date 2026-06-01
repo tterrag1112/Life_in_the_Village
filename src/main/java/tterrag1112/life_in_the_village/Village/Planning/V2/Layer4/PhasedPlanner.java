@@ -35,6 +35,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DropReason;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Footprint;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.FrontageStrip;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Parcel;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlannedAdjunct;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementDefaults;
@@ -44,6 +45,11 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.TerrainFactor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.VariantResolver;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
+import tterrag1112.life_in_the_village.Village.Buildings.Complex.BuildingComplexRegistry;
+import tterrag1112.life_in_the_village.Village.Buildings.Complex.BuildingComplexSpec;
+import tterrag1112.life_in_the_village.Village.Buildings.Complex.MarketComplexRegistry;
+import tterrag1112.life_in_the_village.Village.Buildings.Complex.MarketComplexSpec;
+import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -632,13 +638,21 @@ public final class PhasedPlanner {
             return false;
         }
 
+        // Stage 2a — reserve an interior complex parcel for farm/market
+        // lead buildings (graceful fallback: shrink, then skip). The
+        // parcel AABB folds into this building's reservation so later
+        // buildings avoid it.
+        ComplexParcel cp = reserveComplexParcel(state, type, best);
+        Parcel parcel = cp != null ? cp.parcel() : null;
+        Aabb parcelAabb = cp != null ? cp.aabb() : null;
+
         // Materialise the placement.
         PlacedBuilding pb = new PlacedBuilding(type, best.pos, best.footprint,
                 best.rotation, profile.priority(), best.variantId,
-                best.frontage, best.facingRoad, best.adjunct);
+                best.frontage, best.facingRoad, best.adjunct, parcel);
         state.placed.add(pb);
         state.reservations.add(new Reservation(best.footprintAabb,
-                best.frontageAabb, best.adjunctAabb, type));
+                best.frontageAabb, best.adjunctAabb, parcelAabb, type));
         // Track E1 prompt-4 — capture the dominant nucleus context
         // for the dump's per-building attribution. Recomputes
         // SpatialFit at the chosen cell so the visualizer can show
@@ -1656,6 +1670,10 @@ public final class PhasedPlanner {
                     && (fpAabb.overlaps(r.adjunct) || stripAabb.overlaps(r.adjunct))) {
                 return true;
             }
+            if (r.parcel != null
+                    && (fpAabb.overlaps(r.parcel) || stripAabb.overlaps(r.parcel))) {
+                return true;
+            }
         }
         return false;
     }
@@ -1670,6 +1688,7 @@ public final class PhasedPlanner {
             if (adjunctAabb.overlaps(r.footprint)) return true;
             if (adjunctAabb.overlaps(r.frontage))  return true;
             if (r.adjunct != null && adjunctAabb.overlaps(r.adjunct)) return true;
+            if (r.parcel != null && adjunctAabb.overlaps(r.parcel)) return true;
         }
         return false;
     }
@@ -1959,6 +1978,122 @@ public final class PhasedPlanner {
         return out;
     }
 
+    // =========================================================================
+    // Stage 2a — interior complex parcel reservation
+    // =========================================================================
+
+    /** Buffer between the lead building footprint and the parcel box. */
+    private static final int COMPLEX_PARCEL_BUFFER = 1;
+    /** Max-min elevation drop tolerated across a reserved parcel box. */
+    private static final int COMPLEX_SLOPE_TOLERANCE = 12;
+
+    /** Result of a successful parcel reservation: the {@link Parcel} to
+     *  attach to the {@link PlacedBuilding} plus its AABB for the
+     *  reservation set. */
+    private record ComplexParcel(Parcel parcel, Aabb aabb) {}
+
+    /**
+     * Reserves an interior complex parcel for a FARMHOUSE / MARKET lead
+     * building, growing away from the building's road frontage. Sized
+     * from the complex spec; validated like an adjunct (overlap /
+     * corridor / terrain). Shrinks toward a minimum and, failing that,
+     * returns {@code null} (graceful fallback — the building still
+     * places, just without a parcel). Returns {@code null} for any
+     * non-lead building type.
+     */
+    private static ComplexParcel reserveComplexParcel(State state, BuildingType type,
+                                                      Best best) {
+        Parcel.Kind kind;
+        if (type == BuildingType.FARMHOUSE) kind = Parcel.Kind.FARM;
+        else if (type == BuildingType.MARKET) kind = Parcel.Kind.MARKET;
+        else return null;
+
+        Direction grow = growthDirectionAwayFromRoad(best.frontage);
+        int[] ext = complexBudgetHalfExtents(kind, best.footprintAabb, grow,
+                state.culture, type);
+        int fullPerp = ext[0], fullDepth = ext[1], minPerp = ext[2], minDepth = ext[3];
+
+        // Try the full box, shrinking toward the minimum; the first box
+        // that clears overlap + corridor + terrain wins.
+        final int steps = 4;
+        for (int i = 0; i <= steps; i++) {
+            double t = 1.0 - (double) i / steps;   // 1.0 (full) → 0.0 (min)
+            int hp = (int) Math.round(minPerp + (fullPerp - minPerp) * t);
+            int hd = (int) Math.round(minDepth + (fullDepth - minDepth) * t);
+            Aabb box = budgetBox(best.pos, best.footprintAabb, grow, hp, hd);
+            if (adjunctOverlapsAnyReservation(box, state.reservations)) continue;
+            if (intersectsAnyCorridor(box, state.skeleton.allSegments())) continue;
+            if (!adjunctTerrainOk(state.fmap, box, COMPLEX_SLOPE_TOLERANCE)) continue;
+            Polygon budget = aabbToPolygon(box, best.pos.getY());
+            Polygon bounds = aabbToPolygon(best.footprintAabb, best.pos.getY());
+            Parcel parcel = new Parcel(kind, budget, best.pos, grow, bounds);
+            return new ComplexParcel(parcel, box);
+        }
+        return null;
+    }
+
+    /** Cardinal direction the complex grows — opposite the building's
+     *  road frontage (into the interior, away from the street). */
+    private static Direction growthDirectionAwayFromRoad(FrontageStrip strip) {
+        Vec3 f = strip.frontDirection();
+        Direction toward = Direction.getNearest(
+                (int) Math.signum(f.x), 0, (int) Math.signum(f.z), Direction.SOUTH);
+        return toward.getOpposite();
+    }
+
+    /** Full + minimum parcel half-extents {@code [fullPerp, fullDepth,
+     *  minPerp, minDepth]}, where "perp" is perpendicular to the growth
+     *  direction and "depth" is along it. FARM sizes from the
+     *  flood-fill {@code blockBudget}; MARKET from footprint + the pad
+     *  margin. */
+    private static int[] complexBudgetHalfExtents(Parcel.Kind kind, Aabb fp,
+                                                  Direction grow, String culture,
+                                                  BuildingType type) {
+        boolean growZ = grow.getAxis() == Direction.Axis.Z;
+        int halfAlong = (growZ ? (fp.maxZ - fp.minZ) : (fp.maxX - fp.minX)) / 2;
+        int halfPerp  = (growZ ? (fp.maxX - fp.minX) : (fp.maxZ - fp.minZ)) / 2;
+
+        if (kind == Parcel.Kind.MARKET) {
+            int padMargin = MarketComplexRegistry.get(culture, type)
+                    .map(MarketComplexSpec::padMargin).orElse(10);
+            int minMargin = MarketComplexRegistry.get(culture, type)
+                    .map(MarketComplexSpec::minPadMargin).orElse(Math.min(padMargin, 4));
+            return new int[]{halfPerp + padMargin, halfAlong + padMargin,
+                    halfPerp + minMargin, halfAlong + minMargin};
+        }
+        // FARM — size a square-ish box from the cell budget with margin.
+        int budget = BuildingComplexRegistry.get(culture, type)
+                .map(BuildingComplexSpec::blockBudget).orElse(600);
+        int side = (int) Math.ceil(Math.sqrt(Math.max(64, budget) * 1.4));
+        int fullPerp = Math.max(8, side / 2);
+        int fullDepth = Math.max(10, side / 2 + 2);
+        return new int[]{fullPerp, fullDepth, 6, 8};
+    }
+
+    /** Budget box offset from the building centre in {@code grow},
+     *  starting just past the building's back edge. */
+    private static Aabb budgetBox(BlockPos centre, Aabb fp, Direction grow,
+                                  int halfPerp, int halfDepth) {
+        boolean growZ = grow.getAxis() == Direction.Axis.Z;
+        int parentHalfAlong = (growZ ? (fp.maxZ - fp.minZ) : (fp.maxX - fp.minX)) / 2;
+        int outward = parentHalfAlong + COMPLEX_PARCEL_BUFFER + halfDepth;
+        int cx = centre.getX() + grow.getStepX() * outward;
+        int cz = centre.getZ() + grow.getStepZ() * outward;
+        int worldHalfX = growZ ? halfPerp : halfDepth;
+        int worldHalfZ = growZ ? halfDepth : halfPerp;
+        return new Aabb(cx - worldHalfX, cz - worldHalfZ, cx + worldHalfX, cz + worldHalfZ);
+    }
+
+    /** Rectangular {@link Polygon} from an {@link Aabb} (Y decorative —
+     *  the polygon CONTAINS test is XZ-only). */
+    private static Polygon aabbToPolygon(Aabb a, int y) {
+        return new Polygon(List.of(
+                new BlockPos(a.minX, y, a.minZ),
+                new BlockPos(a.maxX, y, a.minZ),
+                new BlockPos(a.maxX, y, a.maxZ),
+                new BlockPos(a.minX, y, a.maxZ)));
+    }
+
     /** Cardinal unit-vector → world {@link Direction}. The planner's
      *  {@code chooseFacing} produces axis-aligned vectors only, so
      *  diagonal cases collapse cleanly to whichever axis dominates. */
@@ -2229,11 +2364,16 @@ public final class PhasedPlanner {
                         RoadSegment facingRoad, Aabb footprintAabb, Aabb frontageAabb,
                         ScoreBreakdown score, PlannedAdjunct adjunct, Aabb adjunctAabb) {}
 
-    /** B2.1 — adjunct AABB is nullable (most buildings have no adjunct). */
+    /** B2.1 — adjunct AABB is nullable (most buildings have no adjunct).
+     *  Stage 2a — parcel AABB is nullable (only farm/market lead
+     *  buildings reserve a complex parcel). */
     private record Reservation(Aabb footprint, Aabb frontage, Aabb adjunct,
-                               BuildingType type) {
+                               Aabb parcel, BuildingType type) {
         Reservation(Aabb footprint, Aabb frontage, BuildingType type) {
-            this(footprint, frontage, null, type);
+            this(footprint, frontage, null, null, type);
+        }
+        Reservation(Aabb footprint, Aabb frontage, Aabb adjunct, BuildingType type) {
+            this(footprint, frontage, adjunct, null, type);
         }
     }
 
