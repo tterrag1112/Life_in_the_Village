@@ -634,9 +634,6 @@ public final class LayoutDumpSerializer {
                 fg.addProperty("frontDirZ", pb.frontage().frontDirection().z);
                 b.add("frontage", fg);
             }
-            if (pb.adjunct() != null) {
-                b.addProperty("hasAdjunct", true);
-            }
             // Stage 2a — reserved complex parcel (budget box) for
             // farm/market lead buildings.
             if (pb.parcel() != null) {

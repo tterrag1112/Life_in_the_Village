@@ -22,8 +22,8 @@ import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
  * shape is filled <i>inside</i> it at realization (Stage 2b), recorded
  * in {@link #realizedRegion}.
  *
- * <p>No building UUID is carried — like {@link PlannedAdjunct}, a parcel
- * is attached directly to its {@link PlacedBuilding}, and the spawn
+ * <p>No building UUID is carried — the parcel is attached directly to
+ * its {@link PlacedBuilding}, and the spawn
  * adapter pairs the {@code PlacedBuilding} with the persisted
  * {@code Building} (UUID) in its post-spawn loop.
  *

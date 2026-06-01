@@ -91,8 +91,6 @@ public final class LivHelpCommand {
                     + "§f/liv decoration§7 — DecorationProfile / placement listings\n"
                     + "§f/liv parks <village>§7 — reserved GardenPlots\n"
                     + "§f/liv farms <village>§7 — FarmComplex per farmhouse + plot allocation\n"
-                    + "§f/liv homestead <village>§7 — per-HOUSE rolled HOMESTEAD_*\n"
-                    + "§f/liv adjuncts <village>§7 — every reserved AdjunctPlot\n"
                     + "§f/liv atlas§7 — World Atlas inspection (here/stats/sample/region)";
 
     private static final String NPC =

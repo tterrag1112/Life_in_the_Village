@@ -358,13 +358,7 @@ public final class CultureBundles {
             /** B2.5 — per-{@link FarmPlot.CropType} preference weights
              *  consumed by {@code FarmCropPicker}. Keys are CropType
              *  enum names; missing types default to weight 1.0. */
-            Map<String, Double> cropPreference,
-            /** B2.6 — per-HOMESTEAD_* {@code AdjunctPlotType}
-             *  preference weights consumed by V2 Layer 4's HOUSE
-             *  probability roll. Keys are AdjunctPlotType enum names
-             *  (e.g. {@code HOMESTEAD_COOP}); missing types default
-             *  to weight 1.0 — i.e. equally likely. */
-            Map<String, Double> homesteadPlotWeights
+            Map<String, Double> cropPreference
     ) {
         public CulturePlanningBias {
             if (roadMaterial == null) roadMaterial = "minecraft:dirt_path";
@@ -382,8 +376,6 @@ public final class CultureBundles {
             if (pastureRatio > 1.0) pastureRatio = 1.0;
             cropPreference = cropPreference == null ? Map.of()
                     : Map.copyOf(cropPreference);
-            homesteadPlotWeights = homesteadPlotWeights == null ? Map.of()
-                    : Map.copyOf(homesteadPlotWeights);
         }
 
         /** Backwards-compat constructor — pre-B2.4 callers don't
@@ -398,8 +390,7 @@ public final class CultureBundles {
             this(roadMaterial, preferredCurvature, preferredPlazaShape,
                     inclinationBias,
                     0.5, defaultParkPreferenceWeights(),
-                    0.7, 0.2, defaultCropPreferenceWeights(),
-                    defaultHomesteadPlotWeights());
+                    0.7, 0.2, defaultCropPreferenceWeights());
         }
 
         /** B2.4-shape backwards-compat constructor — kept so call
@@ -413,8 +404,7 @@ public final class CultureBundles {
             this(roadMaterial, preferredCurvature, preferredPlazaShape,
                     inclinationBias,
                     parkPriority, parkPreferenceWeight,
-                    0.7, 0.2, defaultCropPreferenceWeights(),
-                    defaultHomesteadPlotWeights());
+                    0.7, 0.2, defaultCropPreferenceWeights());
         }
 
         /** B2.5-shape backwards-compat constructor — kept so call
@@ -431,8 +421,7 @@ public final class CultureBundles {
             this(roadMaterial, preferredCurvature, preferredPlazaShape,
                     inclinationBias,
                     parkPriority, parkPreferenceWeight,
-                    farmPriority, pastureRatio, cropPreference,
-                    defaultHomesteadPlotWeights());
+                    farmPriority, pastureRatio, cropPreference);
         }
 
         public static final CulturePlanningBias DEFAULT =
@@ -445,8 +434,7 @@ public final class CultureBundles {
                         defaultParkPreferenceWeights(),
                         0.7,
                         0.2,
-                        defaultCropPreferenceWeights(),
-                        defaultHomesteadPlotWeights());
+                        defaultCropPreferenceWeights());
 
         /** Bias for {@code inc}, defaulting to 1.0 — mirrors the
          *  deleted {@code V2.Culture.Culture#biasFor}. */
@@ -472,15 +460,6 @@ public final class CultureBundles {
             return v != null ? v : 1.0;
         }
 
-        /** B2.6 — homestead plot type preference weight (typically a
-         *  HOMESTEAD_* {@code AdjunctPlotType} enum name). Default
-         *  1.0 — uniform across types. */
-        public double homesteadPlotWeightFor(String plotTypeName) {
-            if (plotTypeName == null) return 1.0;
-            Double v = homesteadPlotWeights.get(plotTypeName);
-            return v != null ? v : 1.0;
-        }
-
         private static Map<Inclination, Double> uniformInclinationBias() {
             EnumMap<Inclination, Double> m = new EnumMap<>(Inclination.class);
             for (Inclination inc : Inclination.values()) m.put(inc, 1.0);
@@ -500,23 +479,6 @@ public final class CultureBundles {
             m.put("ZEN_GARDEN",    1.0);
             m.put("SACRED_GROVE",  1.0);
             m.put("MEMORIAL_PARK", 0.9);
-            return m;
-        }
-
-        /** B2.6 — default-culture homestead plot weights. Slight
-         *  emphasis on COOP and GARDEN (the most relatable
-         *  homestead options); WORKSHOP / WOODSHED slightly lower
-         *  since they're tinkering-aside; BEES rarer (they require
-         *  a distinct material economy). */
-        private static Map<String, Double> defaultHomesteadPlotWeights() {
-            Map<String, Double> m = new java.util.LinkedHashMap<>();
-            m.put("HOMESTEAD_COOP",     1.3);
-            m.put("HOMESTEAD_GARDEN",   1.3);
-            m.put("HOMESTEAD_PEN",      0.9);
-            m.put("HOMESTEAD_BEES",     0.6);
-            m.put("HOMESTEAD_WORKSHOP", 0.9);
-            m.put("HOMESTEAD_ORCHARD",  0.9);
-            m.put("HOMESTEAD_WOODSHED", 0.9);
             return m;
         }
 
@@ -569,11 +531,7 @@ public final class CultureBundles {
                 Codec.unboundedMap(Codec.STRING, Codec.DOUBLE)
                         .optionalFieldOf("cropPreference",
                                 defaultCropPreferenceWeights())
-                        .forGetter(CulturePlanningBias::cropPreference),
-                Codec.unboundedMap(Codec.STRING, Codec.DOUBLE)
-                        .optionalFieldOf("homesteadPlotWeights",
-                                defaultHomesteadPlotWeights())
-                        .forGetter(CulturePlanningBias::homesteadPlotWeights)
+                        .forGetter(CulturePlanningBias::cropPreference)
         ).apply(i, CulturePlanningBias::new));
     }
 

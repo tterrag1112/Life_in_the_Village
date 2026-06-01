@@ -303,7 +303,7 @@ public final class HarnessDebugSink {
                     r.droppedCount,
                     r.firstCellsScanned,
                     "[" + r.rejReservation + "/" + r.rejCorridor + "/"
-                            + r.rejScore + "/" + r.rejAdjunct + "]",
+                            + r.rejScore + "]",
                     r.totalAccepted,
                     r.firstReservations,
                     r.lastReservations));
@@ -341,12 +341,13 @@ public final class HarnessDebugSink {
 
     /** Compiled once for the slice parse. The planner format string is
      *  {@code "candidates type={} foundation={} cellsScanned={} "
-     *  + "rejected[reservation={} corridor={} score={} adjunct={}] "
-     *  + "accepted={} reservations={}"} — see PhasedPlanner.java:809. */
+     *  + "rejected[reservation={} corridor={} score={}] "
+     *  + "accepted={} reservations={}"} — see PhasedPlanner candidate log
+     *  (Stage 2.5 removed the {@code adjunct=} reject counter). */
     private static final Pattern CAND_LINE = Pattern.compile(
             "candidates type=(\\S+) foundation=(\\S+) cellsScanned=(\\d+) "
                     + "rejected\\[reservation=(\\d+) corridor=(\\d+) "
-                    + "score=(\\d+) adjunct=(\\d+)\\] accepted=(\\d+) "
+                    + "score=(\\d+)\\] accepted=(\\d+) "
                     + "reservations=(\\d+)");
     /** PhasedPlanner.java:611. */
     private static final Pattern PLACED_LINE = Pattern.compile(
@@ -367,7 +368,6 @@ public final class HarnessDebugSink {
         int rejReservation;
         int rejCorridor;
         int rejScore;
-        int rejAdjunct;
         int totalAccepted;
         int firstReservations = -1;
         int lastReservations = -1;
@@ -387,14 +387,13 @@ public final class HarnessDebugSink {
                     row.foundationSeen = true;
                     row.foundationTrue = Boolean.parseBoolean(mc.group(2));
                     row.firstCellsScanned = Integer.parseInt(mc.group(3));
-                    row.firstReservations = Integer.parseInt(mc.group(9));
+                    row.firstReservations = Integer.parseInt(mc.group(8));
                 }
                 row.rejReservation += Integer.parseInt(mc.group(4));
                 row.rejCorridor += Integer.parseInt(mc.group(5));
                 row.rejScore += Integer.parseInt(mc.group(6));
-                row.rejAdjunct += Integer.parseInt(mc.group(7));
-                row.totalAccepted += Integer.parseInt(mc.group(8));
-                row.lastReservations = Integer.parseInt(mc.group(9));
+                row.totalAccepted += Integer.parseInt(mc.group(7));
+                row.lastReservations = Integer.parseInt(mc.group(8));
                 continue;
             }
             Matcher mp = PLACED_LINE.matcher(line);

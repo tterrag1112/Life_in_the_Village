@@ -183,7 +183,6 @@ public final class HarnessDump {
                 fg.addProperty("frontDirZ", pb.frontage().frontDirection().z);
                 b.add("frontage", fg);
             }
-            if (pb.adjunct() != null) b.addProperty("hasAdjunct", true);
             PhasedPlanner.NucleusContext nc = nucleusContexts == null
                     ? null : nucleusContexts.get(pb);
             if (nc != null) {

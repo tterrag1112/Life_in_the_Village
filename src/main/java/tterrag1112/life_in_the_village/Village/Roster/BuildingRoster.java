@@ -413,10 +413,10 @@ public class BuildingRoster {
      *       retreat to the safe anchor).</li>
      * </ul>
      *
-     * <p>Lookup tries the FarmPlot index first (the common case —
-     * ANIMAL_PEN FarmPlots are what {@code PastureRotation} binds);
-     * falls back to the AdjunctPlot index for the rare HOMESTEAD_PEN
-     * binding case.</p>
+     * <p>Lookup uses the FarmPlot index — ANIMAL_PEN FarmPlots are what
+     * {@code PastureRotation} binds. (Stage 2.5 removed the AdjunctPlot
+     * fallback with the adjunct system; {@code boundPlotId} now only ever
+     * binds a FarmPlot.)</p>
      */
     public BlockPos resolveRealizationAnchor(ServerLevel level, BlockPos fallback) {
         if (level == null || fallback == null) return fallback;
@@ -425,9 +425,7 @@ public class BuildingRoster {
         VillageSavedData data = VillageSavedData.get(level);
         BlockPos origin = data.getFarmPlotById(boundPlotId)
                 .map(p -> p.getOrigin())
-                .orElseGet(() -> data.getAdjunctPlot(boundPlotId)
-                        .map(p -> p.origin())
-                        .orElse(null));
+                .orElse(null);
         return origin != null ? origin : fallback;
     }
 

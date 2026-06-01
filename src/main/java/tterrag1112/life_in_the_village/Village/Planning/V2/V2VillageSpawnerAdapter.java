@@ -396,27 +396,6 @@ public final class V2VillageSpawnerAdapter {
                         BuildingFootprint.DEFAULT_BUFFER);
                 neighborIndex.add(b.centre(), placedBuilding.getPrimaryColor());
 
-                // B2.1 — materialise the planned adjunct (if any) into
-                // a persisted AdjunctPlot now that the parent's UUID
-                // exists. Pre-B2.1 this happened in
-                // AdjunctPlotPlacer.tryPlace as a post-spawn probe; the
-                // probe is gone — V2 Layer 4 already validated the
-                // rectangle and the realiser runs as a pure renderer.
-                if (b.adjunct() != null) {
-                    var planned = b.adjunct();
-                    var plot = new tterrag1112.life_in_the_village.Village.Decoration
-                            .Adjunct.AdjunctPlot(
-                                    java.util.UUID.randomUUID(),
-                                    placedBuilding.getId(),
-                                    planned.type(),
-                                    planned.origin(),
-                                    planned.halfWidthX(),
-                                    planned.halfLengthZ(),
-                                    planned.facingFromParent(),
-                                    placedBuilding.getRotation());
-                    data.addAdjunctPlot(plot);
-                }
-
                 placedOk++;
             } catch (Exception e) {
                 LOGGER.warn("V2: place failed for {} at {}: {}",
@@ -813,9 +792,6 @@ public final class V2VillageSpawnerAdapter {
                 tterrag1112.life_in_the_village.Village.Decoration
                         .VillageDecorator.decorateVillage(level, village, data,
                                 realized, footprint));
-        guard("AdjunctPlotRealiser", () ->
-                tterrag1112.life_in_the_village.Village.Decoration.Adjunct
-                        .AdjunctPlotRealiser.run(level, village, data));
         guard("DecorationPass", () ->
                 tterrag1112.life_in_the_village.Village.Decoration.Framework
                         .DecorationPass.run(level, village, data, realized));

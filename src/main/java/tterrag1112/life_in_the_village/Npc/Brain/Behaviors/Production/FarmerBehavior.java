@@ -1593,30 +1593,14 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     }
 
     /**
-     * Phase 6.3.3.j.5 — pick the animal-work XP target for the
-     * current tendAnimals cycle. When the farmhouse building has a
-     * BEES-tagged adjunct plot, 1-in-3 cycles route to BEEKEEPING so
-     * the sub-skill surfaces in practice; the remaining cycles route
-     * to ANIMAL_HUSBANDRY (the broader pen/coop work the farmer is
-     * doing the rest of the time). No bees → always ANIMAL_HUSBANDRY.
+     * Phase 6.3.3.j.5 — pick the animal-work XP target for the current
+     * tendAnimals cycle. Stage 2.5: the BEES-adjunct-plot reroute to
+     * BEEKEEPING was retired with the adjunct system, so animal work
+     * always awards ANIMAL_HUSBANDRY now. (Beekeeping resurfaces when
+     * apiaries return as a parcel/amenity in a later stage.)
      */
     private tterrag1112.life_in_the_village.Npc.Skills.Skill
             pickAnimalXpTarget(ServerLevel level) {
-        if (farmhouse == null) {
-            return tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY;
-        }
-        boolean hasBees = false;
-        for (var plot : tterrag1112.life_in_the_village.Networking.VillageSavedData
-                .get(level).getAdjunctPlotsForBuilding(farmhouse.getId())) {
-            if (plot.type().activityTag() == tterrag1112.life_in_the_village
-                    .Village.Decoration.Adjunct.ActivityTag.BEES) {
-                hasBees = true;
-                break;
-            }
-        }
-        if (hasBees && entity.getRandom().nextInt(3) == 0) {
-            return tterrag1112.life_in_the_village.Npc.Skills.Skill.BEEKEEPING;
-        }
         return tterrag1112.life_in_the_village.Npc.Skills.Skill.ANIMAL_HUSBANDRY;
     }
 

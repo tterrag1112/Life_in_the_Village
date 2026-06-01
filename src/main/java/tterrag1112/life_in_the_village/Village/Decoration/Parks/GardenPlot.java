@@ -11,11 +11,9 @@ import java.util.UUID;
 /**
  * B2.4 — durable record of one reserved park area in a village.
  *
- * <p>Mirrors the
- * {@link tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlot}
- * pattern: an authoritative map keyed by {@link #plotId} with a
- * denormalised per-village index for fast lookup, persisted via
- * {@code VillageSavedData}. Lifecycle:</p>
+ * <p>Uses the standard content-record pattern: an authoritative map
+ * keyed by {@link #plotId} with a denormalised per-village index for
+ * fast lookup, persisted via {@code VillageSavedData}. Lifecycle:</p>
  * <ul>
  *   <li>Created by {@code ParkCandidateFinder} after V2 Layer 4's
  *       hub designation; stored on

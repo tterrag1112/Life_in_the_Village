@@ -10,9 +10,9 @@ import tterrag1112.life_in_the_village.Entities.HouseholdData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Schedule.DayPhase;
+import tterrag1112.life_in_the_village.Entities.Goals.Homestead.Handlers.GenericChoresHandler;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.Decoration.Adjunct.AdjunctPlot;
 
 import java.util.EnumSet;
 
@@ -38,14 +38,11 @@ import java.util.EnumSet;
  *       {@code mentorTargetId} check.</li>
  * </ul>
  *
- * <p>Dispatch: looks up the household's
- * {@link HouseholdData#getHomesteadPlotType()} (set during V2
- * household formation) and routes per-tick work to the
- * {@link HomesteadHandler} registered for that plot type. When
- * the plot type is null (HOUSE didn't win the probability gate),
- * dispatch falls through to
- * {@link HomesteadHandlerRegistry#GENERIC_CHORES} so SPOUSE / CHILD
- * still have something to do.</p>
+ * <p>Dispatch (Stage 2.5): the per-adjunct-plot handler stack was
+ * retired with the adjunct system, so every homestead NPC now routes
+ * to the generic walk-to-house chores handler — SPOUSE / CHILD /
+ * ELDERLY still move and idle at home during their phase. Richer,
+ * parcel-bound homestead behaviours return in a later stage.</p>
  */
 public abstract class AbstractHomesteadGoal extends Goal {
 
@@ -58,10 +55,13 @@ public abstract class AbstractHomesteadGoal extends Goal {
     protected final TownspersonMob npc;
     protected final FamilyRole requiredRole;
 
+    /** Stage 2.5 — the per-adjunct-plot handler stack was retired; every
+     *  homestead NPC now uses the generic walk-to-house chores handler. */
+    private static final HomesteadHandler GENERIC_CHORES = new GenericChoresHandler();
+
     private int tickInGoal;
     private HomesteadHandler activeHandler;
     private HouseholdData household;
-    private AdjunctPlot plot;
     private Building house;
 
     protected AbstractHomesteadGoal(TownspersonMob npc, FamilyRole requiredRole) {
@@ -110,8 +110,7 @@ public abstract class AbstractHomesteadGoal extends Goal {
     public void start() {
         tickInGoal = 0;
         if (resolveContext()) {
-            activeHandler = HomesteadHandlerRegistry.getOrFallback(
-                    household.getHomesteadPlotType());
+            activeHandler = GENERIC_CHORES;
             HomesteadHandler.Context ctx = ctx();
             if (ctx != null) activeHandler.onArrive(ctx);
         }
@@ -142,14 +141,13 @@ public abstract class AbstractHomesteadGoal extends Goal {
         }
         activeHandler = null;
         household = null;
-        plot = null;
         house = null;
         tickInGoal = 0;
     }
 
-    /** Resolves household + plot + parent house from saved data.
-     *  Returns false (canUse fails) if the NPC has no household or
-     *  the household's house is missing. */
+    /** Resolves household + parent house from saved data. Returns false
+     *  (canUse fails) if the NPC has no household or the household's
+     *  house is missing. */
     private boolean resolveContext() {
         if (!(npc.level() instanceof ServerLevel sl)) return false;
         VillageSavedData data = VillageSavedData.get(sl);
@@ -157,14 +155,7 @@ public abstract class AbstractHomesteadGoal extends Goal {
         if (hh == null) return false;
         Building b = data.getBuildingById(hh.getBuildingId()).orElse(null);
         if (b == null) return false;
-        AdjunctPlot rolled = null;
-        if (hh.hasHomestead()) {
-            for (AdjunctPlot p : data.getAdjunctPlotsForBuilding(b.getId())) {
-                if (p.type() == hh.getHomesteadPlotType()) { rolled = p; break; }
-            }
-        }
         this.household = hh;
-        this.plot      = rolled;
         this.house     = b;
         return true;
     }
@@ -172,14 +163,13 @@ public abstract class AbstractHomesteadGoal extends Goal {
     private HomesteadHandler.Context ctx() {
         if (!(npc.level() instanceof ServerLevel sl) || household == null) return null;
         return new HomesteadHandler.Context(npc, sl, VillageSavedData.get(sl),
-                house, household, plot, tickInGoal);
+                house, household, tickInGoal);
     }
 
-    /** Convenience helper used by handlers — convert the plot's
-     *  origin into a navigation target. Falls back to the parent
-     *  house's origin when no plot is set (GENERIC_CHORES path). */
+    /** Convenience helper used by handlers — the NPC's homestead nav
+     *  target. Stage 2.5: always the parent house origin (the per-plot
+     *  navigation targets were retired with the adjunct system). */
     public static BlockPos navTarget(HomesteadHandler.Context ctx) {
-        if (ctx.plot() != null) return ctx.plot().origin();
         if (ctx.parentHouse() != null) return ctx.parentHouse().getShape().getOrigin();
         return ctx.npc().blockPosition();
     }

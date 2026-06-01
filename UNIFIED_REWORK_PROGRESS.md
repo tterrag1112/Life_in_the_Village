@@ -4258,3 +4258,120 @@ backward-compat ctor; `parcel.anchor()/growthDirection()/budget()` resolve on
 remaining references to `PERIMETER_OFFSET*` / `perimeterAnchor` (the only
 `PERIMETER_OFFSET` left is an unrelated decoration constant in
 `VillagePerimeter`).
+
+### 2026-05-31 — Layout Rework Stage 2.5 landed (retire the adjunct system)
+
+**What shipped:** Retired the building-adjunct system end-to-end. Its
+reservation role is now covered by the `Parcel` spine (Stages 2a/2b), and the
+dependent NPC behaviour **degrades gracefully** — nothing visible regresses.
+This was a cross-cutting deletion across planning, realization, persistence,
+NPC behaviour, roster, variants, culture bundles, commands, and tests. **19
+files deleted, 21 modified.** Expected visible effect: villages pack **tighter**
+(the invisible per-building reserved yard space is gone).
+
+**NPC behaviours that lost adjunct branches (all degrade, none break):**
+- **Homestead goals** (`AbstractHomesteadGoal` Spouse/Child/Elderly) — the
+  per-`AdjunctPlotType` handler stack + registry were retired; every homestead
+  NPC now routes to the kept `GenericChoresHandler` (walk-to-house + idle). The
+  goal still fires on its schedule; it just lost per-plot navigation targets.
+  The 7 type-specific handlers + `HomesteadHandlerRegistry` are deleted; the
+  `HomesteadHandler` interface + `GenericChoresHandler` are kept (Context lost
+  its `plot` field).
+- **`ChildPlayGoal`** — the farming-chore play modes (EGG_COLLECTION/WEEDING/
+  WATERING/HERDING) + their adjunct-plot scan were removed; core play
+  (run/chase/rest) is unchanged.
+- **`FarmerBehavior`** — `pickAnimalXpTarget` lost the BEES-adjunct reroute to
+  BEEKEEPING; animal work always awards ANIMAL_HUSBANDRY now.
+- **`HouseholdData`** — `homesteadPlotType` field + codec entry removed
+  (`optionalFieldOf` was already save-tolerant; old saves load cleanly).
+- **`VillageInhabitantPopulator`** — dropped the homestead-type scan at
+  household formation.
+
+**Surface (deleted):** the `Village/Decoration/Adjunct/` package (`AdjunctPlot`,
+`AdjunctPlotType`, `AdjunctPlotRegistry`, `AdjunctPlotPlacer`,
+`AdjunctPlotRealiser`, `ActivityTag`), `Layer3/PlannedAdjunct`,
+`HomesteadHandlerRegistry` + the 7 `Handlers/` type-specific handlers,
+`Variants/AdjunctPreference` + `AdjunctSide`, and the `AdjunctDebugCommand` +
+`HomesteadDebugCommand`.
+
+**Surface (stripped):** `PhasedPlanner` (deleted `planAdjunct`/
+`rollHomesteadType`/`AdjunctPlanOutcome`/`tryFitAdjunctOnSide`, the
+`Reservation.adjunct` + `Best.adjunct`/`adjunctAabb` slots, the `findBestCandidate`
+adjunct block, the `rejAdjunct` counter, `frontDirToDirection`); `PlacedBuilding`
+(dropped the `adjunct` field); the spawn adapter (dropped the `addAdjunctPlot`
+block + the `AdjunctPlotRealiser` pass); `VillageSavedData` (deleted
+`VillageAdjunctData` + the adjunct maps + all add/get/remove/by-tag methods +
+the `VillageContentData.adjunct` codec field); the variant manifest
+(`adjunct` field + `optAdjunct` parser); `BuildingRoster` (the dead
+`getAdjunctPlot` fallback); `LayoutDumpSerializer` (`hasAdjunct`);
+`CultureBundles` (`homesteadPlotWeights` field/codec/accessor/defaults);
+`LivHelpCommand`; and the test harness (`HarnessDump` `pb.adjunct()`,
+`HarnessDebugSink` `rejAdjunct` + candidate-log regex).
+
+**Critical interaction with Stage 2a (handled):** the parcel reservation reused
+two helpers named `adjunctOverlapsAnyReservation` / `adjunctTerrainOk`. Rather
+than delete them with the adjunct system, they were **renamed**
+`aabbOverlapsAnyReservation` / `aabbTerrainOk` and kept — the complex-parcel
+reservation (Stage 2a) still works; only the `Reservation.adjunct` slot and its
+checks were removed (parcels keep their `Reservation.parcel` slot).
+
+**Deviations from prompt:**
+- **Scope was ~35 files, not ~13** (a whole `Handlers/` subpackage, `CultureBundles`
+  homestead weights, and 2 test-harness files were not enumerated). Confirmed
+  with Garrett: **full teardown, also scrub CultureBundles.** `homesteadPlotWeights`
+  was fully removed (field + codec `optionalFieldOf` + accessor + the default-
+  weights method + 4 construction sites) — its only consumer was the deleted
+  `rollHomesteadType`.
+- Kept `HomesteadHandler` (interface) + `GenericChoresHandler` rather than
+  inlining, so the goal's dispatch shape is unchanged and parcel-bound
+  homestead behaviours can return cleanly in a later stage.
+- `Home*Behavior` hobbies and the `FarmPlot`/farm-complex system were **not**
+  touched (the "Home" in their names is cosmetic).
+
+**Preflight (codec / enum / per-tick):** removed enum types (`AdjunctPlotType`,
+`ActivityTag`, `AdjunctSide`) — grepped: their only `switch`/reference sites
+(`ChildPlayGoal.choreSkill`, `rollHomesteadType`, `choreForTag`) were deleted
+with them. Removed codec fields are all `optionalFieldOf` (HouseholdData,
+VillageContentData, CulturePlanningBias) → old saves load cleanly and the
+16-field cap is only relieved. The homestead goal is per-tick: it still no-ops
+cleanly with no plot (the generic handler walks to the house and idles); no new
+log spam.
+
+**Out-of-scope but flagged:**
+- "House yard / residential block" as a visible parcel recipe + NPC binding →
+  Stage 4 / NPC rework (deliberate; not part of this teardown).
+- Apiaries/beekeeping XP, child farming chores, and per-homestead navigation
+  return when homestead amenities come back as parcel recipes.
+- A handful of explanatory prose comments still mention "adjunct" as history
+  (e.g. `FarmerBehavior`, `PlacementDefaults`) — left as accurate context; no
+  code or `{@link}` references to deleted types remain.
+
+**Cumulative pending verification:** Detour A, Layout Rework Phases 1/2/2b/3a/3b,
+Step 3 Stage 1, Stage 2a, Stage 2b, and this Stage 2.5 remain pending the single
+comprehensive in-world smoke test Garrett runs after Stages 2a/2b/2.5.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred in sandbox — see Build verification).
+2. Spawn a village; confirm it generates and NPCs behave — Spouse/Child/Elderly
+   still move and idle at home during their phase (now via the generic
+   house-centred path), children still play (run/chase/rest), farmers still
+   farm. No crashes, no missing-binding errors.
+3. Load an old (pre-retirement) save: confirm it loads cleanly — `homesteadPlotType`,
+   `adjunctData`, and `homesteadPlotWeights` are all dropped `optionalFieldOf`
+   keys, silently ignored. (Skip if testing fresh worlds only.)
+4. Confirm villages pack somewhat tighter (the reserved yard space is gone) and
+   complexes (Stage 2b) still reserve/place correctly.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403 on neoform-runtime-2.0.18.pom). Exhaustive static
+review substituted for the compiler: tree-wide grep confirms **zero code
+references** to every deleted type (`AdjunctPlot`/`AdjunctPlotType`/
+`AdjunctPlotRegistry`/`AdjunctPlotPlacer`/`AdjunctPlotRealiser`/`PlannedAdjunct`/
+`ActivityTag`/`AdjunctPreference`/`AdjunctSide`/`HomesteadHandlerRegistry`/the 7
+handlers/`VillageAdjunctData`) and deleted method/field (`getAdjunctPlot`/
+`addAdjunctPlot`/`homesteadPlotType`/`homesteadPlotWeight*`/`rejAdjunct`/
+`tryPickChore`/`rollHomesteadType`/`planAdjunct`); **zero broken imports**; the
+two `{@link}`-to-deleted-type javadocs were scrubbed; the codec arities were
+re-checked (VillageContentData 5 fields/5 codec entries/5-arg build; HouseholdData
+6-arg `::new`; CulturePlanningBias `::new`); only explanatory prose comments
+mention "adjunct".
