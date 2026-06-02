@@ -5446,3 +5446,111 @@ civic footprints out of the void; `PlazaRegion`/`PlazaPaver`/`addPlazaRegion`
 consumed on their existing contracts; the centerpiece uses `ServerLevel
 .setBlockAndUpdate` after paving; `CardinalAxis`/`Polygon.AABB` imports present;
 no codec field added.
+
+### 2026-06-01 — Layout Rework Fix-up #5 (complete the designed civic core — placement-side square ring)
+
+**Root-cause CORRECTION (stated up front, per the prompt's "verify first" gate).**
+The prompt hypothesised that placement reads the pre-routing **network edges**,
+that the reserved squares blanketed the central spine, and that the fix is to
+**inject ring edges into the placement network**. Disposition shows that
+hypothesis does **not** hold against the post-3c code: the 3c flip rewrote
+`findBestCandidate` to be **zone-based** — it iterates every grid cell and gates
+on `isBuildable` + zone/affinity membership + `overlapsAnyReservation`. It does
+**not** read `NetworkSpec` edges at all. The "no admissible candidate position on
+any network edge" drop message is the **stale pre-3c wording** I flagged in 3c
+(never updated) — and it is exactly what mis-led the diagnosis. So injecting ring
+*edges* would have done nothing.
+
+**The real mechanism:** the civic-core buildings gate to the **CIVIC zone** (their
+nucleus-affinity kind). The civic-square void (half 12, centred on the anchor)
+sits in the middle of that zone, and the void `Reservation` rejects any footprint
+overlapping it. A large civic footprint (MARKET 21×42, CHAPEL 18×38, TOWN_HALL
+29×29) can only clear the void if its **centre** is ≥ `voidHalf + footprintHalf`
+(~31+) from the anchor — but that is **outside** the thin inner CIVIC band, so the
+zone gate rejects it. Squeezed between "centre must be in the inner CIVIC band"
+and "footprint must clear the void," every large civic building dropped (and the
+bound TOWN_HALL fell through to unrestricted, landing 24 W of the anchor). This
+regression is absent pre-4a (4a added the void reservations).
+
+**The fix — a placement-side square RING, realized in the zone gate (not edges).**
+In `findBestCandidate`, civic-core buildings (CIVIC affinity) and the MARKET now
+gate on a **placement disc** around their reserved square — centre within
+`squareHalf + CIVIC_RING_WIDTH(28)` of the square centre — instead of the thin
+inner zone band or the 20-block binding radius. `overlapsAnyReservation` still
+keeps the footprint OUT of the void, and the existing CIVIC nucleus score pulls
+each building to the void edge, so they **ring and front the square**; the
+reservation of each placed footprint spreads subsequent buildings around the
+perimeter. This supersedes both the zone gate and the binding cutoff for these
+buildings (so the bound TOWN_HALL now seats on a square edge without the
+"retrying unrestricted" fallback).
+
+- **MARKET → market square.** `type == MARKET` ring-gates to the MARKET square
+  (checked before the CIVIC branch, so it ignores any civic binding); its stall
+  pad seeds from the MARKET plaza centroid (the 4a fallback) → no more
+  `NO_REGION`, no disconnected market.
+- **Skirting road (item 2) — already covered, one mechanism.** 4a made the
+  router void-aware (obstacle mask + front-cell relocation to the void
+  perimeter); it did **not** add a router-side ring edge. With the civic
+  buildings now present on the perimeter, the router connects their
+  perimeter front-cells *around* the void → a road skirts each square. No second
+  framing mechanism added (simplification: placement-side ring gate + router
+  void-avoidance are complementary, not duplicate).
+- **CITY compaction (item 4).** `ZonePartition`'s radius factor is now tier-keyed
+  (`zoneRadiusFactor`): **CITY 0.8** (cap 80×0.8 = **64**, below the ~96 scan grid
+  → CITY actually compacts, ~32-block fringe for fields, still larger than TOWN's
+  50); TOWN/HAMLET/OUTPOST unchanged at 1.25 (caps 50/25/13). Fixes the CITY
+  ±100 sprawl + off-grid farm-seed failures.
+
+**Tuning baselines:** `CIVIC_RING_WIDTH = 28` (≥ the largest civic footprint
+half-depth so MARKET/CHAPEL can centre clear of the void while fronting it);
+CITY `zoneRadiusFactor = 0.8` (cap 64).
+
+**Deviations from prompt:** the prompt's item 1 (inject ring **edges** into the
+placement network) is **not** what was implemented, because placement is
+zone-based and reads no network edges (root-cause correction above). The ring is
+realized as a **placement-disc gate** around each reserved square — same intent
+("a ring of candidate positions around each square so civic buildings front it"),
+correct mechanism for the post-3c planner. Also updated the stale
+"no admissible candidate position on any network edge" drop message to zone-era
+wording (it caused the misdiagnosis; left flagged-but-unfixed since 3c).
+
+**Simplification sweep:** 4a's framing was router-side only (void-mask + terminal
+relocation), no ring edge. This fix-up adds the placement-side ring **gate**.
+Net: one framing mechanism per side, complementary; nothing to consolidate or
+remove.
+
+**Tie-In Audit:** touched `PhasedPlanner.findBestCandidate` (ring gate; `targetKind`
+now computed even when bound, used only for square-targeting — the bound
+non-square path is unchanged), its drop message, + new `CIVIC_RING_WIDTH` /
+`squareCentreOf`; `ZonePartition` (tier-keyed factor). No signature changes; no
+`NetworkSpec`/`BlockServingRouter` change (so road painter / dump / internal-road
+committer are unaffected — no ring edges were added to `ctx.network()`). No new
+enum. Reservation/zone plumbing reused.
+
+**Out-of-scope but flagged (unchanged):** farm over-density / `INSUFFICIENT_AREA`
+at CITY → 4b "no stray farmhouses"; residential zone + HOUSE re-point → 4b/4c;
+chapel graveyard / green / worksite recipes; merged civic+market square option.
+Non-CIVIC-affinity buildings that also dropped (CARPENTRY/STOCKPILE) are not
+civic-ring buildings; if they still drop it's general density (4b), not this fix.
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Spawn TOWN AGRICULTURAL, seed `-7816748744294284834` (the regression seed).
+   Confirm: MARKET + CHAPEL + BAKERY + BLACKSMITH no longer drop; civic buildings
+   ring the civic square fronting it; TOWN_HALL seats on a square edge (no
+   "retrying unrestricted", or if it retries it still fronts); the market building
+   sits on the market square and its stall pad generates (no `NO_REGION`); a road
+   skirts each square and none crosses it; clean spawn + NPC nav.
+3. Spawn CITY AGRICULTURAL: farmhouses cluster (no ±100 sprawl), off-grid
+   `SEED_NOT_ADMISSIBLE` farm failures gone/reduced (residual `INSUFFICIENT_AREA`
+   is expected — 4b).
+4. A few more seeds/tiers to confirm the ring frames reliably; nothing regressed.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the ring gate is a
+pure addition to the existing cell-scan gate chain (square-ring → binding → zone);
+`state.civicSquare`/`marketSquare` + `civicSquareHalf`/`marketSquareHalf` exist
+from 4a; `targetKind` computed-always doesn't change the bound non-square path
+(that path uses the binding branch, not `targetKind`); `zoneRadiusFactor` replaces
+the single constant at its one use site; no signatures or `NetworkSpec` changed,
+so no downstream caller is affected.

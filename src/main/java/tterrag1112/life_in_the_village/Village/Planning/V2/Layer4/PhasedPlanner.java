@@ -364,9 +364,14 @@ public final class PhasedPlanner {
             // and iterative paths share the same admissibility
             // gates; only the segment selection differs (primary
             // vs primary+cross-street).
-            String detail = foundation
-                    ? "no admissible candidate position on any primary network edge"
-                    : "no admissible candidate position on any network edge";
+            // Fix-up #5 — honest, zone-era wording. Post-3c placement is
+            // ZONE-based (candidate cells are grid cells gated by buildable +
+            // zone/square membership + reservation overlap), NOT network-edge
+            // based. The pre-3c "no admissible candidate position on any
+            // network edge" wording mis-led a diagnosis; corrected here.
+            String detail = "no admissible candidate cell in "
+                    + (foundation ? "foundation zone/ring" : "target zone/ring")
+                    + " (clear of reservations)";
             state.dropped.add(new DroppedBuilding(type, DropReason.NO_VIABLE_CANDIDATE, detail));
             if (profile.required()) state.viable = false;
             LOGGER.info("dropped {}: NO_VIABLE_CANDIDATE phase={} required={} ({})",
@@ -454,9 +459,33 @@ public final class PhasedPlanner {
 
         ZonePartition zp = state.ctx.zonePartition();
         // The zone role this building wants (its nucleus-affinity kind);
-        // null when un-affined, bound, or when no zone of that kind
-        // exists — in which case the gate is "any zoned (in-village) cell".
-        NucleusKind targetKind = (boundPos == null) ? targetZoneKind(state, type, zp) : null;
+        // null when un-affined, or when no zone of that kind exists — in
+        // which case the gate is "any zoned (in-village) cell". Computed
+        // even when bound, so a bound civic building still ring-gates.
+        NucleusKind targetKind = targetZoneKind(state, type, zp);
+
+        // Fix-up #5 — designed-core square ring. Civic-core buildings
+        // (CIVIC affinity) ring the reserved CIVIC square; MARKET rings the
+        // MARKET square. For these, the gate is a placement DISC around the
+        // square (radius squareHalf + CIVIC_RING_WIDTH) rather than the thin
+        // inner zone band or the 20-block binding radius — so the large
+        // civic footprints (MARKET 21×42, CHAPEL 18×38, TOWN_HALL 29×29) can
+        // seat AROUND the void. overlapsAnyReservation still keeps the
+        // footprint OUT of the void, so they front the square; the nucleus
+        // score pulls them to the void edge (hugging the perimeter). This
+        // supersedes both the zone gate and the binding cutoff for them.
+        BlockPos squareCentre = null;
+        int squareHalf = 0;
+        if (type == BuildingType.MARKET && state.marketSquare != null) {
+            squareCentre = squareCentreOf(state.marketSquare);
+            squareHalf = marketSquareHalf(state.ctx.tier());
+        } else if (targetKind == NucleusKind.CIVIC && state.civicSquare != null) {
+            squareCentre = squareCentreOf(state.civicSquare);
+            squareHalf = civicSquareHalf(state.ctx.tier());
+        }
+        final long ringRsq = squareCentre != null
+                ? (long) (squareHalf + CIVIC_RING_WIDTH) * (squareHalf + CIVIC_RING_WIDTH)
+                : 0;
 
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
@@ -467,11 +496,16 @@ public final class PhasedPlanner {
 
                 BlockPos pos = state.fmap.cellWorldPos(i, j);
 
-                // Primary-binding strict cutoff (unchanged): bound types
-                // restrict to within the binding radius; the binding —
-                // not the zone — dictates location, so the zone gate is
-                // skipped when boundPos != null.
-                if (boundPos != null) {
+                if (squareCentre != null) {
+                    // Square-ring gate (supersedes zone + binding): centre
+                    // must lie within the placement disc around the square.
+                    long ddx = pos.getX() - squareCentre.getX();
+                    long ddz = pos.getZ() - squareCentre.getZ();
+                    if (ddx * ddx + ddz * ddz > ringRsq) { rejZone++; continue; }
+                } else if (boundPos != null) {
+                    // Primary-binding strict cutoff: bound types restrict to
+                    // within the binding radius; the binding — not the zone —
+                    // dictates location, so the zone gate is skipped.
                     double bdx = pos.getX() - boundPos.getX();
                     double bdz = pos.getZ() - boundPos.getZ();
                     if (bdx * bdx + bdz * bdz > bindRadiusSq) continue;
@@ -1396,6 +1430,14 @@ public final class PhasedPlanner {
     /** Gap (blocks) between the civic square and the adjacent market square. */
     private static final int CIVIC_SQUARE_GAP = 4;
 
+    /** Fix-up #5 — width (blocks) of the placement ring around a reserved
+     *  square. The civic buildings' centres are admitted in
+     *  {@code [squareHalf, squareHalf + CIVIC_RING_WIDTH]} from the square
+     *  centre, wide enough that the largest civic footprint (MARKET, half-
+     *  depth ~21) can centre far enough out to clear the void while still
+     *  fronting the square. Tuning baseline. */
+    private static final int CIVIC_RING_WIDTH = 28;
+
     /** Town-square half-extent (blocks) per tier — the central void the
      *  civic buildings ring/front. Tuning baseline. */
     private static int civicSquareHalf(ViabilityTier tier) {
@@ -1468,6 +1510,12 @@ public final class PhasedPlanner {
 
     private static Aabb toAabb(Polygon.AABB a) {
         return new Aabb(a.minX(), a.minZ(), a.maxX(), a.maxZ());
+    }
+
+    /** Centre (XZ) of a square void AABB; Y is irrelevant (used only for
+     *  the planar ring-distance test). */
+    private static BlockPos squareCentreOf(Polygon.AABB a) {
+        return new BlockPos((a.minX() + a.maxX()) / 2, 0, (a.minZ() + a.maxZ()) / 2);
     }
 
     /** Result of a successful parcel reservation: the {@link Parcel} to

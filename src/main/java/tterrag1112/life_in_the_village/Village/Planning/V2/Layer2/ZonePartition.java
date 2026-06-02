@@ -79,16 +79,25 @@ public final class ZonePartition {
      *  villages get larger minimum zones. */
     private static final int MIN_ZONE_CELLS_BASE = 8;
 
-    /** Stage 3 fix-up #3 — the zoned region is bounded to
-     *  {@code VillageExtent.radiusFor(tier) × this factor} from the anchor
-     *  (clamped to the scan grid). Cells beyond stay unzoned ({@code -1}):
-     *  available for farm fields + outward expansion, but no buildings
-     *  place there, so the settlement is compact and farm-field seeds land
-     *  inside the scan grid. <b>This is the key compactness/breathing-room
-     *  tuning knob.</b> 1.25× gives the dense civic core (TOWN_HALL +
-     *  MARKET + CHAPEL) a little room past the bare tier radius while still
-     *  cutting the ~3× sprawl; raise toward 1.5 if cores stay cramped. */
-    private static final double ZONE_RADIUS_FACTOR = 1.25;
+    /** Stage 3 fix-up #3 / fix-up #5 — the zoned region is bounded to
+     *  {@code VillageExtent.radiusFor(tier) × zoneRadiusFactor(tier)} from
+     *  the anchor (clamped to the scan grid). Cells beyond stay unzoned
+     *  ({@code -1}): available for farm fields + outward expansion, but no
+     *  buildings place there, so the settlement is compact and farm-field
+     *  seeds land inside the scan grid. <b>The key compactness tuning knob.</b>
+     *
+     *  <p>TOWN/HAMLET/OUTPOST: 1.25× — a little room past the bare tier
+     *  radius for the dense civic core while cutting the ~3× sprawl.
+     *
+     *  <p>Fix-up #5 — CITY: 0.8×. With the 1.25× factor, CITY (radius 80)
+     *  capped at 100 → clamped to the ~96 scan grid → effectively
+     *  UNCOMPACTED, so CITY still sprawled to the corners and farm seeds
+     *  fell off-grid. 0.8× → cap 64 (< grid), so CITY farmhouses cluster and
+     *  leave a ~32-block fringe for fields. (CITY 64 is still > TOWN 50, so
+     *  CITY remains the larger tier.) Baseline; raise if CITY cores cramp. */
+    private static double zoneRadiusFactor(ViabilityTier tier) {
+        return tier == ViabilityTier.CITY ? 0.8 : 1.25;
+    }
 
     private final int gridSize;
     private final int cellSize;
@@ -142,10 +151,11 @@ public final class ZonePartition {
         // Stage 3 fix-up #3 — bound the zoned region to the village radius
         // so the settlement is compact (not sprawled to the scan-grid
         // corners) and farm fields radiate into the still-open fringe.
-        // Cap = VillageExtent.radiusFor(tier) × factor, clamped to the
-        // scan radius so it never silently no-ops at CITY.
+        // Cap = VillageExtent.radiusFor(tier) × zoneRadiusFactor(tier),
+        // clamped to the scan radius. Fix-up #5: the CITY factor (0.8) puts
+        // the cap below the grid so CITY actually compacts.
         int radiusCap = Math.min(
-                (int) Math.round(VillageExtent.radiusFor(tier) * ZONE_RADIUS_FACTOR),
+                (int) Math.round(VillageExtent.radiusFor(tier) * zoneRadiusFactor(tier)),
                 fmap.radius());
         long radiusCapSq = (long) radiusCap * radiusCap;
 
