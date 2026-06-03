@@ -232,14 +232,24 @@ public final class V2VillageSpawnerAdapter {
         ViabilityValidator.ViabilityCheck check =
                 ViabilityValidator.validate(postTerrain, siteCtx.tier());
         if (!check.viable()) {
-            LOGGER.info("V2: post-terrain not viable: {}", check.failureReasons());
-            realizationLog.recordViabilityFailure(check.failureReasons());
-            realizationLog.markAborted("post-terrain not viable: "
-                    + String.join("; ", check.failureReasons()));
-            tryAutoDump(level, origin, villageName, null, culture,
-                    fmap, siteCtx, sel, recon, postTerrain, roads, phased.events(),
-                    phased.nucleusContexts(), phased.droppedBindings(), realizationLog);
-            return Optional.empty();
+            // Stage 4b fix-up — district-only dev mode legitimately produces a
+            // "partial" village (e.g. CITY can't reach the 6-type diversity
+            // minimum with only the 5 district types). Don't abort while the
+            // flag is on; log and proceed so the districted work is visible.
+            if (PhasedPlanner.DISTRICT_ONLY_MODE) {
+                LOGGER.info("V2: post-terrain not viable {} — proceeding"
+                        + " (DISTRICT_ONLY_MODE: partial village expected)",
+                        check.failureReasons());
+            } else {
+                LOGGER.info("V2: post-terrain not viable: {}", check.failureReasons());
+                realizationLog.recordViabilityFailure(check.failureReasons());
+                realizationLog.markAborted("post-terrain not viable: "
+                        + String.join("; ", check.failureReasons()));
+                tryAutoDump(level, origin, villageName, null, culture,
+                        fmap, siteCtx, sel, recon, postTerrain, roads, phased.events(),
+                        phased.nucleusContexts(), phased.droppedBindings(), realizationLog);
+                return Optional.empty();
+            }
         }
 
         // Vegetation + pads (must run before NBT placement so trees

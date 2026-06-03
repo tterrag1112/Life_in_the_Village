@@ -6165,3 +6165,148 @@ the required-farm gate reuses `reserveComplexParcel`'s existing null return; the
 new yard voids flow through the existing `voids()` → router + `ParkCandidateFinder`
 hooks; no signature/codec change; all new private helpers grep-verified to have
 callers.
+
+### 2026-06-03 — Layout Rework Stage 4b fix-up (residential reserves + district-only dev mode)
+
+Two contained changes on post-4b. (1) Residential districts now actually RESERVE
+(they came back `0 reserved` because the ring+yard arrangement sized them too
+big). (2) A temporary, reversible `DISTRICT_ONLY_MODE` so only the districted work
+(civic / market / residential) spawns, for legibility. Market cap-to-1 + CITY
+extent from prior work stay as-is.
+
+**What shipped:**
+
+*Piece 1 — residential districts that reserve (compact, no yard).* **Disposition
+finding:** `0 reserved` was the SIZE, and the size over-constrained the search.
+The 4b ring model wrapped houses around a `yardHalf` 17/11 yard → `gateHalf`
+32/26 → a 64×64 / 52×52 block, scanned in a band only `[gateHalf+gap,
+radius-gateHalf]` ≈ 32 wide with the footprint-sized core filling the centre — no
+clear box of that size exists, so nothing reserved and houses fell back to
+scatter. Fix: drop the yard; PACK houses in a compact near-SQUARE grid sized to
+the house footprint (≈20×11) + small gaps. `RESIDENTIAL_BLOCK_CAP` dropped 5→**4**
+so a block is `cols=⌈√4⌉=2 × rows=2` of `max(w,l)+gap≈22` cells ≈ **44×44**
+(`reach` 22, vs the old 32) — small enough to seat, and more houses make more
+small blocks fanned around the core. The block AABB is the HOUSE inclusion gate
+(supersedes the RURAL zone gate) AND a rural/farm exclusion; houses FILL it
+(no void reservation this pass), leftover open cells → `ParkCandidateFinder`. 4c
+builds the designed interior (BSP plots + shared yard + well + borders).
+
+*Piece 2 — `DISTRICT_ONLY_MODE` (reversible dev scaffold).* A single
+`public static final boolean` in `PhasedPlanner`, **default on**. When on, `run`
+filters `sortedSelection` to `DISTRICT_TYPES` = {TOWN_HALL, CHAPEL, INN, MARKET,
+HOUSE} before the placement loop — so non-district types (BAKERY, BLACKSMITH,
+CARPENTRY, STOCKPILE, STABLE, SHRINE, …) and FARMHOUSE never place, and the rural
+pass + the still-rough required-farm gate never run. Implemented as a placement
+filter (smallest blast radius; roster/reconciliation upstream untouched). When
+off, `selection == sortedSelection` and behaviour is byte-for-byte today's.
+
+**Surface area:** 0 new files + 2 edits + 0 deletions (1 field removed:
+`State.residentialYards`; net helper/constant churn in the residential block).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` — `DISTRICT_ONLY_MODE` +
+  `DISTRICT_TYPES` + the `run` selection filter; compact-grid residential block
+  (CAP 4, near-square, no yard); removed `residentialYards`/`voids()` ref;
+  reverted `sizeDistrictToMembers` to `EnumSet` (residential no longer calls it).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` — relax the Layer-5
+  viability ABORT when `PhasedPlanner.DISTRICT_ONLY_MODE` (see deviation).
+
+**Tie-In Audit:**
+- *Touched surface:* `PhasedPlanner.DISTRICT_ONLY_MODE` (new public flag),
+  `run`'s selection filter, residential block sizing; the adapter's viability
+  abort gate. No public type signature/codec/enum change.
+- *Upstream feeders:* `sortedSelection` (filtered to district types when the flag
+  is on); `FootprintProvider` (HOUSE footprint → block size).
+- *Downstream callers:* `PhasedPlanner.DISTRICT_ONLY_MODE` read by the adapter
+  (line ~234) to relax the viability abort — **in scope**. The `run` filter feeds
+  `reserveCivicSquare` / `reserveResidentialDistricts` / the batch loop / counts
+  (all switched to the local `selection`). `sizeDistrictToMembers` — civic caller
+  unchanged (passes an `EnumSet`); residential no longer calls it (reverted the
+  4b `Collection` widening — orphaned capability removed).
+- *Sibling systems:* **`ViabilityValidator` (the critical tie-in the prompt asked
+  to confirm)** — CITY's `minDiversity=6` EXCEEDS the 5 `DISTRICT_TYPES`, so a
+  district-only CITY is legitimately "not viable" and the adapter would ABORT
+  (line 234, `return Optional.empty()`). Relaxed: when `DISTRICT_ONLY_MODE`, the
+  adapter logs the reasons and PROCEEDS (partial village is expected). TOWN is
+  fine unaided (minDiversity 4 ≤ 5; minCount 5 ≤ TOWN_HALL+CHAPEL+INN+MARKET+
+  houses). `OverlapAuditor` — fewer buildings ⇒ fewer overlaps (still fatal-
+  aborts on a real overlap, unchanged). `BlockServingRouter` / gateways / dump —
+  handle the reduced set (no assumption of a minimum building count). Both spawn
+  paths (`/litv spawn` + normal) run the same `PhasedPlanner.run` + adapter.
+- *Exhaustive switches:* none. The flag is a boolean; `DISTRICT_TYPES` is an
+  EnumSet, not a new enum. (Confirmed no `DropReason`/tier switch touched.)
+
+**Simplification Sweep** (touches `Village/Planning/`):
+- `PhasedPlanner` residential block — REPLACED the ring+yard sizing with compact
+  near-square packing; removed `State.residentialYards` (no yard voids) and its
+  `voids()` reference (orphaned by the change); reverted the 4b
+  `sizeDistrictToMembers(Collection)` widening to `EnumSet` (the multiplicity
+  path is no longer exercised — civic passes a Set). Net: less code than 4b.
+- Helpers `aabbsOverlapXZ` / `aabbOverlapsAny` / `insideAabb` / `insideAny` /
+  `overlapsAnyDistrict` / `aabbOverlapsPoly` — all still have callers
+  (grep-verified). No orphans introduced. The `DISTRICT_ONLY_MODE` filter reuses
+  the existing selection list (no parallel placement path).
+
+**Deviations from prompt:**
+- **`RESIDENTIAL_BLOCK_CAP = 4`, not the suggested 5–6.** With the real HOUSE
+  footprint (≈20×11), a 5-house block is ≥66 in one dimension — still too wide for
+  the narrow band beyond the footprint-sized core. CAP 4 → a 2×2, ~44×44 block
+  (reach 22) that reliably seats; surplus houses spill into additional small
+  blocks. (Reserving reliably was the prompt's hard requirement.)
+- **Near-SQUARE grid, not shallow rows.** The prompt said "rows (~45×12)." A
+  shallow row of the 20-wide house is ~66–88 wide (large max-dimension → hard to
+  seat); a near-square grid minimises the binding max-dimension, so it fits. The
+  exact pretty arrangement (rows/BSP) is 4c. The block is still compact + grouped
+  (the prompt's actual goal).
+- **Viability abort relaxed under district-only** (not in the prompt's piece
+  list, but REQUIRED): CITY can't reach the 6-type diversity minimum with 5
+  district types, so without this the CITY spawn aborts — contradicting the
+  prompt's "confirm no abort." Surfaced here per the disposition's "confirm
+  ViabilityValidator passes" ask. Off ⇒ unchanged (full abort behaviour).
+- **No yard void this pass** (houses fill the block) — the shared yard + well is
+  explicitly 4c; a yard void would re-inflate the block.
+
+**Out-of-scope but flagged:**
+- **Farm-gate over-drop** (required-farm gate dropped ×5/×13) → deferred; rural is
+  disabled by district-only, so the gate doesn't run. Revisit when rural is
+  re-enabled (fix: require only a modest field clearance at planning, let the
+  post-spawn flood-fill size the field).
+- Designed residential block (BSP plots, yard, well, borders) → 4c.
+- Districting workshops / bakery → 4c.
+- Road palette / aesthetics → later road stage (district-only just makes them
+  legible).
+- Civic-district interior (fountain, benches, framing) → later design pass.
+- `DISTRICT_ONLY_MODE` is a TEMPORARY scaffold — flip off (one boolean) to restore
+  the full village; remove the flag + the viability relax when 4c lands.
+
+**Cumulative pending verification:** rework spawns + compact (#3); CITY compacts
+(#5); civic district paves + frames core-first (Stage 4 redesign); market bound
+sub-district + stalls + CITY extent ~85 (#7); residential districts + no-stray
+farms + market cap (4b); and now residential reserves reliably + a district-only
+dev view. None of #5–#7 / Stage 4 redesign / 4b / this fix-up has been
+smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. With `DISTRICT_ONLY_MODE` on, spawn **TOWN AGRICULTURAL**: confirm ONLY the
+   civic district (town hall + chapel + inn around the paved plaza), the market
+   (hall + stalls), and a residential district that **reserves** (log
+   `residential districts: 1 requested / 1 reserved`; `residential district
+   seated: …`) with houses clustered inside it — and **nothing else** (no farms,
+   no loose workshops/storage). Roads connect just those districts.
+3. Spawn **CITY AGRICULTURAL**: confirm **no abort** (log `post-terrain not viable
+   … — proceeding (DISTRICT_ONLY_MODE…)` is expected and fine), one market, ~2
+   residential districts reserving, civic plaza + stalls present.
+4. Flip `DISTRICT_ONLY_MODE` off, spawn once: confirm the FULL village returns
+   (rural + loose buildings back) — i.e. the flag is cleanly reversible.
+5. A couple more TOWN seeds: residential block count scales with HOUSE count
+   (⌈houses/4⌉ blocks).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the selection filter
+is a `stream().filter(DISTRICT_TYPES::contains)` over the existing list (off ⇒
+identity); the compact block uses only `Math.sqrt`/`ceil`/`max`; the viability
+relax is a guarded branch around the existing abort (off ⇒ identical path);
+`sizeDistrictToMembers` reverted to `EnumSet` keeps the civic caller valid;
+`residentialYards` removal verified to have no remaining references; all new
+helpers grep-verified to have callers; no signature/codec/enum change.
