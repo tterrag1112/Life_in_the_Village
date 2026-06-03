@@ -72,12 +72,16 @@ public final class BlockServingRouter {
     /** Cells to search outward for a buildable terminal cell. */
     private static final int SNAP_SEARCH_RADIUS = 6;
 
-    /** Trunk (gateway→gateway) width + tier. */
+    /** Trunk (gateway→gateway) width + tier. Roads fix-up — the trunk is the
+     *  village MAIN STREET; tier it up to TOWN_ROAD (stone-brick, core+inner+
+     *  edge zones) so the unified realizer paints it visibly wider than the
+     *  district-serving lanes. */
     private static final int TRUNK_WIDTH = 3;
-    private static final RoadShape.RoadTier TRUNK_TIER = RoadShape.RoadTier.VILLAGE_ROAD;
-    /** Local branch width + tier. */
+    private static final RoadShape.RoadTier TRUNK_TIER = RoadShape.RoadTier.TOWN_ROAD;
+    /** Local branch width + tier — district-serving lanes (VILLAGE_ROAD:
+     *  cobble, core+inner). */
     private static final int BRANCH_WIDTH = 2;
-    private static final RoadShape.RoadTier BRANCH_TIER = RoadShape.RoadTier.VILLAGE_PATH;
+    private static final RoadShape.RoadTier BRANCH_TIER = RoadShape.RoadTier.VILLAGE_ROAD;
 
     /** Stage 3 fix-up — enter-cost added to a cell that lies inside a
      *  placed building footprint. A strong FINITE penalty (not a hard
@@ -110,13 +114,32 @@ public final class BlockServingRouter {
                                     V2FeatureMap fmap, BlockPos anchor,
                                     List<tterrag1112.life_in_the_village.Utilities
                                             .Geometry.Polygon.AABB> voids) {
+        return route(placed, gateways, fmap, anchor, voids, List.of());
+    }
+
+    /**
+     * Roads fix-up — overload taking explicit DISTRICT connection nodes (the
+     * road-facing edge point of each district: market sub-district, residential
+     * blocks). Each becomes a JUNCTION terminal (relocated out of obstacles),
+     * so the MST connects every district to the main street + to neighbouring
+     * districts even when a district's own building front-cells are sparse —
+     * "districts-by-default: a district isn't done until it has a node the
+     * network connects." Additive: the existing terminals are unchanged, so
+     * more nodes only ADD connectivity (the MST can't disconnect anything).
+     */
+    public static NetworkSpec route(List<PlacedBuilding> placed, Gateways gateways,
+                                    V2FeatureMap fmap, BlockPos anchor,
+                                    List<tterrag1112.life_in_the_village.Utilities
+                                            .Geometry.Polygon.AABB> voids,
+                                    List<BlockPos> districtNodes) {
         int g = fmap.gridSize();
         // Stage 3 fix-up + Stage 4a — placed building footprints AND reserved
         // plaza voids are obstacles for routing: roads thread BETWEEN buildings
         // to reach their front-cells and SKIRT the squares, never cutting
         // across a footprint (OverlapAuditor) or a designed plaza.
         boolean[][] obstacle = obstacleMask(placed, voids, fmap, g);
-        List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g, obstacle);
+        List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g,
+                obstacle, districtNodes);
 
         List<NetworkNode> nodes = new ArrayList<>(terms.size());
         for (Terminal t : terms) {
@@ -170,7 +193,8 @@ public final class BlockServingRouter {
     private static List<Terminal> buildTerminals(List<PlacedBuilding> placed,
                                                  Gateways gateways, V2FeatureMap fmap,
                                                  BlockPos anchor, int g,
-                                                 boolean[][] obstacle) {
+                                                 boolean[][] obstacle,
+                                                 List<BlockPos> districtNodes) {
         List<Terminal> terms = new ArrayList<>();
         Set<Long> usedCells = new HashSet<>();
 
@@ -194,6 +218,16 @@ public final class BlockServingRouter {
             addTerminal(terms, usedCells, "gateway:SECONDARY", NodeKind.GATEWAY,
                     nearestUnobstructedCell(fmap, gateways.secondary().getX(),
                             gateways.secondary().getZ(), obstacle), g);
+        }
+
+        // District connection nodes (roads fix-up) — relocate out of obstacles
+        // (the market void is an obstacle, so its node pins to the void's road-
+        // facing perimeter, like a plaza-fronting building). Added before the
+        // building terminals so a district always has at least one node.
+        int di = 0;
+        for (BlockPos dn : districtNodes) {
+            addTerminal(terms, usedCells, "district:" + di++, NodeKind.JUNCTION,
+                    nearestUnobstructedCell(fmap, dn.getX(), dn.getZ(), obstacle), g);
         }
 
         // Buildings — front-point proxy, relocated out of obstacles. Stage 4a:

@@ -274,7 +274,8 @@ public final class PhasedPlanner {
         // skeleton. NetworkPlanner's network stays on the SiteContext for
         // bindings/batches; only its road GEOMETRY is superseded here.
         NetworkSpec routed = BlockServingRouter.route(
-                state.placed, ctx.gateways(), fmap, ctx.anchor(), state.voids());
+                state.placed, ctx.gateways(), fmap, ctx.anchor(), state.voids(),
+                districtConnectionNodes(state));
         state.skeleton = new Skeleton(routed, ctx.primaryAxis(),
                 ctx.anchor(), SPINE_WIDTH);
         LOGGER.info("routed network: {} nodes, {} edges → {} road segments",
@@ -2018,6 +2019,29 @@ public final class PhasedPlanner {
     private static boolean aabbOverlapsPoly(Aabb a, Polygon.AABB b) {
         return a.minX() <= b.maxX() && a.maxX() >= b.minX()
                 && a.minZ() <= b.maxZ() && a.maxZ() >= b.minZ();
+    }
+
+    /** Roads fix-up — each district's road-facing connection node (the point on
+     *  its AABB boundary nearest the anchor / main street). The router latches a
+     *  JUNCTION terminal onto each so every district connects to the network and
+     *  to its neighbours. The civic precinct is omitted — it surrounds the
+     *  anchor (the trunk hub), so it's connected by construction. */
+    private static List<BlockPos> districtConnectionNodes(State state) {
+        List<BlockPos> out = new ArrayList<>();
+        BlockPos anchor = state.ctx.anchor();
+        if (state.marketSquare != null) out.add(edgePointToward(state.marketSquare, anchor));
+        for (Polygon.AABB gate : state.residentialGates) {
+            out.add(edgePointToward(gate, anchor));
+        }
+        return out;
+    }
+
+    /** The point on {@code aabb}'s boundary closest to {@code target} (clamp);
+     *  when {@code target} is outside the box this lies on the road-facing edge. */
+    private static BlockPos edgePointToward(Polygon.AABB aabb, BlockPos target) {
+        int x = Math.max(aabb.minX(), Math.min(aabb.maxX(), target.getX()));
+        int z = Math.max(aabb.minZ(), Math.min(aabb.maxZ(), target.getZ()));
+        return new BlockPos(x, target.getY(), z);
     }
 
     private static Polygon.AABB squareAt(int cx, int cz, int half) {

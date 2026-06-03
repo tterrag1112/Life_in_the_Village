@@ -54,7 +54,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Debug.LayoutDumpSeria
 import tterrag1112.life_in_the_village.Village.Planning.V2.Debug.RealizationLog;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.OverlapAuditor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.PadBuilder;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.RoadPainter;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.VillageRoadRealizer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.TerrainAdapter;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.VegetationClearer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.ViabilityValidator;
@@ -436,11 +436,13 @@ public final class V2VillageSpawnerAdapter {
         }
         data.setDirty();
 
-        // Roads.
+        // Roads — realize the routed in-village network through the unified
+        // great-road pipeline (UnifiedRoadPlacer + culture palette + tiering),
+        // replacing the retired RoadPainter (the checkerboard renderer).
         try {
-            RoadPainter.paintAll(level, roads, culture);
+            VillageRoadRealizer.realize(level, roads, culture);
         } catch (Exception e) {
-            LOGGER.warn("V2: RoadPainter failed: {}", e.getMessage());
+            LOGGER.warn("V2: VillageRoadRealizer failed: {}", e.getMessage());
         }
 
         // Detour A — one FarmComplex per placed farmhouse. Runs

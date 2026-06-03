@@ -86,6 +86,40 @@ public final class UnifiedRoadPlacer {
                                        RoadEdge edge,
                                        @Nullable String culture,
                                        @Nullable CulturePalette palette) {
+        // Delegate to the RoadEdge-free core, extracting the three things the
+        // placer reads off the edge: the RNG seed, whether it's a great road
+        // (terrain-authority pass), and the great-road character.
+        long seed = edge.getEdgeId().getLeastSignificantBits()
+                ^ edge.getEdgeId().getMostSignificantBits();
+        boolean greatRoad = edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD;
+        GreatRoadCharacter character = greatRoad ? edge.getCharacter().orElse(null) : null;
+        return place(level, centerline, material, tier, seed, greatRoad, character,
+                culture, palette);
+    }
+
+    /**
+     * Roads fix-up — RoadEdge-free core entry point. The great-road graph
+     * callers ({@link EdgeRealizer}) reach this via the {@link RoadEdge}
+     * overload above; in-village roads (which have no world-graph {@link
+     * RoadEdge}) call it directly with a per-edge {@code seed}, {@code
+     * greatRoad=false}, and {@code character=null}. This is what unifies
+     * village streets onto the same placer/palette/lighting pipeline as the
+     * great + connector roads.
+     *
+     * @param seed      deterministic RNG seed for position-noise
+     * @param greatRoad whether to run the GREAT_ROAD terrain-authority pass
+     *                  (smoothing / supports / retaining walls)
+     * @param character great-road character (only read when {@code greatRoad})
+     */
+    public static List<BlockPos> place(ServerLevel level,
+                                       List<BlockPos> centerline,
+                                       PathMaterial material,
+                                       RoadShape.RoadTier tier,
+                                       long seed,
+                                       boolean greatRoad,
+                                       @Nullable GreatRoadCharacter character,
+                                       @Nullable String culture,
+                                       @Nullable CulturePalette palette) {
         if (centerline.size() < 2) return List.of();
         CulturePalette effectivePalette = palette != null ? palette : PaletteRegistry.oldRealm();
 
@@ -104,8 +138,7 @@ public final class UnifiedRoadPlacer {
         // Support structures are built BEFORE OrganicRoadPlacer so the
         // MOTION_BLOCKING_NO_LEAVES heightmap already returns profileY when
         // road surface blocks are queried.
-        if (edge.getTier() == RoadEdge.EdgeTier.GREAT_ROAD) {
-            GreatRoadCharacter character = edge.getCharacter().orElse(null);
+        if (greatRoad) {
             int[] profileY = GreatRoadProfile.computeProfile(dense, character);
             List<GreatRoadProfile.PositionClassification> classes =
                     GreatRoadProfile.classify(dense, profileY, level);
@@ -127,8 +160,6 @@ public final class UnifiedRoadPlacer {
         TerrainClearer.clear(level, corridor, 6, TerrainClearer.MushroomPolicy.CLEAR_IF_TRUNK);
 
         // ── Step 3: paint surface using dense path ─────────────────────────────
-        long seed = edge.getEdgeId().getLeastSignificantBits()
-                ^ edge.getEdgeId().getMostSignificantBits();
         RandomSource rng = RandomSource.create(seed);
         OrganicRoadPlacer.PlacementResult result =
                 OrganicRoadPlacer.place(level, dense, material, tier, null, rng);

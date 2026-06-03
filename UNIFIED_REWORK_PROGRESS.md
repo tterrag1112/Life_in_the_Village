@@ -6437,3 +6437,162 @@ unchanged; `seatDistrict`'s sweep uses only trig + the existing AABB-overlap
 helpers; old `sizeMarketDistrict`/`seatDistrictAlongRay` fully replaced (no
 dangling refs, grep-verified); `squareAt` still used by civic; no signature/codec/
 enum change.
+
+### 2026-06-03 — Layout Rework Roads: unify village roads onto the great-road pipeline + district nodes
+
+Retires the in-village `RoadPainter` and realizes village streets through the
+SAME pipeline the great roads + connectors use (`UnifiedRoadPlacer` →
+`OrganicRoadPlacer` + `CulturePalette`), with a road-tier hierarchy (TOWN_ROAD
+main street) and district connection nodes. Tested with `DISTRICT_ONLY_MODE` on.
+
+**Disposition finding (the crux — surfaced to Garrett, who chose "full unify"):**
+the prompt's "likely" assumption was that `RoadPainter` is REDUNDANT (the
+committed graph edges already realize via `EdgeRealizer`). **It is not.**
+`InternalRoadCommitter.commitFromV2` commits to the `VillageRoadGraph`
+(`VillageRoadsSavedData`) — a NAV-ONLY graph (consumed by
+`GraphTradeRouteEstablisher`, never realized to blocks).
+`EdgeRealizer`/`UnifiedRoadPlacer`/`GraphEdgeRealizationSystem` realize the WORLD
+`RoadEdge` graph (`WorldRoadSavedData` — great roads + connectors), a different
+type/graph. So `RoadPainter` was the SOLE village-street renderer, and "unify" =
+route village edges into `UnifiedRoadPlacer` for the FIRST time. Per user
+direction, proceeded with the full integration + deletion.
+
+**What shipped:**
+1. **Renderer unification.** New `Layer5/VillageRoadRealizer.realize` iterates the
+   routed `skeleton().edges()` (each a `SmoothedPath`) and realizes each through
+   `UnifiedRoadPlacer.place` with the village `CulturePalette`
+   (`PaletteRegistry.forCulture` → `PathMaterial.fromCulturePalette` + seasonal
+   overlay, fresh-maintenance). Fixes the checkerboard (smoothing + organic
+   core/inner/edge zones + position-noise) and gives the palette + culture
+   architectural passes (imperial/highland/nordic) the other roads have.
+2. **`UnifiedRoadPlacer` refactor (the integration seam).** Added a RoadEdge-FREE
+   core overload `place(level, centerline, material, tier, long seed, boolean
+   greatRoad, GreatRoadCharacter character, culture, palette)` — the three things
+   the placer read off the edge (seed, great-road gate, character) are now
+   params. The existing `RoadEdge` overload DELEGATES (extracts them), so every
+   great-road / connector caller is byte-identical; village roads call the core
+   directly with `greatRoad=false`.
+3. **Tier hierarchy + main street.** `BlockServingRouter` trunk tier
+   `VILLAGE_ROAD → TOWN_ROAD` (the gateway→core trunk IS the main street, now
+   stone-brick core+inner+edge) and branch tier `VILLAGE_PATH → VILLAGE_ROAD`
+   (district-serving lanes, cobble). The realizer reads `sp.tier()` straight off
+   the routed edge, so the hierarchy flows through with no extra classification.
+4. **District connection nodes.** `BlockServingRouter.route` gains an additive
+   overload taking `List<BlockPos> districtNodes`; each becomes a JUNCTION
+   terminal (relocated out of obstacles, like a plaza-fronting building), so the
+   MST connects every district to the main street + neighbours.
+   `PhasedPlanner.districtConnectionNodes` computes the road-facing edge point
+   (`edgePointToward`, clamp-to-AABB) of the market sub-district + each
+   residential block (civic precinct omitted — it surrounds the trunk hub).
+5. **Deleted `RoadPainter`** (convert-then-delete).
+
+**Surface area:** 1 new file + 5 edits + 1 deletion.
+
+**Files added:**
+- `.../Village/Planning/V2/Layer5/VillageRoadRealizer.java`
+**Files modified:**
+- `.../Village/Roads/Realization/UnifiedRoadPlacer.java` (RoadEdge-free core).
+- `.../Village/Planning/V2/Layer4/BlockServingRouter.java` (trunk/branch tiers;
+  district-nodes route overload + terminals).
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (district nodes → route).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (RoadPainter →
+  VillageRoadRealizer call + import).
+**Files deleted:**
+- `.../Village/Planning/V2/Layer5/RoadPainter.java`
+
+**Tie-In Audit:**
+- *Touched surface:* `UnifiedRoadPlacer.place` (new overload); `BlockServingRouter.route`
+  (new overload + tiers); village road realization (RoadPainter → VillageRoadRealizer);
+  district reservation → router nodes.
+- *Downstream callers:* `UnifiedRoadPlacer.place(...,RoadEdge,...)` — EdgeRealizer
+  (2 sites) UNAFFECTED (the RoadEdge overload delegates, byte-identical).
+  `BlockServingRouter.route` — PhasedPlanner (updated to 6-arg w/ district nodes),
+  `LayoutDumpSerializer` (line 290, still the 5-arg overload — unaffected).
+  `RoadPainter.paintAll` — sole caller was the adapter (now VillageRoadRealizer);
+  remaining `RoadPainter` references are COMMENT/javadoc prose only (farm
+  PathRenderer, SiteContext, BlockServingRouter header) — no calls, no `{@link}`,
+  compile-safe (stale-comment cleanup flagged below).
+- *Sibling systems:* `InternalRoadCommitter` UNCHANGED — still commits the routed
+  `NetworkSpec` to the nav `VillageRoadGraph` (the new district JUNCTION nodes map
+  to interior nodes via its existing non-GATEWAY path; nav graph still matches the
+  routed geometry, now better-rendered). `PlazaPaver` UNCHANGED — plaza palette
+  unchanged; the new road palette is the SAME `CulturePalette` source, so
+  plaza↔road continuity holds (improves, since roads now use it too). NPC nav
+  reads the unchanged routed graph (nicer blocks, same topology). `OverlapAuditor`
+  unaffected (wider TOWN_ROAD trunk was already the router's reserved width; the
+  router already kept the trunk clear). Both spawn paths run the same adapter
+  road step.
+- *Exhaustive switches:* none touched. Reused `RoadShape.RoadTier` (no new enum);
+  reused `NodeKind.JUNCTION` for district nodes (no new node kind). `RoadEdge.EdgeTier`
+  switches untouched (the realizer never constructs a RoadEdge).
+- *Caller-helper opportunity:* none new (the realizer IS the village-side reuse of
+  the existing placer).
+
+**Simplification Sweep** (touches `Village/Planning/` + `Village/Roads/`):
+- `RoadPainter` — **DELETED** (sole caller migrated; 0 callers after the swap;
+  remaining refs are comments). This is the prompt's "why was there a separate
+  system" cleanup: one renderer now, shared with the great roads.
+- `VillageRoadRealizer` (new) — thin (≈90 lines): loops edges → the existing
+  placer. No parallel machinery; reuses `UnifiedRoadPlacer`/`PaletteRegistry`/
+  `PathMaterial`/`RoadShape.RoadTier`.
+- `UnifiedRoadPlacer` — added one overload, did NOT fork the body (the RoadEdge
+  overload delegates), so no duplicate placer path.
+- Net: −1 class (RoadPainter ≈ 390 lines) + 1 thin realizer; the village renderer
+  is no longer a bespoke parallel system.
+
+**Deviations from prompt:**
+- **The unification was the "harder" case (route into UnifiedRoadPlacer for the
+  first time), not the "likely" deletion** — surfaced + confirmed with Garrett
+  before forcing the swap, then done in full.
+- **2-tier router mapping (trunk→TOWN_ROAD, branch→VILLAGE_ROAD), not 3.** The
+  router emits a binary trunk/branch classification; the prompt's third level
+  (building FOOTPATH stubs) would need a new per-building-stub edge class the
+  router doesn't produce today. Mapped main-street + lanes cleanly; building-stub
+  footpaths flagged as a future refinement.
+- **District nodes via an additive route() overload, not by mutating the routed
+  NetworkSpec post-hoc.** Buildings already terminal-connect their districts, so
+  the district nodes are belt-and-suspenders (a district with sparse fronts still
+  gets a node); additive terminals can only ADD connectivity, never disconnect.
+- **Did not update ~6 stale `{@code RoadPainter...}` comments** in farm-render /
+  SiteContext / router-header prose (out of scope, compile-safe) — flagged.
+
+**Out-of-scope but flagged:**
+- Stale `{@code RoadPainter}` comment references (PathRenderer, PathPalette,
+  AbstractBorderGenerator, SiteAnalyzer, SiteContext, BlockServingRouter header,
+  InternalRoadCommitter) — cosmetic doc cleanup, no behaviour.
+- Per-building FOOTPATH stub tier (3rd road level) → future road refinement.
+- Civic-plaza decoration (`CivicPlazaComplex`, `well_hamlet`) → next prompt.
+- Re-enabling rural / farm-gate relax → later (DISTRICT_ONLY_MODE stays on).
+- New cultural road primitives beyond the unified placer → later.
+
+**Cumulative pending verification:** the rework spawns; civic district + market
+rectangle + residential blocks reserve under DISTRICT_ONLY_MODE; and now village
+roads render through the unified pipeline (tiered, main street, district nodes,
+RoadPainter gone). None of #5–#7 / Stage 4 redesign / 4b / the 4b + market/resi
+fix-ups / this roads unification has been smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. With `DISTRICT_ONLY_MODE` on, spawn **TOWN AGRICULTURAL**: village roads are
+   now SMOOTH (no diagonal checkerboard) with the great-road palette + organic
+   edge noise; a WIDER main street (TOWN_ROAD, stone-brick) runs gateway→core,
+   district lanes (VILLAGE_ROAD, cobble) branch off; civic/market/residential
+   districts connect to the main street + each other (log `VillageRoadRealizer:
+   realized N village edge(s) → … blocks`; `district:` terminals in the routed
+   network); plaza paving still matches the road palette.
+3. Spawn **CITY AGRICULTURAL**: same; the main street threads the larger layout;
+   all district nodes connect; no abort.
+4. A couple of seeds: confirm the checkerboard is gone everywhere and the
+   main-street tier reads clearly vs the lanes.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the `UnifiedRoadPlacer`
+RoadEdge overload delegates to the new core (great-road callers byte-identical;
+verified no `edge.` deref remains in the core body); `VillageRoadRealizer` uses the
+existing `PaletteRegistry.forCulture` / `PathMaterial.fromCulturePalette` /
+`applyOverlays` / `SmoothedPath.tier()`+`waypoints()` / `UnifiedRoadPlacer.place`
+9-arg; the `route` 5-arg overload still serves the dump (delegates to 6-arg with
+`List.of()`); district terminals reuse `nearestUnobstructedCell`; `RoadPainter`
+deletion verified to leave only comment references (no calls, no `{@link}`); reused
+`RoadShape.RoadTier` + `NodeKind.JUNCTION` (no new enum/switch); no codec/signature
+break on any existing caller.
