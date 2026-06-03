@@ -547,11 +547,26 @@ public final class V2VillageSpawnerAdapter {
                                 .Polygon.boundingBox(fc.region()));
                     }
                 }
+                // Fix-up #7 — pass the ROTATED footprint dims. The market hall
+                // is now bound facing the anchor across the perpendicular axis,
+                // so it reliably lands rotated 90°/270°; the pad rectangle
+                // (concentric footprint + margin) must match the hall's actual
+                // XZ extent or the stall band would seat on the hall. 90/270
+                // swap width and length.
+                var rot = mk.placed().rotation();
+                boolean swap = rot == net.minecraft.world.level.block.Rotation.CLOCKWISE_90
+                        || rot == net.minecraft.world.level.block.Rotation.COUNTERCLOCKWISE_90;
+                int padFpWidth = swap
+                        ? mk.placed().footprint().length()
+                        : mk.placed().footprint().width();
+                int padFpLength = swap
+                        ? mk.placed().footprint().width()
+                        : mk.placed().footprint().length();
                 var planInput = new tterrag1112.life_in_the_village.Village.Markets
                         .Complex.MarketComplexPlanner.Input(
                         marketCentre,
-                        mk.placed().footprint().width(),
-                        mk.placed().footprint().length(),
+                        padFpWidth,
+                        padFpLength,
                         padY,
                         culture.id(),
                         BuildingType.MARKET,

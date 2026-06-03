@@ -94,9 +94,18 @@ public final class ZonePartition {
      *  UNCOMPACTED, so CITY still sprawled to the corners and farm seeds
      *  fell off-grid. 0.8× → cap 64 (< grid), so CITY farmhouses cluster and
      *  leave a ~32-block fringe for fields. (CITY 64 is still > TOWN 50, so
-     *  CITY remains the larger tier.) Baseline; raise if CITY cores cramp. */
+     *  CITY remains the larger tier.)
+     *
+     *  <p>Fix-up #7 — CITY: 1.0625× → cap {@code round(80 × 1.0625) = 85}
+     *  (still &lt; the 100-block scan grid, so farm seeds stay on-grid). The
+     *  0.8× cap (64) was starving CITY: the footprint-sized civic precinct
+     *  (~98×78) ate most of a radius-64 extent, leaving the ~30 peripheral
+     *  buildings (houses, stockpiles, a second blacksmith, peripheral farms)
+     *  nowhere to go (22 drops). 85 gives the periphery room while keeping a
+     *  ~15-block fringe inside the grid for fields. TOWN/HAMLET unchanged
+     *  (1.25×). Baseline; raise toward the grid if CITY still drops. */
     private static double zoneRadiusFactor(ViabilityTier tier) {
-        return tier == ViabilityTier.CITY ? 0.8 : 1.25;
+        return tier == ViabilityTier.CITY ? 1.0625 : 1.25;
     }
 
     private final int gridSize;

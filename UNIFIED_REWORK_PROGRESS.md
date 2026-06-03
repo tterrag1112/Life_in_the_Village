@@ -5813,3 +5813,171 @@ with within-batch order preserved; the precinct gate reads `Polygon.AABB`
 min/max accessors already used by `squareAt`; `PlacedBuilding.centre()` /
 `.footprint()` / `.rotation()` feed the existing `footprintAabb`; no signature
 change on any public type, no codec field, no new enum, no exhaustive-switch arm.
+
+### 2026-06-03 — Layout Rework Fix-up #7 (market sub-district sized+bound + CITY extent)
+
+The footprint-driven civic district (Stage 4 redesign) landed well — TOWN
+spawns a framed civic core that paves (CIVIC 552 / MARKET 551 blocks),
+farmhouses radiate outside, ~1 drop. Two pinned issues remained.
+
+**What shipped:**
+
+*Issue 1 — market stalls `NO_REGION` (the market hall was unbound + the
+sub-district was hall-sized-wrong).* Root cause confirmed at HEAD: the market
+void was sized via `sizeDistrictToMembers({MARKET})` → `half=11` (the civic
+PERIMETER/ring formula — wrong geometry for a hall that sits IN its pad), and
+the hall was NOT bound — it ring-gated within a radius-61 disc and the generic
+civic scorer drifted it ~26 blocks toward the civic plaza. The stall pad
+(`MarketComplexPlanner`, concentric `footprint + margin`, `padMargin=10` /
+`minPadMargin=7`) was then computed at the empty reserved square, ringed by 18
+building obstacles → `NO_REGION`. Fix:
+- New `sizeMarketDistrict` — a CONCENTRIC sizer (distinct from the civic ring
+  sizer): `half = ceil(maxDim/2) + padMargin`, `padMargin` read from the
+  authored `MarketComplexSpec` (default 10). For the 21×42 hall → `half=31`
+  (62×62 void), enough to hold the hall + the full pad apron in EITHER
+  rotation. Deliberately NOT clamped to `villageRadius/2` (the hall is a
+  fixed-size building; a radius cap would collapse the void below it).
+- New `boundMarketBest` — the MARKET hall is now BOUND to the centre of its
+  reserved sub-district (short-circuits `findBestCandidate` before the generic
+  scan), so the hall lands in the middle of its stall plaza and the pad grades
+  clear around it. Removed MARKET from the ring-gate branch.
+- `marketPlazaCentroid` (already the MARKET-region centroid = void centre =
+  bound hall centre) feeds the pad, so `marketCentre` == hall centre and the
+  pad's `buildingBounds` matches the hall. The pad now sits in the cleared void
+  → `NO_REGION` stops firing → stall slots seed on the apron.
+- Adapter pad seed now passes the ROTATED footprint dims (90°/270° swap
+  width/length): the bound hall reliably faces the anchor across the
+  perpendicular axis, so it lands rotated; the concentric pad rectangle must
+  match the hall's actual XZ extent or the stall band would seat on the hall.
+- `addCivicPrecinct` now EXCLUDES the market void + the MARKET hall from the
+  rural-exclusion precinct (the market is a footprint-sized satellite that can
+  sit well off the anchor; folding it in would balloon the precinct into a
+  giant civic-to-market rectangle and push every farmhouse to the fringe).
+
+*Issue 2 — CITY starved by the extent cap, not the core.* The civic precinct is
+correctly footprint-sized (~98×78), but `ZonePartition.zoneRadiusFactor(CITY)`
+= 0.8 → cap `round(80×0.8)=64`; the precinct ate most of a radius-64 extent and
+the ~30 peripheral buildings (9 houses, 3 stockpiles, a 2nd blacksmith, 6
+peripheral farmhouses, …) had nowhere to go (22 drops). Fix: CITY factor 0.8 →
+**1.0625** → cap `round(80×1.0625)=85` (still `< the 100-block scan grid`, so
+farm seeds stay on-grid). TOWN/HAMLET/OUTPOST unchanged (1.25×).
+
+**Surface area:** 0 new files + 3 edits + 0 deletions (1 State field removed:
+`marketRingRadius`).
+
+**Files modified:**
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/Layer4/PhasedPlanner.java`
+  (sizeMarketDistrict + boundMarketBest; reserveCivicSquare market section;
+  findBestCandidate MARKET bind + ring-gate restricted to civic RING_MEMBERS;
+  addCivicPrecinct excludes market; removed `marketRingRadius`).
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/Layer2/ZonePartition.java`
+  (CITY `zoneRadiusFactor` 0.8 → 1.0625).
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/V2VillageSpawnerAdapter.java`
+  (market pad seed passes rotated footprint dims).
+
+**Tie-In Audit:**
+- *Touched surface:* `PhasedPlanner` (private market sizing/binding + precinct
+  + removed field), `ZonePartition.zoneRadiusFactor` (private), adapter market
+  pad seed dims. No public type signature changed; no codec field; no enum/
+  switch arm.
+- *Upstream feeders:* `MarketComplexSpec.padMargin` (authored registry) → the
+  market void size; `sortedSelection` → whether MARKET is sized at all;
+  `FootprintProvider` seam → default MARKET footprint.
+- *Downstream callers:* `MarketComplexPlanner.Input/plan` — TWO callers; only
+  the adapter spawn-time call changed (rotated dims); `EventStallManager`
+  (event-time pads, line 93) UNAFFECTED (separate context, record signature
+  unchanged). `marketPlazaCentroid` — only the adapter; behaviour unchanged.
+  `Result.civicSquare()/marketSquare()` — only the adapter (line 263);
+  signature unchanged. `zoneRadiusFactor` — ZonePartition-internal only (grep
+  confirmed); a ternary, not a switch.
+- *Sibling systems:* `BlockServingRouter` — the hall-inside-void case is
+  already handled (`frontCell`/`nearestUnobstructedCell` relocates the hall's
+  road terminal to the void perimeter; the road skirts the plaza, same as the
+  civic void); the market void is already in `state.voids()` passed to the
+  router. `OverlapAuditor` — the bound hall is isolated in its void (no
+  building×building overlap); `reserveComplexParcel(MARKET)` now returns null
+  (the void blocks parcel growth) so no parcel×building check; the road skirts
+  the void (~31 from the hall interior) so no corridor×interior fatal.
+  `PlazaPaver` — paves the MARKET region minus the hall footprint (unchanged);
+  stalls are recorded via `data.addMarketStall` (NOT village buildings, NOT
+  block structures at spawn — populated at market events), so no paving
+  conflict. Both spawn paths (`/litv spawn` + normal) run the same
+  `PhasedPlanner.run` → `reserveCivicSquare`.
+- *Exhaustive switches:* none touched (no enum added; the ViabilityTier
+  switches in ZonePartition are unaffected — the factor is a ternary).
+
+**Simplification Sweep:** touches `Village/Planning/`. No new classes; 2 new
+private methods (`sizeMarketDistrict`, `boundMarketBest`); 1 field removed
+(`marketRingRadius`). `sizeDistrictToMembers` retains its civic caller (grep
+confirmed); `Sized` still used by civic. No orphaned hand-picked market `half`
+constant (the old `half=11` came from the civic perimeter sizer, now replaced
+by the concentric `sizeMarketDistrict`). No debt left behind.
+
+**Deviations from prompt:**
+- **Hall CENTRED in its sub-district, not "at one edge."** The prompt described
+  the hall "at one edge, fronting the civic plaza" with stalls filling the
+  remainder. But `MarketComplexPlanner` grades the pad CONCENTRICALLY
+  (`footprint + margin` centred on `marketCentre`), and the stall seeder fills
+  `region \ buildingBounds`. For the stalls to ring the hall (not seat on it),
+  `marketCentre` MUST equal the hall centre — so the hall is centred and the
+  stalls ring it (hall-in-a-market-plaza). This is the same geometry as the
+  civic plaza (a paved square with a centrepiece) and matches the realiser the
+  prompt told me to "read the actual pad size from." Edge-placement would
+  require changing the realiser's concentric pad model (out of scope). Road
+  access is via the paved plaza, exactly like the town hall fronting the civic
+  void.
+- **Market void NOT radius-capped** (unlike the civic plaza): the hall is a
+  fixed ~21×42, so the void must be ≥ its long side regardless of tier. At
+  small tiers the void can sit near/just beyond the nominal village radius
+  (terrain-gated: skipped if the centre cell isn't buildable → hall falls back
+  to the generic scan). Flagged below.
+- **CITY factor 1.0625** (→ cap 85) rather than a hand-picked 85 constant —
+  keeps the existing factor-based mechanism; recorded as the chosen number.
+
+**Out-of-scope but flagged:**
+- The market satellite offset (`civicHalf + gap + marketHalf` ≈ 50 at TOWN) can
+  place the market near/just past the nominal radius; if in-world testing shows
+  it lands too far or in farmland, the next lever is reducing the void to
+  `minPadMargin`-based sizing or pulling the offset in. (Terrain-gated skip is
+  the safety net — worst case is the prior fallback, not worse.)
+- `EventStallManager`'s own `MarketComplexPlanner.Input` (event-time pads) still
+  passes its context's dims — not audited for the rotation swap here (separate
+  path; spawn-time market was the scope).
+- CITY farm `INSUFFICIENT_AREA` (over-density) + RESIDENTIAL zone / HOUSE
+  re-point + workshop clustering + no-stray-farmhouses → Stage 4b.
+- Richer market-day decoration → later.
+
+**Cumulative pending verification:** the rework spawns + is compact (fix-up
+#3); CITY compacts (#5); civic/market voids sized to the CIVIC zone then to
+footprints (#6 → Stage 4 redesign); the designed civic district paves +
+frames with core-first ordering (Stage 4 redesign); and now the market is a
+footprint-sized sub-district with the hall bound inside + stalls seeding, and
+CITY's extent is lifted to ~85. None of fix-ups #5–#7 / the Stage 4 redesign
+has been smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. Spawn TOWN AGRICULTURAL, seed `-7816748744300307696`. Confirm: the MARKET
+   hall sits in its market sub-district (the `market square: reserved at (…)`
+   centre, NOT drifted toward the civic plaza); the `candidates type=MARKET
+   BOUND to sub-district centre (…)` debug line fires (if DEBUG_CANDIDATES);
+   the stall pad generates (log `V2: market pad rendered for … (margin=…)`, NOT
+   `market pad skipped … NO_REGION`); the civic plaza still paves + frames; the
+   `civic precinct: …` box is tight around the civic core (NOT stretched to the
+   market); still ~1 drop.
+3. Spawn CITY AGRICULTURAL, seed `-7816748743281672299`. Confirm the drop count
+   falls sharply from 22 (residual HOUSE drops + farm `INSUFFICIENT_AREA` are
+   4b — note, don't fix); the market sub-district seats with stalls; farm
+   fields stay on-grid (NO new off-grid `SEED_NOT_ADMISSIBLE` from the larger
+   extent — cap 85 < grid 100); check the log shows the larger CITY extent.
+4. A couple of other seeds/tiers: confirm the market sizing scales with the
+   hall variant and TOWN/HAMLET are unchanged.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `sizeMarketDistrict`
+reads `MarketComplexSpec.padMargin` through the existing registry; `boundMarketBest`
+resolves the footprint via the same `FootprintProvider` seam + `pickVariantIdForV2`
+the scan uses, and builds a `Best` with the existing `footprintAabb`/`chooseFacing`
+helpers; the rotated-dims swap uses `mk.placed().rotation()` (90/270 → swap); the
+CITY factor is a one-line ternary change; the router/auditor/paver tie-ins were
+traced (above); no signature/codec/enum change.

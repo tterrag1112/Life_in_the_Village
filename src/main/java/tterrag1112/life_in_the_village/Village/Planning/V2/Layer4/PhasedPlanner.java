@@ -475,6 +475,23 @@ public final class PhasedPlanner {
         final boolean debugCands = DEBUG_CANDIDATES;
         int cellsScanned = 0, rejZone = 0, rejReservation = 0, rejScore = 0, accepted = 0;
 
+        // Fix-up #7 — the MARKET hall is BOUND to the centre of its reserved
+        // sub-district (sized to hold the hall + stall-pad apron), not
+        // scattered by the generic civic scorer. This is what lets the stall
+        // pad grade clear (no NO_REGION): the hall and the pad share one
+        // reserved void. Falls through to the generic scan only if the
+        // square centre is unusable terrain.
+        if (type == BuildingType.MARKET && state.marketSquare != null) {
+            Best bound = boundMarketBest(state);
+            if (bound != null) {
+                if (debugCands) {
+                    LOGGER.info("candidates type=MARKET BOUND to sub-district centre "
+                            + "({},{})", bound.pos().getX(), bound.pos().getZ());
+                }
+                return bound;
+            }
+        }
+
         ZonePartition zp = state.ctx.zonePartition();
         // The zone role this building wants (its nucleus-affinity kind);
         // null when un-affined, or when no zone of that kind exists — in
@@ -483,24 +500,20 @@ public final class PhasedPlanner {
         NucleusKind targetKind = targetZoneKind(state, type, zp);
 
         // Layout Rework Stage 4 redesign — designed-district ring gate.
-        // Only the plaza RING MEMBERS (TOWN_HALL, CHAPEL, INN) ring the civic
-        // void, and MARKET rings the market void. For these, the gate is a
-        // placement DISC around the square whose radius was sized from the
-        // member footprints in reserveCivicSquare (state.civicRingRadius /
-        // state.marketRingRadius) — wide enough for the largest member to
-        // seat AROUND the void. overlapsAnyReservation still keeps the
-        // footprint OUT of the void, so they front the square; the nucleus
-        // score pulls them to the void edge (hugging the perimeter). This
-        // supersedes both the zone gate and the binding cutoff for them.
-        // Other CIVIC-affinity buildings (BLACKSMITH, BAKERY, GUILD_HALL, …)
-        // are NOT ring-gated — they fall through to the normal zone gate and
-        // distribute across the CIVIC zone.
+        // The plaza RING MEMBERS (TOWN_HALL, CHAPEL, INN) ring the civic void:
+        // the gate is a placement DISC around the square whose radius was
+        // sized from the member footprints in reserveCivicSquare
+        // (state.civicRingRadius) — wide enough for the largest member to seat
+        // AROUND the void. overlapsAnyReservation still keeps the footprint OUT
+        // of the void, so they front the square; the nucleus score pulls them
+        // to the void edge (hugging the perimeter). This supersedes both the
+        // zone gate and the binding cutoff for them. Other CIVIC-affinity
+        // buildings (BLACKSMITH, BAKERY, GUILD_HALL, …) are NOT ring-gated —
+        // they fall through to the normal zone gate. (MARKET is handled above:
+        // bound to its sub-district centre, not ring-gated — fix-up #7.)
         BlockPos squareCentre = null;
         int ringRadius = 0;
-        if (type == BuildingType.MARKET && state.marketSquare != null) {
-            squareCentre = squareCentreOf(state.marketSquare);
-            ringRadius = state.marketRingRadius;
-        } else if (RING_MEMBERS.contains(type) && state.civicSquare != null) {
+        if (RING_MEMBERS.contains(type) && state.civicSquare != null) {
             squareCentre = squareCentreOf(state.civicSquare);
             ringRadius = state.civicRingRadius;
         }
@@ -1552,6 +1565,66 @@ public final class PhasedPlanner {
     }
 
     /**
+     * Fix-up #7 — size the MARKET sub-district. Unlike the civic plaza
+     * (buildings RING a central void — the {@link #sizeDistrictToMembers}
+     * perimeter model), the market hall sits IN the middle of its sub-
+     * district with the stall pad ringing it concentrically (that is how
+     * {@code MarketComplexPlanner} grades the pad: {@code footprint +
+     * margin} centred on the hall). So the void must contain the hall
+     * footprint PLUS the pad apron: {@code half = ceil(maxDim/2) +
+     * padMargin}, where {@code padMargin} is read from the authored
+     * {@code MarketComplexSpec} (the same value the realiser uses, so the
+     * full-margin pad fits clear inside the reserved void → no
+     * {@code NO_REGION}).
+     *
+     * <p>Deliberately NOT clamped to {@code villageRadius/2}: the hall is a
+     * fixed-size building (≈21×42), so the void must be ≥ its long side
+     * regardless of tier — a radius cap would collapse the void below the
+     * hall. If the resulting square doesn't sit on buildable terrain, the
+     * caller skips it and the hall falls back to the generic placement.
+     */
+    private static int sizeMarketDistrict(State state) {
+        StructureSizeCache.FootprintInfo fp =
+                defaultFootprint(state, BuildingType.MARKET);
+        int padMargin = MarketComplexRegistry.get(state.culture, BuildingType.MARKET)
+                .map(MarketComplexSpec::padMargin).orElse(10);
+        int maxDim = Math.max(fp.width(), fp.length());
+        return Math.max(MIN_PLAZA_HALF, (int) Math.ceil(maxDim / 2.0) + padMargin);
+    }
+
+    /**
+     * Fix-up #7 — the MARKET hall, bound to the centre of its reserved
+     * sub-district (rather than scattered by the generic civic scorer).
+     * The void was reserved clear and sized to hold the hall + pad apron,
+     * so the hall lands in the middle of its stall plaza and the pad grades
+     * clear around it. Returns null if the square centre isn't usable (the
+     * caller then falls back to the generic candidate scan). The returned
+     * {@link Best} has null frontage/facingRoad (filled by the post-routing
+     * orientation pass, like every other building).
+     */
+    private static Best boundMarketBest(State state) {
+        BlockPos c = squareCentreOf(state.marketSquare);   // y == 0
+        int mx = c.getX();
+        int mz = c.getZ();
+        if (!state.fmap.inBounds(mx, mz)) return null;
+        Cell cell = state.fmap.cellAt(mx, mz);
+        BlockPos centre = new BlockPos(mx, cell.elevationY(), mz);
+        String variantId = state.variantResolver.pickVariantIdForV2(
+                BuildingType.MARKET, centre, state.ctx.anchor(), state.villageRadius,
+                state.culture, Style.RURAL, state.rng, state.availability);
+        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
+                Style.RURAL, BuildingType.MARKET, variantId, LEVEL, Rotation.NONE);
+        Footprint fp = new Footprint(info.width(), info.length());
+        Rotation rotation = chooseFacing(centre, state.ctx.anchor());
+        Aabb fpAabb = footprintAabb(centre, fp, rotation);
+        // Nominal score — the hall is bound, not scored against alternatives.
+        ScoreBreakdown score = new ScoreBreakdown(1.0, 0.0, 0.0);
+        return new Best(centre, fp, rotation, variantId,
+                /*frontage*/ null, /*facingRoad*/ null,
+                fpAabb, /*frontageAabb*/ fpAabb, score);
+    }
+
+    /**
      * Stage 4 redesign — reserve the central civic district as building-less
      * voids BEFORE any building places. The civic square is sized to the
      * plaza {@link #RING_MEMBERS} the village actually selects; the adjacent
@@ -1596,14 +1669,17 @@ public final class PhasedPlanner {
         LOGGER.info("civic square: centre=({},{}) half={} ring={} members={}",
                 anchor.getX(), anchor.getZ(), civic.half(), civic.ring(), ring);
 
-        // Market square — only when MARKET is selected; sized to its own
-        // footprint and seated beside the civic square.
+        // Market sub-district — only when MARKET is selected. Fix-up #7:
+        // sized to CONTAIN the hall footprint + the concentric stall-pad
+        // apron (sizeMarketDistrict), so the hall binds to its centre and
+        // the pad grades clear inside the void (no NO_REGION). Seated beside
+        // the civic square on the axis perpendicular to the primary axis.
         if (!present.contains(BuildingType.MARKET)) {
             LOGGER.info("market square: skipped (MARKET not selected)");
             return;
         }
-        Sized market = sizeDistrictToMembers(state, EnumSet.of(BuildingType.MARKET));
-        int offset = civic.half() + CIVIC_SQUARE_GAP + market.half();
+        int marketHalf = sizeMarketDistrict(state);
+        int offset = civic.half() + CIVIC_SQUARE_GAP + marketHalf;
         boolean axisX = state.ctx.primaryAxis() == CardinalAxis.X;
         int mx = anchor.getX() + (axisX ? 0 : offset);  // perpendicular to primary axis
         int mz = anchor.getZ() + (axisX ? offset : 0);
@@ -1614,39 +1690,46 @@ public final class PhasedPlanner {
             boolean buildable = (cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
                     && c.localSlope() <= MAX_SLOPE;
             if (buildable) {
-                Polygon.AABB marketAabb = squareAt(mx, mz, market.half());
+                Polygon.AABB marketAabb = squareAt(mx, mz, marketHalf);
                 state.marketSquare = marketAabb;
-                state.marketRingRadius = market.ring();
                 state.reservations.add(
                         new Reservation(toAabb(marketAabb), toAabb(marketAabb), null));
                 reserved = true;
             }
         }
-        LOGGER.info("market square: {} (half={} ring={})",
+        LOGGER.info("market square: {} (half={})",
                 reserved ? "reserved at (" + mx + "," + mz + ")" : "skipped (terrain)",
-                market.half(), market.ring());
+                marketHalf);
     }
 
     /**
      * Stage 4 redesign — derive the civic precinct AABB after the civic core
-     * places (core-first reorder). The precinct is the union of the reserved
-     * voids and every batch-3 (civic) building footprint; it fences the
-     * rural nucleus (batch 2, placed next) out of the district so farmhouses
-     * don't intrude. Stored on {@code state}; consulted only by rural-type
+     * places (core-first reorder). The precinct is the union of the civic
+     * void and the batch-3 (civic) building footprints; it fences the rural
+     * nucleus (batch 2, placed next) out of the district so farmhouses don't
+     * intrude. Stored on {@code state}; consulted only by rural-type
      * placement in {@link #findBestCandidate}.
+     *
+     * <p>Fix-up #7 — the MARKET void and the MARKET hall are deliberately
+     * EXCLUDED. The market is now a footprint-sized satellite sub-district
+     * that can sit well off the anchor (offset ≈ civicHalf + gap +
+     * marketHalf); folding it into the precinct would balloon the rural
+     * exclusion into a giant civic-to-market rectangle and push every
+     * farmhouse to the fringe. The market void is still a {@link
+     * Reservation}, so buildings (incl. farmhouses) already avoid it — it
+     * just doesn't widen the rural-exclusion box.
      */
     private static void addCivicPrecinct(State state) {
         boolean any = false;
         int minX = 0, minZ = 0, maxX = 0, maxZ = 0;
-        for (Polygon.AABB v : state.voids()) {
-            if (!any) { minX = v.minX(); minZ = v.minZ(); maxX = v.maxX(); maxZ = v.maxZ(); any = true; }
-            else {
-                minX = Math.min(minX, v.minX()); minZ = Math.min(minZ, v.minZ());
-                maxX = Math.max(maxX, v.maxX()); maxZ = Math.max(maxZ, v.maxZ());
-            }
+        if (state.civicSquare != null) {
+            Polygon.AABB v = state.civicSquare;
+            minX = v.minX(); minZ = v.minZ(); maxX = v.maxX(); maxZ = v.maxZ();
+            any = true;
         }
         for (PlacedBuilding pb : state.placed) {
             if (getBatch(state.ctx, pb.type()) != 3) continue;
+            if (pb.type() == BuildingType.MARKET) continue;   // satellite — see javadoc
             Aabb fp = footprintAabb(pb.centre(), pb.footprint(), pb.rotation());
             if (!any) { minX = fp.minX(); minZ = fp.minZ(); maxX = fp.maxX(); maxZ = fp.maxZ(); any = true; }
             else {
@@ -1925,11 +2008,12 @@ public final class PhasedPlanner {
          *  CIVIC / MARKET plazas. */
         Polygon.AABB civicSquare;
         Polygon.AABB marketSquare;
-        /** Stage 4 redesign — placement-disc radii (blocks) the ring members
-         *  are admitted within, sized from member footprints in
-         *  {@code reserveCivicSquare}. Consulted by {@code findBestCandidate}. */
+        /** Stage 4 redesign — placement-disc radius (blocks) the civic ring
+         *  members are admitted within, sized from member footprints in
+         *  {@code reserveCivicSquare}. Consulted by {@code findBestCandidate}.
+         *  (Fix-up #7 — the market hall binds to its sub-district centre, so
+         *  it no longer needs a ring radius.) */
         int civicRingRadius;
-        int marketRingRadius;
         /** Stage 4 redesign — civic precinct AABB (void ∪ core footprints ∪
          *  market), derived once the civic core places (core-first reorder).
          *  Off-limits to the rural nucleus that places next; null until then. */
