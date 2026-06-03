@@ -713,17 +713,22 @@ public final class V2VillageSpawnerAdapter {
         LayoutDensityProfile density = LayoutDensityProfile.forLevel(BUILDING_LEVEL);
         BlockPos anchor = siteCtx.anchor();
 
-        // Layout Rework Stage 4a — turn the planner's reserved squares into
-        // CIVIC / MARKET PlazaRegions. Village.applyLayout registers them via
-        // addPlazaRegion, and the VillageDecorator's PlazaPaver paves them.
+        // Layout Rework Stage 4 redesign — turn the planner's reserved
+        // squares into CIVIC / MARKET PlazaRegions. Village.applyLayout
+        // registers them via addPlazaRegion, and the VillageDecorator's
+        // PlazaPaver paves them. Degenerate (zero-area) AABBs are skipped:
+        // PlazaPaver's ray-cast point-in-polygon test paves 0 blocks for a
+        // collapsed polygon (the paves-0 regression), so a degenerate void
+        // should not be emitted at all. (The planner now floors the void at
+        // MIN_PLAZA_HALF, so this is belt-and-suspenders.)
         List<tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion>
                 plazas = new ArrayList<>();
-        if (civicSquare != null) {
+        if (nonDegenerate(civicSquare)) {
             plazas.add(squarePlaza(civicSquare, anchor.getY(),
                     tterrag1112.life_in_the_village.Village.Decoration.Plaza
                             .PlazaPurpose.CIVIC));
         }
-        if (marketSquare != null) {
+        if (nonDegenerate(marketSquare)) {
             plazas.add(squarePlaza(marketSquare, anchor.getY(),
                     tterrag1112.life_in_the_village.Village.Decoration.Plaza
                             .PlazaPurpose.MARKET));
@@ -778,6 +783,13 @@ public final class V2VillageSpawnerAdapter {
                 density.getRing2Radius(),
                 roads,                       // roadNetwork (D1(b))
                 plazas);                     // Stage 4a — civic + market plazas
+    }
+
+    /** Stage 4 redesign — a void is paveable only if it has real area; a
+     *  collapsed AABB makes PlazaPaver pave 0 blocks. */
+    private static boolean nonDegenerate(
+            tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB a) {
+        return a != null && a.maxX() > a.minX() && a.maxZ() > a.minZ();
     }
 
     /** Stage 4a — a square {@link tterrag1112.life_in_the_village.Village

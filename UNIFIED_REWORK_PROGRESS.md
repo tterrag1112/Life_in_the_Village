@@ -5655,3 +5655,161 @@ the sizing helpers clamp to `[MIN, cap]`; the merge path leaves `marketSquare`
 null so the adapter emits one CIVIC plaza and the MARKET building rings it (CIVIC
 affinity) with its pad seeded from the CIVIC plaza; `findBestCandidate` reads the
 actual square size via `squareHalfOf`; no signature/codec/enum change.
+
+### 2026-06-03 — Layout Rework Stage 4 redesign (footprint-driven civic district)
+
+The 7th civic-core iteration. Replaces the guessed square sizing (#5's
+`CIVIC_RING_WIDTH`, #6's `SQUARE_VOID_FRACTION` / per-tier baselines + merge)
+with size **derived from the building footprints the district must hold**, plus
+a **core-first batch reorder** so farmhouses can't wall the civic district off.
+
+**Two make-or-break findings (the prompt asked me to verify and report these
+before forcing them):**
+1. **Core-first reorder — SAFE.** Verified the batch order and dependency graph
+   before swapping. New order is `[1, 3, 2, 4, 5, 6]` (civic batch 3 before rural
+   batch 2); only 2↔3 swap relative to each other, 4/5/6 still trail both. The
+   only dependency that could break is a batch-3 (civic) building requiring a
+   batch-2 (rural) building present — and **every** civic `PlacementProfile`
+   declares `requiresPresent = []` (TOWN_HALL, MARKET, INN, CHAPEL, SHRINE,
+   NOBLE_MANOR, TREASURY; CASTLE→TOWN_HALL is intra-batch-3). Rural FARMHOUSE
+   also has `requiresPresent = []`. So the swap drops no dependencies. Proceeded.
+2. **Max-variant footprint — NOT resolvable pre-placement; documented fallback
+   used.** The planner's *only sanctioned* access to building dimensions is the
+   `FootprintProvider` seam (doc: "The planner's only access to building
+   dimensions"), which resolves **one `variantId` at a time** and exposes **no
+   variant enumeration**. There is therefore no way to read the MAX-variant
+   footprint through the seam pre-placement (enumerating via `VariantRegistry`
+   would bypass the seam and break the headless harness's fixed table). Per the
+   prompt's explicit off-ramp, I size from the **default-variant footprint**
+   (`BuildingVariant.defaultVariantId(type)`, always resolvable on both paths)
+   **plus a documented `LARGE_VARIANT_PAD(4)`** per member to absorb
+   larger-than-default variants the resolver may pick at placement. This is the
+   "documented per-type constant rather than guessing" the prompt called for.
+
+**Mechanism — `sizeDistrictToMembers(members) → Sized(half, ring)`:**
+- A square plaza of half `h` has perimeter `8h`. Each member needs
+  `frontage(width) + PLAZA_GAP(3) + LARGE_VARIANT_PAD(4)` of perimeter, so
+  `half = ceil(Σ(w+GAP+PAD) / 8)`, also `≥ ceil(maxWidth/2)` (the void side must
+  hold the widest member), floored at `MIN_PLAZA_HALF(5)`.
+- **Clamped to `villageRadius/2`** so a footprint-large district never overflows
+  the village at small tiers (radius, not footprints, is the binding limit there).
+- `ring = half + maxDepth + LARGE_VARIANT_PAD + RING_SLACK(4)` — the placement
+  disc radius the ring members are admitted within (deep enough that a member
+  centred just outside the void has slack to seat).
+
+**Civic district (`reserveCivicSquare(state, selection)`):**
+- **Plaza ring = `RING_MEMBERS {TOWN_HALL, CHAPEL, INN}`**, intersected with the
+  village's actual selection (so a roster that drops two of them gets a smaller
+  plaza; always keeps ≥ TOWN_HALL). Civic void sized to those members.
+- **MARKET = adjacent footprint-sized sub-district**, sized to the MARKET
+  footprint, seated `civic.half + GAP + market.half` off the anchor on the axis
+  perpendicular to the primary axis. Only reserved when MARKET is selected **and**
+  the centre is admissible terrain (else falls back to prior seeding).
+- **No merge path** (deleted #6's merge): always a real civic void (+ optional
+  market void). The civic void is always non-degenerate (≥ 11×11), which fixes
+  the **paves-0** regression — #6's zone-fraction/merge sizing could collapse the
+  void on thin-CIVIC sites, and `PlazaPaver`'s ray-cast point-in-polygon test
+  paves 0 blocks for a collapsed polygon. Belt-and-suspenders: the adapter now
+  skips degenerate AABBs (`nonDegenerate`) before emitting a `PlazaRegion`.
+
+**Ring gate (`findBestCandidate`):** restricted to `RING_MEMBERS` + `MARKET`
+(was: all CIVIC-affinity). Other civic buildings (BLACKSMITH, BAKERY, GUILD_HALL,
+…) now use the **normal zone gate** and distribute across the CIVIC zone rather
+than being forced onto the plaza ring. The ring radius is the footprint-sized
+`state.civicRingRadius` / `state.marketRingRadius` (was the fixed
+`squareHalf + CIVIC_RING_WIDTH`).
+
+**Precinct (`addCivicPrecinct`):** after the civic core places (core-first),
+the precinct AABB = union(voids ∪ batch-3 footprints) is stored on state and used
+as a **rural-only exclusion** in `findBestCandidate` (rejects rural-nucleus cells
+inside the precinct). It is NOT a `Reservation` (those block *all* later
+buildings); houses/resource can still sit near the core.
+
+**Deleted (superseded #5/#6 sizing):** `CIVIC_RING_WIDTH`, `SQUARE_VOID_FRACTION`,
+`MIN_SQUARE_HALF`, `civicSquareHalf`, `marketSquareHalf`, `civicCellCount`,
+`squareHalfForBudget`, `squareHalfOf`. **Kept:** `CIVIC_SQUARE_GAP`, `squareAt`,
+`toAabb`, `squareCentreOf`. Fountain centerpiece + leftover→parks unchanged
+(`placeCivicWell` after `ParkRenderer`; both still consume the CIVIC plaza).
+
+**Tuning baselines:** `PLAZA_GAP = 3`, `MIN_PLAZA_HALF = 5`, `RING_SLACK = 4`,
+`LARGE_VARIANT_PAD = 4`, district half cap `= villageRadius/2`.
+
+**Deviations from prompt:**
+- **Default-variant footprint, not max-variant** (make-or-break #2 above) — the
+  max-variant footprint is genuinely not resolvable through the sanctioned seam;
+  `LARGE_VARIANT_PAD` is the disclosed fallback.
+- **Paves-0 not reproduced headless** (no server / 403). I could not isolate the
+  exact runtime mechanism. The redesign addresses the two structural hypotheses —
+  (a) collapsed void (now floored ≥ MIN_PLAZA_HALF; degenerate AABB skipped at
+  emission) and (b) the #6 merge path — but if paves-0 was instead a terrain/
+  water-column or floorY-band issue in `PlazaPaver.clampAndCarveColumn`, that is
+  unaddressed here. **Flag for smoke-test:** confirm `PlazaPaver: paved N blocks
+  for CIVIC` logs N > 0.
+- Precinct is a rural-only soft exclusion (not a hard `Reservation`), matching
+  the prompt's "rural exclusion" wording — a hard reservation would have walled
+  houses out of the core too.
+
+**Tie-In Audit:**
+- **Upstream feeders:** `sortedSelection` (now also drives plaza sizing — read
+  defensively into an `EnumSet`); `FootprintProvider` seam (default-variant
+  lookup, identical on live + headless); `SiteContext` anchor/tier/primaryAxis
+  (unchanged reads).
+- **Downstream callers:** `Result.civicSquare()/marketSquare()` accessors
+  **unchanged** (only the internal sizing changed); sole consumer
+  `V2VillageSpawnerAdapter.buildRealizedLayout` still emits CIVIC/MARKET
+  `PlazaRegion`s (now guarded by `nonDegenerate`). `marketPlazaCentroid` still
+  falls back CIVIC←MARKET (works whether or not a market void exists).
+  `BlockServingRouter.route(..., state.voids())` unchanged — `voids()` still
+  returns the same nullable squares. `reserveCivicSquare` signature changed
+  (added `selection`) but is private/internal — no external caller.
+- **Sibling systems:** `PlazaPaver`/`VillageDecorator` consume `getPlazaRegions()`
+  count-agnostically (0/1/2 regions all fine). `ParkRenderer` + `placeCivicWell`
+  consume the CIVIC plaza unchanged. NPC nav graph / router read the routed
+  network, not the squares — untouched.
+- **Exhaustive switches:** none touched (deleted the per-tier `switch`es in
+  `civicSquareHalf`/`marketSquareHalf`; no enum added/removed).
+
+**Simplification Sweep:** net deletion of 8 helpers/constants vs. 4 new helpers
+(`defaultFootprint`, `sizeDistrictToMembers`, `addCivicPrecinct`, `nonDegenerate`)
++ 1 record (`Sized`). The square-sizing surface is now a single footprint-driven
+path (no merge branch, no zone-fraction branch, no per-tier baseline tables). No
+V1 vocabulary introduced.
+
+**Preflight:** no enum value added; no record field added to a persisted codec
+(the new `State` fields `civicRingRadius`/`marketRingRadius`/`civicPrecinct` are
+transient planning state, never serialized); no new pipeline path bypassing an
+old one (`reserveCivicSquare` is the same single call site, now pre-loop);
+per-tick logging untouched.
+
+**Out-of-scope but flagged:** paves-0 terrain/floorY hypothesis (above —
+smoke-test confirms which); CITY/HAMLET market void can seat just outside the
+village extent at small radii when MARKET is selected (terrain-gated, rare —
+tuning, not correctness); RESIDENTIAL zone / HOUSE re-point (CITY house drops) →
+4b; farm over-density `INSUFFICIENT_AREA` → 4b.
+
+**Smoke-test plan (seed `-7816748744317545459`):**
+1. Build (deferred — sandbox 403). Static review done.
+2. Spawn **TOWN AGRICULTURAL**. Pass: the civic ring members (TOWN_HALL, CHAPEL,
+   INN) place AROUND a paved central plaza (TOWN_HALL fronting, not on, the
+   centre); a fountain at the plaza centre; `PlazaPaver: paved N blocks for CIVIC`
+   with **N > 0**; a MARKET sub-square paves beside it with the market building
+   fronting it + stalls (no `NO_REGION`); farmhouses ring OUTSIDE the precinct
+   (none inside the civic district); a road skirts the plaza, none crosses; clean
+   spawn + NPC nav. Check the log line `civic square: … members=[…]` shows the
+   footprint-sized half, and `civic precinct: …` is logged before rural places.
+3. Spawn **CITY AGRICULTURAL**: civic drop count should be low (footprint-sized
+   district holds the big civic footprints; residual HOUSE drops expected until
+   4b's RESIDENTIAL zone — note, don't fix). If big civic footprints still drop,
+   report the logged `ring=` radius vs. where they tried to seat.
+4. Spawn **HAMLET / OUTPOST**: confirm the `villageRadius/2` cap keeps the plaza
+   inside the village (no plaza overflowing the extent); MARKET may be absent.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: default-variant
+footprint resolves through the existing `FootprintProvider` seam exactly as
+`findBestCandidate` already does; `Sized`/`sizeDistrictToMembers` use only
+`Math.ceil`/`Math.max`/`Math.min`; the batch reorder is a literal order array
+with within-batch order preserved; the precinct gate reads `Polygon.AABB`
+min/max accessors already used by `squareAt`; `PlacedBuilding.centre()` /
+`.footprint()` / `.rotation()` feed the existing `footprintAabb`; no signature
+change on any public type, no codec field, no new enum, no exhaustive-switch arm.
