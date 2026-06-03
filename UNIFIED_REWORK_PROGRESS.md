@@ -6310,3 +6310,130 @@ relax is a guarded branch around the existing abort (off ⇒ identical path);
 `sizeDistrictToMembers` reverted to `EnumSet` keeps the civic caller valid;
 `residentialYards` removal verified to have no remaining references; all new
 helpers grep-verified to have callers; no signature/codec/enum change.
+
+### 2026-06-03 — Layout Rework fix-up (market rectangle + seat all residential blocks)
+
+Two contained sizing fixes the district-only view surfaced. On post-4b-fix-up;
+`DISTRICT_ONLY_MODE` stays on.
+
+**What shipped:**
+
+*Piece 1 — market sub-district = real complex RECTANGLE, not a bloated square.*
+In-world the market was a giant empty paved lot: the sub-district was a SQUARE
+(`half=31`, ~62×62 ≈ 3,800 blocks) holding just the hall (~21×42) + a few stalls.
+The market complex is a RECTANGLE (hall + concentric stall-pad apron =
+`footprint + padMargin` per side), so a square always over-reserves the SHORT
+axis (~62 wide where the complex is ~41) into empty paved space. Fix:
+`marketDistrictHalves` sizes a W×D rectangle from the real complex —
+`alongHalf = ⌈len/2⌉ + padMargin + slack`, `acrossHalf = ⌈width/2⌉ + padMargin +
+slack` — with `padMargin` read from the authored `MarketComplexSpec` (the same
+value the realiser pads with, so the reservation IS the complex, not a square
+that wastes space or, if shrunk square, clips the complex). The hall faces the
+anchor, so its LENGTH runs along the offset axis and WIDTH across — mapped to
+halfX/halfZ by `primaryAxis` (matches `boundMarketBest`'s `chooseFacing`
+rotation). The reserved AABB is a rectangle (~44×64 for the default hall ≈ 2,800
+blocks, vs the old ~3,800), and the MARKET `PlazaRegion` follows it automatically
+(`squarePlaza` builds from the AABB). The +`MARKET_PAD_SLACK`(2) keeps the
+full-margin pad strictly inside → the pad still renders (no `NO_REGION`). No
+forced garden in any leftover (rectangle-fit leaves little; extra stays plain).
+
+*Piece 2 — seat all N residential blocks.* In-world: `3 requested / 1 reserved`
+(CITY) / `2 requested / 1 reserved` (TOWN). **Disposition finding: it was the
+SEARCH, not the loop.** The loop did call seat() N times; but each block got
+exactly ONE fixed bearing (`k·2π/n + π/4`), and a later block whose single
+bearing was obstructed (by the market satellite void or the civic ring) found no
+clear spot and failed — there was room, just not on that one ray. Fix:
+`seatDistrict` now SWEEPS all bearings (`DISTRICT_ANGLE_STEPS`=24, preferring the
+fanned start bearing then rotating around) × radii outward, taking the first
+clear, non-overlapping spot — so every block seats as long as any clear ~44×44
+spot exists in the annulus.
+
+**Surface area:** 0 new files + 1 edit + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` — `marketDistrictHalves`
+  (replaces square `sizeMarketDistrict`); rectangle market reservation in
+  `reserveCivicSquare`; `MARKET_PAD_SLACK`; `seatDistrict` angular sweep
+  (replaces `seatDistrictAlongRay`); `DISTRICT_ANGLE_STEPS`.
+
+**Tie-In Audit:**
+- *Touched surface:* market sub-district sizing (square→rectangle) + its
+  reservation/`PlazaRegion`; the residential block-seating search.
+- *Downstream callers:* `marketSquare` (a `Polygon.AABB`, now a rectangle) is
+  consumed by `boundMarketBest` (centre via `squareCentreOf` — works for any
+  AABB), the router obstacle `voids()` (AABB — fine), and the adapter's
+  `squarePlaza`/`nonDegenerate` (build the plaza polygon from the AABB corners —
+  rectangle paves correctly; `nonDegenerate` true). `MarketComplexPlanner` pad —
+  the adapter already passes ROTATED footprint dims (fix-up #7); the rectangle is
+  co-oriented (length along the offset axis = the pad's long axis), so the full
+  pad fits inside → no `NO_REGION`. `OverlapAuditor` — smaller market footprint
+  (fewer false overlaps). `residentialGates` consumers (HOUSE inclusion + rural
+  exclusion) unchanged — still a list of AABBs, just more of them now seat.
+- *Sibling systems:* `PlazaPaver` paves the (smaller) market rectangle — paving
+  ≈ the complex, not the old empty lot. Router reaches the market + all
+  residential blocks (more blocks now reserve). `DISTRICT_ONLY_MODE` + the
+  viability relax unchanged. Both spawn paths run the same `PhasedPlanner.run`.
+- *Exhaustive switches:* none touched. No new enum/codec/signature.
+
+**Simplification Sweep** (touches `Village/Planning/`):
+- `sizeMarketDistrict` (square half) → REPLACED by `marketDistrictHalves`
+  (rectangle); the square path is gone, not kept alongside.
+- `seatDistrictAlongRay` (one bearing) → REPLACED by `seatDistrict` (angular
+  sweep); old single-bearing path removed.
+- `squareAt` — still Active (civic plaza uses it); market no longer does (uses an
+  inline rectangle AABB, like the residential block). No orphans; net is a
+  like-for-like replacement of two helpers, no new types.
+
+**Deviations from prompt:**
+- **Real paving is ≈2,800 blocks, not "≪3,000."** The complex is inherently
+  ~41×62 (hall 42 long + 10 pad each side), so the snug rectangle is ~44×64 ≈
+  2,800 — a ~27% cut from the ~3,800 square, and crucially the SHORT-axis empty
+  strip the user complained about is gone (44 wide vs 62). There's no smaller
+  honest fit for a 42-long hall + stall ring; "≪3,000" isn't physically reachable
+  without shrinking the complex itself (out of scope).
+- **Rectangle derived from the spec's `padMargin`, not by calling
+  `MarketComplexPlanner.plan()`.** `plan()` needs runtime obstacles + a centre;
+  the complex footprint is deterministically `footprint + padMargin`, so I
+  replicate that from the same authored `MarketComplexSpec` — identical result,
+  no runtime dependency at planning time.
+- **`seatDistrict` sweeps 24 bearings** (not a fixed fan) — the prompt said "fan
+  around the core"; the sweep still PREFERS the fanned bearing but falls back to
+  others, which is what actually guarantees all N seat.
+
+**Out-of-scope but flagged:**
+- Garden in market leftover → future opt-in (not forced).
+- Civic-district interior (fountain/benches/framing) → design stage.
+- Road palette / aesthetics → road stage.
+- Farm-gate relax / rural re-enable → later (rural still off under district-only).
+- BSP residential block + workshop districting → 4c.
+
+**Cumulative pending verification:** rework spawns + compact (#3); CITY compacts
+(#5); civic district paves core-first (Stage 4 redesign); market bound +
+CITY extent ~85 (#7); residential districts + no-stray farms + market cap (4b);
+residential reserves + district-only mode (4b fix-up); and now the market is a
+snug complex-matched rectangle and all residential blocks seat. None of #5–#7 /
+Stage 4 redesign / 4b / the 4b fix-up / this fix-up has been smoke-tested
+in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. With `DISTRICT_ONLY_MODE` on, spawn **TOWN AGRICULTURAL**: the market is now a
+   snug RECTANGLE around the hall + stalls (no giant empty square lot; the short
+   axis hugs the complex), the pad still renders with stalls (no `NO_REGION`); and
+   **all residential blocks reserve** (log `residential districts: N requested /
+   N reserved`; one `residential district seated: …` per block); civic plaza
+   unchanged.
+3. Spawn **CITY AGRICULTURAL**: market snug; ~3 residential blocks reserve for the
+   12 houses; no abort.
+4. Confirm no `market pad skipped … NO_REGION` on a few seeds — the rectangle must
+   still hold the full complex.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `marketDistrictHalves`
+reads the same `MarketComplexSpec.padMargin` the realiser pads with and builds an
+AABB co-oriented with `boundMarketBest`'s `chooseFacing` rotation (pad fits → no
+NO_REGION); the market `PlazaRegion`/`nonDegenerate`/router consume the AABB
+unchanged; `seatDistrict`'s sweep uses only trig + the existing AABB-overlap
+helpers; old `sizeMarketDistrict`/`seatDistrictAlongRay` fully replaced (no
+dangling refs, grep-verified); `squareAt` still used by civic; no signature/codec/
+enum change.

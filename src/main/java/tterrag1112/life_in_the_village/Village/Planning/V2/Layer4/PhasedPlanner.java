@@ -1555,6 +1555,10 @@ public final class PhasedPlanner {
 
     /** Gap (blocks) between the civic square and the adjacent market square. */
     private static final int CIVIC_SQUARE_GAP = 4;
+    /** Slack (blocks per side) added to the market sub-district rectangle
+     *  beyond the full-margin complex pad, so the pad fits strictly inside the
+     *  reservation (no edge-clip → no NO_REGION). */
+    private static final int MARKET_PAD_SLACK = 2;
 
     /** Stage 4 redesign — the plaza RING MEMBERS: the civic buildings that
      *  ring and front the central town square. The square is sized so all
@@ -1641,31 +1645,34 @@ public final class PhasedPlanner {
     }
 
     /**
-     * Fix-up #7 — size the MARKET sub-district. Unlike the civic plaza
-     * (buildings RING a central void — the {@link #sizeDistrictToMembers}
-     * perimeter model), the market hall sits IN the middle of its sub-
-     * district with the stall pad ringing it concentrically (that is how
-     * {@code MarketComplexPlanner} grades the pad: {@code footprint +
-     * margin} centred on the hall). So the void must contain the hall
-     * footprint PLUS the pad apron: {@code half = ceil(maxDim/2) +
-     * padMargin}, where {@code padMargin} is read from the authored
-     * {@code MarketComplexSpec} (the same value the realiser uses, so the
-     * full-margin pad fits clear inside the reserved void → no
-     * {@code NO_REGION}).
+     * Fix-up — the MARKET sub-district as a RECTANGLE matching the real
+     * market-complex footprint, NOT a bloated square. The complex is the hall
+     * (≈21×42) plus the concentric stall-pad apron ({@code footprint +
+     * padMargin} per side, the way {@code MarketComplexPlanner} grades it). A
+     * square (half = maxDim/2 + padMargin) over-reserved the SHORT axis into a
+     * giant empty paved lot; matching the complex's real width AND length
+     * removes that waste. The hall faces the anchor, so its LENGTH runs ALONG
+     * the offset axis (toward the core) and its WIDTH ACROSS it. Returns
+     * {@code {alongHalf, acrossHalf}} (+{@link #MARKET_PAD_SLACK} so the
+     * full-margin pad fits strictly inside → no {@code NO_REGION}). {@code
+     * padMargin} is read from the authored {@code MarketComplexSpec} — the same
+     * value the realiser pads with — so the reservation IS the real complex,
+     * not a square that either wastes space or clips the complex.
      *
      * <p>Deliberately NOT clamped to {@code villageRadius/2}: the hall is a
-     * fixed-size building (≈21×42), so the void must be ≥ its long side
-     * regardless of tier — a radius cap would collapse the void below the
-     * hall. If the resulting square doesn't sit on buildable terrain, the
-     * caller skips it and the hall falls back to the generic placement.
+     * fixed-size building, so the rectangle must be ≥ the complex regardless of
+     * tier. If the centre isn't buildable the caller skips it (hall falls back
+     * to the generic placement).
      */
-    private static int sizeMarketDistrict(State state) {
+    private static int[] marketDistrictHalves(State state) {
         StructureSizeCache.FootprintInfo fp =
                 defaultFootprint(state, BuildingType.MARKET);
         int padMargin = MarketComplexRegistry.get(state.culture, BuildingType.MARKET)
                 .map(MarketComplexSpec::padMargin).orElse(10);
-        int maxDim = Math.max(fp.width(), fp.length());
-        return Math.max(MIN_PLAZA_HALF, (int) Math.ceil(maxDim / 2.0) + padMargin);
+        int alongHalf = (int) Math.ceil(fp.length() / 2.0) + padMargin + MARKET_PAD_SLACK;
+        int acrossHalf = (int) Math.ceil(fp.width() / 2.0) + padMargin + MARKET_PAD_SLACK;
+        return new int[]{Math.max(MIN_PLAZA_HALF, alongHalf),
+                         Math.max(MIN_PLAZA_HALF, acrossHalf)};
     }
 
     /**
@@ -1745,18 +1752,24 @@ public final class PhasedPlanner {
         LOGGER.info("civic square: centre=({},{}) half={} ring={} members={}",
                 anchor.getX(), anchor.getZ(), civic.half(), civic.ring(), ring);
 
-        // Market sub-district — only when MARKET is selected. Fix-up #7:
-        // sized to CONTAIN the hall footprint + the concentric stall-pad
-        // apron (sizeMarketDistrict), so the hall binds to its centre and
-        // the pad grades clear inside the void (no NO_REGION). Seated beside
-        // the civic square on the axis perpendicular to the primary axis.
+        // Market sub-district — only when MARKET is selected. Fix-up: a
+        // RECTANGLE matching the real complex (hall + stall-pad apron), seated
+        // beside the civic square on the axis perpendicular to the primary
+        // axis. The hall faces the anchor, so its LENGTH runs along the offset
+        // axis (alongHalf) and its WIDTH across it (acrossHalf) — see
+        // marketDistrictHalves + boundMarketBest's chooseFacing.
         if (!present.contains(BuildingType.MARKET)) {
             LOGGER.info("market square: skipped (MARKET not selected)");
             return;
         }
-        int marketHalf = sizeMarketDistrict(state);
-        int offset = civic.half() + CIVIC_SQUARE_GAP + marketHalf;
+        int[] mh = marketDistrictHalves(state);
+        int alongHalf = mh[0], acrossHalf = mh[1];
         boolean axisX = state.ctx.primaryAxis() == CardinalAxis.X;
+        // Offset is on the axis perpendicular to the primary axis; the hall's
+        // LENGTH lies along that offset axis.
+        int halfX = axisX ? acrossHalf : alongHalf;
+        int halfZ = axisX ? alongHalf : acrossHalf;
+        int offset = civic.half() + CIVIC_SQUARE_GAP + alongHalf;
         int mx = anchor.getX() + (axisX ? 0 : offset);  // perpendicular to primary axis
         int mz = anchor.getZ() + (axisX ? offset : 0);
         boolean reserved = false;
@@ -1766,16 +1779,17 @@ public final class PhasedPlanner {
             boolean buildable = (cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
                     && c.localSlope() <= MAX_SLOPE;
             if (buildable) {
-                Polygon.AABB marketAabb = squareAt(mx, mz, marketHalf);
+                Polygon.AABB marketAabb = new Polygon.AABB(
+                        mx - halfX, mz - halfZ, mx + halfX, mz + halfZ);
                 state.marketSquare = marketAabb;
                 state.reservations.add(
                         new Reservation(toAabb(marketAabb), toAabb(marketAabb), null));
                 reserved = true;
             }
         }
-        LOGGER.info("market square: {} (half={})",
+        LOGGER.info("market sub-district: {} ({}x{})",
                 reserved ? "reserved at (" + mx + "," + mz + ")" : "skipped (terrain)",
-                marketHalf);
+                2 * halfX, 2 * halfZ);
     }
 
     /**
@@ -1910,11 +1924,12 @@ public final class PhasedPlanner {
 
         int reserved = 0;
         for (int k = 0; k < n; k++) {
-            // Fan the districts around the anchor; offset so the first doesn't
-            // collide with the market satellite on the perpendicular axis.
-            double angle = (2 * Math.PI * k) / n + Math.PI / 4.0;
-            Polygon.AABB gate = seatDistrictAlongRay(
-                    state, anchor, angle, innerR, outerR, halfX, halfZ);
+            // Each block prefers its fanned bearing but SWEEPS all directions
+            // if that bearing is blocked, so every block seats as long as any
+            // clear spot exists in the annulus.
+            double startAngle = (2 * Math.PI * k) / n + Math.PI / 4.0;
+            Polygon.AABB gate = seatDistrict(
+                    state, anchor, startAngle, innerR, outerR, halfX, halfZ);
             if (gate != null) reserved++;
         }
         LOGGER.info("residential districts: {} requested / {} reserved"
@@ -1922,35 +1937,44 @@ public final class PhasedPlanner {
                 n, reserved, houseCount, 2 * halfX, 2 * halfZ, cols, rows);
     }
 
-    /** Seats one residential district by scanning outward along {@code angle}
-     *  from {@code innerR} for a buildable centre whose block AABB clears every
-     *  prior reservation (civic + market voids, placed footprints) and other
-     *  districts. The civic PRECINCT is intentionally NOT a barrier — a
-     *  residential block may sit in its empty corners (residential isn't
-     *  rural). On success records the block gate (no void reserved — houses
-     *  FILL the block this pass) and returns it; null if no spot fits. */
-    private static Polygon.AABB seatDistrictAlongRay(State state, BlockPos anchor,
-            double angle, int innerR, int outerR, int halfX, int halfZ) {
-        double cos = Math.cos(angle), sin = Math.sin(angle);
-        for (int r = innerR; r <= outerR; r += 4) {
-            int cx = anchor.getX() + (int) Math.round(cos * r);
-            int cz = anchor.getZ() + (int) Math.round(sin * r);
-            if (!state.fmap.inBounds(cx, cz)) continue;
-            Cell c = state.fmap.cellAt(cx, cz);
-            BlockCategory cat = c.category();
-            if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
-                    || c.localSlope() > MAX_SLOPE) continue;
-            Polygon.AABB gate = new Polygon.AABB(cx - halfX, cz - halfZ,
-                    cx + halfX, cz + halfZ);
-            if (aabbOverlapsAnyReservation(toAabb(gate), state.reservations)) continue;
-            if (aabbOverlapsAny(gate, state.residentialGates)) continue;
-            // Record the gate for HOUSE inclusion + rural/farm exclusion. No
-            // void reservation: houses fill the block (the gate is NOT a
-            // Reservation, so houses can place inside it).
-            state.residentialGates.add(gate);
-            LOGGER.info("residential district seated: centre=({},{}) block={}x{} r={}",
-                    cx, cz, 2 * halfX, 2 * halfZ, r);
-            return gate;
+    /** Number of bearings swept when seating a residential block. */
+    private static final int DISTRICT_ANGLE_STEPS = 24;
+
+    /** Seats one residential district. Fix-up: SWEEPS all bearings (preferring
+     *  {@code startAngle}, then rotating around) × radii outward, taking the
+     *  first buildable centre whose block AABB clears every prior reservation
+     *  (civic + market voids, placed footprints) and other districts. The
+     *  earlier one-bearing-per-block search left later blocks unseated when
+     *  their single bearing was obstructed (e.g. by the market satellite or
+     *  the civic ring) — the sweep seats all N as long as any clear spot
+     *  exists. The civic PRECINCT is NOT a barrier (a block may sit in its
+     *  empty corners). On success records the gate (no void reserved — houses
+     *  FILL the block this pass) and returns it; null if nothing fits. */
+    private static Polygon.AABB seatDistrict(State state, BlockPos anchor,
+            double startAngle, int innerR, int outerR, int halfX, int halfZ) {
+        for (int a = 0; a < DISTRICT_ANGLE_STEPS; a++) {
+            double angle = startAngle + (2 * Math.PI * a) / DISTRICT_ANGLE_STEPS;
+            double cos = Math.cos(angle), sin = Math.sin(angle);
+            for (int r = innerR; r <= outerR; r += 4) {
+                int cx = anchor.getX() + (int) Math.round(cos * r);
+                int cz = anchor.getZ() + (int) Math.round(sin * r);
+                if (!state.fmap.inBounds(cx, cz)) continue;
+                Cell c = state.fmap.cellAt(cx, cz);
+                BlockCategory cat = c.category();
+                if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
+                        || c.localSlope() > MAX_SLOPE) continue;
+                Polygon.AABB gate = new Polygon.AABB(cx - halfX, cz - halfZ,
+                        cx + halfX, cz + halfZ);
+                if (aabbOverlapsAnyReservation(toAabb(gate), state.reservations)) continue;
+                if (aabbOverlapsAny(gate, state.residentialGates)) continue;
+                // Record the gate for HOUSE inclusion + rural/farm exclusion. No
+                // void reservation: houses fill the block (the gate is NOT a
+                // Reservation, so houses can place inside it).
+                state.residentialGates.add(gate);
+                LOGGER.info("residential district seated: centre=({},{}) block={}x{} r={}",
+                        cx, cz, 2 * halfX, 2 * halfZ, r);
+                return gate;
+            }
         }
         return null;
     }
