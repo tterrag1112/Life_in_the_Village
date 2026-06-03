@@ -478,10 +478,10 @@ public final class PhasedPlanner {
         int squareHalf = 0;
         if (type == BuildingType.MARKET && state.marketSquare != null) {
             squareCentre = squareCentreOf(state.marketSquare);
-            squareHalf = marketSquareHalf(state.ctx.tier());
+            squareHalf = squareHalfOf(state.marketSquare);
         } else if (targetKind == NucleusKind.CIVIC && state.civicSquare != null) {
             squareCentre = squareCentreOf(state.civicSquare);
-            squareHalf = civicSquareHalf(state.ctx.tier());
+            squareHalf = squareHalfOf(state.civicSquare);
         }
         final long ringRsq = squareCentre != null
                 ? (long) (squareHalf + CIVIC_RING_WIDTH) * (squareHalf + CIVIC_RING_WIDTH)
@@ -1438,8 +1438,18 @@ public final class PhasedPlanner {
      *  fronting the square. Tuning baseline. */
     private static final int CIVIC_RING_WIDTH = 28;
 
-    /** Town-square half-extent (blocks) per tier — the central void the
-     *  civic buildings ring/front. Tuning baseline. */
+    /** Fix-up #6 — the reserved square void is sized so its total covers at
+     *  most this fraction of the CIVIC zone's cells, so the void can never
+     *  exceed the zone (4a's fixed per-tier halves reserved ~2× the CIVIC
+     *  zone at TOWN, evicting the civic buildings). Conservative baseline. */
+    private static final double SQUARE_VOID_FRACTION = 0.30;
+    /** Minimum square half-extent (blocks) — a plaza below this isn't worth
+     *  paving; floors the zone-derived size at tiny tiers. */
+    private static final int MIN_SQUARE_HALF = 4;
+
+    /** Town-square half-extent (blocks) per tier — now the per-tier MAX cap
+     *  on the zone-derived size (fix-up #6). The void the civic buildings
+     *  ring/front. Tuning baseline. */
     private static int civicSquareHalf(ViabilityTier tier) {
         return switch (tier) {
             case CITY -> 16;
@@ -1449,8 +1459,9 @@ public final class PhasedPlanner {
         };
     }
 
-    /** Market-square half-extent (blocks) per tier — the adjacent void
-     *  the market stall pad seeds into. Tuning baseline. */
+    /** Market-square half-extent (blocks) per tier — the per-tier MAX cap
+     *  on the zone-derived market-square size (fix-up #6; CITY+ only).
+     *  Tuning baseline. */
     private static int marketSquareHalf(ViabilityTier tier) {
         return switch (tier) {
             case CITY -> 14;
@@ -1477,16 +1488,41 @@ public final class PhasedPlanner {
      */
     private static void reserveCivicSquare(State state) {
         BlockPos anchor = state.ctx.anchor();
-        int ch = civicSquareHalf(state.ctx.tier());
-        Polygon.AABB civic = new Polygon.AABB(
-                anchor.getX() - ch, anchor.getZ() - ch,
-                anchor.getX() + ch, anchor.getZ() + ch);
+        ViabilityTier tier = state.ctx.tier();
+        int civicCells = civicCellCount(state);
+        double budget = SQUARE_VOID_FRACTION * civicCells;   // total void cell budget
+        // Fix-up #6 — TOWN and smaller merge the civic + market square into
+        // ONE plaza (historically the town square IS the market at that
+        // scale); CITY+ keeps two adjacent squares (both zone-sized down).
+        boolean merge = tier != ViabilityTier.CITY;
+
+        if (merge) {
+            int ch = civicCells > 0
+                    ? squareHalfForBudget(budget, civicSquareHalf(tier))
+                    : civicSquareHalf(tier);   // no partition → fall back to cap
+            Polygon.AABB civic = squareAt(anchor.getX(), anchor.getZ(), ch);
+            state.civicSquare = civic;
+            // Void reservation: footprint == frontage == the square; type
+            // null (a void has no building — type is never dereferenced).
+            state.reservations.add(new Reservation(toAabb(civic), toAabb(civic), null));
+            LOGGER.info("civic square (merged civic+market): centre=({},{}) half={}"
+                    + " (civicCells={}, budget={})",
+                    anchor.getX(), anchor.getZ(), ch, civicCells, (int) budget);
+            return;
+        }
+
+        // CITY+: split the void budget between the two squares (civic 60% /
+        // market 40% — the civic square is the larger of the pair).
+        int ch = civicCells > 0
+                ? squareHalfForBudget(budget * 0.6, civicSquareHalf(tier))
+                : civicSquareHalf(tier);
+        int mh = civicCells > 0
+                ? squareHalfForBudget(budget * 0.4, marketSquareHalf(tier))
+                : marketSquareHalf(tier);
+        Polygon.AABB civic = squareAt(anchor.getX(), anchor.getZ(), ch);
         state.civicSquare = civic;
-        // Void reservation: footprint == frontage == the square; type null
-        // (a void has no building — type is never dereferenced).
         state.reservations.add(new Reservation(toAabb(civic), toAabb(civic), null));
 
-        int mh = marketSquareHalf(state.ctx.tier());
         int offset = ch + CIVIC_SQUARE_GAP + mh;
         boolean axisX = state.ctx.primaryAxis() == CardinalAxis.X;
         int mx = anchor.getX() + (axisX ? 0 : offset);  // perpendicular to primary axis
@@ -1497,15 +1533,39 @@ public final class PhasedPlanner {
             boolean buildable = (cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
                     && c.localSlope() <= MAX_SLOPE;
             if (buildable) {
-                Polygon.AABB market = new Polygon.AABB(mx - mh, mz - mh, mx + mh, mz + mh);
+                Polygon.AABB market = squareAt(mx, mz, mh);
                 state.marketSquare = market;
                 state.reservations.add(
                         new Reservation(toAabb(market), toAabb(market), null));
             }
         }
-        LOGGER.info("civic square: centre=({},{}) half={}; market square: {}",
-                anchor.getX(), anchor.getZ(), ch,
-                state.marketSquare != null ? "reserved" : "skipped (terrain)");
+        LOGGER.info("civic square: centre=({},{}) half={}; market square: {} (half={},"
+                + " civicCells={})", anchor.getX(), anchor.getZ(), ch,
+                state.marketSquare != null ? "reserved" : "skipped (terrain)", mh, civicCells);
+    }
+
+    /** CIVIC zone cell count from the partition, or 0 if none. The handle
+     *  the square sizing is derived from (the value logged as {@code CIVIC:N}). */
+    private static int civicCellCount(State state) {
+        ZonePartition zp = state.ctx.zonePartition();
+        if (zp == null) return 0;
+        for (Zone z : zp.zones()) {
+            if (z.kind() == NucleusKind.CIVIC) return z.cellCount();
+        }
+        return 0;
+    }
+
+    /** Fix-up #6 — square half-extent (blocks) whose void covers at most
+     *  {@code budgetCells}, clamped to {@code [MIN_SQUARE_HALF, cap]}. The
+     *  conservative formula treats {@code sqrt(budgetCells)} as a block side
+     *  and halves it. */
+    private static int squareHalfForBudget(double budgetCells, int cap) {
+        int h = (int) Math.floor((Math.sqrt(Math.max(0, budgetCells)) - 1) / 2.0);
+        return Math.max(MIN_SQUARE_HALF, Math.min(cap, h));
+    }
+
+    private static Polygon.AABB squareAt(int cx, int cz, int half) {
+        return new Polygon.AABB(cx - half, cz - half, cx + half, cz + half);
     }
 
     private static Aabb toAabb(Polygon.AABB a) {
@@ -1516,6 +1576,11 @@ public final class PhasedPlanner {
      *  the planar ring-distance test). */
     private static BlockPos squareCentreOf(Polygon.AABB a) {
         return new BlockPos((a.minX() + a.maxX()) / 2, 0, (a.minZ() + a.maxZ()) / 2);
+    }
+
+    /** Half-extent (blocks) of a reserved square AABB. */
+    private static int squareHalfOf(Polygon.AABB a) {
+        return (a.maxX() - a.minX()) / 2;
     }
 
     /** Result of a successful parcel reservation: the {@link Parcel} to

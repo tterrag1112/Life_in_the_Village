@@ -5554,3 +5554,104 @@ from 4a; `targetKind` computed-always doesn't change the bound non-square path
 (that path uses the binding branch, not `targetKind`); `zoneRadiusFactor` replaces
 the single constant at its one use site; no signatures or `NetworkSpec` changed,
 so no downstream caller is affected.
+
+### 2026-06-02 — Layout Rework Fix-up #6 (size the squares to the CIVIC zone + merge at small tiers)
+
+**Disposition confirmations (the premise the fix relies on):**
+- **The zone gate is center-based** — `findBestCandidate` tests `zp.zoneIdAt(i,j)`
+  where `(i,j)` is the candidate cell = the building **centre**, never the
+  footprint. So a big building places with its centre in the core and its long
+  body extending radially out through a gap; shrinking the void lets the centre
+  sit near the true core again (as it did pre-4a), so the body can aim down a
+  farmhouse gap. ✓ (If placement tested the whole footprint, shrinking wouldn't
+  help — it doesn't, so it does.)
+- **The CIVIC-cell handle** is `zp.zones()` → the CIVIC `Zone.cellCount()` (the
+  value `SiteAnalyzer` logs as `CIVIC:654` / `CIVIC:1070`). ✓
+
+**Root cause (confirmed in-world, TOWN seed `-7816748744303455996` + CITY):** the
+fix-up-#5 ring gate IS active and CITY compaction works, but MARKET + CHAPEL still
+drop. 4a's fixed per-tier halves reserve **~2× the CIVIC zone** at TOWN (civic
+24×24 ≈ 576 + market ≈ 676 vs CIVIC = 654 cells), so the void evicts the civic
+buildings outward; the phase-3 farmhouses then ring the core at ~40–55, leaving a
+~15-block annulus; and the big civic footprints (MARKET 21×42, CHAPEL 18×38)
+can't fit that annulus tangent to the void → they drop. (Small footprints that DO
+fit — INN, BLACKSMITH, houses — are the ones that placed.)
+
+**The fix — size the void to the CIVIC zone + merge at small tiers (Garrett's
+"shrink + merge"):**
+1. **Void sized from CIVIC cells.** `reserveCivicSquare` now derives the square
+   half from the CIVIC cell count: total void ≤ `SQUARE_VOID_FRACTION(0.30) ×
+   civicCells`, with `half = floor((√budgetCells − 1) / 2)`, clamped to
+   `[MIN_SQUARE_HALF(4), per-tier cap]` (the 4a halves became the MAX caps, so the
+   void can only shrink, never grow). Resulting halves: **TOWN merged 6** (was
+   12), **CITY civic 6 / market 5** (was 16 / 14) — the void is now ~6–7% of the
+   CIVIC zone, so it can never exceed it.
+2. **Merge to one plaza at TOWN and smaller.** A single combined civic+market
+   square (one void `Reservation`, one CIVIC `PlazaRegion`); the town hall fronts
+   it, the well sits on it, and the **market complex seeds from this plaza's
+   centroid** (`marketPlazaCentroid` now falls back to the CIVIC plaza when no
+   MARKET region exists). The MARKET building (CIVIC affinity, `marketSquare`
+   null) rings the merged square; its stall pad shrinks to fit the paved plaza
+   (the existing pad shrink-to-fit handles a small plaza → no `NO_REGION`). CITY+
+   keeps two adjacent squares, both zone-sized down (split 60% civic / 40%
+   market).
+3. **Ring not over-tight.** The fix-up-#5 ring is a placement **disc** (radius
+   `squareHalf + CIVIC_RING_WIDTH`), not a thin edge band — it reaches from the
+   anchor out to the disc edge, so a big footprint can centre as far out as
+   needed to clear the (now small) void. With the smaller void, a MARKET needs its
+   centre at `voidHalf(6)+footprintHalf(21)=27`, and the disc reaches `6+28=34` —
+   fits. `findBestCandidate` now reads the **actual reserved square size**
+   (`squareHalfOf`) rather than the per-tier cap, so the ring tracks the smaller
+   void. `CIVIC_RING_WIDTH` kept at 28 (verified sufficient; not widened).
+
+**Tuning baselines:** `SQUARE_VOID_FRACTION = 0.30`, `MIN_SQUARE_HALF = 4`,
+two-square split 60/40, per-tier caps unchanged (16/12/9/7 civic, 14/10/8/6
+market). Merge threshold: TOWN and smaller merge; CITY+ split.
+
+**Deviations from prompt:**
+- The prompt's sizing formula carries a unit subtlety (it treats
+  `√(fraction×civicCells)` as a block side, then halves) — implemented literally
+  because it reproduces the prompt's stated numbers (TOWN 6, CITY ~5–6); the
+  effective void is ~6–7% of CIVIC cells (more conservative than 30%, which is
+  fine — the goal is "never exceeds the zone"). Recorded as the baseline.
+- Two-square budget **split 60/40** (civic larger), not 50/50 (the prompt said
+  "split"). `MIN_SQUARE_HALF` floor can let a tiny-tier void slightly exceed the
+  fraction (negligible — few civic buildings there).
+- `CIVIC_RING_WIDTH` **not** widened (verified the disc already reaches past what
+  the smaller void requires).
+- **Did NOT** implement the civic-precinct rezone (the prompt's explicitly-not-
+  chosen alternative). If shrink+merge still can't seat the big footprints in
+  the in-world test, that's the reported next lever — not done here.
+
+**Tie-In Audit:** `PhasedPlanner` (zone-sized squares; merge-by-tier; one-vs-two
+reservations; ring reads actual square size); `V2VillageSpawnerAdapter`
+(`marketPlazaCentroid` CIVIC fallback; `buildRealizedLayout` already emits one
+plaza when `marketSquare` is null). `PlazaPaver`/`VillageDecorator` consume
+`getPlazaRegions()` unchanged — nothing assumes exactly two regions (the loop is
+count-agnostic). No `NetworkSpec`/router/signature change; no codec field; no new
+enum (merge is a local boolean).
+
+**Out-of-scope but flagged:** civic-precinct rezone (not chosen — report if
+needed); CITY farm `INSUFFICIENT_AREA` over-density → 4b; RESIDENTIAL zone / HOUSE
+re-point (CITY house drops) → 4b; the farmer-can't-path-to-crops nav warning
+(pre-existing farm-nav, not layout).
+
+**Smoke-test plan:**
+1. Build (deferred — sandbox 403). Static review done.
+2. Spawn TOWN AGRICULTURAL, seed `-7816748744303455996`. Pass: MARKET + CHAPEL
+   (ideally the full civic set) place; one merged civic+market plaza paves with
+   the town hall fronting it, a well at centre, market stalls generating on it (no
+   `NO_REGION`); a road skirts the plaza, none crosses; clean spawn + NPC nav.
+3. Spawn CITY AGRICULTURAL: the two smaller squares no longer evict the civic
+   buildings — drop count should fall sharply from 17 (residual HOUSE drops
+   expected until 4b's RESIDENTIAL zone — note, don't fix). If CITY still drops
+   most civic buildings, report whether the 0.8 compaction is now too tight.
+4. A couple more seeds/tiers to confirm the merge threshold + sizing scale.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `civicCellCount` reads
+the existing `Zone.cellCount()` (CIVIC zone) via the imported `Zone`/`NucleusKind`;
+the sizing helpers clamp to `[MIN, cap]`; the merge path leaves `marketSquare`
+null so the adapter emits one CIVIC plaza and the MARKET building rings it (CIVIC
+affinity) with its pad seeded from the CIVIC plaza; `findBestCandidate` reads the
+actual square size via `squareHalfOf`; no signature/codec/enum change.

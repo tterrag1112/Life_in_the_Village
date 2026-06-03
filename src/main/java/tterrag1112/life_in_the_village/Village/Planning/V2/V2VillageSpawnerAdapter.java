@@ -800,15 +800,24 @@ public final class V2VillageSpawnerAdapter {
                 poly, centroid, floorY, java.util.Set.of(), 0f);
     }
 
-    /** Stage 4a — centroid of the registered MARKET plaza, or null. */
+    /** Stage 4a / fix-up #6 — centroid of the market's square: the MARKET
+     *  plaza when one exists (CITY+), else the CIVIC plaza (the merged
+     *  civic+market square at TOWN and smaller — the market shares it).
+     *  Null only when no plaza was produced. */
     private static BlockPos marketPlazaCentroid(Village village) {
+        BlockPos civic = null;
         for (var r : village.getPlazaRegions()) {
-            if (r.purpose() == tterrag1112.life_in_the_village.Village.Decoration
+            var p = r.purpose();
+            if (p == tterrag1112.life_in_the_village.Village.Decoration
                     .Plaza.PlazaPurpose.MARKET) {
                 return r.centroid();
             }
+            if (p == tterrag1112.life_in_the_village.Village.Decoration
+                    .Plaza.PlazaPurpose.CIVIC) {
+                civic = r.centroid();
+            }
         }
-        return null;
+        return civic;
     }
 
     /** Stage 4a — the civic-square centerpiece: a small procedural well at
