@@ -6596,3 +6596,144 @@ existing `PaletteRegistry.forCulture` / `PathMaterial.fromCulturePalette` /
 deletion verified to leave only comment references (no calls, no `{@link}`); reused
 `RoadShape.RoadTier` + `NodeKind.JUNCTION` (no new enum/switch); no codec/signature
 break on any existing caller.
+
+### 2026-06-03 — Civic plaza decoration: CivicPlazaComplex (typed-piece framework)
+
+Turns the bare civic plaza (flat paving + a code-gen 3×3 well) into a designed
+central square: a `well_hamlet` FOUNTAIN at the centre, perimeter GARDEN
+greenery, and OPEN cobbled paving between (buildings ring it). Built on the farm
+complex's typed-sub-piece + per-kind-renderer pattern. Tested with
+`DISTRICT_ONLY_MODE` on.
+
+**What shipped:**
+- **`PlazaPiece`** (record + `Kind` enum) — the plaza analogue of
+  `FarmPlot.PlotSubtype`. v1 kinds: `FOUNTAIN`, `GARDEN`, `OPEN`; staged
+  framework slots `WELL` / `MARKET_STALL` / `NOTICEBOARD` / `BENCH_CLUSTER`
+  (accepted by the renderer, not emitted by the planner yet).
+- **`CivicPlazaComplex`** — the lean planner + entry. `plan(PlazaRegion)` emits
+  one FOUNTAIN at the centroid + a few perimeter GARDENs scaled to plaza size
+  (4 corners always; +4 mid-edges on large plazas; tiny plazas get fountain
+  only); OPEN is the unpieced remainder (paving already laid). `decorate(level,
+  village)` finds the CIVIC `PlazaRegion`, plans, and renders. Mostly-OPEN by
+  design (gardens are small, kept clear of the central fountain zone).
+- **`PlazaPieceRenderer`** — the per-kind dispatch (mirrors
+  `PlotInteriorRenderer`): FOUNTAIN → stamp `well_hamlet.nbt` centred on the
+  centroid (load via the same `StructureTemplate`/`placeInWorld` path as
+  `DecorationPass.stamp`; centre by `template.getSize()/2`) + register a
+  `GatheringPoint(FOUNTAIN)`; GARDEN → procedural flowers / low oak-leaf hedge on
+  the paving (soil at floorY-1, plant at floorY, clipped to the plaza polygon);
+  OPEN + staged kinds → no-op. NBT-missing fallback: a small stone-brick well so
+  the centre is never bare.
+- **Replaced the code-gen centerpiece** — deleted `V2VillageSpawnerAdapter
+  .placeCivicWell`; the `runDownstream` "CivicCenterpiece" guard now calls
+  `CivicPlazaComplex.decorate` (same post-paving slot).
+
+**Surface area:** 3 new files + 1 edit + 1 method deletion.
+
+**Files added:**
+- `.../Village/Decoration/Plaza/PlazaPiece.java`
+- `.../Village/Decoration/Plaza/CivicPlazaComplex.java`
+- `.../Village/Decoration/Plaza/PlazaPieceRenderer.java`
+**Files modified:**
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (centerpiece guard →
+  CivicPlazaComplex; deleted `placeCivicWell`).
+
+**Tie-In Audit:**
+- *Touched surface:* new `PlazaPiece`/`CivicPlazaComplex`/`PlazaPieceRenderer`;
+  the CIVIC plaza centerpiece (code-gen → FOUNTAIN piece); `GatheringPoint`
+  registration; a render hook after `PlazaPaver`.
+- *Upstream feeders:* the CIVIC `PlazaRegion` (produced by the planner via the
+  adapter, paved by `PlazaPaver` in `VillageDecorator`) → confirmed available
+  post-paving on `village.getPlazaRegions()` with footprint + centroid + floorY.
+  Runs AFTER `VillageDecorator`/`DecorationPass`/`ParkRenderer` in `runDownstream`,
+  so paving is down first (pieces render on top — no double-paving; gardens
+  intentionally replace the floor block at floorY-1).
+- *Downstream callers:* `PlazaPiece` consumed ONLY by `PlazaPieceRenderer`
+  (grep-verified — no external switch). `GatheringPoint` — `village.addGatheringPoint`
+  had ZERO prior callers (grep-verified), so the fountain point is the first; the
+  NPC social layer reads `getGatheringPoints()` (read-only consumer, now
+  populated). `Village` persists `gatheringPoints` via its existing codec (no new
+  field).
+- *Sibling systems:* `PlazaPaver` UNAFFECTED (paves first; pieces decorate on
+  top). The decoration slot/matcher (`DecorationSlotEmitter` `PLAZA_FOUNTAIN` /
+  `PLAZA_*`) — did NOT render the centerpiece (the code-gen well did), and emits
+  no `GatheringPoint`, so no overlap; the complex owns the plaza interior now
+  (slot system flagged below). `DISTRICT_ONLY_MODE` unaffected (CIVIC plaza spawns
+  in district-only). Both spawn paths run `runDownstream`.
+- *Exhaustive switches:* the new `PlazaPiece.Kind` switch lives only in
+  `PlazaPieceRenderer` (exhaustive, incl. staged kinds). Reused existing
+  `GatheringPointKind.FOUNTAIN` (no new enum). No codec field added.
+- *Caller-helper opportunity:* none (the renderer IS the per-kind dispatch; the
+  NBT-stamp path duplicates `DecorationPass.stamp` ~15 lines — flagged as a
+  possible shared `NbtStamper` helper if a 3rd stamping site appears).
+
+**Simplification Sweep** (touches `Village/Decoration/`):
+- `V2VillageSpawnerAdapter.placeCivicWell` — **DELETED** (the code-gen
+  centerpiece the FOUNTAIN piece replaces). Its 3×3 logic survives only as the
+  NBT-missing fallback inside `PlazaPieceRenderer`.
+- 3 new classes — all Active (CivicPlazaComplex ← adapter; PlazaPieceRenderer ←
+  CivicPlazaComplex; PlazaPiece ← both). No parallel machinery: reuses
+  `PlazaRegion`, the `DecorationPass` NBT-stamp pattern, `GatheringPoint`,
+  `Polygon`.
+- Did NOT reuse `BspSubdivider`/`CellPolygonizer`/`ParkPrimitive` renderer
+  wiring — see deviation (a coarse centre+perimeter partition + direct garden
+  stamps is leaner than the farm's full subdivision, which the prompt allowed).
+
+**Deviations from prompt:**
+- **No persistence record.** The prompt said persist "if a reload pass is wanted";
+  v1 decorates once at spawn (like the code-gen well it replaces), so no
+  `CivicPlazaComplex` SavedData record. Re-render-on-reload can be added later.
+  Flagged.
+- **Coarse centre+perimeter partition, not `BspSubdivider`/`CellPolygonizer`.** The
+  prompt explicitly allowed "a coarse centre+perimeter partition is fine if
+  simpler" (a full dense BSP would over-fill the square; openness is the point).
+- **GARDEN content = direct procedural stamps** (flowers / persistent oak-leaf
+  hedge), not wired through `ParkRenderer`/`GardenPlot`/`ParkPrimitive`'s renderer
+  — leaner + self-contained for v1; the `ParkPrimitive` flora vocabulary informs
+  the block choices. The reusable framework (typed piece + per-kind dispatch) is
+  the part the prompt prioritised and is in place.
+- **OPEN pieces aren't emitted** (the unpieced remainder IS the open paving) — the
+  enum slot exists + the renderer handles it as a no-op, for framework symmetry.
+
+**Out-of-scope but flagged:**
+- Staged piece content `WELL` / `MARKET_STALL` / `NOTICEBOARD` / `BENCH_CLUSTER`
+  → later pass (framework accepts them).
+- A dedicated fountain NBT (using `well_hamlet` now) → Garrett may author later.
+- `CivicPlazaComplex` reload persistence (re-render record) → later if wanted.
+- The decoration slot/matcher `PLAZA_*` emission may now be vestigial INSIDE the
+  plaza interior (the complex owns it) — NOT deleted (may still serve furniture
+  outside the plaza); flagged for a later decision.
+- Shared `NbtStamper` helper (dedupe the `DecorationPass.stamp` load/place path)
+  if a 3rd site appears.
+- Rural re-enable / market+resi fix-up / roads → separate (DISTRICT_ONLY_MODE on).
+
+**Cumulative pending verification:** the rework spawns; civic district + market
+rectangle + residential blocks reserve; village roads render through the unified
+pipeline; and now the civic plaza has a designed fountain + gardens. None of
+#5–#7 / Stage 4 redesign / 4b / the market+resi & roads fix-ups / this plaza
+decoration has been smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. With `DISTRICT_ONLY_MODE` on, spawn **TOWN AGRICULTURAL**: the civic plaza has
+   a `well_hamlet` FOUNTAIN at its centre (log `CivicPlazaComplex: planned N
+   piece(s) …`), a few GARDEN patches (flowers / a low hedge) around the
+   perimeter, and OPEN cobbled paving between — buildings ringing it, reading as a
+   designed square (cf. the Alsatian reference). NO leftover code-gen 3×3 well
+   unless the NBT is missing (then the fallback well + a log line). `/litv` or the
+   NPC layer sees a FOUNTAIN gathering point at the centre.
+3. Spawn **CITY AGRICULTURAL**: a larger plaza with the fountain + more garden
+   accents (corners + mid-edges), still mostly open; no abort.
+4. A couple of seeds: gardens scale with plaza size; the fountain always lands
+   centred; gardens never spill onto the ringing buildings (polygon-clipped).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the FOUNTAIN stamp
+reuses the exact `StructureTemplate`/`NbtIo`/`StructurePlaceSettings`/`placeInWorld`
+path as `DecorationPass.stamp` (+ `getSize()` centring, as `BuildingPlacer` does);
+all flora blocks (SHORT_GRASS/POPPY/CORNFLOWER/AZURE_BLUET/OXEYE_DAISY/DANDELION)
++ `LeavesBlock.PERSISTENT` are used elsewhere in the tree; `GatheringPoint`
+(id,pos,kind,capacity) + `Village.addGatheringPoint` match; `Polygon.boundingBox`/
+`contains(poly,x,z)` exist; `PlazaPiece.Kind` switch is exhaustive + sole consumer;
+`placeCivicWell` deletion verified (no remaining refs); no codec/signature/enum
+break.

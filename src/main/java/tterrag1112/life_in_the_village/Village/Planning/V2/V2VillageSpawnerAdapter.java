@@ -859,36 +859,6 @@ public final class V2VillageSpawnerAdapter {
         return civic;
     }
 
-    /** Stage 4a — the civic-square centerpiece: a small procedural well at
-     *  the CIVIC plaza centroid. Runs AFTER plaza paving (the decorator) so
-     *  the floor doesn't overwrite it. A 3×3 stone-brick rim (two high) ring
-     *  a central water source at the plaza floor. Guarded + defensive. */
-    private static void placeCivicWell(ServerLevel level, Village village) {
-        tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion civic = null;
-        for (var r : village.getPlazaRegions()) {
-            if (r.purpose() == tterrag1112.life_in_the_village.Village.Decoration
-                    .Plaza.PlazaPurpose.CIVIC) { civic = r; break; }
-        }
-        if (civic == null) return;
-        BlockPos c = civic.centroid();
-        int y = civic.floorY();
-        net.minecraft.world.level.block.state.BlockState rim =
-                net.minecraft.world.level.block.Blocks.STONE_BRICKS.defaultBlockState();
-        net.minecraft.world.level.block.state.BlockState water =
-                net.minecraft.world.level.block.Blocks.WATER.defaultBlockState();
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                BlockPos p = new BlockPos(c.getX() + dx, y, c.getZ() + dz);
-                if (dx == 0 && dz == 0) {
-                    level.setBlockAndUpdate(p, water);
-                } else {
-                    level.setBlockAndUpdate(p, rim);
-                    level.setBlockAndUpdate(p.above(), rim);
-                }
-            }
-        }
-    }
-
     /**
      * Convert V2's centre-based placement to the pivot {@link
      * BuildingPlacer#placeAndRegister} expects, with +1 Y so the
@@ -950,9 +920,12 @@ public final class V2VillageSpawnerAdapter {
         guard("ParkRenderer", () ->
                 tterrag1112.life_in_the_village.Village.Decoration.Parks
                         .ParkRenderer.run(level, village, data));
-        // Stage 4a — civic-square centerpiece. After plaza paving so the
-        // floor doesn't overwrite the well.
-        guard("CivicCenterpiece", () -> placeCivicWell(level, village));
+        // Civic-plaza decoration complex — designed central square (well
+        // fountain + perimeter gardens + open paving). After plaza paving so
+        // the floor doesn't overwrite the pieces. Replaces the code-gen well.
+        guard("CivicPlazaComplex", () ->
+                tterrag1112.life_in_the_village.Village.Decoration.Plaza
+                        .CivicPlazaComplex.decorate(level, village));
         guard("TradeRouteManager", () ->
                 tterrag1112.life_in_the_village.Village.Economy.Trade
                         .TradeRouteManager.establishRoutes(level, village, data));
